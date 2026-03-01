@@ -1,0 +1,197 @@
+# Delta Inventory
+
+Deltas (work items) extracted from VISION.md for Tachikoma.
+
+## Status Tracking
+
+Deltas track their progress through the development workflow using a status field:
+
+- **✗ Defined** - Delta extracted and documented (initial state)
+- **⧗ Spec** - Specification in progress (`/spec-delta` started)
+- **✓ Spec** - Specification complete (`/spec-delta` done)
+- **⧗ Design** - Design rationale in progress (`/design-delta` started)
+- **✓ Design** - Design complete (`/design-delta` done)
+- **⧗ Plan** - Implementation plan in progress (`/plan-delta` started)
+- **✓ Plan** - Implementation plan complete (`/plan-delta` done)
+- **⧗ Implementation** - Delta implementation in progress (`/implement-delta` started)
+- **✓ Implementation** - Delta complete and tested (`/implement-delta` done)
+- **✓ Reconciled** - Feature documentation updated (`/reconcile-delta` done)
+
+Commands automatically update status as they progress. To manually update:
+```bash
+python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py status set DELTA-ID "STATUS"
+```
+
+Query status:
+```bash
+python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py status list                    # All deltas
+python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py status list --complexity Easy  # Filter by complexity
+python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py status show DELTA-ID           # Detailed view
+```
+
+## Priority Tracking
+
+Deltas have a priority level (1-5) that determines their urgency:
+
+| Level | Label | Description |
+|-------|-------|-------------|
+| 1 | Critical | Blocks release, must do now |
+| 2 | High | Important, needed soon |
+| 3 | Medium | Standard priority (default) |
+| 4 | Low | Nice to have |
+| 5 | Backlog | Someday/maybe |
+
+Set priority:
+```bash
+python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority set DELTA-ID LEVEL
+```
+
+List by priority:
+```bash
+python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list                  # Grouped by priority
+python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # Filter by level
+```
+
+---
+
+## Deltas
+
+### DLT-001: Set up core agent architecture with processing hook points
+**Status**: ✗ Defined
+**Depends on**: None
+**Priority**: 3 (Medium)
+**Complexity**: Medium
+**Description**: Set up the core agent architecture using Claude Code SDK. This is the foundation every other delta builds on — it establishes the main request/response loop where a user message comes in and a response goes out. The architecture defines hook points for pre-processing (enrich messages before the agent sees them), post-processing (learn from completed conversations), delegation (route to specialized sub-agents), and idle task processing (background work between conversations). Without any other deltas implemented, the agent simply receives a message and responds directly. Each hook point is a well-defined extension surface that other deltas integrate into.
+
+### DLT-002: Send and receive messages via Telegram
+**Status**: ✗ Defined
+**Depends on**: DLT-001
+**Priority**: 3 (Medium)
+**Complexity**: Medium
+**Description**: Integrate with the Telegram Bot API to provide the primary user-facing communication channel for v1. Users send text messages to a Telegram bot, which forwards them to the coordinator agent. The coordinator's responses are sent back through the same channel. This delta covers the full Telegram lifecycle: bot initialization, receiving incoming messages via polling or webhooks, forwarding them into the agent architecture, sending responses back, and managing the connection (including reconnection on disconnects and graceful shutdown). Message validation ensures only expected input reaches the agent.
+
+### DLT-003: Delegate tasks to focused sub-agents
+**Status**: ✗ Defined
+**Depends on**: DLT-001
+**Priority**: 3 (Medium)
+**Complexity**: Medium
+**Description**: Enable the coordinator to delegate specialized requests to focused sub-agents instead of handling everything itself. When a request requires specific expertise or tooling, the coordinator spawns a sub-agent that receives only the context and tools relevant to its task — preventing context poisoning and keeping each agent sharp. The sub-agent executes, returns its result, and the coordinator synthesizes it into a user-facing response. This delta covers the delegation mechanism itself (how to spawn, scope, and collect results from sub-agents); specific sub-agent types are defined by their own deltas. Error handling for sub-agent failures (timeouts, crashes, bad output) should be addressed as part of this mechanism.
+
+### DLT-004: Detect conversation boundaries via inactivity timeout
+**Status**: ✗ Defined
+**Depends on**: DLT-001
+**Priority**: 3 (Medium)
+**Complexity**: Easy
+**Description**: Detect when a conversation has ended by monitoring for periods of user inactivity. After a configurable threshold (~20 minutes by default), the system considers the conversation complete and triggers downstream actions: post-processing to extract learnings, and transitioning to idle mode for background task processing. This boundary detection is critical because it determines when the assistant learns from a conversation and when it can start working on queued tasks. The threshold should be configurable per-deployment.
+
+### DLT-005: Load foundational context for personality and user knowledge
+**Status**: ✗ Defined
+**Depends on**: DLT-001
+**Priority**: 3 (Medium)
+**Complexity**: Easy
+**Description**: Provide the assistant with foundational, always-available context through core files that are loaded with higher priority than dynamically retrieved memories. Three files establish the assistant's identity and baseline knowledge: SOUL.md defines personality traits, tone, and behavioral guidelines; USER.md captures known information about the user (name, preferences, projects, communication style); AGENTS.md provides operational instructions for the agent and sub-agents. These files ensure the assistant behaves consistently regardless of which memories are retrieved for a given conversation, and give the user a transparent, editable way to shape the assistant's behavior.
+
+### DLT-006: Pre-process messages with memory context injection
+**Status**: ✗ Defined
+**Depends on**: DLT-001, DLT-008, DLT-009
+**Priority**: 3 (Medium)
+**Complexity**: Hard
+**Description**: Before the coordinator processes a user message, automatically gather and inject relevant context so responses are informed by past interactions. This delta delivers two things: a reusable, pluggable pre-processing pipeline that runs context providers in parallel before the agent sees a message, and the first provider — a memory context provider that searches stored memories using semantic similarity to find context relevant to the current message. The pipeline architecture must support adding more providers later (e.g., calendar, email, notes) without modifying the core pipeline. Retrieved memories are injected into the coordinator's context, enabling the assistant to reference past conversations, known preferences, and prior decisions naturally.
+
+### DLT-007: Extract and store learnings after conversations end
+**Status**: ✗ Defined
+**Depends on**: DLT-001, DLT-004, DLT-008
+**Priority**: 3 (Medium)
+**Complexity**: Hard
+**Description**: After a conversation ends (detected by DLT-004), automatically analyze the full exchange to extract what the assistant should remember: new facts about the user, decisions that were made, preferences expressed, and behavioral patterns observed. Each learning is stored as an individual memory document. This delta delivers two things: a reusable, pluggable post-processing pipeline that runs processors after conversation end is detected, and the first processor — a memory extraction processor that uses LLM analysis to identify and categorize learnings. The pipeline architecture must support adding more post-processors later without modifying the core pipeline. This is the core learning mechanism — the assistant gets smarter after every interaction without the user doing anything explicit.
+
+### DLT-008: Store memories as structured markdown documents
+**Status**: ✗ Defined
+**Depends on**: None
+**Priority**: 3 (Medium)
+**Complexity**: Easy
+**Description**: Persist memories extracted from conversations as markdown files in a dedicated directory, organized by type (facts, preferences, decisions, patterns). Using markdown keeps memories human-readable and directly inspectable by the user, avoiding database dependencies for v1. Each memory document includes structured metadata for retrieval: timestamps (creation and last referenced), type tags, source conversation reference, and a confidence indicator. The storage format must support efficient listing and filtering by type, and be compatible with the semantic search system (DLT-009) for retrieval.
+
+### DLT-009: Search memories by semantic similarity
+**Status**: ✗ Defined
+**Depends on**: DLT-008
+**Priority**: 3 (Medium)
+**Complexity**: Hard
+**Description**: Provide the ability to search stored memories by semantic similarity to a query, enabling the assistant to find relevant past context even when exact keywords don't match. Results are ranked by a combination of semantic relevance and time-based weighting (recent memories rank higher). This is the retrieval engine consumed by the memory context provider (DLT-006) and potentially other components that need to find relevant past context. The delta involves selecting and integrating an embedding model, building and maintaining an index over stored memories, and implementing the search/ranking logic. The embedding model choice should be evaluated during speccing, balancing quality, speed, and self-hosted requirements.
+
+### DLT-010: Queue and process background tasks during idle time
+**Status**: ✗ Defined
+**Depends on**: DLT-001, DLT-003, DLT-004
+**Priority**: 3 (Medium)
+**Complexity**: Medium
+**Description**: Enable the assistant to work proactively by creating, scheduling, and executing background tasks. This delta covers the full task lifecycle across two concerns: (1) **Task creation and storage** — a specialized sub-agent (delegated by the coordinator via DLT-003) handles task creation. It interprets user intent, extracts timing information, and structures task entries (e.g., "remind me about X tomorrow morning", "follow up on topic Y in a few hours", "summarize today's notes"). Tasks are stored in a persistent queue that survives restarts and support both immediate execution (process during next idle period) and time-based scheduling (process at or after a specified time). (2) **Task execution** — when no conversation is active (after DLT-004 detects conversation end), the system picks up eligible tasks — those whose scheduled time has passed or that have no time constraint — and executes them one at a time without interrupting the user. Results are stored and delivered at the start of the user's next interaction.
+
+### DLT-011: Run as a persistent background service
+**Status**: ✗ Defined
+**Depends on**: DLT-001
+**Priority**: 3 (Medium)
+**Complexity**: Easy
+**Description**: Run the assistant as a persistent background process that starts automatically on system boot and restarts on failure. This delta covers service lifecycle and process management only — it ensures the application is always running and recovers from crashes. Specific reconnection logic (Telegram) and state persistence (memory files) are handled by their respective deltas. Implementation should use standard Linux service management (e.g., systemd) appropriate for a single-user, self-hosted deployment.
+
+### DLT-012: Configure application parameters and secrets
+**Status**: ✗ Defined
+**Depends on**: None
+**Priority**: 3 (Medium)
+**Complexity**: Easy
+**Description**: Provide a clean separation between operational configuration and code. Tunable parameters (inactivity threshold, memory directory path, logging level, and future settings) are managed via a configuration file that can be edited without redeployment. Secrets (Telegram bot token, Anthropic API key, and future credentials) are loaded from environment variables following security best practices. The configuration system should support sensible defaults, validation on startup, and clear error messages when required values are missing.
+
+### DLT-013: Add structured logging for agent actions
+**Status**: ✗ Defined
+**Depends on**: DLT-001
+**Priority**: 3 (Medium)
+**Complexity**: Medium
+**Description**: Instrument the assistant with structured logging so that key agent actions are recorded in a consistent, machine-parseable format for debugging and understanding behavior in production. Events to log include: message received, pre-processing started/completed, delegation started/completed, memory stored/retrieved, task queued/executed, post-processing started/completed, and errors at any stage. Each log entry should include timestamps, correlation IDs (to trace a full request lifecycle), and relevant metadata. The logging infrastructure should be lightweight, write to local storage, and support configurable log levels.
+
+### DLT-014: Add LLM observability for agent interactions
+**Status**: ✗ Defined
+**Depends on**: DLT-001
+**Priority**: 3 (Medium)
+**Complexity**: Medium
+**Description**: Track LLM calls across the entire system — the coordinator and all sub-agents — to provide visibility into how the underlying model is being used. Capture inputs (prompts/context sent), outputs (responses received), token usage, latency, and estimated costs per call. This enables understanding of which operations are expensive, identifying prompt quality issues, and optimizing token budgets over time. Local/self-hosted tooling is preferred over cloud analytics services; the specific solution should be evaluated during speccing to find the best fit for a single-user, privacy-conscious deployment.
+
+### DLT-015: Set up evaluation framework for agent pipelines
+**Status**: ✗ Defined
+**Depends on**: None
+**Priority**: 3 (Medium)
+**Complexity**: Medium
+**Description**: Establish the foundation for testing agent processing pipelines with reproducible, automated test cases. The framework should support defining input scenarios (e.g., a conversation transcript, a user message with known relevant memories), running them through specific pipelines (pre-processing, post-processing), and comparing outputs against expected results using configurable assertions. This enables quality assurance for LLM-powered pipelines without relying on manual testing, and provides a regression safety net as pipelines evolve. The framework should be runnable locally and produce clear pass/fail reports.
+
+### DLT-016: Eval: Context processing quality
+**Status**: ✗ Defined
+**Depends on**: DLT-006, DLT-015
+**Priority**: 3 (Medium)
+**Complexity**: Easy
+**Description**: Build an eval suite for the pre-processing pipeline using the evaluation framework (DLT-015). Tests whether the right memories and context are being retrieved and injected for given input messages. Test cases should cover: retrieving relevant memories when they exist, not injecting irrelevant context, handling messages where no relevant memories exist, and prioritizing recent/important memories appropriately. Measures precision (no irrelevant context injected) and recall (relevant context not missed) of the context injection process.
+
+### DLT-017: Eval: Memory extraction quality
+**Status**: ✗ Defined
+**Depends on**: DLT-007, DLT-015
+**Priority**: 3 (Medium)
+**Complexity**: Easy
+**Description**: Build an eval suite for the post-processing pipeline using the evaluation framework (DLT-015). Tests whether the right facts, preferences, decisions, and patterns are being captured from sample conversations. Test cases should cover: extracting explicit facts, detecting implicit preferences, correctly categorizing memory types, avoiding hallucinated memories (extracting things that weren't actually discussed), and handling conversations with no extractable learnings. Measures completeness (nothing important missed), accuracy (correct categorization), and precision (no false extractions).
+
+### DLT-018: Update core context files from conversation learnings
+**Status**: ✗ Defined
+**Depends on**: DLT-005, DLT-007
+**Priority**: 3 (Medium)
+**Complexity**: Medium
+**Description**: A dedicated post-processing processor (plugging into DLT-007's pipeline) that analyzes completed conversations for information that should update the assistant's foundational context files. Detects changes to user information (new job, moved cities, changed preferences) for USER.md, personality adjustments based on user feedback for SOUL.md, and operational instruction updates for AGENTS.md. Different from memory extraction — this updates long-lived foundational documents rather than creating individual memory entries. Must be conservative: only update when there's clear evidence, since these files carry higher weight than individual memories.
+
+### DLT-019: Eval: Core context update quality
+**Status**: ✗ Defined
+**Depends on**: DLT-015, DLT-018
+**Priority**: 3 (Medium)
+**Complexity**: Easy
+**Description**: Build an eval suite for the core context update post-processor using the evaluation framework (DLT-015). Tests whether the right updates are being applied to SOUL.md, USER.md, and AGENTS.md from sample conversations. Test cases should cover: detecting explicit user information changes, ignoring ambiguous or uncertain information, not overwriting correct existing information with noise, correctly routing updates to the right file (user info to USER.md, personality feedback to SOUL.md), and handling conversations with no context-file-relevant information. Measures precision (no false updates applied) and conservatism (only high-confidence changes are made).
+
+---
+
+## Notes
+
+- Error handling and resilience patterns are addressed within each delta's spec phase rather than as a separate cross-cutting delta. Key areas: sub-agent failures (DLT-003), Telegram disconnects (DLT-002), and service crashes (DLT-011).
+- Speccing notes for DLT-002: address connection resilience and message validation. For DLT-003: address sub-agent failure handling (timeouts, crashes, bad output).
