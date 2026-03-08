@@ -82,11 +82,19 @@ An opinionated personal assistant built on Claude Code SDK that uses a delegatio
 - Basic delegation: coordinator can spawn sub-agents for focused tasks
 - Conversation segmentation with configurable inactivity threshold (~20 minutes default)
 - Core context files: SOUL.md (personality/tone), USER.md (user information), AGENTS.md (agent instructions) — loaded with higher priority than dynamic memory
+- Installable as a CLI tool via uv for easy setup and updates
+- First-run workspace initialization: creates required directory structure and default core context files
+- Git-managed workspace: all persistent files (memories, core context, skills, configuration) live in a versioned git repository with automatic commits for history and rollback
 
 **Pre/Post Processing Pipeline:**
 - Pre-processing: inject relevant memories before the agent sees a message
 - Post-processing: extract facts, decisions, and preferences after a conversation ends
-- Context providers as pluggable agents (memory provider for v1, extensible for more)
+- Context providers as pluggable agents (memory provider and skills provider for v1, extensible for more)
+
+**Skills System:**
+- Skills defined as markdown documents (workflows or knowledge that any agent can load)
+- Skill registry for managing available skills
+- Skills provider detects relevant skills during pre-processing and injects them into agent context
 
 **Memory System:**
 - Store memories as written documents (markdown files)
@@ -130,6 +138,16 @@ Explicitly out of scope for v1:
 - Non-LLM workflow state management
 - Workflow declarations with step dependencies
 
+**Workflow Guardrails:**
+- Planner agent generates execution plan before workflow runs
+- Evaluator agent monitors step outputs and collects friction metadata
+- Feeds into optimization and self-improvement cycles
+
+**Advanced Workspace Management:**
+- Two-tier change model: direct commits for data, branch + PR for behavior changes
+- Conflict resolution for concurrent workspace modifications
+- Skill self-optimization via execution traces, friction data, and git branches
+
 **Interfaces:**
 - Web interface (chat + dashboard)
 - Hardware form factor (speaker with display)
@@ -147,8 +165,8 @@ Explicitly out of scope for v1:
 - Single-user, self-hosted
 
 **Language/Runtime:**
-- TypeScript (Claude Code SDK is TypeScript-native)
-- Node.js runtime
+- Python (Claude Code SDK has a Python SDK)
+- Installable as a CLI tool via uv
 
 **User Interaction:**
 - Telegram Bot API as primary interface
@@ -159,15 +177,16 @@ Explicitly out of scope for v1:
 - Coordinator + sub-agent pattern
 - Each agent gets scoped context and tools
 
-**Memory Storage:**
-- Markdown files in a dedicated directory
-- Semantic search for retrieval (embedding model TBD)
+**Workspace:**
+- A git-managed directory containing all persistent data (memories, core context files, skill definitions, configuration)
+- Changes committed automatically for version history and rollback
+- Markdown files for memories with semantic search for retrieval (embedding model TBD)
 - File-based — no database for v1
 
 **External Systems:**
 - Telegram Bot API (communication)
 - Anthropic API via Claude Code SDK (agent execution)
-- Local filesystem (memory storage)
+- Local filesystem (git-managed workspace)
 
 **Configuration:**
 - Environment variables for API keys (Telegram, Anthropic)
@@ -187,7 +206,8 @@ v1 is successful when:
 Ideas for v2 and beyond (not committing to these):
 - ACE Framework cycle: async session evaluation, pattern consolidation, memory curation
 - Context providers for calendar, tasks, email, vault (each as a pluggable agent)
-- Constrained workflow execution for reliable multi-step skills
+- Constrained workflow execution with guardrails (planner + evaluator agents, friction-based optimization)
+- Skill self-optimization: background analysis of execution traces proposes improvements via workspace branches
 - Web interface with chat + dashboard
 - Nori agent proxy library for SDK abstraction (swap Claude Code SDK for alternatives per task)
 - Event-driven triggers from external sources
