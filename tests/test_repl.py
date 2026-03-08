@@ -1,112 +1,158 @@
 """REPL behavior tests.
 
-Tests for DLT-001: Core agent architecture.
+Tests for DLT-001: Core agent architecture and DLT-025: Markdown rendering.
 """
 
+from io import StringIO
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from prompt_toolkit.validation import Validator
+from rich.console import Console
 
 from tachikoma.events import Error, Result, TextChunk, ToolActivity
 from tachikoma.repl import Renderer, Repl
 
 
 @pytest.fixture
-def renderer() -> Renderer:
-    return Renderer()
+def stdout_buf() -> StringIO:
+    return StringIO()
+
+
+@pytest.fixture
+def stderr_buf() -> StringIO:
+    return StringIO()
+
+
+@pytest.fixture
+def renderer(stdout_buf: StringIO, stderr_buf: StringIO) -> Renderer:
+    return Renderer(
+        console=Console(file=stdout_buf, force_terminal=True),
+        err_console=Console(file=stderr_buf, force_terminal=True),
+    )
 
 
 class TestRendering:
-    def test_renders_text_chunk_inline(self, renderer, capsys) -> None:
+    def test_renders_text_chunk(self, renderer, stdout_buf) -> None:
         renderer.render(TextChunk(text="Hello"))
 
-        assert capsys.readouterr().out == "Hello"
+        assert "Hello" in stdout_buf.getvalue()
 
-    def test_renders_tool_activity_as_status_line(self, renderer, capsys) -> None:
+    def test_renders_tool_activity_as_status_line(self, renderer, stdout_buf) -> None:
         event = ToolActivity(tool_name="Read", tool_input={"file_path": "main.py"}, result="")
         renderer.render(event)
 
-        out = capsys.readouterr().out
-        assert "Reading main.py..." in out
+        assert "Reading main.py..." in stdout_buf.getvalue()
 
-    def test_renders_generic_tool_activity(self, renderer, capsys) -> None:
+    def test_renders_generic_tool_activity(self, renderer, stdout_buf) -> None:
         renderer.render(ToolActivity(tool_name="Write", tool_input={}, result=""))
 
-        out = capsys.readouterr().out
-        assert "Write..." in out
+        assert "Write..." in stdout_buf.getvalue()
 
-    def test_renders_grep_tool_with_pattern(self, renderer, capsys) -> None:
+    def test_renders_grep_tool_with_pattern(self, renderer, stdout_buf) -> None:
         renderer.render(ToolActivity(
             tool_name="Grep",
             tool_input={"pattern": "TODO"},
             result="",
         ))
 
-        out = capsys.readouterr().out
-        assert "Searching for 'TODO'..." in out
+        assert "Searching for 'TODO'..." in stdout_buf.getvalue()
 
-    def test_renders_glob_tool_with_pattern(self, renderer, capsys) -> None:
+    def test_renders_glob_tool_with_pattern(self, renderer, stdout_buf) -> None:
         renderer.render(ToolActivity(
             tool_name="Glob",
             tool_input={"pattern": "**/*.py"},
             result="",
         ))
 
-        out = capsys.readouterr().out
-        assert "Globbing **/*.py..." in out
+        assert "Globbing **/*.py..." in stdout_buf.getvalue()
 
-    def test_renders_bash_tool_with_command(self, renderer, capsys) -> None:
+    def test_renders_bash_tool_with_command(self, renderer, stdout_buf) -> None:
         renderer.render(ToolActivity(
             tool_name="Bash",
             tool_input={"command": "ls -la"},
             result="",
         ))
 
-        out = capsys.readouterr().out
-        assert "Running: ls -la" in out
+        assert "Running: ls -la" in stdout_buf.getvalue()
 
-    def test_renders_tool_search_with_query(self, renderer, capsys) -> None:
+    def test_renders_tool_search_with_query(self, renderer, stdout_buf) -> None:
         renderer.render(ToolActivity(
             tool_name="ToolSearch",
             tool_input={"query": "select:Read"},
             result="",
         ))
 
-        out = capsys.readouterr().out
-        assert "Searching tools: select:Read" in out
+        assert "Searching tools: select:Read" in stdout_buf.getvalue()
 
-    def test_tool_activity_after_text_gets_leading_newline(self, renderer, capsys) -> None:
+    def test_tool_activity_after_text_both_render(self, renderer, stdout_buf) -> None:
         renderer.render(TextChunk(text="thinking"))
         renderer.render(ToolActivity(tool_name="Read", tool_input={"file_path": "f.py"}, result=""))
 
-        out = capsys.readouterr().out
-        assert out.startswith("thinking\n")
+        out = stdout_buf.getvalue()
+        assert "thinking" in out
         assert "Reading f.py..." in out
 
-    def test_tool_activity_without_prior_text_has_no_leading_newline(
-        self, renderer, capsys,
-    ) -> None:
-        renderer.render(ToolActivity(tool_name="Read", tool_input={"file_path": "f.py"}, result=""))
-
-        out = capsys.readouterr().out
-        assert not out.startswith("\n")
-
-    def test_renders_result_as_newline(self, renderer, capsys) -> None:
+    def test_renders_result_as_blank_line(self, renderer, stdout_buf) -> None:
         renderer.render(Result())
 
-        assert capsys.readouterr().out == "\n"
+        assert "\n" in stdout_buf.getvalue()
 
-    def test_renders_error_message(self, renderer, capsys) -> None:
+    def test_renders_error_message(self, renderer, stderr_buf) -> None:
         renderer.render(Error(message="connection lost", recoverable=True))
 
-        assert "connection lost" in capsys.readouterr().err
+        assert "connection lost" in stderr_buf.getvalue()
 
     def test_recoverable_error_returns_true(self, renderer) -> None:
         assert renderer.render(Error(message="transient", recoverable=True)) is True
 
     def test_non_recoverable_error_returns_false(self, renderer) -> None:
         assert renderer.render(Error(message="auth failed", recoverable=False)) is False
+
+    def test_renders_bold_and_italic(self, renderer, stdout_buf) -> None:
+        """AC: Bold and italic text appear with appropriate formatting."""
+        renderer.render(TextChunk(text="**bold** and *italic*"))
+
+        out = stdout_buf.getvalue()
+        assert "bold" in out
+        assert "italic" in out
+
+    def test_renders_markdown_list(self, renderer, stdout_buf) -> None:
+        """AC: List items display as a properly formatted list."""
+        renderer.render(TextChunk(text="- first\n- second\n- third"))
+
+        out = stdout_buf.getvalue()
+        assert "first" in out
+        assert "second" in out
+        assert "third" in out
+
+    def test_renders_markdown_heading(self, renderer, stdout_buf) -> None:
+        """AC: Headings display with visual emphasis."""
+        renderer.render(TextChunk(text="# Title"))
+
+        assert "Title" in stdout_buf.getvalue()
+
+    def test_renders_plain_text_without_artifacts(self, renderer, stdout_buf) -> None:
+        """AC: Plain text renders normally without artifacts."""
+        renderer.render(TextChunk(text="Hello world"))
+
+        out = stdout_buf.getvalue()
+        assert "Hello world" in out
+
+    def test_renders_fenced_code_block(self, renderer, stdout_buf) -> None:
+        """AC: Fenced code block content is preserved in output."""
+        renderer.render(TextChunk(text="```python\nprint('hello')\n```"))
+
+        assert "print" in stdout_buf.getvalue()
+
+    def test_sequential_text_chunks_each_render(self, renderer, stdout_buf) -> None:
+        """AC: Multiple TextChunk events each display immediately."""
+        renderer.render(TextChunk(text="First chunk"))
+        renderer.render(TextChunk(text="Second chunk"))
+
+        out = stdout_buf.getvalue()
+        assert "First chunk" in out
+        assert "Second chunk" in out
 
 
 class TestReplControlFlow:

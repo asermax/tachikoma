@@ -5,6 +5,7 @@ requires-python = ">=3.12"
 dependencies = [
     "claude-agent-sdk",
     "prompt-toolkit",
+    "rich",
 ]
 
 [dependency-groups]
