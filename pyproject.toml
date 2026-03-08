@@ -1,0 +1,41 @@
+[project]
+name = "tachikoma"
+version = "0.1.0"
+requires-python = ">=3.12"
+dependencies = [
+    "claude-agent-sdk",
+    "prompt-toolkit",
+]
+
+[dependency-groups]
+dev = [
+    "ruff",
+    "ty",
+]
+test = [
+    "pytest",
+    "pytest-asyncio",
+    "pytest-mock",
+    "pytest-xdist",
+    "pytest-cov",
+]
+
+[tool.uv]
+package = false
+
+[tool.ruff]
+line-length = 100
+src = ["src"]
+lint.select = ["C4", "E", "ERA", "F", "I", "PLC", "SIM", "TID", "UP", "N", "W"]
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+pythonpath = ["src"]
+addopts = "-m 'not slow'"
+markers = [
+    "slow: marks tests as slow (run with '-m slow' to include)",
+]
