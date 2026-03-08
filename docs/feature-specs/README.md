@@ -1,0 +1,10 @@
+# Feature Specifications
+
+System capabilities organized by domain.
+
+## Capability Domains
+
+| Domain | Description |
+|--------|-------------|
+| [agent](agent/) | Core agent loop, SDK integration, and message processing |
+| [channels](channels/) | Communication interfaces for interacting with the agent |

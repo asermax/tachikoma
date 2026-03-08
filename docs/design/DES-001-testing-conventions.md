@@ -23,7 +23,8 @@ src/tachikoma/
 └── repl.py
 
 tests/
-├── conftest.py              # Root fixtures (shared across all tests)
+├── conftest.py              # Root fixtures (pytest fixtures and hooks only)
+├── helpers.py               # Shared test helpers (plain functions, SDK builders)
 ├── test_events.py           # Unit tests for domain types
 ├── test_adapter.py          # Unit tests for message adapter
 ├── test_coordinator.py      # Integration tests for coordinator
@@ -53,13 +54,18 @@ markers = [
 
 ### 3. Fixture Hierarchy
 
-**Root `conftest.py`** — Shared fixtures:
-- Mock SDK query function
-- Common event builders
+**Root `conftest.py`** — Pytest fixtures and hooks only:
+- Mock SDK client fixture
+- Shared pytest fixtures
+
+**`helpers.py`** — Plain helper functions (importable by any test):
+- SDK message builders (e.g., `make_assistant`, `make_result`)
+- Common test data factories
+
+Why separate: `conftest.py` is auto-loaded by pytest and is reserved for fixtures/hooks. Plain helper functions in `helpers.py` avoid import issues with `--import-mode=importlib` and keep concerns separated.
 
 **Feature `conftest.py`** — Feature-specific fixtures (when tests grow):
 - Mock services
-- Test data builders
 - Feature-specific setup/teardown
 
 ### 4. Async Testing
@@ -163,31 +169,43 @@ def test_handles_cli_not_found(mocker: MockerFixture) -> None:
 
 ### 8. Test Data Helpers
 
-Create helper functions for common test data:
+Create helper functions in `tests/helpers.py` (not `conftest.py`) for common test data:
 
 ```python
-# tests/conftest.py
+# tests/helpers.py
 
-from claude_code_sdk import AssistantMessage, TextBlock, ToolUseBlock, ResultMessage
-
-
-def make_text_message(text: str = "Hello!") -> AssistantMessage:
-    """Create an AssistantMessage with a single text block."""
-    return AssistantMessage(
-        role="assistant",
-        content=[TextBlock(type="text", text=text)],
-    )
+from claude_agent_sdk.types import AssistantMessage, AssistantMessageError, ResultMessage
 
 
-def make_tool_message(
-    name: str = "Read", input: dict | None = None
+def make_assistant(
+    content: list,
+    error: AssistantMessageError | None = None,
 ) -> AssistantMessage:
-    """Create an AssistantMessage with a tool use block."""
-    return AssistantMessage(
-        role="assistant",
-        content=[ToolUseBlock(type="tool_use", id="test-id", name=name, input=input or {})],
+    """Create an AssistantMessage with given content blocks."""
+    return AssistantMessage(content=content, model="claude-sonnet-4-5", error=error)
+
+
+def make_result(
+    session_id: str = "sess-test",
+    total_cost_usd: float | None = 0.01,
+    is_error: bool = False,
+    result: str | None = None,
+) -> ResultMessage:
+    """Create a ResultMessage with sensible defaults."""
+    return ResultMessage(
+        subtype="success" if not is_error else "error",
+        duration_ms=100,
+        duration_api_ms=80,
+        is_error=is_error,
+        num_turns=1,
+        session_id=session_id,
+        total_cost_usd=total_cost_usd,
+        usage={"input_tokens": 10},
+        result=result,
     )
 ```
+
+New SDK message builders should be added to `helpers.py` as more test files need them.
 
 ## Rationale
 

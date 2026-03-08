@@ -56,51 +56,44 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 
 ## Deltas
 
-### DLT-001: Set up core agent architecture with terminal REPL
-**Status**: ✓ Implementation
-**Depends on**: None
-**Priority**: 1 (Critical)
-**Complexity**: Medium
-**Description**: Set up the core agent architecture using Claude Agent SDK and provide a terminal REPL as the first interactive channel. This is the foundation every other delta builds on — it establishes the project structure (pyproject.toml, package layout, dependencies), the main request/response loop where a user message comes in and a response goes out, and a programmatic entry point that channels (REPL, Telegram) call to interact with the agent. The application wraps the SDK client with its own orchestration — future deltas extend this with pre-processing, post-processing, delegation, and idle task processing. The terminal REPL streams responses token-by-token and maintains conversation context across messages. Without any other deltas, the agent is a conversationalist with basic file access (Read, Glob, Grep). Absorbs DLT-025.
-
 ### DLT-002: Send and receive messages via Telegram
 **Status**: ✗ Defined
-**Depends on**: DLT-001
+**Depends on**: None
 **Priority**: 4 (Low)
 **Complexity**: Medium
 **Description**: Integrate with the Telegram Bot API to provide the primary user-facing communication channel for v1. Users send text messages to a Telegram bot, which forwards them to the coordinator agent. The coordinator's responses are sent back through the same channel. This delta covers the full Telegram lifecycle: bot initialization, receiving incoming messages via polling or webhooks, forwarding them into the agent architecture, sending responses back, and managing the connection (including reconnection on disconnects and graceful shutdown). Message validation ensures only expected input reaches the agent.
 
 ### DLT-003: Delegate tasks to focused sub-agents
 **Status**: ✗ Defined
-**Depends on**: DLT-001
+**Depends on**: None
 **Priority**: 4 (Low)
 **Complexity**: Medium
 **Description**: Enable the coordinator to delegate specialized requests to focused sub-agents instead of handling everything itself. When a request requires specific expertise or tooling, the coordinator spawns a sub-agent that receives only the context and tools relevant to its task — preventing context poisoning and keeping each agent sharp. The sub-agent executes, returns its result, and the coordinator synthesizes it into a user-facing response. This delta covers the delegation mechanism itself (how to spawn, scope, and collect results from sub-agents); specific sub-agent types are defined by their own deltas. Error handling for sub-agent failures (timeouts, crashes, bad output) should be addressed as part of this mechanism.
 
 ### DLT-004: Detect conversation boundaries via inactivity timeout
 **Status**: ✗ Defined
-**Depends on**: DLT-001
+**Depends on**: None
 **Priority**: 2 (High)
 **Complexity**: Easy
 **Description**: Detect when a conversation has ended by monitoring for periods of user inactivity. After a configurable threshold (~20 minutes by default), the system considers the conversation complete and triggers downstream actions: post-processing to extract learnings, and transitioning to idle mode for background task processing. This boundary detection is critical because it determines when the assistant learns from a conversation and when it can start working on queued tasks. The threshold should be configurable per-deployment.
 
 ### DLT-005: Load foundational context for personality and user knowledge
 **Status**: ✗ Defined
-**Depends on**: DLT-001, DLT-023
+**Depends on**: DLT-023
 **Priority**: 2 (High)
 **Complexity**: Easy
 **Description**: Provide the assistant with foundational, always-available context through core files that are loaded with higher priority than dynamically retrieved memories. Three files establish the assistant's identity and baseline knowledge: SOUL.md defines personality traits, tone, and behavioral guidelines; USER.md captures known information about the user (name, preferences, projects, communication style); AGENTS.md provides operational instructions for the agent and sub-agents. These files ensure the assistant behaves consistently regardless of which memories are retrieved for a given conversation, and give the user a transparent, editable way to shape the assistant's behavior.
 
 ### DLT-006: Pre-process messages with memory context injection
 **Status**: ✗ Defined
-**Depends on**: DLT-001, DLT-008
+**Depends on**: DLT-008
 **Priority**: 2 (High)
 **Complexity**: Hard
 **Description**: Before the coordinator processes a user message, automatically gather and inject relevant context so responses are informed by past interactions. This delta delivers two things: a reusable, pluggable pre-processing pipeline that runs context providers in parallel before the agent sees a message, and the first provider — a memory context provider that searches stored memories using semantic similarity to find context relevant to the current message. The pipeline architecture must support adding more providers later (e.g., calendar, email, notes) without modifying the core pipeline. Retrieved memories are injected into the coordinator's context, enabling the assistant to reference past conversations, known preferences, and prior decisions naturally.
 
 ### DLT-008: Extract and store memories from conversations
 **Status**: ✗ Defined
-**Depends on**: DLT-001, DLT-004, DLT-023
+**Depends on**: DLT-004, DLT-023
 **Priority**: 2 (High)
 **Complexity**: Hard
 **Description**: The complete memory write path — from conversation analysis to persistent storage. After a conversation ends (detected by DLT-004), automatically analyze the full exchange to extract what the assistant should remember: new facts about the user, decisions that were made, preferences expressed, and behavioral patterns observed. Each learning is persisted as a structured markdown file in a dedicated directory, organized by type (facts, preferences, decisions, patterns). Using markdown keeps memories human-readable and directly inspectable by the user, avoiding database dependencies for v1. Each memory document includes structured metadata: timestamps (creation and last referenced), type tags, source conversation reference, and a confidence indicator. This delta delivers two things: (1) a reusable, pluggable post-processing pipeline that runs processors after conversation end is detected (supporting additional post-processors later without modifying the core pipeline), and (2) the first processor — a memory extraction processor that uses LLM analysis to identify, categorize, and persist learnings. The storage format must support efficient listing and filtering by type. When DLT-020 is implemented, memory file writes should trigger automatic git commits to maintain workspace version history.
@@ -114,14 +107,14 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 
 ### DLT-010: Queue and process background tasks during idle time
 **Status**: ✗ Defined
-**Depends on**: DLT-001, DLT-003, DLT-004
+**Depends on**: DLT-003, DLT-004
 **Priority**: 4 (Low)
 **Complexity**: Medium
 **Description**: Enable the assistant to work proactively by creating, scheduling, and executing background tasks. This delta covers the full task lifecycle across two concerns: (1) **Task creation and storage** — a specialized sub-agent (delegated by the coordinator via DLT-003) handles task creation. It interprets user intent, extracts timing information, and structures task entries (e.g., "remind me about X tomorrow morning", "follow up on topic Y in a few hours", "summarize today's notes"). Tasks are stored in a persistent queue that survives restarts and support both immediate execution (process during next idle period) and time-based scheduling (process at or after a specified time). (2) **Task execution** — when no conversation is active (after DLT-004 detects conversation end), the system picks up eligible tasks — those whose scheduled time has passed or that have no time constraint — and executes them one at a time without interrupting the user. Results are stored and delivered at the start of the user's next interaction.
 
 ### DLT-011: Run as a persistent background service
 **Status**: ✗ Defined
-**Depends on**: DLT-001, DLT-024
+**Depends on**: DLT-024
 **Priority**: 5 (Backlog)
 **Complexity**: Easy
 **Description**: Run the assistant as a persistent background process that starts automatically on system boot and restarts on failure. This delta covers service lifecycle and process management only — it ensures the application is always running and recovers from crashes. Specific reconnection logic (Telegram) and state persistence (memory files) are handled by their respective deltas. Implementation should use standard Linux service management (e.g., systemd) appropriate for a single-user, self-hosted deployment.
@@ -135,14 +128,14 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 
 ### DLT-013: Add structured logging for agent actions
 **Status**: ✗ Defined
-**Depends on**: DLT-001
+**Depends on**: None
 **Priority**: 3 (Medium)
 **Complexity**: Medium
 **Description**: Instrument the assistant with structured logging so that key agent actions are recorded in a consistent, machine-parseable format for debugging and understanding behavior in production. Events to log include: message received, pre-processing started/completed, delegation started/completed, memory stored/retrieved, task queued/executed, post-processing started/completed, and errors at any stage. Each log entry should include timestamps, correlation IDs (to trace a full request lifecycle), and relevant metadata. The logging infrastructure should be lightweight, write to local storage, and support configurable log levels.
 
 ### DLT-014: Add LLM observability for agent interactions
 **Status**: ✗ Defined
-**Depends on**: DLT-001
+**Depends on**: None
 **Priority**: 4 (Low)
 **Complexity**: Medium
 **Description**: Track LLM calls across the entire system — the coordinator and all sub-agents — to provide visibility into how the underlying model is being used. Capture inputs (prompts/context sent), outputs (responses received), token usage, latency, and estimated costs per call. This enables understanding of which operations are expensive, identifying prompt quality issues, and optimizing token budgets over time. Local/self-hosted tooling is preferred over cloud analytics services; the specific solution should be evaluated during speccing to find the best fit for a single-user, privacy-conscious deployment.
@@ -212,7 +205,7 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 
 ### DLT-024: Package and install agent as a uv tool
 **Status**: ✗ Defined
-**Depends on**: DLT-001, DLT-012
+**Depends on**: DLT-012
 **Priority**: 5 (Backlog)
 **Complexity**: Easy
 **Description**: Package the agent as an installable CLI tool using uv, enabling easy installation and updates via `uv tool install`. This delta covers project packaging configuration (pyproject.toml entry points, dependencies), a CLI entry point that starts the agent, and documentation for installation. The CLI entry point is the main way users launch the agent — it wires up the agent architecture (DLT-001), loads configuration (DLT-012), and starts the main loop. Using uv tool provides isolated dependency management and simple update path (`uv tool upgrade`).
