@@ -61,12 +61,13 @@ class Coordinator:
 
         try:
             async for sdk_message in self._client.receive_messages():
-                events = adapt(sdk_message)
+                done = False
 
-                for event in events:
+                for event in adapt(sdk_message):
                     yield event
+                    done = done or isinstance(event, Result)
 
-                if any(isinstance(e, Result) for e in events):
+                if done:
                     break
 
         except (CLIConnectionError, ProcessError) as exc:
