@@ -210,6 +210,13 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 **Complexity**: Easy
 **Description**: Package the agent as an installable CLI tool using uv, enabling easy installation and updates via `uv tool install`. This delta covers project packaging configuration (pyproject.toml entry points, dependencies), a CLI entry point that starts the agent, and documentation for installation. The CLI entry point is the main way users launch the agent — it wires up the agent architecture (DLT-001), loads configuration (DLT-012), and starts the main loop. Using uv tool provides isolated dependency management and simple update path (`uv tool upgrade`).
 
+### DLT-025: Display formatted markdown in REPL responses
+**Status**: ✗ Defined
+**Depends on**: None
+**Priority**: 2 (High)
+**Complexity**: Easy
+**Description**: The coordinator agent produces markdown-formatted text (headings, bold, italic, code blocks, lists, links), but the REPL currently displays this as raw syntax, making responses harder to read. This delta adds markdown-aware rendering to the terminal channel so that the agent's output displays with appropriate formatting — structured headings, emphasized text, syntax-highlighted code blocks, and readable lists. The change is scoped to the terminal output layer; the event system and coordinator are unaffected.
+
 ---
 
 ## Notes
