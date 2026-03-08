@@ -56,12 +56,12 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 
 ## Deltas
 
-### DLT-001: Set up core agent architecture with processing hook points
-**Status**: ✗ Defined
+### DLT-001: Set up core agent architecture with terminal REPL
+**Status**: ✓ Plan
 **Depends on**: None
 **Priority**: 1 (Critical)
 **Complexity**: Medium
-**Description**: Set up the core agent architecture using Claude Code SDK. This is the foundation every other delta builds on — it establishes the main request/response loop where a user message comes in and a response goes out. The architecture defines hook points for pre-processing (enrich messages before the agent sees them), post-processing (learn from completed conversations), delegation (route to specialized sub-agents), and idle task processing (background work between conversations). Without any other deltas implemented, the agent simply receives a message and responds directly. Each hook point is a well-defined extension surface that other deltas integrate into.
+**Description**: Set up the core agent architecture using Claude Agent SDK and provide a terminal REPL as the first interactive channel. This is the foundation every other delta builds on — it establishes the project structure (pyproject.toml, package layout, dependencies), the main request/response loop where a user message comes in and a response goes out, and a programmatic entry point that channels (REPL, Telegram) call to interact with the agent. The application wraps the SDK client with its own orchestration — future deltas extend this with pre-processing, post-processing, delegation, and idle task processing. The terminal REPL streams responses token-by-token and maintains conversation context across messages. Without any other deltas, the agent is a conversationalist with basic file access (Read, Glob, Grep). Absorbs DLT-025.
 
 ### DLT-002: Send and receive messages via Telegram
 **Status**: ✗ Defined
@@ -216,13 +216,6 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 **Priority**: 5 (Backlog)
 **Complexity**: Easy
 **Description**: Package the agent as an installable CLI tool using uv, enabling easy installation and updates via `uv tool install`. This delta covers project packaging configuration (pyproject.toml entry points, dependencies), a CLI entry point that starts the agent, and documentation for installation. The CLI entry point is the main way users launch the agent — it wires up the agent architecture (DLT-001), loads configuration (DLT-012), and starts the main loop. Using uv tool provides isolated dependency management and simple update path (`uv tool upgrade`).
-
-### DLT-025: Converse with agent via terminal REPL
-**Status**: ✗ Defined
-**Depends on**: DLT-001
-**Priority**: 2 (High)
-**Complexity**: Easy
-**Description**: A terminal REPL that serves as the primary interaction channel during development, before Telegram integration. The user types messages, they're fed into the agent architecture, and responses are printed back. This provides a lightweight way to test features (memory, skills, context injection) end-to-end without needing external service integrations. Minimal scope: read input, send to coordinator, print response, loop.
 
 ---
 
