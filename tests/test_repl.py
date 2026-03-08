@@ -201,31 +201,21 @@ class TestReplControlFlow:
 
 
 class TestReplInputValidation:
-    def test_rejects_empty_input(self) -> None:
-        validator = Validator.from_callable(
+    @pytest.fixture
+    def validator(self) -> Validator:
+        return Validator.from_callable(
             lambda text: text.strip() != "",
             error_message="",
             move_cursor_to_end=True,
         )
 
+    def test_rejects_empty_input(self, validator) -> None:
         with pytest.raises(Exception):
             validator.validate(MagicMock(text=""))
 
-    def test_rejects_whitespace_only_input(self) -> None:
-        validator = Validator.from_callable(
-            lambda text: text.strip() != "",
-            error_message="",
-            move_cursor_to_end=True,
-        )
-
+    def test_rejects_whitespace_only_input(self, validator) -> None:
         with pytest.raises(Exception):
             validator.validate(MagicMock(text="   "))
 
-    def test_accepts_valid_input(self) -> None:
-        validator = Validator.from_callable(
-            lambda text: text.strip() != "",
-            error_message="",
-            move_cursor_to_end=True,
-        )
-
+    def test_accepts_valid_input(self, validator) -> None:
         validator.validate(MagicMock(text="hello"))

@@ -3,33 +3,24 @@
 Tests for DLT-001: Core agent architecture.
 """
 
-from typing import Any
 from unittest.mock import MagicMock
 
 from claude_agent_sdk.types import (
-    AssistantMessage,
-    AssistantMessageError,
     ResultMessage,
     SystemMessage,
     TextBlock,
     ToolUseBlock,
     UserMessage,
 )
+from helpers import make_assistant
 
 from tachikoma.adapter import adapt
 from tachikoma.events import Error, Result, TextChunk, ToolActivity
 
 
-def _make_assistant(
-    content: list[Any],
-    error: AssistantMessageError | None = None,
-) -> AssistantMessage:
-    return AssistantMessage(content=content, model="claude-sonnet-4-5", error=error)
-
-
 class TestAdaptAssistantMessage:
     def test_maps_text_block_to_text_chunk(self) -> None:
-        msg = _make_assistant([TextBlock(text="Hello!")])
+        msg = make_assistant([TextBlock(text="Hello!")])
 
         events = adapt(msg)
 
@@ -38,7 +29,7 @@ class TestAdaptAssistantMessage:
         assert events[0].text == "Hello!"
 
     def test_maps_tool_use_block_to_tool_activity(self) -> None:
-        msg = _make_assistant([
+        msg = make_assistant([
             ToolUseBlock(id="tool-1", name="Read", input={"file_path": "/tmp/f.txt"}),
         ])
 
@@ -51,7 +42,7 @@ class TestAdaptAssistantMessage:
         assert events[0].result == ""
 
     def test_maps_error_field_to_error_event(self) -> None:
-        msg = _make_assistant([], error="server_error")
+        msg = make_assistant([], error="server_error")
 
         events = adapt(msg)
 
@@ -60,7 +51,7 @@ class TestAdaptAssistantMessage:
         assert events[0].message == "server_error"
 
     def test_rate_limit_error_is_recoverable(self) -> None:
-        msg = _make_assistant([], error="rate_limit")
+        msg = make_assistant([], error="rate_limit")
 
         events = adapt(msg)
 
@@ -68,7 +59,7 @@ class TestAdaptAssistantMessage:
         assert events[0].recoverable is True
 
     def test_server_error_is_recoverable(self) -> None:
-        msg = _make_assistant([], error="server_error")
+        msg = make_assistant([], error="server_error")
 
         events = adapt(msg)
 
@@ -76,7 +67,7 @@ class TestAdaptAssistantMessage:
         assert events[0].recoverable is True
 
     def test_auth_error_is_not_recoverable(self) -> None:
-        msg = _make_assistant([], error="authentication_failed")
+        msg = make_assistant([], error="authentication_failed")
 
         events = adapt(msg)
 
@@ -84,15 +75,31 @@ class TestAdaptAssistantMessage:
         assert events[0].recoverable is False
 
     def test_billing_error_is_not_recoverable(self) -> None:
-        msg = _make_assistant([], error="billing_error")
+        msg = make_assistant([], error="billing_error")
 
         events = adapt(msg)
 
         assert isinstance(events[0], Error)
         assert events[0].recoverable is False
 
+    def test_invalid_request_error_is_recoverable(self) -> None:
+        msg = make_assistant([], error="invalid_request")
+
+        events = adapt(msg)
+
+        assert isinstance(events[0], Error)
+        assert events[0].recoverable is True
+
+    def test_unknown_error_is_recoverable(self) -> None:
+        msg = make_assistant([], error="unknown")
+
+        events = adapt(msg)
+
+        assert isinstance(events[0], Error)
+        assert events[0].recoverable is True
+
     def test_multiple_content_blocks_produce_multiple_events(self) -> None:
-        msg = _make_assistant([
+        msg = make_assistant([
             TextBlock(text="Let me check..."),
             ToolUseBlock(id="tool-1", name="Grep", input={"pattern": "TODO"}),
         ])

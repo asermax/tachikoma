@@ -9,39 +9,15 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from claude_agent_sdk import CLIConnectionError, ProcessError
 from claude_agent_sdk.types import (
-    AssistantMessage,
-    ResultMessage,
     SystemMessage,
     TextBlock,
     ToolUseBlock,
     UserMessage,
 )
+from helpers import make_assistant, make_result
 
 from tachikoma.coordinator import Coordinator
 from tachikoma.events import Error, Result, TextChunk, ToolActivity
-
-
-def _make_result(
-    session_id: str = "sess-test",
-    total_cost_usd: float | None = 0.01,
-    is_error: bool = False,
-    result: str | None = None,
-) -> ResultMessage:
-    return ResultMessage(
-        subtype="success" if not is_error else "error",
-        duration_ms=100,
-        duration_api_ms=80,
-        is_error=is_error,
-        num_turns=1,
-        session_id=session_id,
-        total_cost_usd=total_cost_usd,
-        usage={"input_tokens": 10},
-        result=result,
-    )
-
-
-def _make_assistant(content: list) -> AssistantMessage:
-    return AssistantMessage(content=content, model="claude-sonnet-4-5")
 
 
 async def _mock_messages(*messages):
@@ -91,8 +67,8 @@ class TestCoordinatorSendMessage:
     async def test_yields_text_chunk_for_text_response(self, mock_sdk) -> None:
         client, _ = mock_sdk
         client.receive_messages.return_value = _mock_messages(
-            _make_assistant([TextBlock(text="Hello!")]),
-            _make_result(),
+            make_assistant([TextBlock(text="Hello!")]),
+            make_result(),
         )
 
         async with Coordinator() as coord:
@@ -105,10 +81,10 @@ class TestCoordinatorSendMessage:
     async def test_yields_tool_activity_for_tool_use(self, mock_sdk) -> None:
         client, _ = mock_sdk
         client.receive_messages.return_value = _mock_messages(
-            _make_assistant([
+            make_assistant([
                 ToolUseBlock(id="t1", name="Read", input={"file_path": "main.py"}),
             ]),
-            _make_result(),
+            make_result(),
         )
 
         async with Coordinator() as coord:
@@ -121,8 +97,8 @@ class TestCoordinatorSendMessage:
     async def test_yields_result_at_stream_end(self, mock_sdk) -> None:
         client, _ = mock_sdk
         client.receive_messages.return_value = _mock_messages(
-            _make_assistant([TextBlock(text="done")]),
-            _make_result(session_id="sess-42", total_cost_usd=0.03),
+            make_assistant([TextBlock(text="done")]),
+            make_result(session_id="sess-42", total_cost_usd=0.03),
         )
 
         async with Coordinator() as coord:
@@ -136,11 +112,11 @@ class TestCoordinatorSendMessage:
     async def test_filters_user_and_system_messages(self, mock_sdk) -> None:
         client, _ = mock_sdk
         client.receive_messages.return_value = _mock_messages(
-            _make_assistant([TextBlock(text="checking...")]),
+            make_assistant([TextBlock(text="checking...")]),
             UserMessage(content="tool result"),
             SystemMessage(subtype="init", data={}),
-            _make_assistant([TextBlock(text="found it")]),
-            _make_result(),
+            make_assistant([TextBlock(text="found it")]),
+            make_result(),
         )
 
         async with Coordinator() as coord:
@@ -166,7 +142,7 @@ class TestCoordinatorErrorHandling:
         client, _ = mock_sdk
 
         async def _failing_messages():
-            yield _make_assistant([TextBlock(text="partial")])
+            yield make_assistant([TextBlock(text="partial")])
             raise CLIConnectionError("connection lost")
 
         client.receive_messages.return_value = _failing_messages()
@@ -202,8 +178,8 @@ class TestCoordinatorErrorHandling:
             yield  # make it an async generator
 
         async def _ok():
-            yield _make_assistant([TextBlock(text="recovered")])
-            yield _make_result()
+            yield make_assistant([TextBlock(text="recovered")])
+            yield make_result()
 
         client.receive_messages.side_effect = [_failing(), _ok()]
 
