@@ -57,7 +57,7 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 ## Deltas
 
 ### DLT-002: Send and receive messages via Telegram
-**Status**: ✗ Defined
+**Status**: ✓ Design
 **Depends on**: None
 **Priority**: 4 (Low)
 **Complexity**: Medium
@@ -120,11 +120,11 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 **Description**: Run the assistant as a persistent background process that starts automatically on system boot and restarts on failure. This delta covers service lifecycle and process management only — it ensures the application is always running and recovers from crashes. Specific reconnection logic (Telegram) and state persistence (memory files) are handled by their respective deltas. Implementation should use standard Linux service management (e.g., systemd) appropriate for a single-user, self-hosted deployment.
 
 ### DLT-013: Add structured logging for agent actions
-**Status**: ✗ Defined
-**Depends on**: None
+**Status**: ✓ Spec
+**Depends on**: DLT-012, DLT-023
 **Priority**: 3 (Medium)
 **Complexity**: Medium
-**Description**: Instrument the assistant with structured logging so that key agent actions are recorded in a consistent, machine-parseable format for debugging and understanding behavior in production. Events to log include: message received, pre-processing started/completed, delegation started/completed, memory stored/retrieved, task queued/executed, post-processing started/completed, and errors at any stage. Each log entry should include timestamps, correlation IDs (to trace a full request lifecycle), and relevant metadata. The logging infrastructure should be lightweight, write to local storage, and support configurable log levels.
+**Description**: Instrument the assistant with structured logging via loguru so that key agent actions — startup, message processing, coordinator lifecycle, and errors — are recorded in a consistent, machine-parseable format. Log entries include timestamps, log level, component context, and relevant metadata via keyword arguments. Logs are written to a file in the workspace data directory, configured through a bootstrap hook (DLT-023). Log level is configurable via the TOML config file (DLT-012). Follows conventions established in ADR-006 and DES-002.
 
 ### DLT-014: Add LLM observability for agent interactions
 **Status**: ✗ Defined
@@ -169,7 +169,7 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 **Description**: Build an eval suite for the core context update post-processor using the evaluation framework (DLT-015). Tests whether the right updates are being applied to SOUL.md, USER.md, and AGENTS.md from sample conversations. Test cases should cover: detecting explicit user information changes, ignoring ambiguous or uncertain information, not overwriting correct existing information with noise, correctly routing updates to the right file (user info to USER.md, personality feedback to SOUL.md), and handling conversations with no context-file-relevant information. Measures precision (no false updates applied) and conservatism (only high-confidence changes are made).
 
 ### DLT-020: Git module for workspace version tracking
-**Status**: ✗ Defined
+**Status**: ✓ Spec
 **Depends on**: DLT-023
 **Priority**: 2 (High)
 **Complexity**: Easy
@@ -190,7 +190,7 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 **Description**: Build an eval suite for the skills context provider using the evaluation framework (DLT-015). Tests whether the right skills are being detected and injected for given input messages. Test cases should cover: detecting relevant skills when they exist, not injecting irrelevant skills that waste context, handling messages where no skills apply, prioritizing when multiple skills match, and correctly loading skill content into agent context. Measures precision (no irrelevant skills injected) and recall (applicable skills not missed) of the skill detection process.
 
 ### DLT-023: Bootstrap agent workspace on first run
-**Status**: ✗ Defined
+**Status**: ✓ Plan
 **Depends on**: None
 **Priority**: 2 (High)
 **Complexity**: Easy
@@ -211,7 +211,7 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 **Description**: Add a step that runs before the pre-processing pipeline to actively detect whether an incoming message continues the current conversation or starts a new one. On each message, a lightweight agent compares the message content against the current session's topic and recent context. If it's a continuation, processing proceeds normally into the pre-processing pipeline. If it detects a topic shift or unrelated message, the system signals the session registry (DLT-027) to close the current session — triggering any post-processing on the completed conversation — and opens a new session before the coordinator sees the message. This is architecturally separate from the context-enrichment pipeline (DLT-006) — it's a lifecycle gating step, not a context provider. DLT-004's inactivity timeout remains as a fallback for detecting abandoned conversations (user goes silent without topic change). Should add no more than 1-2 seconds to message processing.
 
 ### DLT-027: Track conversation sessions
-**Status**: ✗ Defined
+**Status**: ✓ Spec
 **Depends on**: DLT-023
 **Priority**: 1 (Critical)
 **Complexity**: Easy
