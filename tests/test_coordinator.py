@@ -4,6 +4,7 @@ Tests for DLT-001: Core agent architecture.
 Mocks ClaudeSDKClient to test the coordinator's end-to-end behavior.
 """
 
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -135,6 +136,16 @@ class TestCoordinatorSendMessage:
 
         options = mock_cls.call_args[0][0]
         assert options.allowed_tools == ["Read", "Glob"]
+
+    async def test_forwards_cwd_to_sdk_options(self, mock_sdk) -> None:
+        """AC (R8, DLT-023): Coordinator passes cwd to ClaudeAgentOptions."""
+        _, mock_cls = mock_sdk
+
+        async with Coordinator(cwd=Path("/workspace")):
+            pass
+
+        options = mock_cls.call_args[0][0]
+        assert options.cwd == Path("/workspace")
 
 
 class TestCoordinatorErrorHandling:

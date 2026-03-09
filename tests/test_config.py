@@ -11,6 +11,7 @@ from pydantic import ValidationError
 
 from tachikoma.config import (
     Settings,
+    SettingsManager,
     WorkspaceSettings,
     _generate_default_config,
     load_settings,
@@ -28,12 +29,12 @@ class TestSettingsModel:
 
     def test_workspace_path_expands_tilde(self) -> None:
         """AC (R2): Path with ~ is expanded to home directory."""
-        ws = WorkspaceSettings(path="~/custom")
+        ws = WorkspaceSettings(path=Path("~/custom"))
 
         assert ws.path == Path.home() / "custom"
 
-    def test_workspace_path_expands_tilde_from_path(self) -> None:
-        ws = WorkspaceSettings(path=Path("~/custom"))
+    def test_workspace_path_expands_tilde_from_str(self) -> None:
+        ws = WorkspaceSettings.model_validate({"path": "~/custom"})
 
         assert ws.path == Path.home() / "custom"
 
@@ -54,7 +55,7 @@ class TestSettingsModel:
         settings = Settings()
 
         with pytest.raises(ValidationError):
-            settings.workspace = WorkspaceSettings(path="/other")
+            settings.workspace = WorkspaceSettings(path=Path("/other"))
 
     def test_extra_fields_ignored(self) -> None:
         """AC (R3): Unknown keys are silently ignored."""
@@ -81,6 +82,12 @@ class TestSettingsModel:
 
         assert settings.workspace.path == Path.home() / "custom"
         assert settings.agent.model is None
+
+    def test_data_path_returns_tachikoma_subfolder(self) -> None:
+        """AC (R1, DLT-023): data_path is .tachikoma under workspace path."""
+        ws = WorkspaceSettings(path=Path("/workspace"))
+
+        assert ws.data_path == Path("/workspace/.tachikoma")
 
     def test_invalid_path_type_raises_validation_error(self) -> None:
         """AC (R3): Invalid value type produces ValidationError."""
@@ -263,4 +270,103 @@ class TestLoadSettings:
         settings = load_settings(config_path)
 
         with pytest.raises(ValidationError):
-            settings.workspace = WorkspaceSettings(path="/other")
+            settings.workspace = WorkspaceSettings(path=Path("/other"))
+
+
+class TestSettingsManager:
+    """Tests for the SettingsManager read-write config wrapper.
+
+    Tests for DLT-023: Bootstrap agent workspace on first run.
+    """
+
+    def test_settings_returns_frozen_snapshot(self, tmp_path: Path) -> None:
+        """AC (R4.1): .settings returns a frozen Settings instance."""
+        config_path = tmp_path / "config.toml"
+        config_path.write_text("")
+
+        manager = SettingsManager(config_path)
+
+        assert isinstance(manager.settings, Settings)
+
+    def test_update_modifies_value(self, tmp_path: Path) -> None:
+        """AC (R4.1): After update + save, settings reflect the change."""
+        config_path = tmp_path / "config.toml"
+        config_path.write_text("")
+
+        manager = SettingsManager(config_path)
+        manager.update("workspace", "path", str(tmp_path / "custom"))
+        manager.save()
+
+        assert manager.settings.workspace.path == tmp_path / "custom"
+
+    def test_update_raises_on_invalid_section(self, tmp_path: Path) -> None:
+        config_path = tmp_path / "config.toml"
+        config_path.write_text("")
+
+        manager = SettingsManager(config_path)
+
+        with pytest.raises(KeyError, match="Unknown section"):
+            manager.update("nonexistent", "key", "v")
+
+    def test_update_raises_on_invalid_key(self, tmp_path: Path) -> None:
+        config_path = tmp_path / "config.toml"
+        config_path.write_text("")
+
+        manager = SettingsManager(config_path)
+
+        with pytest.raises(KeyError, match="Unknown key"):
+            manager.update("workspace", "nonexistent", "v")
+
+    def test_save_persists_to_file(self, tmp_path: Path) -> None:
+        """AC (R4.1): After save, the TOML file reflects the updated value."""
+        config_path = tmp_path / "config.toml"
+        config_path.write_text("")
+
+        manager = SettingsManager(config_path)
+        manager.update("workspace", "path", str(tmp_path / "persisted"))
+        manager.save()
+
+        with open(config_path, "rb") as f:
+            data = tomllib.load(f)
+
+        assert data["workspace"]["path"] == str(tmp_path / "persisted")
+
+    def test_save_reloads_frozen_settings(self, tmp_path: Path) -> None:
+        """AC (R4.1): .settings before and after save return different snapshots."""
+        config_path = tmp_path / "config.toml"
+        config_path.write_text("")
+
+        manager = SettingsManager(config_path)
+        before = manager.settings
+        manager.update("workspace", "path", str(tmp_path / "new"))
+        manager.save()
+        after = manager.settings
+
+        assert before is not after
+        assert before.workspace.path != after.workspace.path
+
+    def test_multiple_updates_before_save(self, tmp_path: Path) -> None:
+        """AC (R4.1): Batched updates are all reflected after a single save."""
+        config_path = tmp_path / "config.toml"
+        config_path.write_text("")
+
+        manager = SettingsManager(config_path)
+        manager.update("workspace", "path", str(tmp_path / "ws"))
+        manager.update("agent", "model", "claude-sonnet-4-5")
+        manager.save()
+
+        assert manager.settings.workspace.path == tmp_path / "ws"
+        assert manager.settings.agent.model == "claude-sonnet-4-5"
+
+    def test_save_preserves_toml_comments(self, tmp_path: Path) -> None:
+        """AC (R4.1): Config file comments are preserved after save."""
+        config_path = tmp_path / "config.toml"
+        config_path.write_text('# User comment\n[workspace]\npath = "~/tachikoma"\n')
+
+        manager = SettingsManager(config_path)
+        manager.update("workspace", "path", str(tmp_path / "new"))
+        manager.save()
+
+        content = config_path.read_text()
+
+        assert "# User comment" in content

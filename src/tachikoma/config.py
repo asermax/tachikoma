@@ -8,6 +8,7 @@ auto-generated on first run.
 import sys
 import tomllib
 from pathlib import Path
+from typing import Any, cast
 
 import tomlkit
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
@@ -35,6 +36,10 @@ class WorkspaceSettings(BaseModel):
 
         return v
 
+    @property
+    def data_path(self) -> Path:
+        return self.path / ".tachikoma"
+
 
 class AgentSettings(BaseModel):
     model_config = ConfigDict(frozen=True, extra="ignore")
@@ -54,6 +59,49 @@ class Settings(BaseModel):
 
     workspace: WorkspaceSettings = Field(default_factory=WorkspaceSettings)
     agent: AgentSettings = Field(default_factory=AgentSettings)
+
+
+class SettingsManager:
+    """Read-write access to the configuration system.
+
+    Wraps config loading and provides update()/save() for persisting
+    changes back to the TOML file while preserving comments and formatting.
+    """
+
+    def __init__(self, config_path: Path | None = None) -> None:
+        self._config_path = config_path if config_path is not None else CONFIG_PATH
+        self._settings = load_settings(self._config_path)
+
+        if self._config_path.exists():
+            self._doc = tomlkit.parse(self._config_path.read_text())
+        else:
+            # Defensive: load_settings() auto-generates the file, but guard
+            # against edge cases where the file doesn't exist after loading
+            self._doc = tomlkit.document()
+
+    @property
+    def settings(self) -> Settings:
+        return self._settings
+
+    def update(self, section: str, key: str, value: object) -> None:
+        """Modify a setting value in memory. Call save() to persist."""
+        if section not in Settings.model_fields:
+            raise KeyError(f"Unknown section: {section}")
+
+        section_model = Settings.model_fields[section].annotation
+
+        if key not in section_model.model_fields:
+            raise KeyError(f"Unknown key '{key}' in section '{section}'")
+
+        if section not in self._doc:
+            self._doc.add(section, tomlkit.table())
+
+        cast(dict[str, Any], self._doc[section])[key] = value
+
+    def save(self) -> None:
+        """Write current state to the config file and reload settings."""
+        self._config_path.write_text(tomlkit.dumps(self._doc))
+        self._settings = load_settings(self._config_path)
 
 
 def _generate_default_config(config_path: Path = CONFIG_PATH) -> None:

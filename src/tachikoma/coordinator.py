@@ -6,6 +6,7 @@ domain events via the message adapter.
 """
 
 from collections.abc import AsyncIterator
+from pathlib import Path
 from types import TracebackType
 
 from claude_agent_sdk import ClaudeAgentOptions, ClaudeSDKClient, CLIConnectionError, ProcessError
@@ -28,15 +29,18 @@ class Coordinator:
         self,
         allowed_tools: list[str] | None = None,
         model: str | None = None,
+        cwd: Path | None = None,
     ) -> None:
         self._allowed_tools = allowed_tools or []
         self._model = model
+        self._cwd = cwd
         self._client: ClaudeSDKClient | None = None
 
     async def __aenter__(self) -> "Coordinator":
         options = ClaudeAgentOptions(
             allowed_tools=self._allowed_tools,
             model=self._model,
+            cwd=self._cwd,
         )
         self._client = ClaudeSDKClient(options)
         await self._client.connect()
