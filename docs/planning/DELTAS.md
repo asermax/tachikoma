@@ -119,13 +119,6 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 **Complexity**: Easy
 **Description**: Run the assistant as a persistent background process that starts automatically on system boot and restarts on failure. This delta covers service lifecycle and process management only — it ensures the application is always running and recovers from crashes. Specific reconnection logic (Telegram) and state persistence (memory files) are handled by their respective deltas. Implementation should use standard Linux service management (e.g., systemd) appropriate for a single-user, self-hosted deployment.
 
-### DLT-012: Configure application parameters and secrets
-**Status**: ✓ Implementation
-**Depends on**: None
-**Priority**: 1 (Critical)
-**Complexity**: Easy
-**Description**: Provide a clean separation between operational configuration and code. Tunable parameters (inactivity threshold, memory directory path, logging level, and future settings) are managed via a configuration file that can be edited without redeployment. Secrets (Telegram bot token, Anthropic API key, and future credentials) are loaded from environment variables following security best practices. The configuration system should support sensible defaults, validation on startup, and clear error messages when required values are missing.
-
 ### DLT-013: Add structured logging for agent actions
 **Status**: ✗ Defined
 **Depends on**: None
@@ -198,28 +191,15 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 
 ### DLT-023: Bootstrap agent workspace on first run
 **Status**: ✗ Defined
-**Depends on**: DLT-012
+**Depends on**: None
 **Priority**: 2 (High)
 **Complexity**: Easy
 **Description**: Implement the agent's first-run initialization process that sets up the workspace. On first launch, detects that no workspace exists and creates the base workspace directory. Provides an initialization hook system so that other modules (like the git module, DLT-020) can register setup steps that run during workspace creation. Individual modules are responsible for creating their own subdirectories on first use (memories, skills, core context files) — the bootstrap provides the root workspace and the hook system, not the full directory tree. Subsequent launches detect the existing workspace and skip initialization. The workspace path comes from configuration (DLT-012).
 
 ### DLT-024: Package and install agent as a uv tool
 **Status**: ✗ Defined
-**Depends on**: DLT-012
+**Depends on**: None
 **Priority**: 5 (Backlog)
 **Complexity**: Easy
 **Description**: Package the agent as an installable CLI tool using uv, enabling easy installation and updates via `uv tool install`. This delta covers project packaging configuration (pyproject.toml entry points, dependencies), a CLI entry point that starts the agent, and documentation for installation. The CLI entry point is the main way users launch the agent — it wires up the agent architecture (DLT-001), loads configuration (DLT-012), and starts the main loop. Using uv tool provides isolated dependency management and simple update path (`uv tool upgrade`).
 
-### DLT-025: Display formatted markdown in REPL responses
-**Status**: ✓ Implementation
-**Depends on**: None
-**Priority**: 2 (High)
-**Complexity**: Easy
-**Description**: The coordinator agent produces markdown-formatted text (headings, bold, italic, code blocks, lists, links), but the REPL currently displays this as raw syntax, making responses harder to read. This delta adds markdown-aware rendering to the terminal channel so that the agent's output displays with appropriate formatting — structured headings, emphasized text, syntax-highlighted code blocks, and readable lists. The change is scoped to the terminal output layer; the event system and coordinator are unaffected.
-
----
-
-## Notes
-
-- Error handling and resilience patterns are addressed within each delta's spec phase rather than as a separate cross-cutting delta. Key areas: sub-agent failures (DLT-003), Telegram disconnects (DLT-002), and service crashes (DLT-011).
-- Speccing notes for DLT-002: address connection resilience and message validation. For DLT-003: address sub-agent failure handling (timeouts, crashes, bad output).

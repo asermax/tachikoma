@@ -8,3 +8,4 @@ Implementation approaches organized by domain. Each design corresponds to a feat
 |--------|-------------|
 | [agent](agent/) | Core agent loop, SDK integration, and message processing |
 | [channels](channels/) | Communication interfaces for interacting with the agent |
+| [configuration](configuration/) | Application configuration management |

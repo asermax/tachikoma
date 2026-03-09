@@ -17,7 +17,7 @@ An interactive terminal REPL that reads user input, sends it through the coordin
 | ID | Requirement |
 |----|-------------|
 | R0 | Terminal REPL that reads input, sends through coordinator, and streams the response |
-| R1 | Streaming display: text inline, tool activity as status lines |
+| R1 | Streaming display: markdown-rendered text, tool activity as styled status lines |
 | R2 | Input management: persistent history across sessions, empty input prevention |
 | R3 | Clean exit handling: Ctrl+C, Ctrl+D, exit/quit commands |
 
@@ -25,10 +25,11 @@ An interactive terminal REPL that reads user input, sends it through the coordin
 
 ### Streaming Display (R1)
 
-The REPL renders domain events to the terminal as they arrive: text chunks appear inline, tool activity shows as gray italic status lines with tool-specific details, errors print to stderr.
+The REPL renders domain events to the terminal as they arrive: text chunks are rendered as formatted markdown (headings, emphasis, syntax-highlighted code blocks, lists) via `rich`, tool activity shows as styled status lines with tool-specific details, errors print to stderr.
 
 **Acceptance Criteria**:
-- Given the agent responds with text, when text events arrive, then text is printed inline (no trailing newline until complete)
+- Given the agent responds with text, when text events arrive, then text is rendered with markdown formatting (headings, emphasis, syntax-highlighted code blocks, lists)
+- Given the agent responds with plain text (no markdown), when rendered, then it displays normally without artifacts
 - Given the agent uses a tool, when a tool activity event arrives, then a gray italic status line shows tool name and key parameters (e.g., "Reading src/main.py...")
 - Given the agent uses an unknown tool, when a tool activity event arrives, then the tool name is shown as a fallback
 - Given the agent completes its response, when a result event arrives, then a newline is printed and the REPL shows a new prompt

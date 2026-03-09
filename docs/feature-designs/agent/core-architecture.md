@@ -66,7 +66,7 @@ The **Message Adapter** is a pure transformation layer — it maps SDK `Message`
 
 | Layer/Component | Responsibility | Key Decisions |
 |-----------------|----------------|---------------|
-| `src/tachikoma/__main__.py` | CLI entry point, runs `asyncio.run(main())` | Minimal — wires up coordinator + channel; enables `python -m tachikoma` |
+| `src/tachikoma/__main__.py` | CLI entry point: loads config, wires up coordinator + channel, runs `asyncio.run(main())` | Minimal — loads config, wires up coordinator + channel; enables `python -m tachikoma` |
 | `src/tachikoma/coordinator.py` | Wraps `ClaudeSDKClient`, manages session lifecycle, exposes `send_message()` | Async context manager pattern; owns SDK client instance |
 | `src/tachikoma/events.py` | `AgentEvent` domain type hierarchy | Dataclasses; no SDK dependency |
 | `src/tachikoma/adapter.py` | Transforms SDK messages to `AgentEvent`s | Pure function, stateless; only module that imports SDK message types |
@@ -167,12 +167,13 @@ AgentEvent (base)
 
 ```
 1. __main__.py runs asyncio.run(main())
-2. Ensures ~/.tachikoma/ directory exists
-3. Creates Coordinator with allowed_tools=["Read", "Glob", "Grep"]
-4. Enters coordinator async context (connects SDK client)
-5. If connection fails → catch SDK error, print to stderr, exit
-6. Creates channel (REPL) with coordinator reference
-7. Channel enters its main loop
+2. Loads configuration via load_settings() (see configuration/config-system design)
+3. Ensures workspace directory exists (path from config)
+4. Creates Coordinator with allowed_tools and model from config
+5. Enters coordinator async context (connects SDK client)
+6. If connection fails → catch SDK error, print to stderr, exit
+7. Creates channel (REPL) with coordinator reference and history path from config
+8. Channel enters its main loop
 ```
 
 ### Shutdown flow
@@ -214,11 +215,12 @@ AgentEvent (base)
 ### Restricted tool set via allowed_tools
 
 **Choice**: Use `allowed_tools=["Read", "Glob", "Grep"]` to pre-approve read-only file tools
-**Why**: The agent is a conversationalist with basic file access. These tools work without prompting; any unlisted tools fall through to the default permission mode.
+**Why**: The agent is a conversationalist with basic file access. These tools work without prompting; any unlisted tools fall through to the default permission mode. The tool list is configured via the configuration system (`agent.allowed_tools`) with these values as defaults.
 
 **Consequences**:
 - Pro: Read-only tools work without interruption
 - Pro: User prompted for anything beyond read access
+- Pro: Tool list is configurable without code changes
 
 ### Message-level streaming
 

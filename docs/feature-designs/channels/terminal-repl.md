@@ -20,9 +20,9 @@ The agent needs a developer-facing interactive terminal as its first communicati
 
 ## Design Overview
 
-Two classes with separated concerns: `Repl` owns the input loop and control flow, `Renderer` owns event rendering and line-state tracking. Both live in `src/tachikoma/repl.py` due to high cohesion.
+Two classes with separated concerns: `Repl` owns the input loop and control flow, `Renderer` owns event rendering via `rich` Console. Both live in `src/tachikoma/repl.py` due to high cohesion.
 
-The REPL uses `prompt_toolkit` for async input with persistent file history at `~/.tachikoma/repl_history`.
+The REPL uses `prompt_toolkit` for async input with persistent file history. The history file path is derived from the configured workspace path (`workspace.path / "repl_history"`).
 
 ## Components
 
@@ -30,17 +30,17 @@ The REPL uses `prompt_toolkit` for async input with persistent file history at `
 
 | Layer/Component | Responsibility | Key Decisions |
 |-----------------|----------------|---------------|
-| `Repl` | Input loop, control flow, exit conditions, interrupt handling | Owns `PromptSession` with `FileHistory` and empty-input `Validator` |
-| `Renderer` | Event rendering, line-state tracking (`_needs_newline`) | `render()` returns bool: `True` to continue, `False` to exit |
+| `Repl` | Input loop, control flow, exit conditions, interrupt handling | Owns `PromptSession` with `FileHistory` (path from config) and empty-input `Validator` |
+| `Renderer` | Event rendering via rich Console | Owns two Console instances (stdout, stderr). `render()` returns bool: `True` to continue, `False` to exit |
 
 ### Event Rendering
 
-| Event Type | Rendering | Line State |
-|------------|-----------|------------|
-| `TextChunk` | Print inline (`end=""`, `flush=True`) | Sets `_needs_newline = True` |
-| `ToolActivity` | Newline if needed, then gray italic status line with tool details | Clears `_needs_newline` |
-| `Result` | Print newline | Clears `_needs_newline` |
-| `Error` | Print to stderr | Clears `_needs_newline`; returns `False` if non-recoverable |
+| Event Type | Rendering |
+|------------|-----------|
+| `TextChunk` | Rendered as `Markdown` via `rich` Console with syntax-highlighted code blocks |
+| `ToolActivity` | Styled status line (dim, italic) with tool-specific details |
+| `Result` | Blank line separator |
+| `Error` | Styled error message on stderr Console; returns `False` if non-recoverable |
 
 **Tool display format:** Known tools show contextual details (e.g., "Reading src/main.py...", "Searching for 'authenticate'...", "Globbing \*\*/\*.py..."). Unknown tools show the tool name.
 
@@ -64,7 +64,7 @@ The REPL uses `prompt_toolkit` for async input with persistent file history at `
 ### Separated Repl/Renderer classes
 
 **Choice**: Separate input (`Repl`) from output (`Renderer`) in the same module
-**Why**: The `Renderer` encapsulates line-state tracking (`_needs_newline`) needed for correct newline insertion between text chunks and tool activity lines. This keeps `Repl` focused on control flow while making rendering independently testable.
+**Why**: The `Renderer` encapsulates all terminal rendering via `rich` Console instances (stdout and stderr), keeping `Repl` focused on control flow while making rendering independently testable via Console injection.
 
 **Consequences**:
 - Pro: Rendering logic is testable without mocking prompt_toolkit
@@ -105,6 +105,7 @@ The REPL uses `prompt_toolkit` for async input with persistent file history at `
 
 ## Notes
 
-- Input history is persisted via `prompt_toolkit`'s `FileHistory` at `~/.tachikoma/repl_history`, providing history across REPL sessions
+- The `Renderer` uses `rich` for all terminal output: `Markdown` for text chunks (with Dracula code theme for syntax highlighting) and styled `Console.print()` for tool activity and errors
+- Input history is persisted via `prompt_toolkit`'s `FileHistory` at the workspace path's `repl_history` file (default: `~/tachikoma/repl_history`), providing history across REPL sessions
 - Ctrl+C always exits the REPL regardless of state (during streaming or at prompt). Use Ctrl+U to clear the current input line without exiting.
 - The `Renderer.render()` return value (`bool`) provides the control flow signal: `True` means continue consuming events, `False` means exit the REPL (on non-recoverable errors)
