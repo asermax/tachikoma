@@ -11,8 +11,6 @@ from rich.markdown import Markdown
 from tachikoma.coordinator import Coordinator
 from tachikoma.events import AgentEvent, Error, Result, TextChunk, ToolActivity
 
-HISTORY_PATH = Path.home() / ".tachikoma" / "repl_history"
-
 TOOL_DISPLAY = {
     "Read": lambda inp: f"Reading {inp.get('file_path', '...')}...",
     "Grep": lambda inp: f"Searching for '{inp.get('pattern', '...')}'...",
@@ -61,12 +59,12 @@ class Renderer:
 class Repl:
     """Terminal REPL that sends user input through the coordinator."""
 
-    def __init__(self, coordinator: Coordinator) -> None:
+    def __init__(self, coordinator: Coordinator, history_path: Path) -> None:
         self._coordinator = coordinator
         self._renderer = Renderer()
 
         self._session = PromptSession[str](
-            history=FileHistory(HISTORY_PATH),
+            history=FileHistory(str(history_path)),
             validator=Validator.from_callable(
                 lambda text: text.strip() != "",
                 error_message="",

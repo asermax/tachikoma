@@ -4,6 +4,7 @@ Tests for DLT-001: Core agent architecture and DLT-025: Markdown rendering.
 """
 
 from io import StringIO
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -156,39 +157,41 @@ class TestRendering:
 
 
 class TestReplControlFlow:
-    async def test_exits_on_eof(self, mocker) -> None:
+    async def test_exits_on_eof(self, tmp_path: Path, mocker) -> None:
         coordinator = MagicMock()
-        repl = Repl(coordinator)
+        repl = Repl(coordinator, history_path=tmp_path / "repl_history")
 
         mocker.patch.object(repl._session, "prompt_async", side_effect=EOFError)
 
         await repl.run()
 
-    async def test_exits_on_keyboard_interrupt_at_prompt(self, mocker) -> None:
+    async def test_exits_on_keyboard_interrupt_at_prompt(self, tmp_path: Path, mocker) -> None:
         coordinator = MagicMock()
-        repl = Repl(coordinator)
+        repl = Repl(coordinator, history_path=tmp_path / "repl_history")
 
         mocker.patch.object(repl._session, "prompt_async", side_effect=KeyboardInterrupt)
 
         await repl.run()
 
-    async def test_exits_on_exit_command(self, mocker) -> None:
+    async def test_exits_on_exit_command(self, tmp_path: Path, mocker) -> None:
         coordinator = MagicMock()
-        repl = Repl(coordinator)
+        repl = Repl(coordinator, history_path=tmp_path / "repl_history")
 
         mocker.patch.object(repl._session, "prompt_async", side_effect=["exit"])
 
         await repl.run()
 
-    async def test_exits_on_quit_command(self, mocker) -> None:
+    async def test_exits_on_quit_command(self, tmp_path: Path, mocker) -> None:
         coordinator = MagicMock()
-        repl = Repl(coordinator)
+        repl = Repl(coordinator, history_path=tmp_path / "repl_history")
 
         mocker.patch.object(repl._session, "prompt_async", side_effect=["quit"])
 
         await repl.run()
 
-    async def test_interrupts_and_exits_on_ctrl_c_during_stream(self, mocker) -> None:
+    async def test_interrupts_and_exits_on_ctrl_c_during_stream(
+        self, tmp_path: Path, mocker,
+    ) -> None:
         coordinator = MagicMock()
         coordinator.interrupt = AsyncMock()
 
@@ -198,14 +201,14 @@ class TestReplControlFlow:
 
         coordinator.send_message = MagicMock(side_effect=_raise_on_iter)
 
-        repl = Repl(coordinator)
+        repl = Repl(coordinator, history_path=tmp_path / "repl_history")
         mocker.patch.object(repl._session, "prompt_async", side_effect=["hello", EOFError])
 
         await repl.run()
 
         coordinator.interrupt.assert_awaited_once()
 
-    async def test_exits_on_non_recoverable_error(self, mocker) -> None:
+    async def test_exits_on_non_recoverable_error(self, tmp_path: Path, mocker) -> None:
         coordinator = MagicMock()
 
         async def _fatal_stream(text):
@@ -213,12 +216,12 @@ class TestReplControlFlow:
 
         coordinator.send_message = MagicMock(side_effect=_fatal_stream)
 
-        repl = Repl(coordinator)
+        repl = Repl(coordinator, history_path=tmp_path / "repl_history")
         mocker.patch.object(repl._session, "prompt_async", side_effect=["hello", EOFError])
 
         await repl.run()
 
-    async def test_continues_on_recoverable_error(self, mocker) -> None:
+    async def test_continues_on_recoverable_error(self, tmp_path: Path, mocker) -> None:
         coordinator = MagicMock()
         call_count = 0
 
@@ -234,7 +237,7 @@ class TestReplControlFlow:
 
         coordinator.send_message = MagicMock(side_effect=_stream)
 
-        repl = Repl(coordinator)
+        repl = Repl(coordinator, history_path=tmp_path / "repl_history")
         mocker.patch.object(
             repl._session,
             "prompt_async",
