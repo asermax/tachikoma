@@ -72,10 +72,10 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 
 ### DLT-004: Detect conversation boundaries via inactivity timeout
 **Status**: ✗ Defined
-**Depends on**: None
-**Priority**: 2 (High)
+**Depends on**: DLT-027
+**Priority**: 3 (Medium)
 **Complexity**: Easy
-**Description**: Detect when a conversation has ended by monitoring for periods of user inactivity. After a configurable threshold (~20 minutes by default), the system considers the conversation complete and triggers downstream actions: post-processing to extract learnings, and transitioning to idle mode for background task processing. This boundary detection is critical because it determines when the assistant learns from a conversation and when it can start working on queued tasks. The threshold should be configurable per-deployment.
+**Description**: Fallback conversation boundary detection that monitors for periods of user inactivity. After a configurable threshold (~20 minutes by default), the system signals the session registry (DLT-027) to close the current session, triggering downstream post-processing. This serves as a safety net for cases where the user goes silent without a clear topic change — DLT-026's topic-based analysis is the primary boundary mechanism, but it only fires on incoming messages. The inactivity timeout catches the "user walked away" case. The threshold should be configurable per-deployment.
 
 ### DLT-005: Load foundational context for personality and user knowledge
 **Status**: ✗ Defined
@@ -93,7 +93,7 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 
 ### DLT-008: Extract and store memories from conversations
 **Status**: ✗ Defined
-**Depends on**: DLT-004, DLT-023
+**Depends on**: DLT-027, DLT-023
 **Priority**: 2 (High)
 **Complexity**: Hard
 **Description**: The complete memory write path — from conversation analysis to persistent storage. After a conversation ends (detected by DLT-004), automatically analyze the full exchange to extract what the assistant should remember: new facts about the user, decisions that were made, preferences expressed, and behavioral patterns observed. Each learning is persisted as a structured markdown file in a dedicated directory, organized by type (facts, preferences, decisions, patterns). Using markdown keeps memories human-readable and directly inspectable by the user, avoiding database dependencies for v1. Each memory document includes structured metadata: timestamps (creation and last referenced), type tags, source conversation reference, and a confidence indicator. This delta delivers two things: (1) a reusable, pluggable post-processing pipeline that runs processors after conversation end is detected (supporting additional post-processors later without modifying the core pipeline), and (2) the first processor — a memory extraction processor that uses LLM analysis to identify, categorize, and persist learnings. The storage format must support efficient listing and filtering by type. When DLT-020 is implemented, memory file writes should trigger automatic git commits to maintain workspace version history.
@@ -107,7 +107,7 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 
 ### DLT-010: Queue and process background tasks during idle time
 **Status**: ✗ Defined
-**Depends on**: DLT-003, DLT-004
+**Depends on**: DLT-003, DLT-027
 **Priority**: 4 (Low)
 **Complexity**: Medium
 **Description**: Enable the assistant to work proactively by creating, scheduling, and executing background tasks. This delta covers the full task lifecycle across two concerns: (1) **Task creation and storage** — a specialized sub-agent (delegated by the coordinator via DLT-003) handles task creation. It interprets user intent, extracts timing information, and structures task entries (e.g., "remind me about X tomorrow morning", "follow up on topic Y in a few hours", "summarize today's notes"). Tasks are stored in a persistent queue that survives restarts and support both immediate execution (process during next idle period) and time-based scheduling (process at or after a specified time). (2) **Task execution** — when no conversation is active (after DLT-004 detects conversation end), the system picks up eligible tasks — those whose scheduled time has passed or that have no time constraint — and executes them one at a time without interrupting the user. Results are stored and delivered at the start of the user's next interaction.
@@ -202,4 +202,18 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 **Priority**: 5 (Backlog)
 **Complexity**: Easy
 **Description**: Package the agent as an installable CLI tool using uv, enabling easy installation and updates via `uv tool install`. This delta covers project packaging configuration (pyproject.toml entry points, dependencies), a CLI entry point that starts the agent, and documentation for installation. The CLI entry point is the main way users launch the agent — it wires up the agent architecture (DLT-001), loads configuration (DLT-012), and starts the main loop. Using uv tool provides isolated dependency management and simple update path (`uv tool upgrade`).
+
+### DLT-026: Detect conversation boundaries via topic analysis
+**Status**: ✗ Defined
+**Depends on**: DLT-027
+**Priority**: 1 (Critical)
+**Complexity**: Medium
+**Description**: Add a step that runs before the pre-processing pipeline to actively detect whether an incoming message continues the current conversation or starts a new one. On each message, a lightweight agent compares the message content against the current session's topic and recent context. If it's a continuation, processing proceeds normally into the pre-processing pipeline. If it detects a topic shift or unrelated message, the system signals the session registry (DLT-027) to close the current session — triggering any post-processing on the completed conversation — and opens a new session before the coordinator sees the message. This is architecturally separate from the context-enrichment pipeline (DLT-006) — it's a lifecycle gating step, not a context provider. DLT-004's inactivity timeout remains as a fallback for detecting abandoned conversations (user goes silent without topic change). Should add no more than 1-2 seconds to message processing.
+
+### DLT-027: Track conversation sessions
+**Status**: ✗ Defined
+**Depends on**: DLT-023
+**Priority**: 1 (Critical)
+**Complexity**: Easy
+**Description**: Maintain a registry of conversation sessions the agent has had with the user. Each session is tracked with a unique ID, start timestamp, end timestamp (set when the session closes), and a reference to the session's conversation file (where the full exchange is stored by the underlying SDK). The registry provides the foundation for post-processing pipelines (which need to know which conversation to analyze), memory extraction (which links memories back to source sessions), and future features like "what did we talk about yesterday?". Sessions are created when a new conversation starts (either on first message or when DLT-026 detects a boundary) and closed when the conversation ends (via DLT-026's topic detection or DLT-004's inactivity timeout). The session registry is stored as a lightweight file in the workspace, supporting queries by time range and session ID.
 

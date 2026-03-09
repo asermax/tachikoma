@@ -38,12 +38,12 @@ An opinionated personal assistant built on Claude Code SDK that uses a delegatio
 
 ### 2. Memory Extraction
 
-**Trigger**: Conversation detected as ended (no messages for ~20 minutes)
+**Trigger**: Conversation boundary detected (topic change on new message, or inactivity timeout as fallback)
 **Steps**:
-1. Conversation segmentation detects inactivity threshold
-2. Post-processing pipeline analyzes the completed conversation
+1. Boundary detection closes the current session in the session registry — either via topic analysis on an incoming message or inactivity timeout when the user goes silent
+2. Session closure triggers the post-processing pipeline with the completed conversation
 3. Extracts new facts, decisions, preferences, and patterns
-4. Stores memories as written documents (not embeddings or key-value pairs)
+4. Stores memories as written documents (not embeddings or key-value pairs), linked back to the source session
 5. Memories are available for pre-processing retrieval in future conversations
 
 **Result**: The assistant learns from every interaction without explicit user action
@@ -80,7 +80,8 @@ An opinionated personal assistant built on Claude Code SDK that uses a delegatio
 - Coordinator agent built on Claude Code SDK
 - Telegram bot as the primary communication channel
 - Basic delegation: coordinator can spawn sub-agents for focused tasks
-- Conversation segmentation with configurable inactivity threshold (~20 minutes default)
+- Conversation boundary detection via topic analysis (primary) and configurable inactivity timeout (~20 minutes default, fallback)
+- Session tracking: registry of conversation sessions with IDs, timestamps, and conversation file references for post-processing and history
 - Core context files: SOUL.md (personality/tone), USER.md (user information), AGENTS.md (agent instructions) — loaded with higher priority than dynamic memory
 - Installable as a CLI tool via uv for easy setup and updates
 - First-run workspace initialization: creates required directory structure and default core context files
