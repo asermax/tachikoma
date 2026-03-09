@@ -71,13 +71,7 @@ class SettingsManager:
     def __init__(self, config_path: Path | None = None) -> None:
         self._config_path = config_path if config_path is not None else CONFIG_PATH
         self._settings = load_settings(self._config_path)
-
-        if self._config_path.exists():
-            self._doc = tomlkit.parse(self._config_path.read_text())
-        else:
-            # Defensive: load_settings() auto-generates the file, but guard
-            # against edge cases where the file doesn't exist after loading
-            self._doc = tomlkit.document()
+        self._doc = tomlkit.parse(self._config_path.read_text())
 
     @property
     def settings(self) -> Settings:

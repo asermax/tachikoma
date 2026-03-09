@@ -40,13 +40,13 @@ class TestRendering:
         assert "Hello" in stdout_buf.getvalue()
 
     def test_renders_tool_activity_as_status_line(self, renderer, stdout_buf) -> None:
-        event = ToolActivity(tool_name="Read", tool_input={"file_path": "main.py"}, result="")
+        event = ToolActivity(tool_name="Read", tool_input={"file_path": "main.py"})
         renderer.render(event)
 
         assert "Reading main.py..." in stdout_buf.getvalue()
 
     def test_renders_generic_tool_activity(self, renderer, stdout_buf) -> None:
-        renderer.render(ToolActivity(tool_name="Write", tool_input={}, result=""))
+        renderer.render(ToolActivity(tool_name="Write", tool_input={}))
 
         assert "Write..." in stdout_buf.getvalue()
 
@@ -88,7 +88,7 @@ class TestRendering:
 
     def test_tool_activity_after_text_both_render(self, renderer, stdout_buf) -> None:
         renderer.render(TextChunk(text="thinking"))
-        renderer.render(ToolActivity(tool_name="Read", tool_input={"file_path": "f.py"}, result=""))
+        renderer.render(ToolActivity(tool_name="Read", tool_input={"file_path": "f.py"}))
 
         out = stdout_buf.getvalue()
         assert "thinking" in out

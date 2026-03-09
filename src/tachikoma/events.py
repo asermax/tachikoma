@@ -20,7 +20,7 @@ class ToolActivity(AgentEvent):
 
     tool_name: str
     tool_input: dict[str, Any]
-    result: str
+    result: str = ""
 
 
 @dataclass

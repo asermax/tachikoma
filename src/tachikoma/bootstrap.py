@@ -53,25 +53,20 @@ def workspace_hook(ctx: BootstrapContext) -> None:
     settings = ctx.settings_manager.settings
     workspace_path = settings.workspace.path
 
-    if workspace_path.exists() and not workspace_path.is_dir():
+    try:
+        workspace_path.mkdir(parents=True, exist_ok=True)
+    except FileExistsError:
         raise RuntimeError(
             f"Workspace path exists but is not a directory: {workspace_path}"
         )
+    except PermissionError as exc:
+        raise RuntimeError(
+            f"Cannot create workspace directory: Permission denied: {workspace_path}"
+        ) from exc
 
-    if not workspace_path.exists():
-        try:
-            workspace_path.mkdir(parents=True)
-        except PermissionError as exc:
-            raise RuntimeError(
-                f"Cannot create workspace directory: Permission denied: {workspace_path}"
-            ) from exc
-
-    data_path = settings.workspace.data_path
-
-    if not data_path.exists():
-        try:
-            data_path.mkdir()
-        except PermissionError as exc:
-            raise RuntimeError(
-                f"Cannot create data directory: Permission denied: {data_path}"
-            ) from exc
+    try:
+        settings.workspace.data_path.mkdir(exist_ok=True)
+    except PermissionError as exc:
+        raise RuntimeError(
+            f"Cannot create data directory: Permission denied: {settings.workspace.data_path}"
+        ) from exc

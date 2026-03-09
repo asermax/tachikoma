@@ -31,18 +31,15 @@ class Coordinator:
         model: str | None = None,
         cwd: Path | None = None,
     ) -> None:
-        self._allowed_tools = allowed_tools or []
-        self._model = model
-        self._cwd = cwd
+        self._options = ClaudeAgentOptions(
+            allowed_tools=allowed_tools or [],
+            model=model,
+            cwd=cwd,
+        )
         self._client: ClaudeSDKClient | None = None
 
     async def __aenter__(self) -> "Coordinator":
-        options = ClaudeAgentOptions(
-            allowed_tools=self._allowed_tools,
-            model=self._model,
-            cwd=self._cwd,
-        )
-        self._client = ClaudeSDKClient(options)
+        self._client = ClaudeSDKClient(self._options)
         await self._client.connect()
         return self
 

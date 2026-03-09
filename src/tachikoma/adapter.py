@@ -49,9 +49,7 @@ def _adapt_assistant(message: AssistantMessage) -> list[AgentEvent]:
         if isinstance(block, TextBlock):
             events.append(TextChunk(text=block.text))
         elif isinstance(block, ToolUseBlock):
-            events.append(
-                ToolActivity(tool_name=block.name, tool_input=block.input, result="")
-            )
+            events.append(ToolActivity(tool_name=block.name, tool_input=block.input))
 
     return events
 
