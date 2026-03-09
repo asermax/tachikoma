@@ -21,9 +21,9 @@ Tachikoma needs a way to manage operational parameters (workspace path, agent mo
 
 ## Design Overview
 
-A single `config.py` module provides the entire configuration system: a typed Pydantic model hierarchy for validation, a loader function that reads TOML via stdlib `tomllib`, and a generator that produces a commented default config file using `tomlkit`.
+A single `config.py` module provides the entire configuration system: a typed Pydantic model hierarchy for validation, a loader function that reads TOML via stdlib `tomllib`, and a generator that produces a commented default config file using `tomlkit`. A `SettingsManager` class wraps the configuration system with read-write access for modules that need to update settings at runtime (e.g., bootstrap hooks persisting user-provided values).
 
-Consumers (`__main__.py`, `Coordinator`, `Repl`) receive the `Settings` instance and read values from it instead of using hardcoded defaults.
+Consumers (`__main__.py`, `Coordinator`, `Repl`) receive the frozen `Settings` instance and read values from it instead of using hardcoded defaults.
 
 ## Components
 
@@ -31,30 +31,39 @@ Consumers (`__main__.py`, `Coordinator`, `Repl`) receive the `Settings` instance
 
 | Layer/Component | Responsibility | Key Decisions |
 |-----------------|----------------|---------------|
-| `src/tachikoma/config.py` | Settings model, TOML loading, default generation | Plain Pydantic + tomllib for reading, tomlkit for writing defaults |
+| `src/tachikoma/config.py` | Settings model, TOML loading, default generation, SettingsManager for read-write access | Plain Pydantic + tomllib for reading, tomlkit for writing defaults and write-back |
 
 ### Cross-Layer Contracts
 
-The `Settings` instance is created once at startup by `__main__.py` via `load_settings()` and passed to consumers via constructor injection. No global state.
+At startup, `__main__.py` creates a `SettingsManager` which loads settings and supports write-back. After bootstrap completes, the final frozen `Settings` snapshot is read from the SettingsManager and passed to consumers via constructor injection. No global state.
 
 ```mermaid
 sequenceDiagram
     participant Main as __main__.py
     participant Config as config.py
     participant FS as Filesystem
+    participant Boot as Bootstrap
     participant Coord as Coordinator
     participant Repl as Repl
 
-    Main->>Config: load_settings()
+    Main->>Config: SettingsManager()
     Config->>FS: check config file exists
     alt no config file
         Config->>FS: create directory + default config
     end
-    Config->>FS: read TOML file (tomllib)
+    Config->>FS: read TOML file (tomllib) + load tomlkit document
     Config->>Config: Settings.model_validate(data)
-    Config-->>Main: frozen Settings instance
+    Config-->>Main: SettingsManager (with frozen Settings)
 
-    Main->>Coord: Coordinator(allowed_tools=..., model=...)
+    Main->>Boot: Bootstrap(settings_manager)
+    Main->>Boot: register("workspace", workspace_hook)
+    Main->>Boot: run()
+    Boot->>Boot: workspace_hook(ctx)
+    Note over Boot: Creates workspace dirs if needed
+    Note over Boot: May update settings via ctx.settings_manager
+
+    Main->>Config: settings_manager.settings (final snapshot)
+    Main->>Coord: Coordinator(allowed_tools=..., model=..., cwd=workspace_path)
     Main->>Repl: Repl(coordinator, history_path=...)
 ```
 
@@ -65,7 +74,8 @@ The settings model is a nested hierarchy matching the TOML sections:
 ```
 Settings (root, frozen)
 ├── workspace: WorkspaceSettings
-│   └── path: Path = ~/tachikoma
+│   ├── path: Path = ~/tachikoma
+│   └── data_path: Path (computed property: self.path / ".tachikoma")
 └── agent: AgentSettings
     ├── model: str | None = None (SDK default)
     └── allowed_tools: list[str] = ["Read", "Glob", "Grep"]
@@ -73,7 +83,19 @@ Settings (root, frozen)
 
 All models use `ConfigDict(frozen=True, extra="ignore")`. Frozen prevents accidental mutation. Extra="ignore" provides forward compatibility — unknown TOML keys are silently ignored.
 
-The `workspace.path` field stores a string in TOML but is validated into a `Path` by Pydantic. A `field_validator` calls `Path.expanduser()` to expand `~` to the home directory.
+The `workspace.path` field stores a string in TOML but is validated into a `Path` by Pydantic. A `field_validator` calls `Path.expanduser()` to expand `~` to the home directory. The `data_path` computed property returns `self.path / ".tachikoma"` — available to any consumer of Settings, always current even after settings changes.
+
+`SettingsManager` wraps the configuration system with read-write access:
+
+```
+SettingsManager
+├── _config_path: Path (TOML file location)
+├── _settings: Settings (frozen, reloaded after save)
+├── _doc: tomlkit Document (in-memory TOML for write-back)
+├── property settings → Settings (current frozen snapshot)
+├── update(section, key, value) → modifies in-memory TOML doc
+└── save() → writes to file, reloads frozen Settings
+```
 
 Future deltas add new sections as needed (e.g., a `secrets` section with `telegram_bot_token`).
 
@@ -99,6 +121,20 @@ flowchart TD
     Validate --> Valid{valid values?}
     Valid -->|No| ErrVal[exit: validation error with field + expected type]
     Valid -->|Yes| Return[return frozen Settings]
+```
+
+### Settings write-back flow
+
+```
+1. Module calls settings_manager.update(section, key, value)
+2. SettingsManager validates section against Settings.model_fields
+3. SettingsManager validates key against the section model's model_fields
+4. Updates the in-memory tomlkit document
+   - If the section table doesn't exist in the TOML document, creates it
+5. Module calls settings_manager.save()
+6. SettingsManager writes tomlkit document to config file (preserves comments)
+7. SettingsManager reloads frozen Settings via load_settings()
+8. Subsequent .settings access returns the updated snapshot
 ```
 
 ## Key Decisions
@@ -127,6 +163,30 @@ flowchart TD
 - Pro: Comments derived from field descriptions — single source of truth
 - Con: Adds `tomlkit` as a runtime dependency
 
+### SettingsManager for read-write config access
+
+**Choice**: Add a `SettingsManager` class that wraps settings loading and provides `update()`/`save()` for write-back
+**Why**: Bootstrap hooks may need to persist user-provided values. The SettingsManager uses tomlkit to read-modify-write the TOML file while preserving comments. The `.settings` property always returns a frozen `Settings` instance, preserving the immutability guarantee for consumers.
+**Alternatives Considered**:
+- Read-only settings + separate config writer: Splits concern but requires coordinating two objects for the same file
+- Mutable Settings during bootstrap: Pydantic frozen models can't be unfrozen without hacks
+
+**Consequences**:
+- Pro: Hooks can prompt for values and persist them
+- Pro: Frozen Settings guarantee preserved for all consumers
+- Pro: tomlkit preserves comments in user-edited config files
+- Con: Adds write responsibility to the config module
+
+### Separate update() and save() methods
+
+**Choice**: Separate `update()` (in-memory) and `save()` (write + reload) instead of auto-save
+**Why**: Modules may batch multiple updates before writing, or update without saving if they determine the change isn't needed.
+
+**Consequences**:
+- Pro: Modules control when file I/O happens
+- Pro: Multiple updates batched before a single write
+- Con: Callers must remember to call save()
+
 ### Frozen settings instance
 
 **Choice**: Use `ConfigDict(frozen=True)` on all settings models
@@ -134,7 +194,7 @@ flowchart TD
 
 **Consequences**:
 - Pro: Prevents bugs from accidental settings mutation
-- Con: If runtime config changes are ever needed, must create a new Settings instance
+- Con: For bootstrap-time changes, the SettingsManager handles reload-after-save internally while preserving the frozen guarantee for runtime consumers
 
 ### Hardcoded ~/.config over XDG_CONFIG_HOME
 

@@ -9,6 +9,7 @@ Design documents for the core agent capabilities.
 | Capability | Description | Status |
 |------------|-------------|--------|
 | [core-architecture](core-architecture.md) | Coordinator, event system, and SDK adapter | Current |
+| [workspace-bootstrap](workspace-bootstrap.md) | Bootstrap registry, hook pattern, workspace directory creation | Current |
 
 ## Related Decisions
 

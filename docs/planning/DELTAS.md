@@ -79,7 +79,7 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 
 ### DLT-005: Load foundational context for personality and user knowledge
 **Status**: ✗ Defined
-**Depends on**: DLT-023
+**Depends on**: None
 **Priority**: 2 (High)
 **Complexity**: Easy
 **Description**: Provide the assistant with foundational, always-available context through core files that are loaded with higher priority than dynamically retrieved memories. Three files establish the assistant's identity and baseline knowledge: SOUL.md defines personality traits, tone, and behavioral guidelines; USER.md captures known information about the user (name, preferences, projects, communication style); AGENTS.md provides operational instructions for the agent and sub-agents. These files ensure the assistant behaves consistently regardless of which memories are retrieved for a given conversation, and give the user a transparent, editable way to shape the assistant's behavior.
@@ -93,7 +93,7 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 
 ### DLT-008: Extract and store memories from conversations
 **Status**: ✗ Defined
-**Depends on**: DLT-027, DLT-023
+**Depends on**: DLT-027
 **Priority**: 2 (High)
 **Complexity**: Hard
 **Description**: The complete memory write path — from conversation analysis to persistent storage. After a conversation ends (detected by DLT-004), automatically analyze the full exchange to extract what the assistant should remember: new facts about the user, decisions that were made, preferences expressed, and behavioral patterns observed. Each learning is persisted as a structured markdown file in a dedicated directory, organized by type (facts, preferences, decisions, patterns). Using markdown keeps memories human-readable and directly inspectable by the user, avoiding database dependencies for v1. Each memory document includes structured metadata: timestamps (creation and last referenced), type tags, source conversation reference, and a confidence indicator. This delta delivers two things: (1) a reusable, pluggable post-processing pipeline that runs processors after conversation end is detected (supporting additional post-processors later without modifying the core pipeline), and (2) the first processor — a memory extraction processor that uses LLM analysis to identify, categorize, and persist learnings. The storage format must support efficient listing and filtering by type. When DLT-020 is implemented, memory file writes should trigger automatic git commits to maintain workspace version history.
@@ -121,7 +121,7 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 
 ### DLT-013: Add structured logging for agent actions
 **Status**: ✓ Spec
-**Depends on**: DLT-012, DLT-023
+**Depends on**: DLT-012
 **Priority**: 3 (Medium)
 **Complexity**: Medium
 **Description**: Instrument the assistant with structured logging via loguru so that key agent actions — startup, message processing, coordinator lifecycle, and errors — are recorded in a consistent, machine-parseable format. Log entries include timestamps, log level, component context, and relevant metadata via keyword arguments. Logs are written to a file in the workspace data directory, configured through a bootstrap hook (DLT-023). Log level is configurable via the TOML config file (DLT-012). Follows conventions established in ADR-006 and DES-002.
@@ -170,14 +170,14 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 
 ### DLT-020: Git module for workspace version tracking
 **Status**: ✓ Spec
-**Depends on**: DLT-023
+**Depends on**: None
 **Priority**: 2 (High)
 **Complexity**: Easy
 **Description**: A git module that hooks into the workspace initialization process (DLT-023) to set up the workspace directory as a git repository and provides tools for version tracking. The module initializes the repo during first-run setup (git init, sensible .gitignore), and exposes a commit utility that other components call after writing files to maintain automatic version history. Every write operation that modifies workspace files results in an automatic commit with a descriptive message, providing built-in history and the ability to roll back to any prior state. Includes startup validation that the workspace is a healthy git repo. The git integration is intentionally simple for v1 — linear history on a single branch, no merging, no PRs. Advanced workspace management (branching, two-tier change model, conflict resolution) is deferred to post-v1.
 
 ### DLT-021: Skill system with detection and pre-processing injection
 **Status**: ✗ Defined
-**Depends on**: DLT-006, DLT-023
+**Depends on**: DLT-006
 **Priority**: 3 (Medium)
 **Complexity**: Medium
 **Description**: Deliver the complete v1 skill system: skills are markdown documents that define workflows or knowledge any agent (coordinator or sub-agents) can load when needed. Each skill document follows a standard format with metadata (name, description, trigger patterns) and content (instructions, steps, reference knowledge). A skill registry manages available skills — listing, looking up by name, and providing metadata for detection. Skills live in a dedicated directory within the workspace. A skills context provider plugs into the pre-processing pipeline (DLT-006) to automatically detect which skills are relevant to an incoming message and inject them into the agent's context. The provider queries the registry, matches skills against the current message using metadata and trigger patterns, and loads matched skill documents into the enriched context alongside memory. Detection should balance precision (don't load irrelevant skills that waste context) with recall (don't miss applicable skills). This delta does NOT cover constrained execution (post-v1).
@@ -188,13 +188,6 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 **Priority**: 5 (Backlog)
 **Complexity**: Easy
 **Description**: Build an eval suite for the skills context provider using the evaluation framework (DLT-015). Tests whether the right skills are being detected and injected for given input messages. Test cases should cover: detecting relevant skills when they exist, not injecting irrelevant skills that waste context, handling messages where no skills apply, prioritizing when multiple skills match, and correctly loading skill content into agent context. Measures precision (no irrelevant skills injected) and recall (applicable skills not missed) of the skill detection process.
-
-### DLT-023: Bootstrap agent workspace on first run
-**Status**: ✓ Plan
-**Depends on**: None
-**Priority**: 2 (High)
-**Complexity**: Easy
-**Description**: Implement the agent's first-run initialization process that sets up the workspace. On first launch, detects that no workspace exists and creates the base workspace directory. Provides an initialization hook system so that other modules (like the git module, DLT-020) can register setup steps that run during workspace creation. Individual modules are responsible for creating their own subdirectories on first use (memories, skills, core context files) — the bootstrap provides the root workspace and the hook system, not the full directory tree. Subsequent launches detect the existing workspace and skip initialization. The workspace path comes from configuration (DLT-012).
 
 ### DLT-024: Package and install agent as a uv tool
 **Status**: ✗ Defined
@@ -212,7 +205,7 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 
 ### DLT-027: Track conversation sessions
 **Status**: ✓ Spec
-**Depends on**: DLT-023
+**Depends on**: None
 **Priority**: 1 (Critical)
 **Complexity**: Easy
 **Description**: Maintain a registry of conversation sessions the agent has had with the user. Each session is tracked with a unique ID, start timestamp, end timestamp (set when the session closes), and a reference to the session's conversation file (where the full exchange is stored by the underlying SDK). The registry provides the foundation for post-processing pipelines (which need to know which conversation to analyze), memory extraction (which links memories back to source sessions), and future features like "what did we talk about yesterday?". Sessions are created when a new conversation starts (either on first message or when DLT-026 detects a boundary) and closed when the conversation ends (via DLT-026's topic detection or DLT-004's inactivity timeout). The session registry is stored as a lightweight file in the workspace, supporting queries by time range and session ID.

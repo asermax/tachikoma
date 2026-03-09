@@ -9,6 +9,7 @@ Core agent capabilities: the coordinator loop that receives messages, delegates 
 | Capability | Description | Status |
 |------------|-------------|--------|
 | [core-architecture](core-architecture.md) | Coordinator, event system, and SDK adapter | ✓ |
+| [workspace-bootstrap](workspace-bootstrap.md) | Workspace initialization with idempotent hook system | ✓ |
 
 ## Related Decisions
 

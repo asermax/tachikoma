@@ -20,6 +20,7 @@ The core agent loop: receive a user message, pass it to the Claude agent via the
 | R2 | Programmatic entry point (coordinator) that channels call to send messages and get streamed responses |
 | R3 | Session lifecycle: connect and disconnect from the agent service, preserving conversation context across messages within a session |
 | R4 | Error handling: distinguish between transient failures that allow continued use and fatal failures that require stopping |
+| R5 | Agent operates from workspace directory via SDK cwd option |
 
 ## Behaviors
 
@@ -49,6 +50,14 @@ The coordinator manages connection to the underlying agent service and maintains
 - Given the coordinator exits its async context, then it disconnects from the agent service
 - Given a new conversation starts, then a new session is created
 - Given an active session, when subsequent messages arrive, then they use the same session
+
+### Working Directory (R5)
+
+The coordinator operates from the workspace directory, ensuring the agent's file operations are relative to the configured workspace path.
+
+**Acceptance Criteria**:
+- Given the agent starts, when the coordinator is created, then its working directory is set to the workspace path from configuration
+- Given a custom workspace path is configured, when the agent starts, then the coordinator's working directory matches that custom path
 
 ### Startup Validation (R4)
 

@@ -4,7 +4,7 @@
 
 ## Overview
 
-A typed configuration system backed by a single TOML file at `~/.config/tachikoma/config.toml`. All tunable parameters live in this file with sensible defaults. On first run, a commented default config file is auto-generated so users can see what's configurable. The system validates all values at startup and provides clear error messages.
+A typed configuration system backed by a single TOML file at `~/.config/tachikoma/config.toml`. All tunable parameters live in this file with sensible defaults. On first run, a commented default config file is auto-generated so users can see what's configurable. The system validates all values at startup and provides clear error messages. Additionally, the system supports write-back — modules can update settings values and persist them to the config file while preserving comments and formatting.
 
 The `ANTHROPIC_API_KEY` is not managed by this system — the Claude SDK reads it natively from the environment. Only Tachikoma-specific parameters go in the config file.
 
@@ -22,6 +22,7 @@ The `ANTHROPIC_API_KEY` is not managed by this system — the Claude SDK reads i
 | R3 | Startup validation with clear error messages for missing/invalid values |
 | R4 | Auto-generate a commented default config file when none exists |
 | R5 | Easy extensibility — adding new config parameters is low-friction |
+| R6 | Write-back capability: modules can update and persist configuration values at runtime |
 
 ## Behaviors
 
@@ -55,6 +56,16 @@ When no config file exists, the system creates a commented default file so users
 - Given no config directory exists, when the application starts, then the directory is created before writing the default config
 - Given the config directory cannot be created (permission denied), when the application starts, then it exits with a clear error
 - Given a config file already exists, when the application starts, then it is loaded as-is (never overwritten)
+
+### Settings Write-Back (R6)
+
+Modules can update settings values in memory and persist them to the TOML config file. Write-back preserves existing comments and formatting. This enables bootstrap hooks and other modules to prompt users for values and save them.
+
+**Acceptance Criteria**:
+- Given a module updates a setting value, when the change is saved, then the TOML config file is updated while preserving existing comments and formatting
+- Given a setting is updated and saved, when settings are subsequently read, then the new value is reflected
+- Given a module attempts to update a non-existent section or key, then a clear error is raised
+- Given multiple settings are updated before saving, when save is called, then all changes are persisted in a single write
 
 ### Extensibility (R5)
 

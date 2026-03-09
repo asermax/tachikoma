@@ -66,7 +66,7 @@ The **Message Adapter** is a pure transformation layer — it maps SDK `Message`
 
 | Layer/Component | Responsibility | Key Decisions |
 |-----------------|----------------|---------------|
-| `src/tachikoma/__main__.py` | CLI entry point: loads config, wires up coordinator + channel, runs `asyncio.run(main())` | Minimal — loads config, wires up coordinator + channel; enables `python -m tachikoma` |
+| `src/tachikoma/__main__.py` | CLI entry point: loads config via SettingsManager, runs bootstrap, wires up coordinator + channel, runs `asyncio.run(main())` | Loads config via SettingsManager, runs bootstrap, wires up coordinator + channel; enables `python -m tachikoma` |
 | `src/tachikoma/coordinator.py` | Wraps `ClaudeSDKClient`, manages session lifecycle, exposes `send_message()` | Async context manager pattern; owns SDK client instance |
 | `src/tachikoma/events.py` | `AgentEvent` domain type hierarchy | Dataclasses; no SDK dependency |
 | `src/tachikoma/adapter.py` | Transforms SDK messages to `AgentEvent`s | Pure function, stateless; only module that imports SDK message types |
@@ -167,13 +167,16 @@ AgentEvent (base)
 
 ```
 1. __main__.py runs asyncio.run(main())
-2. Loads configuration via load_settings() (see configuration/config-system design)
-3. Ensures workspace directory exists (path from config)
-4. Creates Coordinator with allowed_tools and model from config
-5. Enters coordinator async context (connects SDK client)
-6. If connection fails → catch SDK error, print to stderr, exit
-7. Creates channel (REPL) with coordinator reference and history path from config
-8. Channel enters its main loop
+2. Creates SettingsManager (loads configuration, see configuration/config-system design)
+3. Creates Bootstrap, registers workspace hook
+4. Runs bootstrap — hooks execute in registration order (workspace creation, etc.)
+5. If bootstrap fails → catch BootstrapError, print to stderr, exit
+6. Reads final settings from SettingsManager
+7. Creates Coordinator with allowed_tools, model, and cwd=workspace_path from config
+8. Enters coordinator async context (connects SDK client)
+9. If connection fails → catch SDK error, print to stderr, exit
+10. Creates channel (REPL) with coordinator reference and history path from config
+11. Channel enters its main loop
 ```
 
 ### Shutdown flow
@@ -221,6 +224,19 @@ AgentEvent (base)
 - Pro: Read-only tools work without interruption
 - Pro: User prompted for anything beyond read access
 - Pro: Tool list is configurable without code changes
+
+### SDK cwd for workspace directory (not os.chdir)
+
+**Choice**: Pass `workspace_path` to Coordinator, forwarded as `cwd` in `ClaudeAgentOptions`
+**Why**: `os.chdir()` is a global side effect affecting the entire process. The SDK's `ClaudeAgentOptions.cwd` sets the agent's working directory without affecting the host process.
+**Alternatives Considered**:
+- `os.chdir()` after bootstrap: Global side effect, affects entire process
+
+**Consequences**:
+- Pro: No global side effects
+- Pro: SDK natively supports it
+- Pro: Coordinator explicitly declares its working directory
+- Con: Requires cwd parameter on Coordinator constructor
 
 ### Message-level streaming
 
