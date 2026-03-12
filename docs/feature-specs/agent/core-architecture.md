@@ -18,7 +18,7 @@ The core agent loop: receive a user message, pass it to the Claude agent via the
 | R0 | Core agent loop: send a user message, receive a streamed response as domain events |
 | R1 | Project structure: pyproject.toml with dependencies, src package layout, entry point |
 | R2 | Programmatic entry point (coordinator) that channels call to send messages and get streamed responses |
-| R3 | Session lifecycle: connect and disconnect from the agent service, preserving conversation context across messages within a session |
+| R3 | Session lifecycle: connect and disconnect from the agent service, preserving conversation context across messages within a session. Optionally tracks sessions persistently via a session registry (see [sessions](sessions.md)) |
 | R4 | Error handling: distinguish between transient failures that allow continued use and fatal failures that require stopping |
 | R5 | Agent operates from workspace directory via SDK cwd option |
 
@@ -50,6 +50,10 @@ The coordinator manages connection to the underlying agent service and maintains
 - Given the coordinator exits its async context, then it disconnects from the agent service
 - Given a new conversation starts, then a new session is created
 - Given an active session, when subsequent messages arrive, then they use the same session
+- Given a session registry is available, when the first message in a new conversation arrives, then a persistent session is created before the message is processed
+- Given an active persistent session, when the agent produces a Result event, then the session's SDK metadata (session ID and transcript path) is populated
+- Given an active persistent session, when the coordinator exits its async context, then the persistent session is closed
+- Given a session registry operation fails, then the error is logged and the conversation continues uninterrupted
 
 ### Working Directory (R5)
 
