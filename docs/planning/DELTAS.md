@@ -78,7 +78,7 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 **Description**: Fallback conversation boundary detection that monitors for periods of user inactivity. After a configurable threshold (~20 minutes by default), the system signals the session registry (DLT-027) to close the current session, triggering downstream post-processing. This serves as a safety net for cases where the user goes silent without a clear topic change — DLT-026's topic-based analysis is the primary boundary mechanism, but it only fires on incoming messages. The inactivity timeout catches the "user walked away" case. The threshold should be configurable per-deployment.
 
 ### DLT-005: Load foundational context for personality and user knowledge
-**Status**: ✗ Defined
+**Status**: ✓ Design
 **Depends on**: None
 **Priority**: 2 (High)
 **Complexity**: Easy
