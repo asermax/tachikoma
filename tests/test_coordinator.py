@@ -1,9 +1,11 @@
 """Coordinator integration tests.
 
 Tests for DLT-001: Core agent architecture.
+Tests for DLT-027: Session tracking integration.
 Mocks ClaudeSDKClient to test the coordinator's end-to-end behavior.
 """
 
+from datetime import UTC, datetime
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
@@ -17,8 +19,10 @@ from claude_agent_sdk.types import (
 )
 from helpers import make_assistant, make_result
 
-from tachikoma.coordinator import Coordinator
+from tachikoma.coordinator import Coordinator, _derive_transcript_path
 from tachikoma.events import Error, Result, TextChunk, ToolActivity
+from tachikoma.sessions.errors import SessionRepositoryError
+from tachikoma.sessions.model import Session
 
 
 async def _mock_messages(*messages):
@@ -212,3 +216,151 @@ class TestCoordinatorInterrupt:
             await coord.interrupt()
 
         client.interrupt.assert_awaited_once()
+
+
+def _make_mock_registry(active_session=None):
+    """Create a mock SessionRegistry with sensible defaults."""
+    registry = MagicMock()
+    registry.get_active_session = AsyncMock(return_value=active_session)
+    registry.create_session = AsyncMock(
+        return_value=Session(id="new-session", started_at=datetime.now(UTC))
+    )
+    registry.close_session = AsyncMock()
+    registry.update_metadata = AsyncMock()
+    return registry
+
+
+class TestCoordinatorSessionTracking:
+    """Tests for DLT-027: session tracking integration in the coordinator."""
+
+    async def test_first_message_creates_session(self, mock_sdk) -> None:
+        """AC: first message with no active session triggers create_session."""
+        client, _ = mock_sdk
+        client.receive_messages.return_value = _mock_messages(
+            make_assistant([TextBlock(text="hi")]),
+            make_result(),
+        )
+
+        registry = _make_mock_registry(active_session=None)
+
+        async with Coordinator(registry=registry) as coord:
+            _ = [e async for e in coord.send_message("hello")]
+
+        registry.create_session.assert_awaited_once()
+
+    async def test_second_message_reuses_active_session(self, mock_sdk) -> None:
+        """AC: subsequent messages with an active session do not create another."""
+        client, _ = mock_sdk
+        active = Session(id="existing", started_at=datetime.now(UTC))
+
+        # First call: no active session → create; second call: active session exists
+        registry = _make_mock_registry()
+        registry.get_active_session.side_effect = [None, active, active, active]
+
+        client.receive_messages.side_effect = [
+            _mock_messages(make_assistant([TextBlock(text="a")]), make_result()),
+            _mock_messages(make_assistant([TextBlock(text="b")]), make_result()),
+        ]
+
+        async with Coordinator(registry=registry) as coord:
+            _ = [e async for e in coord.send_message("first")]
+            _ = [e async for e in coord.send_message("second")]
+
+        assert registry.create_session.await_count == 1
+
+    async def test_result_event_triggers_metadata_update(self, mock_sdk) -> None:
+        """AC: Result event with session_id triggers update_metadata."""
+        client, _ = mock_sdk
+        client.receive_messages.return_value = _mock_messages(
+            make_assistant([TextBlock(text="done")]),
+            make_result(session_id="sdk-session-xyz"),
+        )
+
+        registry = _make_mock_registry(active_session=None)
+
+        async with Coordinator(registry=registry) as coord:
+            _ = [e async for e in coord.send_message("hello")]
+
+        registry.update_metadata.assert_awaited_once()
+        call_kwargs = registry.update_metadata.call_args[1]
+        assert call_kwargs["sdk_session_id"] == "sdk-session-xyz"
+        assert "transcript_path" in call_kwargs
+
+    async def test_clean_shutdown_closes_active_session(self, mock_sdk) -> None:
+        """AC: __aexit__ closes the active session via registry."""
+        client, _ = mock_sdk
+        active = Session(id="s1", started_at=datetime.now(UTC))
+        registry = _make_mock_registry(active_session=active)
+
+        async with Coordinator(registry=registry):
+            pass
+
+        registry.close_session.assert_awaited_once_with("s1")
+
+    async def test_works_without_registry(self, mock_sdk) -> None:
+        """AC: coordinator is fully functional when no registry is provided."""
+        client, _ = mock_sdk
+        client.receive_messages.return_value = _mock_messages(
+            make_assistant([TextBlock(text="hello")]),
+            make_result(),
+        )
+
+        async with Coordinator() as coord:
+            events = [e async for e in coord.send_message("hi")]
+
+        text_events = [e for e in events if isinstance(e, TextChunk)]
+        assert len(text_events) == 1
+
+    async def test_session_tracking_error_does_not_crash_conversation(self, mock_sdk) -> None:
+        """AC: registry errors are swallowed — conversation continues normally."""
+        client, _ = mock_sdk
+        client.receive_messages.return_value = _mock_messages(
+            make_assistant([TextBlock(text="still works")]),
+            make_result(),
+        )
+
+        registry = _make_mock_registry(active_session=None)
+        registry.create_session.side_effect = SessionRepositoryError("DB down")
+
+        async with Coordinator(registry=registry) as coord:
+            events = [e async for e in coord.send_message("hi")]
+
+        text_events = [e for e in events if isinstance(e, TextChunk)]
+        assert len(text_events) == 1
+        assert text_events[0].text == "still works"
+
+
+class TestTranscriptPathDerivation:
+    """Tests for _derive_transcript_path helper.
+
+    See: DLT-027 design — Known SDK coupling note.
+    """
+
+    def test_basic_path_derivation(self) -> None:
+        """Basic case: absolute cwd is sanitized and combined with session ID."""
+        result = _derive_transcript_path("abc123", Path("/home/user/myproject"))
+
+        home = str(Path.home())
+        assert result == f"{home}/.claude/projects/home-user-myproject/abc123.jsonl"
+
+    def test_leading_dash_stripped(self) -> None:
+        """Leading '-' from the sanitized cwd is stripped."""
+        result = _derive_transcript_path("sess-1", Path("/workspace"))
+
+        # "/workspace" -> "-workspace" -> "workspace" (leading dash stripped)
+        home = str(Path.home())
+        assert result == f"{home}/.claude/projects/workspace/sess-1.jsonl"
+
+    def test_none_cwd_uses_current_working_directory(self) -> None:
+        """When cwd is None, falls back to Path.cwd()."""
+        result = _derive_transcript_path("sess-2", None)
+
+        # Should not raise and should end with the session ID
+        assert result.endswith("/sess-2.jsonl")
+
+    def test_deep_nested_path(self) -> None:
+        """Deeply nested paths are sanitized with dashes."""
+        result = _derive_transcript_path("deep-sess", Path("/a/b/c/d"))
+
+        home = str(Path.home())
+        assert result == f"{home}/.claude/projects/a-b-c-d/deep-sess.jsonl"
