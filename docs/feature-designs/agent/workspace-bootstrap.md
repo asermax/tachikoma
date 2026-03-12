@@ -20,7 +20,7 @@ The agent needs a formal initialization sequence that runs on every launch. As m
 
 ## Design Overview
 
-A `Bootstrap` registry class owns a `BootstrapContext` and an ordered list of named hooks. Callers register hooks via `register(name, hook)` and trigger execution via `run()`. Each hook is a plain callable (`Callable[[BootstrapContext], None]`) that receives the context and self-determines whether it needs to act. Hooks access settings via `ctx.settings_manager`.
+A `Bootstrap` registry class owns a `BootstrapContext` and an ordered list of named hooks. Callers register hooks via `register(name, hook)` and trigger execution via `await run()`. Each hook is a plain async callable (`Callable[[BootstrapContext], Awaitable[None]]`) that receives the context and self-determines whether it needs to act. Hooks access settings via `ctx.settings_manager`. Hooks can pass objects back to the caller via `ctx.extras`, a mutable dictionary on the frozen context.
 
 The workspace root directory and `.tachikoma/` data folder are created by a standard hook (not special-cased), making the bootstrap mechanism completely generic.
 
@@ -48,7 +48,7 @@ flowchart TD
 
 ### Cross-Layer Contracts
 
-Hooks receive a `BootstrapContext` with access to the SettingsManager (for reading and writing config) and a prompt callable (for user input).
+Hooks receive a `BootstrapContext` with access to the SettingsManager (for reading and writing config), a prompt callable (for user input), and an extras dictionary (for passing objects back to the caller).
 
 ```
 Bootstrap(settings_manager, prompt=input)
@@ -56,17 +56,24 @@ Bootstrap(settings_manager, prompt=input)
     ▼
 BootstrapContext
 ├── settings_manager: SettingsManager (read + write access)
-└── prompt: Callable[[str], str] (for user input)
+├── prompt: Callable[[str], str] (for user input)
+└── extras: dict[str, Any] (mutable bag for hook-to-caller communication)
     │
     │ passed to each hook
     ▼
 workspace_hook(ctx) ──creates──▶ dirs
                     ──may call──▶ ctx.settings_manager.update/save
+
+Bootstrap.extras (property) ──delegates to──▶ BootstrapContext.extras
+    │
+    │ callers read hook outputs after run()
+    ▼
+__main__.py reads bootstrap.extras["key"]
 ```
 
 **Integration Points:**
 - Bootstrap ↔ hooks: hooks receive BootstrapContext, raise exceptions on failure
-- Bootstrap ↔ `__main__.py`: `run()` raises BootstrapError on hook failure
+- Bootstrap ↔ `__main__.py`: `run()` raises BootstrapError on hook failure; `bootstrap.extras` exposes hook outputs
 - BootstrapContext ↔ SettingsManager: hooks read/write settings via `ctx.settings_manager`
 
 ## Modeling
@@ -78,9 +85,10 @@ Bootstrap
 
 BootstrapContext (frozen dataclass)
 ├── settings_manager: SettingsManager (mutable — can update/save settings)
-└── prompt: Callable[[str], str] (for user input)
+├── prompt: Callable[[str], str] (for user input)
+└── extras: dict[str, Any] = {} (mutable bag; frozen prevents swapping the dict, contents are mutable)
 
-BootstrapHook = Callable[[BootstrapContext], None]
+BootstrapHook = Callable[[BootstrapContext], Awaitable[None]]
 
 BootstrapError
 └── names the failing hook in its message, chains original exception via __cause__
@@ -95,13 +103,15 @@ The `BootstrapContext` is frozen (fields can't be reassigned), but `settings_man
 ```
 1. __main__.py creates Bootstrap(settings_manager, prompt=input)
 2. Registers hooks: bootstrap.register("workspace", workspace_hook)
-3. Calls bootstrap.run()
+3. Calls await bootstrap.run()
 4. For each (name, hook) in registration order:
-   a. Call hook(context)
+   a. await hook(context)
    b. Hook self-determines if action needed
    c. Hook may call ctx.settings_manager.update() + .save()
-   d. If hook raises → wrap in BootstrapError naming hook, propagate
+   d. Hook may store objects on ctx.extras for the caller to retrieve
+   e. If hook raises → wrap in BootstrapError naming hook, propagate
 5. Bootstrap completes — __main__.py reads final settings
+6. __main__.py retrieves hook outputs from bootstrap.extras
 ```
 
 ### Workspace hook logic
@@ -133,16 +143,18 @@ The `BootstrapContext` is frozen (fields can't be reassigned), but `settings_man
 - Pro: Hook names stored naturally alongside hooks
 - Con: Slightly more ceremony than a plain function
 
-### Plain callable for hooks (not Protocol)
+### Plain async callable for hooks (not Protocol)
 
-**Choice**: `BootstrapHook = Callable[[BootstrapContext], None]` type alias
-**Why**: Any function with the right signature works. No boilerplate required.
+**Choice**: `BootstrapHook = Callable[[BootstrapContext], Awaitable[None]]` type alias
+**Why**: Any async function with the right signature works. Async hooks can natively `await` operations like database access and network calls without `asyncio.run()` workarounds inside sync hooks.
 **Alternatives Considered**:
 - Protocol with name property: Adds ceremony; registry already stores names
+- Sync hooks with `asyncio.run()` workarounds: Conflicts with the outer event loop
 
 **Consequences**:
-- Pro: Zero boilerplate — plain functions work
+- Pro: Zero boilerplate — plain async functions work
 - Pro: Easy to test
+- Pro: Hooks can natively await async operations (DB access, network calls)
 
 ### Prompt callback for user input
 
@@ -194,6 +206,5 @@ The `BootstrapContext` is frozen (fields can't be reassigned), but `settings_man
 
 ## Notes
 
-- Future hooks (DLT-020 git module, DLT-005 core context files) will register themselves in `__main__.py` alongside the workspace hook
+- The session recovery hook is the second hook registered alongside the workspace hook; future hooks (DLT-020 git module, DLT-005 core context files) will follow the same pattern
 - The hook registration order in `__main__.py` serves as the explicit documentation of initialization sequence — no magic discovery
-- The bootstrap hook pattern is a candidate for DES promotion when the second hook is implemented

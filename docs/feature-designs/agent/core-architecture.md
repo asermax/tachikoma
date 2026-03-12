@@ -66,8 +66,8 @@ The **Message Adapter** is a pure transformation layer — it maps SDK `Message`
 
 | Layer/Component | Responsibility | Key Decisions |
 |-----------------|----------------|---------------|
-| `src/tachikoma/__main__.py` | CLI entry point: loads config via SettingsManager, runs bootstrap, wires up coordinator + channel, runs `asyncio.run(main())` | Loads config via SettingsManager, runs bootstrap, wires up coordinator + channel; enables `python -m tachikoma` |
-| `src/tachikoma/coordinator.py` | Wraps `ClaudeSDKClient`, manages session lifecycle, exposes `send_message()` | Async context manager pattern; owns SDK client instance |
+| `src/tachikoma/__main__.py` | CLI entry point: loads config via SettingsManager, runs bootstrap (workspace + session recovery hooks), retrieves session objects from bootstrap extras, wires up coordinator + channel with try/finally for engine disposal, runs `asyncio.run(main())` | Loads config via SettingsManager, runs bootstrap, wires up coordinator + channel; enables `python -m tachikoma` |
+| `src/tachikoma/coordinator.py` | Wraps `ClaudeSDKClient`, manages session lifecycle, exposes `send_message()`. Optionally integrates with `SessionRegistry` for persistent session tracking (see [sessions design](sessions.md)) | Async context manager pattern; owns SDK client instance; optional registry dependency |
 | `src/tachikoma/events.py` | `AgentEvent` domain type hierarchy | Dataclasses; no SDK dependency |
 | `src/tachikoma/adapter.py` | Transforms SDK messages to `AgentEvent`s | Pure function, stateless; only module that imports SDK message types |
 
@@ -101,6 +101,7 @@ sequenceDiagram
 - Coordinator ↔ SDK: async context manager lifecycle (`connect`/`disconnect`), `query()` to send messages, iterate `receive_messages()` for response stream
 - Coordinator ↔ Adapter: pure function call `adapt(sdk_message) -> list[AgentEvent]` (returns empty list for filtered messages)
 - Channel ↔ Coordinator: async iterator protocol
+- Coordinator ↔ SessionRegistry (optional): `create_session()` on first message, `update_metadata()` on Result events, `close_session()` on shutdown (see [sessions design](sessions.md))
 
 ### Shared Logic
 
@@ -168,24 +169,28 @@ AgentEvent (base)
 ```
 1. __main__.py runs asyncio.run(main())
 2. Creates SettingsManager (loads configuration, see configuration/config-system design)
-3. Creates Bootstrap, registers workspace hook
-4. Runs bootstrap — hooks execute in registration order (workspace creation, etc.)
+3. Creates Bootstrap, registers hooks: workspace, session recovery
+4. Runs bootstrap — hooks execute in registration order (workspace creation, session DB init + crash recovery)
 5. If bootstrap fails → catch BootstrapError, print to stderr, exit
 6. Reads final settings from SettingsManager
-7. Creates Coordinator with allowed_tools, model, and cwd=workspace_path from config
-8. Enters coordinator async context (connects SDK client)
-9. If connection fails → catch SDK error, print to stderr, exit
-10. Creates channel (REPL) with coordinator reference and history path from config
-11. Channel enters its main loop
+7. Retrieves session repository and registry from bootstrap extras
+8. Creates Coordinator with allowed_tools, model, cwd=workspace_path, and registry
+9. Enters coordinator async context (connects SDK client)
+10. If connection fails → catch SDK error, print to stderr, exit
+11. Creates channel (REPL) with coordinator reference and history path from config
+12. Channel enters its main loop
+13. finally: disposes session repository engine (always runs, even on error)
 ```
 
 ### Shutdown flow
 
 ```
 1. Channel signals exit (user action or non-recoverable error)
-2. Coordinator async context exits (disconnects SDK client)
+2a. Coordinator __aexit__ closes active persistent session (if any; errors logged, not propagated)
+2b. Coordinator disconnects SDK client
 3. SDK client disconnects, CLI process terminates
-4. asyncio.run() completes
+4. finally block: session repository engine disposed
+5. asyncio.run() completes
 ```
 
 ## Key Decisions

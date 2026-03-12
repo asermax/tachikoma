@@ -182,7 +182,7 @@ Explicitly out of scope for v1:
 - A git-managed directory containing all persistent data (memories, core context files, skill definitions, configuration)
 - Changes committed automatically for version history and rollback
 - Markdown files for memories with semantic search for retrieval (embedding model TBD)
-- File-based — no database for v1
+- File-based — SQLite (embedded file-based database) is used where query capabilities are needed, keeping the single-file, no-server-process constraint
 
 **External Systems:**
 - Telegram Bot API (communication)
