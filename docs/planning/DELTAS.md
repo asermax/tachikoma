@@ -92,7 +92,7 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 **Description**: Before the coordinator processes a user message, automatically gather and inject relevant context so responses are informed by past interactions. This delta delivers two things: a reusable, pluggable pre-processing pipeline that runs context providers in parallel before the agent sees a message, and the first provider — a memory context provider that searches stored memories using semantic similarity to find context relevant to the current message. The pipeline architecture must support adding more providers later (e.g., calendar, email, notes) without modifying the core pipeline. Retrieved memories are injected into the coordinator's context, enabling the assistant to reference past conversations, known preferences, and prior decisions naturally.
 
 ### DLT-008: Extract and store memories from conversations
-**Status**: ✓ Spec
+**Status**: ⧗ Design
 **Depends on**: None
 **Priority**: 2 (High)
 **Complexity**: Hard
