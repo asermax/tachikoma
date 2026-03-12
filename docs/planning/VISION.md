@@ -42,8 +42,8 @@ An opinionated personal assistant built on Claude Code SDK that uses a delegatio
 **Steps**:
 1. Boundary detection closes the current session in the session registry — either via topic analysis on an incoming message or inactivity timeout when the user goes silent
 2. Session closure triggers the post-processing pipeline with the completed conversation
-3. Extracts new facts, decisions, preferences, and patterns
-4. Stores memories as written documents (not embeddings or key-value pairs), linked back to the source session
+3. Separate processors run in parallel for each memory type — each forks the original session and asks the agent to extract and manage its memory category
+4. Stores memories as written documents (not embeddings or key-value pairs) in type-organized subdirectories, linked back to the source session
 5. Memories are available for pre-processing retrieval in future conversations
 
 **Result**: The assistant learns from every interaction without explicit user action
@@ -89,7 +89,7 @@ An opinionated personal assistant built on Claude Code SDK that uses a delegatio
 
 **Pre/Post Processing Pipeline:**
 - Pre-processing: inject relevant memories before the agent sees a message
-- Post-processing: extract facts, decisions, and preferences after a conversation ends
+- Post-processing: extract and manage memories after a conversation ends — separate processors per memory type, running in parallel via session forking
 - Context providers as pluggable agents (memory provider and skills provider for v1, extensible for more)
 
 **Skills System:**
@@ -100,7 +100,7 @@ An opinionated personal assistant built on Claude Code SDK that uses a delegatio
 **Memory System:**
 - Store memories as written documents (markdown files)
 - Retrieve relevant memories during pre-processing via semantic search
-- Simple memory types: facts, preferences, decisions, patterns
+- Memory types: episodic (date-stamped, rewritable summaries), facts (named files, updatable), preferences (named files, updatable)
 - Time-based relevance (recent memories weighted higher)
 
 **Proactive Behavior:**
