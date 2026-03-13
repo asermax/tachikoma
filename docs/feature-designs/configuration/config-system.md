@@ -57,10 +57,13 @@ sequenceDiagram
 
     Main->>Boot: Bootstrap(settings_manager)
     Main->>Boot: register("workspace", workspace_hook)
+    Main->>Boot: register("logging", logging_hook)
     Main->>Boot: run()
     Boot->>Boot: workspace_hook(ctx)
     Note over Boot: Creates workspace dirs if needed
     Note over Boot: May update settings via ctx.settings_manager
+    Boot->>Boot: logging_hook(ctx)
+    Note over Boot: Creates logs/ dir, configures loguru
 
     Main->>Config: settings_manager.settings (final snapshot)
     Main->>Coord: Coordinator(allowed_tools=..., model=..., cwd=workspace_path)
@@ -76,9 +79,12 @@ Settings (root, frozen)
 ├── workspace: WorkspaceSettings
 │   ├── path: Path = ~/tachikoma
 │   └── data_path: Path (computed property: self.path / ".tachikoma")
-└── agent: AgentSettings
-    ├── model: str | None = None (SDK default)
-    └── allowed_tools: list[str] = ["Read", "Glob", "Grep"]
+├── agent: AgentSettings
+│   ├── model: str | None = None (SDK default)
+│   └── allowed_tools: list[str] = ["Read", "Glob", "Grep"]
+└── logging: LoggingSettings
+    ├── level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = "INFO"
+    └── console: bool = false
 ```
 
 All models use `ConfigDict(frozen=True, extra="ignore")`. Frozen prevents accidental mutation. Extra="ignore" provides forward compatibility — unknown TOML keys are silently ignored.
@@ -97,7 +103,7 @@ SettingsManager
 └── save() → writes to file, reloads frozen Settings
 ```
 
-Future deltas add new sections as needed (e.g., a `secrets` section with `telegram_bot_token`).
+New sections are added as needed (e.g., a future `secrets` section with `telegram_bot_token`).
 
 ## Data Flow
 
