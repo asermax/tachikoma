@@ -15,6 +15,8 @@ from loguru import logger
 
 from tachikoma.adapter import adapt
 from tachikoma.events import AgentEvent, Error, Result
+from tachikoma.post_processing import PostProcessingPipeline
+from tachikoma.sessions.model import Session
 from tachikoma.sessions.registry import SessionRegistry
 
 _log = logger.bind(component="coordinator")
@@ -53,6 +55,7 @@ class Coordinator:
         cwd: Path | None = None,
         registry: SessionRegistry | None = None,
         system_prompt: str | None = None,
+        pipeline: PostProcessingPipeline | None = None,
     ) -> None:
         # Build SystemPromptPreset when system_prompt is provided
         sdk_system_prompt = None
@@ -72,6 +75,7 @@ class Coordinator:
         self._cwd = cwd
         self._client: ClaudeSDKClient | None = None
         self._registry = registry
+        self._pipeline = pipeline
 
     async def __aenter__(self) -> "Coordinator":
         self._client = ClaudeSDKClient(self._options)
@@ -84,7 +88,8 @@ class Coordinator:
         exc_val: BaseException | None,
         exc_tb: TracebackType | None,
     ) -> None:
-        # Close the active session on clean shutdown before disconnecting
+        # Capture active session reference BEFORE close_session (which clears _active_session)
+        active: Session | None = None
         if self._registry is not None:
             active = await self._registry.get_active_session()
 
@@ -93,6 +98,22 @@ class Coordinator:
                     await self._registry.close_session(active.id)
                 except Exception as exc:
                     _log.exception("Failed to close session on shutdown: err={err}", err=str(exc))
+
+        # Run post-processing pipeline after session close, before SDK disconnect
+        # Pipeline uses standalone query() which is independent of ClaudeSDKClient
+        if active is not None and self._pipeline is not None:
+            if active.sdk_session_id is not None:
+                try:
+                    await self._pipeline.run(active)
+                except Exception as exc:
+                    _log.exception(
+                        "Post-processing pipeline failed: err={err}",
+                        err=str(exc),
+                    )
+            else:
+                _log.warning(
+                    "Skipping post-processing: session has no SDK session ID"
+                )
 
         if self._client is not None:
             await self._client.disconnect()
