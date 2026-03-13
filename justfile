@@ -21,5 +21,9 @@ fmt:
 typecheck:
     uv run ty check
 
+# Install all dependencies
+install:
+    uv sync --all-groups
+
 # Run all quality gates
 check: lint typecheck test
