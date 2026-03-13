@@ -170,10 +170,10 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 
 ### DLT-020: Git module for workspace version tracking
 **Status**: ✓ Spec
-**Depends on**: None
+**Depends on**: DLT-008
 **Priority**: 2 (High)
 **Complexity**: Easy
-**Description**: A git module that hooks into the workspace initialization process (DLT-023) to set up the workspace directory as a git repository and provides tools for version tracking. The module initializes the repo during first-run setup (git init, sensible .gitignore), and exposes a commit utility that other components call after writing files to maintain automatic version history. Every write operation that modifies workspace files results in an automatic commit with a descriptive message, providing built-in history and the ability to roll back to any prior state. Includes startup validation that the workspace is a healthy git repo. The git integration is intentionally simple for v1 — linear history on a single branch, no merging, no PRs. Advanced workspace management (branching, two-tier change model, conflict resolution) is deferred to post-v1.
+**Description**: A git post-processor that plugs into DLT-008's post-processing pipeline and runs in a finalization phase — after all other processors complete. It spawns a Haiku agent via a fresh `query()` call that inspects uncommitted workspace changes using bash git commands, groups them into cohesive sets (e.g., episodic memories in one commit, facts in another, project config in a third), and creates one descriptive commit per group. A bootstrap hook initializes the workspace as a git repo on first run with a fixed committer identity. Extends the pipeline to support phased execution (main → finalize). The git integration is intentionally simple for v1 — linear history on a single branch, no merging, no PRs.
 
 ### DLT-021: Skill system with detection and pre-processing injection
 **Status**: ✗ Defined
