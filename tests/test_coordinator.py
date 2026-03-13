@@ -22,7 +22,6 @@ from helpers import make_assistant, make_result
 
 from tachikoma.coordinator import Coordinator, _derive_transcript_path
 from tachikoma.events import Error, Result, TextChunk, ToolActivity
-from tachikoma.post_processing import PostProcessingPipeline
 from tachikoma.sessions.errors import SessionRepositoryError
 from tachikoma.sessions.model import Session
 
