@@ -86,9 +86,11 @@ class TestCoordinatorSendMessage:
     async def test_yields_tool_activity_for_tool_use(self, mock_sdk) -> None:
         client, _ = mock_sdk
         client.receive_messages.return_value = _mock_messages(
-            make_assistant([
-                ToolUseBlock(id="t1", name="Read", input={"file_path": "main.py"}),
-            ]),
+            make_assistant(
+                [
+                    ToolUseBlock(id="t1", name="Read", input={"file_path": "main.py"}),
+                ]
+            ),
             make_result(),
         )
 
@@ -364,3 +366,47 @@ class TestTranscriptPathDerivation:
 
         home = str(Path.home())
         assert result == f"{home}/.claude/projects/a-b-c-d/deep-sess.jsonl"
+
+
+class TestCoordinatorSystemPrompt:
+    """Tests for DLT-005: system prompt integration in the coordinator."""
+
+    async def test_system_prompt_provided_sets_sdk_system_prompt(
+        self, mock_sdk
+    ) -> None:
+        """AC: Given system_prompt is provided → system_prompt is a SystemPromptPreset."""
+        _, mock_cls = mock_sdk
+
+        async with Coordinator(system_prompt="Custom prompt"):
+            pass
+
+        options = mock_cls.call_args[0][0]
+        assert options.system_prompt is not None
+        assert options.system_prompt["type"] == "preset"
+        assert options.system_prompt["preset"] == "claude_code"
+        assert options.system_prompt["append"] == "Custom prompt"
+
+    async def test_system_prompt_none_leaves_unset(
+        self, mock_sdk
+    ) -> None:
+        """AC: Given system_prompt is None → ClaudeAgentOptions.system_prompt is None."""
+        _, mock_cls = mock_sdk
+
+        async with Coordinator():
+            pass
+        options = mock_cls.call_args[0][0]
+        assert options.system_prompt is None
+
+    async def test_system_prompt_does_not_break_send_message(self, mock_sdk) -> None:
+        """AC: Given system_prompt is provided → existing coordinator behavior still works."""
+        client, _ = mock_sdk
+        client.receive_messages.return_value = _mock_messages(
+            make_assistant([TextBlock(text="Hello!")]),
+            make_result(),
+        )
+        async with Coordinator(system_prompt="Custom prompt") as coord:
+            events = [e async for e in coord.send_message("hi")]
+
+        text_events = [e for e in events if isinstance(e, TextChunk)]
+        assert len(text_events) == 1
+        assert text_events[0].text == "Hello!"
