@@ -5,11 +5,13 @@ import sys
 
 from claude_agent_sdk import CLIConnectionError, CLINotFoundError, ProcessError
 
-from tachikoma.bootstrap import Bootstrap, BootstrapError, workspace_hook
+from tachikoma.bootstrap import Bootstrap, BootstrapError
 from tachikoma.config import SettingsManager
+from tachikoma.context import context_hook
 from tachikoma.coordinator import Coordinator
 from tachikoma.repl import Repl
 from tachikoma.sessions import session_recovery_hook
+from tachikoma.workspace import workspace_hook
 
 
 async def main() -> None:
@@ -17,6 +19,7 @@ async def main() -> None:
 
     bootstrap = Bootstrap(settings_manager)
     bootstrap.register("workspace", workspace_hook)
+    bootstrap.register("context", context_hook)
     bootstrap.register("sessions", session_recovery_hook)
 
     try:
@@ -31,12 +34,16 @@ async def main() -> None:
     repository = bootstrap.extras["session_repository"]
     registry = bootstrap.extras["session_registry"]
 
+    # Get the system prompt from the context hook (if available)
+    system_prompt = bootstrap.extras.get("system_prompt")
+
     try:
         async with Coordinator(
             allowed_tools=settings.agent.allowed_tools,
             model=settings.agent.model,
             cwd=settings.workspace.path,
             registry=registry,
+            system_prompt=system_prompt,
         ) as coordinator:
             repl = Repl(coordinator, history_path=settings.workspace.path / "repl_history")
             await repl.run()

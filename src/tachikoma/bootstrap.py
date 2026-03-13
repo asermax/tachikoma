@@ -55,27 +55,3 @@ class Bootstrap:
                 await hook(self._context)
             except Exception as exc:
                 raise BootstrapError(f"Hook '{name}' failed: {exc}") from exc
-
-
-async def workspace_hook(ctx: BootstrapContext) -> None:
-    """Create workspace root and .tachikoma/ data folder if missing."""
-    settings = ctx.settings_manager.settings
-    workspace_path = settings.workspace.path
-
-    try:
-        workspace_path.mkdir(parents=True, exist_ok=True)
-    except FileExistsError:
-        raise RuntimeError(
-            f"Workspace path exists but is not a directory: {workspace_path}"
-        )
-    except PermissionError as exc:
-        raise RuntimeError(
-            f"Cannot create workspace directory: Permission denied: {workspace_path}"
-        ) from exc
-
-    try:
-        settings.workspace.data_path.mkdir(exist_ok=True)
-    except PermissionError as exc:
-        raise RuntimeError(
-            f"Cannot create data directory: Permission denied: {settings.workspace.data_path}"
-        ) from exc
