@@ -2,6 +2,7 @@
 
 Tests for DLT-001: Core agent architecture.
 Tests for DLT-027: Session tracking integration.
+Tests for DLT-008: Post-processing pipeline integration.
 Mocks ClaudeSDKClient to test the coordinator's end-to-end behavior.
 """
 
@@ -410,3 +411,144 @@ class TestCoordinatorSystemPrompt:
         text_events = [e for e in events if isinstance(e, TextChunk)]
         assert len(text_events) == 1
         assert text_events[0].text == "Hello!"
+
+
+def _make_mock_pipeline():
+    """Create a mock PostProcessingPipeline with sensible defaults."""
+    pipeline = MagicMock()
+    pipeline.run = AsyncMock()
+    return pipeline
+
+
+class TestCoordinatorPostProcessing:
+    """Tests for DLT-008: post-processing pipeline integration."""
+
+    async def test_triggers_pipeline_on_shutdown_with_valid_session(self, mock_sdk) -> None:
+        """AC: Session with sdk_session_id triggers pipeline.run()."""
+        client, _ = mock_sdk
+        active = Session(
+            id="s1",
+            started_at=datetime.now(UTC),
+            sdk_session_id="sdk-xyz",
+        )
+        registry = _make_mock_registry(active_session=active)
+        pipeline = _make_mock_pipeline()
+
+        async with Coordinator(registry=registry, pipeline=pipeline):
+            pass
+
+        pipeline.run.assert_awaited_once()
+        # Verify the session passed to pipeline.run has the sdk_session_id
+        session_arg = pipeline.run.call_args[0][0]
+        assert session_arg.sdk_session_id == "sdk-xyz"
+
+    async def test_pipeline_receives_session_with_sdk_session_id(self, mock_sdk) -> None:
+        """AC: Session passed to pipeline has sdk_session_id captured before close."""
+        client, _ = mock_sdk
+        active = Session(
+            id="s2",
+            started_at=datetime.now(UTC),
+            sdk_session_id="sdk-before-close",
+        )
+        registry = _make_mock_registry(active_session=active)
+        pipeline = _make_mock_pipeline()
+
+        async with Coordinator(registry=registry, pipeline=pipeline):
+            pass
+
+        # The session passed to pipeline.run should have the sdk_session_id
+        session_arg = pipeline.run.call_args[0][0]
+        assert session_arg.id == "s2"
+        assert session_arg.sdk_session_id == "sdk-before-close"
+
+    async def test_skips_pipeline_when_no_sdk_session_id(self, mock_sdk) -> None:
+        """AC: Session without sdk_session_id does not trigger pipeline."""
+        client, _ = mock_sdk
+        # Session exists but has no sdk_session_id (interrupted session)
+        active = Session(
+            id="s3",
+            started_at=datetime.now(UTC),
+            sdk_session_id=None,
+        )
+        registry = _make_mock_registry(active_session=active)
+        pipeline = _make_mock_pipeline()
+
+        async with Coordinator(registry=registry, pipeline=pipeline):
+            pass
+
+        pipeline.run.assert_not_awaited()
+
+    async def test_skips_pipeline_when_no_pipeline_provided(self, mock_sdk) -> None:
+        """AC: No pipeline parameter means shutdown works normally."""
+        client, _ = mock_sdk
+        active = Session(
+            id="s4",
+            started_at=datetime.now(UTC),
+            sdk_session_id="sdk-123",
+        )
+        registry = _make_mock_registry(active_session=active)
+
+        # Should not raise
+        async with Coordinator(registry=registry):
+            pass
+
+    async def test_pipeline_failure_does_not_block_shutdown(self, mock_sdk) -> None:
+        """AC: Pipeline errors are caught — disconnect still happens."""
+        client, _ = mock_sdk
+        active = Session(
+            id="s5",
+            started_at=datetime.now(UTC),
+            sdk_session_id="sdk-fail",
+        )
+        registry = _make_mock_registry(active_session=active)
+        pipeline = _make_mock_pipeline()
+        pipeline.run.side_effect = RuntimeError("Pipeline crashed")
+
+        async with Coordinator(registry=registry, pipeline=pipeline):
+            pass
+
+        # Disconnect should still have been called despite pipeline failure
+        client.disconnect.assert_awaited_once()
+
+    async def test_pipeline_runs_after_session_close_before_disconnect(self, mock_sdk) -> None:
+        """AC: Ordering is close_session → pipeline.run → disconnect."""
+        client, _ = mock_sdk
+        active = Session(
+            id="s6",
+            started_at=datetime.now(UTC),
+            sdk_session_id="sdk-order",
+        )
+        registry = _make_mock_registry(active_session=active)
+        pipeline = _make_mock_pipeline()
+
+        # Track call order
+        call_order = []
+
+        async def track_close(session_id: str) -> None:
+            call_order.append("close")
+
+        async def track_run(session: Session) -> None:
+            call_order.append("pipeline")
+
+        async def track_disconnect() -> None:
+            call_order.append("disconnect")
+
+        registry.close_session.side_effect = track_close
+        pipeline.run.side_effect = track_run
+        client.disconnect.side_effect = track_disconnect
+
+        async with Coordinator(registry=registry, pipeline=pipeline):
+            pass
+
+        assert call_order == ["close", "pipeline", "disconnect"]
+
+    async def test_skips_pipeline_when_no_active_session(self, mock_sdk) -> None:
+        """AC: No active session means pipeline is not called."""
+        client, _ = mock_sdk
+        registry = _make_mock_registry(active_session=None)
+        pipeline = _make_mock_pipeline()
+
+        async with Coordinator(registry=registry, pipeline=pipeline):
+            pass
+
+        pipeline.run.assert_not_awaited()

@@ -7,4 +7,3 @@ dist/
 .pytest_cache/
 .coverage
 htmlcov/
-.claude/scheduled_tasks.lock

@@ -206,5 +206,5 @@ The `BootstrapContext` is frozen (fields can't be reassigned), but `settings_man
 
 ## Notes
 
-- The session recovery hook is the second hook registered alongside the workspace hook; future hooks (DLT-020 git module, DLT-005 core context files) will follow the same pattern
+- Hook registration order in `__main__.py`: workspace → context → memory → sessions. Future hooks follow the same registration pattern.
 - The hook registration order in `__main__.py` serves as the explicit documentation of initialization sequence — no magic discovery

@@ -1,0 +1,70 @@
+"""Preferences memory processor.
+
+Extracts user preferences from conversations.
+"""
+
+from pathlib import Path
+
+from tachikoma.post_processing import PostProcessor, fork_and_consume
+from tachikoma.sessions.model import Session
+
+PREFERENCES_PROMPT = """You are a memory extraction agent. Your task is to analyze
+the conversation and extract or update the user's expressed preferences.
+
+## Instructions
+
+1. First, read the existing files in the `memories/preferences/` directory to
+   see what preferences are already stored.
+
+2. Analyze the conversation for preference-related statements the user made:
+   - How they like things done
+   - Their preferred approaches or styles
+   - Things they want to avoid
+   - Communication preferences
+   - Tool or workflow preferences
+   - Any subjective choices they've expressed
+
+3. Manage the preference files:
+   - Create new files with descriptive names (e.g., `code-style.md`,
+     `communication.md`, `workflow.md`)
+   - Update existing files when preferences change or are refined
+   - Delete files for preferences that are no longer accurate
+
+4. Each preference file should contain:
+   - A clear statement of the preference
+   - Any relevant context or examples
+   - When appropriate, how strongly the preference is held
+
+5. **Important constraints**:
+   - Only create or modify files within `memories/preferences/`
+   - Use descriptive, topic-based filenames (not dates)
+   - If no preference-related information emerged from the conversation,
+     it is perfectly acceptable to create no files
+   - Do not infer preferences from silence — only record what the user
+     actually expressed
+
+Remember: These memories help the assistant tailor its approach to the user's
+preferences. Focus on genuine, stated preferences rather than assumptions."""
+
+
+class PreferencesProcessor(PostProcessor):
+    """Post-processor for extracting preference memories.
+
+    Creates or updates topic-named files in memories/preferences/.
+    """
+
+    def __init__(self, cwd: Path) -> None:
+        """Initialize the processor.
+
+        Args:
+            cwd: The workspace directory for the forked agent.
+        """
+        self._cwd = cwd
+
+    async def process(self, session: Session) -> None:
+        """Extract preference memories from the session.
+
+        Args:
+            session: The closed session to process.
+        """
+        await fork_and_consume(session, PREFERENCES_PROMPT, self._cwd)

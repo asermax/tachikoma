@@ -9,3 +9,4 @@ System capabilities organized by domain.
 | [agent](agent/) | Core agent loop, SDK integration, and message processing |
 | [channels](channels/) | Communication interfaces for interacting with the agent |
 | [configuration](configuration/) | Application configuration management |
+| [memory](memory/) | Automatic memory extraction from conversations |

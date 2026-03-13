@@ -9,6 +9,13 @@ from tachikoma.bootstrap import Bootstrap, BootstrapError
 from tachikoma.config import SettingsManager
 from tachikoma.context import context_hook
 from tachikoma.coordinator import Coordinator
+from tachikoma.memory import (
+    EpisodicProcessor,
+    FactsProcessor,
+    PreferencesProcessor,
+    memory_hook,
+)
+from tachikoma.post_processing import PostProcessingPipeline
 from tachikoma.repl import Repl
 from tachikoma.sessions import session_recovery_hook
 from tachikoma.workspace import workspace_hook
@@ -20,6 +27,7 @@ async def main() -> None:
     bootstrap = Bootstrap(settings_manager)
     bootstrap.register("workspace", workspace_hook)
     bootstrap.register("context", context_hook)
+    bootstrap.register("memory", memory_hook)
     bootstrap.register("sessions", session_recovery_hook)
 
     try:
@@ -37,6 +45,12 @@ async def main() -> None:
     # Get the system prompt from the context hook (if available)
     system_prompt = bootstrap.extras.get("system_prompt")
 
+    # Create and configure the post-processing pipeline
+    pipeline = PostProcessingPipeline()
+    pipeline.register(EpisodicProcessor(cwd=settings.workspace.path))
+    pipeline.register(FactsProcessor(cwd=settings.workspace.path))
+    pipeline.register(PreferencesProcessor(cwd=settings.workspace.path))
+
     try:
         async with Coordinator(
             allowed_tools=settings.agent.allowed_tools,
@@ -44,6 +58,7 @@ async def main() -> None:
             cwd=settings.workspace.path,
             registry=registry,
             system_prompt=system_prompt,
+            pipeline=pipeline,
         ) as coordinator:
             repl = Repl(coordinator, history_path=settings.workspace.path / "repl_history")
             await repl.run()

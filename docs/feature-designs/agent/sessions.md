@@ -22,7 +22,7 @@ The system needs a persistent record of conversation sessions so that downstream
 **Interactions:**
 - Coordinator (core-architecture): creates sessions on first message, updates metadata on Result events, closes on shutdown
 - Boundary detectors (future): signal session close
-- Post-processing pipelines (future): query completed sessions for analysis
+- Post-processing pipeline: receives `Session` as input on session close (see [memory-extraction design](../../feature-designs/memory/memory-extraction.md))
 - Bootstrap system (workspace-bootstrap): recovery hook runs on startup
 
 ## Design Overview
@@ -121,7 +121,7 @@ sequenceDiagram
 **Session close mechanism (pre-boundary-detection):**
 
 Before boundary detectors are implemented, sessions close via two mechanisms:
-1. **Coordinator disconnect**: On clean shutdown, the coordinator's `__aexit__` calls `registry.close_session()`.
+1. **Coordinator disconnect**: On clean shutdown, the coordinator's `__aexit__` calls `registry.close_session()`, then triggers the post-processing pipeline with the closed session if it has a valid `sdk_session_id`.
 2. **Crash recovery**: On next launch, the bootstrap recovery hook closes interrupted sessions.
 
 Once boundary detectors are implemented, they become the primary close signals. The coordinator disconnect remains as a final safety net.
