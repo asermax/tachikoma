@@ -22,6 +22,8 @@ The core agent loop: receive a user message, pass it to the Claude agent via the
 | R4 | Error handling: distinguish between transient failures that allow continued use and fatal failures that require stopping |
 | R5 | Agent operates from workspace directory via SDK cwd option |
 | R6 | Post-processing pipeline: on session close, run registered processors to analyze the completed conversation |
+| R7 | Agent has unrestricted tool access without user confirmation prompts |
+| R8 | Tachikoma is the sole memory system — no competing memory mechanisms from the underlying SDK |
 
 ## Behaviors
 
@@ -83,6 +85,20 @@ After a session closes, the coordinator triggers a registered post-processing pi
 - Given the pipeline itself fails, when the coordinator is shutting down, then the error is logged and shutdown continues (SDK disconnect proceeds)
 - Given no pipeline is registered, when a session closes, then shutdown proceeds directly to SDK disconnect
 - Given a pipeline is already running from a previous session close, when another session close triggers the pipeline, then the new run is serialized (awaits the previous one before starting)
+
+### Unrestricted Tool Access (R7)
+
+The agent operates with full tool access, bypassing Claude Code's default permission prompts.
+
+**Acceptance Criteria**:
+- Given the coordinator is created, then `ClaudeAgentOptions.permission_mode` is set to `"bypassPermissions"`
+
+### Auto-Memory Disabled (R8)
+
+Claude Code's built-in auto-memory feature is disabled so that Tachikoma's own memory system (context files + post-processing extraction) is the sole memory mechanism.
+
+**Acceptance Criteria**:
+- Given the coordinator is created, then `ClaudeAgentOptions.env` includes `CLAUDE_CODE_DISABLE_AUTO_MEMORY=1`
 
 ### Error Recovery (R4)
 

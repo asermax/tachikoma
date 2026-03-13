@@ -68,7 +68,7 @@ The **Message Adapter** is a pure transformation layer — it maps SDK `Message`
 | Layer/Component | Responsibility | Key Decisions |
 |-----------------|----------------|---------------|
 | `src/tachikoma/__main__.py` | CLI entry point: loads config via SettingsManager, runs bootstrap hooks (workspace, logging, context, memory, session recovery), retrieves session objects from bootstrap extras, wires up coordinator + channel with try/finally for engine disposal, runs `asyncio.run(main())` | Loads config via SettingsManager, runs bootstrap, wires up coordinator + channel; enables `python -m tachikoma` |
-| `src/tachikoma/coordinator.py` | Wraps `ClaudeSDKClient`, manages session lifecycle, exposes `send_message()`. Optionally integrates with `SessionRegistry` for persistent session tracking (see [sessions design](sessions.md)) and `PostProcessingPipeline` for post-conversation analysis (see [memory-extraction design](../../feature-designs/memory/memory-extraction.md)) | Async context manager pattern; owns SDK client instance; optional registry and pipeline dependencies |
+| `src/tachikoma/coordinator.py` | Wraps `ClaudeSDKClient`, manages session lifecycle, exposes `send_message()`. Accepts `permission_mode` and `env` for SDK configuration. Optionally integrates with `SessionRegistry` for persistent session tracking (see [sessions design](sessions.md)) and `PostProcessingPipeline` for post-conversation analysis (see [memory-extraction design](../../feature-designs/memory/memory-extraction.md)) | Async context manager pattern; owns SDK client instance; optional registry and pipeline dependencies; passes `permission_mode` and `env` through to `ClaudeAgentOptions` |
 | `src/tachikoma/events.py` | `AgentEvent` domain type hierarchy | Dataclasses; no SDK dependency |
 | `src/tachikoma/adapter.py` | Transforms SDK messages to `AgentEvent`s | Pure function, stateless; only module that imports SDK message types |
 
@@ -178,7 +178,7 @@ AgentEvent (base)
 6. Reads final settings from SettingsManager
 7. Retrieves session repository, registry, and system_prompt from bootstrap extras
 8. Creates PostProcessingPipeline, registers memory processors (episodic, facts, preferences) with workspace_path
-9. Creates Coordinator with allowed_tools, model, cwd=workspace_path, registry, system_prompt, and pipeline
+9. Creates Coordinator with allowed_tools, model, cwd=workspace_path, registry, system_prompt, pipeline, permission_mode="bypassPermissions", and env={"CLAUDE_CODE_DISABLE_AUTO_MEMORY": "1"}
 10. Enters coordinator async context (connects SDK client)
 11. If connection fails → catch SDK error, log + print to stderr, exit
 12. Creates channel (REPL) with coordinator reference and history path from config
@@ -227,12 +227,11 @@ AgentEvent (base)
 
 ### Restricted tool set via allowed_tools
 
-**Choice**: Use `allowed_tools=["Read", "Glob", "Grep"]` to pre-approve read-only file tools
-**Why**: The agent is a conversationalist with basic file access. These tools work without prompting; any unlisted tools fall through to the default permission mode. The tool list is configured via the configuration system (`agent.allowed_tools`) with these values as defaults.
+**Choice**: Use `allowed_tools=["Read", "Glob", "Grep"]` to constrain which tools the agent can use
+**Why**: The `allowed_tools` list limits tool visibility — the agent can only use tools in this list. Combined with `permission_mode="bypassPermissions"`, the agent uses these tools without any prompts and cannot access tools outside this list. The tool list is configured via the configuration system (`agent.allowed_tools`) with these values as defaults.
 
 **Consequences**:
-- Pro: Read-only tools work without interruption
-- Pro: User prompted for anything beyond read access
+- Pro: Agent's tool access is scoped to a controlled set
 - Pro: Tool list is configurable without code changes
 
 ### SDK cwd for workspace directory (not os.chdir)
@@ -247,6 +246,29 @@ AgentEvent (base)
 - Pro: SDK natively supports it
 - Pro: Coordinator explicitly declares its working directory
 - Con: Requires cwd parameter on Coordinator constructor
+
+### Bypass permissions for the main session
+
+**Choice**: Set `permission_mode="bypassPermissions"` on the main coordinator session
+**Why**: Tachikoma is a personal assistant that needs full tool access to be useful — reading/writing files, running commands, etc. The default permission mode would prompt the user for each tool invocation, which defeats the purpose of an autonomous assistant.
+
+**Consequences**:
+- Pro: Agent can use all tools without user prompts
+- Pro: Matches the UX expectation of a personal assistant
+- Con: User must trust the system prompt and agent behavior
+
+### Auto-memory disabled via environment variable
+
+**Choice**: Pass `CLAUDE_CODE_DISABLE_AUTO_MEMORY=1` through `ClaudeAgentOptions.env`
+**Why**: Claude Code has a built-in auto-memory feature that writes to `~/.claude/projects/<project>/memory/`. This conflicts with Tachikoma's own memory system (context files + post-processing extraction). The env var is the official mechanism (available since Claude Code v2.1.59) passed to the CLI subprocess.
+**Alternatives Considered**:
+- CLAUDE.md instruction to not use memory: Unreliable, prompt-level control
+- No action: Would cause duplicate/conflicting memory systems
+
+**Consequences**:
+- Pro: Single memory system, no conflicts
+- Pro: Official SDK mechanism, clean implementation
+- Con: Depends on env var contract with Claude Code CLI
 
 ### Message-level streaming
 
