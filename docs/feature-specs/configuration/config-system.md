@@ -28,12 +28,13 @@ The `ANTHROPIC_API_KEY` is not managed by this system — the Claude SDK reads i
 
 ### Configuration Loading (R1, R2)
 
-The system loads parameters from the TOML config file at startup, applying defaults for any unspecified values.
+The system loads parameters from the TOML config file at startup, applying defaults for any unspecified values. Supported sections include `[workspace]`, `[agent]`, and `[logging]`.
 
 **Acceptance Criteria**:
 - Given a valid TOML config file, when the application starts, then all parameters are loaded and available to components
 - Given a config file with no `[workspace]` section, when loaded, then `workspace.path` defaults to `~/tachikoma`
 - Given a config file with no `[agent]` section, when loaded, then `agent.model` defaults to `None` (SDK default) and `agent.allowed_tools` defaults to `["Read", "Glob", "Grep"]`
+- Given a config file with no `[logging]` section, when loaded, then `logging.level` defaults to `"INFO"` and `logging.console` defaults to `false`
 - Given a completely empty config file, when loaded, then all non-secret parameters use their defaults and the application starts successfully
 
 ### Startup Validation (R3)

@@ -4,11 +4,13 @@ import asyncio
 import sys
 
 from claude_agent_sdk import CLIConnectionError, CLINotFoundError, ProcessError
+from loguru import logger
 
 from tachikoma.bootstrap import Bootstrap, BootstrapError
 from tachikoma.config import SettingsManager
 from tachikoma.context import context_hook
 from tachikoma.coordinator import Coordinator
+from tachikoma.logging import logging_hook
 from tachikoma.memory import (
     EpisodicProcessor,
     FactsProcessor,
@@ -20,12 +22,15 @@ from tachikoma.repl import Repl
 from tachikoma.sessions import session_recovery_hook
 from tachikoma.workspace import workspace_hook
 
+_log = logger.bind(component="main")
+
 
 async def main() -> None:
     settings_manager = SettingsManager()
 
     bootstrap = Bootstrap(settings_manager)
     bootstrap.register("workspace", workspace_hook)
+    bootstrap.register("logging", logging_hook)
     bootstrap.register("context", context_hook)
     bootstrap.register("memory", memory_hook)
     bootstrap.register("sessions", session_recovery_hook)
@@ -33,6 +38,7 @@ async def main() -> None:
     try:
         await bootstrap.run()
     except BootstrapError as e:
+        _log.error("Bootstrap failed: err={err}", err=str(e))
         print(str(e), file=sys.stderr)
         sys.exit(1)
 
@@ -41,6 +47,12 @@ async def main() -> None:
     # Retrieve the session objects created inside the recovery hook
     repository = bootstrap.extras["session_repository"]
     registry = bootstrap.extras["session_registry"]
+
+    _log.info(
+        "Startup complete: workspace={ws}, log_level={level}",
+        ws=settings.workspace.path,
+        level=settings.logging.level,
+    )
 
     # Get the system prompt from the context hook (if available)
     system_prompt = bootstrap.extras.get("system_prompt")
@@ -63,6 +75,7 @@ async def main() -> None:
             repl = Repl(coordinator, history_path=settings.workspace.path / "repl_history")
             await repl.run()
     except (CLINotFoundError, CLIConnectionError, ProcessError) as e:
+        _log.error("Connection failed: err={err}", err=str(e))
         print(str(e), file=sys.stderr)
         sys.exit(1)
     finally:

@@ -67,7 +67,7 @@ The **Message Adapter** is a pure transformation layer — it maps SDK `Message`
 
 | Layer/Component | Responsibility | Key Decisions |
 |-----------------|----------------|---------------|
-| `src/tachikoma/__main__.py` | CLI entry point: loads config via SettingsManager, runs bootstrap (workspace + session recovery hooks), retrieves session objects from bootstrap extras, wires up coordinator + channel with try/finally for engine disposal, runs `asyncio.run(main())` | Loads config via SettingsManager, runs bootstrap, wires up coordinator + channel; enables `python -m tachikoma` |
+| `src/tachikoma/__main__.py` | CLI entry point: loads config via SettingsManager, runs bootstrap hooks (workspace, logging, context, memory, session recovery), retrieves session objects from bootstrap extras, wires up coordinator + channel with try/finally for engine disposal, runs `asyncio.run(main())` | Loads config via SettingsManager, runs bootstrap, wires up coordinator + channel; enables `python -m tachikoma` |
 | `src/tachikoma/coordinator.py` | Wraps `ClaudeSDKClient`, manages session lifecycle, exposes `send_message()`. Optionally integrates with `SessionRegistry` for persistent session tracking (see [sessions design](sessions.md)) and `PostProcessingPipeline` for post-conversation analysis (see [memory-extraction design](../../feature-designs/memory/memory-extraction.md)) | Async context manager pattern; owns SDK client instance; optional registry and pipeline dependencies |
 | `src/tachikoma/events.py` | `AgentEvent` domain type hierarchy | Dataclasses; no SDK dependency |
 | `src/tachikoma/adapter.py` | Transforms SDK messages to `AgentEvent`s | Pure function, stateless; only module that imports SDK message types |
@@ -172,15 +172,15 @@ AgentEvent (base)
 ```
 1. __main__.py runs asyncio.run(main())
 2. Creates SettingsManager (loads configuration, see configuration/config-system design)
-3. Creates Bootstrap, registers hooks: workspace, context, memory, session recovery
-4. Runs bootstrap — hooks execute in registration order (workspace creation, core context init, memory directory creation, session DB init + crash recovery)
-5. If bootstrap fails → catch BootstrapError, print to stderr, exit
+3. Creates Bootstrap, registers hooks: workspace, logging, context, memory, session recovery
+4. Runs bootstrap — hooks execute in registration order (workspace creation, logging configuration, core context init, memory directory creation, session DB init + crash recovery)
+5. If bootstrap fails → catch BootstrapError, log + print to stderr, exit (if logging hook itself failed, log may not reach file)
 6. Reads final settings from SettingsManager
 7. Retrieves session repository, registry, and system_prompt from bootstrap extras
 8. Creates PostProcessingPipeline, registers memory processors (episodic, facts, preferences) with workspace_path
 9. Creates Coordinator with allowed_tools, model, cwd=workspace_path, registry, system_prompt, and pipeline
 10. Enters coordinator async context (connects SDK client)
-11. If connection fails → catch SDK error, print to stderr, exit
+11. If connection fails → catch SDK error, log + print to stderr, exit
 12. Creates channel (REPL) with coordinator reference and history path from config
 13. Channel enters its main loop
 14. finally: disposes session repository engine (always runs, even on error)

@@ -112,13 +112,6 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 **Complexity**: Easy
 **Description**: Run the assistant as a persistent background process that starts automatically on system boot and restarts on failure. This delta covers service lifecycle and process management only — it ensures the application is always running and recovers from crashes. Specific reconnection logic (Telegram) and state persistence (memory files) are handled by their respective deltas. Implementation should use standard Linux service management (e.g., systemd) appropriate for a single-user, self-hosted deployment.
 
-### DLT-013: Add structured logging for agent actions
-**Status**: ✓ Spec
-**Depends on**: DLT-012
-**Priority**: 3 (Medium)
-**Complexity**: Medium
-**Description**: Instrument the assistant with structured logging via loguru so that key agent actions — startup, message processing, coordinator lifecycle, and errors — are recorded in a consistent, machine-parseable format. Log entries include timestamps, log level, component context, and relevant metadata via keyword arguments. Logs are written to a file in the workspace data directory, configured through a bootstrap hook (DLT-023). Log level is configurable via the TOML config file (DLT-012). Follows conventions established in ADR-006 and DES-002.
-
 ### DLT-014: Add LLM observability for agent interactions
 **Status**: ✗ Defined
 **Depends on**: None

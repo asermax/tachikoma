@@ -206,5 +206,5 @@ The `BootstrapContext` is frozen (fields can't be reassigned), but `settings_man
 
 ## Notes
 
-- Hook registration order in `__main__.py`: workspace → context → memory → sessions. Future hooks follow the same registration pattern.
+- Hook registration order in `__main__.py`: workspace → logging → context → memory → sessions. Future hooks follow the same registration pattern.
 - The hook registration order in `__main__.py` serves as the explicit documentation of initialization sequence — no magic discovery

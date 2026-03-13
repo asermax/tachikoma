@@ -80,6 +80,7 @@ class Coordinator:
     async def __aenter__(self) -> "Coordinator":
         self._client = ClaudeSDKClient(self._options)
         await self._client.connect()
+        _log.info("Connected to agent service")
         return self
 
     async def __aexit__(
@@ -116,6 +117,7 @@ class Coordinator:
                 )
 
         if self._client is not None:
+            _log.info("Disconnecting from agent service")
             await self._client.disconnect()
             self._client = None
 
@@ -123,6 +125,8 @@ class Coordinator:
         """Send a user message and yield AgentEvents as the agent responds."""
         if self._client is None:
             raise RuntimeError("Coordinator is not connected. Use as an async context manager.")
+
+        _log.debug("Message received: length={n}", n=len(text))
 
         # Create a session if this is the first message in a new conversation
         active = None
@@ -173,7 +177,10 @@ class Coordinator:
                 if done:
                     break
 
+            _log.debug("Response complete")
+
         except (CLIConnectionError, ProcessError) as exc:
+            _log.error("Stream error (recoverable): err={err}", err=str(exc))
             yield Error(message=str(exc), recoverable=True)
 
     async def interrupt(self) -> None:
