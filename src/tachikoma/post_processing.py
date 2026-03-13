@@ -1,8 +1,8 @@
 """Post-processing pipeline for running processors after conversation end.
 
 Provides a reusable, pluggable pipeline that runs PostProcessor instances
-in parallel with error isolation. Used by memory extraction (DLT-008) and
-will be extended by future post-processors (DLT-018, DLT-020).
+in parallel with error isolation. Used by memory extraction processors and
+other post-conversation handlers.
 """
 
 import asyncio
