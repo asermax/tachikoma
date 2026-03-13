@@ -12,10 +12,10 @@ from tachikoma.config import SettingsManager
 from tachikoma.context import (
     CONTEXT_DIR_NAME,
     CONTEXT_FILES,
-    CONTEXT_PREAMBLE,
     DEFAULT_AGENTS_CONTENT,
     DEFAULT_SOUL_CONTENT,
     DEFAULT_USER_CONTENT,
+    SYSTEM_PREAMBLE,
     context_hook,
     load_context,
 )
@@ -35,8 +35,7 @@ class TestLoadContext:
 
         result = load_context(tmp_path)
 
-        assert result is not None
-        assert CONTEXT_PREAMBLE in result
+        assert SYSTEM_PREAMBLE in result
         assert "<soul>\nTest soul content\n</soul>" in result
         assert "<user>\nTest user content\n</user>" in result
         assert "<agents>\nTest agents content\n</agents>" in result
@@ -51,7 +50,6 @@ class TestLoadContext:
         (context_dir / "AGENTS.md").write_text("C")
 
         result = load_context(tmp_path)
-        assert result is not None
 
         # Check ordering
         soul_pos = result.find("<soul>")
@@ -61,17 +59,15 @@ class TestLoadContext:
         assert soul_pos < user_pos < agents_pos
 
     def test_preamble_prepended(self, tmp_path: Path) -> None:
-        """AC: Preamble is prepended before any file content."""
+        """AC: System preamble is prepended before any file content."""
         context_dir = tmp_path / CONTEXT_DIR_NAME
         context_dir.mkdir()
 
         (context_dir / "SOUL.md").write_text("Content")
 
         result = load_context(tmp_path)
-        assert result is not None
 
-        # Preamble comes first
-        assert result.startswith(CONTEXT_PREAMBLE)
+        assert result.startswith(SYSTEM_PREAMBLE)
 
     def test_one_file_missing_warns_and_includes_remaining(self, tmp_path: Path, caplog) -> None:
         """AC: One file missing → warns, includes remaining files."""
@@ -86,10 +82,9 @@ class TestLoadContext:
             load_context(tmp_path)
 
         result = load_context(tmp_path)
-        assert result is not None
-        assert "<soul>" in result
-        assert "<agents>" in result
-        assert "<user>" not in result
+        assert "<soul>\nSoul content\n</soul>" in result
+        assert "<agents>\nAgents content\n</agents>" in result
+        assert "<user>\n" not in result
 
     def test_one_file_empty_skips_silently(self, tmp_path: Path, caplog) -> None:
         """AC: One file empty → skips silently (no warning), includes remaining files."""
@@ -106,10 +101,9 @@ class TestLoadContext:
         assert not any(record.level == "WARNING" for record in caplog.records)
 
         result = load_context(tmp_path)
-        assert result is not None
-        assert "<soul>" in result
-        assert "<agents>" in result
-        assert "<user>" not in result
+        assert "<soul>\nSoul content\n</soul>" in result
+        assert "<agents>\nAgents content\n</agents>" in result
+        assert "<user>\n" not in result
 
     def test_whitespace_only_file_treated_as_empty(self, tmp_path: Path) -> None:
         """AC: Whitespace-only file treated as empty (= content.strip() == "")."""
@@ -121,10 +115,9 @@ class TestLoadContext:
         (context_dir / "AGENTS.md").write_text("Agents content")
 
         result = load_context(tmp_path)
-        assert result is not None
-        assert "<soul>" not in result
-        assert "<user>" in result
-        assert "<agents>" in result
+        assert "<soul>\n" not in result
+        assert "<user>\nUser content\n</user>" in result
+        assert "<agents>\nAgents content\n</agents>" in result
 
     def test_one_file_unreadable_warns_and_includes_remaining(
         self, tmp_path: Path, caplog, mocker
@@ -147,17 +140,18 @@ class TestLoadContext:
         with caplog.at_level("WARNING"):
             load_context(tmp_path)
 
-    def test_all_files_missing_returns_none(self, tmp_path: Path) -> None:
-        """AC: All files missing → returns None."""
+    def test_all_files_missing_returns_preamble_only(self, tmp_path: Path) -> None:
+        """AC: All files missing → returns preamble only (never None)."""
         context_dir = tmp_path / CONTEXT_DIR_NAME
         context_dir.mkdir()
         # No files created
 
         result = load_context(tmp_path)
-        assert result is None
 
-    def test_all_files_empty_returns_none(self, tmp_path: Path) -> None:
-        """AC: All files empty → returns None."""
+        assert result == SYSTEM_PREAMBLE
+
+    def test_all_files_empty_returns_preamble_only(self, tmp_path: Path) -> None:
+        """AC: All files empty → returns preamble only (never None)."""
         context_dir = tmp_path / CONTEXT_DIR_NAME
         context_dir.mkdir()
 
@@ -166,7 +160,19 @@ class TestLoadContext:
         (context_dir / "AGENTS.md").write_text("")
 
         result = load_context(tmp_path)
-        assert result is None
+
+        assert result == SYSTEM_PREAMBLE
+
+    def test_preamble_always_present(self, tmp_path: Path) -> None:
+        """AC: System preamble is always present, even without context files."""
+        context_dir = tmp_path / CONTEXT_DIR_NAME
+        context_dir.mkdir()
+
+        result = load_context(tmp_path)
+
+        assert SYSTEM_PREAMBLE in result
+        assert "Tachikoma" in result
+        assert "memories/" in result
 
 
 class TestContextHook:
@@ -233,10 +239,10 @@ class TestContextHook:
         assert (context_path / "AGENTS.md").read_text() == "Existing agents"
         assert (context_path / "USER.md").read_text() == DEFAULT_USER_CONTENT
 
-    async def test_stores_system_prompt_when_files_have_content(
+    async def test_always_stores_system_prompt(
         self, ctx: BootstrapContext, settings_manager: SettingsManager
     ) -> None:
-        """AC: Hook stores system_prompt in ctx.extras when files have content."""
+        """AC: Hook always stores system_prompt in ctx.extras (preamble at minimum)."""
         ws = settings_manager.settings.workspace
         context_path = ws.path / CONTEXT_DIR_NAME
         context_path.mkdir(parents=True)
@@ -248,10 +254,10 @@ class TestContextHook:
         assert "system_prompt" in ctx.extras
         assert ctx.extras["system_prompt"] is not None
 
-    async def test_does_not_store_system_prompt_when_all_files_empty(
+    async def test_stores_system_prompt_even_when_all_files_empty(
         self, ctx: BootstrapContext, settings_manager: SettingsManager
     ) -> None:
-        """AC: Hook does NOT store system_prompt when all files empty."""
+        """AC: Hook stores system_prompt even when all files empty (preamble always present)."""
         ws = settings_manager.settings.workspace
         context_path = ws.path / CONTEXT_DIR_NAME
         context_path.mkdir(parents=True)
@@ -262,7 +268,8 @@ class TestContextHook:
 
         await context_hook(ctx)
 
-        assert "system_prompt" not in ctx.extras
+        assert "system_prompt" in ctx.extras
+        assert SYSTEM_PREAMBLE in ctx.extras["system_prompt"]
 
     async def test_dir_creation_failure_propagates(self, ctx: BootstrapContext, mocker) -> None:
         """AC: Dir creation failure → exception propagates (not caught)."""

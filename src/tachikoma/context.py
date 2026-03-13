@@ -86,26 +86,61 @@ CONTEXT_FILES = [
     ("AGENTS.md", "agents", DEFAULT_AGENTS_CONTENT),
 ]
 
-# Hard-coded preamble explaining the context system
-CONTEXT_PREAMBLE = """\
-The following sections contain your foundational context — personality traits, user knowledge,
-and behavioral instructions. These files live in the workspace's `context/` directory and are
-user-editable. You can suggest updates when you learn something that should be persisted.
+# Hard-coded system preamble: identity, role, memory guidance, and context explanation.
+# Always included in the system prompt, even when context files are missing or empty.
+SYSTEM_PREAMBLE = """\
+# Your Identity
 
-Each section is wrapped in XML tags to clearly delineate its purpose."""
+You are Tachikoma — a personal assistant. While you run on top of Claude Code, your role is \
+different from a typical coding assistant. You are a general-purpose assistant whose primary \
+purpose is helping the user with everything they need: daily tasks, questions, planning, \
+research, and coding when asked. You are not bound to any specific project or codebase.
+
+Update your understanding of your role accordingly: you are not here to work on a specific \
+project, but to be a helpful, proactive companion across all aspects of the user's life.
+
+# Memory System
+
+You have your own memory system — do NOT use Claude Code's built-in memory features.
+
+## Context Files
+
+Your foundational context lives in the workspace's `context/` directory as user-editable \
+markdown files. You can read and edit these files directly:
+
+- **SOUL.md** (`<soul>` section below) — Your personality traits, tone, and behavioral guidelines
+- **USER.md** (`<user>` section below) — What you know about the user
+- **AGENTS.md** (`<agents>` section below) — Operational instructions and workflow preferences
+
+Update these files when you learn something important that should persist across conversations.
+
+## Memories
+
+Past conversation learnings are stored in the `memories/` directory, organized by type:
+
+- `memories/episodic/` — Date-stamped conversation summaries
+- `memories/facts/` — Factual information (topic-named files)
+- `memories/preferences/` — User preferences (topic-named files)
+
+You can read these files for context during conversations, but do NOT write to them directly. \
+An automated post-processing pipeline extracts and manages memories after each conversation \
+ends — it will handle creating, updating, and deleting memory files for you.
+
+# Context Documents
+
+The following sections contain your current foundational context, wrapped in XML tags."""
 
 
-def load_context(workspace_path: Path) -> str | None:
+def load_context(workspace_path: Path) -> str:
     """Read context files and assemble into a system prompt string.
 
-    Synchronous — files are small. Returns None when no content found.
+    Synchronous — files are small. Always returns at least the system preamble.
 
     Args:
         workspace_path: Path to the workspace root directory.
 
     Returns:
-        Assembled system prompt string with preamble and XML-wrapped sections,
-        or None if all files are missing or empty.
+        Assembled system prompt string with preamble and XML-wrapped sections.
     """
     context_path = workspace_path / CONTEXT_DIR_NAME
     sections: list[str] = []
@@ -141,9 +176,9 @@ def load_context(workspace_path: Path) -> str | None:
         sections.append(f"<{tag}>\n{content}\n</{tag}>")
 
     if not sections:
-        return None
+        return SYSTEM_PREAMBLE
 
-    return CONTEXT_PREAMBLE + "\n\n" + "\n\n".join(sections)
+    return SYSTEM_PREAMBLE + "\n\n" + "\n\n".join(sections)
 
 
 async def context_hook(ctx: BootstrapContext) -> None:
@@ -170,7 +205,5 @@ async def context_hook(ctx: BootstrapContext) -> None:
             file_path.write_text(default_content)
             _log.debug("Created default context file: file={file}", file=filename)
 
-    # Load context and store in extras
-    system_prompt = load_context(workspace_path)
-    if system_prompt is not None:
-        ctx.extras["system_prompt"] = system_prompt
+    # Load context and store in extras (always returns a string — preamble at minimum)
+    ctx.extras["system_prompt"] = load_context(workspace_path)
