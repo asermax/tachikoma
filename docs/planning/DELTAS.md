@@ -86,21 +86,14 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 
 ### DLT-006: Pre-process messages with memory context injection
 **Status**: ✗ Defined
-**Depends on**: DLT-008
+**Depends on**: None
 **Priority**: 2 (High)
 **Complexity**: Hard
 **Description**: Before the coordinator processes a user message, automatically gather and inject relevant context so responses are informed by past interactions. This delta delivers two things: a reusable, pluggable pre-processing pipeline that runs context providers in parallel before the agent sees a message, and the first provider — a memory context provider that searches stored memories using semantic similarity to find context relevant to the current message. The pipeline architecture must support adding more providers later (e.g., calendar, email, notes) without modifying the core pipeline. Retrieved memories are injected into the coordinator's context, enabling the assistant to reference past conversations, known preferences, and prior decisions naturally.
 
-### DLT-008: Extract and store memories from conversations
-**Status**: ✓ Implementation
-**Depends on**: None
-**Priority**: 2 (High)
-**Complexity**: Hard
-**Description**: The complete memory write path — from conversation analysis to persistent storage. After a conversation ends (detected by DLT-004), automatically analyze the full exchange to extract what the assistant should remember. Each memory type has its own post-processor that forks the original SDK session and asks the agent — via a tailored prompt — to read the relevant memory subdirectory, then create, update, or delete memory files as needed. Three memory types for v1: episodic (date-stamped summaries of what happened, rewritten over time), facts (named files about the user — job, projects, family — updated when new info emerges), and preferences (named files about how the user likes things done — updated or deleted when preferences change). All processors run in parallel since they operate on independent subdirectories. Using markdown keeps memories human-readable and directly inspectable by the user, avoiding database dependencies for v1. This delta delivers two things: (1) a reusable, pluggable post-processing pipeline that runs processors in parallel after conversation end is detected (supporting additional post-processors later without modifying the core pipeline), and (2) the initial set of memory processors — one per memory type, each with its own extraction prompt and session fork. When DLT-020 is implemented, memory file writes should trigger automatic git commits to maintain workspace version history.
-
 ### DLT-009: Search memories by semantic similarity
 **Status**: ✗ Defined
-**Depends on**: DLT-008
+**Depends on**: None
 **Priority**: 5 (Backlog)
 **Complexity**: Hard
 **Description**: Provide the ability to search stored memories by semantic similarity to a query, enabling the assistant to find relevant past context even when exact keywords don't match. Results are ranked by a combination of semantic relevance and time-based weighting (recent memories rank higher). This is the retrieval engine consumed by the memory context provider (DLT-006) and potentially other components that need to find relevant past context. The delta involves selecting and integrating an embedding model, building and maintaining an index over stored memories, and implementing the search/ranking logic. The embedding model choice should be evaluated during speccing, balancing quality, speed, and self-hosted requirements.
@@ -149,14 +142,14 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 
 ### DLT-017: Eval: Memory extraction quality
 **Status**: ✗ Defined
-**Depends on**: DLT-008, DLT-015
+**Depends on**: DLT-015
 **Priority**: 5 (Backlog)
 **Complexity**: Easy
 **Description**: Build an eval suite for the post-processing pipeline using the evaluation framework (DLT-015). Tests whether the right facts, preferences, decisions, and patterns are being captured from sample conversations. Test cases should cover: extracting explicit facts, detecting implicit preferences, correctly categorizing memory types, avoiding hallucinated memories (extracting things that weren't actually discussed), and handling conversations with no extractable learnings. Measures completeness (nothing important missed), accuracy (correct categorization), and precision (no false extractions).
 
 ### DLT-018: Update core context files from conversation learnings
 **Status**: ✗ Defined
-**Depends on**: DLT-005, DLT-008
+**Depends on**: DLT-005
 **Priority**: 3 (Medium)
 **Complexity**: Medium
 **Description**: A dedicated post-processing processor (plugging into DLT-007's pipeline) that analyzes completed conversations for information that should update the assistant's foundational context files. Detects changes to user information (new job, moved cities, changed preferences) for USER.md, personality adjustments based on user feedback for SOUL.md, and operational instruction updates for AGENTS.md. Different from memory extraction — this updates long-lived foundational documents rather than creating individual memory entries. Must be conservative: only update when there's clear evidence, since these files carry higher weight than individual memories. When DLT-020 is implemented, core context file updates should trigger automatic git commits, making changes easy to review and roll back.
@@ -170,7 +163,7 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 
 ### DLT-020: Git module for workspace version tracking
 **Status**: ✓ Spec
-**Depends on**: DLT-008
+**Depends on**: None
 **Priority**: 2 (High)
 **Complexity**: Easy
 **Description**: A git post-processor that plugs into DLT-008's post-processing pipeline and runs in a finalization phase — after all other processors complete. It spawns a Haiku agent via a fresh `query()` call that inspects uncommitted workspace changes using bash git commands, groups them into cohesive sets (e.g., episodic memories in one commit, facts in another, project config in a third), and creates one descriptive commit per group. A bootstrap hook initializes the workspace as a git repo on first run with a fixed committer identity. Extends the pipeline to support phased execution (main → finalize). The git integration is intentionally simple for v1 — linear history on a single branch, no merging, no PRs.

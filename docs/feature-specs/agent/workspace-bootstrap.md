@@ -63,6 +63,16 @@ Hooks can prompt users for input and persist values to the configuration file.
 - Given a hook updates a setting value, when the value is saved, then the configuration file is updated and the change persists across restarts
 - Given a hook updates a setting during bootstrap, when subsequent hooks run, then they see the updated value
 
+### Registered Hooks
+
+The following hooks are registered in `__main__.py` and execute in registration order:
+
+**Acceptance Criteria**:
+- Given the workspace hook, when it runs, then the workspace root directory and `.tachikoma/` data folder are created if they don't exist
+- Given the context hook, when it runs, then core context files are initialized and the system prompt is assembled
+- Given the memory hook, when it runs, then `memories/`, `memories/episodic/`, `memories/facts/`, and `memories/preferences/` directories are created if they don't exist
+- Given the session recovery hook, when it runs, then sessions left open from ungraceful shutdowns are detected and closed
+
 ### Failure Handling (R7)
 
 Hook failures abort startup immediately with clear error messaging.

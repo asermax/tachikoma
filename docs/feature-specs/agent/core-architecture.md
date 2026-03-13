@@ -21,6 +21,7 @@ The core agent loop: receive a user message, pass it to the Claude agent via the
 | R3 | Session lifecycle: connect and disconnect from the agent service, preserving conversation context across messages within a session. Optionally tracks sessions persistently via a session registry (see [sessions](sessions.md)) |
 | R4 | Error handling: distinguish between transient failures that allow continued use and fatal failures that require stopping |
 | R5 | Agent operates from workspace directory via SDK cwd option |
+| R6 | Post-processing pipeline: on session close, run registered processors to analyze the completed conversation |
 
 ## Behaviors
 
@@ -69,6 +70,19 @@ Fatal errors at startup are caught before the main loop begins.
 
 **Acceptance Criteria**:
 - Given missing or invalid authentication, when the coordinator attempts to connect, then the process exits with a clear error message
+
+### Post-Processing Pipeline Trigger (R6)
+
+After a session closes, the coordinator triggers a registered post-processing pipeline that runs processors in parallel to analyze the completed conversation.
+
+**Acceptance Criteria**:
+- Given a session closes with a valid SDK session ID and a pipeline is registered, when the coordinator exits its async context, then the pipeline runs all registered processors in parallel
+- Given a session closes without an SDK session ID, when the coordinator would trigger post-processing, then the pipeline is skipped and a warning is logged
+- Given no active session exists, when the coordinator exits its async context, then the pipeline is not triggered
+- Given a pipeline processor fails, when other processors are running, then the failing processor's error is logged and the others complete normally
+- Given the pipeline itself fails, when the coordinator is shutting down, then the error is logged and shutdown continues (SDK disconnect proceeds)
+- Given no pipeline is registered, when a session closes, then shutdown proceeds directly to SDK disconnect
+- Given a pipeline is already running from a previous session close, when another session close triggers the pipeline, then the new run is serialized (awaits the previous one before starting)
 
 ### Error Recovery (R4)
 
