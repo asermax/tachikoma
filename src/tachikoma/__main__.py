@@ -71,6 +71,8 @@ async def main() -> None:
             registry=registry,
             system_prompt=system_prompt,
             pipeline=pipeline,
+            permission_mode="bypassPermissions",
+            env={"CLAUDE_CODE_DISABLE_AUTO_MEMORY": "1"},
         ) as coordinator:
             repl = Repl(coordinator, history_path=settings.workspace.path / "repl_history")
             await repl.run()

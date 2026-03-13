@@ -413,6 +413,50 @@ class TestCoordinatorSystemPrompt:
         assert text_events[0].text == "Hello!"
 
 
+class TestCoordinatorPermissionAndEnv:
+    """Tests for permission_mode and env passthrough to ClaudeAgentOptions."""
+
+    async def test_permission_mode_passed_to_sdk_options(self, mock_sdk) -> None:
+        """AC: Given permission_mode is provided → ClaudeAgentOptions.permission_mode is set."""
+        _, mock_cls = mock_sdk
+
+        async with Coordinator(permission_mode="bypassPermissions"):
+            pass
+
+        options = mock_cls.call_args[0][0]
+        assert options.permission_mode == "bypassPermissions"
+
+    async def test_permission_mode_defaults_to_none(self, mock_sdk) -> None:
+        """AC: Given permission_mode is not provided → defaults to None."""
+        _, mock_cls = mock_sdk
+
+        async with Coordinator():
+            pass
+
+        options = mock_cls.call_args[0][0]
+        assert options.permission_mode is None
+
+    async def test_env_passed_to_sdk_options(self, mock_sdk) -> None:
+        """AC: Given env is provided → ClaudeAgentOptions.env is set."""
+        _, mock_cls = mock_sdk
+
+        async with Coordinator(env={"CLAUDE_CODE_DISABLE_AUTO_MEMORY": "1"}):
+            pass
+
+        options = mock_cls.call_args[0][0]
+        assert options.env == {"CLAUDE_CODE_DISABLE_AUTO_MEMORY": "1"}
+
+    async def test_env_defaults_to_empty_dict(self, mock_sdk) -> None:
+        """AC: Given env is not provided → defaults to empty dict."""
+        _, mock_cls = mock_sdk
+
+        async with Coordinator():
+            pass
+
+        options = mock_cls.call_args[0][0]
+        assert options.env == {}
+
+
 def _make_mock_pipeline():
     """Create a mock PostProcessingPipeline with sensible defaults."""
     pipeline = MagicMock()

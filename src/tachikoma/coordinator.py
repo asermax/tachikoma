@@ -10,7 +10,7 @@ from pathlib import Path
 from types import TracebackType
 
 from claude_agent_sdk import ClaudeAgentOptions, ClaudeSDKClient, CLIConnectionError, ProcessError
-from claude_agent_sdk.types import SystemPromptPreset
+from claude_agent_sdk.types import PermissionMode, SystemPromptPreset
 from loguru import logger
 
 from tachikoma.adapter import adapt
@@ -56,6 +56,8 @@ class Coordinator:
         registry: SessionRegistry | None = None,
         system_prompt: str | None = None,
         pipeline: PostProcessingPipeline | None = None,
+        permission_mode: PermissionMode | None = None,
+        env: dict[str, str] | None = None,
     ) -> None:
         # Build SystemPromptPreset when system_prompt is provided
         sdk_system_prompt = None
@@ -71,6 +73,8 @@ class Coordinator:
             model=model,
             cwd=cwd,
             system_prompt=sdk_system_prompt,
+            permission_mode=permission_mode,
+            env=env or {},
         )
         self._cwd = cwd
         self._client: ClaudeSDKClient | None = None
