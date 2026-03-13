@@ -8,7 +8,7 @@ auto-generated on first run.
 import sys
 import tomllib
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, Literal, cast
 
 import tomlkit
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
@@ -54,11 +54,25 @@ class AgentSettings(BaseModel):
     )
 
 
+class LoggingSettings(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="ignore")
+
+    level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = Field(
+        default="INFO",
+        description="Log level (DEBUG, INFO, WARNING, ERROR, CRITICAL)",
+    )
+    console: bool = Field(
+        default=False,
+        description="Enable colored stderr output for development",
+    )
+
+
 class Settings(BaseModel):
     model_config = ConfigDict(frozen=True, extra="ignore")
 
     workspace: WorkspaceSettings = Field(default_factory=WorkspaceSettings)
     agent: AgentSettings = Field(default_factory=AgentSettings)
+    logging: LoggingSettings = Field(default_factory=LoggingSettings)
 
 
 class SettingsManager:
@@ -135,6 +149,22 @@ def _generate_default_config(config_path: Path = CONFIG_PATH) -> None:
             doc.add(tomlkit.comment(f"{name} = [{items}]"))
         elif default is None:
             doc.add(tomlkit.comment(f"{name} ="))
+        else:
+            doc.add(tomlkit.comment(f'{name} = "{default}"'))
+
+    doc.add(tomlkit.nl())
+
+    # [logging] section
+    doc.add(tomlkit.comment("[logging]"))
+
+    for name, field_info in LoggingSettings.model_fields.items():
+        desc = field_info.description or ""
+        default = field_info.default
+
+        doc.add(tomlkit.comment(f"{desc}"))
+
+        if isinstance(default, bool):
+            doc.add(tomlkit.comment(f"{name} = {str(default).lower()}"))
         else:
             doc.add(tomlkit.comment(f'{name} = "{default}"'))
 

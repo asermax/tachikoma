@@ -10,6 +10,7 @@ import pytest
 from pydantic import ValidationError
 
 from tachikoma.config import (
+    LoggingSettings,
     Settings,
     SettingsManager,
     WorkspaceSettings,
@@ -94,9 +95,25 @@ class TestSettingsModel:
         with pytest.raises(ValidationError):
             Settings.model_validate({"workspace": {"path": 123}})
 
+    def test_default_logging_level_is_info(self) -> None:
+        """AC (R2, DLT-013): logging.level defaults to INFO."""
+        settings = Settings()
+
+        assert settings.logging.level == "INFO"
+
+    def test_default_logging_console_is_false(self) -> None:
+        """AC (R2, DLT-013): logging.console defaults to False."""
+        settings = Settings()
+
+        assert settings.logging.console is False
+
+    def test_invalid_logging_level_raises_validation_error(self) -> None:
+        """AC (R3, DLT-013): Invalid log level produces ValidationError."""
+        with pytest.raises(ValidationError):
+            LoggingSettings(level="VERBOSE")
+
 
 class TestDefaultConfigGeneration:
-    """Tests for the default config file generator."""
 
     def test_generates_file_that_parses_to_empty_dict(self, tmp_path: Path) -> None:
         """AC (R4): Generated file has all values commented out."""
@@ -119,6 +136,17 @@ class TestDefaultConfigGeneration:
         assert "agent" in content.lower()
         assert "path" in content
         assert "allowed_tools" in content
+
+    def test_generated_file_contains_logging_section(self, tmp_path: Path) -> None:
+        """AC (R4, DLT-013): Generated file contains [logging] section."""
+        config_path = tmp_path / "config.toml"
+        _generate_default_config(config_path)
+
+        content = config_path.read_text()
+
+        assert "logging" in content.lower()
+        assert "level" in content
+        assert "console" in content
 
     def test_creates_parent_directories(self, tmp_path: Path) -> None:
         """AC (R4): Missing directory is created before writing."""
@@ -271,6 +299,27 @@ class TestLoadSettings:
 
         with pytest.raises(ValidationError):
             settings.workspace = WorkspaceSettings(path=Path("/other"))
+
+    def test_logging_level_from_config(self, tmp_path: Path) -> None:
+        """AC (R1, DLT-013): Logging level loaded from config."""
+        config_path = tmp_path / "config.toml"
+        config_path.write_text('[logging]\nlevel = "DEBUG"\n')
+
+        settings = load_settings(config_path)
+
+        assert settings.logging.level == "DEBUG"
+
+    def test_invalid_logging_level_exits_with_error(self, tmp_path: Path, capsys) -> None:
+        """AC (R3, DLT-013): Invalid logging level exits with clear error."""
+        config_path = tmp_path / "config.toml"
+        config_path.write_text('[logging]\nlevel = "VERBOSE"\n')
+
+        with pytest.raises(SystemExit):
+            load_settings(config_path)
+
+        err = capsys.readouterr().err
+        assert "logging" in err
+        assert "level" in err
 
 
 class TestSettingsManager:
