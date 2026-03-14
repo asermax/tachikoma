@@ -9,3 +9,4 @@
 | [ADR-005](ADR-005-task-runner.md) | Task Runner | Accepted | 2026-03-08 |
 | [ADR-006](ADR-006-logging-library.md) | Logging Library | Accepted | 2026-03-09 |
 | [ADR-007](ADR-007-persistence-layer.md) | Persistence Layer | Accepted | 2026-03-12 |
+| [ADR-008](ADR-008-system-prompt-composition.md) | System Prompt Composition via Append | Accepted | 2026-03-13 |
