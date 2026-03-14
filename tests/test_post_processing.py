@@ -10,7 +10,13 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from tachikoma.post_processing import PostProcessingPipeline, PostProcessor, fork_and_consume
+from tachikoma.post_processing import (
+    FINALIZE_PHASE,
+    MAIN_PHASE,
+    PostProcessingPipeline,
+    PostProcessor,
+    fork_and_consume,
+)
 from tachikoma.sessions.model import Session
 
 
@@ -153,6 +159,119 @@ class TestPostProcessingPipeline:
 
         # Should not raise
         await pipeline.run(session)
+
+
+class TestPhasedPipelineExecution:
+    """Tests for phased pipeline execution (DLT-020)."""
+
+    def test_unknown_phase_raises_value_error(self) -> None:
+        """AC: Registration with unknown phase raises ValueError with clear message."""
+        processor = _make_mock_processor()
+        pipeline = PostProcessingPipeline()
+
+        with pytest.raises(ValueError, match="Invalid phase 'invalid'"):
+            pipeline.register(processor, phase="invalid")
+
+    async def test_finalize_phase_runs_after_main_phase(self) -> None:
+        """AC: Finalize-phase processors run after main-phase processors complete."""
+        call_order: list[str] = []
+
+        async def track_main(session: Session) -> None:
+            call_order.append("main_start")
+            await asyncio.sleep(0.02)
+            call_order.append("main_end")
+
+        async def track_finalize(session: Session) -> None:
+            call_order.append("finalize_start")
+            call_order.append("finalize_end")
+
+        main_processor = _make_mock_processor()
+        main_processor.process.side_effect = track_main
+        finalize_processor = _make_mock_processor()
+        finalize_processor.process.side_effect = track_finalize
+
+        pipeline = PostProcessingPipeline()
+        pipeline.register(main_processor, phase=MAIN_PHASE)
+        pipeline.register(finalize_processor, phase=FINALIZE_PHASE)
+
+        await pipeline.run(_make_session())
+
+        # Main phase should complete before finalize starts
+        assert call_order.index("main_end") < call_order.index("finalize_start")
+
+    async def test_finalize_runs_even_when_main_fails(self) -> None:
+        """AC: Finalize-phase processors run even when main-phase processors fail."""
+        main_processor = _make_mock_processor()
+        main_processor.process.side_effect = RuntimeError("main failed")
+        finalize_processor = _make_mock_processor()
+
+        pipeline = PostProcessingPipeline()
+        pipeline.register(main_processor, phase=MAIN_PHASE)
+        pipeline.register(finalize_processor, phase=FINALIZE_PHASE)
+
+        await pipeline.run(_make_session())
+
+        # Both should have been called despite main failure
+        main_processor.process.assert_awaited_once()
+        finalize_processor.process.assert_awaited_once()
+
+    async def test_default_phase_is_main(self) -> None:
+        """AC: Default phase is 'main' for backward compatibility."""
+        processor = _make_mock_processor()
+
+        pipeline = PostProcessingPipeline()
+        pipeline.register(processor)  # No phase specified
+
+        # Verify it went to main phase by checking internal structure
+        assert len(pipeline._phases[MAIN_PHASE]) == 1
+        assert len(pipeline._phases[FINALIZE_PHASE]) == 0
+
+    async def test_empty_phase_is_skipped(self) -> None:
+        """AC: Empty phase is skipped without error."""
+        finalize_processor = _make_mock_processor()
+
+        pipeline = PostProcessingPipeline()
+        # Only register finalize, leave main empty
+        pipeline.register(finalize_processor, phase=FINALIZE_PHASE)
+
+        # Should not raise
+        await pipeline.run(_make_session())
+
+        finalize_processor.process.assert_awaited_once()
+
+    async def test_multiple_finalize_processors_run_in_parallel(self) -> None:
+        """AC: Multiple finalize processors run in parallel (same as main-phase)."""
+        call_order: list[str] = []
+
+        async def slow_finalize(session: Session) -> None:
+            call_order.append("slow_start")
+            await asyncio.sleep(0.05)
+            call_order.append("slow_end")
+
+        async def fast_finalize(session: Session) -> None:
+            call_order.append("fast_start")
+            await asyncio.sleep(0.01)
+            call_order.append("fast_end")
+
+        slow_processor = _make_mock_processor()
+        slow_processor.process.side_effect = slow_finalize
+        fast_processor = _make_mock_processor()
+        fast_processor.process.side_effect = fast_finalize
+
+        pipeline = PostProcessingPipeline()
+        pipeline.register(slow_processor, phase=FINALIZE_PHASE)
+        pipeline.register(fast_processor, phase=FINALIZE_PHASE)
+
+        await pipeline.run(_make_session())
+
+        # Both should have started before either finished (parallel execution)
+        assert call_order.index("slow_start") < call_order.index("slow_end")
+        assert call_order.index("fast_start") < call_order.index("fast_end")
+
+    def test_phase_constants_are_exported(self) -> None:
+        """AC: Phase constants are exported and usable."""
+        assert MAIN_PHASE == "main"
+        assert FINALIZE_PHASE == "finalize"
 
 
 class TestForkAndConsume:

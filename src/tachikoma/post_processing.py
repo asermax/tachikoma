@@ -16,6 +16,11 @@ from tachikoma.sessions.model import Session
 
 _log = logger.bind(component="post_processing")
 
+# Fixed phase identifiers — validated at registration
+MAIN_PHASE = "main"
+FINALIZE_PHASE = "finalize"
+_VALID_PHASES = frozenset({MAIN_PHASE, FINALIZE_PHASE})
+
 
 class PostProcessor(ABC):
     """Abstract base class for post-processing handlers.
@@ -49,34 +54,59 @@ class PostProcessingPipeline:
     processors from completing.
     """
 
+    # Phase execution order
+    _phase_order = [MAIN_PHASE, FINALIZE_PHASE]
+
     def __init__(self) -> None:
-        self._processors: list[PostProcessor] = []
+        # Pre-populate phases so register() can append without KeyError
+        self._phases: dict[str, list[PostProcessor]] = {p: [] for p in _VALID_PHASES}
         self._lock = asyncio.Lock()
 
-    def register(self, processor: PostProcessor) -> None:
-        """Register a processor to run on pipeline execution."""
-        self._processors.append(processor)
+    def register(self, processor: PostProcessor, phase: str = MAIN_PHASE) -> None:
+        """Register a processor to run on pipeline execution.
+
+        Args:
+            processor: The processor to register.
+            phase: The phase to run this processor in. Must be "main" or "finalize".
+                Defaults to "main" for backward compatibility.
+
+        Raises:
+            ValueError: If phase is not a valid phase identifier.
+        """
+        if phase not in _VALID_PHASES:
+            valid_list = ", ".join(sorted(_VALID_PHASES))
+            raise ValueError(f"Invalid phase '{phase}'. Valid phases: {valid_list}")
+        self._phases[phase].append(processor)
 
     async def run(self, session: Session) -> None:
-        """Run all registered processors in parallel.
+        """Run all registered processors in sequential phases.
 
-        Acquires an internal lock to serialize concurrent invocations.
-        Each processor runs independently — failures are logged per
-        DES-002 but don't propagate.
+        Phases run in order (main → finalize). Within each phase,
+        processors run in parallel. Acquires an internal lock to serialize
+        concurrent invocations.
+
+        Individual processor failures are logged per DES-002 but don't
+        propagate or prevent subsequent phases from running.
         """
         async with self._lock:
-            results = await asyncio.gather(
-                *[p.process(session) for p in self._processors],
-                return_exceptions=True,
-            )
+            for phase in self._phase_order:
+                processors = self._phases[phase]
+                if not processors:
+                    continue
 
-            for processor, result in zip(self._processors, results, strict=True):
-                if isinstance(result, Exception):
-                    _log.exception(
-                        "Processor failed: processor={name} err={err}",
-                        name=processor.__class__.__name__,
-                        err=str(result),
-                    )
+                results = await asyncio.gather(
+                    *[p.process(session) for p in processors],
+                    return_exceptions=True,
+                )
+
+                for processor, result in zip(processors, results, strict=True):
+                    if isinstance(result, Exception):
+                        _log.exception(
+                            "Processor failed: processor={name} phase={phase} err={err}",
+                            name=processor.__class__.__name__,
+                            phase=phase,
+                            err=str(result),
+                        )
 
 
 async def fork_and_consume(session: Session, prompt: str, cwd: Path) -> None:

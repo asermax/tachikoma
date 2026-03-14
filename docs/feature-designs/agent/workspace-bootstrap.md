@@ -103,7 +103,7 @@ The `BootstrapContext` is frozen (fields can't be reassigned), but `settings_man
 
 ```
 1. __main__.py creates Bootstrap(settings_manager, prompt=input)
-2. Registers hooks: bootstrap.register("workspace", workspace_hook)
+2. Registers hooks: bootstrap.register("workspace", workspace_hook), bootstrap.register("git", git_hook), ...
 3. Calls await bootstrap.run()
 4. For each (name, hook) in registration order:
    a. await hook(context)
@@ -207,5 +207,5 @@ The `BootstrapContext` is frozen (fields can't be reassigned), but `settings_man
 
 ## Notes
 
-- Hook registration order in `__main__.py`: workspace → logging → context → memory → sessions. Future hooks follow the same registration pattern.
+- Hook registration order in `__main__.py`: workspace → git → logging → context → memory → sessions. Future hooks follow the same registration pattern.
 - The hook registration order in `__main__.py` serves as the explicit documentation of initialization sequence — no magic discovery

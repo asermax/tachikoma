@@ -14,10 +14,11 @@ As the system grows, more modules need first-run setup (workspace creation, cont
 Each subsystem owns its bootstrap hook in its own module. The `bootstrap.py` module owns only the mechanism (`Bootstrap` class, `BootstrapContext`, `BootstrapHook` type, `BootstrapError`), not the hooks themselves. Hooks are defined where they logically belong:
 
 - **workspace subsystem** → `src/tachikoma/workspace.py` owns `workspace_hook`
-- **context subsystem** → `src/tachikoma/context.py` owns `context_hook`
-- **sessions subsystem** → `src/tachikoma/sessions/hooks.py` owns `session_recovery_hook`
+- **git subsystem** → `src/tachikoma/git/hooks.py` owns `git_hook`
 - **logging subsystem** → `src/tachikoma/logging/hooks.py` owns `logging_hook`
-- (future) **git subsystem** → `src/tachikoma/git.py` owns `git_hook`
+- **context subsystem** → `src/tachikoma/context.py` owns `context_hook`
+- **memory subsystem** → `src/tachikoma/memory/hooks.py` owns `memory_hook`
+- **sessions subsystem** → `src/tachikoma/sessions/hooks.py` owns `session_recovery_hook`
 
 The `__main__.py` entry point registers hooks in order:
 
@@ -65,11 +66,17 @@ async def context_hook(ctx: BootstrapContext) -> None:
 **__main__.py** (registers hooks):
 ```python
 from tachikoma.workspace import workspace_hook
+from tachikoma.git import git_hook
+from tachikoma.logging import logging_hook
 from tachikoma.context import context_hook
-from tachikoma.sessions.hooks import session_recovery_hook
+from tachikoma.memory import memory_hook
+from tachikoma.sessions import session_recovery_hook
 
 bootstrap.register("workspace", workspace_hook)
+bootstrap.register("git", git_hook)
+bootstrap.register("logging", logging_hook)
 bootstrap.register("context", context_hook)
+bootstrap.register("memory", memory_hook)
 bootstrap.register("sessions", session_recovery_hook)
 ```
 

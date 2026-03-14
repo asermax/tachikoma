@@ -77,13 +77,6 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 **Complexity**: Easy
 **Description**: Fallback conversation boundary detection that monitors for periods of user inactivity. After a configurable threshold (~20 minutes by default), the system signals the session registry (DLT-027) to close the current session, triggering downstream post-processing. This serves as a safety net for cases where the user goes silent without a clear topic change — DLT-026's topic-based analysis is the primary boundary mechanism, but it only fires on incoming messages. The inactivity timeout catches the "user walked away" case. The threshold should be configurable per-deployment.
 
-### DLT-005: Load foundational context for personality and user knowledge
-**Status**: ✓ Reconciled
-**Depends on**: None
-**Priority**: 2 (High)
-**Complexity**: Easy
-**Description**: Provide the assistant with foundational, always-available context through core files that are loaded with higher priority than dynamically retrieved memories. Three files establish the assistant's identity and baseline knowledge: SOUL.md defines personality traits, tone, and behavioral guidelines; USER.md captures known information about the user (name, preferences, projects, communication style); AGENTS.md provides operational instructions for the agent and sub-agents. These files ensure the assistant behaves consistently regardless of which memories are retrieved for a given conversation, and give the user a transparent, editable way to shape the assistant's behavior.
-
 ### DLT-006: Pre-process messages with memory context injection
 **Status**: ✗ Defined
 **Depends on**: None
@@ -142,7 +135,7 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 
 ### DLT-018: Update core context files from conversation learnings
 **Status**: ✗ Defined
-**Depends on**: DLT-005
+**Depends on**: None
 **Priority**: 3 (Medium)
 **Complexity**: Medium
 **Description**: A dedicated post-processing processor (plugging into DLT-007's pipeline) that analyzes completed conversations for information that should update the assistant's foundational context files. Detects changes to user information (new job, moved cities, changed preferences) for USER.md, personality adjustments based on user feedback for SOUL.md, and operational instruction updates for AGENTS.md. Different from memory extraction — this updates long-lived foundational documents rather than creating individual memory entries. Must be conservative: only update when there's clear evidence, since these files carry higher weight than individual memories. When DLT-020 is implemented, core context file updates should trigger automatic git commits, making changes easy to review and roll back.
@@ -153,13 +146,6 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 **Priority**: 5 (Backlog)
 **Complexity**: Easy
 **Description**: Build an eval suite for the core context update post-processor using the evaluation framework (DLT-015). Tests whether the right updates are being applied to SOUL.md, USER.md, and AGENTS.md from sample conversations. Test cases should cover: detecting explicit user information changes, ignoring ambiguous or uncertain information, not overwriting correct existing information with noise, correctly routing updates to the right file (user info to USER.md, personality feedback to SOUL.md), and handling conversations with no context-file-relevant information. Measures precision (no false updates applied) and conservatism (only high-confidence changes are made).
-
-### DLT-020: Git module for workspace version tracking
-**Status**: ✓ Design
-**Depends on**: None
-**Priority**: 2 (High)
-**Complexity**: Easy
-**Description**: A git post-processor that plugs into DLT-008's post-processing pipeline and runs in a finalization phase — after all other processors complete. It spawns a Haiku agent via a fresh `query()` call that inspects uncommitted workspace changes using bash git commands, groups them into cohesive sets (e.g., episodic memories in one commit, facts in another, project config in a third), and creates one descriptive commit per group. A bootstrap hook initializes the workspace as a git repo on first run with a fixed committer identity. Extends the pipeline to support phased execution (main → finalize). The git integration is intentionally simple for v1 — linear history on a single branch, no merging, no PRs.
 
 ### DLT-021: Skill system with detection and pre-processing injection
 **Status**: ✗ Defined

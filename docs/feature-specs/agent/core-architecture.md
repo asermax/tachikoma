@@ -21,7 +21,7 @@ The core agent loop: receive a user message, pass it to the Claude agent via the
 | R3 | Session lifecycle: connect and disconnect from the agent service, preserving conversation context across messages within a session. Optionally tracks sessions persistently via a session registry (see [sessions](sessions.md)) |
 | R4 | Error handling: distinguish between transient failures that allow continued use and fatal failures that require stopping |
 | R5 | Agent operates from workspace directory via SDK cwd option |
-| R6 | Post-processing pipeline: on session close, run registered processors to analyze the completed conversation |
+| R6 | Post-processing pipeline: on session close, run registered processors in sequential phases to analyze the completed conversation and perform finalization tasks (see [pipeline spec](post-processing-pipeline.md)) |
 | R7 | Agent has unrestricted tool access without user confirmation prompts |
 | R8 | Tachikoma is the sole memory system — no competing memory mechanisms from the underlying SDK |
 | R9 | Foundational context (personality, user knowledge, operational guidelines) passed to the coordinator at startup and layered onto the SDK's default system prompt |
@@ -76,10 +76,10 @@ Fatal errors at startup are caught before the main loop begins.
 
 ### Post-Processing Pipeline Trigger (R6)
 
-After a session closes, the coordinator triggers a registered post-processing pipeline that runs processors in parallel to analyze the completed conversation.
+After a session closes, the coordinator triggers a registered post-processing pipeline that runs processors in phases to analyze the completed conversation and perform finalization tasks.
 
 **Acceptance Criteria**:
-- Given a session closes with a valid SDK session ID and a pipeline is registered, when the coordinator exits its async context, then the pipeline runs all registered processors in parallel
+- Given a session closes with a valid SDK session ID and a pipeline is registered, when the coordinator exits its async context, then the pipeline runs registered processors in phases, with processors within each phase running in parallel
 - Given a session closes without an SDK session ID, when the coordinator would trigger post-processing, then the pipeline is skipped and a warning is logged
 - Given no active session exists, when the coordinator exits its async context, then the pipeline is not triggered
 - Given a pipeline processor fails, when other processors are running, then the failing processor's error is logged and the others complete normally
@@ -89,6 +89,7 @@ After a session closes, the coordinator triggers a registered post-processing pi
 - Given a session closes with a valid SDK session ID and a pipeline is registered, when post-processing starts, then a status notification is emitted before the pipeline runs
 - Given an on_status callback is registered but no pipeline is registered, when the coordinator exits, then the status callback is not called
 - Given an on_status callback is registered but the session has no SDK session ID, when the coordinator exits, then the status callback is not called
+- Given a main-phase processor fails during pipeline execution, when the finalize phase begins, then the finalize-phase processors still run (error isolation applies across phases)
 - Given a post-processing processor forks the conversation, when the forked session is created, then it has `permission_mode="bypassPermissions"` to operate without user confirmation
 
 ### Unrestricted Tool Access (R7)
