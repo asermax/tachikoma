@@ -109,7 +109,7 @@ sequenceDiagram
 
 **Integration Points:**
 - Pipeline ↔ Processors: `processor.process(session)` called in parallel via `asyncio.gather`
-- Processors ↔ SDK: `fork_and_consume` calls `query(prompt, options=ClaudeAgentOptions(cwd=cwd, resume=session.sdk_session_id, fork_session=True))` — standalone function, independent of `ClaudeSDKClient`
+- Processors ↔ SDK: `fork_and_consume` calls `query(prompt, options=ClaudeAgentOptions(cwd=cwd, resume=session.sdk_session_id, fork_session=True, permission_mode="bypassPermissions"))` — standalone function, independent of `ClaudeSDKClient`
 - Forked agents ↔ Workspace: agents read/write markdown files in `memories/` subdirectories
 - Bootstrap ↔ Memory hook: `memory_hook` creates directory structure on startup
 
@@ -179,7 +179,7 @@ erDiagram
 1. processor.process(session) is called
 2. Processor references its extraction prompt (module-level constant)
 3. Calls fork_and_consume(session, prompt, self._cwd):
-   a. Creates ClaudeAgentOptions(cwd=self._cwd, resume=session.sdk_session_id, fork_session=True)
+   a. Creates ClaudeAgentOptions(cwd=self._cwd, resume=session.sdk_session_id, fork_session=True, permission_mode="bypassPermissions")
    b. Calls query(prompt=prompt, options=options)
    c. Async iterates over the returned generator to consume all messages
    d. The forked agent (LLM) autonomously:
@@ -277,3 +277,4 @@ erDiagram
 - Memory extraction quality is an LLM behavioral concern. Prompts are the primary quality lever.
 - `fork_and_consume` fully consumes the async iterator, ensuring the forked session ends cleanly.
 - The pipeline's `asyncio.Lock` serialization is forward-looking — currently at most one concurrent invocation per shutdown.
+- Forked sessions require `permission_mode="bypassPermissions"` to allow the extraction agent to read and write memory files without permission prompts.

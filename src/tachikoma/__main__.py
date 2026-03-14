@@ -2,9 +2,11 @@
 
 import asyncio
 import sys
+from pathlib import Path
 
 from claude_agent_sdk import CLIConnectionError, CLINotFoundError, ProcessError
 from loguru import logger
+from rich.console import Console
 
 from tachikoma.bootstrap import Bootstrap, BootstrapError
 from tachikoma.config import SettingsManager
@@ -63,6 +65,8 @@ async def main() -> None:
     pipeline.register(FactsProcessor(cwd=settings.workspace.path))
     pipeline.register(PreferencesProcessor(cwd=settings.workspace.path))
 
+    console = Console()
+
     try:
         async with Coordinator(
             allowed_tools=settings.agent.allowed_tools,
@@ -73,8 +77,9 @@ async def main() -> None:
             pipeline=pipeline,
             permission_mode="bypassPermissions",
             env={"CLAUDE_CODE_DISABLE_AUTO_MEMORY": "1"},
+            on_status=lambda msg: console.print(msg, style="dim italic grey50"),
         ) as coordinator:
-            repl = Repl(coordinator, history_path=settings.workspace.path / "repl_history")
+            repl = Repl(coordinator, history_path=Path("/tmp/tachikoma_repl_history"))
             await repl.run()
     except (CLINotFoundError, CLIConnectionError, ProcessError) as e:
         _log.error("Connection failed: err={err}", err=str(e))

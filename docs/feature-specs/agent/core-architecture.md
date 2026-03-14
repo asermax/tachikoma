@@ -85,6 +85,10 @@ After a session closes, the coordinator triggers a registered post-processing pi
 - Given the pipeline itself fails, when the coordinator is shutting down, then the error is logged and shutdown continues (SDK disconnect proceeds)
 - Given no pipeline is registered, when a session closes, then shutdown proceeds directly to SDK disconnect
 - Given a pipeline is already running from a previous session close, when another session close triggers the pipeline, then the new run is serialized (awaits the previous one before starting)
+- Given a session closes with a valid SDK session ID and a pipeline is registered, when post-processing starts, then a status notification is emitted before the pipeline runs
+- Given an on_status callback is registered but no pipeline is registered, when the coordinator exits, then the status callback is not called
+- Given an on_status callback is registered but the session has no SDK session ID, when the coordinator exits, then the status callback is not called
+- Given a post-processing processor forks the conversation, when the forked session is created, then it has `permission_mode="bypassPermissions"` to operate without user confirmation
 
 ### Unrestricted Tool Access (R7)
 

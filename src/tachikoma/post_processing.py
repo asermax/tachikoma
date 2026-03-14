@@ -104,6 +104,7 @@ async def fork_and_consume(session: Session, prompt: str, cwd: Path) -> None:
         cwd=cwd,
         resume=session.sdk_session_id,
         fork_session=True,
+        permission_mode="bypassPermissions",
     )
 
     # Fully consume the async iterator to ensure the forked session ends cleanly

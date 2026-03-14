@@ -596,3 +596,55 @@ class TestCoordinatorPostProcessing:
             pass
 
         pipeline.run.assert_not_awaited()
+
+    async def test_calls_on_status_before_pipeline_run(self, mock_sdk) -> None:
+        """AC4: Status callback is called before pipeline runs."""
+        client, _ = mock_sdk
+        active = Session(
+            id="s7",
+            started_at=datetime.now(UTC),
+            sdk_session_id="sdk-status",
+        )
+        registry = _make_mock_registry(active_session=active)
+        pipeline = _make_mock_pipeline()
+
+        call_order: list[str] = []
+        on_status = MagicMock(side_effect=lambda msg: call_order.append("status"))
+        pipeline.run.side_effect = AsyncMock(side_effect=lambda s: call_order.append("pipeline"))
+
+        async with Coordinator(
+            registry=registry, pipeline=pipeline, on_status=on_status,
+        ):
+            pass
+
+        on_status.assert_called_once_with("Processing memories...")
+        assert call_order == ["status", "pipeline"]
+
+    async def test_on_status_not_called_without_pipeline(self, mock_sdk) -> None:
+        """AC: Status callback not called when no pipeline is registered."""
+        client, _ = mock_sdk
+        on_status = MagicMock()
+
+        async with Coordinator(on_status=on_status):
+            pass
+
+        on_status.assert_not_called()
+
+    async def test_on_status_not_called_without_sdk_session_id(self, mock_sdk) -> None:
+        """AC: Status callback not called when session has no sdk_session_id."""
+        client, _ = mock_sdk
+        active = Session(
+            id="s8",
+            started_at=datetime.now(UTC),
+            sdk_session_id=None,
+        )
+        registry = _make_mock_registry(active_session=active)
+        pipeline = _make_mock_pipeline()
+        on_status = MagicMock()
+
+        async with Coordinator(
+            registry=registry, pipeline=pipeline, on_status=on_status,
+        ):
+            pass
+
+        on_status.assert_not_called()

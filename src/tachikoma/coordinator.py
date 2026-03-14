@@ -5,7 +5,7 @@ The coordinator manages the SDK client lifecycle and transforms SDK messages int
 domain events via the message adapter.
 """
 
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from pathlib import Path
 from types import TracebackType
 
@@ -58,6 +58,7 @@ class Coordinator:
         pipeline: PostProcessingPipeline | None = None,
         permission_mode: PermissionMode | None = None,
         env: dict[str, str] | None = None,
+        on_status: Callable[[str], None] | None = None,
     ) -> None:
         # Build SystemPromptPreset when system_prompt is provided
         sdk_system_prompt = None
@@ -80,6 +81,7 @@ class Coordinator:
         self._client: ClaudeSDKClient | None = None
         self._registry = registry
         self._pipeline = pipeline
+        self._on_status = on_status
 
     async def __aenter__(self) -> "Coordinator":
         self._client = ClaudeSDKClient(self._options)
@@ -108,6 +110,12 @@ class Coordinator:
         # Pipeline uses standalone query() which is independent of ClaudeSDKClient
         if active is not None and self._pipeline is not None:
             if active.sdk_session_id is not None:
+                if self._on_status is not None:
+                    try:
+                        self._on_status("Processing memories...")
+                    except Exception as exc:
+                        _log.exception("Status callback failed: err={err}", err=str(exc))
+
                 try:
                     await self._pipeline.run(active)
                 except Exception as exc:

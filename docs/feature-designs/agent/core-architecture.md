@@ -68,7 +68,7 @@ The **Message Adapter** is a pure transformation layer — it maps SDK `Message`
 | Layer/Component | Responsibility | Key Decisions |
 |-----------------|----------------|---------------|
 | `src/tachikoma/__main__.py` | CLI entry point: loads config via SettingsManager, runs bootstrap hooks (workspace, logging, context, memory, session recovery), retrieves session objects from bootstrap extras, wires up coordinator + channel with try/finally for engine disposal, runs `asyncio.run(main())` | Loads config via SettingsManager, runs bootstrap, wires up coordinator + channel; enables `python -m tachikoma` |
-| `src/tachikoma/coordinator.py` | Wraps `ClaudeSDKClient`, manages session lifecycle, exposes `send_message()`. Accepts `permission_mode` and `env` for SDK configuration. Optionally integrates with `SessionRegistry` for persistent session tracking (see [sessions design](sessions.md)) and `PostProcessingPipeline` for post-conversation analysis (see [memory-extraction design](../../feature-designs/memory/memory-extraction.md)) | Async context manager pattern; owns SDK client instance; optional registry and pipeline dependencies; passes `permission_mode` and `env` through to `ClaudeAgentOptions` |
+| `src/tachikoma/coordinator.py` | Wraps `ClaudeSDKClient`, manages session lifecycle, exposes `send_message()`. Accepts `permission_mode` and `env` for SDK configuration, and an optional `on_status` callback for shutdown-phase notifications. Optionally integrates with `SessionRegistry` for persistent session tracking (see [sessions design](sessions.md)) and `PostProcessingPipeline` for post-conversation analysis (see [memory-extraction design](../../feature-designs/memory/memory-extraction.md)) | Async context manager pattern; owns SDK client instance; optional registry, pipeline, and on_status dependencies; passes `permission_mode` and `env` through to `ClaudeAgentOptions` |
 | `src/tachikoma/events.py` | `AgentEvent` domain type hierarchy | Dataclasses; no SDK dependency |
 | `src/tachikoma/adapter.py` | Transforms SDK messages to `AgentEvent`s | Pure function, stateless; only module that imports SDK message types |
 
@@ -178,10 +178,10 @@ AgentEvent (base)
 6. Reads final settings from SettingsManager
 7. Retrieves session repository, registry, and system_prompt from bootstrap extras
 8. Creates PostProcessingPipeline, registers memory processors (episodic, facts, preferences) with workspace_path
-9. Creates Coordinator with allowed_tools, model, cwd=workspace_path, registry, system_prompt, pipeline, permission_mode="bypassPermissions", and env={"CLAUDE_CODE_DISABLE_AUTO_MEMORY": "1"}
+9. Creates Coordinator with allowed_tools, model, cwd=workspace_path, registry, system_prompt, pipeline, permission_mode="bypassPermissions", env={"CLAUDE_CODE_DISABLE_AUTO_MEMORY": "1"}, and on_status callback (for channel display)
 10. Enters coordinator async context (connects SDK client)
 11. If connection fails → catch SDK error, log + print to stderr, exit
-12. Creates channel (REPL) with coordinator reference and history path from config
+12. Creates channel (REPL) with coordinator reference and history path `/tmp/tachikoma_repl_history`
 13. Channel enters its main loop
 14. finally: disposes session repository engine (always runs, even on error)
 ```
@@ -191,7 +191,7 @@ AgentEvent (base)
 ```
 1. Channel signals exit (user action or non-recoverable error)
 2a. Coordinator __aexit__ captures active session (if any), then closes it via registry (errors logged, not propagated)
-2b. If captured session has a valid SDK session ID and a pipeline is registered, coordinator triggers post-processing pipeline (errors logged, not propagated)
+2b. If captured session has a valid SDK session ID and a pipeline is registered, coordinator calls on_status callback then triggers post-processing pipeline (errors in both callback and pipeline logged, not propagated)
 2c. Coordinator disconnects SDK client
 3. SDK client disconnects, CLI process terminates
 4. finally block: session repository engine disposed
@@ -325,3 +325,4 @@ AgentEvent (base)
 - The adapter pattern used here (SDK types → domain types) may become a project-wide pattern if repeated in future features that integrate external services
 - `ClaudeSDKClient.query()` returns `None` — messages are retrieved via `receive_messages()` which yields `AsyncIterator[Message]`
 - The `Message` union type includes `StreamEvent` alongside the main message types — the adapter filters it along with other non-relevant types
+- The `on_status` callback is a lightweight injection point for channels to display post-processing progress. The coordinator has no knowledge of rendering — the callback keeps rendering concerns in the channel layer.

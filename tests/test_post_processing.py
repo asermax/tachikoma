@@ -181,6 +181,7 @@ class TestForkAndConsume:
         assert options.cwd == cwd
         assert options.resume == "sdk-test-123"
         assert options.fork_session is True
+        assert options.permission_mode == "bypassPermissions"
 
     async def test_consumes_full_async_iterator(self, mocker: pytest.MockerFixture) -> None:
         """AC: Async iterator is fully consumed."""
