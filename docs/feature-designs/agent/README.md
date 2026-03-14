@@ -11,6 +11,8 @@ Design documents for the core agent capabilities.
 | [core-architecture](core-architecture.md) | Coordinator, event system, and SDK adapter | Current |
 | [workspace-bootstrap](workspace-bootstrap.md) | Bootstrap registry, hook pattern, workspace directory creation | Current |
 | [core-context](../../feature-specs/agent/core-architecture.md) | Core context files (SOUL.md, USER.md, AGENTS.md) loaded at startup and appended to system prompt | Current |
+| [post-processing-pipeline](post-processing-pipeline.md) | Phased pipeline mechanism, processor interface, shared helpers | Current |
+| [workspace-version-tracking](workspace-version-tracking.md) | Git module: bootstrap hook and commit post-processor | Current |
 | [sessions](sessions.md) | Session model, repository, registry, and crash recovery | Current |
 
 ## Related Decisions

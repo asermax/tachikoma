@@ -10,6 +10,8 @@ Core agent capabilities: the coordinator loop that receives messages, delegates 
 |------------|-------------|--------|
 | [core-architecture](core-architecture.md) | Coordinator, event system, and SDK adapter | ✓ |
 | [workspace-bootstrap](workspace-bootstrap.md) | Workspace initialization with idempotent hook system | ✓ |
+| [post-processing-pipeline](post-processing-pipeline.md) | Phased post-processing pipeline for running processors after session close | ✓ |
+| [workspace-version-tracking](workspace-version-tracking.md) | Automatic git version tracking for workspace changes | ✓ |
 | [sessions](sessions.md) | Persistent conversation session tracking and crash recovery | ✓ |
 
 ## Related Decisions

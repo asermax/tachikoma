@@ -20,7 +20,7 @@ Tachikoma needs a foundational agent architecture that wraps the Claude Agent SD
 
 **Interactions:**
 - Channels (REPL, Telegram) call the coordinator's `send_message()` to interact with the agent
-- Post-processing pipeline runs registered processors after session close (see [memory-extraction design](../../feature-designs/memory/memory-extraction.md))
+- Post-processing pipeline runs registered processors after session close (see [pipeline design](post-processing-pipeline.md))
 - Future features (delegation, pre-processing) will extend the coordinator's message flow
 
 ## Design Overview
@@ -67,8 +67,8 @@ The **Message Adapter** is a pure transformation layer — it maps SDK `Message`
 
 | Layer/Component | Responsibility | Key Decisions |
 |-----------------|----------------|---------------|
-| `src/tachikoma/__main__.py` | CLI entry point: loads config via SettingsManager, runs bootstrap hooks (workspace, logging, context, memory, session recovery), retrieves session objects and system_prompt from bootstrap extras, wires up coordinator + channel with try/finally for engine disposal, runs `asyncio.run(main())` | Loads config via SettingsManager, runs bootstrap, reads system_prompt from extras, wires up coordinator + channel; enables `python -m tachikoma` |
-| `src/tachikoma/coordinator.py` | Wraps `ClaudeSDKClient`, manages session lifecycle, exposes `send_message()`. Accepts `system_prompt`, `permission_mode`, and `env` for SDK configuration, and an optional `on_status` callback for shutdown-phase notifications. Optionally integrates with `SessionRegistry` for persistent session tracking (see [sessions design](sessions.md)) and `PostProcessingPipeline` for post-conversation analysis (see [memory-extraction design](../../feature-designs/memory/memory-extraction.md)) | Async context manager pattern; owns SDK client instance; wraps system_prompt in SystemPromptPreset with append mode (see ADR-008); optional registry, pipeline, and on_status dependencies; passes `system_prompt`, `permission_mode`, and `env` through to `ClaudeAgentOptions` |
+| `src/tachikoma/__main__.py` | CLI entry point: loads config via SettingsManager, runs bootstrap hooks (workspace, git, logging, context, memory, session recovery), retrieves session objects and system_prompt from bootstrap extras, wires up coordinator + channel with try/finally for engine disposal, runs `asyncio.run(main())` | Loads config via SettingsManager, runs bootstrap, reads system_prompt from extras, registers pipeline processors (memory in main phase, git in finalize phase), wires up coordinator + channel; enables `python -m tachikoma` |
+| `src/tachikoma/coordinator.py` | Wraps `ClaudeSDKClient`, manages session lifecycle, exposes `send_message()`. Accepts `system_prompt`, `permission_mode`, and `env` for SDK configuration, and an optional `on_status` callback for shutdown-phase notifications. Optionally integrates with `SessionRegistry` for persistent session tracking (see [sessions design](sessions.md)) and `PostProcessingPipeline` for post-conversation analysis (see [pipeline design](post-processing-pipeline.md)) | Async context manager pattern; owns SDK client instance; wraps system_prompt in SystemPromptPreset with append mode (see ADR-008); optional registry, pipeline, and on_status dependencies; passes `system_prompt`, `permission_mode`, and `env` through to `ClaudeAgentOptions` |
 | `src/tachikoma/events.py` | `AgentEvent` domain type hierarchy | Dataclasses; no SDK dependency |
 | `src/tachikoma/adapter.py` | Transforms SDK messages to `AgentEvent`s | Pure function, stateless; only module that imports SDK message types |
 
@@ -103,7 +103,7 @@ sequenceDiagram
 - Coordinator ↔ Adapter: pure function call `adapt(sdk_message) -> list[AgentEvent]` (returns empty list for filtered messages)
 - Channel ↔ Coordinator: async iterator protocol
 - Coordinator ↔ SessionRegistry (optional): `create_session()` on first message, `update_metadata()` on Result events, `close_session()` on shutdown (see [sessions design](sessions.md))
-- Coordinator ↔ PostProcessingPipeline (optional): `pipeline.run(session)` in `__aexit__`, after session close, before SDK disconnect (see [memory-extraction design](../../feature-designs/memory/memory-extraction.md))
+- Coordinator ↔ PostProcessingPipeline (optional): `pipeline.run(session)` in `__aexit__`, after session close, before SDK disconnect (see [pipeline design](post-processing-pipeline.md))
 
 ### Shared Logic
 
@@ -172,12 +172,12 @@ AgentEvent (base)
 ```
 1. __main__.py runs asyncio.run(main())
 2. Creates SettingsManager (loads configuration, see configuration/config-system design)
-3. Creates Bootstrap, registers hooks: workspace, logging, context, memory, session recovery
-4. Runs bootstrap — hooks execute in registration order (workspace creation, logging configuration, core context init, memory directory creation, session DB init + crash recovery)
+3. Creates Bootstrap, registers hooks: workspace, git, logging, context, memory, session recovery
+4. Runs bootstrap — hooks execute in registration order (workspace creation, git init, logging configuration, core context init, memory directory creation, session DB init + crash recovery)
 5. If bootstrap fails → catch BootstrapError, log + print to stderr, exit (if logging hook itself failed, log may not reach file)
 6. Reads final settings from SettingsManager
 7. Retrieves session repository, registry, and system_prompt from bootstrap extras
-8. Creates PostProcessingPipeline, registers memory processors (episodic, facts, preferences) with workspace_path
+8. Creates PostProcessingPipeline, registers memory processors (episodic, facts, preferences) in main phase, registers GitProcessor in finalize phase — all with workspace_path
 9. Creates Coordinator with allowed_tools, model, cwd=workspace_path, registry, system_prompt, pipeline, permission_mode="bypassPermissions", env={"CLAUDE_CODE_DISABLE_AUTO_MEMORY": "1"}, and on_status callback (for channel display)
 10. Enters coordinator async context (connects SDK client)
 11. If connection fails → catch SDK error, log + print to stderr, exit

@@ -8,7 +8,7 @@ Design documents for automatic memory extraction from conversations.
 
 | Capability | Description | Status |
 |------------|-------------|--------|
-| [memory-extraction](memory-extraction.md) | Post-processing pipeline, memory processors, and bootstrap hook | Current |
+| [memory-extraction](memory-extraction.md) | Memory processors and bootstrap hook | Current |
 
 ## Related Decisions
 

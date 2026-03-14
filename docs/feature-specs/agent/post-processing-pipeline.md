@@ -1,0 +1,60 @@
+# Post-Processing Pipeline
+
+<!-- This spec describes the current system capability. Updated through delta reconciliation. -->
+
+## Overview
+
+A reusable, pluggable pipeline that runs registered processors after conversation end. The pipeline supports phased execution — processors declare which phase they run in, phases execute sequentially, and processors within each phase run in parallel with error isolation. The pipeline is domain-agnostic; it knows nothing about what processors do.
+
+## User Stories
+
+- As a developer, I want a reusable pipeline so that any post-conversation processor can register without coupling to other processors
+- As a developer, I want phased execution so that finalization tasks (like git commits) can run after all other processors complete
+
+## Requirements
+
+| ID | Requirement |
+|----|-------------|
+| R0 | Reusable pipeline that runs registered processors after session close |
+| R1 | Phased execution — processors declare a phase at registration; phases run sequentially, processors within a phase run in parallel |
+| R2 | Error isolation — individual processor failures are logged but don't prevent other processors or subsequent phases from completing |
+| R3 | Concurrent invocations serialized via lock |
+| R4 | Shared processor interface (ABC) that is domain-agnostic and SDK-decoupled |
+| R5 | Phase validation at registration — invalid phases rejected immediately |
+
+## Behaviors
+
+### Processor Registration (R0, R1, R5)
+
+Processors register with the pipeline, optionally declaring a phase. Invalid phases are rejected at registration.
+
+**Acceptance Criteria**:
+- Given a processor is registered without a phase, when it is added to the pipeline, then it defaults to the main phase
+- Given a processor is registered with `phase="finalize"`, when it is added, then it is placed in the finalize phase
+- Given a processor is registered with an invalid phase, when `register()` is called, then a `ValueError` is raised listing valid phases
+- Given multiple processors register for the same phase, when the pipeline runs, then they execute in parallel
+
+### Phased Execution (R1, R2)
+
+The pipeline runs phases sequentially (main → finalize). Within each phase, processors run in parallel. Failures in one phase do not prevent subsequent phases from running.
+
+**Acceptance Criteria**:
+- Given processors in both main and finalize phases, when the pipeline runs, then main-phase processors complete before finalize-phase processors start
+- Given a main-phase processor fails, when the finalize phase begins, then finalize-phase processors still run
+- Given a phase has no registered processors, when the pipeline runs that phase, then it is skipped
+- Given a processor fails, when other processors in the same phase are running, then they complete normally
+
+### Serialization (R3)
+
+Concurrent pipeline invocations are serialized to prevent interleaving.
+
+**Acceptance Criteria**:
+- Given a pipeline is already running, when another invocation arrives, then it waits for the first to complete before starting
+
+### Shared Interface (R4)
+
+The `PostProcessor` ABC defines the processor contract without SDK coupling.
+
+**Acceptance Criteria**:
+- Given a class implements `PostProcessor`, when it defines `process(session)`, then it can register with the pipeline
+- Given the `PostProcessor` ABC, then it has no dependency on the Claude Agent SDK

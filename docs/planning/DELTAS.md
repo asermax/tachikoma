@@ -147,13 +147,6 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 **Complexity**: Easy
 **Description**: Build an eval suite for the core context update post-processor using the evaluation framework (DLT-015). Tests whether the right updates are being applied to SOUL.md, USER.md, and AGENTS.md from sample conversations. Test cases should cover: detecting explicit user information changes, ignoring ambiguous or uncertain information, not overwriting correct existing information with noise, correctly routing updates to the right file (user info to USER.md, personality feedback to SOUL.md), and handling conversations with no context-file-relevant information. Measures precision (no false updates applied) and conservatism (only high-confidence changes are made).
 
-### DLT-020: Git module for workspace version tracking
-**Status**: ⧗ Implementation
-**Depends on**: None
-**Priority**: 2 (High)
-**Complexity**: Easy
-**Description**: A git post-processor that plugs into DLT-008's post-processing pipeline and runs in a finalization phase — after all other processors complete. It spawns a Haiku agent via a fresh `query()` call that inspects uncommitted workspace changes using bash git commands, groups them into cohesive sets (e.g., episodic memories in one commit, facts in another, project config in a third), and creates one descriptive commit per group. A bootstrap hook initializes the workspace as a git repo on first run with a fixed committer identity. Extends the pipeline to support phased execution (main → finalize). The git integration is intentionally simple for v1 — linear history on a single branch, no merging, no PRs.
-
 ### DLT-021: Skill system with detection and pre-processing injection
 **Status**: ✗ Defined
 **Depends on**: DLT-006

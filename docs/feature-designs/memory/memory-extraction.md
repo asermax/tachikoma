@@ -7,7 +7,9 @@
 
 ## Purpose
 
-This document explains the design rationale for memory extraction: how the post-processing pipeline infrastructure works, how memory processors fork SDK sessions to extract memories, and how the bootstrap hook initializes the memory directory structure.
+This document explains the design rationale for memory extraction: how memory processors fork SDK sessions to extract memories, and how the bootstrap hook initializes the memory directory structure.
+
+For the post-processing pipeline infrastructure that memory processors plug into, see the [post-processing pipeline design](../agent/post-processing-pipeline.md).
 
 ## Problem Context
 
@@ -21,12 +23,13 @@ Conversations are ephemeral — once a session ends, the context is lost. The as
 
 **Interactions:**
 - Coordinator (core-architecture): triggers pipeline on session close in `__aexit__`
+- Post-processing pipeline: memory processors register in the default `main` phase (see [pipeline design](../agent/post-processing-pipeline.md))
 - Sessions: provides the `Session` dataclass with `sdk_session_id` for forking
 - Workspace bootstrap: memory hook creates directory structure
 
 ## Design Overview
 
-Two independent components work together: a reusable **post-processing pipeline** and a set of **memory processors** that plug into it.
+Three **memory processors** plug into the [post-processing pipeline](../agent/post-processing-pipeline.md), registering in the default `main` phase and running in parallel.
 
 ```
 ┌───────────────────────────────────────────────────────────┐
@@ -40,25 +43,10 @@ Two independent components work together: a reusable **post-processing pipeline*
 │  Coordinator(..., pipeline=pipeline)                      │
 └───────────────────────────────────────────────────────────┘
                           │
-                          ▼
-┌───────────────────────────────────────────────────────────┐
-│             PostProcessingPipeline                        │
-│             (src/tachikoma/post_processing.py)            │
-│                                                           │
-│  run(session):                                            │
-│    async with lock:    ◄── serializes concurrent runs     │
-│      await gather(                                        │
-│        processor1.process(session),                       │
-│        processor2.process(session),                       │
-│        processor3.process(session),                       │
-│        return_exceptions=True                             │
-│      )                                                    │
-└───────────────────────────────────────────────────────────┘
-                          │
              ┌────────────┼────────────┐
              ▼            ▼            ▼
         ┌─────────┐ ┌─────────┐ ┌─────────┐
-        │Episodic │ │  Facts  │ │  Prefs  │
+        │Episodic │ │  Facts  │ │  Prefs  │  (main phase)
         │Processor│ │Processor│ │Processor│
         └────┬────┘ └────┬────┘ └────┬────┘
              │            │            │
@@ -70,9 +58,7 @@ Two independent components work together: a reusable **post-processing pipeline*
         episodic/    facts/       preferences/
 ```
 
-The **PostProcessingPipeline** is a generic mechanism — it knows nothing about memory. It accepts any `PostProcessor` subclass and runs them in parallel with error isolation. It lives in its own module (`post_processing.py`) so future features can register processors without touching memory code.
-
-Each **memory processor** is a thin ABC subclass that builds an extraction prompt and calls the standalone `fork_and_consume()` helper. The forked agent has full workspace access and autonomously reads, creates, updates, or deletes memory files — the processor code performs no file I/O.
+Each **memory processor** is a thin `PostProcessor` subclass that builds an extraction prompt and calls the standalone `fork_and_consume()` helper. The forked agent has full workspace access and autonomously reads, creates, updates, or deletes memory files — the processor code performs no file I/O.
 
 ## Components
 
@@ -80,7 +66,6 @@ Each **memory processor** is a thin ABC subclass that builds an extraction promp
 
 | Layer/Component | Responsibility | Key Decisions |
 |-----------------|----------------|---------------|
-| `src/tachikoma/post_processing.py` | `PostProcessor` ABC (interface only), `PostProcessingPipeline` class, `fork_and_consume` standalone helper | Separate module from memory; reusable by future processors; ABC has no SDK coupling; fork helper uses standalone `query()` |
 | `src/tachikoma/memory/__init__.py` | Re-exports: `EpisodicProcessor`, `FactsProcessor`, `PreferencesProcessor`, `memory_hook` | Clean public API for the memory package |
 | `src/tachikoma/memory/hooks.py` | `memory_hook`: creates `memories/` directory structure | Subsystem-owned hook pattern; registered after context hook |
 | `src/tachikoma/memory/episodic.py` | `EpisodicProcessor(PostProcessor)` + `EPISODIC_PROMPT` constant | Prompt co-located with processor logic |
@@ -97,7 +82,7 @@ sequenceDiagram
     participant FS as Workspace Files
 
     rect rgba(0, 128, 255, 0.1)
-        Note over Pipeline,FS: Parallel execution (asyncio.gather)
+        Note over Pipeline,FS: Phase: main (parallel execution)
         Pipeline->>Proc: process(session) [x3 in parallel]
         Proc->>Proc: build extraction prompt
         Proc->>SDK: fork_and_consume(session, prompt, cwd)
@@ -108,37 +93,16 @@ sequenceDiagram
 ```
 
 **Integration Points:**
-- Pipeline ↔ Processors: `processor.process(session)` called in parallel via `asyncio.gather`
+- Processors ↔ Pipeline: memory processors register in the default `main` phase (see [pipeline design](../agent/post-processing-pipeline.md))
 - Processors ↔ SDK: `fork_and_consume` calls `query(prompt, options=ClaudeAgentOptions(cwd=cwd, resume=session.sdk_session_id, fork_session=True, permission_mode="bypassPermissions"))` — standalone function, independent of `ClaudeSDKClient`
 - Forked agents ↔ Workspace: agents read/write markdown files in `memories/` subdirectories
 - Bootstrap ↔ Memory hook: `memory_hook` creates directory structure on startup
-
-**Error contract:**
-- Individual processor failures caught by `asyncio.gather(return_exceptions=True)` and logged per DES-002
-- Pipeline failures in coordinator logged but never propagate — don't block shutdown
-- Pipeline serializes concurrent invocations via `asyncio.Lock`
-
-### Shared Logic
-
-- **`PostProcessor` ABC** (`post_processing.py`): shared interface between all processors. Defines only the `process()` contract.
-- **`fork_and_consume` function** (`post_processing.py`): standalone helper encapsulating SDK `query()` forking pattern. Available to future processors.
-- **`Session` dataclass** (`sessions/model.py`): shared input to the pipeline — processors read `sdk_session_id`.
 
 ## Modeling
 
 The domain model is minimal — no persistent entities or database tables. Memory files are unstructured markdown managed by forked LLM agents.
 
 ```
-PostProcessingPipeline
-├── _processors: list[PostProcessor]     (registered processors)
-├── _lock: asyncio.Lock                  (serializes concurrent runs)
-└── run(session: Session) → None         (parallel execution)
-
-PostProcessor (ABC)
-└── process(session: Session) → None     (abstract)
-
-fork_and_consume(session, prompt, cwd) → None  (standalone helper)
-
 EpisodicProcessor(PostProcessor)
 ├── _cwd: Path
 └── EPISODIC_PROMPT: str
@@ -152,26 +116,9 @@ PreferencesProcessor(PostProcessor)
 └── PREFERENCES_PROMPT: str
 ```
 
-```mermaid
-erDiagram
-    PostProcessingPipeline ||--o{ PostProcessor : registers
-    PostProcessor ||--|| Session : "receives as input"
-    Coordinator ||--o| PostProcessingPipeline : "optionally triggers"
-```
+For the `PostProcessingPipeline`, `PostProcessor` ABC, and `fork_and_consume` models, see the [pipeline design](../agent/post-processing-pipeline.md).
 
 ## Data Flow
-
-### Pipeline execution flow
-
-```
-1. pipeline.run(session) acquires asyncio.Lock
-2. For each registered processor, creates a coroutine: processor.process(session)
-3. Runs all coroutines via asyncio.gather(return_exceptions=True)
-4. Iterates results:
-   a. If result is an Exception → log error with processor name (DES-002)
-   b. If result is None → processor succeeded
-5. Releases lock
-```
 
 ### Memory processor flow (per processor)
 
@@ -190,31 +137,6 @@ erDiagram
 ```
 
 ## Key Decisions
-
-### Pipeline separate from memory
-
-**Choice**: `PostProcessingPipeline` and `PostProcessor` live in `src/tachikoma/post_processing.py`, separate from `memory/`.
-**Why**: The pipeline is reusable — future features register processors without touching memory code. Separating mechanism from domain follows the same pattern as `bootstrap.py` (mechanism) vs subsystem hooks.
-**Alternatives Considered**:
-- Single `memory/` package: simpler but couples reusable pipeline to memory
-
-**Consequences**:
-- Pro: Clean separation — pipeline is domain-agnostic
-- Pro: Future processors import from `post_processing.py`, not `memory/`
-- Pro: Consistent with bootstrap mechanism-vs-hook pattern
-
-### ABC with standalone fork helper
-
-**Choice**: `PostProcessor` ABC with only `process()`. Shared forking logic in standalone `fork_and_consume()`.
-**Why**: ABC defines interface contract. Fork helper is convenience for processors needing SDK session forking. Standalone avoids coupling ABC to SDK's `query()`.
-**Alternatives Considered**:
-- Plain callable: lacks structure
-- ABC with fork as method: couples interface to SDK
-
-**Consequences**:
-- Pro: `PostProcessor` ABC is truly generic — no SDK coupling
-- Pro: `fork_and_consume` available to any processor
-- Pro: Future processors can implement `process()` without inheriting forking behavior
 
 ### Processor-per-file with co-located prompts
 
@@ -245,7 +167,7 @@ erDiagram
 
 **Given**: A conversation session with a valid `sdk_session_id`
 **When**: The coordinator's `__aexit__` fires
-**Then**: Session is closed. Pipeline runs all three processors in parallel. Each forks the session and the forked agent reads/writes memory files. After completion, SDK client disconnects.
+**Then**: Session is closed. Pipeline runs all three memory processors in the main phase. Each forks the session and the forked agent reads/writes memory files. After completion, SDK client disconnects.
 
 ### Scenario: One processor fails
 
@@ -275,6 +197,4 @@ erDiagram
 
 - Forked sessions have no `max_turns` or `max_budget_usd` limits. Extraction prompts are focused, so sessions should be naturally short.
 - Memory extraction quality is an LLM behavioral concern. Prompts are the primary quality lever.
-- `fork_and_consume` fully consumes the async iterator, ensuring the forked session ends cleanly.
-- The pipeline's `asyncio.Lock` serialization is forward-looking — currently at most one concurrent invocation per shutdown.
 - Forked sessions require `permission_mode="bypassPermissions"` to allow the extraction agent to read and write memory files without permission prompts.
