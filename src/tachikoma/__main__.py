@@ -12,6 +12,7 @@ from tachikoma.bootstrap import Bootstrap, BootstrapError
 from tachikoma.config import SettingsManager
 from tachikoma.context import context_hook
 from tachikoma.coordinator import Coordinator
+from tachikoma.git import GitProcessor, git_hook
 from tachikoma.logging import logging_hook
 from tachikoma.memory import (
     EpisodicProcessor,
@@ -19,7 +20,7 @@ from tachikoma.memory import (
     PreferencesProcessor,
     memory_hook,
 )
-from tachikoma.post_processing import PostProcessingPipeline
+from tachikoma.post_processing import FINALIZE_PHASE, PostProcessingPipeline
 from tachikoma.repl import Repl
 from tachikoma.sessions import session_recovery_hook
 from tachikoma.workspace import workspace_hook
@@ -32,6 +33,7 @@ async def main() -> None:
 
     bootstrap = Bootstrap(settings_manager)
     bootstrap.register("workspace", workspace_hook)
+    bootstrap.register("git", git_hook)
     bootstrap.register("logging", logging_hook)
     bootstrap.register("context", context_hook)
     bootstrap.register("memory", memory_hook)
@@ -64,6 +66,7 @@ async def main() -> None:
     pipeline.register(EpisodicProcessor(cwd=settings.workspace.path))
     pipeline.register(FactsProcessor(cwd=settings.workspace.path))
     pipeline.register(PreferencesProcessor(cwd=settings.workspace.path))
+    pipeline.register(GitProcessor(cwd=settings.workspace.path), phase=FINALIZE_PHASE)
 
     console = Console()
 
