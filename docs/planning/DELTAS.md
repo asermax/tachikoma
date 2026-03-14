@@ -134,7 +134,7 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 **Description**: Build an eval suite for the post-processing pipeline using the evaluation framework (DLT-015). Tests whether the right facts, preferences, decisions, and patterns are being captured from sample conversations. Test cases should cover: extracting explicit facts, detecting implicit preferences, correctly categorizing memory types, avoiding hallucinated memories (extracting things that weren't actually discussed), and handling conversations with no extractable learnings. Measures completeness (nothing important missed), accuracy (correct categorization), and precision (no false extractions).
 
 ### DLT-018: Update core context files from conversation learnings
-**Status**: ✓ Spec
+**Status**: ⧗ Design
 **Depends on**: None
 **Priority**: 3 (Medium)
 **Complexity**: Medium
