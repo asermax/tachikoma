@@ -10,6 +10,7 @@ Design documents for the core agent capabilities.
 |------------|-------------|--------|
 | [core-architecture](core-architecture.md) | Coordinator, event system, and SDK adapter | Current |
 | [workspace-bootstrap](workspace-bootstrap.md) | Bootstrap registry, hook pattern, workspace directory creation | Current |
+| [core-context](../../feature-specs/agent/core-architecture.md) | Core context files (SOUL.md, USER.md, AGENTS.md) loaded at startup and appended to system prompt | Current |
 | [sessions](sessions.md) | Session model, repository, registry, and crash recovery | Current |
 
 ## Related Decisions

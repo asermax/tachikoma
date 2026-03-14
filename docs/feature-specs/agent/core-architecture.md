@@ -24,6 +24,7 @@ The core agent loop: receive a user message, pass it to the Claude agent via the
 | R6 | Post-processing pipeline: on session close, run registered processors to analyze the completed conversation |
 | R7 | Agent has unrestricted tool access without user confirmation prompts |
 | R8 | Tachikoma is the sole memory system — no competing memory mechanisms from the underlying SDK |
+| R9 | Foundational context (personality, user knowledge, operational guidelines) passed to the coordinator at startup and layered onto the SDK's default system prompt |
 
 ## Behaviors
 
@@ -103,6 +104,15 @@ Claude Code's built-in auto-memory feature is disabled so that Tachikoma's own m
 
 **Acceptance Criteria**:
 - Given the coordinator is created, then `ClaudeAgentOptions.env` includes `CLAUDE_CODE_DISABLE_AUTO_MEMORY=1`
+
+### Foundational Context (R9)
+
+Personality, user knowledge, and operational guidelines are loaded at startup and appended to the SDK's default system prompt via `SystemPromptPreset`.
+
+**Acceptance Criteria**:
+- Given the coordinator is created, when a `system_prompt` parameter is provided, then it is wrapped in `SystemPromptPreset` and passed to `ClaudeAgentOptions`
+- Given foundational context files exist, when the coordinator is created, then the assembled context (SOUL.md + USER.md + AGENTS.md) is passed to the coordinator
+- Given the coordinator is created, then the agent operates with the SDK's default behaviors (tool use, safety, agentic loop) plus the appended context
 
 ### Error Recovery (R4)
 

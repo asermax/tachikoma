@@ -44,7 +44,8 @@ flowchart TD
 
 | Layer/Component | Responsibility | Key Decisions |
 |-----------------|----------------|---------------|
-| `src/tachikoma/bootstrap.py` | BootstrapContext, BootstrapHook type, Bootstrap class, BootstrapError, workspace_hook | New module; keeps bootstrap mechanism + built-in hook together |
+| `src/tachikoma/bootstrap.py` | BootstrapContext, BootstrapHook type, Bootstrap class, BootstrapError | Mechanism only; each subsystem owns its hooks internally (see DES-003) |
+| `src/tachikoma/workspace.py` | `workspace_hook` — creates workspace root and `.tachikoma/` data folder | Subsystem-owned hook; pattern established by workspace module |
 
 ### Cross-Layer Contracts
 
