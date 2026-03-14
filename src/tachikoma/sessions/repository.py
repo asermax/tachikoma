@@ -8,7 +8,7 @@ from datetime import datetime
 from pathlib import Path
 
 from loguru import logger
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker, create_async_engine
 
 from tachikoma.sessions.errors import SessionRepositoryError
@@ -60,6 +60,26 @@ class SessionRepository:
             self._engine = None
             self._session_factory = None
 
+    async def migrate(self) -> None:
+        """Apply schema migrations for columns added after initial creation.
+
+        SQLAlchemy's create_all() only creates missing tables, not columns.
+        This method adds new columns to existing tables as needed.
+        """
+        self._require_initialized()
+
+        # Check if summary column exists via pragma_table_info
+        async with self._engine.connect() as conn:
+            result = await conn.execute(
+                text("SELECT * FROM pragma_table_info('sessions') WHERE name='summary'")
+            )
+            column_exists = result.fetchone() is not None
+
+            if not column_exists:
+                await conn.execute(text("ALTER TABLE sessions ADD COLUMN summary TEXT"))
+                await conn.commit()
+                _log.info("Schema migration: added 'summary' column to sessions table")
+
     # ------------------------------------------------------------------
     # CRUD operations
     # ------------------------------------------------------------------
@@ -73,6 +93,7 @@ class SessionRepository:
                 id=session.id,
                 sdk_session_id=session.sdk_session_id,
                 transcript_path=session.transcript_path,
+                summary=session.summary,
                 started_at=session.started_at,
                 ended_at=session.ended_at,
             )
@@ -89,7 +110,7 @@ class SessionRepository:
     async def update(self, session_id: str, **fields) -> None:
         """Update arbitrary fields on a session by ID.
 
-        Accepted fields: sdk_session_id, transcript_path, ended_at.
+        Accepted fields: sdk_session_id, transcript_path, summary, ended_at.
         """
         self._require_initialized()
 

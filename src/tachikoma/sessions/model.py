@@ -25,6 +25,7 @@ class Session:
     started_at: datetime
     sdk_session_id: str | None = None
     transcript_path: str | None = None
+    summary: str | None = None
     ended_at: datetime | None = None
 
     @property
@@ -64,6 +65,7 @@ class SessionRecord(Base):
     id: Mapped[str] = mapped_column(primary_key=True)
     sdk_session_id: Mapped[str | None] = mapped_column(default=None)
     transcript_path: Mapped[str | None] = mapped_column(default=None)
+    summary: Mapped[str | None] = mapped_column(default=None)
     # DateTime(timezone=True) ensures SQLite stores ISO strings with UTC offset
     # so datetimes round-trip with their tzinfo intact.
     started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
@@ -83,6 +85,7 @@ class SessionRecord(Base):
             id=self.id,
             sdk_session_id=self.sdk_session_id,
             transcript_path=self.transcript_path,
+            summary=self.summary,
             started_at=_ensure_utc(self.started_at),  # type: ignore[arg-type]
             ended_at=_ensure_utc(self.ended_at),
         )
