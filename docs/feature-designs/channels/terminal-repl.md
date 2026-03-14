@@ -30,7 +30,7 @@ The REPL uses `prompt_toolkit` for async input with persistent file history. The
 
 | Layer/Component | Responsibility | Key Decisions |
 |-----------------|----------------|---------------|
-| `Repl` | Input loop, control flow, exit conditions, interrupt handling | Owns `PromptSession` with `multiline=True`, `prompt_continuation="  "`, `FileHistory` (at `/tmp/tachikoma_repl_history`), and empty-input `Validator` |
+| `Repl` | Input loop, control flow, exit conditions, interrupt handling | Owns `PromptSession` with `multiline=True`, custom `KeyBindings` (Enter submits via `validate_and_handle()`, Escape+Enter inserts newline), `prompt_continuation="  "`, `FileHistory` (at `/tmp/tachikoma_repl_history`), and empty-input `Validator` |
 | `Renderer` | Event rendering via rich Console | Owns two Console instances (stdout, stderr). `render()` returns bool: `True` to continue, `False` to exit |
 
 ### Event Rendering
@@ -95,12 +95,12 @@ The REPL uses `prompt_toolkit` for async input with persistent file history. The
 
 **Given**: The REPL is waiting for input
 **When**: The user types text and presses Enter
-**Then**: A newline is inserted. The user can continue typing. Pressing Escape followed by Enter submits the full multiline text. The empty-input validator still applies — whitespace-only submissions are rejected.
+**Then**: The message is submitted. To compose multiline input, the user presses Escape followed by Enter (or Alt+Enter) to insert newlines before submitting. The empty-input validator still applies — whitespace-only submissions are rejected.
 
 ### Scenario: Empty input prevented
 
 **Given**: The REPL is waiting for input
-**When**: The user submits (Escape+Enter) without content
+**When**: The user submits (Enter) without content
 **Then**: The validator rejects submission. The cursor stays on the same line.
 
 ### Scenario: Agent uses a tool

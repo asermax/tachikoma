@@ -73,8 +73,8 @@ from tachikoma.memory import memory_hook
 from tachikoma.sessions import session_recovery_hook
 
 bootstrap.register("workspace", workspace_hook)
-bootstrap.register("git", git_hook)
 bootstrap.register("logging", logging_hook)
+bootstrap.register("git", git_hook)
 bootstrap.register("context", context_hook)
 bootstrap.register("memory", memory_hook)
 bootstrap.register("sessions", session_recovery_hook)

@@ -21,7 +21,7 @@ An interactive terminal REPL that reads user input, sends it through the coordin
 | R1 | Streaming display: markdown-rendered text, tool activity as styled status lines |
 | R2 | Input management: persistent history across sessions, empty input prevention |
 | R3 | Clean exit handling: Ctrl+C, Ctrl+D, exit/quit commands |
-| R4 | Multiline input: Enter inserts newline, Escape+Enter submits |
+| R4 | Multiline input: Enter submits, Escape+Enter inserts newline |
 
 ## Behaviors
 
@@ -49,12 +49,12 @@ The REPL provides async input with persistent file history and input validation.
 
 ### Multiline Input (R4)
 
-The REPL accepts multiline input using prompt_toolkit's built-in multiline mode.
+The REPL accepts multiline input using prompt_toolkit with custom key bindings that override the default multiline behavior.
 
 **Acceptance Criteria**:
-- Given the user is typing, when they press Enter, then a newline is inserted at the cursor position
-- Given multiline input, when the user presses Escape followed by Enter (or Meta+Enter), then the full text is submitted to the coordinator
-- Given the user has entered a newline, when the continuation line is displayed, then it is indented to align with the prompt's content area
+- Given the user is typing, when they press Enter, then the message is submitted to the coordinator
+- Given the user is composing multiline input, when they press Escape followed by Enter (or Alt+Enter on terminals that encode Alt as Escape prefix), then a newline is inserted at the cursor position
+- Given the user has entered a newline via Escape+Enter, when the continuation line is displayed, then it is indented to align with the prompt's content area
 
 ### Exit Handling (R3)
 
