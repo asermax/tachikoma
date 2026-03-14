@@ -77,13 +77,6 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 **Complexity**: Easy
 **Description**: Fallback conversation boundary detection that monitors for periods of user inactivity. After a configurable threshold (~20 minutes by default), the system signals the session registry (DLT-027) to close the current session, triggering downstream post-processing. This serves as a safety net for cases where the user goes silent without a clear topic change — DLT-026's topic-based analysis is the primary boundary mechanism, but it only fires on incoming messages. The inactivity timeout catches the "user walked away" case. The threshold should be configurable per-deployment.
 
-### DLT-005: Load foundational context for personality and user knowledge
-**Status**: ✓ Reconciled
-**Depends on**: None
-**Priority**: 2 (High)
-**Complexity**: Easy
-**Description**: Provide the assistant with foundational, always-available context through core files that are loaded with higher priority than dynamically retrieved memories. Three files establish the assistant's identity and baseline knowledge: SOUL.md defines personality traits, tone, and behavioral guidelines; USER.md captures known information about the user (name, preferences, projects, communication style); AGENTS.md provides operational instructions for the agent and sub-agents. These files ensure the assistant behaves consistently regardless of which memories are retrieved for a given conversation, and give the user a transparent, editable way to shape the assistant's behavior.
-
 ### DLT-006: Pre-process messages with memory context injection
 **Status**: ✗ Defined
 **Depends on**: None
@@ -142,7 +135,7 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 
 ### DLT-018: Update core context files from conversation learnings
 **Status**: ✗ Defined
-**Depends on**: DLT-005
+**Depends on**: None
 **Priority**: 3 (Medium)
 **Complexity**: Medium
 **Description**: A dedicated post-processing processor (plugging into DLT-007's pipeline) that analyzes completed conversations for information that should update the assistant's foundational context files. Detects changes to user information (new job, moved cities, changed preferences) for USER.md, personality adjustments based on user feedback for SOUL.md, and operational instruction updates for AGENTS.md. Different from memory extraction — this updates long-lived foundational documents rather than creating individual memory entries. Must be conservative: only update when there's clear evidence, since these files carry higher weight than individual memories. When DLT-020 is implemented, core context file updates should trigger automatic git commits, making changes easy to review and roll back.
