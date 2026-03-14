@@ -99,6 +99,28 @@ class SessionRegistry:
             sdk=sdk_session_id,
         )
 
+    async def update_summary(self, session_id: str, summary: str) -> None:
+        """Update the rolling conversation summary on a session.
+
+        Re-fetches the session after update to replace the frozen dataclass
+        reference with the new summary value.
+
+        Args:
+            session_id: The ID of the session to update.
+            summary: The new conversation summary text.
+        """
+        await self._repository.update(session_id, summary=summary)
+
+        # Update in-memory active session reference with new summary
+        if self._active_session is not None and self._active_session.id == session_id:
+            self._active_session = await self._repository.get_by_id(session_id)
+
+        _log.debug(
+            "Session summary updated: session_id={id} summary_length={len}",
+            id=session_id,
+            len=len(summary),
+        )
+
     async def get_active_session(self) -> Session | None:
         """Return the currently active session, or None if no session is open."""
         return self._active_session
