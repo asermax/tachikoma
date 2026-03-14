@@ -4,6 +4,7 @@ from pathlib import Path
 
 from prompt_toolkit import PromptSession
 from prompt_toolkit.history import FileHistory
+from prompt_toolkit.key_binding import KeyBindings, KeyPressEvent
 from prompt_toolkit.validation import Validator
 from rich.console import Console
 from rich.markdown import Markdown
@@ -63,10 +64,21 @@ class Repl:
         self._coordinator = coordinator
         self._renderer = Renderer()
 
+        kb = KeyBindings()
+
+        @kb.add("enter")
+        def _submit(event: KeyPressEvent) -> None:
+            event.current_buffer.validate_and_handle()
+
+        @kb.add("escape", "enter")
+        def _newline(event: KeyPressEvent) -> None:
+            event.current_buffer.insert_text("\n")
+
         self._session = PromptSession[str](
             multiline=True,
             history=FileHistory(str(history_path)),
             prompt_continuation="  ",
+            key_bindings=kb,
             validator=Validator.from_callable(
                 lambda text: text.strip() != "",
                 error_message="",
