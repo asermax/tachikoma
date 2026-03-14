@@ -249,6 +249,28 @@ class TestReplControlFlow:
         assert call_count == 2
 
 
+class TestReplMultilineInput:
+    async def test_multiline_text_sent_to_coordinator(self, tmp_path: Path, mocker) -> None:
+        """Multiline text (containing newlines) is submitted as-is to the coordinator."""
+        coordinator = MagicMock()
+
+        async def _stream(text):
+            yield Result()
+
+        coordinator.send_message = MagicMock(side_effect=_stream)
+
+        repl = Repl(coordinator, history_path=tmp_path / "repl_history")
+        mocker.patch.object(
+            repl._session,
+            "prompt_async",
+            side_effect=["line1\nline2\nline3", EOFError],
+        )
+
+        await repl.run()
+
+        coordinator.send_message.assert_called_once_with("line1\nline2\nline3")
+
+
 class TestReplInputValidation:
     @pytest.fixture
     def validator(self) -> Validator:

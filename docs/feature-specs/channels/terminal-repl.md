@@ -11,6 +11,7 @@ An interactive terminal REPL that reads user input, sends it through the coordin
 - As a developer, I want to type messages in a terminal and see the agent's streamed response so that I can interact with the agent during development
 - As a developer, I want to see what tools the agent is using while it works so that I understand what is happening during pauses
 - As a developer, I want my input history preserved across sessions so that I can recall previous messages
+- As a developer, I want to compose multiline messages so that I can send structured content or code snippets to the agent
 
 ## Requirements
 
@@ -20,6 +21,7 @@ An interactive terminal REPL that reads user input, sends it through the coordin
 | R1 | Streaming display: markdown-rendered text, tool activity as styled status lines |
 | R2 | Input management: persistent history across sessions, empty input prevention |
 | R3 | Clean exit handling: Ctrl+C, Ctrl+D, exit/quit commands |
+| R4 | Multiline input: Enter inserts newline, Escape+Enter submits |
 
 ## Behaviors
 
@@ -43,6 +45,16 @@ The REPL provides async input with persistent file history and input validation.
 - Given the REPL is running, when the user sends multiple messages, then conversation context is preserved between them
 - Given the user presses enter without typing (or whitespace only), then input is rejected and the prompt stays
 - Given a previous session's history exists, when the REPL starts, then prior inputs are available via history navigation
+- Given the REPL starts, then input history is loaded from a temporary file path (`/tmp/tachikoma_repl_history`), persisting across sessions within the same system boot
+
+### Multiline Input (R4)
+
+The REPL accepts multiline input using prompt_toolkit's built-in multiline mode.
+
+**Acceptance Criteria**:
+- Given the user is typing, when they press Enter, then a newline is inserted at the cursor position
+- Given multiline input, when the user presses Escape followed by Enter (or Meta+Enter), then the full text is submitted to the coordinator
+- Given the user has entered a newline, when the continuation line is displayed, then it is indented to align with the prompt's content area
 
 ### Exit Handling (R3)
 

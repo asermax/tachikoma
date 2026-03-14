@@ -22,7 +22,7 @@ The agent needs a developer-facing interactive terminal as its first communicati
 
 Two classes with separated concerns: `Repl` owns the input loop and control flow, `Renderer` owns event rendering via `rich` Console. Both live in `src/tachikoma/repl.py` due to high cohesion.
 
-The REPL uses `prompt_toolkit` for async input with persistent file history. The history file path is derived from the configured workspace path (`workspace.path / "repl_history"`).
+The REPL uses `prompt_toolkit` for async input with persistent file history. The history file path is `/tmp/tachikoma_repl_history`.
 
 ## Components
 
@@ -30,7 +30,7 @@ The REPL uses `prompt_toolkit` for async input with persistent file history. The
 
 | Layer/Component | Responsibility | Key Decisions |
 |-----------------|----------------|---------------|
-| `Repl` | Input loop, control flow, exit conditions, interrupt handling | Owns `PromptSession` with `FileHistory` (path from config) and empty-input `Validator` |
+| `Repl` | Input loop, control flow, exit conditions, interrupt handling | Owns `PromptSession` with `multiline=True`, `prompt_continuation="  "`, `FileHistory` (at `/tmp/tachikoma_repl_history`), and empty-input `Validator` |
 | `Renderer` | Event rendering via rich Console | Owns two Console instances (stdout, stderr). `render()` returns bool: `True` to continue, `False` to exit |
 
 ### Event Rendering
@@ -91,10 +91,16 @@ The REPL uses `prompt_toolkit` for async input with persistent file history. The
 **When**: The user presses Ctrl+D
 **Then**: `prompt_toolkit` raises `EOFError`. The REPL exits cleanly.
 
+### Scenario: Multiline input composition
+
+**Given**: The REPL is waiting for input
+**When**: The user types text and presses Enter
+**Then**: A newline is inserted. The user can continue typing. Pressing Escape followed by Enter submits the full multiline text. The empty-input validator still applies — whitespace-only submissions are rejected.
+
 ### Scenario: Empty input prevented
 
 **Given**: The REPL is waiting for input
-**When**: The user presses enter without content
+**When**: The user submits (Escape+Enter) without content
 **Then**: The validator rejects submission. The cursor stays on the same line.
 
 ### Scenario: Agent uses a tool
@@ -106,6 +112,6 @@ The REPL uses `prompt_toolkit` for async input with persistent file history. The
 ## Notes
 
 - The `Renderer` uses `rich` for all terminal output: `Markdown` for text chunks (with Dracula code theme for syntax highlighting) and styled `Console.print()` for tool activity and errors
-- Input history is persisted via `prompt_toolkit`'s `FileHistory` at the workspace path's `repl_history` file (default: `~/tachikoma/repl_history`), providing history across REPL sessions
+- Input history is persisted via `prompt_toolkit`'s `FileHistory` at `/tmp/tachikoma_repl_history`, providing history across REPL sessions within the same system boot
 - Ctrl+C always exits the REPL regardless of state (during streaming or at prompt). Use Ctrl+U to clear the current input line without exiting.
 - The `Renderer.render()` return value (`bool`) provides the control flow signal: `True` means continue consuming events, `False` means exit the REPL (on non-recoverable errors)

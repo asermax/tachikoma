@@ -64,7 +64,9 @@ class Repl:
         self._renderer = Renderer()
 
         self._session = PromptSession[str](
+            multiline=True,
             history=FileHistory(str(history_path)),
+            prompt_continuation="  ",
             validator=Validator.from_callable(
                 lambda text: text.strip() != "",
                 error_message="",
