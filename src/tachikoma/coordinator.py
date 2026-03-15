@@ -276,7 +276,12 @@ class Coordinator:
                     done = done or isinstance(event, Result)
 
                 if done:
-                    # Continue past Result when steering is active
+                    # Continue past Result when steering is active.
+                    # Note: response_chunks accumulates text from all turns
+                    # (initial + steered), but msg_pipeline only receives the
+                    # initial user message. This is acceptable for boundary
+                    # detection summaries — they still capture all response
+                    # content, just without the steered user messages.
                     if self._pending_steers > 0:
                         self._pending_steers -= 1
                         done = False

@@ -6,6 +6,7 @@ and streaming response rendering.
 """
 
 import asyncio
+import contextlib
 import time
 
 from aiogram import Bot, Dispatcher, F, Router
@@ -310,14 +311,12 @@ class TelegramChannel:
         except Exception as e:
             _log.exception("Error during message processing")
             # Try to send error message
-            try:
+            with contextlib.suppress(TelegramAPIError):
                 await self._bot.send_message(
                     chat_id,
                     f"⚠️ Error: {e!s}",
                     parse_mode=None,
                 )
-            except TelegramAPIError:
-                pass
 
         finally:
             self._is_processing = False

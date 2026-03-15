@@ -74,8 +74,8 @@ async def main(
     settings = settings_manager.settings
 
     # Retrieve the session objects created inside the recovery hook
-    repository = bootstrap.extras.get("session_repository")
-    registry = bootstrap.extras.get("session_registry")
+    repository = bootstrap.extras["session_repository"]
+    registry = bootstrap.extras["session_registry"]
 
     # Create skill registry and discover agents
     skill_registry = SkillRegistry(settings.workspace.path)

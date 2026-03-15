@@ -273,10 +273,11 @@ The `Result` event serves as a turn boundary signal. The channel finalizes the c
    a. bootstrap.register("workspace", workspace_hook)
    b. bootstrap.register("logging", logging_hook)
    c. bootstrap.register("git", git_hook)
-   d. bootstrap.register("context", context_hook)
-   e. bootstrap.register("memory", memory_hook)
-   f. bootstrap.register("sessions", session_recovery_hook)
-   g. bootstrap.register("telegram", telegram_hook)  (follows DES-003)
+   d. bootstrap.register("skills", skills_hook)
+   e. bootstrap.register("context", context_hook)
+   f. bootstrap.register("memory", memory_hook)
+   g. bootstrap.register("sessions", session_recovery_hook)
+   h. bootstrap.register("telegram", telegram_hook)  (follows DES-003)
 6. bootstrap.run()
    └─ telegram_hook:
       a. Check settings.channel == "telegram", skip otherwise
