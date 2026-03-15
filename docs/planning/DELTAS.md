@@ -161,10 +161,3 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 **Complexity**: Easy
 **Description**: Package the agent as an installable CLI tool using uv, enabling easy installation and updates via `uv tool install`. This delta covers project packaging configuration (pyproject.toml entry points, dependencies), a CLI entry point that starts the agent, and documentation for installation. The CLI entry point is the main way users launch the agent — it wires up the agent architecture (DLT-001), loads configuration (DLT-012), and starts the main loop. Using uv tool provides isolated dependency management and simple update path (`uv tool upgrade`).
 
-### DLT-026: Detect conversation boundaries via topic analysis
-**Status**: ✗ Defined
-**Depends on**: None
-**Priority**: 1 (Critical)
-**Complexity**: Medium
-**Description**: Add a step that runs before the pre-processing pipeline to actively detect whether an incoming message continues the current conversation or starts a new one. On each message, a lightweight agent compares the message content against the current session's topic and recent context. If it's a continuation, processing proceeds normally into the pre-processing pipeline. If it detects a topic shift or unrelated message, the system signals the session registry (DLT-027) to close the current session — triggering any post-processing on the completed conversation — and opens a new session before the coordinator sees the message. This is architecturally separate from the context-enrichment pipeline (DLT-006) — it's a lifecycle gating step, not a context provider. DLT-004's inactivity timeout remains as a fallback for detecting abandoned conversations (user goes silent without topic change). Should add no more than 1-2 seconds to message processing.
-

@@ -63,6 +63,7 @@ class TestSessionDataclass:
 
         assert session.sdk_session_id is None
         assert session.transcript_path is None
+        assert session.summary is None
         assert session.ended_at is None
 
     def test_fields_set_correctly(self) -> None:
@@ -72,6 +73,7 @@ class TestSessionDataclass:
             id="test-id",
             sdk_session_id="sdk-456",
             transcript_path="/path/to/transcript.jsonl",
+            summary="Test conversation summary",
             started_at=now,
             ended_at=now,
         )
@@ -79,5 +81,26 @@ class TestSessionDataclass:
         assert session.id == "test-id"
         assert session.sdk_session_id == "sdk-456"
         assert session.transcript_path == "/path/to/transcript.jsonl"
+        assert session.summary == "Test conversation summary"
         assert session.started_at == now
         assert session.ended_at == now
+
+
+class TestSessionSummary:
+    """Tests for Session.summary field."""
+
+    def test_summary_defaults_to_none(self) -> None:
+        """AC: summary field defaults to None."""
+        session = Session(id="abc", started_at=_utcnow())
+
+        assert session.summary is None
+
+    def test_summary_field_set_correctly(self) -> None:
+        """AC: summary field round-trips correctly."""
+        session = Session(
+            id="abc",
+            started_at=_utcnow(),
+            summary="User discussed Python testing frameworks.",
+        )
+
+        assert session.summary == "User discussed Python testing frameworks."

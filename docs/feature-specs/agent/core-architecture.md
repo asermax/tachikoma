@@ -25,6 +25,8 @@ The core agent loop: receive a user message, pass it to the Claude agent via the
 | R7 | Agent has unrestricted tool access without user confirmation prompts |
 | R8 | Tachikoma is the sole memory system — no competing memory mechanisms from the underlying SDK |
 | R9 | Foundational context (personality, user knowledge, operational guidelines) passed to the coordinator at startup and layered onto the SDK's default system prompt |
+| R10 | Conversation boundary detection: before processing a message, check whether it continues the current conversation or starts a new one; on topic shift, transition sessions before processing (see [boundary detection](boundary-detection.md)) |
+| R11 | Per-message post-processing: after each agent response, trigger a per-message pipeline for ongoing conversation analysis (see [boundary detection](boundary-detection.md)) |
 
 ## Behaviors
 
@@ -35,6 +37,7 @@ The coordinator receives a text message, forwards it to the SDK client, and yiel
 **Acceptance Criteria**:
 - Given a user message, when passed to the coordinator, then the agent responds via the Claude model and the response streams as domain events
 - Given a conversation in progress, when the user sends a follow-up message, then the agent has context from prior messages in the same session (R3)
+- Given a user message, when boundary detection is active and a topic shift is detected, then a session transition occurs before the message is processed in a fresh context (R10)
 - Given a conversation, when the user asks about files in the working directory, then the agent can explore and report on them
 
 ### Programmatic Entry Point (R2)
@@ -58,6 +61,9 @@ The coordinator manages connection to the underlying agent service and maintains
 - Given an active persistent session, when the agent produces a Result event, then the session's SDK metadata (session ID and transcript path) is populated
 - Given an active persistent session, when the coordinator exits its async context, then the persistent session is closed
 - Given a session registry operation fails, then the error is logged and the conversation continues uninterrupted
+- Given a topic shift is detected mid-conversation, when the transition completes, then the current session is closed, the SDK conversation context is reset (new client with previous summary in system prompt), and a new session is created
+- Given the SDK client reset fails during a session transition, when the error occurs, then the old client is retained with stale context and the conversation continues
+- Given a session transition where any step fails, when the transition completes, then a new session is still created in the registry
 
 ### Working Directory (R5)
 
@@ -86,6 +92,9 @@ After a session closes, the coordinator triggers a registered post-processing pi
 - Given the pipeline itself fails, when the coordinator is shutting down, then the error is logged and shutdown continues (SDK disconnect proceeds)
 - Given no pipeline is registered, when a session closes, then shutdown proceeds directly to SDK disconnect
 - Given a pipeline is already running from a previous session close, when another session close triggers the pipeline, then the new run is serialized (awaits the previous one before starting)
+- Given a session closes mid-conversation due to a topic shift, when the session has a valid SDK session ID and a pipeline is registered, then the pipeline runs asynchronously as a background task (not blocking the new session)
+- Given background post-processing tasks are running from previous topic shifts, when the coordinator shuts down, then it awaits all background tasks before disconnecting
+- Given a background post-processing task fails, when the error occurs, then it is logged without affecting the active conversation or other background tasks
 - Given a session closes with a valid SDK session ID and a pipeline is registered, when post-processing starts, then a status notification is emitted before the pipeline runs
 - Given an on_status callback is registered but no pipeline is registered, when the coordinator exits, then the status callback is not called
 - Given an on_status callback is registered but the session has no SDK session ID, when the coordinator exits, then the status callback is not called
@@ -124,3 +133,21 @@ Transient errors keep the conversation usable. Fatal errors signal channels to e
 - Given a transient connection error mid-stream, then an error event with `recoverable=True` is produced and the conversation remains usable; partial output remains visible
 - Given an in-stream rate limit or server error, then an error event with `recoverable=True` is produced
 - Given an in-stream authentication or billing error, then an error event with `recoverable=False` is produced
+
+### Boundary Detection Gating (R10)
+
+Before processing a message, the coordinator checks whether it continues the current conversation or starts a new topic. On topic shift, it orchestrates a session transition before the message reaches the SDK.
+
+**Acceptance Criteria**:
+- Given an active session with a conversation summary, when a new message arrives, then the coordinator runs boundary detection before processing the message
+- Given a topic shift is detected, when the transition completes, then the current session is closed, a new session is created with the SDK context reset, and the message is processed in the fresh session
+- Given no active session, no summary, or no workspace directory exists, when a message arrives, then boundary detection is skipped
+- Given boundary detection fails, when the error is caught, then the message proceeds as a continuation (fail-open)
+
+### Per-Message Post-Processing Trigger (R11)
+
+After each agent response completes, the coordinator triggers a per-message pipeline as a background task to update conversation state (rolling summary).
+
+**Acceptance Criteria**:
+- Given the agent completes a response, when the response stream ends, then the per-message pipeline runs asynchronously with the current session (with SDK metadata populated) and the accumulated response text
+- Given no per-message pipeline is registered, when the response completes, then no per-message processing runs

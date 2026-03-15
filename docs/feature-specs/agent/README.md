@@ -14,6 +14,7 @@ Core agent capabilities: the coordinator loop that receives messages, delegates 
 | [workspace-version-tracking](workspace-version-tracking.md) | Automatic git version tracking for workspace changes | ✓ |
 | [sessions](sessions.md) | Persistent conversation session tracking and crash recovery | ✓ |
 | [core-context-updates](core-context-updates.md) | Automated context file updates from conversation learnings | ✓ |
+| [boundary-detection](boundary-detection.md) | Conversation boundary detection via topic analysis and per-message processing | ✓ |
 
 ## Related Decisions
 

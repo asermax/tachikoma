@@ -24,6 +24,7 @@ def _make_session(
     ended_at: datetime | None = None,
     sdk_session_id: str | None = None,
     transcript_path: str | None = None,
+    summary: str | None = None,
 ) -> Session:
     return Session(
         id=session_id,
@@ -31,6 +32,7 @@ def _make_session(
         ended_at=ended_at,
         sdk_session_id=sdk_session_id,
         transcript_path=transcript_path,
+        summary=summary,
     )
 
 
@@ -162,6 +164,17 @@ class TestRepositoryUpdate:
         """AC: updating an ID that doesn't exist raises no error."""
         await repo.update("ghost", ended_at=_utcnow())
 
+    async def test_update_summary_field(self, repo: SessionRepository) -> None:
+        """AC: summary field can be updated."""
+        session = _make_session("s6")
+        await repo.create(session)
+
+        await repo.update("s6", summary="Updated conversation summary")
+
+        retrieved = await repo.get_by_id("s6")
+        assert retrieved is not None
+        assert retrieved.summary == "Updated conversation summary"
+
 
 class TestRepositoryGetOpenSessions:
     """Tests for get_open_sessions."""
@@ -281,3 +294,74 @@ class TestRepositoryClose:
         # After close, further operations should raise
         with pytest.raises(SessionRepositoryError):
             await repo.get_open_sessions()
+
+
+class TestRepositoryMigration:
+    """Tests for schema migration."""
+
+    async def test_migrate_adds_summary_column_to_existing_table(
+        self, tmp_path: Path
+    ) -> None:
+        """AC: migrate() adds summary column if it doesn't exist."""
+        import aiosqlite
+
+        db_path = tmp_path / "sessions.db"
+
+        # Create a table without the summary column (simulating old schema)
+        async with aiosqlite.connect(db_path) as db:
+            await db.execute(
+                """CREATE TABLE sessions (
+                    id TEXT PRIMARY KEY,
+                    sdk_session_id TEXT,
+                    transcript_path TEXT,
+                    started_at TEXT,
+                    ended_at TEXT
+                )"""
+            )
+            await db.commit()
+
+        # Verify summary column doesn't exist
+        async with aiosqlite.connect(db_path) as db:
+            cursor = await db.execute(
+                "SELECT * FROM pragma_table_info('sessions') WHERE name='summary'"
+            )
+            row = await cursor.fetchone()
+            assert row is None
+
+        # Initialize and migrate
+        repo = SessionRepository(db_path)
+        await repo.initialize()
+        await repo.migrate()
+
+        # Verify summary column now exists
+        async with aiosqlite.connect(db_path) as db:
+            cursor = await db.execute(
+                "SELECT * FROM pragma_table_info('sessions') WHERE name='summary'"
+            )
+            row = await cursor.fetchone()
+            assert row is not None
+
+        await repo.close()
+
+    async def test_migrate_noop_when_column_exists(self, tmp_path: Path) -> None:
+        """AC: migrate() is idempotent when column already exists."""
+        db_path = tmp_path / "sessions.db"
+
+        # Normal initialization creates the full schema including summary
+        repo = SessionRepository(db_path)
+        await repo.initialize()
+
+        # Running migrate on fresh DB should not error
+        await repo.migrate()
+
+        # Verify the column exists
+        import aiosqlite
+
+        async with aiosqlite.connect(db_path) as db:
+            cursor = await db.execute(
+                "SELECT * FROM pragma_table_info('sessions') WHERE name='summary'"
+            )
+            row = await cursor.fetchone()
+            assert row is not None
+
+        await repo.close()

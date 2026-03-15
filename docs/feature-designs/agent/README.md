@@ -15,6 +15,7 @@ Design documents for the core agent capabilities.
 | [workspace-version-tracking](workspace-version-tracking.md) | Git module: bootstrap hook and commit post-processor | Current |
 | [sessions](sessions.md) | Session model, repository, registry, and crash recovery | Current |
 | [core-context-updates](core-context-updates.md) | Context update processor, pending signals mechanism, MCP tools | Current |
+| [boundary-detection](boundary-detection.md) | Boundary detection, per-message pipeline, summary processor, session transitions | Current |
 
 ## Related Decisions
 

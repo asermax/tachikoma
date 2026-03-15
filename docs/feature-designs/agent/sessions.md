@@ -72,8 +72,8 @@ The **SessionRegistry** is the facade that the coordinator calls. It owns the bu
 | Layer/Component | Responsibility | Key Decisions |
 |-----------------|----------------|---------------|
 | `src/tachikoma/sessions/model.py` | SQLAlchemy ORM model (`SessionRecord`) + frozen dataclass (`Session`) + `DeclarativeBase` | Separate ORM model from domain dataclass; callers never see SQLAlchemy types |
-| `src/tachikoma/sessions/repository.py` | `SessionRepository`: async engine lifecycle, CRUD operations, schema creation, time-range queries | Owns SQLAlchemy engine + session factory; all SQL is behind async methods |
-| `src/tachikoma/sessions/registry.py` | `SessionRegistry`: business logic facade, creation lock, crash recovery, status derivation | Receives repository via constructor; owns the `asyncio.Lock` |
+| `src/tachikoma/sessions/repository.py` | `SessionRepository`: async engine lifecycle, CRUD operations, schema creation, time-range queries, `migrate()` for schema evolution (checks `pragma_table_info` for column existence, runs `ALTER TABLE` if missing) | Owns SQLAlchemy engine + session factory; all SQL is behind async methods |
+| `src/tachikoma/sessions/registry.py` | `SessionRegistry`: business logic facade, creation lock, crash recovery, status derivation, `update_summary()` for persisting rolling summaries (re-fetch-and-replace pattern, same as `update_metadata()`) | Receives repository via constructor; owns the `asyncio.Lock` |
 | `src/tachikoma/sessions/errors.py` | `SessionRepositoryError`: wraps SQLAlchemy exceptions for clean error contract | Callers catch one domain exception, not SQLAlchemy internals |
 | `src/tachikoma/sessions/hooks.py` | `session_recovery_hook`: creates repository + registry, runs recovery, stores on context extras | Registered as bootstrap hook; runs after workspace hook |
 | `src/tachikoma/sessions/__init__.py` | Re-exports public API: `Session`, `SessionRegistry`, `SessionRepository`, `SessionRepositoryError` | Clean public API for the sessions package |
@@ -113,18 +113,18 @@ sequenceDiagram
 ```
 
 **Integration Points:**
-- Coordinator → SessionRegistry: `get_active_session()` + `create_session()` on first message, `update_metadata()` on Result events, `close_session()` on shutdown
+- Coordinator → SessionRegistry: `get_active_session()` + `create_session()` on first message, `update_metadata()` on Result events, `close_session()` on shutdown and topic shift
+- SummaryProcessor → SessionRegistry: `update_summary()` after each per-message pipeline run (see [boundary detection design](boundary-detection.md))
 - SessionRegistry → SessionRepository: all persistence delegated
 - SessionRepository → SQLAlchemy AsyncEngine → aiosqlite → sessions.db
 - Bootstrap → SessionRegistry: `recover_interrupted()` on startup via `session_recovery_hook`
 
-**Session close mechanism (pre-boundary-detection):**
+**Session close mechanism:**
 
-Before boundary detectors are implemented, sessions close via two mechanisms:
-1. **Coordinator disconnect**: On clean shutdown, the coordinator's `__aexit__` calls `registry.close_session()`, then triggers the post-processing pipeline with the closed session if it has a valid `sdk_session_id`.
-2. **Crash recovery**: On next launch, the bootstrap recovery hook closes interrupted sessions.
-
-Once boundary detectors are implemented, they become the primary close signals. The coordinator disconnect remains as a final safety net.
+Sessions close via two runtime mechanisms and one startup mechanism:
+1. **Boundary detection** (primary, mid-conversation): When a topic shift is detected, the coordinator closes the current session and opens a new one. Post-processing runs as a background task.
+2. **Coordinator disconnect** (shutdown safety net): On clean shutdown, the coordinator's `__aexit__` calls `registry.close_session()`, then triggers the post-processing pipeline with the closed session if it has a valid `sdk_session_id`.
+3. **Crash recovery** (startup): On next launch, the bootstrap recovery hook closes interrupted sessions.
 
 **Error contract:**
 
@@ -145,6 +145,7 @@ erDiagram
         string id PK "UUID4 hex string"
         string sdk_session_id "nullable - set on Result event"
         string transcript_path "nullable - derived from sdk_session_id"
+        string summary "nullable - rolling conversation summary"
         datetime started_at "UTC - set on creation"
         datetime ended_at "nullable UTC - set on close"
     }
@@ -157,6 +158,7 @@ Session (frozen dataclass)
 ├── id: str                           (UUID4 hex, generated at creation)
 ├── sdk_session_id: str | None        (populated from Result event)
 ├── transcript_path: str | None       (derived from SDK session ID)
+├── summary: str | None               (rolling conversation summary, updated by per-message pipeline)
 ├── started_at: datetime              (UTC, set at creation time)
 ├── ended_at: datetime | None         (UTC, set when session closes)
 └── status: SessionStatus (property)  (derived, not persisted)
@@ -175,6 +177,7 @@ SessionRecord (DeclarativeBase)
 ├── id: Mapped[str]                   (primary_key=True)
 ├── sdk_session_id: Mapped[str | None]
 ├── transcript_path: Mapped[str | None]
+├── summary: Mapped[str | None]       (rolling conversation summary)
 ├── started_at: Mapped[datetime]      (DateTime(timezone=True))
 ├── ended_at: Mapped[datetime | None] (DateTime(timezone=True))
 └── index on started_at               (for time-range queries)
@@ -227,11 +230,23 @@ The `transcript_path` is derived from the SDK session ID using the known Claude 
 1. session_recovery_hook runs (after workspace_hook)
 2. Creates SessionRepository(data_path / "sessions.db")
 3. await repository.initialize() — creates engine, runs schema creation via run_sync
+3b. await repository.migrate() — applies schema migrations for new columns (checks pragma_table_info, runs ALTER TABLE if missing)
 4. Creates SessionRegistry(repository)
 5. Calls registry.recover_interrupted():
    a. Queries open sessions (ended_at IS NULL)
    b. For each: sets ended_at from transcript file mtime (if available) or current time
 6. Stores repository + registry on ctx.extras for __main__.py retrieval
+```
+
+### Summary update (per-message pipeline)
+
+```
+1. SummaryProcessor completes, calls registry.update_summary(session_id, summary)
+2. Registry calls repository.update(session_id, summary=...)
+3. Repository queries by ID, updates summary field, commits
+4. Registry re-fetches session via repository.get_by_id()
+5. Registry replaces _active_session with new frozen Session instance
+   (same re-fetch-and-replace pattern as update_metadata())
 ```
 
 ### Query by time range

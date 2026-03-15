@@ -25,6 +25,7 @@ def _make_session(
     ended_at: datetime | None = None,
     sdk_session_id: str | None = None,
     transcript_path: str | None = None,
+    summary: str | None = None,
 ) -> Session:
     return Session(
         id=session_id,
@@ -32,6 +33,7 @@ def _make_session(
         ended_at=ended_at,
         sdk_session_id=sdk_session_id,
         transcript_path=transcript_path,
+        summary=summary,
     )
 
 
@@ -195,6 +197,50 @@ class TestSessionRegistryUpdateMetadata:
 
         active = await registry.get_active_session()
         assert active is updated
+
+
+class TestSessionRegistryUpdateSummary:
+    """Tests for update_summary() behavior."""
+
+    async def test_update_summary_delegates_to_repository(
+        self, registry: SessionRegistry, mock_repo
+    ) -> None:
+        """AC: update_summary calls repository update with summary field."""
+        await registry.update_summary("s1", summary="Test summary")
+
+        mock_repo.update.assert_awaited_once_with("s1", summary="Test summary")
+
+    async def test_update_summary_refreshes_active_session(
+        self, registry: SessionRegistry, mock_repo
+    ) -> None:
+        """AC: active session reference is updated after summary update."""
+        original = _make_session("s1")
+        updated = _make_session("s1", summary="New summary")
+        mock_repo.create.return_value = original
+        mock_repo.get_by_id.return_value = updated
+
+        await registry.create_session()
+        await registry.update_summary("s1", summary="New summary")
+
+        active = await registry.get_active_session()
+        assert active is updated
+        assert active.summary == "New summary"
+
+    async def test_update_summary_does_not_refresh_non_active_session(
+        self, registry: SessionRegistry, mock_repo
+    ) -> None:
+        """AC: non-active sessions are not refreshed in memory."""
+        # Create a session so we have an active one
+        active_session = _make_session("active")
+        mock_repo.create.return_value = active_session
+        await registry.create_session()
+
+        # Update summary for a different session
+        await registry.update_summary("other-session", summary="Test summary")
+
+        # get_by_id should not be called for the active session
+        # (only called if session_id matches active session)
+        mock_repo.get_by_id.assert_not_awaited()
 
 
 class TestSessionRegistryGetActive:
