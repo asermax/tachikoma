@@ -8,6 +8,7 @@ other post-conversation handlers.
 import asyncio
 from abc import ABC, abstractmethod
 from pathlib import Path
+from typing import Any
 
 from claude_agent_sdk import ClaudeAgentOptions, query
 from loguru import logger
@@ -38,6 +39,39 @@ class PostProcessor(ABC):
             session: The closed session with sdk_session_id for forking.
         """
         ...
+
+
+class PromptDrivenProcessor(PostProcessor):
+    """Base class for processors that fork the SDK session with a prompt.
+
+    Simple processors that just need to send a prompt and let the agent
+    manage files can inherit from this class and only provide a prompt
+    constant. The base class handles storing prompt/cwd and implementing
+    process() via fork_and_consume().
+
+    Subclasses needing pre/post steps should override process() entirely
+    and call fork_and_consume() directly (e.g., CoreContextProcessor).
+
+    See DES-004 for the pattern documentation.
+    """
+
+    def __init__(self, prompt: str, cwd: Path) -> None:
+        """Initialize the processor.
+
+        Args:
+            prompt: The prompt to send to the forked agent.
+            cwd: The workspace directory for the forked agent.
+        """
+        self._prompt = prompt
+        self._cwd = cwd
+
+    async def process(self, session: Session) -> None:
+        """Process by forking the SDK session with the configured prompt.
+
+        Args:
+            session: The closed session to process.
+        """
+        await fork_and_consume(session, self._prompt, self._cwd)
 
 
 class PostProcessingPipeline:
@@ -109,7 +143,12 @@ class PostProcessingPipeline:
                         )
 
 
-async def fork_and_consume(session: Session, prompt: str, cwd: Path) -> None:
+async def fork_and_consume(
+    session: Session,
+    prompt: str,
+    cwd: Path,
+    mcp_servers: dict[str, Any] | None = None,
+) -> None:
     """Fork the SDK session and consume the agent's response.
 
     Creates a forked session using the standalone query() function,
@@ -120,6 +159,9 @@ async def fork_and_consume(session: Session, prompt: str, cwd: Path) -> None:
         session: The session to fork (must have sdk_session_id).
         prompt: The extraction prompt to send to the forked agent.
         cwd: The working directory for the forked agent.
+        mcp_servers: Optional MCP servers to provide to the forked agent.
+            Can include in-process SDK MCP servers (from create_sdk_mcp_server())
+            or external server configs.
 
     Raises:
         RuntimeError: If session has no sdk_session_id.
@@ -135,6 +177,7 @@ async def fork_and_consume(session: Session, prompt: str, cwd: Path) -> None:
         resume=session.sdk_session_id,
         fork_session=True,
         permission_mode="bypassPermissions",
+        mcp_servers=mcp_servers,
     )
 
     # Fully consume the async iterator to ensure the forked session ends cleanly

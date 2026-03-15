@@ -15,6 +15,7 @@ from tachikoma.post_processing import (
     MAIN_PHASE,
     PostProcessingPipeline,
     PostProcessor,
+    PromptDrivenProcessor,
     fork_and_consume,
 )
 from tachikoma.sessions.model import Session
@@ -338,3 +339,136 @@ class TestForkAndConsume:
 
         with pytest.raises(RuntimeError, match="no sdk_session_id"):
             await fork_and_consume(session, "prompt", Path("/workspace"))
+
+    async def test_mcp_servers_passed_to_query_options(
+        self, mocker: pytest.MockerFixture
+    ) -> None:
+        """AC: mcp_servers parameter is passed through to ClaudeAgentOptions."""
+        mock_query = mocker.patch("tachikoma.post_processing.query")
+
+        async def fake_query(*args, **kwargs):
+            yield MagicMock()
+
+        mock_query.return_value = fake_query()
+
+        session = _make_session(sdk_session_id="sdk-test-123")
+        prompt = "Test prompt"
+        cwd = Path("/workspace")
+        mcp_servers = {"test-server": {"type": "stdio", "command": "test"}}
+
+        await fork_and_consume(session, prompt, cwd, mcp_servers=mcp_servers)
+
+        mock_query.assert_called_once()
+        call_kwargs = mock_query.call_args
+        options = call_kwargs[1]["options"]
+        assert options.mcp_servers == mcp_servers
+
+    async def test_mcp_servers_default_none_not_set(
+        self, mocker: pytest.MockerFixture
+    ) -> None:
+        """AC: When mcp_servers is None (default), behavior unchanged."""
+        mock_query = mocker.patch("tachikoma.post_processing.query")
+
+        async def fake_query(*args, **kwargs):
+            yield MagicMock()
+
+        mock_query.return_value = fake_query()
+
+        session = _make_session(sdk_session_id="sdk-test-123")
+
+        await fork_and_consume(session, "prompt", Path("/workspace"))
+
+        mock_query.assert_called_once()
+        call_kwargs = mock_query.call_args
+        options = call_kwargs[1]["options"]
+        assert options.mcp_servers is None
+
+
+class TestPromptDrivenProcessor:
+    """Tests for PromptDrivenProcessor base class."""
+
+    async def test_process_calls_fork_and_consume_with_correct_args(
+        self, mocker: pytest.MockerFixture
+    ) -> None:
+        """AC: process() calls fork_and_consume with session, prompt, and cwd."""
+        mock_fork = mocker.patch(
+            "tachikoma.post_processing.fork_and_consume", new_callable=AsyncMock
+        )
+        session = _make_session()
+        prompt = "Test prompt"
+        cwd = Path("/workspace")
+
+        processor = PromptDrivenProcessor(prompt=prompt, cwd=cwd)
+        await processor.process(session)
+
+        mock_fork.assert_awaited_once_with(session, prompt, cwd)
+
+    async def test_simple_subclass_inherits_process(self, mocker: pytest.MockerFixture) -> None:
+        """AC: Simple subclasses inherit process() and only need a prompt constant."""
+
+        class SimpleProcessor(PromptDrivenProcessor):
+            """Simple processor that just provides a prompt."""
+
+            def __init__(self, cwd: Path) -> None:
+                super().__init__(prompt="Simple extraction prompt", cwd=cwd)
+
+        mock_fork = mocker.patch(
+            "tachikoma.post_processing.fork_and_consume", new_callable=AsyncMock
+        )
+        session = _make_session()
+        cwd = Path("/workspace")
+
+        processor = SimpleProcessor(cwd=cwd)
+        await processor.process(session)
+
+        mock_fork.assert_awaited_once_with(session, "Simple extraction prompt", cwd)
+
+    async def test_subclass_can_override_process(self, mocker: pytest.MockerFixture) -> None:
+        """AC: Subclasses can override process() without calling super().process()."""
+        mock_fork = mocker.patch(
+            "tachikoma.post_processing.fork_and_consume", new_callable=AsyncMock
+        )
+
+        class CustomProcessor(PromptDrivenProcessor):
+            """Custom processor with pre/post steps."""
+
+            def __init__(self, cwd: Path, fork_mock: AsyncMock) -> None:
+                super().__init__(prompt="Custom prompt", cwd=cwd)
+                self.pre_called = False
+                self.post_called = False
+                self._fork_mock = fork_mock
+
+            async def process(self, session: Session) -> None:
+                # Pre-step
+                self.pre_called = True
+                # Call fork_and_consume directly (not super().process())
+                await self._fork_mock(session, self._prompt, self._cwd)
+                # Post-step
+                self.post_called = True
+
+        session = _make_session()
+        cwd = Path("/workspace")
+
+        processor = CustomProcessor(cwd=cwd, fork_mock=mock_fork)
+        await processor.process(session)
+
+        assert processor.pre_called
+        assert processor.post_called
+        mock_fork.assert_awaited_once_with(session, "Custom prompt", cwd)
+
+    async def test_propagates_fork_and_consume_error(
+        self, mocker: pytest.MockerFixture
+    ) -> None:
+        """AC: Exceptions from fork_and_consume propagate."""
+        mocker.patch(
+            "tachikoma.post_processing.fork_and_consume",
+            side_effect=RuntimeError("SDK error"),
+        )
+        session = _make_session()
+        cwd = Path("/workspace")
+
+        processor = PromptDrivenProcessor(prompt="Test prompt", cwd=cwd)
+
+        with pytest.raises(RuntimeError, match="SDK error"):
+            await processor.process(session)
+
