@@ -177,7 +177,7 @@ AgentEvent (base)
 5. If bootstrap fails → catch BootstrapError, log + print to stderr, exit (if logging hook itself failed, log may not reach file)
 6. Reads final settings from SettingsManager
 7. Retrieves session repository, registry, and system_prompt from bootstrap extras
-8. Creates PostProcessingPipeline, registers memory processors (episodic, facts, preferences) in main phase, registers GitProcessor in finalize phase — all with workspace_path
+8. Creates PostProcessingPipeline, registers memory processors (episodic, facts, preferences) and CoreContextProcessor in main phase, registers GitProcessor in finalize phase — all with workspace_path
 9. Creates Coordinator with allowed_tools, model, cwd=workspace_path, registry, system_prompt, pipeline, permission_mode="bypassPermissions", env={"CLAUDE_CODE_DISABLE_AUTO_MEMORY": "1"}, and on_status callback (for channel display)
 10. Enters coordinator async context (connects SDK client)
 11. If connection fails → catch SDK error, log + print to stderr, exit

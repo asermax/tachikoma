@@ -114,6 +114,7 @@ Personality, user knowledge, and operational guidelines are loaded at startup an
 - Given the coordinator is created, when a `system_prompt` parameter is provided, then it is wrapped in `SystemPromptPreset` and passed to `ClaudeAgentOptions`
 - Given foundational context files exist, when the coordinator is created, then the assembled context (SOUL.md + USER.md + AGENTS.md) is passed to the coordinator
 - Given the coordinator is created, then the agent operates with the SDK's default behaviors (tool use, safety, agentic loop) plus the appended context
+- Given context files are updated by post-processing after a session close, when the next session starts, then the coordinator loads the updated files — context changes take effect on the next session (see [core-context-updates](core-context-updates.md))
 
 ### Error Recovery (R4)
 

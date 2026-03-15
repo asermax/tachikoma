@@ -21,6 +21,7 @@ A reusable, pluggable pipeline that runs registered processors after conversatio
 | R3 | Concurrent invocations serialized via lock |
 | R4 | Shared processor interface (ABC) that is domain-agnostic and SDK-decoupled |
 | R5 | Phase validation at registration — invalid phases rejected immediately |
+| R6 | Convenience base class for prompt-driven processors that standardizes the fork pattern (DES-004) |
 
 ## Behaviors
 
@@ -58,3 +59,12 @@ The `PostProcessor` ABC defines the processor contract without SDK coupling.
 **Acceptance Criteria**:
 - Given a class implements `PostProcessor`, when it defines `process(session)`, then it can register with the pipeline
 - Given the `PostProcessor` ABC, then it has no dependency on the Claude Agent SDK
+
+### Prompt-Driven Processor Base (R6)
+
+A convenience base class standardizes the pattern for processors that fork the SDK session with a prompt (DES-004). Simple processors inherit `process()` from the base; complex processors override it for pre/post steps.
+
+**Acceptance Criteria**:
+- Given a subclass providing a prompt, when `process()` is called, then it forks the SDK session via `fork_and_consume()` with the configured prompt and working directory
+- Given a subclass that overrides `process()`, when it calls `fork_and_consume()` directly, then it can add pre/post steps around the fork
+- Given a subclass that overrides `process()`, when it calls `fork_and_consume()` with `mcp_servers`, then the forked agent has access to the provided MCP tools

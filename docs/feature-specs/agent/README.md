@@ -13,9 +13,11 @@ Core agent capabilities: the coordinator loop that receives messages, delegates 
 | [post-processing-pipeline](post-processing-pipeline.md) | Phased post-processing pipeline for running processors after session close | ✓ |
 | [workspace-version-tracking](workspace-version-tracking.md) | Automatic git version tracking for workspace changes | ✓ |
 | [sessions](sessions.md) | Persistent conversation session tracking and crash recovery | ✓ |
+| [core-context-updates](core-context-updates.md) | Automated context file updates from conversation learnings | ✓ |
 
 ## Related Decisions
 
 - ADR-001 through ADR-005: Dev tooling (uv, ruff, ty, pytest, just)
 - ADR-007: Persistence layer (SQLAlchemy 2.0 async)
 - DES-001: Testing conventions
+- DES-004: Prompt-driven forked processor pattern

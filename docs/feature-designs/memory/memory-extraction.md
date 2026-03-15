@@ -29,7 +29,7 @@ Conversations are ephemeral — once a session ends, the context is lost. The as
 
 ## Design Overview
 
-Three **memory processors** plug into the [post-processing pipeline](../agent/post-processing-pipeline.md), registering in the default `main` phase and running in parallel.
+Three **memory processors** extend `PromptDrivenProcessor` (DES-004) and plug into the [post-processing pipeline](../agent/post-processing-pipeline.md), registering in the default `main` phase and running in parallel.
 
 ```
 ┌───────────────────────────────────────────────────────────┐
@@ -39,26 +39,30 @@ Three **memory processors** plug into the [post-processing pipeline](../agent/po
 │  pipeline.register(EpisodicProcessor(cwd))                │
 │  pipeline.register(FactsProcessor(cwd))                   │
 │  pipeline.register(PreferencesProcessor(cwd))             │
+│  pipeline.register(CoreContextProcessor(cwd))             │
 │                                                           │
 │  Coordinator(..., pipeline=pipeline)                      │
 └───────────────────────────────────────────────────────────┘
                           │
-             ┌────────────┼────────────┐
-             ▼            ▼            ▼
-        ┌─────────┐ ┌─────────┐ ┌─────────┐
-        │Episodic │ │  Facts  │ │  Prefs  │  (main phase)
-        │Processor│ │Processor│ │Processor│
-        └────┬────┘ └────┬────┘ └────┬────┘
-             │            │            │
-             ▼            ▼            ▼
-        query(prompt, resume=sdk_session_id, fork_session=True)
-             │            │            │
-             ▼            ▼            ▼
-        memories/    memories/    memories/
-        episodic/    facts/       preferences/
+           ┌──────────────┼──────────────┬──────────────┐
+           ▼              ▼              ▼              ▼
+      ┌─────────┐   ┌─────────┐   ┌─────────┐   ┌──────────┐
+      │Episodic │   │  Facts  │   │  Prefs  │   │  Context │
+      │Processor│   │Processor│   │Processor│   │ Processor│
+      └────┬────┘   └────┬────┘   └────┬────┘   └────┬─────┘
+           │              │              │              │
+           ▼              ▼              ▼              ▼
+      fork_and_consume(prompt, cwd)                fork_and_consume(
+           │              │              │            prompt, cwd,
+           ▼              ▼              ▼            mcp_servers=...)
+      memories/      memories/      memories/           │
+      episodic/      facts/         preferences/        ▼
+                                                   context/ files
 ```
 
-Each **memory processor** is a thin `PostProcessor` subclass that builds an extraction prompt and calls the standalone `fork_and_consume()` helper. The forked agent has full workspace access and autonomously reads, creates, updates, or deletes memory files — the processor code performs no file I/O.
+Each **memory processor** is a `PromptDrivenProcessor` subclass (DES-004) that provides an extraction prompt. The base class handles forking the SDK session via `fork_and_consume()`. The forked agent has full workspace access and autonomously reads, creates, updates, or deletes memory files — the processor code performs no file I/O.
+
+For the context update processor that also runs in the main phase, see [core-context-updates design](../agent/core-context-updates.md).
 
 ## Components
 
@@ -68,9 +72,9 @@ Each **memory processor** is a thin `PostProcessor` subclass that builds an extr
 |-----------------|----------------|---------------|
 | `src/tachikoma/memory/__init__.py` | Re-exports: `EpisodicProcessor`, `FactsProcessor`, `PreferencesProcessor`, `memory_hook` | Clean public API for the memory package |
 | `src/tachikoma/memory/hooks.py` | `memory_hook`: creates `memories/` directory structure | Subsystem-owned hook pattern; registered after context hook |
-| `src/tachikoma/memory/episodic.py` | `EpisodicProcessor(PostProcessor)` + `EPISODIC_PROMPT` constant | Prompt co-located with processor logic |
-| `src/tachikoma/memory/facts.py` | `FactsProcessor(PostProcessor)` + `FACTS_PROMPT` constant | Prompt co-located with processor logic |
-| `src/tachikoma/memory/preferences.py` | `PreferencesProcessor(PostProcessor)` + `PREFERENCES_PROMPT` constant | Prompt co-located with processor logic |
+| `src/tachikoma/memory/episodic.py` | `EpisodicProcessor(PromptDrivenProcessor)` + `EPISODIC_PROMPT` constant | Extends DES-004 base class; prompt co-located with processor |
+| `src/tachikoma/memory/facts.py` | `FactsProcessor(PromptDrivenProcessor)` + `FACTS_PROMPT` constant | Extends DES-004 base class; prompt co-located with processor |
+| `src/tachikoma/memory/preferences.py` | `PreferencesProcessor(PromptDrivenProcessor)` + `PREFERENCES_PROMPT` constant | Extends DES-004 base class; prompt co-located with processor |
 
 ### Cross-Layer Contracts
 
@@ -84,7 +88,6 @@ sequenceDiagram
     rect rgba(0, 128, 255, 0.1)
         Note over Pipeline,FS: Phase: main (parallel execution)
         Pipeline->>Proc: process(session) [x3 in parallel]
-        Proc->>Proc: build extraction prompt
         Proc->>SDK: fork_and_consume(session, prompt, cwd)
         SDK->>FS: agent reads/writes memory files
         SDK-->>Proc: async iterator consumed
@@ -103,20 +106,17 @@ sequenceDiagram
 The domain model is minimal — no persistent entities or database tables. Memory files are unstructured markdown managed by forked LLM agents.
 
 ```
-EpisodicProcessor(PostProcessor)
-├── _cwd: Path
+EpisodicProcessor(PromptDrivenProcessor)    [DES-004]
 └── EPISODIC_PROMPT: str
 
-FactsProcessor(PostProcessor)
-├── _cwd: Path
+FactsProcessor(PromptDrivenProcessor)       [DES-004]
 └── FACTS_PROMPT: str
 
-PreferencesProcessor(PostProcessor)
-├── _cwd: Path
+PreferencesProcessor(PromptDrivenProcessor) [DES-004]
 └── PREFERENCES_PROMPT: str
 ```
 
-For the `PostProcessingPipeline`, `PostProcessor` ABC, and `fork_and_consume` models, see the [pipeline design](../agent/post-processing-pipeline.md).
+Each processor inherits `_prompt`, `_cwd`, and the default `process()` implementation from `PromptDrivenProcessor`. For the base class, `PostProcessingPipeline`, `PostProcessor` ABC, and `fork_and_consume` models, see the [pipeline design](../agent/post-processing-pipeline.md).
 
 ## Data Flow
 
@@ -124,8 +124,8 @@ For the `PostProcessingPipeline`, `PostProcessor` ABC, and `fork_and_consume` mo
 
 ```
 1. processor.process(session) is called
-2. Processor references its extraction prompt (module-level constant)
-3. Calls fork_and_consume(session, prompt, self._cwd):
+2. Base class references the extraction prompt (set in constructor via DES-004 pattern)
+3. Base class calls fork_and_consume(session, self._prompt, self._cwd):
    a. Creates ClaudeAgentOptions(cwd=self._cwd, resume=session.sdk_session_id, fork_session=True, permission_mode="bypassPermissions")
    b. Calls query(prompt=prompt, options=options)
    c. Async iterates over the returned generator to consume all messages
@@ -140,15 +140,12 @@ For the `PostProcessingPipeline`, `PostProcessor` ABC, and `fork_and_consume` mo
 
 ### Processor-per-file with co-located prompts
 
-**Choice**: Each processor in its own file with extraction prompt as module-level constant.
-**Why**: Co-locates related concerns. Each file is self-contained. When iterating on extraction quality, developers modify one file per memory type.
-**Alternatives Considered**:
-- External markdown files: adds runtime file I/O
-- Dedicated `prompts.py` module: separates things that change together
+**Choice**: Each processor in its own file with extraction prompt as module-level constant. All three extend `PromptDrivenProcessor` (DES-004), inheriting the `process()` implementation.
+**Why**: Co-locates related concerns. Each file is self-contained — just a prompt constant and a near-empty class. When iterating on extraction quality, developers modify one file per memory type.
 
 **Consequences**:
 - Pro: Self-contained files per processor
-- Pro: Simple structure
+- Pro: Near-trivial subclasses thanks to DES-004 base class
 - Con: Prompt changes require code changes (acceptable)
 
 ### Pipeline trigger timing — after session close, before SDK disconnect
