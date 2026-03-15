@@ -367,7 +367,14 @@ the user explicitly refers back to it.
             self._options = new_options
 
             if old_client is not None:
-                await old_client.disconnect()
+                try:
+                    await old_client.disconnect()
+                except Exception as disconnect_exc:
+                    # Cleanup failure doesn't affect the new client
+                    _log.exception(
+                        "Failed to disconnect old client during swap: err={err}",
+                        err=str(disconnect_exc),
+                    )
 
             _log.info("SDK client reset with previous conversation summary")
 
