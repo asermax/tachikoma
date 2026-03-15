@@ -11,6 +11,9 @@ dependencies = [
     "sqlalchemy[asyncio]>=2.0",
     "aiosqlite>=0.20",
     "loguru>=0.7",
+    "aiogram>=3.20",
+    "telegramify-markdown>=1.0",
+    "cyclopts",
 ]
 
 [dependency-groups]

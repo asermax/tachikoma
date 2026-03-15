@@ -648,3 +648,114 @@ class TestCoordinatorPostProcessing:
             pass
 
         on_status.assert_not_called()
+
+
+class TestCoordinatorSteering:
+    """Tests for DLT-002: steering mechanism in the coordinator."""
+
+    async def test_steer_calls_client_query(self, mock_sdk) -> None:
+        """AC: steer() calls client.query() with the text."""
+        client, _ = mock_sdk
+
+        async with Coordinator() as coord:
+            await coord.steer("follow-up message")
+
+        client.query.assert_awaited_once_with("follow-up message")
+
+    async def test_steer_increments_pending_counter(self, mock_sdk) -> None:
+        """AC: steer() increments _pending_steers counter."""
+        client, _ = mock_sdk
+
+        async with Coordinator() as coord:
+            assert coord._pending_steers == 0
+            await coord.steer("message 1")
+            assert coord._pending_steers == 1
+            await coord.steer("message 2")
+            assert coord._pending_steers == 2
+
+    async def test_steer_without_connection_raises_runtime_error(self, mock_sdk) -> None:
+        """AC: steer() without connection raises RuntimeError."""
+        coord = Coordinator()
+
+        with pytest.raises(RuntimeError, match="not connected"):
+            await coord.steer("message")
+
+    async def test_send_message_continues_past_result_when_steering(self, mock_sdk) -> None:
+        """AC: send_message() continues past Result when one steer is pending."""
+        client, _ = mock_sdk
+
+        # Single generator yields messages for both responses
+        # (steered messages are queued by CLI and yielded by the same generator)
+        async def _combined_messages():
+            # First response
+            yield make_assistant([TextBlock(text="A")])
+            yield make_result()
+            # Second response (steered message)
+            yield make_assistant([TextBlock(text="B")])
+            yield make_result()
+
+        client.receive_messages.return_value = _combined_messages()
+
+        async with Coordinator() as coord:
+            # Steer before calling send_message
+            await coord.steer("follow-up")
+
+            events = [e async for e in coord.send_message("initial")]
+
+        # Should see events from both responses (two Result events)
+        result_events = [e for e in events if isinstance(e, Result)]
+        text_events = [e for e in events if isinstance(e, TextChunk)]
+
+        assert len(result_events) == 2
+        assert len(text_events) == 2
+        assert text_events[0].text == "A"
+        assert text_events[1].text == "B"
+
+    async def test_send_message_breaks_after_final_result(self, mock_sdk) -> None:
+        """AC: send_message() breaks after final Result when counter reaches 0."""
+        client, _ = mock_sdk
+
+        client.receive_messages.return_value = _mock_messages(
+            make_assistant([TextBlock(text="response")]),
+            make_result(),
+        )
+
+        async with Coordinator() as coord:
+            events = [e async for e in coord.send_message("initial")]
+
+        # Should see exactly one Result
+        result_events = [e for e in events if isinstance(e, Result)]
+        assert len(result_events) == 1
+
+    async def test_pending_steers_decremented_on_each_result(self, mock_sdk) -> None:
+        """AC: _pending_steers is decremented on each Result."""
+        client, _ = mock_sdk
+
+        # Single generator yields messages for all three responses
+        async def _combined_messages():
+            # First response
+            yield make_assistant([TextBlock(text="A")])
+            yield make_result()
+            # Second response (steered message 1)
+            yield make_assistant([TextBlock(text="B")])
+            yield make_result()
+            # Third response (steered message 2)
+            yield make_assistant([TextBlock(text="C")])
+            yield make_result()
+
+        client.receive_messages.return_value = _combined_messages()
+
+        async with Coordinator() as coord:
+            # Queue two steers
+            await coord.steer("follow-up 1")
+            await coord.steer("follow-up 2")
+            assert coord._pending_steers == 2
+
+            events = [e async for e in coord.send_message("initial")]
+
+            # Counter should be 0 after all responses
+            assert coord._pending_steers == 0
+
+        # Should see three Result events
+        result_events = [e for e in events if isinstance(e, Result)]
+        assert len(result_events) == 3

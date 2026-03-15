@@ -82,6 +82,7 @@ class Coordinator:
         self._registry = registry
         self._pipeline = pipeline
         self._on_status = on_status
+        self._pending_steers: int = 0
 
     async def __aenter__(self) -> "Coordinator":
         self._client = ClaudeSDKClient(self._options)
@@ -187,7 +188,12 @@ class Coordinator:
                     done = done or isinstance(event, Result)
 
                 if done:
-                    break
+                    # Continue past Result when steering is active
+                    if self._pending_steers > 0:
+                        self._pending_steers -= 1
+                        done = False
+                    else:
+                        break
 
             _log.debug("Response complete")
 
@@ -199,3 +205,16 @@ class Coordinator:
         """Interrupt the current agent response."""
         if self._client is not None:
             await self._client.interrupt()
+
+    async def steer(self, text: str) -> None:
+        """Inject a user message mid-stream via client.query().
+
+        The message is queued by the CLI and processed after the current turn completes.
+        The send_message() iteration continues yielding events for the steered message.
+        """
+        if self._client is None:
+            raise RuntimeError("Coordinator is not connected. Use as an async context manager.")
+
+        self._pending_steers += 1
+        await self._client.query(text)
+        _log.debug("Steered message queued: pending_steers={n}", n=self._pending_steers)

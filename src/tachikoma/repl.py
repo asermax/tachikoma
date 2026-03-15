@@ -10,15 +10,8 @@ from rich.console import Console
 from rich.markdown import Markdown
 
 from tachikoma.coordinator import Coordinator
+from tachikoma.display import TOOL_DISPLAY
 from tachikoma.events import AgentEvent, Error, Result, TextChunk, ToolActivity
-
-TOOL_DISPLAY = {
-    "Read": lambda inp: f"Reading {inp.get('file_path', '...')}...",
-    "Grep": lambda inp: f"Searching for '{inp.get('pattern', '...')}'...",
-    "Glob": lambda inp: f"Globbing {inp.get('pattern', '...')}...",
-    "Bash": lambda inp: f"Running: {inp.get('command', '...')}",
-    "ToolSearch": lambda inp: f"Searching tools: {inp.get('query', '...')}",
-}
 
 
 class Renderer:

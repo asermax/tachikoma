@@ -8,7 +8,7 @@ auto-generated on first run.
 import sys
 import tomllib
 from pathlib import Path
-from typing import Any, Literal, cast
+from typing import Any, Literal, Union, cast, get_args
 
 import tomlkit
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
@@ -67,12 +67,31 @@ class LoggingSettings(BaseModel):
     )
 
 
+class TelegramSettings(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="ignore")
+
+    bot_token: str = Field(
+        description="Telegram bot token from @BotFather",
+    )
+    authorized_chat_id: int = Field(
+        description="Authorized Telegram chat ID (only this user can interact with the bot)",
+    )
+
+
 class Settings(BaseModel):
     model_config = ConfigDict(frozen=True, extra="ignore")
 
     workspace: WorkspaceSettings = Field(default_factory=WorkspaceSettings)
     agent: AgentSettings = Field(default_factory=AgentSettings)
     logging: LoggingSettings = Field(default_factory=LoggingSettings)
+    channel: Literal["repl", "telegram"] = Field(
+        default="repl",
+        description="Communication channel to use (repl or telegram)",
+    )
+    telegram: TelegramSettings | None = Field(
+        default=None,
+        description="Telegram bot configuration (required when channel is telegram)",
+    )
 
 
 class SettingsManager:
@@ -98,6 +117,13 @@ class SettingsManager:
 
         section_model = Settings.model_fields[section].annotation
 
+        # Unwrap union types (e.g., TelegramSettings | None -> TelegramSettings)
+        origin = getattr(section_model, "__origin__", None)
+        if origin is Union:
+            # Extract the non-None type from the union
+            args = get_args(section_model)
+            section_model = next((arg for arg in args if arg is not type(None)), section_model)
+
         if key not in section_model.model_fields:
             raise KeyError(f"Unknown key '{key}' in section '{section}'")
 
@@ -105,6 +131,33 @@ class SettingsManager:
             self._doc.add(section, tomlkit.table())
 
         cast(dict[str, Any], self._doc[section])[key] = value
+
+    def update_root(self, key: str, value: object) -> None:
+        """Modify a root-level setting value in memory. Call reload() to apply.
+
+        Use for runtime-only overrides (no file persistence).
+        """
+        if key not in Settings.model_fields:
+            raise KeyError(f"Unknown root key: {key}")
+
+        field_info = Settings.model_fields[key]
+
+        # Prevent using update_root for section-level fields (BaseModel subclasses)
+        if hasattr(field_info.annotation, "model_fields"):
+            raise KeyError(
+                f"'{key}' is a section, use update('{key}', ...) instead of update_root()"
+            )
+
+        self._doc[key] = value
+
+    def reload(self) -> None:
+        """Reload settings from the in-memory TOML document without file I/O.
+
+        Use after update_root() for runtime-only changes.
+        """
+        # Convert tomlkit document to dict and re-validate
+        data = dict(self._doc)
+        self._settings = Settings.model_validate(data)
 
     def save(self) -> None:
         """Write current state to the config file and reload settings."""
@@ -167,6 +220,27 @@ def _generate_default_config(config_path: Path = CONFIG_PATH) -> None:
             doc.add(tomlkit.comment(f"{name} = {str(default).lower()}"))
         else:
             doc.add(tomlkit.comment(f'{name} = "{default}"'))
+
+    doc.add(tomlkit.nl())
+
+    # Root-level channel field
+    doc.add(tomlkit.comment("Communication channel to use (repl or telegram)"))
+    doc.add(tomlkit.comment('channel = "repl"'))
+
+    doc.add(tomlkit.nl())
+
+    # [telegram] section
+    doc.add(tomlkit.comment("[telegram]"))
+
+    for name, field_info in TelegramSettings.model_fields.items():
+        desc = field_info.description or ""
+
+        doc.add(tomlkit.comment(f"{desc}"))
+
+        if name == "bot_token":
+            doc.add(tomlkit.comment('bot_token = ""'))
+        elif name == "authorized_chat_id":
+            doc.add(tomlkit.comment("authorized_chat_id = 0"))
 
     try:
         config_path.parent.mkdir(parents=True, exist_ok=True)

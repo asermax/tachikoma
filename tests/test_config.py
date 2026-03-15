@@ -13,6 +13,7 @@ from tachikoma.config import (
     LoggingSettings,
     Settings,
     SettingsManager,
+    TelegramSettings,
     WorkspaceSettings,
     _generate_default_config,
     load_settings,
@@ -419,3 +420,161 @@ class TestSettingsManager:
         content = config_path.read_text()
 
         assert "# User comment" in content
+
+
+class TestTelegramSettings:
+    """Tests for TelegramSettings model (DLT-002)."""
+
+    def test_telegram_settings_requires_both_fields(self) -> None:
+        """AC (R8): TelegramSettings requires bot_token and authorized_chat_id."""
+        with pytest.raises(ValidationError):
+            TelegramSettings()
+
+        with pytest.raises(ValidationError):
+            TelegramSettings(bot_token="token")
+
+        with pytest.raises(ValidationError):
+            TelegramSettings(authorized_chat_id=123)
+
+    def test_telegram_settings_valid_with_all_fields(self) -> None:
+        """AC (R8): TelegramSettings validates with both fields."""
+        settings = TelegramSettings(bot_token="my_token", authorized_chat_id=12345)
+
+        assert settings.bot_token == "my_token"
+        assert settings.authorized_chat_id == 12345
+
+    def test_telegram_settings_accepts_negative_chat_id(self) -> None:
+        """AC (R8): Telegram chat IDs can be negative (groups)."""
+        settings = TelegramSettings(bot_token="token", authorized_chat_id=-1001234567890)
+
+        assert settings.authorized_chat_id == -1001234567890
+
+    def test_default_channel_is_repl(self) -> None:
+        """AC (R9): Default channel is 'repl'."""
+        settings = Settings()
+
+        assert settings.channel == "repl"
+
+    def test_default_telegram_is_none(self) -> None:
+        """AC (R8): Default telegram is None (not configured)."""
+        settings = Settings()
+
+        assert settings.telegram is None
+
+    def test_settings_with_valid_telegram_section(self) -> None:
+        """AC (R8): Settings validates with a valid telegram section."""
+        settings = Settings.model_validate({
+            "telegram": {
+                "bot_token": "my_token",
+                "authorized_chat_id": 12345,
+            },
+        })
+
+        assert settings.telegram is not None
+        assert settings.telegram.bot_token == "my_token"
+        assert settings.telegram.authorized_chat_id == 12345
+
+    def test_settings_with_missing_telegram_field_raises_error(self, tmp_path: Path) -> None:
+        """AC (R8): Partial telegram section raises ValidationError with field name."""
+        with pytest.raises(ValidationError) as exc_info:
+            Settings.model_validate({
+                "telegram": {"bot_token": "token"},
+            })
+
+        errors = exc_info.value.errors()
+        assert any("authorized_chat_id" in str(e) for e in errors)
+
+    def test_settings_without_telegram_uses_none(self) -> None:
+        """AC (R8): Missing telegram section uses None."""
+        settings = Settings.model_validate({})
+
+        assert settings.telegram is None
+
+
+class TestTelegramDefaultConfig:
+    """Tests for telegram section in default config generation (DLT-002)."""
+
+    def test_generated_file_contains_telegram_section(self, tmp_path: Path) -> None:
+        """AC (R8): Generated file contains [telegram] section."""
+        config_path = tmp_path / "config.toml"
+        _generate_default_config(config_path)
+
+        content = config_path.read_text()
+
+        assert "telegram" in content.lower()
+        assert "bot_token" in content
+        assert "authorized_chat_id" in content
+
+    def test_generated_file_contains_channel_field(self, tmp_path: Path) -> None:
+        """AC (R9): Generated file contains channel field."""
+        config_path = tmp_path / "config.toml"
+        _generate_default_config(config_path)
+
+        content = config_path.read_text()
+
+        assert "channel" in content.lower()
+
+
+class TestSettingsManagerTelegram:
+    """Tests for SettingsManager with telegram section (DLT-002)."""
+
+    def test_update_telegram_section_with_union_type(self, tmp_path: Path) -> None:
+        """AC (R8): update() handles optional section types (TelegramSettings | None)."""
+        config_path = tmp_path / "config.toml"
+        config_path.write_text("")
+
+        manager = SettingsManager(config_path)
+        manager.update("telegram", "bot_token", "test_token")
+        manager.update("telegram", "authorized_chat_id", 12345)
+        manager.save()
+
+        assert manager.settings.telegram is not None
+        assert manager.settings.telegram.bot_token == "test_token"
+        assert manager.settings.telegram.authorized_chat_id == 12345
+
+    def test_update_root_modifies_channel(self, tmp_path: Path) -> None:
+        """AC (R9): update_root() modifies root-level channel field."""
+        config_path = tmp_path / "config.toml"
+        config_path.write_text("")
+
+        manager = SettingsManager(config_path)
+        manager.update_root("channel", "telegram")
+        manager.reload()
+
+        assert manager.settings.channel == "telegram"
+
+    def test_reload_without_save(self, tmp_path: Path) -> None:
+        """AC (R9): reload() updates settings without file I/O."""
+        config_path = tmp_path / "config.toml"
+        config_path.write_text("")
+
+        manager = SettingsManager(config_path)
+        original_content = config_path.read_text()
+
+        manager.update_root("channel", "telegram")
+        manager.reload()
+
+        # Settings reflect the change
+        assert manager.settings.channel == "telegram"
+        # File was not modified
+        assert config_path.read_text() == original_content
+
+    def test_update_root_with_unknown_key_raises_error(self, tmp_path: Path) -> None:
+        """AC (R9): update_root with unknown key raises KeyError."""
+        config_path = tmp_path / "config.toml"
+        config_path.write_text("")
+
+        manager = SettingsManager(config_path)
+
+        with pytest.raises(KeyError, match="Unknown root key"):
+            manager.update_root("nonexistent", "value")
+
+    def test_update_root_with_section_name_raises_error(self, tmp_path: Path) -> None:
+        """AC (R9): update_root with section name raises error."""
+        config_path = tmp_path / "config.toml"
+        config_path.write_text("")
+
+        manager = SettingsManager(config_path)
+
+        with pytest.raises(KeyError, match="is a section"):
+            manager.update_root("workspace", "value")
