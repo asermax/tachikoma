@@ -22,6 +22,7 @@ from helpers import make_assistant, make_result
 
 from tachikoma.coordinator import Coordinator, _derive_transcript_path
 from tachikoma.events import Error, Result, TextChunk, ToolActivity
+from tachikoma.pre_processing import ContextResult
 from tachikoma.sessions.errors import SessionRepositoryError
 from tachikoma.sessions.model import Session
 
@@ -648,3 +649,160 @@ class TestCoordinatorPostProcessing:
             pass
 
         on_status.assert_not_called()
+
+
+def _make_mock_pre_pipeline():
+    """Create a mock PreProcessingPipeline with sensible defaults."""
+    pipeline = MagicMock()
+    pipeline.run = AsyncMock(return_value=[])
+    return pipeline
+
+
+class TestCoordinatorPreProcessing:
+    """Tests for DLT-006: pre-processing pipeline integration."""
+
+    async def test_runs_pre_pipeline_on_first_message_of_new_session(
+        self, mock_sdk
+    ) -> None:
+        """AC: First message of new session triggers pre_pipeline.run()."""
+        client, _ = mock_sdk
+        client.receive_messages.return_value = _mock_messages(
+            make_assistant([TextBlock(text="Hello!")]),
+            make_result(),
+        )
+
+        pre_pipeline = _make_mock_pre_pipeline()
+        pre_pipeline.run.return_value = [
+            ContextResult(tag="memories", content="Some memories")
+        ]
+        registry = _make_mock_registry(active_session=None)
+
+        async with Coordinator(registry=registry, pre_pipeline=pre_pipeline) as coord:
+            events = [e async for e in coord.send_message("hello")]
+
+        pre_pipeline.run.assert_awaited_once_with("hello")
+        # Verify the enriched message was sent to the SDK
+        client.query.assert_awaited_once()
+        query_text = client.query.call_args[0][0]
+        assert "<memories>" in query_text
+        assert "hello" in query_text
+
+    async def test_skips_pre_pipeline_on_subsequent_message(
+        self, mock_sdk
+    ) -> None:
+        """AC: Second message in same session does not trigger pre-processing."""
+        client, _ = mock_sdk
+        active = Session(id="existing", started_at=datetime.now(UTC))
+
+        registry = _make_mock_registry()
+        registry.get_active_session.side_effect = [None, active, active, active]
+
+        client.receive_messages.side_effect = [
+            _mock_messages(make_assistant([TextBlock(text="a")]), make_result()),
+            _mock_messages(make_assistant([TextBlock(text="b")]), make_result()),
+        ]
+
+        pre_pipeline = _make_mock_pre_pipeline()
+        pre_pipeline.run.return_value = [ContextResult(tag="memories", content="ctx")]
+
+        async with Coordinator(registry=registry, pre_pipeline=pre_pipeline) as coord:
+            _ = [e async for e in coord.send_message("first")]
+            _ = [e async for e in coord.send_message("second")]
+
+        # Pre-processing should only run on the first message
+        assert pre_pipeline.run.await_count == 1
+
+    async def test_skips_pre_pipeline_when_no_pipeline_provided(
+        self, mock_sdk
+    ) -> None:
+        """AC: No pre_pipeline means message is sent unmodified."""
+        client, _ = mock_sdk
+        client.receive_messages.return_value = _mock_messages(
+            make_assistant([TextBlock(text="Hello!")]),
+            make_result(),
+        )
+        registry = _make_mock_registry(active_session=None)
+
+        async with Coordinator(registry=registry) as coord:
+            events = [e async for e in coord.send_message("hello")]
+
+        # Message should be sent without enrichment
+        client.query.assert_awaited_once_with("hello")
+
+    async def test_skips_pre_pipeline_when_no_registry(
+        self, mock_sdk
+    ) -> None:
+        """AC: No registry means pre-processing is skipped."""
+        client, _ = mock_sdk
+        client.receive_messages.return_value = _mock_messages(
+            make_assistant([TextBlock(text="Hello!")]),
+            make_result(),
+        )
+
+        pre_pipeline = _make_mock_pre_pipeline()
+
+        async with Coordinator(pre_pipeline=pre_pipeline) as coord:
+            events = [e async for e in coord.send_message("hello")]
+
+        pre_pipeline.run.assert_not_awaited()
+        client.query.assert_awaited_once_with("hello")
+
+    async def test_pre_pipeline_failure_sends_original_message(
+        self, mock_sdk
+    ) -> None:
+        """AC: Pre-processing failure logs error and sends original message."""
+        client, _ = mock_sdk
+        client.receive_messages.return_value = _mock_messages(
+            make_assistant([TextBlock(text="Hello!")]),
+            make_result(),
+        )
+
+        pre_pipeline = _make_mock_pre_pipeline()
+        pre_pipeline.run.side_effect = RuntimeError("Pre-processing failed")
+        registry = _make_mock_registry(active_session=None)
+
+        async with Coordinator(registry=registry, pre_pipeline=pre_pipeline) as coord:
+            events = [e async for e in coord.send_message("hello")]
+
+        # Original message should be sent despite failure
+        client.query.assert_awaited_once_with("hello")
+
+    async def test_pre_pipeline_empty_results_sends_original_message(
+        self, mock_sdk
+    ) -> None:
+        """AC: Empty results from pre_pipeline sends original message."""
+        client, _ = mock_sdk
+        client.receive_messages.return_value = _mock_messages(
+            make_assistant([TextBlock(text="Hello!")]),
+            make_result(),
+        )
+
+        pre_pipeline = _make_mock_pre_pipeline()
+        pre_pipeline.run.return_value = []  # No results
+        registry = _make_mock_registry(active_session=None)
+
+        async with Coordinator(registry=registry, pre_pipeline=pre_pipeline) as coord:
+            events = [e async for e in coord.send_message("hello")]
+
+        # Original message should be sent (assemble_context returns original on empty)
+        client.query.assert_awaited_once_with("hello")
+
+    async def test_session_creation_failure_skips_pre_pipeline(
+        self, mock_sdk
+    ) -> None:
+        """AC: Session creation failure means pre-processing is skipped."""
+        client, _ = mock_sdk
+        client.receive_messages.return_value = _mock_messages(
+            make_assistant([TextBlock(text="Hello!")]),
+            make_result(),
+        )
+
+        pre_pipeline = _make_mock_pre_pipeline()
+        registry = _make_mock_registry(active_session=None)
+        registry.create_session.side_effect = SessionRepositoryError("DB error")
+
+        async with Coordinator(registry=registry, pre_pipeline=pre_pipeline) as coord:
+            events = [e async for e in coord.send_message("hello")]
+
+        pre_pipeline.run.assert_not_awaited()
+        client.query.assert_awaited_once_with("hello")

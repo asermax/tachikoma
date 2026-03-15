@@ -17,10 +17,12 @@ from tachikoma.logging import logging_hook
 from tachikoma.memory import (
     EpisodicProcessor,
     FactsProcessor,
+    MemoryContextProvider,
     PreferencesProcessor,
     memory_hook,
 )
 from tachikoma.post_processing import FINALIZE_PHASE, PostProcessingPipeline
+from tachikoma.pre_processing import PreProcessingPipeline
 from tachikoma.repl import Repl
 from tachikoma.sessions import session_recovery_hook
 from tachikoma.workspace import workspace_hook
@@ -68,6 +70,10 @@ async def main() -> None:
     pipeline.register(PreferencesProcessor(cwd=settings.workspace.path))
     pipeline.register(GitProcessor(cwd=settings.workspace.path), phase=FINALIZE_PHASE)
 
+    # Create and configure the pre-processing pipeline
+    pre_pipeline = PreProcessingPipeline()
+    pre_pipeline.register(MemoryContextProvider(cwd=settings.workspace.path))
+
     console = Console()
 
     try:
@@ -78,6 +84,7 @@ async def main() -> None:
             registry=registry,
             system_prompt=system_prompt,
             pipeline=pipeline,
+            pre_pipeline=pre_pipeline,
             permission_mode="bypassPermissions",
             env={"CLAUDE_CODE_DISABLE_AUTO_MEMORY": "1"},
             on_status=lambda msg: console.print(msg, style="dim italic grey50"),

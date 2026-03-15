@@ -16,6 +16,7 @@ from loguru import logger
 from tachikoma.adapter import adapt
 from tachikoma.events import AgentEvent, Error, Result
 from tachikoma.post_processing import PostProcessingPipeline
+from tachikoma.pre_processing import PreProcessingPipeline, assemble_context
 from tachikoma.sessions.model import Session
 from tachikoma.sessions.registry import SessionRegistry
 
@@ -56,6 +57,7 @@ class Coordinator:
         registry: SessionRegistry | None = None,
         system_prompt: str | None = None,
         pipeline: PostProcessingPipeline | None = None,
+        pre_pipeline: PreProcessingPipeline | None = None,
         permission_mode: PermissionMode | None = None,
         env: dict[str, str] | None = None,
         on_status: Callable[[str], None] | None = None,
@@ -81,6 +83,7 @@ class Coordinator:
         self._client: ClaudeSDKClient | None = None
         self._registry = registry
         self._pipeline = pipeline
+        self._pre_pipeline = pre_pipeline
         self._on_status = on_status
 
     async def __aenter__(self) -> "Coordinator":
@@ -142,6 +145,7 @@ class Coordinator:
 
         # Create a session if this is the first message in a new conversation
         active = None
+        is_new_session = False
 
         if self._registry is not None:
             try:
@@ -149,10 +153,20 @@ class Coordinator:
 
                 if active is None:
                     active = await self._registry.create_session()
+                    is_new_session = True
 
             except Exception as exc:
                 # Session tracking failures are logged but never crash the conversation
                 _log.exception("Failed to create session: err={err}", err=str(exc))
+
+        # Run pre-processing pipeline on first message of new session
+        if is_new_session and self._pre_pipeline is not None:
+            try:
+                results = await self._pre_pipeline.run(text)
+                if results:
+                    text = assemble_context(results, text)
+            except Exception as exc:
+                _log.exception("Pre-processing failed: err={err}", err=str(exc))
 
         await self._client.query(text)
 
