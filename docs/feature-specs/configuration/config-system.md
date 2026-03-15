@@ -23,12 +23,14 @@ The `ANTHROPIC_API_KEY` is not managed by this system — the Claude SDK reads i
 | R4 | Auto-generate a commented default config file when none exists |
 | R5 | Easy extensibility — adding new config parameters is low-friction |
 | R6 | Write-back capability: modules can update and persist configuration values at runtime |
+| R7 | Telegram configuration: optional `[telegram]` section for bot token and authorized chat ID |
+| R8 | CLI override capability: runtime-only overrides via CLI flags without file persistence |
 
 ## Behaviors
 
 ### Configuration Loading (R1, R2)
 
-The system loads parameters from the TOML config file at startup, applying defaults for any unspecified values. Supported sections include `[workspace]`, `[agent]`, and `[logging]`.
+The system loads parameters from the TOML config file at startup, applying defaults for any unspecified values. Supported sections include `[workspace]`, `[agent]`, `[logging]`, and `[telegram]`.
 
 **Acceptance Criteria**:
 - Given a valid TOML config file, when the application starts, then all parameters are loaded and available to components
@@ -74,3 +76,22 @@ Adding new configuration parameters is low-friction and backward-compatible.
 
 **Acceptance Criteria**:
 - Given a settings model with a new field that has a default value, when a config file without that field is loaded, then the new field uses its default without error
+
+### Telegram Configuration (R7)
+
+The optional `[telegram]` section configures the Telegram bot channel. When the section is absent, `settings.telegram` is None. When present, both fields are required.
+
+**Acceptance Criteria**:
+- Given a config file with a `[telegram]` section, when loaded, then `telegram.bot_token` and `telegram.authorized_chat_id` are available
+- Given a config file with no `[telegram]` section, when loaded, then `settings.telegram` is None
+- Given a config file with a `[telegram]` section missing a required field, when loaded, then validation fails with a clear error
+- Given the auto-generated default config, when created, then the `[telegram]` section is included (commented out) with annotations
+
+### CLI Override (R8)
+
+CLI flags can override configuration values at runtime without modifying the config file. Overrides apply via `SettingsManager.update_root()` followed by `reload()`.
+
+**Acceptance Criteria**:
+- Given a `--channel telegram` flag, when the application starts, then `settings.channel` is "telegram" for that session regardless of TOML config
+- Given a CLI override, when the application is running, then the override value is used but the config file is not modified
+- Given a CLI override is applied, when `settings_manager.reload()` is called, then the frozen Settings snapshot reflects the merged result

@@ -9,6 +9,7 @@ Design documents for communication interfaces.
 | Capability | Description | Status |
 |------------|-------------|--------|
 | [terminal-repl](terminal-repl.md) | Interactive terminal REPL for development | Current |
+| [telegram](telegram.md) | Telegram bot for production use | Current |
 
 ## Related Decisions
 

@@ -82,9 +82,13 @@ Settings (root, frozen)
 ├── agent: AgentSettings
 │   ├── model: str | None = None (SDK default)
 │   └── allowed_tools: list[str] = ["Read", "Glob", "Grep"]
-└── logging: LoggingSettings
-    ├── level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = "INFO"
-    └── console: bool = false
+├── logging: LoggingSettings
+│   ├── level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = "INFO"
+│   └── console: bool = false
+├── channel: Literal["repl", "telegram"] = "repl"
+└── telegram: TelegramSettings | None = None
+    ├── bot_token: str
+    └── authorized_chat_id: int
 ```
 
 All models use `ConfigDict(frozen=True, extra="ignore")`. Frozen prevents accidental mutation. Extra="ignore" provides forward compatibility — unknown TOML keys are silently ignored.
@@ -99,7 +103,9 @@ SettingsManager
 ├── _settings: Settings (frozen, reloaded after save)
 ├── _doc: tomlkit Document (in-memory TOML for write-back)
 ├── property settings → Settings (current frozen snapshot)
-├── update(section, key, value) → modifies in-memory TOML doc
+├── update(section, key, value) → modifies in-memory TOML doc (section-level)
+├── update_root(key, value) → modifies in-memory TOML doc (root-level)
+├── reload() → reloads frozen Settings from in-memory TOML (no file I/O)
 └── save() → writes to file, reloads frozen Settings
 ```
 
@@ -141,6 +147,19 @@ flowchart TD
 6. SettingsManager writes tomlkit document to config file (preserves comments)
 7. SettingsManager reloads frozen Settings via load_settings()
 8. Subsequent .settings access returns the updated snapshot
+```
+
+### CLI override flow (runtime-only)
+
+```
+1. CLI parses flag (e.g., --channel telegram)
+2. Module calls settings_manager.update_root("channel", "telegram")
+3. SettingsManager validates key against Settings.model_fields (root level)
+4. Updates the in-memory tomlkit document (root-level key)
+5. Module calls settings_manager.reload()
+6. SettingsManager reloads frozen Settings from in-memory TOML (no file I/O)
+7. Subsequent .settings access returns the merged result (TOML + CLI override)
+8. Config file is NOT modified — override is session-only
 ```
 
 ## Key Decisions
@@ -219,6 +238,29 @@ flowchart TD
 **Consequences**:
 - Pro: Config files are forward and backward compatible
 - Con: Typos in key names are silently ignored rather than flagged
+
+### update_root() and reload() for CLI overrides
+
+**Choice**: Add `update_root(key, value)` and `reload()` methods to SettingsManager for runtime-only CLI overrides
+**Why**: CLI flags like `--channel telegram` need to override config values without modifying the TOML file. The existing `update()` only supports section-level keys. `update_root()` handles root-level fields (like `channel`), and `reload()` reapplies the frozen Settings from the in-memory TOML without file I/O.
+**Alternatives Considered**:
+- Mutate Settings directly: Pydantic frozen models can't be mutated
+- Separate CLI config object: Duplicates logic, two sources of truth
+
+**Consequences**:
+- Pro: Single source of truth (SettingsManager) for all config values
+- Pro: CLI overrides are session-only (no file persistence)
+- Pro: Bootstrap and all consumers see merged result via `.settings`
+
+### Optional TelegramSettings with required fields
+
+**Choice**: Model `telegram` as `TelegramSettings | None = None`, where `TelegramSettings` fields are all required (no defaults)
+**Why**: Telegram settings (bot token, chat ID) are secrets with no meaningful defaults. The section itself is optional (None = not configured), but when present, all fields must be provided. This prevents half-configured states.
+
+**Consequences**:
+- Pro: Clear distinction — None means "not configured", present means "fully configured"
+- Pro: Pydantic validates all fields when the section exists
+- Con: Bootstrap hook must prompt for missing values when channel is "telegram"
 
 ## System Behavior
 

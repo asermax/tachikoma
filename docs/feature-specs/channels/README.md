@@ -9,6 +9,7 @@ Communication interfaces for interacting with the agent. Each channel calls the 
 | Capability | Description | Status |
 |------------|-------------|--------|
 | [terminal-repl](terminal-repl.md) | Interactive terminal REPL for development | ✓ |
+| [telegram](telegram.md) | Telegram bot for production use | ✓ |
 
 ## Related Decisions
 

@@ -31,7 +31,7 @@ Three-layer architecture with clear boundaries:
 ┌─────────────────────────────────────────────────────┐
 │                    Channel Layer                     │
 │  ┌─────────┐  ┌──────────┐                          │
-│  │  REPL   │  │ Telegram │ (future)                  │
+│  │  REPL   │  │ Telegram │                          │
 │  └────┬────┘  └────┬─────┘                          │
 │       │             │                                │
 │       ▼             ▼                                │
@@ -40,6 +40,7 @@ Three-layer architecture with clear boundaries:
 │  ┌──────────────────────────────────────────┐        │
 │  │  Coordinator                             │        │
 │  │  send_message(text) → AsyncIterator      │        │
+│  │  steer(text) → None                      │        │
 │  │  [AgentEvent]                            │        │
 │  └────┬─────────────────────────────────────┘        │
 │       │                                              │
@@ -57,7 +58,7 @@ Three-layer architecture with clear boundaries:
 └─────────────────────────────────────────────────────┘
 ```
 
-The **Coordinator** is the programmatic entry point. Channels call `send_message()` and consume the resulting `AsyncIterator[AgentEvent]`. The coordinator manages the SDK client lifecycle and transforms SDK messages into domain events via the message adapter.
+The **Coordinator** is the programmatic entry point. Channels call `send_message()` and consume the resulting `AsyncIterator[AgentEvent]`. The coordinator manages the SDK client lifecycle and transforms SDK messages into domain events via the message adapter. The `steer()` method allows mid-stream message injection for channels that support it (e.g., Telegram).
 
 The **Message Adapter** is a pure transformation layer — it maps SDK `Message` objects into `AgentEvent` domain types, decoupling channels from SDK internals.
 
@@ -149,6 +150,20 @@ AgentEvent (base)
 | `UserMessage` | — | (filtered) | Tool results echoed back by SDK |
 | `SystemMessage` | — | (filtered) | Session metadata |
 
+### Coordinator state and methods
+
+```
+Coordinator
+├── _client: ClaudeSDKClient
+├── _pending_steers: int = 0              (count of steered messages)
+├── send_message(text) → AsyncIterator[AgentEvent]
+│   └── continues past Result when _pending_steers > 0
+└── steer(text) → None
+    └── increments _pending_steers, calls client.query()
+```
+
+The `steer()` method allows channels to inject user messages mid-stream. When a steered message is queued, `send_message()` continues iterating after the current `Result` event, yielding events for the steered message through the same async iterator.
+
 ## Data Flow
 
 ### Normal message flow
@@ -167,23 +182,44 @@ AgentEvent (base)
 
 **Streaming granularity:** The SDK's `receive_messages()` yields complete `Message` objects. Text appears in message-level chunks rather than token-by-token. This is simpler (adapter handles complete, well-typed objects) and still responsive since messages arrive as the agent produces them. The `AgentEvent` contract with channels remains unchanged if finer granularity is needed later.
 
+### Steering flow
+
+```
+1. Channel A calls coordinator.send_message("msg_A")
+2. send_message() calls client.query("msg_A"), iterates receive_messages()
+3. Events for msg_A stream back, channel renders them
+4. Channel B calls coordinator.steer("msg_B") (e.g., Telegram message during active response)
+5. steer() increments _pending_steers to 1, calls client.query("msg_B")
+6. CLI queues msg_B internally
+7. msg_A completes → receive_messages() yields ResultMessage for msg_A
+8. send_message() checks _pending_steers > 0 → decrements, continues iterating
+9. CLI processes msg_B → receive_messages() yields messages for msg_B
+10. Events for msg_B stream back through the same send_message() iteration
+11. msg_B completes → Result, _pending_steers == 0 → break
+```
+
+The `Result` event serves as a turn boundary. Channels can detect it to reset their rendering state between steered messages. The `send_message()` iteration does not break — it checks the counter and continues.
+
 ### Startup flow
 
 ```
-1. __main__.py runs asyncio.run(main())
+1. cyclopts App parses CLI args (--channel flag)
 2. Creates SettingsManager (loads configuration, see configuration/config-system design)
-3. Creates Bootstrap, registers hooks: workspace, git, logging, context, memory, session recovery
-4. Runs bootstrap — hooks execute in registration order (workspace creation, git init, logging configuration, core context init, memory directory creation, session DB init + crash recovery)
-5. If bootstrap fails → catch BootstrapError, log + print to stderr, exit (if logging hook itself failed, log may not reach file)
-6. Reads final settings from SettingsManager
-7. Retrieves session repository, registry, and system_prompt from bootstrap extras
-8. Creates PostProcessingPipeline, registers memory processors (episodic, facts, preferences) in main phase, registers GitProcessor in finalize phase — all with workspace_path
-9. Creates Coordinator with allowed_tools, model, cwd=workspace_path, registry, system_prompt, pipeline, permission_mode="bypassPermissions", env={"CLAUDE_CODE_DISABLE_AUTO_MEMORY": "1"}, and on_status callback (for channel display)
-10. Enters coordinator async context (connects SDK client)
-11. If connection fails → catch SDK error, log + print to stderr, exit
-12. Creates channel (REPL) with coordinator reference and history path `/tmp/tachikoma_repl_history`
-13. Channel enters its main loop
-14. finally: disposes session repository engine (always runs, even on error)
+3. Applies CLI overrides via update_root() + reload() (runtime-only, no file write)
+4. Creates Bootstrap, registers hooks: workspace, git, logging, context, memory, session recovery, telegram
+5. Runs bootstrap — hooks execute in registration order (workspace creation, git init, logging configuration, core context init, memory directory creation, session DB init + crash recovery, telegram validation)
+6. If bootstrap fails → catch BootstrapError, log + print to stderr, exit (if logging hook itself failed, log may not reach file)
+7. Reads final settings from SettingsManager
+8. Retrieves session repository, registry, and system_prompt from bootstrap extras
+9. Creates PostProcessingPipeline, registers memory processors (episodic, facts, preferences) in main phase, registers GitProcessor in finalize phase — all with workspace_path
+10. Creates Coordinator with allowed_tools, model, cwd=workspace_path, registry, system_prompt, pipeline, permission_mode="bypassPermissions", env={"CLAUDE_CODE_DISABLE_AUTO_MEMORY": "1"}, and on_status callback (for channel display)
+11. Enters coordinator async context (connects SDK client)
+12. If connection fails → catch SDK error, log + print to stderr, exit
+13. Dispatches based on settings.channel:
+    ├─ "repl" → Repl(coordinator, history_path=...)
+    └─ "telegram" → TelegramChannel(coordinator, settings.telegram)
+14. Channel enters its main loop
+15. finally: disposes session repository engine (always runs, even on error)
 ```
 
 ### Shutdown flow
