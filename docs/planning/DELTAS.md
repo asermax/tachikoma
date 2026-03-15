@@ -64,7 +64,7 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 **Description**: Integrate with the Telegram Bot API to provide the primary user-facing communication channel for v1. Users send text messages to a Telegram bot, which forwards them to the coordinator agent. The coordinator's responses are sent back through the same channel. This delta covers the full Telegram lifecycle: bot initialization, receiving incoming messages via polling or webhooks, forwarding them into the agent architecture, sending responses back, and managing the connection (including reconnection on disconnects and graceful shutdown). Message validation ensures only expected input reaches the agent.
 
 ### DLT-003: Skill system foundation and sub-agent delegation
-**Status**: ⧗ Plan
+**Status**: ✓ Plan
 **Depends on**: None
 **Priority**: 4 (Low)
 **Complexity**: Hard
