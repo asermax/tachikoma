@@ -133,16 +133,9 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 **Complexity**: Easy
 **Description**: Build an eval suite for the post-processing pipeline using the evaluation framework (DLT-015). Tests whether the right facts, preferences, decisions, and patterns are being captured from sample conversations. Test cases should cover: extracting explicit facts, detecting implicit preferences, correctly categorizing memory types, avoiding hallucinated memories (extracting things that weren't actually discussed), and handling conversations with no extractable learnings. Measures completeness (nothing important missed), accuracy (correct categorization), and precision (no false extractions).
 
-### DLT-018: Update core context files from conversation learnings
-**Status**: ✓ Implementation
-**Depends on**: None
-**Priority**: 3 (Medium)
-**Complexity**: Medium
-**Description**: A dedicated post-processing processor (plugging into DLT-007's pipeline) that analyzes completed conversations for information that should update the assistant's foundational context files. Detects changes to user information (new job, moved cities, changed preferences) for USER.md, personality adjustments based on user feedback for SOUL.md, and operational instruction updates for AGENTS.md. Different from memory extraction — this updates long-lived foundational documents rather than creating individual memory entries. Must be conservative: only update when there's clear evidence, since these files carry higher weight than individual memories. When DLT-020 is implemented, core context file updates should trigger automatic git commits, making changes easy to review and roll back.
-
 ### DLT-019: Eval: Core context update quality
 **Status**: ✗ Defined
-**Depends on**: DLT-015, DLT-018
+**Depends on**: DLT-015
 **Priority**: 5 (Backlog)
 **Complexity**: Easy
 **Description**: Build an eval suite for the core context update post-processor using the evaluation framework (DLT-015). Tests whether the right updates are being applied to SOUL.md, USER.md, and AGENTS.md from sample conversations. Test cases should cover: detecting explicit user information changes, ignoring ambiguous or uncertain information, not overwriting correct existing information with noise, correctly routing updates to the right file (user info to USER.md, personality feedback to SOUL.md), and handling conversations with no context-file-relevant information. Measures precision (no false updates applied) and conservatism (only high-confidence changes are made).
