@@ -191,20 +191,17 @@ AgentEvent (base)
 2. Channel calls coordinator.send_message(text)
 3. Coordinator awaits any pending per-message task (logs errors, doesn't propagate)
 4. Coordinator checks for active session; creates one via registry if needed
-5. If active session has a summary AND cwd is not None:
-   a. Call detect_boundary(text, session.summary, cwd)
-   b. If topic shift → run _handle_transition(), re-fetch active session
-   c. If continuation or detection error → proceed normally
-6. Coordinator calls SDK client.query(text)
-7. Coordinator iterates SDK client.receive_messages(), accumulating response text
-8. For each SDK Message:
-   a. Adapter maps to AgentEvent(s) or filters out
-   b. Coordinator yields AgentEvent(s)
-   c. TextChunk events are also accumulated for per-message post-processing
-9. On Result event:
-   a. Session metadata updated from Result event
-   b. Re-fetch active session, launch per-message pipeline as background task
-   c. Stream ends
+5. If active session has a summary AND cwd is not None, call detect_boundary(text, session.summary, cwd)
+6. If topic shift → run _handle_transition(), re-fetch active session
+7. If continuation or detection error → proceed normally
+8. Coordinator calls SDK client.query(text)
+9. Coordinator iterates SDK client.receive_messages(), accumulating response text
+10. For each SDK Message, adapter maps to AgentEvent(s) or filters out
+11. Coordinator yields AgentEvent(s)
+12. TextChunk events are also accumulated for per-message post-processing
+13. On Result event, session metadata updated from Result event
+14. Re-fetch active session, launch per-message pipeline as background task
+15. Stream ends
 ```
 
 **Streaming granularity:** The SDK's `receive_messages()` yields complete `Message` objects. Text appears in message-level chunks rather than token-by-token. This is simpler (adapter handles complete, well-typed objects) and still responsive since messages arrive as the agent produces them. The `AgentEvent` contract with channels remains unchanged if finer granularity is needed later.
@@ -220,27 +217,27 @@ AgentEvent (base)
 6. Reads final settings from SettingsManager
 7. Retrieves session repository, registry, and system_prompt from bootstrap extras
 8. Creates PostProcessingPipeline, registers memory processors (episodic, facts, preferences) and CoreContextProcessor in main phase, registers GitProcessor in finalize phase — all with workspace_path
-8b. Creates MessagePostProcessingPipeline, registers SummaryProcessor with registry and workspace_path
-9. Creates Coordinator with allowed_tools, model, cwd=workspace_path, registry, system_prompt, pipeline, msg_pipeline, permission_mode="bypassPermissions", env={"CLAUDE_CODE_DISABLE_AUTO_MEMORY": "1"}, and on_status callback (for channel display)
-10. Enters coordinator async context (connects SDK client)
-11. If connection fails → catch SDK error, log + print to stderr, exit
-12. Creates channel (REPL) with coordinator reference and history path `/tmp/tachikoma_repl_history`
-13. Channel enters its main loop
-14. finally: disposes session repository engine (always runs, even on error)
+9. Creates MessagePostProcessingPipeline, registers SummaryProcessor with registry and workspace_path
+10. Creates Coordinator with allowed_tools, model, cwd=workspace_path, registry, system_prompt, pipeline, msg_pipeline, permission_mode="bypassPermissions", env={"CLAUDE_CODE_DISABLE_AUTO_MEMORY": "1"}, and on_status callback (for channel display)
+11. Enters coordinator async context (connects SDK client)
+12. If connection fails → catch SDK error, log + print to stderr, exit
+13. Creates channel (REPL) with coordinator reference and history path `/tmp/tachikoma_repl_history`
+14. Channel enters its main loop
+15. finally: disposes session repository engine (always runs, even on error)
 ```
 
 ### Shutdown flow
 
 ```
 1. Channel signals exit (user action or non-recoverable error)
-2a. Coordinator __aexit__ awaits any pending per-message task (logs errors, doesn't propagate)
-2b. Captures active session (if any), then closes it via registry (errors logged, not propagated)
-2c. If captured session has a valid SDK session ID and a pipeline is registered, coordinator calls on_status callback then triggers post-processing pipeline (errors in both callback and pipeline logged, not propagated)
-2d. Awaits all background session post-processing tasks from previous topic shifts via asyncio.gather(return_exceptions=True), logs errors
-2e. Coordinator disconnects SDK client
-3. SDK client disconnects, CLI process terminates
-4. finally block: session repository engine disposed
-5. asyncio.run() completes
+2. Coordinator __aexit__ awaits any pending per-message task (logs errors, doesn't propagate)
+3. Captures active session (if any), then closes it via registry (errors logged, not propagated)
+4. If captured session has a valid SDK session ID and a pipeline is registered, coordinator calls on_status callback then triggers post-processing pipeline (errors in both callback and pipeline logged, not propagated)
+5. Awaits all background session post-processing tasks from previous topic shifts via asyncio.gather(return_exceptions=True), logs errors
+6. Coordinator disconnects SDK client
+7. SDK client disconnects, CLI process terminates
+8. finally block: session repository engine disposed
+9. asyncio.run() completes
 ```
 
 ## Key Decisions
