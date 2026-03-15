@@ -679,7 +679,7 @@ class TestCoordinatorPreProcessing:
         registry = _make_mock_registry(active_session=None)
 
         async with Coordinator(registry=registry, pre_pipeline=pre_pipeline) as coord:
-            events = [e async for e in coord.send_message("hello")]
+            _ = [e async for e in coord.send_message("hello")]
 
         pre_pipeline.run.assert_awaited_once_with("hello")
         # Verify the enriched message was sent to the SDK
@@ -725,7 +725,7 @@ class TestCoordinatorPreProcessing:
         registry = _make_mock_registry(active_session=None)
 
         async with Coordinator(registry=registry) as coord:
-            events = [e async for e in coord.send_message("hello")]
+            _ = [e async for e in coord.send_message("hello")]
 
         # Message should be sent without enrichment
         client.query.assert_awaited_once_with("hello")
@@ -743,7 +743,7 @@ class TestCoordinatorPreProcessing:
         pre_pipeline = _make_mock_pre_pipeline()
 
         async with Coordinator(pre_pipeline=pre_pipeline) as coord:
-            events = [e async for e in coord.send_message("hello")]
+            _ = [e async for e in coord.send_message("hello")]
 
         pre_pipeline.run.assert_not_awaited()
         client.query.assert_awaited_once_with("hello")
@@ -763,7 +763,7 @@ class TestCoordinatorPreProcessing:
         registry = _make_mock_registry(active_session=None)
 
         async with Coordinator(registry=registry, pre_pipeline=pre_pipeline) as coord:
-            events = [e async for e in coord.send_message("hello")]
+            _ = [e async for e in coord.send_message("hello")]
 
         # Original message should be sent despite failure
         client.query.assert_awaited_once_with("hello")
@@ -783,7 +783,7 @@ class TestCoordinatorPreProcessing:
         registry = _make_mock_registry(active_session=None)
 
         async with Coordinator(registry=registry, pre_pipeline=pre_pipeline) as coord:
-            events = [e async for e in coord.send_message("hello")]
+            _ = [e async for e in coord.send_message("hello")]
 
         # Original message should be sent (assemble_context returns original on empty)
         client.query.assert_awaited_once_with("hello")
@@ -803,7 +803,7 @@ class TestCoordinatorPreProcessing:
         registry.create_session.side_effect = SessionRepositoryError("DB error")
 
         async with Coordinator(registry=registry, pre_pipeline=pre_pipeline) as coord:
-            events = [e async for e in coord.send_message("hello")]
+            _ = [e async for e in coord.send_message("hello")]
 
         pre_pipeline.run.assert_not_awaited()
         client.query.assert_awaited_once_with("hello")

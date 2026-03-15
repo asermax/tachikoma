@@ -4,9 +4,9 @@ Tests for DLT-006: Pre-process messages with memory context injection.
 """
 
 from pathlib import Path
-from unittest.mock import AsyncMock
 
 import pytest
+from claude_agent_sdk.types import ResultMessage
 
 from tachikoma.memory.context_provider import MEMORY_SEARCH_PROMPT, MemoryContextProvider
 from tachikoma.pre_processing import ContextResult
@@ -16,8 +16,6 @@ def _make_query_result(result: str | None, is_error: bool = False):
     """Create an async generator that yields a ResultMessage."""
 
     async def gen():
-        from claude_agent_sdk.types import ResultMessage
-
         yield ResultMessage(
             subtype="error" if is_error else "success",
             duration_ms=100,
