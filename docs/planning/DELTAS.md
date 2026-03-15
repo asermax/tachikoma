@@ -63,13 +63,6 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 **Complexity**: Medium
 **Description**: Integrate with the Telegram Bot API to provide the primary user-facing communication channel for v1. Users send text messages to a Telegram bot, which forwards them to the coordinator agent. The coordinator's responses are sent back through the same channel. This delta covers the full Telegram lifecycle: bot initialization, receiving incoming messages via polling or webhooks, forwarding them into the agent architecture, sending responses back, and managing the connection (including reconnection on disconnects and graceful shutdown). Message validation ensures only expected input reaches the agent.
 
-### DLT-003: Skill system foundation and sub-agent delegation
-**Status**: ✓ Implementation
-**Depends on**: None
-**Priority**: 4 (Low)
-**Complexity**: Hard
-**Description**: Establish the foundational skill system and sub-agent delegation mechanism. Skills are directory-based packages with a SKILL.md metadata file and agents/ subdirectory containing agent definitions. Each agent follows a standard markdown format with YAML frontmatter (description, model, tools) and markdown body for system context. A skill registry discovers all skills at startup and loads agent definitions, building a dictionary of agents indexed by namespace (skill-name/agent-name). The coordinator passes all discovered agents to the SDK via `ClaudeAgentOptions.agents`, enabling the SDK's internal orchestrator to delegate work to appropriate sub-agents. Agent tool access is scoped via the tools field in the agent definition (SDK enforces at invocation). Error handling gracefully skips invalid skills/agents with logged warnings, allowing the system to continue. Bootstrap creates the skills directory via an idempotent hook. This delta provides the infrastructure foundation; automatic skill detection and injection is DLT-021, custom MCP tools per-agent is deferred, and skill-level markdown instructions are out of scope.
-
 ### DLT-004: Detect conversation boundaries via inactivity timeout
 **Status**: ✗ Defined
 **Depends on**: None
@@ -93,7 +86,7 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 
 ### DLT-010: Queue and process background tasks during idle time
 **Status**: ✗ Defined
-**Depends on**: DLT-003
+**Depends on**: None
 **Priority**: 4 (Low)
 **Complexity**: Medium
 **Description**: Enable the assistant to work proactively by creating, scheduling, and executing background tasks. This delta covers the full task lifecycle across two concerns: (1) **Task creation and storage** — a specialized sub-agent (delegated by the coordinator via DLT-003) handles task creation. It interprets user intent, extracts timing information, and structures task entries (e.g., "remind me about X tomorrow morning", "follow up on topic Y in a few hours", "summarize today's notes"). Tasks are stored in a persistent queue that survives restarts and support both immediate execution (process during next idle period) and time-based scheduling (process at or after a specified time). (2) **Task execution** — when no conversation is active (after DLT-004 detects conversation end), the system picks up eligible tasks — those whose scheduled time has passed or that have no time constraint — and executes them one at a time without interrupting the user. Results are stored and delivered at the start of the user's next interaction.
@@ -149,7 +142,7 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 
 ### DLT-021: Skill detection and context injection
 **Status**: ✗ Defined
-**Depends on**: DLT-003, DLT-006
+**Depends on**: DLT-006
 **Priority**: 3 (Medium)
 **Complexity**: Medium
 **Description**: Build the skills context provider that plugs into the pre-processing pipeline (DLT-006) to automatically detect and inject relevant skills into the agent's context. The provider queries the skill registry (DLT-003) on each incoming message, matches skills against the message using metadata and trigger patterns, and loads matched skill components (instructions, agents, tools) into the coordinator's session. Once a skill is loaded in a session, it persists across subsequent messages without re-detection. Detection should balance precision (don't load irrelevant skills that waste context) with recall (don't miss applicable skills). This delta does NOT cover skill definition, registry, or agent infrastructure (DLT-003), nor constrained execution (post-v1).
