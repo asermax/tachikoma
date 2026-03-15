@@ -30,7 +30,7 @@ class TestFactsProcessor:
     ) -> None:
         """AC: Processor calls fork_and_consume with session, prompt, and cwd."""
         mock_fork = mocker.patch(
-            "tachikoma.memory.facts.fork_and_consume", new_callable=AsyncMock
+            "tachikoma.post_processing.fork_and_consume", new_callable=AsyncMock
         )
         session = _make_session()
         cwd = Path("/workspace")
@@ -62,7 +62,7 @@ class TestFactsProcessor:
     ) -> None:
         """AC: Exceptions from fork_and_consume propagate."""
         _mock_fork = mocker.patch(
-            "tachikoma.memory.facts.fork_and_consume",
+            "tachikoma.post_processing.fork_and_consume",
             side_effect=RuntimeError("SDK error"),
         )
         session = _make_session()

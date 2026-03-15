@@ -16,7 +16,7 @@ A persistent registry of conversation sessions that tracks when conversations st
 | ID | Requirement |
 |----|-------------|
 | R0 | Maintain a persistent registry of conversation sessions with lifecycle tracking |
-| R1 | Each session tracks: unique ID, SDK session ID, transcript path, start timestamp, end timestamp |
+| R1 | Each session tracks: unique ID, SDK session ID, transcript path, summary, start timestamp, end timestamp |
 | R2 | Create a new session when a conversation starts (first message or boundary detection) |
 | R3 | Close a session when a conversation ends (set end timestamp and final metadata) |
 | R4 | Query sessions by time range |
@@ -25,6 +25,7 @@ A persistent registry of conversation sessions that tracks when conversations st
 | R7 | Registry data survives application restarts |
 | R8 | On startup, detect sessions left open from ungraceful shutdowns and mark them as interrupted |
 | R9 | Session tracking failures must not interrupt active conversations |
+| R10 | Rolling conversation summary is updated on the session record by per-message post-processing |
 
 ## Behaviors
 
@@ -35,7 +36,7 @@ The system creates a new session when the coordinator receives the first message
 **Acceptance Criteria**:
 - Given the agent receives the first message in a new conversation, when no active session exists, then a new session is created with a unique ID and the current timestamp as `started_at`
 - Given a boundary detector signals a new conversation, when the current session is closed, then a new session is created for the incoming message
-- Given a session is created, then its `ended_at` is null, `sdk_session_id` is null, and `transcript_path` is null until the conversation produces a Result event
+- Given a session is created, then its `ended_at` is null, `sdk_session_id` is null, `transcript_path` is null, and `summary` is null until the per-message pipeline updates it after the first agent response
 - Given a session creation is already in progress, when another creation signal arrives, then only one session is created (the operation is serialized)
 
 ### Session Metadata Update (R1)
@@ -48,7 +49,7 @@ When the coordinator receives a Result event from the SDK, it populates the sess
 
 ### Session Closing (R3)
 
-Sessions close when a boundary signal is received or on clean shutdown.
+Sessions close when a boundary detection topic shift is detected or on clean shutdown.
 
 **Acceptance Criteria**:
 - Given an active session, when a conversation end signal is received, then the session's `ended_at` is set to the current timestamp
@@ -80,6 +81,14 @@ On startup, the recovery hook detects and closes sessions left open from ungrace
 - Given the application starts with sessions that have null `ended_at`, when the recovery hook runs, then those sessions have their `ended_at` set to a best-effort timestamp (transcript file mtime if available, otherwise current time)
 - Given a session has `ended_at` set but `sdk_session_id` is null, then it is identified as "interrupted"
 - Given the recovery hook runs and no sessions have null `ended_at`, then the hook completes with no side effects
+
+### Summary Update (R1, R10)
+
+When the per-message pipeline completes, it updates the session's rolling conversation summary.
+
+**Acceptance Criteria**:
+- Given an active session, when the per-message pipeline produces a new summary, then the session's `summary` field is updated and persisted
+- Given the session is a frozen dataclass, when the summary is updated, then the active session reference is refreshed with the updated value
 
 ### Graceful Degradation (R9)
 

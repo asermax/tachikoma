@@ -166,14 +166,15 @@ The `BootstrapContext` is frozen (fields can't be reassigned), but `settings_man
 - Pro: Fully testable — inject a lambda or mock
 - Pro: Explicit dependency
 
-### Workspace hook co-located with bootstrap module
+### Workspace hook in its own module
 
-**Choice**: Define `workspace_hook` in `bootstrap.py` alongside the mechanism
-**Why**: Tightly coupled to bootstrap — it's the foundational hook that creates directories other hooks depend on.
+**Choice**: Define `workspace_hook` in `workspace.py`, following DES-003 (subsystem-owned bootstrap hooks)
+**Why**: Each subsystem owns its hook in its own module. The workspace hook creates directories other hooks depend on, but that dependency is managed through registration order in `__main__.py`, not module co-location.
 
 **Consequences**:
-- Pro: Everything related to bootstrap in one module
-- Con: If many built-in hooks accumulate, may need extraction
+- Pro: Consistent with DES-003 pattern — all hooks follow the same placement convention
+- Pro: Bootstrap module stays focused on the mechanism (`Bootstrap` class, `BootstrapContext`)
+- Pro: Discoverable — looking at `workspace.py`, you immediately find `workspace_hook`
 
 ## System Behavior
 
@@ -207,5 +208,5 @@ The `BootstrapContext` is frozen (fields can't be reassigned), but `settings_man
 
 ## Notes
 
-- Hook registration order in `__main__.py`: workspace → logging → git → context → memory → sessions. Logging runs before git so that loguru's file handler is configured before any hooks emit log messages. Future hooks follow the same registration pattern.
+- Hook registration order in `__main__.py`: workspace → logging → git → skills → context → memory → sessions. Logging runs before git so that loguru's file handler is configured before any hooks emit log messages. Skills runs before context so that the skills directory is created before context initialization. Future hooks follow the same registration pattern.
 - The hook registration order in `__main__.py` serves as the explicit documentation of initialization sequence — no magic discovery

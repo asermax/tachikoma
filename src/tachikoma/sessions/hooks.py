@@ -16,9 +16,9 @@ _log = logger.bind(component="sessions")
 async def session_recovery_hook(ctx: BootstrapContext) -> None:
     """Bootstrap hook: initialize session repository and recover interrupted sessions.
 
-    Creates the SessionRepository and SessionRegistry, runs crash recovery,
-    then stores both on ctx.extras so __main__.py can retrieve them after
-    bootstrap completes.
+    Creates the SessionRepository and SessionRegistry, runs schema migration,
+    runs crash recovery, then stores both on ctx.extras so __main__.py can
+    retrieve them after bootstrap completes.
 
     Keys written to ctx.extras:
         "session_repository" -> SessionRepository instance
@@ -30,6 +30,7 @@ async def session_recovery_hook(ctx: BootstrapContext) -> None:
 
     repository = SessionRepository(data_path / "sessions.db")
     await repository.initialize()
+    await repository.migrate()
 
     registry = SessionRegistry(repository)
     await registry.recover_interrupted()

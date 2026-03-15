@@ -6,6 +6,7 @@ Tests for DLT-027: Track conversation sessions.
 from datetime import UTC, datetime
 from pathlib import Path
 
+import aiosqlite
 import pytest
 
 from tachikoma.bootstrap import BootstrapContext
@@ -99,3 +100,54 @@ class TestSessionRecoveryHook:
         registry: SessionRegistry = ctx.extras["session_registry"]
         active = await registry.get_active_session()
         assert active is None
+
+    async def test_runs_migration_before_recovery(
+        self, ctx: BootstrapContext, settings_manager: SettingsManager
+    ) -> None:
+        """AC: migration runs before recovery, adding summary column to existing DB."""
+
+        data_path = settings_manager.settings.workspace.data_path
+        db_path = data_path / "sessions.db"
+
+        # Pre-populate a database with the OLD schema (no summary column)
+        async with aiosqlite.connect(db_path) as db:
+            await db.execute(
+                """CREATE TABLE sessions (
+                    id TEXT PRIMARY KEY,
+                    sdk_session_id TEXT,
+                    transcript_path TEXT,
+                    started_at TEXT,
+                    ended_at TEXT
+                )"""
+            )
+            # Add an open session that needs recovery
+            await db.execute(
+                "INSERT INTO sessions (id, started_at) VALUES ('open-xyz', ?)",
+                (datetime.now(UTC).isoformat(),),
+            )
+            await db.commit()
+
+        # Verify summary column doesn't exist
+        async with aiosqlite.connect(db_path) as db:
+            cursor = await db.execute(
+                "SELECT * FROM pragma_table_info('sessions') WHERE name='summary'"
+            )
+            row = await cursor.fetchone()
+            assert row is None
+
+        # Run the hook — should migrate AND recover
+        await session_recovery_hook(ctx)
+
+        # Verify the column was added
+        async with aiosqlite.connect(db_path) as db:
+            cursor = await db.execute(
+                "SELECT * FROM pragma_table_info('sessions') WHERE name='summary'"
+            )
+            row = await cursor.fetchone()
+            assert row is not None
+
+        # Verify recovery also happened
+        repo2: SessionRepository = ctx.extras["session_repository"]
+        recovered = await repo2.get_by_id("open-xyz")
+        assert recovered is not None
+        assert recovered.ended_at is not None
