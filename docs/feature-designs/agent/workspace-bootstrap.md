@@ -166,14 +166,15 @@ The `BootstrapContext` is frozen (fields can't be reassigned), but `settings_man
 - Pro: Fully testable — inject a lambda or mock
 - Pro: Explicit dependency
 
-### Workspace hook co-located with bootstrap module
+### Workspace hook in its own module
 
-**Choice**: Define `workspace_hook` in `bootstrap.py` alongside the mechanism
-**Why**: Tightly coupled to bootstrap — it's the foundational hook that creates directories other hooks depend on.
+**Choice**: Define `workspace_hook` in `workspace.py`, following DES-003 (subsystem-owned bootstrap hooks)
+**Why**: Each subsystem owns its hook in its own module. The workspace hook creates directories other hooks depend on, but that dependency is managed through registration order in `__main__.py`, not module co-location.
 
 **Consequences**:
-- Pro: Everything related to bootstrap in one module
-- Con: If many built-in hooks accumulate, may need extraction
+- Pro: Consistent with DES-003 pattern — all hooks follow the same placement convention
+- Pro: Bootstrap module stays focused on the mechanism (`Bootstrap` class, `BootstrapContext`)
+- Pro: Discoverable — looking at `workspace.py`, you immediately find `workspace_hook`
 
 ## System Behavior
 

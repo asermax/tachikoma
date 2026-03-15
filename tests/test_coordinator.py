@@ -741,6 +741,24 @@ class TestCoordinatorAgents:
         assert len(text_events) == 1
         assert text_events[0].text == "Hello!"
 
+    async def test_agents_preserved_after_sdk_client_reset(self, mock_sdk) -> None:
+        """AC: agents survive SDK client reset on topic shift."""
+        _, mock_cls = mock_sdk
+
+        agents = {
+            "test/agent": AgentDefinition(
+                description="Test agent",
+                prompt="A test agent.",
+            ),
+        }
+
+        async with Coordinator(agents=agents) as coord:
+            await coord._reset_sdk_client("Previous summary")
+
+        # The new client should have been created with agents preserved
+        new_options = mock_cls.call_args[0][0]
+        assert new_options.agents == agents
+
 
 def _make_mock_pre_pipeline():
     """Create a mock PreProcessingPipeline with sensible defaults."""
