@@ -13,6 +13,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from claude_agent_sdk import CLIConnectionError, ProcessError
 from claude_agent_sdk.types import (
+    AgentDefinition,
     SystemMessage,
     TextBlock,
     ToolUseBlock,
@@ -648,3 +649,93 @@ class TestCoordinatorPostProcessing:
             pass
 
         on_status.assert_not_called()
+
+
+class TestCoordinatorAgents:
+    """Tests for DLT-003: sub-agent delegation via agents parameter."""
+
+    async def test_passes_agents_to_sdk_options(self, mock_sdk) -> None:
+        """AC: Given agents dict → ClaudeAgentOptions.agents is set."""
+        _, mock_cls = mock_sdk
+
+        agents = {
+            "memory/extractor": AgentDefinition(
+                description="Extracts memories",
+                prompt="Extract episodic memories from conversations.",
+            ),
+        }
+
+        async with Coordinator(agents=agents):
+            pass
+
+        options = mock_cls.call_args[0][0]
+        assert options.agents == agents
+
+    async def test_no_agents_when_none_provided(self, mock_sdk) -> None:
+        """AC: Given agents=None → ClaudeAgentOptions.agents is None."""
+        _, mock_cls = mock_sdk
+
+        async with Coordinator():
+            pass
+
+        options = mock_cls.call_args[0][0]
+        assert options.agents is None
+
+    async def test_agents_with_tools(self, mock_sdk) -> None:
+        """AC: AgentDefinition.tools is passed through to SDK options."""
+        _, mock_cls = mock_sdk
+
+        agents = {
+            "search/query": AgentDefinition(
+                description="Search agent",
+                prompt="Search for information.",
+                tools=["Read", "Glob", "Grep"],
+            ),
+        }
+
+        async with Coordinator(agents=agents):
+            pass
+
+        options = mock_cls.call_args[0][0]
+        assert options.agents["search/query"].tools == ["Read", "Glob", "Grep"]
+
+    async def test_agents_with_model(self, mock_sdk) -> None:
+        """AC: AgentDefinition.model is passed through to SDK options."""
+        _, mock_cls = mock_sdk
+
+        agents = {
+            "analysis/deep": AgentDefinition(
+                description="Deep analysis agent",
+                prompt="Perform deep analysis.",
+                model="opus",
+            ),
+        }
+
+        async with Coordinator(agents=agents):
+            pass
+
+        options = mock_cls.call_args[0][0]
+        assert options.agents["analysis/deep"].model == "opus"
+
+    async def test_agents_does_not_break_send_message(self, mock_sdk) -> None:
+        """AC: Given agents are provided → existing coordinator behavior still works."""
+        client, _ = mock_sdk
+        client.receive_messages.return_value = _mock_messages(
+            make_assistant([TextBlock(text="Hello!")]),
+            make_result(),
+        )
+
+        agents = {
+            "test/agent": AgentDefinition(
+                description="Test agent",
+                prompt="A test agent.",
+            ),
+        }
+
+        async with Coordinator(agents=agents) as coord:
+            events = [e async for e in coord.send_message("hi")]
+
+        text_events = [e for e in events if isinstance(e, TextChunk)]
+        assert len(text_events) == 1
+        assert text_events[0].text == "Hello!"
+
