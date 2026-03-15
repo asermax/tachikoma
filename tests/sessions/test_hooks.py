@@ -6,6 +6,7 @@ Tests for DLT-027: Track conversation sessions.
 from datetime import UTC, datetime
 from pathlib import Path
 
+import aiosqlite
 import pytest
 
 from tachikoma.bootstrap import BootstrapContext
@@ -104,7 +105,6 @@ class TestSessionRecoveryHook:
         self, ctx: BootstrapContext, settings_manager: SettingsManager
     ) -> None:
         """AC: migration runs before recovery, adding summary column to existing DB."""
-        import aiosqlite
 
         data_path = settings_manager.settings.workspace.data_path
         db_path = data_path / "sessions.db"

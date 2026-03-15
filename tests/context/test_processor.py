@@ -5,7 +5,7 @@ Tests for DLT-018: Update core context files from conversation learnings.
 
 from datetime import UTC, datetime
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -32,7 +32,7 @@ class TestCoreContextProcessor:
         mock_clean = mocker.patch(
             "tachikoma.context.processor.clean_pending_signals"
         )
-        mock_fork = mocker.patch(
+        mocker.patch(
             "tachikoma.context.processor.fork_and_consume",
             new_callable=AsyncMock,
         )
@@ -51,7 +51,7 @@ class TestCoreContextProcessor:
         mock_create_server = mocker.patch(
             "tachikoma.context.processor.create_pending_signals_server"
         )
-        mock_fork = mocker.patch(
+        mocker.patch(
             "tachikoma.context.processor.fork_and_consume",
             new_callable=AsyncMock,
         )
@@ -85,7 +85,10 @@ class TestCoreContextProcessor:
         assert "mcp_servers" in call_args[1]
         assert "pending-signals" in call_args[1]["mcp_servers"]
 
-    @pytest.mark.skip(reason="mtime changes happen inside mocked fork_and_consume, making post-step comparison difficult to observe")
+    @pytest.mark.skip(
+        reason="mtime changes happen inside mocked fork_and_consume, "
+        "making post-step comparison difficult to observe",
+    )
     async def test_logs_when_file_created(
         self, mocker: pytest.MockerFixture, tmp_path: Path, caplog: pytest.LogCaptureFixture
     ) -> None:
@@ -94,7 +97,10 @@ class TestCoreContextProcessor:
         # during the fork, which adds complexity for minimal test value.
         pass
 
-    @pytest.mark.skip(reason="mtime changes happen inside mocked fork_and_consume, making post-step comparison difficult to observe")
+    @pytest.mark.skip(
+        reason="mtime changes happen inside mocked fork_and_consume, "
+        "making post-step comparison difficult to observe",
+    )
     async def test_logs_when_file_updated(
         self, mocker: pytest.MockerFixture, tmp_path: Path, caplog: pytest.LogCaptureFixture
     ) -> None:
@@ -138,7 +144,8 @@ class TestContextUpdatePrompt:
     def test_instructs_conservative_update_policy(self) -> None:
         """AC: Prompt instructs conservative update policy."""
         assert "conservative" in CONTEXT_UPDATE_PROMPT.lower()
-        assert "clear" in CONTEXT_UPDATE_PROMPT.lower() or "explicit" in CONTEXT_UPDATE_PROMPT.lower()
+        prompt = CONTEXT_UPDATE_PROMPT.lower()
+        assert "clear" in prompt or "explicit" in prompt
 
     def test_instructs_reading_files_before_modifying(self) -> None:
         """AC: Prompt instructs reading files before modifying."""
@@ -148,9 +155,11 @@ class TestContextUpdatePrompt:
     def test_instructs_not_to_directly_access_pending_signals_file(self) -> None:
         """AC: Prompt instructs not to directly access pending signals file."""
         assert "tool" in CONTEXT_UPDATE_PROMPT.lower()
-        assert "directly" not in CONTEXT_UPDATE_PROMPT.lower() or "only" in CONTEXT_UPDATE_PROMPT.lower()
+        prompt = CONTEXT_UPDATE_PROMPT.lower()
+        assert "directly" not in prompt or "only" in prompt
 
     def test_instructs_preserving_structure(self) -> None:
         """AC: Prompt instructs preserving existing structure."""
-        assert "preserve" in CONTEXT_UPDATE_PROMPT.lower() or "maintain" in CONTEXT_UPDATE_PROMPT.lower()
-        assert "structure" in CONTEXT_UPDATE_PROMPT.lower() or "format" in CONTEXT_UPDATE_PROMPT.lower()
+        prompt = CONTEXT_UPDATE_PROMPT.lower()
+        assert "preserve" in prompt or "maintain" in prompt
+        assert "structure" in prompt or "format" in prompt

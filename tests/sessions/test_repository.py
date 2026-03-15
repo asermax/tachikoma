@@ -7,6 +7,7 @@ Uses real SQLite databases in tmp_path (no mocking of the DB layer).
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
+import aiosqlite
 import pytest
 
 from tachikoma.sessions.errors import SessionRepositoryError
@@ -303,7 +304,6 @@ class TestRepositoryMigration:
         self, tmp_path: Path
     ) -> None:
         """AC: migrate() adds summary column if it doesn't exist."""
-        import aiosqlite
 
         db_path = tmp_path / "sessions.db"
 
@@ -355,7 +355,6 @@ class TestRepositoryMigration:
         await repo.migrate()
 
         # Verify the column exists
-        import aiosqlite
 
         async with aiosqlite.connect(db_path) as db:
             cursor = await db.execute(

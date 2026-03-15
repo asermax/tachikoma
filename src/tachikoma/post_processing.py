@@ -8,9 +8,14 @@ other post-conversation handlers.
 import asyncio
 from abc import ABC, abstractmethod
 from pathlib import Path
-from typing import Any
 
 from claude_agent_sdk import ClaudeAgentOptions, query
+from claude_agent_sdk.types import (
+    McpHttpServerConfig,
+    McpSdkServerConfig,
+    McpSSEServerConfig,
+    McpStdioServerConfig,
+)
 from loguru import logger
 
 from tachikoma.sessions.model import Session
@@ -147,7 +152,11 @@ async def fork_and_consume(
     session: Session,
     prompt: str,
     cwd: Path,
-    mcp_servers: dict[str, Any] | None = None,
+    mcp_servers: dict[
+        str,
+        McpStdioServerConfig | McpSSEServerConfig | McpHttpServerConfig | McpSdkServerConfig,
+    ]
+    | None = None,
 ) -> None:
     """Fork the SDK session and consume the agent's response.
 
@@ -177,8 +186,10 @@ async def fork_and_consume(
         resume=session.sdk_session_id,
         fork_session=True,
         permission_mode="bypassPermissions",
-        mcp_servers=mcp_servers,
     )
+
+    if mcp_servers is not None:
+        options.mcp_servers = mcp_servers
 
     # Fully consume the async iterator to ensure the forked session ends cleanly
     async for _ in query(prompt=prompt, options=options):

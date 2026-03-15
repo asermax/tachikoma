@@ -3,9 +3,7 @@
 Tests for DLT-026: Detect conversation boundaries via topic analysis.
 """
 
-from datetime import UTC, datetime
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from claude_agent_sdk.types import ResultMessage

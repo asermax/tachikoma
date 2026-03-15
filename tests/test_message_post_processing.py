@@ -5,7 +5,7 @@ Tests for DLT-026: Detect conversation boundaries via topic analysis.
 
 import asyncio
 from datetime import UTC, datetime
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock
 
 import pytest
 

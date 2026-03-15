@@ -780,7 +780,7 @@ class TestBoundaryDetection:
         msg_pipeline = MagicMock()
         msg_pipeline.run = AsyncMock(side_effect=slow_msg_pipeline)
 
-        mock_detect = mocker.patch(
+        mocker.patch(
             "tachikoma.coordinator.detect_boundary",
             return_value=True,
         )
@@ -859,7 +859,7 @@ class TestSessionTransition:
         registry = _make_mock_registry(active_session=active)
         registry.get_active_session.side_effect = [active, None, None]
 
-        mock_detect = mocker.patch(
+        mocker.patch(
             "tachikoma.coordinator.detect_boundary",
             return_value=False,  # Topic shift
         )
@@ -891,7 +891,7 @@ class TestSessionTransition:
         registry.get_active_session.side_effect = [active, None, None]
         pipeline = _make_mock_pipeline()
 
-        mock_detect = mocker.patch(
+        mocker.patch(
             "tachikoma.coordinator.detect_boundary",
             return_value=False,
         )
@@ -936,7 +936,7 @@ class TestSessionTransition:
         registry.get_active_session.side_effect = [active, None, None]
         pipeline = _make_mock_pipeline()
 
-        mock_detect = mocker.patch(
+        mocker.patch(
             "tachikoma.coordinator.detect_boundary",
             return_value=False,
         )
@@ -969,7 +969,7 @@ class TestSessionTransition:
         registry = _make_mock_registry(active_session=active)
         registry.get_active_session.side_effect = [active, None, None]
 
-        mock_detect = mocker.patch(
+        mocker.patch(
             "tachikoma.coordinator.detect_boundary",
             return_value=False,
         )
@@ -1002,7 +1002,7 @@ class TestSessionTransition:
         # First get returns active, subsequent calls return None (after close), then new session
         registry.get_active_session.side_effect = [active, None, None]
 
-        mock_detect = mocker.patch(
+        mocker.patch(
             "tachikoma.coordinator.detect_boundary",
             return_value=False,
         )
@@ -1035,7 +1035,7 @@ class TestSessionTransition:
         registry.get_active_session.side_effect = [active, None, None]
         registry.close_session.side_effect = RuntimeError("DB error")
 
-        mock_detect = mocker.patch(
+        mocker.patch(
             "tachikoma.coordinator.detect_boundary",
             return_value=False,
         )
@@ -1071,7 +1071,7 @@ class TestSDKClientReset:
         registry = _make_mock_registry(active_session=active)
         registry.get_active_session.side_effect = [active, None, None]
 
-        mock_detect = mocker.patch(
+        mocker.patch(
             "tachikoma.coordinator.detect_boundary",
             return_value=False,
         )
@@ -1105,7 +1105,7 @@ class TestSDKClientReset:
         registry = _make_mock_registry(active_session=active)
         registry.get_active_session.side_effect = [active, None, None]
 
-        mock_detect = mocker.patch(
+        mocker.patch(
             "tachikoma.coordinator.detect_boundary",
             return_value=False,
         )
@@ -1138,7 +1138,7 @@ class TestSDKClientReset:
         registry = _make_mock_registry(active_session=active)
         registry.get_active_session.side_effect = [active, None, None]
 
-        mock_detect = mocker.patch(
+        mocker.patch(
             "tachikoma.coordinator.detect_boundary",
             return_value=False,
         )
@@ -1180,7 +1180,7 @@ class TestSDKClientReset:
         registry = _make_mock_registry(active_session=active)
         registry.get_active_session.side_effect = [active, None, None]
 
-        mock_detect = mocker.patch(
+        mocker.patch(
             "tachikoma.coordinator.detect_boundary",
             return_value=False,
         )
@@ -1215,7 +1215,7 @@ class TestSDKClientReset:
         )
         registry = _make_mock_registry(active_session=active)
 
-        mock_detect = mocker.patch(
+        mocker.patch(
             "tachikoma.coordinator.detect_boundary",
             return_value=False,
         )
@@ -1428,7 +1428,7 @@ class TestCoordinatorShutdownWithBoundaryDetection:
         pipeline = MagicMock()
         pipeline.run = AsyncMock(side_effect=slow_pipeline)
 
-        mock_detect = mocker.patch(
+        mocker.patch(
             "tachikoma.coordinator.detect_boundary",
             return_value=False,
         )
@@ -1465,7 +1465,7 @@ class TestCoordinatorShutdownWithBoundaryDetection:
         pipeline = MagicMock()
         pipeline.run = AsyncMock(side_effect=RuntimeError("Pipeline failed"))
 
-        mock_detect = mocker.patch(
+        mocker.patch(
             "tachikoma.coordinator.detect_boundary",
             return_value=False,
         )

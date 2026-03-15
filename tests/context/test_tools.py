@@ -131,7 +131,7 @@ class TestPendingSignalsToolsIntegration:
         (tmp_path / PENDING_SIGNALS_FILENAME).write_text(content)
 
         # Create server and extract the read tool handler
-        server = create_pending_signals_server(tmp_path)
+        create_pending_signals_server(tmp_path)
         # The SDK wraps tools internally; we test by reading file directly
         # This is a simplified integration test
         assert (tmp_path / PENDING_SIGNALS_FILENAME).exists()

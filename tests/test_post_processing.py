@@ -363,10 +363,10 @@ class TestForkAndConsume:
         options = call_kwargs[1]["options"]
         assert options.mcp_servers == mcp_servers
 
-    async def test_mcp_servers_default_none_not_set(
+    async def test_mcp_servers_default_none_not_passed(
         self, mocker: pytest.MockerFixture
     ) -> None:
-        """AC: When mcp_servers is None (default), behavior unchanged."""
+        """AC: When mcp_servers is None (default), options use SDK default (empty dict)."""
         mock_query = mocker.patch("tachikoma.post_processing.query")
 
         async def fake_query(*args, **kwargs):
@@ -381,7 +381,7 @@ class TestForkAndConsume:
         mock_query.assert_called_once()
         call_kwargs = mock_query.call_args
         options = call_kwargs[1]["options"]
-        assert options.mcp_servers is None
+        assert options.mcp_servers == {}
 
 
 class TestPromptDrivenProcessor:
