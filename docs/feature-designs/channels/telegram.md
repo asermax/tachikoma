@@ -235,7 +235,7 @@ Coordinator (existing)
    c. Start new message with remainder + current tool line (if active)
    d. Reset _current_message_id to new message
 4. If no paragraph boundary found, split at last newline
-5. If no newline found, hard-split at 4096
+5. If no newline found, hard-split at MAX_MESSAGE_SIZE (3800)
 ```
 
 The 3800-char safety margin (7% buffer) accounts for entity overhead and encoding variations.

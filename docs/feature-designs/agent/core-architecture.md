@@ -206,8 +206,8 @@ The `Result` event serves as a turn boundary. Channels can detect it to reset th
 1. cyclopts App parses CLI args (--channel flag)
 2. Creates SettingsManager (loads configuration, see configuration/config-system design)
 3. Applies CLI overrides via update_root() + reload() (runtime-only, no file write)
-4. Creates Bootstrap, registers hooks: workspace, git, logging, context, memory, session recovery, telegram
-5. Runs bootstrap — hooks execute in registration order (workspace creation, git init, logging configuration, core context init, memory directory creation, session DB init + crash recovery, telegram validation)
+4. Creates Bootstrap, registers hooks: workspace, logging, git, context, memory, session recovery, telegram
+5. Runs bootstrap — hooks execute in registration order (workspace creation, logging configuration, git init, core context init, memory directory creation, session DB init + crash recovery, telegram validation)
 6. If bootstrap fails → catch BootstrapError, log + print to stderr, exit (if logging hook itself failed, log may not reach file)
 7. Reads final settings from SettingsManager
 8. Retrieves session repository, registry, and system_prompt from bootstrap extras
