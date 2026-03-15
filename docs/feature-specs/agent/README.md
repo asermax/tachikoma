@@ -13,6 +13,7 @@ Core agent capabilities: the coordinator loop that receives messages, delegates 
 | [post-processing-pipeline](post-processing-pipeline.md) | Phased post-processing pipeline for running processors after session close | ✓ |
 | [workspace-version-tracking](workspace-version-tracking.md) | Automatic git version tracking for workspace changes | ✓ |
 | [sessions](sessions.md) | Persistent conversation session tracking and crash recovery | ✓ |
+| [skills](skills.md) | Skill system: directory-based packages, registry, and sub-agent delegation | ✓ |
 
 ## Related Decisions
 
