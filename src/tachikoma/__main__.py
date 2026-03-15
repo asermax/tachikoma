@@ -8,8 +8,8 @@ from claude_agent_sdk import CLIConnectionError, CLINotFoundError, ProcessError
 from loguru import logger
 from rich.console import Console
 
-from tachikoma.boundary import SummaryProcessor
 from tachikoma.bootstrap import Bootstrap, BootstrapError
+from tachikoma.boundary import SummaryProcessor
 from tachikoma.config import SettingsManager
 from tachikoma.context import context_hook
 from tachikoma.coordinator import Coordinator

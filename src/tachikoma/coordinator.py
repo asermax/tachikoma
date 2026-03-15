@@ -337,7 +337,12 @@ for brief context only — do not continue the previous conversation unless
 the user explicitly refers back to it.
 
 {previous_summary}"""
-            append_text = append_text + summary_section if append_text else summary_section[1:]  # Strip leading newline if no base
+            # Strip leading newline if no base text precedes the summary
+            append_text = (
+                append_text + summary_section
+                if append_text
+                else summary_section[1:]
+            )
 
         # Build new options
         new_system_prompt = None
