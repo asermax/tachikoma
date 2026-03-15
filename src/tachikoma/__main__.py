@@ -10,7 +10,7 @@ from rich.console import Console
 
 from tachikoma.bootstrap import Bootstrap, BootstrapError
 from tachikoma.config import SettingsManager
-from tachikoma.context import context_hook
+from tachikoma.context import CoreContextProcessor, context_hook
 from tachikoma.coordinator import Coordinator
 from tachikoma.git import GitProcessor, git_hook
 from tachikoma.logging import logging_hook
@@ -66,6 +66,7 @@ async def main() -> None:
     pipeline.register(EpisodicProcessor(cwd=settings.workspace.path))
     pipeline.register(FactsProcessor(cwd=settings.workspace.path))
     pipeline.register(PreferencesProcessor(cwd=settings.workspace.path))
+    pipeline.register(CoreContextProcessor(cwd=settings.workspace.path))
     pipeline.register(GitProcessor(cwd=settings.workspace.path), phase=FINALIZE_PHASE)
 
     console = Console()
