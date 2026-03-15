@@ -63,12 +63,12 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 **Complexity**: Medium
 **Description**: Integrate with the Telegram Bot API to provide the primary user-facing communication channel for v1. Users send text messages to a Telegram bot, which forwards them to the coordinator agent. The coordinator's responses are sent back through the same channel. This delta covers the full Telegram lifecycle: bot initialization, receiving incoming messages via polling or webhooks, forwarding them into the agent architecture, sending responses back, and managing the connection (including reconnection on disconnects and graceful shutdown). Message validation ensures only expected input reaches the agent.
 
-### DLT-003: Delegate tasks to focused sub-agents
-**Status**: ✗ Defined
+### DLT-003: Skill system foundation and sub-agent delegation
+**Status**: ⧗ Spec
 **Depends on**: None
 **Priority**: 4 (Low)
-**Complexity**: Medium
-**Description**: Enable the coordinator to delegate specialized requests to focused sub-agents instead of handling everything itself. When a request requires specific expertise or tooling, the coordinator spawns a sub-agent that receives only the context and tools relevant to its task — preventing context poisoning and keeping each agent sharp. The sub-agent executes, returns its result, and the coordinator synthesizes it into a user-facing response. This delta covers the delegation mechanism itself (how to spawn, scope, and collect results from sub-agents); specific sub-agent types are defined by their own deltas. Error handling for sub-agent failures (timeouts, crashes, bad output) should be addressed as part of this mechanism.
+**Complexity**: Hard
+**Description**: Establish the foundational skill system and sub-agent delegation mechanism. Skills are packages that bundle instructions, sub-agents, and tools into a cohesive toolbox the assistant loads when handling specific domains. Each skill follows a standard format with metadata (name, description, trigger patterns) and components (markdown instructions, sub-agent definitions via the SDK's `AgentDefinition`, custom MCP tools). A skill registry manages available skills — listing, lookup by name, and providing metadata for detection. Skills live in a dedicated directory within the workspace. For sub-agent delegation, skills define focused agents scoped with only the context and tools relevant to their task — preventing context poisoning. The coordinator passes loaded agents to the SDK via `ClaudeAgentOptions.agents`, and the SDK's internal orchestrator handles delegation decisions. Error handling covers sub-agent failures (timeouts, crashes, bad output) with graceful degradation. This delta provides the infrastructure that the skills context provider (DLT-021) builds on for automatic detection and injection.
 
 ### DLT-004: Detect conversation boundaries via inactivity timeout
 **Status**: ✗ Defined
@@ -147,12 +147,12 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 **Complexity**: Easy
 **Description**: Build an eval suite for the core context update post-processor using the evaluation framework (DLT-015). Tests whether the right updates are being applied to SOUL.md, USER.md, and AGENTS.md from sample conversations. Test cases should cover: detecting explicit user information changes, ignoring ambiguous or uncertain information, not overwriting correct existing information with noise, correctly routing updates to the right file (user info to USER.md, personality feedback to SOUL.md), and handling conversations with no context-file-relevant information. Measures precision (no false updates applied) and conservatism (only high-confidence changes are made).
 
-### DLT-021: Skill system with detection and pre-processing injection
+### DLT-021: Skill detection and context injection
 **Status**: ✗ Defined
-**Depends on**: DLT-006
+**Depends on**: DLT-003, DLT-006
 **Priority**: 3 (Medium)
 **Complexity**: Medium
-**Description**: Deliver the complete v1 skill system: skills are markdown documents that define workflows or knowledge any agent (coordinator or sub-agents) can load when needed. Each skill document follows a standard format with metadata (name, description, trigger patterns) and content (instructions, steps, reference knowledge). A skill registry manages available skills — listing, looking up by name, and providing metadata for detection. Skills live in a dedicated directory within the workspace. A skills context provider plugs into the pre-processing pipeline (DLT-006) to automatically detect which skills are relevant to an incoming message and inject them into the agent's context. The provider queries the registry, matches skills against the current message using metadata and trigger patterns, and loads matched skill documents into the enriched context alongside memory. Detection should balance precision (don't load irrelevant skills that waste context) with recall (don't miss applicable skills). This delta does NOT cover constrained execution (post-v1).
+**Description**: Build the skills context provider that plugs into the pre-processing pipeline (DLT-006) to automatically detect and inject relevant skills into the agent's context. The provider queries the skill registry (DLT-003) on each incoming message, matches skills against the message using metadata and trigger patterns, and loads matched skill components (instructions, agents, tools) into the coordinator's session. Once a skill is loaded in a session, it persists across subsequent messages without re-detection. Detection should balance precision (don't load irrelevant skills that waste context) with recall (don't miss applicable skills). This delta does NOT cover skill definition, registry, or agent infrastructure (DLT-003), nor constrained execution (post-v1).
 
 ### DLT-022: Eval: Skill detection quality
 **Status**: ✗ Defined
