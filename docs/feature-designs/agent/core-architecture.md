@@ -68,7 +68,7 @@ The **Message Adapter** is a pure transformation layer — it maps SDK `Message`
 | Layer/Component | Responsibility | Key Decisions |
 |-----------------|----------------|---------------|
 | `src/tachikoma/__main__.py` | CLI entry point: loads config via SettingsManager, runs bootstrap hooks (workspace, git, logging, context, memory, session recovery), retrieves session objects and system_prompt from bootstrap extras, wires up coordinator + channel with try/finally for engine disposal, runs `asyncio.run(main())` | Loads config via SettingsManager, runs bootstrap, reads system_prompt from extras, registers pipeline processors (memory in main phase, git in finalize phase), wires up coordinator + channel; enables `python -m tachikoma` |
-| `src/tachikoma/coordinator.py` | Wraps `ClaudeSDKClient`, manages session lifecycle, exposes `send_message()`. Accepts `system_prompt`, `permission_mode`, and `env` for SDK configuration, and an optional `on_status` callback for shutdown-phase notifications. Optionally integrates with `SessionRegistry` for persistent session tracking (see [sessions design](sessions.md)) and `PostProcessingPipeline` for post-conversation analysis (see [pipeline design](post-processing-pipeline.md)) | Async context manager pattern; owns SDK client instance; wraps system_prompt in SystemPromptPreset with append mode (see ADR-008); optional registry, pipeline, and on_status dependencies; passes `system_prompt`, `permission_mode`, and `env` through to `ClaudeAgentOptions` |
+| `src/tachikoma/coordinator.py` | Wraps `ClaudeSDKClient`, manages session lifecycle, exposes `send_message()`. Accepts `system_prompt`, `permission_mode`, and `env` for SDK configuration, and an optional `on_status` callback for shutdown-phase notifications. Optionally integrates with `SessionRegistry` for persistent session tracking (see [sessions design](sessions.md)), `PostProcessingPipeline` for post-conversation analysis (see [pipeline design](post-processing-pipeline.md)), and `MessagePostProcessingPipeline` for per-message processing (see [boundary detection design](boundary-detection.md)). Extended with boundary detection gating, per-message post-processing trigger, session transition orchestration (`_handle_transition`), and SDK client replacement (`_reset_sdk_client`). Stores base system prompt for recomposition on topic shift. Tracks `_pending_msg_task` and `_background_tasks` for lifecycle management. | Async context manager pattern; owns SDK client instance; wraps system_prompt in SystemPromptPreset with append mode (see ADR-008); optional registry, pipeline, msg_pipeline, and on_status dependencies; passes `system_prompt`, `permission_mode`, and `env` through to `ClaudeAgentOptions` |
 | `src/tachikoma/events.py` | `AgentEvent` domain type hierarchy | Dataclasses; no SDK dependency |
 | `src/tachikoma/adapter.py` | Transforms SDK messages to `AgentEvent`s | Pure function, stateless; only module that imports SDK message types |
 
@@ -82,28 +82,60 @@ Channels send a text message and receive an async stream of `AgentEvent`s. The s
 sequenceDiagram
     actor User
     participant Channel
-    participant Coordinator
-    participant Adapter
+    participant Coord as Coordinator
+    participant Detector as detect_boundary
+    participant Registry as SessionRegistry
     participant SDK as ClaudeSDKClient
+    participant Adapter
+    participant MsgPipeline as MessagePostProcessingPipeline
 
     User->>Channel: sends message
-    Channel->>Coordinator: send_message(text)
-    Coordinator->>SDK: query(text)
+    Channel->>Coord: send_message(text)
+
+    rect rgba(0, 128, 255, 0.1)
+        Note over Coord: Await pending per-message task
+        Coord->>Coord: await _pending_msg_task (if any)
+    end
+
+    Coord->>Registry: get_active_session()
+    Registry-->>Coord: Session (with summary)
+
+    rect rgba(0, 200, 100, 0.1)
+        Note over Coord,Detector: Boundary detection
+        alt has session and summary and cwd
+            Coord->>Detector: detect_boundary(text, summary, cwd)
+            Note over Detector: standalone query() with Opus low effort
+            Detector-->>Coord: continues_conversation: bool
+        else no session or no summary or no cwd
+            Note over Coord: skip detection
+        end
+    end
+
+    Coord->>SDK: query(text)
     loop for each SDK Message
-        SDK-->>Coordinator: Message
-        Coordinator->>Adapter: adapt(message)
-        Adapter-->>Coordinator: AgentEvent(s) or skip
-        Coordinator-->>Channel: yield AgentEvent
+        SDK-->>Coord: Message
+        Coord->>Adapter: adapt(message)
+        Adapter-->>Coord: AgentEvent(s) or skip
+        Coord-->>Channel: yield AgentEvent
         Channel-->>User: render response
+    end
+
+    rect rgba(128, 0, 255, 0.1)
+        Note over Coord,MsgPipeline: Per-message post-processing
+        Coord-)+MsgPipeline: run(session, text, response) [background task]
     end
 ```
 
+Note: `send_message()` is an async generator. The per-message pipeline launch happens inside the generator body, after the response stream completes but before the generator returns.
+
 **Integration Points:**
-- Coordinator ↔ SDK: async context manager lifecycle (`connect`/`disconnect`), `query()` to send messages, iterate `receive_messages()` for response stream
+- Coordinator ↔ SDK: async context manager lifecycle (`connect`/`disconnect`), `query()` to send messages, iterate `receive_messages()` for response stream. Supports mid-lifecycle client replacement via swap-on-success (replaces both `_client` and `_options`)
 - Coordinator ↔ Adapter: pure function call `adapt(sdk_message) -> list[AgentEvent]` (returns empty list for filtered messages)
 - Channel ↔ Coordinator: async iterator protocol
-- Coordinator ↔ SessionRegistry (optional): `create_session()` on first message, `update_metadata()` on Result events, `close_session()` on shutdown (see [sessions design](sessions.md))
-- Coordinator ↔ PostProcessingPipeline (optional): `pipeline.run(session)` in `__aexit__`, after session close, before SDK disconnect (see [pipeline design](post-processing-pipeline.md))
+- Coordinator ↔ SessionRegistry (optional): `create_session()` on first message, `update_metadata()` on Result events, `close_session()` on shutdown and on topic shift (see [sessions design](sessions.md))
+- Coordinator ↔ PostProcessingPipeline (optional): `pipeline.run(session)` in `__aexit__` (after session close, before SDK disconnect) and as background task during topic shift transitions. Note: `on_status` callback is NOT called for transition-triggered post-processing — only on shutdown (see [pipeline design](post-processing-pipeline.md))
+- Coordinator ↔ `detect_boundary` (from `boundary` package): pure function call before processing, returns `bool`, errors caught and defaulted to `True` (continuation). Skipped when no session, no summary, or no cwd (see [boundary detection design](boundary-detection.md))
+- Coordinator ↔ `MessagePostProcessingPipeline` (optional): `run(session, text, response_text)` as background `asyncio.Task` after each response, reference stored as `_pending_msg_task` (see [boundary detection design](boundary-detection.md))
 
 ### Shared Logic
 
@@ -117,7 +149,8 @@ The domain model is intentionally minimal:
 erDiagram
     Coordinator ||--|| ClaudeSDKClient : wraps
     Coordinator ||--o{ AgentEvent : produces
-    Coordinator ||--o| PostProcessingPipeline : "triggers on shutdown"
+    Coordinator ||--o| PostProcessingPipeline : "triggers on shutdown and topic shift"
+    Coordinator ||--o| MessagePostProcessingPipeline : "triggers per-message"
     Channel ||--o{ AgentEvent : consumes
     Channel }o--|| Coordinator : "calls send_message()"
 ```
@@ -156,13 +189,22 @@ AgentEvent (base)
 ```
 1. Channel receives user input
 2. Channel calls coordinator.send_message(text)
-3. Coordinator calls SDK client.query(text)
-4. Coordinator iterates SDK client.receive_messages()
-5. For each SDK Message:
+3. Coordinator awaits any pending per-message task (logs errors, doesn't propagate)
+4. Coordinator checks for active session; creates one via registry if needed
+5. If active session has a summary AND cwd is not None:
+   a. Call detect_boundary(text, session.summary, cwd)
+   b. If topic shift → run _handle_transition(), re-fetch active session
+   c. If continuation or detection error → proceed normally
+6. Coordinator calls SDK client.query(text)
+7. Coordinator iterates SDK client.receive_messages(), accumulating response text
+8. For each SDK Message:
    a. Adapter maps to AgentEvent(s) or filters out
    b. Coordinator yields AgentEvent(s)
-6. Channel renders each AgentEvent
-7. On Result event, stream ends
+   c. TextChunk events are also accumulated for per-message post-processing
+9. On Result event:
+   a. Session metadata updated from Result event
+   b. Re-fetch active session, launch per-message pipeline as background task
+   c. Stream ends
 ```
 
 **Streaming granularity:** The SDK's `receive_messages()` yields complete `Message` objects. Text appears in message-level chunks rather than token-by-token. This is simpler (adapter handles complete, well-typed objects) and still responsive since messages arrive as the agent produces them. The `AgentEvent` contract with channels remains unchanged if finer granularity is needed later.
@@ -178,7 +220,8 @@ AgentEvent (base)
 6. Reads final settings from SettingsManager
 7. Retrieves session repository, registry, and system_prompt from bootstrap extras
 8. Creates PostProcessingPipeline, registers memory processors (episodic, facts, preferences) in main phase, registers GitProcessor in finalize phase — all with workspace_path
-9. Creates Coordinator with allowed_tools, model, cwd=workspace_path, registry, system_prompt, pipeline, permission_mode="bypassPermissions", env={"CLAUDE_CODE_DISABLE_AUTO_MEMORY": "1"}, and on_status callback (for channel display)
+8b. Creates MessagePostProcessingPipeline, registers SummaryProcessor with registry and workspace_path
+9. Creates Coordinator with allowed_tools, model, cwd=workspace_path, registry, system_prompt, pipeline, msg_pipeline, permission_mode="bypassPermissions", env={"CLAUDE_CODE_DISABLE_AUTO_MEMORY": "1"}, and on_status callback (for channel display)
 10. Enters coordinator async context (connects SDK client)
 11. If connection fails → catch SDK error, log + print to stderr, exit
 12. Creates channel (REPL) with coordinator reference and history path `/tmp/tachikoma_repl_history`
@@ -190,9 +233,11 @@ AgentEvent (base)
 
 ```
 1. Channel signals exit (user action or non-recoverable error)
-2a. Coordinator __aexit__ captures active session (if any), then closes it via registry (errors logged, not propagated)
-2b. If captured session has a valid SDK session ID and a pipeline is registered, coordinator calls on_status callback then triggers post-processing pipeline (errors in both callback and pipeline logged, not propagated)
-2c. Coordinator disconnects SDK client
+2a. Coordinator __aexit__ awaits any pending per-message task (logs errors, doesn't propagate)
+2b. Captures active session (if any), then closes it via registry (errors logged, not propagated)
+2c. If captured session has a valid SDK session ID and a pipeline is registered, coordinator calls on_status callback then triggers post-processing pipeline (errors in both callback and pipeline logged, not propagated)
+2d. Awaits all background session post-processing tasks from previous topic shifts via asyncio.gather(return_exceptions=True), logs errors
+2e. Coordinator disconnects SDK client
 3. SDK client disconnects, CLI process terminates
 4. finally block: session repository engine disposed
 5. asyncio.run() completes

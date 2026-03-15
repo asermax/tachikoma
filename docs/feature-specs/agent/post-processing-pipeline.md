@@ -6,6 +6,8 @@
 
 A reusable, pluggable pipeline that runs registered processors after conversation end. The pipeline supports phased execution — processors declare which phase they run in, phases execute sequentially, and processors within each phase run in parallel with error isolation. The pipeline is domain-agnostic; it knows nothing about what processors do.
 
+A parallel concept — the `MessagePostProcessingPipeline` — follows a similar structural pattern (processor ABC, serialized execution, error isolation) but as a separate implementation with a distinct per-message processor interface that receives the active session, user message, and agent response. It has no phased execution. See [boundary detection](boundary-detection.md) for details.
+
 ## User Stories
 
 - As a developer, I want a reusable pipeline so that any post-conversation processor can register without coupling to other processors

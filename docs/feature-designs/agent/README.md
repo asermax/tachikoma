@@ -14,6 +14,7 @@ Design documents for the core agent capabilities.
 | [post-processing-pipeline](post-processing-pipeline.md) | Phased pipeline mechanism, processor interface, shared helpers | Current |
 | [workspace-version-tracking](workspace-version-tracking.md) | Git module: bootstrap hook and commit post-processor | Current |
 | [sessions](sessions.md) | Session model, repository, registry, and crash recovery | Current |
+| [boundary-detection](boundary-detection.md) | Boundary detection, per-message pipeline, summary processor, session transitions | Current |
 
 ## Related Decisions
 
