@@ -28,6 +28,8 @@ After a conversation ends, various post-processing tasks need to run — memory 
 
 A `PostProcessingPipeline` manages registered `PostProcessor` instances across sequential phases. Processors declare their phase at registration (defaulting to `main` for backward compatibility). The pipeline runs phases in order — `main` then `finalize` — with processors within each phase executing in parallel via `asyncio.gather`.
 
+A parallel concept — the `MessagePostProcessingPipeline` — follows a similar structural pattern (processor ABC, serialized execution, error isolation) but as a separate implementation with a distinct per-message processor interface. Unlike this pipeline, it has no phased execution. See [boundary detection design](boundary-detection.md) for details.
+
 ```
 ┌───────────────────────────────────────────────────────────┐
 │             PostProcessingPipeline                        │
@@ -43,7 +45,9 @@ A `PostProcessingPipeline` manages registered `PostProcessor` instances across s
 └───────────────────────────────────────────────────────────┘
 ```
 
-A standalone `fork_and_consume()` helper encapsulates the SDK session forking pattern, available to any processor that needs to fork a session.
+A `PromptDrivenProcessor` base class (DES-004) standardizes the pattern for processors that fork the SDK session with a prompt. Simple processors inherit `process()` from the base; complex processors override it for pre/post steps while still using `fork_and_consume()` internally.
+
+A standalone `fork_and_consume()` helper encapsulates the SDK session forking pattern, available to any processor that needs to fork a session. It accepts an optional `mcp_servers` parameter for providing custom in-process MCP tools to the forked agent.
 
 ## Components
 
@@ -51,7 +55,7 @@ A standalone `fork_and_consume()` helper encapsulates the SDK session forking pa
 
 | Layer/Component | Responsibility | Key Decisions |
 |-----------------|----------------|---------------|
-| `src/tachikoma/post_processing.py` | `PostProcessor` ABC (interface only), `PostProcessingPipeline` class (with phased execution), `fork_and_consume` standalone helper, phase constants (`MAIN_PHASE`, `FINALIZE_PHASE`) | Separate module from any processor domain; ABC has no SDK coupling; fork helper uses standalone `query()`; pipeline supports sequential phases for ordering dependencies |
+| `src/tachikoma/post_processing.py` | `PostProcessor` ABC (interface only), `PromptDrivenProcessor` base class (DES-004), `PostProcessingPipeline` class (with phased execution), `fork_and_consume` standalone helper (with optional `mcp_servers`), phase constants (`MAIN_PHASE`, `FINALIZE_PHASE`) | Separate module from any processor domain; ABC has no SDK coupling; `PromptDrivenProcessor` standardizes the fork pattern; fork helper uses standalone `query()` and accepts optional `mcp_servers` for custom in-process tools; pipeline supports sequential phases for ordering dependencies |
 
 ### Cross-Layer Contracts
 
@@ -91,7 +95,8 @@ sequenceDiagram
 ### Shared Logic
 
 - **`PostProcessor` ABC** (`post_processing.py`): shared interface between all processors. Defines only the `process()` contract.
-- **`fork_and_consume` function** (`post_processing.py`): standalone helper encapsulating SDK `query()` forking pattern. Available to processors needing session context.
+- **`PromptDrivenProcessor`** (`post_processing.py`): base class for processors that fork the SDK session with a prompt (DES-004). Stores `_prompt` and `_cwd`, implements `process()` via `fork_and_consume()`. Simple subclasses inherit `process()`; complex subclasses override it for pre/post steps and call `fork_and_consume()` directly.
+- **`fork_and_consume` function** (`post_processing.py`): standalone helper encapsulating SDK `query()` forking pattern. Accepts optional `mcp_servers` parameter for providing custom in-process MCP tools to the forked agent. Available to processors needing session context.
 - **`Session` dataclass** (`sessions/model.py`): shared input to the pipeline — processors read `sdk_session_id`.
 - **Phase constants** (`post_processing.py`): `MAIN_PHASE = "main"`, `FINALIZE_PHASE = "finalize"` — centralized alongside pipeline validation logic.
 
@@ -108,7 +113,12 @@ PostProcessingPipeline
 PostProcessor (ABC)
 └── process(session: Session) → None     (abstract)
 
-fork_and_consume(session, prompt, cwd) → None  (standalone helper)
+PromptDrivenProcessor(PostProcessor)                    [DES-004]
+├── _prompt: str
+├── _cwd: Path
+└── process(session) → fork_and_consume(session, prompt, cwd)
+
+fork_and_consume(session, prompt, cwd, mcp_servers=None) → None  (standalone helper)
 ```
 
 ```mermaid
@@ -181,6 +191,16 @@ erDiagram
 - Pro: `PostProcessor` ABC is truly generic — no SDK coupling
 - Pro: `fork_and_consume` available to any processor
 - Pro: Future processors can implement `process()` without inheriting forking behavior
+
+### PromptDrivenProcessor convenience base class
+
+**Choice**: Introduce `PromptDrivenProcessor(PostProcessor)` base class that stores prompt + cwd and implements `process()` via `fork_and_consume()` (DES-004).
+**Why**: All prompt-driven processors follow the same pattern: store a prompt, call `fork_and_consume()`. The base class eliminates identical boilerplate. Complex processors override `process()` for pre/post steps.
+
+**Consequences**:
+- Pro: Simple subclasses become near-empty — just a prompt constant and `super().__init__()` call
+- Pro: Complex processors override `process()` naturally and call `fork_and_consume()` directly
+- Pro: Standardized pattern across all prompt-driven processors
 
 ## System Behavior
 

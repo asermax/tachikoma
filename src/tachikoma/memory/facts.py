@@ -6,8 +6,7 @@ persist for future reference.
 
 from pathlib import Path
 
-from tachikoma.post_processing import PostProcessor, fork_and_consume
-from tachikoma.sessions.model import Session
+from tachikoma.post_processing import PromptDrivenProcessor
 
 FACTS_PROMPT = """You are a memory extraction agent. Your task is to analyze
 the conversation and extract or update factual information that would be useful
@@ -54,7 +53,7 @@ Remember: These memories help the assistant maintain context across sessions.
 Focus on accurate, verified information that will be useful to recall later."""
 
 
-class FactsProcessor(PostProcessor):
+class FactsProcessor(PromptDrivenProcessor):
     """Post-processor for extracting factual memories.
 
     Creates or updates topic-named files in memories/facts/.
@@ -66,12 +65,4 @@ class FactsProcessor(PostProcessor):
         Args:
             cwd: The workspace directory for the forked agent.
         """
-        self._cwd = cwd
-
-    async def process(self, session: Session) -> None:
-        """Extract factual memories from the session.
-
-        Args:
-            session: The closed session to process.
-        """
-        await fork_and_consume(session, FACTS_PROMPT, self._cwd)
+        super().__init__(FACTS_PROMPT, cwd)

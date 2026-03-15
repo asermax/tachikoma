@@ -9,18 +9,22 @@ from loguru import logger
 from rich.console import Console
 
 from tachikoma.bootstrap import Bootstrap, BootstrapError
+from tachikoma.boundary import SummaryProcessor
 from tachikoma.config import SettingsManager
-from tachikoma.context import context_hook
+from tachikoma.context import CoreContextProcessor, context_hook
 from tachikoma.coordinator import Coordinator
 from tachikoma.git import GitProcessor, git_hook
 from tachikoma.logging import logging_hook
 from tachikoma.memory import (
     EpisodicProcessor,
     FactsProcessor,
+    MemoryContextProvider,
     PreferencesProcessor,
     memory_hook,
 )
+from tachikoma.message_post_processing import MessagePostProcessingPipeline
 from tachikoma.post_processing import FINALIZE_PHASE, PostProcessingPipeline
+from tachikoma.pre_processing import PreProcessingPipeline
 from tachikoma.repl import Repl
 from tachikoma.sessions import session_recovery_hook
 from tachikoma.skills import SkillRegistry, skills_hook
@@ -68,12 +72,21 @@ async def main() -> None:
     # Get the system prompt from the context hook (if available)
     system_prompt = bootstrap.extras.get("system_prompt")
 
-    # Create and configure the post-processing pipeline
+    # Create and configure the session post-processing pipeline
     pipeline = PostProcessingPipeline()
     pipeline.register(EpisodicProcessor(cwd=settings.workspace.path))
     pipeline.register(FactsProcessor(cwd=settings.workspace.path))
     pipeline.register(PreferencesProcessor(cwd=settings.workspace.path))
+    pipeline.register(CoreContextProcessor(cwd=settings.workspace.path))
     pipeline.register(GitProcessor(cwd=settings.workspace.path), phase=FINALIZE_PHASE)
+
+    # Create and configure the pre-processing pipeline
+    pre_pipeline = PreProcessingPipeline()
+    pre_pipeline.register(MemoryContextProvider(cwd=settings.workspace.path))
+
+    # Create and configure the per-message post-processing pipeline
+    msg_pipeline = MessagePostProcessingPipeline()
+    msg_pipeline.register(SummaryProcessor(registry=registry, cwd=settings.workspace.path))
 
     console = Console()
 
@@ -85,6 +98,8 @@ async def main() -> None:
             registry=registry,
             system_prompt=system_prompt,
             pipeline=pipeline,
+            pre_pipeline=pre_pipeline,
+            msg_pipeline=msg_pipeline,
             permission_mode="bypassPermissions",
             env={"CLAUDE_CODE_DISABLE_AUTO_MEMORY": "1"},
             on_status=lambda msg: console.print(msg, style="dim italic grey50"),

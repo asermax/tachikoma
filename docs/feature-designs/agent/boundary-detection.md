@@ -1,0 +1,372 @@
+# Design: Conversation Boundary Detection
+
+<!-- This design describes the current implementation approach. Updated through delta reconciliation. -->
+
+**Feature Spec**: [../../feature-specs/agent/boundary-detection.md](../../feature-specs/agent/boundary-detection.md)
+**Status**: Current
+
+## Purpose
+
+This document explains the design rationale for conversation boundary detection: the detection mechanism, session transition orchestration, per-message post-processing pipeline, and rolling summary maintenance.
+
+## Problem Context
+
+The system treats all messages as belonging to a single, long-running conversation. When the user changes topics, the old conversation's context bleeds into the new one — the SDK session carries prior history, and post-processing (memory extraction) doesn't run until full shutdown. This means: (a) the agent may reference stale context from a previous topic, (b) memory extraction is delayed until the process stops, and (c) there's no clean separation between distinct conversations for downstream analysis.
+
+**Constraints:**
+- Boundary detection must add no more than 1-2 seconds to message processing latency (R6)
+- Detection must not interfere with or depend on the coordinator's active SDK session (R12)
+- Failures must never block message processing — fail-open to continuation (R8)
+- The rolling summary must stay concise regardless of conversation length (R13)
+- On graceful shutdown, all background tasks must complete before exit (R14)
+
+**Interactions:**
+- Coordinator (`core-architecture`): `send_message()` gains boundary detection gating, per-message post-processing trigger, await-pending logic, and SDK client replacement
+- Sessions (`sessions`): Session model gains a `summary` field; sessions can now close mid-conversation
+- Post-processing pipeline (`post-processing-pipeline`): Pipeline infrastructure is reused for session-level post-processing during transitions (async, not just on shutdown)
+- Memory extraction: Session post-processing is now triggered asynchronously on topic shift, not just on shutdown
+
+## Design Overview
+
+Three new mechanisms layer onto the existing coordinator:
+
+```
+┌──────────────────────────────────────────────────────────────────────┐
+│                    Coordinator.send_message() flow                    │
+│                                                                      │
+│  ┌─────────────┐   ┌──────────────┐   ┌────────────┐   ┌─────────┐ │
+│  │ Await       │──▶│ Boundary     │──▶│ Session    │──▶│ Process │ │
+│  │ pending     │   │ detection    │   │ transition │   │ message │ │
+│  │ post-proc   │   │ (Opus low)   │   │ (if shift) │   │ (SDK)   │ │
+│  └─────────────┘   └──────────────┘   └────────────┘   └────┬────┘ │
+│                                                              │      │
+│                                        ┌─────────────────────┘      │
+│                                        ▼                            │
+│                              ┌──────────────────┐                   │
+│                              │ Per-message       │                   │
+│                              │ post-processing   │                   │
+│                              │ (background task) │                   │
+│                              └──────────────────┘                   │
+└──────────────────────────────────────────────────────────────────────┘
+```
+
+1. **Boundary detection** — A standalone `query()` call using Opus with low effort that classifies whether a new message continues the current conversation or starts a new topic. Uses JSON schema output for reliable parsing. Runs before the coordinator processes the message.
+
+2. **Session transition** — On topic shift, an orchestrated sequence closes the old session, fires async session post-processing, resets the SDK client (new instance with updated system prompt), and creates a new session. Uses a swap-on-success pattern to guarantee the coordinator always has a working client.
+
+3. **Per-message post-processing** — A separate pipeline (`MessagePostProcessingPipeline`) with its own processor interface that runs after each agent response. The summary processor generates/updates a rolling conversation summary using Opus with low effort, storing it on the session record for the next boundary check.
+
+## Components
+
+### Implementation Structure
+
+| Layer/Component | Responsibility | Key Decisions |
+|-----------------|----------------|---------------|
+| `src/tachikoma/boundary/__init__.py` | Re-exports public API: `detect_boundary`, `SummaryProcessor` | New package for boundary detection |
+| `src/tachikoma/boundary/detector.py` | `detect_boundary(message, summary, cwd)` — standalone `query()` with Opus low effort, JSON schema output, returns `bool` (`True` = continues conversation). `cwd` is passed from the coordinator's `self._cwd`. | Independent of coordinator; pure function + SDK call |
+| `src/tachikoma/boundary/prompts.py` | Prompt templates for boundary detection and summary generation | Separated for easy iteration and testing |
+| `src/tachikoma/boundary/summary.py` | `SummaryProcessor` — `MessagePostProcessor` that calls standalone `query()` with Opus low effort to update the rolling summary | Uses incremental pattern: previous summary + latest exchange → updated summary |
+| `src/tachikoma/message_post_processing.py` | `MessagePostProcessor` ABC (`process(session, user_message, agent_response)`) and `MessagePostProcessingPipeline` class | Parallel to `post_processing.py` but with a different interface reflecting the per-message context |
+
+### Cross-Layer Contracts
+
+**Integration Points:**
+- Coordinator ↔ `detect_boundary`: pure function call, returns `bool`, catches all errors and defaults to `True` (continuation). Skipped when `cwd is None`.
+- Coordinator ↔ `MessagePostProcessingPipeline`: `run(session, user_message, agent_response)`, launched as `asyncio.Task`, reference stored on coordinator
+- `SummaryProcessor` ↔ `SessionRegistry`: calls `update_summary()` to persist the rolling summary
+
+**Error contract:**
+- Boundary detection errors: caught in coordinator, logged, default to continuation (fail-open per R8)
+- Per-message pipeline errors: caught by `asyncio.gather(return_exceptions=True)` within the pipeline, logged
+- Background session post-processing errors: caught in task wrapper, logged, no propagation
+
+### Shared Logic
+
+- **`MessagePostProcessor` ABC** (`message_post_processing.py`): shared interface for per-message processors. Separate from session-level `PostProcessor`.
+- **`Session` dataclass** (`sessions/model.py`): extended with `summary` field. Shared input to both pipelines and the boundary detector.
+- **Prompt templates** (`boundary/prompts.py`): shared between summary processor and boundary detector. Centralized for easy iteration.
+
+## Modeling
+
+### New domain types
+
+```
+MessagePostProcessor (ABC)
+└── process(session: Session, user_message: str, agent_response: str) → None
+
+MessagePostProcessingPipeline
+├── _processors: list[MessagePostProcessor]
+├── _lock: asyncio.Lock  (serializes concurrent runs — defensive, since coordinator
+│                          awaits the pending task before launching another, but
+│                          protects against future callers or race conditions)
+├── register(processor) → None
+└── run(session: Session, user_message: str, agent_response: str) → None
+
+SummaryProcessor (MessagePostProcessor)
+├── _registry: SessionRegistry
+├── _cwd: Path
+└── process(session, user_message, agent_response) → None
+    └── standalone query() with Opus low effort → update summary
+
+detect_boundary(message: str, summary: str, cwd: Path) → bool
+└── standalone query() with Opus low effort, JSON schema → True (continues) / False (shift)
+```
+
+The function returns a Python `bool`, while the underlying query returns `{"continues_conversation": boolean}` JSON — the function parses and converts the structured output.
+
+### Component relationships
+
+```mermaid
+erDiagram
+    Coordinator ||--o| MessagePostProcessingPipeline : "triggers per-message"
+    MessagePostProcessingPipeline ||--o{ MessagePostProcessor : "registers"
+    SummaryProcessor ||--|| SessionRegistry : "updates summary"
+    Coordinator }o--|| detect_boundary : "calls before processing"
+```
+
+## Data Flow
+
+### Normal message flow (continuation)
+
+```
+1. Channel calls coordinator.send_message(text)
+2. Coordinator awaits any pending per-message task (S4)
+   - If task pending: await it, log any errors
+   - If no task: proceed immediately
+3. Coordinator checks for active session; creates one if needed (existing behavior)
+4. If active session exists AND session has a summary AND cwd is not None:
+   a. Call detect_boundary(text, session.summary, cwd) (S5)
+   b. Standalone Opus low effort query returns {"continues_conversation": true}
+   c. Proceed normally
+5. Coordinator calls SDK client.query(text), streams response (existing behavior)
+6. During streaming, coordinator accumulates response text:
+   - Initialize response_chunks: list[str] = []
+   - For each TextChunk event yielded, append event.text to response_chunks
+   - Events are still yielded to the channel as before — accumulation is internal
+7. After Result event triggers break from the message loop:
+   a. Join accumulated chunks: response_text = "".join(response_chunks)
+   b. Re-fetch active session from registry (it may have been updated by metadata)
+   c. Launch per-message pipeline as background task (S3):
+      asyncio.create_task(msg_pipeline.run(session, text, response_text))
+   d. Store task reference on coordinator (S4)
+   Note: The per-message pipeline launch happens inside the generator body,
+   after the break but before the generator returns. The generator's execution
+   frame holds the accumulated text and the active session reference.
+8. Channel renders response (events were yielded during step 6)
+```
+
+### Topic shift flow
+
+```
+1. Steps 1-3 same as above
+4. detect_boundary returns {"continues_conversation": false}
+5. Coordinator calls _handle_transition(previous_session):
+   a. Capture active session snapshot (frozen Session dataclass)
+   b. Close session in registry (try/except, log errors) (S7)
+   c. If session had sdk_session_id:
+      - Fire session post-processing as background task (S9):
+        task = asyncio.create_task(pipeline.run(session))
+        Add task to _background_tasks list
+      - Prune completed tasks from list (avoid unbounded growth)
+      - Note: on_status callback is NOT called for transition-triggered
+        post-processing (only on shutdown)
+   d. Reset SDK client (S8):
+      - Build new ClaudeAgentOptions with updated system prompt
+        (base system prompt + previous conversation summary)
+      - Construct new ClaudeSDKClient with new options
+      - await new_client.connect()
+      - If success: await old_client.disconnect(), replace self._client and self._options
+      - If failure: log error, keep old client (stale context, but functional)
+   e. Create new session in registry (try/except, log errors) (S7)
+6. Coordinator calls new SDK client.query(text)
+7. Normal streaming + per-message post-processing trigger
+```
+
+### System prompt composition on topic shift
+
+```
+1. Read base system prompt from coordinator's stored reference
+   (the original system_prompt string passed at construction)
+2. Append previous conversation summary:
+
+   {base_system_prompt}
+
+   # Previous Conversation
+   The user was previously discussing the following topic. This is provided
+   for brief context only — do not continue the previous conversation unless
+   the user explicitly refers back to it.
+
+   {previous_summary}
+
+3. Wrap in SystemPromptPreset(type="preset", preset="claude_code", append=...)
+4. Build new ClaudeAgentOptions with the composed system prompt
+```
+
+### Summary processor data flow
+
+```
+1. SummaryProcessor.process(session, user_message, agent_response) called
+2. Read previous summary from session.summary (may be None for first exchange)
+3. Build prompt:
+   - System: "You are a conversation summarizer..."
+   - User: previous summary + latest exchange + instructions
+4. Call standalone query() with:
+   - model="opus", effort="low"
+   - system_prompt=SUMMARY_SYSTEM_PROMPT (plain string, not Claude Code preset)
+   - No tools (summary is a text-only task)
+   - cwd from constructor
+5. Consume response, extract text from AssistantMessage
+6. Call registry.update_summary(session.id, extracted_text)
+7. Registry persists to DB via repository.update(session_id, summary=...),
+   then re-fetches the session via repository.get_by_id() and replaces
+   _active_session with the new frozen Session instance (same re-fetch
+   pattern as update_metadata())
+```
+
+## Key Decisions
+
+### Opus with low effort for boundary detection and summarization
+
+**Choice**: Use `model="opus"` with `effort="low"` for both `detect_boundary` and `SummaryProcessor` standalone `query()` calls.
+**Why**: Both tasks are simple (binary classification and short text summarization). Opus with low effort provides high classification quality while keeping latency within the 1-2 second budget (R6). The `model` and `effort` parameters on `ClaudeAgentOptions` are passed as `--model` and `--effort` to the CLI subprocess.
+**Alternatives Considered**:
+- Haiku (fastest, cheapest but lower quality for edge cases), Sonnet (good balance), Opus with low effort (best quality with controlled latency).
+
+**Consequences**:
+- Pro: Best classification quality for detecting topic shifts, especially ambiguous ones
+- Pro: Both calls are independent — model choice doesn't affect the coordinator's main session
+- Pro: Low effort keeps latency within budget for simple binary classification and short summarization
+- Con: Higher per-token cost than Haiku, but the tasks use minimal tokens
+
+### Incremental summarization over full-transcript fork
+
+**Choice**: Summary processor receives previous summary + latest exchange via function arguments, not via SDK session fork.
+**Why**: Constant-cost per invocation regardless of conversation length. No subprocess spawning for a text-only task. Research from progressive summarization literature shows incremental summaries are "reliable and usable" for topic tracking, with ~10% content drift (acceptable for boundary detection where topic identity, not factual precision, matters).
+**Alternatives Considered**:
+- Full-transcript fork via `fork_and_consume()` (costs grow linearly, spawns subprocess), hybrid periodic refresh (added complexity).
+
+**Consequences**:
+- Pro: O(1) cost per summarization call regardless of conversation length
+- Pro: No subprocess spawning — uses lightweight standalone `query()`
+- Con: Small accuracy drift over very long conversations (~10% content affected)
+- Con: Cannot recover from a badly drifted summary without starting fresh
+
+### JSON schema output for boundary detection
+
+**Choice**: Use JSON schema `output_format` with `{"continues_conversation": boolean}` for the boundary detector.
+**Why**: Eliminates parsing ambiguity entirely. The SDK passes `--json-schema` to the CLI, and the result is available in `ResultMessage.structured_output` as a parsed dict. Boolean field means no string matching or normalization needed.
+**Alternatives Considered**:
+- Plain text single word (fragile parsing), XML tags (unnecessary complexity).
+
+**Consequences**:
+- Pro: Zero parsing ambiguity — result is a Python dict with a boolean
+- Pro: Schema validation happens at the SDK level
+- Con: Requires the model to support structured output (Opus does)
+
+### Separate `MessagePostProcessor` interface
+
+**Choice**: New `MessagePostProcessor` ABC with `process(session, user_message, agent_response)` and `MessagePostProcessingPipeline`, separate from the existing `PostProcessor`/`PostProcessingPipeline`.
+**Why**: Per-message processing is a fundamentally different concept from session-level processing. Session processors receive a closed session and fork it for analysis. Message processors receive the latest exchange inline and update session state. Different inputs, different lifecycle, different triggering semantics. A separate interface makes this distinction explicit.
+**Alternatives Considered**:
+- Extend existing `PostProcessor` ABC with extra parameters (changes signature for all existing processors), store exchange data on session model (pollutes session with transient data).
+
+**Consequences**:
+- Pro: Existing `PostProcessor` implementations untouched
+- Pro: Clear semantic distinction between session-level and per-message processing
+- Pro: Per-message pipeline can have its own error isolation and lifecycle
+- Con: Two pipeline types to understand (but they serve clearly different purposes)
+
+### Boundary detection in the coordinator (not a separate orchestrator)
+
+**Choice**: Integrate boundary detection, transition logic, and per-message pipeline trigger directly into the coordinator's `send_message()`.
+**Why**: The coordinator already owns session lifecycle (create, close, update metadata), SDK client lifecycle (connect, disconnect), and post-processing triggering. Boundary detection is tightly coupled to these concerns — it reads session state, potentially closes/creates sessions, and replaces the SDK client. A separate orchestrator would need access to all the coordinator's internals, creating tight coupling without clear separation.
+**Alternatives Considered**:
+- Separate `ConversationLifecycleManager` wrapping the coordinator (would need to reach into coordinator internals anyway).
+
+**Consequences**:
+- Pro: Related concerns stay together — session lifecycle, SDK lifecycle, boundary detection
+- Pro: No new indirection layer
+- Con: Coordinator grows in complexity (mitigated by extracting boundary detection and summary logic to a separate `boundary/` package)
+
+### Swap-on-success for SDK client reset
+
+**Choice**: When resetting the SDK conversation context, construct and connect a new `ClaudeSDKClient` before disconnecting the old one. Only swap references (both `_client` and `_options`) after the new client is confirmed working.
+**Why**: SDK investigation confirmed that `ClaudeSDKClient` doesn't support clean reconnection — a new instance is needed. The swap-on-success pattern guarantees the coordinator always has a working client. If the new client fails to connect, the old client (with stale context) is retained — the user gets prior conversation context bleeding through, but the system remains functional. If disconnecting the old client fails, the error is logged but the new client is already in place.
+**Alternatives Considered**:
+- Disconnect-first approaches (leave coordinator without working client if reconnection fails), same-instance reconnection (relies on undocumented behavior).
+
+**Consequences**:
+- Pro: Coordinator always has a working SDK client
+- Pro: Graceful degradation — stale context beats no functionality
+- Con: Briefly holds two SDK client instances (two CLI subprocesses) during the swap
+
+## System Behavior
+
+### Scenario: Normal message (continuation)
+
+**Given**: An active session with a summary from the previous exchange
+**When**: A new message arrives on the same topic
+**Then**: Pending per-message task is awaited, boundary detector classifies as continuation, message is processed normally by the existing SDK session, per-message pipeline is triggered as a background task to update the summary.
+
+### Scenario: Topic shift detected
+
+**Given**: An active session with a summary about "Python testing"
+**When**: A new message arrives about "What should I have for dinner?"
+**Then**: Boundary detector classifies as topic shift. Transition orchestrator: closes current session, fires async session post-processing (memory extraction), resets SDK client with summary of previous conversation in system prompt, creates new session, processes the message in the fresh context.
+
+### Scenario: First message (no prior session)
+
+**Given**: No active session exists (first message ever, or after startup)
+**When**: A message arrives
+**Then**: Boundary detection is skipped. A new session is created via the existing `create_session()` flow. Message processed normally.
+
+### Scenario: Second message (no summary yet)
+
+**Given**: An active session exists but has no summary (per-message pipeline hasn't completed yet after the first exchange)
+**When**: The second message arrives
+**Then**: Boundary detection is skipped (no summary to compare against). Message proceeds normally. After this exchange, the per-message pipeline produces a summary for future boundary checks.
+
+### Scenario: Boundary detection fails (SDK error, timeout)
+
+**Given**: An active session with a summary
+**When**: The boundary detector's `query()` call fails
+**Then**: Error is logged, message proceeds as continuation (fail-open). The coordinator catches the exception and defaults to `continues_conversation=True`.
+
+### Scenario: SDK client reset fails during transition
+
+**Given**: A topic shift is detected and the transition sequence begins
+**When**: The new `ClaudeSDKClient` fails to connect
+**Then**: Error is logged. The old client is retained (swap-on-success pattern). A new Tachikoma session is still created in the registry. The message is processed with the old client — the user gets stale context from the previous conversation but the system remains functional.
+
+### Scenario: Per-message post-processing still running when next message arrives
+
+**Given**: The per-message pipeline (summary update) from the previous exchange is still running
+**When**: A new message arrives
+**Then**: The coordinator awaits the pending task before proceeding to boundary detection. If the task fails, the error is logged and boundary detection runs with whatever summary is available (possibly stale).
+
+### Scenario: Multiple rapid topic shifts
+
+**Given**: The user sends several messages that each trigger a topic shift
+**When**: Background session post-processing tasks accumulate
+**Then**: Each task runs independently. All tasks are tracked in the coordinator's `_background_tasks` list. Completed tasks are pruned from the list on each new topic shift. Failed tasks are logged but don't affect others. On shutdown, all remaining tasks are awaited.
+
+### Scenario: Graceful shutdown with background tasks
+
+**Given**: Background session post-processing tasks are running from previous topic shifts, and a per-message task is pending
+**When**: The system shuts down gracefully
+**Then**: The coordinator's `__aexit__` awaits the pending per-message task, runs shutdown pipeline for the current session, then awaits all background tasks via `asyncio.gather(return_exceptions=True)`. Errors are logged. SDK client is disconnected last.
+
+### Scenario: Per-message pipeline processor fails
+
+**Given**: The summary processor encounters an error during its `query()` call
+**When**: The per-message pipeline handles the failure
+**Then**: The error is logged. The conversation continues uninterrupted. On the next exchange, the per-message pipeline runs again independently — no permanent failure state. The summary may be stale (from a prior successful run) or `None` (if it never succeeded), causing boundary detection to be skipped on the next message.
+
+## Notes
+
+- The `boundary/` package encapsulates all boundary detection logic (detector, summary processor, prompts), keeping the coordinator focused on orchestration. The `SummaryProcessor` lives in `boundary/summary.py` rather than alongside `message_post_processing.py` because it is cohesively tied to boundary detection — its output (the rolling summary) exists primarily to feed the boundary detector.
+- Both Opus low effort calls (detection and summarization) use standalone `query()` — they never touch the coordinator's `ClaudeSDKClient`. This satisfies R12 (independence from active session).
+- The `MessagePostProcessingPipeline` follows the same patterns as `PostProcessingPipeline` (parallel execution, error isolation via `asyncio.gather(return_exceptions=True)`, serialized execution) but with a different processor interface and no phased execution.
+- The coordinator stores the base `system_prompt` string (not the `SystemPromptPreset`) so it can recompose the system prompt on topic shifts by appending the previous conversation summary.
+- On a second (or subsequent) topic shift, only the *immediately previous* conversation's summary is injected — not a chain of all prior summaries. This is intentional: the summary serves as brief context to help the agent understand what just came before, not a complete history. Older conversations are preserved in memory extraction, not in the system prompt.
+- The `fork_and_consume()` helper in `post_processing.py` is not used by the boundary detection or summary subsystem — those use direct `query()` calls without session forking.

@@ -29,7 +29,7 @@ class TestGitProcessor:
         self, mocker: pytest.MockerFixture
     ) -> None:
         """AC: Processor calls query_and_consume when workspace is dirty."""
-        mock_status = mocker.patch(
+        mocker.patch(
             "tachikoma.git.processor._check_git_status",
             new_callable=AsyncMock,
             side_effect=[True, False],  # First call: dirty, second call: clean
@@ -48,7 +48,7 @@ class TestGitProcessor:
         self, mocker: pytest.MockerFixture
     ) -> None:
         """AC: Processor returns no-op when workspace is clean (no agent spawned)."""
-        mock_status = mocker.patch(
+        mocker.patch(
             "tachikoma.git.processor._check_git_status",
             new_callable=AsyncMock,
             return_value=False,
@@ -72,7 +72,7 @@ class TestGitProcessor:
             new_callable=AsyncMock,
             side_effect=[True, True],  # First call: dirty, second call: still dirty
         )
-        mock_query = mocker.patch(
+        mocker.patch(
             "tachikoma.git.processor.query_and_consume",
             new_callable=AsyncMock,
         )
