@@ -16,7 +16,7 @@ Each subsystem owns its bootstrap hook in its own module. The `bootstrap.py` mod
 - **workspace subsystem** → `src/tachikoma/workspace.py` owns `workspace_hook`
 - **git subsystem** → `src/tachikoma/git/hooks.py` owns `git_hook`
 - **logging subsystem** → `src/tachikoma/logging/hooks.py` owns `logging_hook`
-- **context subsystem** → `src/tachikoma/context.py` owns `context_hook`
+- **context subsystem** → `src/tachikoma/context/loading.py` owns `context_hook`
 - **memory subsystem** → `src/tachikoma/memory/hooks.py` owns `memory_hook`
 - **sessions subsystem** → `src/tachikoma/sessions/hooks.py` owns `session_recovery_hook`
 
@@ -41,7 +41,7 @@ Define and place a bootstrap hook in the module that owns the subsystem it initi
 
 ## Example
 
-**context.py** (owns context subsystem):
+**context/loading.py** (owns context subsystem):
 ```python
 async def context_hook(ctx: BootstrapContext) -> None:
     """Initialize core context files and assemble system prompt."""
@@ -105,5 +105,5 @@ bootstrap.register("sessions", session_recovery_hook)
 
 - `src/tachikoma/bootstrap.py` — Bootstrap mechanism (not hooks)
 - `src/tachikoma/workspace.py` — workspace_hook example
-- `src/tachikoma/context.py` — context_hook example
+- `src/tachikoma/context/loading.py` — context_hook example
 - `src/tachikoma/__main__.py` — Hook registration order

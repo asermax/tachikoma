@@ -15,9 +15,12 @@ Design documents for the core agent capabilities.
 | [workspace-version-tracking](workspace-version-tracking.md) | Git module: bootstrap hook and commit post-processor | Current |
 | [pre-processing-pipeline](pre-processing-pipeline.md) | Pre-processing pipeline mechanism, provider interface, context assembly | Current |
 | [sessions](sessions.md) | Session model, repository, registry, and crash recovery | Current |
+| [core-context-updates](core-context-updates.md) | Context update processor, pending signals mechanism, MCP tools | Current |
+| [boundary-detection](boundary-detection.md) | Boundary detection, per-message pipeline, summary processor, session transitions | Current |
 
 ## Related Decisions
 
 - ADR-001 through ADR-005: Dev tooling (uv, ruff, ty, pytest, just)
 - ADR-007: Persistence layer (SQLAlchemy 2.0 async)
 - DES-001: Testing conventions
+- DES-004: Prompt-driven forked processor pattern

@@ -5,8 +5,7 @@ Extracts user preferences from conversations.
 
 from pathlib import Path
 
-from tachikoma.post_processing import PostProcessor, fork_and_consume
-from tachikoma.sessions.model import Session
+from tachikoma.post_processing import PromptDrivenProcessor
 
 PREFERENCES_PROMPT = """You are a memory extraction agent. Your task is to analyze
 the conversation and extract or update the user's expressed preferences.
@@ -47,7 +46,7 @@ Remember: These memories help the assistant tailor its approach to the user's
 preferences. Focus on genuine, stated preferences rather than assumptions."""
 
 
-class PreferencesProcessor(PostProcessor):
+class PreferencesProcessor(PromptDrivenProcessor):
     """Post-processor for extracting preference memories.
 
     Creates or updates topic-named files in memories/preferences/.
@@ -59,12 +58,4 @@ class PreferencesProcessor(PostProcessor):
         Args:
             cwd: The workspace directory for the forked agent.
         """
-        self._cwd = cwd
-
-    async def process(self, session: Session) -> None:
-        """Extract preference memories from the session.
-
-        Args:
-            session: The closed session to process.
-        """
-        await fork_and_consume(session, PREFERENCES_PROMPT, self._cwd)
+        super().__init__(PREFERENCES_PROMPT, cwd)

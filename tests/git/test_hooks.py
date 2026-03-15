@@ -3,6 +3,7 @@
 Tests for DLT-020: Git module for workspace version tracking.
 """
 
+import shutil
 from pathlib import Path
 
 import pytest
@@ -93,7 +94,6 @@ class TestGitHook:
         await git_hook(ctx)
 
         # Delete .git
-        import shutil
         shutil.rmtree(workspace_path / ".git")
 
         # Second run should re-initialize
