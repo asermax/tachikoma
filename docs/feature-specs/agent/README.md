@@ -12,6 +12,7 @@ Core agent capabilities: the coordinator loop that receives messages, delegates 
 | [workspace-bootstrap](workspace-bootstrap.md) | Workspace initialization with idempotent hook system | ✓ |
 | [post-processing-pipeline](post-processing-pipeline.md) | Phased post-processing pipeline for running processors after session close | ✓ |
 | [workspace-version-tracking](workspace-version-tracking.md) | Automatic git version tracking for workspace changes | ✓ |
+| [pre-processing-pipeline](pre-processing-pipeline.md) | Pluggable pipeline for context enrichment before message processing | ✓ |
 | [sessions](sessions.md) | Persistent conversation session tracking and crash recovery | ✓ |
 
 ## Related Decisions

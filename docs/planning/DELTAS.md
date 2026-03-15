@@ -77,13 +77,6 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 **Complexity**: Easy
 **Description**: Fallback conversation boundary detection that monitors for periods of user inactivity. After a configurable threshold (~20 minutes by default), the system signals the session registry (DLT-027) to close the current session, triggering downstream post-processing. This serves as a safety net for cases where the user goes silent without a clear topic change — DLT-026's topic-based analysis is the primary boundary mechanism, but it only fires on incoming messages. The inactivity timeout catches the "user walked away" case. The threshold should be configurable per-deployment.
 
-### DLT-006: Pre-process messages with memory context injection
-**Status**: ✓ Implementation
-**Depends on**: None
-**Priority**: 2 (High)
-**Complexity**: Hard
-**Description**: Before the coordinator processes a user message, automatically gather and inject relevant context so responses are informed by past interactions. This delta delivers two things: a reusable, pluggable pre-processing pipeline that runs context providers in parallel before the agent sees a message, and the first provider — a memory context provider that searches stored memories using semantic similarity to find context relevant to the current message. The pipeline architecture must support adding more providers later (e.g., calendar, email, notes) without modifying the core pipeline. Retrieved memories are injected into the coordinator's context, enabling the assistant to reference past conversations, known preferences, and prior decisions naturally.
-
 ### DLT-009: Search memories by semantic similarity
 **Status**: ✗ Defined
 **Depends on**: None
@@ -121,7 +114,7 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 
 ### DLT-016: Eval: Context processing quality
 **Status**: ✗ Defined
-**Depends on**: DLT-006, DLT-015
+**Depends on**: DLT-015
 **Priority**: 5 (Backlog)
 **Complexity**: Easy
 **Description**: Build an eval suite for the pre-processing pipeline using the evaluation framework (DLT-015). Tests whether the right memories and context are being retrieved and injected for given input messages. Test cases should cover: retrieving relevant memories when they exist, not injecting irrelevant context, handling messages where no relevant memories exist, and prioritizing recent/important memories appropriately. Measures precision (no irrelevant context injected) and recall (relevant context not missed) of the context injection process.
@@ -149,7 +142,7 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 
 ### DLT-021: Skill system with detection and pre-processing injection
 **Status**: ✗ Defined
-**Depends on**: DLT-006
+**Depends on**: None
 **Priority**: 3 (Medium)
 **Complexity**: Medium
 **Description**: Deliver the complete v1 skill system: skills are markdown documents that define workflows or knowledge any agent (coordinator or sub-agents) can load when needed. Each skill document follows a standard format with metadata (name, description, trigger patterns) and content (instructions, steps, reference knowledge). A skill registry manages available skills — listing, looking up by name, and providing metadata for detection. Skills live in a dedicated directory within the workspace. A skills context provider plugs into the pre-processing pipeline (DLT-006) to automatically detect which skills are relevant to an incoming message and inject them into the agent's context. The provider queries the registry, matches skills against the current message using metadata and trigger patterns, and loads matched skill documents into the enriched context alongside memory. Detection should balance precision (don't load irrelevant skills that waste context) with recall (don't miss applicable skills). This delta does NOT cover constrained execution (post-v1).

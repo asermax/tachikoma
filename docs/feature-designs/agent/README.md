@@ -13,6 +13,7 @@ Design documents for the core agent capabilities.
 | [core-context](../../feature-specs/agent/core-architecture.md) | Core context files (SOUL.md, USER.md, AGENTS.md) loaded at startup and appended to system prompt | Current |
 | [post-processing-pipeline](post-processing-pipeline.md) | Phased pipeline mechanism, processor interface, shared helpers | Current |
 | [workspace-version-tracking](workspace-version-tracking.md) | Git module: bootstrap hook and commit post-processor | Current |
+| [pre-processing-pipeline](pre-processing-pipeline.md) | Pre-processing pipeline mechanism, provider interface, context assembly | Current |
 | [sessions](sessions.md) | Session model, repository, registry, and crash recovery | Current |
 
 ## Related Decisions

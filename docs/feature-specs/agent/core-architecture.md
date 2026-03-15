@@ -10,6 +10,7 @@ The core agent loop: receive a user message, pass it to the Claude agent via the
 
 - As a developer, I want a programmatic entry point that accepts a message and streams back domain events so that I can build channels without knowing SDK details
 - As a developer, I want conversation context preserved across messages so that follow-up messages are coherent
+- As a user, I want my assistant to automatically inject relevant context before processing my message so that responses are informed without me repeating information
 
 ## Requirements
 
@@ -25,6 +26,7 @@ The core agent loop: receive a user message, pass it to the Claude agent via the
 | R7 | Agent has unrestricted tool access without user confirmation prompts |
 | R8 | Tachikoma is the sole memory system — no competing memory mechanisms from the underlying SDK |
 | R9 | Foundational context (personality, user knowledge, operational guidelines) passed to the coordinator at startup and layered onto the SDK's default system prompt |
+| R10 | Pre-processing pipeline: on new session, run registered context providers to enrich the first message before the agent processes it (see [pipeline spec](pre-processing-pipeline.md)) |
 
 ## Behaviors
 
@@ -114,6 +116,19 @@ Personality, user knowledge, and operational guidelines are loaded at startup an
 - Given the coordinator is created, when a `system_prompt` parameter is provided, then it is wrapped in `SystemPromptPreset` and passed to `ClaudeAgentOptions`
 - Given foundational context files exist, when the coordinator is created, then the assembled context (SOUL.md + USER.md + AGENTS.md) is passed to the coordinator
 - Given the coordinator is created, then the agent operates with the SDK's default behaviors (tool use, safety, agentic loop) plus the appended context
+
+### Pre-Processing Pipeline Trigger (R10)
+
+On the first message of a new session, the coordinator triggers a registered pre-processing pipeline that runs context providers in parallel to enrich the message before the agent sees it.
+
+**Acceptance Criteria**:
+- Given one or more context providers are registered and a new session starts, when the first message arrives, then the pipeline runs all providers in parallel before the coordinator passes the message to the agent
+- Given the pipeline completes with results, when the coordinator processes the message, then the assembled context XML blocks are prepended to the user message text passed to `client.query()`
+- Given a subsequent message arrives in the same session, when the coordinator processes it, then pre-processing is skipped — the agent already has context from the first enriched message in its conversation history
+- Given no pre-processing pipeline is registered, when a new session starts, then the message is sent to the agent unmodified
+- Given the pre-processing pipeline fails, when the coordinator handles the error, then the failure is logged and the original unmodified message is sent to the agent
+- Given session creation fails, when the coordinator would run pre-processing, then pre-processing is skipped
+- Given all providers fail or return no results, when the coordinator processes the message, then the original message is sent to the agent unmodified
 
 ### Error Recovery (R4)
 
