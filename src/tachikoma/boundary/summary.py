@@ -1,7 +1,7 @@
 """Summary processor for rolling conversation summaries.
 
 Generates and updates concise rolling summaries after each agent response.
-Uses standalone Haiku query for fast, cost-effective summarization.
+Uses standalone Opus query with low effort for fast, cost-effective summarization.
 """
 
 from pathlib import Path
@@ -56,7 +56,8 @@ class SummaryProcessor(MessagePostProcessor):
         )
 
         options = ClaudeAgentOptions(
-            model="haiku",
+            model="opus",
+            effort="low",
             cwd=self._cwd,
             system_prompt=SUMMARY_SYSTEM_PROMPT,
             allowed_tools=[],

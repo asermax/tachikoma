@@ -67,10 +67,10 @@ class TestDetectBoundary:
 
         assert result is False
 
-    async def test_passes_haiku_model_to_options(
+    async def test_passes_opus_low_effort_model_to_options(
         self, mocker: pytest.MockerFixture
     ) -> None:
-        """AC: Uses Haiku model for fast, cheap classification."""
+        """AC: Uses Opus model with low effort for fast, reliable classification."""
         mock_query = mocker.patch("tachikoma.boundary.detector.query")
 
         async def fake_query_gen(*args, **kwargs):
@@ -94,10 +94,11 @@ class TestDetectBoundary:
             cwd=Path("/workspace"),
         )
 
-        # Verify the options include haiku model
+        # Verify the options include opus model with low effort
         call_kwargs = mock_query.call_args
         options = call_kwargs[1]["options"]
-        assert options.model == "haiku"
+        assert options.model == "opus"
+        assert options.effort == "low"
 
     async def test_passes_json_schema_output_format(
         self, mocker: pytest.MockerFixture

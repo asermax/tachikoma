@@ -1,7 +1,7 @@
 """Boundary detection for conversation topic shifts.
 
-Uses standalone Haiku query with JSON schema output for fast, reliable
-classification. Returns True for continuation, False for topic shift.
+Uses standalone Opus query with low effort and JSON schema output for fast,
+reliable classification. Returns True for continuation, False for topic shift.
 """
 
 from pathlib import Path
@@ -21,8 +21,8 @@ async def detect_boundary(message: str, summary: str, cwd: Path) -> bool:
     **IMPORTANT**: Returns True when the conversation CONTINUES (not when a boundary
     is detected). Returns False only when there is a clear, unambiguous topic shift.
 
-    Uses a standalone Haiku query with JSON schema output for fast, reliable
-    classification. This call is independent of the coordinator's SDK session.
+    Uses a standalone Opus query with low effort and JSON schema output for fast,
+    reliable classification. This call is independent of the coordinator's SDK session.
 
     Args:
         message: The incoming user message text.
@@ -37,7 +37,8 @@ async def detect_boundary(message: str, summary: str, cwd: Path) -> bool:
             error wrapping with fail-open behavior.
     """
     options = ClaudeAgentOptions(
-        model="haiku",
+        model="opus",
+        effort="low",
         cwd=cwd,
         system_prompt=BOUNDARY_DETECTION_SYSTEM_PROMPT,
         output_format={
