@@ -25,6 +25,7 @@ The core agent loop: receive a user message, pass it to the Claude agent via the
 | R7 | Agent has unrestricted tool access without user confirmation prompts |
 | R8 | Tachikoma is the sole memory system — no competing memory mechanisms from the underlying SDK |
 | R9 | Foundational context (personality, user knowledge, operational guidelines) passed to the coordinator at startup and layered onto the SDK's default system prompt |
+| R10 | Sub-agent delegation: coordinator receives agents dictionary from skill registry and passes to SDK for delegation (see [skills](skills.md)) |
 
 ## Behaviors
 
@@ -114,6 +115,16 @@ Personality, user knowledge, and operational guidelines are loaded at startup an
 - Given the coordinator is created, when a `system_prompt` parameter is provided, then it is wrapped in `SystemPromptPreset` and passed to `ClaudeAgentOptions`
 - Given foundational context files exist, when the coordinator is created, then the assembled context (SOUL.md + USER.md + AGENTS.md) is passed to the coordinator
 - Given the coordinator is created, then the agent operates with the SDK's default behaviors (tool use, safety, agentic loop) plus the appended context
+
+### Sub-Agent Delegation (R10)
+
+The coordinator receives a dictionary of sub-agents from the skill registry and passes them to the SDK for delegation during conversation.
+
+**Acceptance Criteria**:
+- Given the coordinator initializes, when it receives an agents dictionary from the skill registry, then it passes the agents to `ClaudeAgentOptions.agents`
+- Given agents are passed to the SDK at initialization, when a conversation is active, then the SDK orchestrator can delegate to those agents based on the message context and agent descriptions
+- Given an agents dictionary is available, when the coordinator creates ClaudeAgentOptions, then all agents are included (SDK handles delegation logic)
+- Given the agent system starts, then the skill registry is populated before the coordinator is created, ensuring agents are available during the first message
 
 ### Error Recovery (R4)
 

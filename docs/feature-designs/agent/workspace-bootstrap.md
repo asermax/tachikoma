@@ -207,5 +207,5 @@ The `BootstrapContext` is frozen (fields can't be reassigned), but `settings_man
 
 ## Notes
 
-- Hook registration order in `__main__.py`: workspace → logging → git → context → memory → sessions. Logging runs before git so that loguru's file handler is configured before any hooks emit log messages. Future hooks follow the same registration pattern.
+- Hook registration order in `__main__.py`: workspace → logging → git → skills → context → memory → sessions. Logging runs before git so that loguru's file handler is configured before any hooks emit log messages. Skills runs before context so that the skills directory is created before context initialization. Future hooks follow the same registration pattern.
 - The hook registration order in `__main__.py` serves as the explicit documentation of initialization sequence — no magic discovery

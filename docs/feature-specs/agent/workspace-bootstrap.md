@@ -71,6 +71,7 @@ The following hooks are registered in `__main__.py` and execute in registration 
 - Given the workspace hook, when it runs, then the workspace root directory and `.tachikoma/` data folder are created if they don't exist
 - Given the logging hook, when it runs, then loguru is configured with structured file output under `.tachikoma/logs/`, creating the `logs/` directory if it doesn't exist
 - Given the git hook, when it runs, then a git repository is initialized in the workspace with a fixed committer identity and an initial empty commit, if no `.git` directory exists
+- Given the skills hook, when it runs, then the `skills/` directory in the workspace root is created if it doesn't exist
 - Given the context hook, when it runs, then core context files are initialized and the system prompt is assembled
 - Given the memory hook, when it runs, then `memories/`, `memories/episodic/`, `memories/facts/`, and `memories/preferences/` directories are created if they don't exist
 - Given the session recovery hook, when it runs, then sessions left open from ungraceful shutdowns are detected and closed

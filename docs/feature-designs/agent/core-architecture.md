@@ -172,18 +172,19 @@ AgentEvent (base)
 ```
 1. __main__.py runs asyncio.run(main())
 2. Creates SettingsManager (loads configuration, see configuration/config-system design)
-3. Creates Bootstrap, registers hooks: workspace, git, logging, context, memory, session recovery
-4. Runs bootstrap — hooks execute in registration order (workspace creation, git init, logging configuration, core context init, memory directory creation, session DB init + crash recovery)
+3. Creates Bootstrap, registers hooks: workspace, logging, git, skills, context, memory, session recovery
+4. Runs bootstrap — hooks execute in registration order (workspace creation, logging configuration, git init, skills directory creation, core context init, memory directory creation, session DB init + crash recovery)
 5. If bootstrap fails → catch BootstrapError, log + print to stderr, exit (if logging hook itself failed, log may not reach file)
 6. Reads final settings from SettingsManager
 7. Retrieves session repository, registry, and system_prompt from bootstrap extras
-8. Creates PostProcessingPipeline, registers memory processors (episodic, facts, preferences) in main phase, registers GitProcessor in finalize phase — all with workspace_path
-9. Creates Coordinator with allowed_tools, model, cwd=workspace_path, registry, system_prompt, pipeline, permission_mode="bypassPermissions", env={"CLAUDE_CODE_DISABLE_AUTO_MEMORY": "1"}, and on_status callback (for channel display)
-10. Enters coordinator async context (connects SDK client)
-11. If connection fails → catch SDK error, log + print to stderr, exit
-12. Creates channel (REPL) with coordinator reference and history path `/tmp/tachikoma_repl_history`
-13. Channel enters its main loop
-14. finally: disposes session repository engine (always runs, even on error)
+8. Creates SkillRegistry with workspace_path, discovers and loads all skills and agents
+9. Creates PostProcessingPipeline, registers memory processors (episodic, facts, preferences) in main phase, registers GitProcessor in finalize phase — all with workspace_path
+10. Creates Coordinator with allowed_tools, model, cwd=workspace_path, agents_dict from SkillRegistry, session_registry, system_prompt, pipeline, permission_mode="bypassPermissions", env={"CLAUDE_CODE_DISABLE_AUTO_MEMORY": "1"}, and on_status callback (for channel display)
+11. Enters coordinator async context (connects SDK client with agents passed to ClaudeAgentOptions.agents)
+12. If connection fails → catch SDK error, log + print to stderr, exit
+13. Creates channel (REPL) with coordinator reference and history path `/tmp/tachikoma_repl_history`
+14. Channel enters its main loop
+15. finally: disposes session repository engine (always runs, even on error)
 ```
 
 ### Shutdown flow
