@@ -23,6 +23,7 @@ from tachikoma.memory import (
 from tachikoma.post_processing import FINALIZE_PHASE, PostProcessingPipeline
 from tachikoma.repl import Repl
 from tachikoma.sessions import session_recovery_hook
+from tachikoma.skills import SkillRegistry, skills_hook
 from tachikoma.workspace import workspace_hook
 
 _log = logger.bind(component="main")
@@ -35,6 +36,7 @@ async def main() -> None:
     bootstrap.register("workspace", workspace_hook)
     bootstrap.register("logging", logging_hook)
     bootstrap.register("git", git_hook)
+    bootstrap.register("skills", skills_hook)
     bootstrap.register("context", context_hook)
     bootstrap.register("memory", memory_hook)
     bootstrap.register("sessions", session_recovery_hook)
@@ -52,10 +54,15 @@ async def main() -> None:
     repository = bootstrap.extras["session_repository"]
     registry = bootstrap.extras["session_registry"]
 
+    # Create skill registry and discover agents
+    skill_registry = SkillRegistry(settings.workspace.path)
+    agents = skill_registry.get_agents()
+
     _log.info(
-        "Startup complete: workspace={ws}, log_level={level}",
+        "Startup complete: workspace={ws}, log_level={level}, agents={agent_count}",
         ws=settings.workspace.path,
         level=settings.logging.level,
+        agent_count=len(agents),
     )
 
     # Get the system prompt from the context hook (if available)
@@ -81,6 +88,7 @@ async def main() -> None:
             permission_mode="bypassPermissions",
             env={"CLAUDE_CODE_DISABLE_AUTO_MEMORY": "1"},
             on_status=lambda msg: console.print(msg, style="dim italic grey50"),
+            agents=agents,
         ) as coordinator:
             repl = Repl(coordinator, history_path=Path("/tmp/tachikoma_repl_history"))
             await repl.run()
