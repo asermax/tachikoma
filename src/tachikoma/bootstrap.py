@@ -8,7 +8,11 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Any
 
+from loguru import logger
+
 from tachikoma.config import SettingsManager
+
+_log = logger.bind(component="bootstrap")
 
 
 class BootstrapError(Exception):
@@ -51,7 +55,11 @@ class Bootstrap:
 
     async def run(self) -> None:
         for name, hook in self._hooks:
+            _log.debug("Running hook: name={name}", name=name)
+
             try:
                 await hook(self._context)
             except Exception as exc:
                 raise BootstrapError(f"Hook '{name}' failed: {exc}") from exc
+
+            _log.debug("Hook completed: name={name}", name=name)

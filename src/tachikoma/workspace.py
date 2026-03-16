@@ -6,13 +6,19 @@ root and .tachikoma/ data folder if missing.
 See: DLT-023 (Workspace bootstrap), DLT-005 (Hook extraction pattern).
 """
 
+from loguru import logger
+
 from tachikoma.bootstrap import BootstrapContext
+
+_log = logger.bind(component="workspace")
 
 
 async def workspace_hook(ctx: BootstrapContext) -> None:
     """Create workspace root and .tachikoma/ data folder if missing."""
     settings = ctx.settings_manager.settings
     workspace_path = settings.workspace.path
+
+    _log.debug("Ensuring workspace exists: path={path}", path=str(workspace_path))
 
     try:
         workspace_path.mkdir(parents=True, exist_ok=True)

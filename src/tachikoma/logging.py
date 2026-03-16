@@ -8,6 +8,7 @@ DLT-013: Add structured logging for agent actions.
 
 import logging
 import sys
+from datetime import datetime
 from pathlib import Path
 
 from loguru import logger
@@ -68,8 +69,17 @@ def configure_logging(level: str, data_path: Path, console: bool = False) -> Non
     # Remove default stderr handler (ensures idempotency)
     logger.remove()
 
+    # Rotate the previous session's log file so each session gets a clean file
+    log_file = data_path / "logs" / "tachikoma.log"
+
+    if log_file.exists() and log_file.stat().st_size > 0:
+        timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+        log_file.rename(data_path / "logs" / f"tachikoma.{timestamp}.log")
+
     # Add file handler with rotation, retention, and compression
-    # See ADR-006: 100 MB rotation, 7 days retention, gzip compression
+    # Size rotation is a safety net for very long sessions.
+    # Session rotation is handled above (rename on startup).
+    # Retention: 7 days — old rotated files are deleted automatically.
     logger.add(
         data_path / "logs" / "tachikoma.log",
         format=LOG_FORMAT,
@@ -94,6 +104,16 @@ def configure_logging(level: str, data_path: Path, console: bool = False) -> Non
 
     # Install InterceptHandler to redirect stdlib logging
     logging.basicConfig(handlers=[InterceptHandler()], level=0, force=True)
+
+    # Suppress noisy third-party loggers
+    for noisy_logger in (
+        "sqlalchemy.engine",
+        "aiosqlite",
+        "aiogram",
+        "markdown_it",
+        "claude_agent_sdk",
+    ):
+        logging.getLogger(noisy_logger).setLevel(logging.WARNING)
 
 
 async def logging_hook(ctx: BootstrapContext) -> None:

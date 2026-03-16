@@ -2,6 +2,7 @@
 
 from pathlib import Path
 
+from loguru import logger
 from prompt_toolkit import PromptSession
 from prompt_toolkit.history import FileHistory
 from prompt_toolkit.key_binding import KeyBindings, KeyPressEvent
@@ -11,7 +12,9 @@ from rich.markdown import Markdown
 
 from tachikoma.coordinator import Coordinator
 from tachikoma.display import TOOL_DISPLAY
-from tachikoma.events import AgentEvent, Error, Result, TextChunk, ToolActivity
+from tachikoma.events import AgentEvent, Error, Result, Status, TextChunk, ToolActivity
+
+_log = logger.bind(component="repl")
 
 
 class Renderer:
@@ -30,7 +33,10 @@ class Renderer:
 
         Returns True if the REPL should continue, False if it should exit.
         """
-        if isinstance(event, TextChunk):
+        if isinstance(event, Status):
+            self._console.print(event.message, style="dim italic grey50", highlight=False)
+
+        elif isinstance(event, TextChunk):
             self._console.print(Markdown(event.text, code_theme="dracula"))
 
         elif isinstance(event, ToolActivity):
@@ -81,14 +87,20 @@ class Repl:
 
     async def run(self) -> None:
         """Run the REPL input loop until the user exits."""
+        _log.debug("REPL started")
+
         while True:
             try:
                 text = await self._session.prompt_async("> ")
             except (KeyboardInterrupt, EOFError):
+                _log.debug("REPL interrupted by user")
                 break
 
             if text.strip().lower() in ("exit", "quit"):
+                _log.debug("REPL exited by command")
                 break
+
+            _log.debug("Message received: length={n}", n=len(text))
 
             try:
                 async for event in self._coordinator.send_message(text):
