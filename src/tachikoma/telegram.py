@@ -176,9 +176,9 @@ class ResponseRenderer:
             else:
                 # Edit existing message
                 await self._bot.edit_message_text(
-                    text,
-                    self._chat_id,
-                    self._current_message_id,
+                    text=text,
+                    chat_id=self._chat_id,
+                    message_id=self._current_message_id,
                     parse_mode=None,
                     entities=[e.to_dict() for e in entities],
                 )
@@ -280,6 +280,7 @@ class TelegramChannel:
             "Starting Telegram bot for chat {chat_id}",
             chat_id=self._settings.authorized_chat_id,
         )
+        _log.info("Telegram bot running — send a message to start chatting (Ctrl+C to stop)")
 
         # aiogram handles SIGTERM/SIGINT internally
         await self._dispatcher.start_polling(
