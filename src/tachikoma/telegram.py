@@ -7,11 +7,12 @@ and streaming response rendering.
 
 import asyncio
 import contextlib
+import signal
 import time
 
 from aiogram import Bot, Dispatcher, F, Router
 from aiogram.dispatcher.dispatcher import BackoffConfig
-from aiogram.exceptions import TelegramAPIError, TelegramRetryAfter
+from aiogram.exceptions import TelegramAPIError, TelegramBadRequest, TelegramRetryAfter
 from aiogram.types import Message
 from aiogram.utils.chat_action import ChatActionSender
 from loguru import logger
@@ -87,6 +88,9 @@ class ResponseRenderer:
         # If we had tools and this is the first text after them,
         # insert the "Ran tools" marker
         if self._had_tools and not self._tools_marker_inserted:
+            if self._buffer and not self._buffer.endswith("\n"):
+                self._buffer += "\n"
+
             self._buffer += "_🔧 Ran tools_\n"
             self._tools_marker_inserted = True
             self._tool_line = None  # Clear tool line - marker replaces it
@@ -124,6 +128,7 @@ class ResponseRenderer:
 
     async def finalize(self) -> None:
         """Send the final state of the current message, bypassing throttle."""
+        self._tool_line = None
         await self._flush(force=True)
 
     async def _flush(self, force: bool = False) -> None:
@@ -196,8 +201,13 @@ class ResponseRenderer:
             await asyncio.sleep(e.retry_after)
             # Don't retry this edit - next edit cycle will pick up the buffer
 
+        except TelegramBadRequest as e:
+            if "message is not modified" in str(e):
+                _log.debug("Edit skipped: message content unchanged")
+            else:
+                _log.exception("Failed to send/edit message")
+
         except TelegramAPIError:
-            # Other API errors - log and skip this edit
             _log.exception("Failed to send/edit message")
 
     async def _split_and_send(self, display_text: str) -> None:
@@ -275,6 +285,9 @@ class TelegramChannel:
         """Start the bot and begin polling for messages.
 
         This method blocks until the bot is stopped (via signal or error).
+        Signals are handled manually (not by aiogram) so that polling stops
+        gracefully without cancelling the task — this allows the Coordinator's
+        post-processing pipeline to run on shutdown.
         """
         _log.info(
             "Starting Telegram bot for chat {chat_id}",
@@ -282,17 +295,29 @@ class TelegramChannel:
         )
         _log.info("Telegram bot running — send a message to start chatting (Ctrl+C to stop)")
 
-        # aiogram handles SIGTERM/SIGINT internally
-        await self._dispatcher.start_polling(
-            self._bot,
-            handle_signals=True,
-            backoff_config=BackoffConfig(
-                min_delay=1,
-                max_delay=60,
-                factor=2,
-                jitter=0.1,
-            ),
-        )
+        loop = asyncio.get_running_loop()
+
+        def _request_shutdown(sig: signal.Signals) -> None:
+            _log.info("Received {sig}, stopping polling", sig=sig.name)
+            asyncio.ensure_future(self._dispatcher.stop_polling())
+
+        for sig in (signal.SIGINT, signal.SIGTERM):
+            loop.add_signal_handler(sig, _request_shutdown, sig)
+
+        try:
+            await self._dispatcher.start_polling(
+                self._bot,
+                handle_signals=False,
+                backoff_config=BackoffConfig(
+                    min_delay=1,
+                    max_delay=60,
+                    factor=2,
+                    jitter=0.1,
+                ),
+            )
+        finally:
+            for sig in (signal.SIGINT, signal.SIGTERM):
+                loop.remove_signal_handler(sig)
 
     async def _handle_message(self, message: Message) -> None:
         """Handle an incoming message from the authorized user."""
