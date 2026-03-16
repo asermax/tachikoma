@@ -15,7 +15,7 @@ from tachikoma.sessions.model import Session
 _log = logger.bind(component="git")
 
 GIT_COMMIT_PROMPT = """You are a git commit agent. Your task is to inspect the workspace
-and create cohesive, well-organized commits for all changes.
+and create cohesive, well-organized commits for ALL changes.
 
 ## Instructions
 
@@ -46,7 +46,9 @@ and create cohesive, well-organized commits for all changes.
 - Do NOT use: `git push`, `git branch`, `git checkout`, `git reset`, `git rebase`,
   `git merge`, `git stash`, or any other commands
 - Never ask for confirmation — just make the commits
-- Include ALL non-ignored changes (both tracked and untracked files)
+- Commit EVERYTHING that shows up in `git status`, including ephemeral runtime files
+  (session data, logs, caches). Anything not in `.gitignore` should be committed.
+  Do NOT skip files because they look temporary — if git tracks them, commit them.
 - If there are no changes, do nothing
 
 Remember: These commits provide version history for the workspace. Good commit
