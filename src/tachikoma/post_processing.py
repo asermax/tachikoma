@@ -60,15 +60,17 @@ class PromptDrivenProcessor(PostProcessor):
     See DES-004 for the pattern documentation.
     """
 
-    def __init__(self, prompt: str, cwd: Path) -> None:
+    def __init__(self, prompt: str, cwd: Path, cli_path: str | None = None) -> None:
         """Initialize the processor.
 
         Args:
             prompt: The prompt to send to the forked agent.
             cwd: The workspace directory for the forked agent.
+            cli_path: Optional path to the Claude CLI binary.
         """
         self._prompt = prompt
         self._cwd = cwd
+        self._cli_path = cli_path
 
     async def process(self, session: Session) -> None:
         """Process by forking the SDK session with the configured prompt.
@@ -76,7 +78,7 @@ class PromptDrivenProcessor(PostProcessor):
         Args:
             session: The closed session to process.
         """
-        await fork_and_consume(session, self._prompt, self._cwd)
+        await fork_and_consume(session, self._prompt, self._cwd, cli_path=self._cli_path)
 
 
 class PostProcessingPipeline:
@@ -157,6 +159,7 @@ async def fork_and_consume(
         McpStdioServerConfig | McpSSEServerConfig | McpHttpServerConfig | McpSdkServerConfig,
     ]
     | None = None,
+    cli_path: str | None = None,
 ) -> None:
     """Fork the SDK session and consume the agent's response.
 
@@ -183,6 +186,7 @@ async def fork_and_consume(
 
     options = ClaudeAgentOptions(
         cwd=cwd,
+        cli_path=cli_path,
         resume=session.sdk_session_id,
         fork_session=True,
         permission_mode="bypassPermissions",

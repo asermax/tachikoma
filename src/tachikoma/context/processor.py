@@ -99,13 +99,14 @@ class CoreContextProcessor(PromptDrivenProcessor):
     - Post-step: mtime comparison for observability logging
     """
 
-    def __init__(self, cwd: Path) -> None:
+    def __init__(self, cwd: Path, cli_path: str | None = None) -> None:
         """Initialize the processor.
 
         Args:
             cwd: The workspace directory containing the context/ folder.
+            cli_path: Optional path to the Claude CLI binary.
         """
-        super().__init__(CONTEXT_UPDATE_PROMPT, cwd)
+        super().__init__(CONTEXT_UPDATE_PROMPT, cwd, cli_path=cli_path)
         self._data_dir = cwd / ".tachikoma"
 
     async def process(self, session: Session) -> None:
@@ -145,6 +146,7 @@ class CoreContextProcessor(PromptDrivenProcessor):
             self._prompt,
             self._cwd,
             mcp_servers={"pending-signals": pending_signals_server},
+            cli_path=self._cli_path,
         )
 
         # Post-step: Compare mtimes and log changes

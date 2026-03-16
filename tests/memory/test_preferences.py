@@ -38,7 +38,7 @@ class TestPreferencesProcessor:
         processor = PreferencesProcessor(cwd=cwd)
         await processor.process(session)
 
-        mock_fork.assert_awaited_once_with(session, PREFERENCES_PROMPT, cwd)
+        mock_fork.assert_awaited_once_with(session, PREFERENCES_PROMPT, cwd, cli_path=None)
 
     def test_prompt_references_correct_subdirectory(self) -> None:
         """AC: Prompt mentions the preferences subdirectory path."""

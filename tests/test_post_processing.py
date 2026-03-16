@@ -401,7 +401,7 @@ class TestPromptDrivenProcessor:
         processor = PromptDrivenProcessor(prompt=prompt, cwd=cwd)
         await processor.process(session)
 
-        mock_fork.assert_awaited_once_with(session, prompt, cwd)
+        mock_fork.assert_awaited_once_with(session, prompt, cwd, cli_path=None)
 
     async def test_simple_subclass_inherits_process(self, mocker: pytest.MockerFixture) -> None:
         """AC: Simple subclasses inherit process() and only need a prompt constant."""
@@ -421,7 +421,9 @@ class TestPromptDrivenProcessor:
         processor = SimpleProcessor(cwd=cwd)
         await processor.process(session)
 
-        mock_fork.assert_awaited_once_with(session, "Simple extraction prompt", cwd)
+        mock_fork.assert_awaited_once_with(
+            session, "Simple extraction prompt", cwd, cli_path=None,
+        )
 
     async def test_subclass_can_override_process(self, mocker: pytest.MockerFixture) -> None:
         """AC: Subclasses can override process() without calling super().process()."""

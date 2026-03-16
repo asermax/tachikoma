@@ -38,7 +38,7 @@ class TestFactsProcessor:
         processor = FactsProcessor(cwd=cwd)
         await processor.process(session)
 
-        mock_fork.assert_awaited_once_with(session, FACTS_PROMPT, cwd)
+        mock_fork.assert_awaited_once_with(session, FACTS_PROMPT, cwd, cli_path=None)
 
     def test_prompt_references_correct_subdirectory(self) -> None:
         """AC: Prompt mentions the facts subdirectory path."""

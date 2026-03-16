@@ -59,10 +59,11 @@ class FactsProcessor(PromptDrivenProcessor):
     Creates or updates topic-named files in memories/facts/.
     """
 
-    def __init__(self, cwd: Path) -> None:
+    def __init__(self, cwd: Path, cli_path: str | None = None) -> None:
         """Initialize the processor.
 
         Args:
             cwd: The workspace directory for the forked agent.
+            cli_path: Optional path to the Claude CLI binary.
         """
-        super().__init__(FACTS_PROMPT, cwd)
+        super().__init__(FACTS_PROMPT, cwd, cli_path=cli_path)

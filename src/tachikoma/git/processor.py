@@ -53,7 +53,9 @@ Remember: These commits provide version history for the workspace. Good commit
 messages help understand what changed and when."""
 
 
-async def query_and_consume(prompt: str, cwd: Path) -> None:
+async def query_and_consume(
+    prompt: str, cwd: Path, cli_path: str | None = None
+) -> None:
     """Spawn a fresh agent and consume its response.
 
     Creates a fresh query() call with no session forking. Used for
@@ -62,6 +64,7 @@ async def query_and_consume(prompt: str, cwd: Path) -> None:
     Args:
         prompt: The prompt to send to the agent.
         cwd: The working directory for the agent.
+        cli_path: Optional path to the Claude CLI binary.
 
     Raises:
         Propagates: SDK errors from the query() call.
@@ -69,6 +72,7 @@ async def query_and_consume(prompt: str, cwd: Path) -> None:
     options = ClaudeAgentOptions(
         model="haiku",
         cwd=cwd,
+        cli_path=cli_path,
         permission_mode="bypassPermissions",
     )
 
@@ -84,13 +88,15 @@ class GitProcessor(PostProcessor):
     Runs in the finalize phase after all other processors complete.
     """
 
-    def __init__(self, cwd: Path) -> None:
+    def __init__(self, cwd: Path, cli_path: str | None = None) -> None:
         """Initialize the processor.
 
         Args:
             cwd: The workspace directory for git operations.
+            cli_path: Optional path to the Claude CLI binary.
         """
         self._cwd = cwd
+        self._cli_path = cli_path
 
     async def process(self, session: Session) -> None:
         """Commit workspace changes if any exist.
@@ -108,7 +114,7 @@ class GitProcessor(PostProcessor):
         _log.debug("Workspace has uncommitted changes, spawning commit agent")
 
         # Spawn agent to handle commits
-        await query_and_consume(GIT_COMMIT_PROMPT, self._cwd)
+        await query_and_consume(GIT_COMMIT_PROMPT, self._cwd, cli_path=self._cli_path)
 
         # Verify all changes were committed
         still_dirty = await _check_git_status(self._cwd)

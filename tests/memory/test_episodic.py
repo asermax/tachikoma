@@ -38,7 +38,7 @@ class TestEpisodicProcessor:
         processor = EpisodicProcessor(cwd=cwd)
         await processor.process(session)
 
-        mock_fork.assert_awaited_once_with(session, EPISODIC_PROMPT, cwd)
+        mock_fork.assert_awaited_once_with(session, EPISODIC_PROMPT, cwd, cli_path=None)
 
     def test_prompt_references_correct_subdirectory(self) -> None:
         """AC: Prompt mentions the episodic subdirectory path."""

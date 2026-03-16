@@ -42,7 +42,9 @@ class TestGitProcessor:
         processor = GitProcessor(cwd=Path("/workspace"))
         await processor.process(_make_session())
 
-        mock_query.assert_awaited_once_with(GIT_COMMIT_PROMPT, Path("/workspace"))
+        mock_query.assert_awaited_once_with(
+            GIT_COMMIT_PROMPT, Path("/workspace"), cli_path=None,
+        )
 
     async def test_no_op_when_workspace_clean(
         self, mocker: pytest.MockerFixture
