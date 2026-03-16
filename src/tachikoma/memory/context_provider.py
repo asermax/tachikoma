@@ -68,13 +68,15 @@ class MemoryContextProvider(ContextProvider):
     with the "memories" tag containing a ranked list of relevant files.
     """
 
-    def __init__(self, cwd: Path) -> None:
+    def __init__(self, cwd: Path, cli_path: str | None = None) -> None:
         """Initialize the provider.
 
         Args:
             cwd: The workspace directory for the agent's cwd.
+            cli_path: Optional path to the Claude CLI binary.
         """
         self._cwd = cwd
+        self._cli_path = cli_path
 
     async def provide(self, message: str) -> ContextResult | None:
         """Search memories for context relevant to the message.
@@ -95,7 +97,11 @@ class MemoryContextProvider(ContextProvider):
             allowed_tools=["Read", "Glob", "Grep"],
             permission_mode="bypassPermissions",
             cwd=self._cwd,
+            cli_path=self._cli_path,
         )
+
+        # Fully consume the query() generator to ensure proper SDK cleanup.
+        result: ContextResult | None = None
 
         try:
             async for sdk_message in query(prompt=prompt, options=options):
@@ -105,22 +111,18 @@ class MemoryContextProvider(ContextProvider):
                             "Memory search agent returned error: err={err}",
                             err=sdk_message.result,
                         )
-                        return None
+                    elif sdk_message.result is not None:
+                        stripped = sdk_message.result.strip()
 
-                    if sdk_message.result is not None:
-                        # Agent is instructed to respond with exactly NO_RELEVANT_MEMORIES
-                        if sdk_message.result.strip() == "NO_RELEVANT_MEMORIES":
+                        if stripped == "NO_RELEVANT_MEMORIES":
                             _log.debug("No relevant memories found for message")
-                            return None
-
-                        return ContextResult(tag="memories", content=sdk_message.result)
-
-            # Loop completed without a valid result
-            return None
+                        else:
+                            result = ContextResult(tag="memories", content=sdk_message.result)
 
         except Exception as exc:
             _log.exception(
                 "Memory search agent failed: err={err}",
                 err=str(exc),
             )
-            return None
+
+        return result

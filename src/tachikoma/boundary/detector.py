@@ -8,14 +8,19 @@ from pathlib import Path
 
 from claude_agent_sdk import ClaudeAgentOptions, query
 from claude_agent_sdk.types import ResultMessage
+from loguru import logger
 
 from tachikoma.boundary.prompts import (
     BOUNDARY_DETECTION_SYSTEM_PROMPT,
     BOUNDARY_DETECTION_USER_PROMPT,
 )
 
+_log = logger.bind(component="boundary")
 
-async def detect_boundary(message: str, summary: str, cwd: Path) -> bool:
+
+async def detect_boundary(
+    message: str, summary: str, cwd: Path, *, cli_path: str | None = None
+) -> bool:
     """Detect whether a message continues the current conversation or starts a new topic.
 
     **IMPORTANT**: Returns True when the conversation CONTINUES (not when a boundary
@@ -40,6 +45,7 @@ async def detect_boundary(message: str, summary: str, cwd: Path) -> bool:
         model="opus",
         effort="low",
         cwd=cwd,
+        cli_path=cli_path,
         system_prompt=BOUNDARY_DETECTION_SYSTEM_PROMPT,
         output_format={
             "type": "json_schema",
@@ -60,14 +66,31 @@ async def detect_boundary(message: str, summary: str, cwd: Path) -> bool:
         summary=summary, message=message
     )
 
+    # Fully consume the query() generator to ensure proper SDK cleanup.
+    continues = True
+    got_result = False
+
     async for sdk_message in query(prompt=user_prompt, options=options):
         if isinstance(sdk_message, ResultMessage):
-            if sdk_message.structured_output is not None:
-                result = sdk_message.structured_output
-                return bool(result.get("continues_conversation", True))
+            got_result = True
 
-            # Fallback: if no structured output, default to continuation
-            return True
+            if sdk_message.is_error:
+                _log.warning(
+                    "Boundary detection returned error: err={err}",
+                    err=sdk_message.result,
+                )
+            elif sdk_message.structured_output is not None:
+                continues = bool(
+                    sdk_message.structured_output.get("continues_conversation", True)
+                )
+                _log.debug(
+                    "Boundary detection result: continues={continues}",
+                    continues=continues,
+                )
+            else:
+                _log.warning("Boundary detection returned no structured output")
 
-    # If we never got a ResultMessage, default to continuation
-    return True
+    if not got_result:
+        _log.warning("Boundary detection query produced no ResultMessage")
+
+    return continues

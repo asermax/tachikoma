@@ -8,11 +8,14 @@ from pathlib import Path
 
 from claude_agent_sdk import ClaudeAgentOptions, query
 from claude_agent_sdk.types import AssistantMessage, TextBlock
+from loguru import logger
 
 from tachikoma.boundary.prompts import SUMMARY_SYSTEM_PROMPT, SUMMARY_USER_PROMPT
 from tachikoma.message_post_processing import MessagePostProcessor
 from tachikoma.sessions.model import Session
 from tachikoma.sessions.registry import SessionRegistry
+
+_log = logger.bind(component="boundary")
 
 
 class SummaryProcessor(MessagePostProcessor):
@@ -23,15 +26,19 @@ class SummaryProcessor(MessagePostProcessor):
     and used by the boundary detector for topic shift detection.
     """
 
-    def __init__(self, registry: SessionRegistry, cwd: Path) -> None:
+    def __init__(
+        self, registry: SessionRegistry, cwd: Path, cli_path: str | None = None
+    ) -> None:
         """Initialize the summary processor.
 
         Args:
             registry: The session registry for persisting summary updates.
             cwd: The working directory for SDK subprocess calls.
+            cli_path: Optional path to the Claude CLI binary.
         """
         self._registry = registry
         self._cwd = cwd
+        self._cli_path = cli_path
 
     async def process(
         self, session: Session, user_message: str, agent_response: str
@@ -59,6 +66,7 @@ class SummaryProcessor(MessagePostProcessor):
             model="opus",
             effort="low",
             cwd=self._cwd,
+            cli_path=self._cli_path,
             system_prompt=SUMMARY_SYSTEM_PROMPT,
             allowed_tools=[],
             permission_mode="bypassPermissions",
@@ -75,3 +83,8 @@ class SummaryProcessor(MessagePostProcessor):
         # Update the session summary if we got a response
         if response_text.strip():
             await self._registry.update_summary(session.id, response_text.strip())
+        else:
+            _log.warning(
+                "Summary processor received empty response: session_id={id}",
+                id=session.id,
+            )
