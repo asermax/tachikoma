@@ -78,7 +78,10 @@ class PromptDrivenProcessor(PostProcessor):
         Args:
             session: The closed session to process.
         """
+        name = self.__class__.__name__
+        _log.info("Processor started: processor={name}", name=name)
         await fork_and_consume(session, self._prompt, self._cwd, cli_path=self._cli_path)
+        _log.info("Processor completed: processor={name}", name=name)
 
 
 class PostProcessingPipeline:
@@ -130,10 +133,18 @@ class PostProcessingPipeline:
         propagate or prevent subsequent phases from running.
         """
         async with self._lock:
+            _log.info("Pipeline started: session={sid}", sid=session.id[:8])
+
             for phase in self._phase_order:
                 processors = self._phases[phase]
                 if not processors:
                     continue
+
+                names = [p.__class__.__name__ for p in processors]
+                _log.info(
+                    "Phase started: phase={phase} processors={names}",
+                    phase=phase, names=names,
+                )
 
                 results = await asyncio.gather(
                     *[p.process(session) for p in processors],
@@ -141,13 +152,17 @@ class PostProcessingPipeline:
                 )
 
                 for processor, result in zip(processors, results, strict=True):
-                    if isinstance(result, Exception):
+                    if isinstance(result, BaseException):
                         _log.exception(
                             "Processor failed: processor={name} phase={phase} err={err}",
                             name=processor.__class__.__name__,
                             phase=phase,
                             err=str(result),
                         )
+
+                _log.info("Phase completed: phase={phase}", phase=phase)
+
+            _log.info("Pipeline completed: session={sid}", sid=session.id[:8])
 
 
 async def fork_and_consume(
