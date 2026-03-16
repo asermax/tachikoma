@@ -10,6 +10,7 @@ import contextlib
 import time
 
 from aiogram import Bot, Dispatcher, F, Router
+from aiogram.dispatcher.dispatcher import BackoffConfig
 from aiogram.exceptions import TelegramAPIError, TelegramRetryAfter
 from aiogram.types import Message
 from aiogram.utils.chat_action import ChatActionSender
@@ -20,7 +21,7 @@ from tachikoma.bootstrap import BootstrapContext, BootstrapError
 from tachikoma.config import TelegramSettings
 from tachikoma.coordinator import Coordinator
 from tachikoma.display import TOOL_DISPLAY
-from tachikoma.events import Error, Result, TextChunk, ToolActivity
+from tachikoma.events import Error, Result, Status, TextChunk, ToolActivity
 
 _log = logger.bind(component="telegram")
 
@@ -64,6 +65,22 @@ class ResponseRenderer:
         self._last_edit_time = 0.0
         # Note: _message_count is NOT reset - it tracks total messages
         # for the entire response cycle including steered messages
+
+    async def handle_status(self, message: str) -> None:
+        """Handle a Status event by sending a transient status message.
+
+        The message will be replaced when the first TextChunk or ToolActivity arrives.
+        """
+        try:
+            msg = await self._bot.send_message(
+                self._chat_id,
+                f"_{message}_",
+                parse_mode="Markdown",
+            )
+            self._current_message_id = msg.message_id
+            self._message_count += 1
+        except TelegramAPIError:
+            _log.exception("Failed to send status message")
 
     async def handle_text(self, chunk: str) -> None:
         """Handle a TextChunk event by appending to buffer and scheduling edit."""
@@ -268,11 +285,12 @@ class TelegramChannel:
         await self._dispatcher.start_polling(
             self._bot,
             handle_signals=True,
-            backoff_config={
-                "min_delay": 1,
-                "max_delay": 60,
-                "multiplier": 2,
-            },
+            backoff_config=BackoffConfig(
+                min_delay=1,
+                max_delay=60,
+                factor=2,
+                jitter=0.1,
+            ),
         )
 
     async def _handle_message(self, message: Message) -> None:
@@ -298,7 +316,9 @@ class TelegramChannel:
         try:
             async with ChatActionSender(bot=self._bot, chat_id=chat_id, action="typing"):
                 async for event in self._coordinator.send_message(text):
-                    if isinstance(event, TextChunk):
+                    if isinstance(event, Status):
+                        await self._active_renderer.handle_status(event.message)
+                    elif isinstance(event, TextChunk):
                         await self._active_renderer.handle_text(event.text)
                     elif isinstance(event, ToolActivity):
                         await self._active_renderer.handle_tool(event)
