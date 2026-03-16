@@ -33,6 +33,13 @@ class Result(AgentEvent):
 
 
 @dataclass
+class Status(AgentEvent):
+    """A transient status update from the coordinator (e.g. "Thinking...")."""
+
+    message: str
+
+
+@dataclass
 class Error(AgentEvent):
     """An error encountered during agent processing."""
 

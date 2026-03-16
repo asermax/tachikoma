@@ -1,8 +1,8 @@
-"""Coordinator: wraps ClaudeSDKClient and exposes a channel-facing async iterator API.
+"""Coordinator: per-message ClaudeSDKClient with resume-based session continuity.
 
 Channels call send_message() and consume the resulting AsyncIterator[AgentEvent].
-The coordinator manages the SDK client lifecycle and transforms SDK messages into
-domain events via the message adapter.
+Each message exchange creates a fresh SDK client, using `resume` for conversation
+continuity. Topic shifts simply start a new session without resume.
 """
 
 import asyncio
@@ -16,7 +16,7 @@ from loguru import logger
 
 from tachikoma.adapter import adapt
 from tachikoma.boundary import detect_boundary
-from tachikoma.events import AgentEvent, Error, Result, TextChunk
+from tachikoma.events import AgentEvent, Error, Result, Status, TextChunk
 from tachikoma.message_post_processing import MessagePostProcessingPipeline
 from tachikoma.post_processing import PostProcessingPipeline
 from tachikoma.pre_processing import PreProcessingPipeline, assemble_context
@@ -45,6 +45,10 @@ def _derive_transcript_path(sdk_session_id: str, cwd: Path | None) -> str:
 class Coordinator:
     """Programmatic entry point for the agent.
 
+    Creates a fresh ClaudeSDKClient per message exchange. Conversation
+    continuity is maintained via ``resume=sdk_session_id``. Topic shifts
+    simply drop the resume ID so the next message starts a fresh session.
+
     Usage::
 
         async with Coordinator(allowed_tools=["Read", "Glob", "Grep"]) as coord:
@@ -66,28 +70,25 @@ class Coordinator:
         env: dict[str, str] | None = None,
         on_status: Callable[[str], None] | None = None,
         agents: dict[str, AgentDefinition] | None = None,
+        cli_path: str | None = None,
     ) -> None:
-        # Build SystemPromptPreset when system_prompt is provided
-        sdk_system_prompt = None
-        if system_prompt is not None:
-            sdk_system_prompt = SystemPromptPreset(
-                type="preset",
-                preset="claude_code",
-                append=system_prompt,
-            )
-
-        self._options = ClaudeAgentOptions(
-            allowed_tools=allowed_tools or [],
-            model=model,
-            cwd=cwd,
-            system_prompt=sdk_system_prompt,
-            permission_mode=permission_mode,
-            env=env or {},
-            agents=agents,
-        )
+        # Store individual options for building ClaudeAgentOptions per message
+        self._allowed_tools = allowed_tools or []
+        self._model = model
         self._cwd = cwd
+        self._cli_path = cli_path
         self._base_system_prompt = system_prompt
+        self._permission_mode = permission_mode
+        self._env = env or {}
+        self._agents = agents
+
+        # SDK session tracking for resume
+        self._sdk_session_id: str | None = None
+        self._previous_summary: str | None = None
+
+        # Active client (only set during send_message, None between messages)
         self._client: ClaudeSDKClient | None = None
+
         self._registry = registry
         self._pipeline = pipeline
         self._pre_pipeline = pre_pipeline
@@ -101,9 +102,7 @@ class Coordinator:
         self._background_tasks: list[asyncio.Task[None]] = []
 
     async def __aenter__(self) -> "Coordinator":
-        self._client = ClaudeSDKClient(self._options)
-        await self._client.connect()
-        _log.info("Connected to agent service")
+        _log.info("Coordinator initialized")
         return self
 
     async def __aexit__(
@@ -134,8 +133,7 @@ class Coordinator:
                 except Exception as exc:
                     _log.exception("Failed to close session on shutdown: err={err}", err=str(exc))
 
-        # Run post-processing pipeline after session close, before SDK disconnect
-        # Pipeline uses standalone query() which is independent of ClaudeSDKClient
+        # Run post-processing pipeline after session close
         if active is not None and self._pipeline is not None:
             if active.sdk_session_id is not None:
                 if self._on_status is not None:
@@ -170,16 +168,60 @@ class Coordinator:
                     )
             self._background_tasks = []
 
-        if self._client is not None:
-            _log.info("Disconnecting from agent service")
-            await self._client.disconnect()
-            self._client = None
+    def _build_options(self, *, resume: str | None = None) -> ClaudeAgentOptions:
+        """Build ClaudeAgentOptions for a single message exchange.
+
+        On topic shift, the previous conversation summary is appended to the
+        system prompt for the first message of the new session only.
+        """
+        append_text = self._base_system_prompt or ""
+
+        if self._previous_summary is not None:
+            summary_section = f"""
+
+# Previous Conversation
+The user was previously discussing the following topic. This is provided
+for brief context only — do not continue the previous conversation unless
+the user explicitly refers back to it.
+
+{self._previous_summary}"""
+
+            append_text = (
+                append_text + summary_section
+                if append_text
+                else summary_section[1:]
+            )
+
+            # Clear after first use — only the first message of the new session
+            # needs the summary context
+            self._previous_summary = None
+
+        sdk_system_prompt = None
+        if append_text:
+            sdk_system_prompt = SystemPromptPreset(
+                type="preset",
+                preset="claude_code",
+                append=append_text,
+            )
+
+        return ClaudeAgentOptions(
+            allowed_tools=self._allowed_tools,
+            model=self._model,
+            cwd=self._cwd,
+            cli_path=self._cli_path,
+            system_prompt=sdk_system_prompt,
+            permission_mode=self._permission_mode,
+            env=self._env,
+            agents=self._agents,
+            resume=resume,
+        )
 
     async def send_message(self, text: str) -> AsyncIterator[AgentEvent]:
-        """Send a user message and yield AgentEvents as the agent responds."""
-        if self._client is None:
-            raise RuntimeError("Coordinator is not connected. Use as an async context manager.")
+        """Send a user message and yield AgentEvents as the agent responds.
 
+        Creates a fresh ClaudeSDKClient for this exchange. Uses ``resume``
+        for conversation continuity within the same session.
+        """
         _log.debug("Message received: length={n}", n=len(text))
 
         # Await any pending per-message post-processing task before proceeding
@@ -210,10 +252,21 @@ class Coordinator:
                 # Session tracking failures are logged but never crash the conversation
                 _log.exception("Failed to create session: err={err}", err=str(exc))
 
+        # Signal "Thinking..." when boundary detection or pre-processing will run
+        will_detect_boundary = (
+            active is not None and active.summary is not None and self._cwd is not None
+        )
+        will_preprocess = is_new_session and self._pre_pipeline is not None
+
+        if will_detect_boundary or will_preprocess:
+            yield Status(message="Thinking...")
+
         # Boundary detection: check if the message continues the current topic
-        if active is not None and active.summary is not None and self._cwd is not None:
+        if will_detect_boundary:
             try:
-                continues = await detect_boundary(text, active.summary, self._cwd)
+                continues = await detect_boundary(
+                    text, active.summary, self._cwd, cli_path=self._cli_path
+                )
                 if not continues:
                     _log.info("Topic shift detected, transitioning to new session")
                     await self._handle_transition(active)
@@ -236,85 +289,88 @@ class Coordinator:
             except Exception as exc:
                 _log.exception("Pre-processing failed: err={err}", err=str(exc))
 
-        await self._client.query(text)
+        # Determine whether to resume the existing SDK session
+        resume_id = self._sdk_session_id if not is_new_session else None
 
-        # Accumulate response text for per-message post-processing
+        # Build options and create a fresh client for this exchange
+        options = self._build_options(resume=resume_id)
         response_chunks: list[str] = []
 
         try:
-            async for sdk_message in self._client.receive_messages():
-                done = False
+            async with ClaudeSDKClient(options) as client:
+                self._client = client
+                await client.query(text)
 
-                for event in adapt(sdk_message):
-                    yield event
+                # Process the response (receive_response stops at ResultMessage)
+                async for sdk_message in client.receive_response():
+                    for event in adapt(sdk_message):
+                        yield event
 
-                    # Accumulate text chunks for per-message post-processing
-                    if isinstance(event, TextChunk):
-                        response_chunks.append(event.text)
+                        if isinstance(event, TextChunk):
+                            response_chunks.append(event.text)
 
-                    # Populate SDK session metadata on the first Result event
-                    if (
-                        isinstance(event, Result)
-                        and self._registry is not None
-                        and active is not None
-                        and event.session_id
-                    ):
-                        try:
-                            transcript_path = _derive_transcript_path(
-                                event.session_id, self._cwd
-                            )
-                            await self._registry.update_metadata(
-                                session_id=active.id,
-                                sdk_session_id=event.session_id,
-                                transcript_path=transcript_path,
-                            )
-                        except Exception as exc:
-                            _log.exception(
-                                "Failed to update session metadata: err={err}", err=str(exc)
-                            )
+                        if (
+                            isinstance(event, Result)
+                            and self._registry is not None
+                            and active is not None
+                            and event.session_id
+                        ):
+                            self._sdk_session_id = event.session_id
+                            try:
+                                transcript_path = _derive_transcript_path(
+                                    event.session_id, self._cwd
+                                )
+                                await self._registry.update_metadata(
+                                    session_id=active.id,
+                                    sdk_session_id=event.session_id,
+                                    transcript_path=transcript_path,
+                                )
+                            except Exception as exc:
+                                _log.exception(
+                                    "Failed to update session metadata: err={err}",
+                                    err=str(exc),
+                                )
 
-                    done = done or isinstance(event, Result)
+                # Handle steered messages: each pending steer gets its own
+                # receive_response() call which picks up the CLI's queued response
+                while self._pending_steers > 0:
+                    self._pending_steers -= 1
+                    async for sdk_message in client.receive_response():
+                        for event in adapt(sdk_message):
+                            yield event
 
-                if done:
-                    # Continue past Result when steering is active.
-                    # Note: response_chunks accumulates text from all turns
-                    # (initial + steered), but msg_pipeline only receives the
-                    # initial user message. This is acceptable for boundary
-                    # detection summaries — they still capture all response
-                    # content, just without the steered user messages.
-                    if self._pending_steers > 0:
-                        self._pending_steers -= 1
-                        done = False
-                    else:
-                        break
+                            if isinstance(event, TextChunk):
+                                response_chunks.append(event.text)
 
-            # Trigger per-message post-processing after response completes
-            if (
-                self._msg_pipeline is not None
-                and active is not None
-                and self._registry is not None
-            ):
-                # Re-fetch session to get latest metadata (may have been updated)
-                current_session = await self._registry.get_active_session()
-                if current_session is not None:
-                    response_text = "".join(response_chunks)
-                    self._pending_msg_task = asyncio.create_task(
-                        self._msg_pipeline.run(current_session, text, response_text)
-                    )
-
-            _log.debug("Response complete")
+                self._client = None
 
         except (CLIConnectionError, ProcessError) as exc:
+            self._client = None
             _log.error("Stream error (recoverable): err={err}", err=str(exc))
             yield Error(message=str(exc), recoverable=True)
+
+        # Trigger per-message post-processing after response completes
+        if (
+            self._msg_pipeline is not None
+            and active is not None
+            and self._registry is not None
+        ):
+            # Re-fetch session to get latest metadata (may have been updated)
+            current_session = await self._registry.get_active_session()
+            if current_session is not None:
+                response_text = "".join(response_chunks)
+                self._pending_msg_task = asyncio.create_task(
+                    self._msg_pipeline.run(current_session, text, response_text)
+                )
+
+        _log.debug("Response complete")
 
     async def _handle_transition(self, previous_session: Session) -> None:
         """Handle session transition on topic shift.
 
-        Closes the current session, fires async post-processing, resets the SDK
-        client with the previous summary in system prompt, and creates a new session.
+        Closes the current session, fires async post-processing, clears the
+        SDK session ID (so the next message starts fresh), and creates a new session.
         """
-        # Capture session snapshot
         session_snapshot = previous_session
 
         # Close session in registry
@@ -334,8 +390,10 @@ class Coordinator:
             # Prune completed tasks to avoid unbounded growth
             self._background_tasks = [t for t in self._background_tasks if not t.done()]
 
-        # Reset SDK client with previous summary in system prompt
-        await self._reset_sdk_client(session_snapshot.summary)
+        # Clear SDK session so next message starts a fresh conversation.
+        # Save the summary for injection into the new session's system prompt.
+        self._sdk_session_id = None
+        self._previous_summary = session_snapshot.summary
 
         # Create new session in registry
         if self._registry is not None:
@@ -346,78 +404,6 @@ class Coordinator:
                     "Failed to create new session during transition: err={err}",
                     err=str(exc),
                 )
-
-    async def _reset_sdk_client(self, previous_summary: str | None) -> None:
-        """Reset the SDK client with previous conversation summary in system prompt.
-
-        Uses swap-on-success pattern: creates and connects new client before
-        disconnecting the old one. If new client fails, old client is retained.
-        """
-        # Compose the new system prompt
-        append_text = self._base_system_prompt or ""
-
-        if previous_summary is not None:
-            summary_section = f"""
-
-# Previous Conversation
-The user was previously discussing the following topic. This is provided
-for brief context only — do not continue the previous conversation unless
-the user explicitly refers back to it.
-
-{previous_summary}"""
-            # Strip leading newline if no base text precedes the summary
-            append_text = (
-                append_text + summary_section
-                if append_text
-                else summary_section[1:]
-            )
-
-        # Build new options
-        new_system_prompt = None
-        if append_text:
-            new_system_prompt = SystemPromptPreset(
-                type="preset",
-                preset="claude_code",
-                append=append_text,
-            )
-
-        new_options = ClaudeAgentOptions(
-            allowed_tools=self._options.allowed_tools,
-            model=self._options.model,
-            cwd=self._options.cwd,
-            system_prompt=new_system_prompt,
-            permission_mode=self._options.permission_mode,
-            env=self._options.env,
-            agents=self._options.agents,
-        )
-
-        # Swap-on-success pattern
-        old_client = self._client
-        try:
-            new_client = ClaudeSDKClient(new_options)
-            await new_client.connect()
-            # Success: swap clients
-            self._client = new_client
-            self._options = new_options
-
-            if old_client is not None:
-                try:
-                    await old_client.disconnect()
-                except Exception as disconnect_exc:
-                    # Cleanup failure doesn't affect the new client
-                    _log.exception(
-                        "Failed to disconnect old client during swap: err={err}",
-                        err=str(disconnect_exc),
-                    )
-
-            _log.info("SDK client reset with previous conversation summary")
-
-        except Exception as exc:
-            # Failure: keep old client (stale context but functional)
-            _log.exception(
-                "Failed to reset SDK client, keeping old client: err={err}",
-                err=str(exc),
-            )
 
     async def interrupt(self) -> None:
         """Interrupt the current agent response."""

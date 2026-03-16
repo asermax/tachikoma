@@ -52,6 +52,10 @@ class AgentSettings(BaseModel):
         default=["Read", "Glob", "Grep"],
         description="Tools the agent is allowed to use",
     )
+    cli_path: str | None = Field(
+        default=None,
+        description="Path to claude binary (None = SDK bundled binary)",
+    )
 
 
 class LoggingSettings(BaseModel):

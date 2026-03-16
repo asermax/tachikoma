@@ -47,6 +47,10 @@ async def main(
         channel: Communication channel to use (repl or telegram).
                  Defaults to 'repl'. Overrides TOML config if provided.
     """
+    # Remove loguru's default stderr handler to prevent log messages
+    # from leaking to the console before configure_logging() runs
+    logger.remove()
+
     settings_manager = SettingsManager()
 
     # Apply CLI override if provided (runtime-only, no file write)
@@ -92,21 +96,27 @@ async def main(
     # Get the system prompt from the context hook (if available)
     system_prompt = bootstrap.extras.get("system_prompt")
 
+    cli_path = settings.agent.cli_path
+
     # Create and configure the session post-processing pipeline
     pipeline = PostProcessingPipeline()
-    pipeline.register(EpisodicProcessor(cwd=settings.workspace.path))
-    pipeline.register(FactsProcessor(cwd=settings.workspace.path))
-    pipeline.register(PreferencesProcessor(cwd=settings.workspace.path))
-    pipeline.register(CoreContextProcessor(cwd=settings.workspace.path))
-    pipeline.register(GitProcessor(cwd=settings.workspace.path), phase=FINALIZE_PHASE)
+    pipeline.register(EpisodicProcessor(cwd=settings.workspace.path, cli_path=cli_path))
+    pipeline.register(FactsProcessor(cwd=settings.workspace.path, cli_path=cli_path))
+    pipeline.register(PreferencesProcessor(cwd=settings.workspace.path, cli_path=cli_path))
+    pipeline.register(CoreContextProcessor(cwd=settings.workspace.path, cli_path=cli_path))
+    pipeline.register(
+        GitProcessor(cwd=settings.workspace.path, cli_path=cli_path), phase=FINALIZE_PHASE,
+    )
 
     # Create and configure the pre-processing pipeline
     pre_pipeline = PreProcessingPipeline()
-    pre_pipeline.register(MemoryContextProvider(cwd=settings.workspace.path))
+    pre_pipeline.register(MemoryContextProvider(cwd=settings.workspace.path, cli_path=cli_path))
 
     # Create and configure the per-message post-processing pipeline
     msg_pipeline = MessagePostProcessingPipeline()
-    msg_pipeline.register(SummaryProcessor(registry=registry, cwd=settings.workspace.path))
+    msg_pipeline.register(
+        SummaryProcessor(registry=registry, cwd=settings.workspace.path, cli_path=cli_path),
+    )
 
     console = Console()
 
@@ -124,6 +134,7 @@ async def main(
             env={"CLAUDE_CODE_DISABLE_AUTO_MEMORY": "1"},
             on_status=lambda msg: console.print(msg, style="dim italic grey50"),
             agents=agents,
+            cli_path=cli_path,
         ) as coordinator:
             # Dispatch based on channel setting
             if settings.channel == "telegram":
