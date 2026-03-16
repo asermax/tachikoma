@@ -36,6 +36,7 @@ The REPL renders domain events to the terminal as they arrive: text chunks are r
 - Given the agent uses an unknown tool, when a tool activity event arrives, then the tool name is shown as a fallback
 - Given the agent completes its response, when a result event arrives, then a newline is printed and the REPL shows a new prompt
 - Given an error occurs, when an error event arrives, then the error message prints to stderr
+- Given the coordinator yields a Status event (e.g., "Thinking..."), when received, then the status message is displayed as dim italic text
 
 ### Input Management (R2)
 

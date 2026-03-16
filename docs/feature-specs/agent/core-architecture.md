@@ -19,9 +19,9 @@ The core agent loop: receive a user message, pass it to the Claude agent via the
 | R0 | Core agent loop: send a user message, receive a streamed response as domain events |
 | R1 | Project structure: pyproject.toml with dependencies, src package layout, entry point |
 | R2 | Programmatic entry point (coordinator) that channels call to send messages and get streamed responses |
-| R3 | Session lifecycle: connect and disconnect from the agent service, preserving conversation context across messages within a session. Optionally tracks sessions persistently via a session registry (see [sessions](sessions.md)) |
+| R3 | Session lifecycle: create a per-message SDK client for each exchange, preserving conversation context across messages via resume-based session continuity. Optionally tracks sessions persistently via a session registry (see [sessions](sessions.md)) |
 | R4 | Error handling: distinguish between transient failures that allow continued use and fatal failures that require stopping |
-| R5 | Agent operates from workspace directory via SDK cwd option |
+| R5 | Agent operates from workspace directory via SDK cwd option; optionally uses a custom CLI binary path (`cli_path`) |
 | R6 | Post-processing pipeline: on session close, run registered processors in sequential phases to analyze the completed conversation and perform finalization tasks (see [pipeline spec](post-processing-pipeline.md)) |
 | R7 | Agent has unrestricted tool access without user confirmation prompts |
 | R8 | Tachikoma is the sole memory system — no competing memory mechanisms from the underlying SDK |
@@ -40,6 +40,7 @@ The coordinator receives a text message, forwards it to the SDK client, and yiel
 **Acceptance Criteria**:
 - Given a user message, when passed to the coordinator, then the agent responds via the Claude model and the response streams as domain events
 - Given a conversation in progress, when the user sends a follow-up message, then the agent has context from prior messages in the same session (R3)
+- Given a user message, when boundary detection or pre-processing will run, then a Status event is yielded to inform the channel of the pending work before proceeding
 - Given a user message, when boundary detection is active and a topic shift is detected, then a session transition occurs before the message is processed in a fresh context (R10)
 - Given a conversation, when the user asks about files in the working directory, then the agent can explore and report on them
 
@@ -53,19 +54,18 @@ Channels interact with the agent through a single coordinator interface that ret
 
 ### Session Lifecycle (R3)
 
-The coordinator manages connection to the underlying agent service and maintains conversation context.
+The coordinator manages per-message SDK client creation and maintains conversation context via resume-based session continuity.
 
 **Acceptance Criteria**:
-- Given the coordinator enters its async context, then it connects to the agent service
-- Given the coordinator exits its async context, then it disconnects from the agent service
+- Given a user message, when the coordinator processes it, then a fresh SDK client is created for that exchange and disposed after the response completes
+- Given a conversation in progress, when the user sends a follow-up message, then the coordinator resumes the existing SDK session via `resume=sdk_session_id`
 - Given a new conversation starts, then a new session is created
 - Given an active session, when subsequent messages arrive, then they use the same session
 - Given a session registry is available, when the first message in a new conversation arrives, then a persistent session is created before the message is processed
 - Given an active persistent session, when the agent produces a Result event, then the session's SDK metadata (session ID and transcript path) is populated
 - Given an active persistent session, when the coordinator exits its async context, then the persistent session is closed
 - Given a session registry operation fails, then the error is logged and the conversation continues uninterrupted
-- Given a topic shift is detected mid-conversation, when the transition completes, then the current session is closed, the SDK conversation context is reset (new client with previous summary in system prompt), and a new session is created
-- Given the SDK client reset fails during a session transition, when the error occurs, then the old client is retained with stale context and the conversation continues
+- Given a topic shift is detected mid-conversation, when the transition completes, then the current session is closed, the SDK session ID is cleared, and a new session is created — the next message starts a fresh SDK session with the previous conversation summary in the system prompt
 - Given a session transition where any step fails, when the transition completes, then a new session is still created in the registry
 
 ### Working Directory (R5)
@@ -92,11 +92,11 @@ After a session closes, the coordinator triggers a registered post-processing pi
 - Given a session closes without an SDK session ID, when the coordinator would trigger post-processing, then the pipeline is skipped and a warning is logged
 - Given no active session exists, when the coordinator exits its async context, then the pipeline is not triggered
 - Given a pipeline processor fails, when other processors are running, then the failing processor's error is logged and the others complete normally
-- Given the pipeline itself fails, when the coordinator is shutting down, then the error is logged and shutdown continues (SDK disconnect proceeds)
-- Given no pipeline is registered, when a session closes, then shutdown proceeds directly to SDK disconnect
+- Given the pipeline itself fails, when the coordinator is shutting down, then the error is logged and shutdown continues
+- Given no pipeline is registered, when a session closes, then shutdown proceeds directly
 - Given a pipeline is already running from a previous session close, when another session close triggers the pipeline, then the new run is serialized (awaits the previous one before starting)
 - Given a session closes mid-conversation due to a topic shift, when the session has a valid SDK session ID and a pipeline is registered, then the pipeline runs asynchronously as a background task (not blocking the new session)
-- Given background post-processing tasks are running from previous topic shifts, when the coordinator shuts down, then it awaits all background tasks before disconnecting
+- Given background post-processing tasks are running from previous topic shifts, when the coordinator shuts down, then it awaits all background tasks before exiting
 - Given a background post-processing task fails, when the error occurs, then it is logged without affecting the active conversation or other background tasks
 - Given a session closes with a valid SDK session ID and a pipeline is registered, when post-processing starts, then a status notification is emitted before the pipeline runs
 - Given an on_status callback is registered but no pipeline is registered, when the coordinator exits, then the status callback is not called

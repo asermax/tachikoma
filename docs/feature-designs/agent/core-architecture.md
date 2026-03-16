@@ -15,7 +15,7 @@ Tachikoma needs a foundational agent architecture that wraps the Claude Agent SD
 
 **Constraints:**
 - The Claude Agent SDK (`claude-agent-sdk`) is async-first and spawns a Claude Code CLI process internally
-- The SDK has two entry points: `query()` (stateless iterator) and `ClaudeSDKClient` (persistent session)
+- The SDK has two entry points: `query()` (stateless iterator) and `ClaudeSDKClient` (session-scoped client with `resume` for conversation continuity)
 - This architecture implements pre-processing (context enrichment before the first session message) and post-processing (analysis after session close), with delegation as a future extension
 
 **Interactions:**
@@ -59,7 +59,7 @@ Three-layer architecture with clear boundaries:
 └─────────────────────────────────────────────────────┘
 ```
 
-The **Coordinator** is the programmatic entry point. Channels call `send_message()` and consume the resulting `AsyncIterator[AgentEvent]`. The coordinator manages the SDK client lifecycle and transforms SDK messages into domain events via the message adapter. The `steer()` method allows mid-stream message injection for channels that support it (e.g., Telegram).
+The **Coordinator** is the programmatic entry point. Channels call `send_message()` and consume the resulting `AsyncIterator[AgentEvent]`. The coordinator creates a fresh `ClaudeSDKClient` per message exchange, using `resume=sdk_session_id` for conversation continuity. It transforms SDK messages into domain events via the message adapter. The `steer()` method allows mid-stream message injection for channels that support it (e.g., Telegram).
 
 The **Message Adapter** is a pure transformation layer — it maps SDK `Message` objects into `AgentEvent` domain types, decoupling channels from SDK internals.
 
@@ -69,8 +69,8 @@ The **Message Adapter** is a pure transformation layer — it maps SDK `Message`
 
 | Layer/Component | Responsibility | Key Decisions |
 |-----------------|----------------|---------------|
-| `src/tachikoma/__main__.py` | Cyclopts CLI entry point: parses `--channel` flag, loads config via SettingsManager, applies CLI overrides at runtime, runs bootstrap hooks (workspace, logging, git, skills, context, memory, session recovery, telegram), creates SkillRegistry, retrieves session objects and system_prompt from bootstrap extras, creates pre-processing pipeline (registers MemoryContextProvider), post-processing pipeline (registers memory processors and CoreContextProcessor in main phase per DES-004, git in finalize phase), and per-message pipeline (registers SummaryProcessor), wires up coordinator + channel dispatch (REPL or Telegram) with try/finally for engine disposal | Cyclopts for CLI parsing; SettingsManager with runtime-only overrides; SkillRegistry for agent discovery; channel dispatch based on `settings.channel`; enables `python -m tachikoma` |
-| `src/tachikoma/coordinator.py` | Wraps `ClaudeSDKClient`, manages session lifecycle, exposes `send_message()`. Accepts `system_prompt`, `permission_mode`, `env`, and `agents` for SDK configuration, and an optional `on_status` callback for shutdown-phase notifications. Optionally integrates with `SessionRegistry` for persistent session tracking (see [sessions design](sessions.md)), `PreProcessingPipeline` for context enrichment on new sessions (see [pipeline design](pre-processing-pipeline.md)), `PostProcessingPipeline` for post-conversation analysis (see [pipeline design](post-processing-pipeline.md)), and `MessagePostProcessingPipeline` for per-message processing (see [boundary detection design](boundary-detection.md)). Extended with boundary detection gating, per-message post-processing trigger, session transition orchestration (`_handle_transition`), and SDK client replacement (`_reset_sdk_client`). Stores base system prompt for recomposition on topic shift. Tracks `_pending_msg_task` and `_background_tasks` for lifecycle management. | Async context manager pattern; owns SDK client instance; wraps system_prompt in SystemPromptPreset with append mode (see ADR-008); optional registry, pre_pipeline, pipeline, msg_pipeline, and on_status dependencies; passes `system_prompt`, `permission_mode`, `env`, and `agents` through to `ClaudeAgentOptions` |
+| `src/tachikoma/__main__.py` | Cyclopts CLI entry point: parses `--channel` flag, loads config via SettingsManager, applies CLI overrides at runtime, runs bootstrap hooks (workspace, logging, git, skills, context, memory, session recovery, telegram), creates SkillRegistry, retrieves session objects and system_prompt from bootstrap extras, reads `cli_path` from agent settings and threads it through all pipeline components, creates pre-processing pipeline (registers MemoryContextProvider), post-processing pipeline (registers memory processors and CoreContextProcessor in main phase per DES-004, git in finalize phase), and per-message pipeline (registers SummaryProcessor), wires up coordinator + channel dispatch (REPL or Telegram) with try/finally for engine disposal | Cyclopts for CLI parsing; SettingsManager with runtime-only overrides; SkillRegistry for agent discovery; channel dispatch based on `settings.channel`; enables `python -m tachikoma` |
+| `src/tachikoma/coordinator.py` | Creates a per-message `ClaudeSDKClient`, manages session lifecycle via `resume`, exposes `send_message()`. Accepts `system_prompt`, `permission_mode`, `env`, `agents`, and `cli_path` for SDK configuration, and an optional `on_status` callback for shutdown-phase notifications. Optionally integrates with `SessionRegistry` for persistent session tracking (see [sessions design](sessions.md)), `PreProcessingPipeline` for context enrichment on new sessions (see [pipeline design](pre-processing-pipeline.md)), `PostProcessingPipeline` for post-conversation analysis (see [pipeline design](post-processing-pipeline.md)), and `MessagePostProcessingPipeline` for per-message processing (see [boundary detection design](boundary-detection.md)). Extended with boundary detection gating, per-message post-processing trigger, session transition orchestration (`_handle_transition`), and `_build_options()` for per-message option construction. Stores base system prompt for recomposition on topic shift. Tracks `_sdk_session_id`, `_previous_summary`, `_pending_msg_task`, and `_background_tasks` for lifecycle management. | Async context manager pattern; creates fresh `ClaudeSDKClient` per `send_message()` call with `resume` for continuity; wraps system_prompt in SystemPromptPreset with append mode (see ADR-008); optional registry, pre_pipeline, pipeline, msg_pipeline, and on_status dependencies; passes `system_prompt`, `permission_mode`, `env`, `agents`, and `cli_path` through to `ClaudeAgentOptions` |
 | `src/tachikoma/events.py` | `AgentEvent` domain type hierarchy | Dataclasses; no SDK dependency |
 | `src/tachikoma/adapter.py` | Transforms SDK messages to `AgentEvent`s | Pure function, stateless; only module that imports SDK message types |
 
@@ -125,8 +125,9 @@ sequenceDiagram
         end
     end
 
+    Note over Coord: async with ClaudeSDKClient(options)
     Coord->>SDK: query(enriched_text or text)
-    loop for each SDK Message
+    loop for each SDK Message via receive_response()
         SDK-->>Coord: Message
         Coord->>Adapter: adapt(message)
         Adapter-->>Coord: AgentEvent(s) or skip
@@ -143,12 +144,12 @@ sequenceDiagram
 Note: `send_message()` is an async generator. The per-message pipeline launch happens inside the generator body, after the response stream completes but before the generator returns.
 
 **Integration Points:**
-- Coordinator ↔ SDK: async context manager lifecycle (`connect`/`disconnect`), `query()` to send messages, iterate `receive_messages()` for response stream. Supports mid-lifecycle client replacement via swap-on-success (replaces both `_client` and `_options`)
+- Coordinator ↔ SDK: per-message `async with ClaudeSDKClient(options)`, `query()` to send messages, iterate `receive_response()` for response stream (stops at `ResultMessage`). Uses `resume=sdk_session_id` for conversation continuity across messages
 - Coordinator ↔ Adapter: pure function call `adapt(sdk_message) -> list[AgentEvent]` (returns empty list for filtered messages)
 - Channel ↔ Coordinator: async iterator protocol
 - Coordinator ↔ SessionRegistry (optional): `create_session()` on first message, `update_metadata()` on Result events, `close_session()` on shutdown and on topic shift (see [sessions design](sessions.md))
 - Coordinator ↔ PreProcessingPipeline (optional): `pipeline.run(message)` in `send_message()`, on first message of new session (including after topic shift transition), before `client.query()` (see [pipeline design](pre-processing-pipeline.md))
-- Coordinator ↔ PostProcessingPipeline (optional): `pipeline.run(session)` in `__aexit__` (after session close, before SDK disconnect) and as background task during topic shift transitions. Note: `on_status` callback is NOT called for transition-triggered post-processing — only on shutdown (see [pipeline design](post-processing-pipeline.md))
+- Coordinator ↔ PostProcessingPipeline (optional): `pipeline.run(session)` in `__aexit__` (after session close) and as background task during topic shift transitions. Note: `on_status` callback is NOT called for transition-triggered post-processing — only on shutdown (see [pipeline design](post-processing-pipeline.md))
 - Coordinator ↔ `detect_boundary` (from `boundary` package): pure function call before processing, returns `bool`, errors caught and defaulted to `True` (continuation). Skipped when no session, no summary, or no cwd (see [boundary detection design](boundary-detection.md))
 - Coordinator ↔ `MessagePostProcessingPipeline` (optional): `run(session, text, response_text)` as background `asyncio.Task` after each response, reference stored as `_pending_msg_task` (see [boundary detection design](boundary-detection.md))
 
@@ -162,7 +163,7 @@ The domain model is intentionally minimal:
 
 ```mermaid
 erDiagram
-    Coordinator ||--|| ClaudeSDKClient : wraps
+    Coordinator ||--|| ClaudeSDKClient : "creates per-message"
     Coordinator ||--o{ AgentEvent : produces
     Coordinator ||--o| PreProcessingPipeline : "runs on first message of new session"
     Coordinator ||--o| PostProcessingPipeline : "triggers on shutdown and topic shift"
@@ -178,12 +179,14 @@ AgentEvent (base)
 ├── TextChunk       — a piece of streamed text content
 ├── ToolActivity    — agent used a tool (name + input + result)
 ├── Result          — response complete (session, cost, usage metadata)
+├── Status          — transient coordinator status update (e.g. "Thinking...")
 └── Error           — error occurred (message, recoverable flag)
 ```
 
 - **TextChunk**: `text: str` — one fragment of the agent's response
 - **ToolActivity**: `tool_name: str`, `tool_input: dict`, `result: str` — a tool invocation by the agent
 - **Result**: `session_id: str | None`, `total_cost_usd: float | None`, `usage: dict | None` — signals response completion with observability metadata
+- **Status**: `message: str` — a transient status update from the coordinator, yielded before boundary detection and pre-processing to inform channels of pending work
 - **Error**: `message: str`, `recoverable: bool` — something went wrong; recoverable errors let the conversation continue, non-recoverable errors signal exit
 
 ### SDK Message → AgentEvent mapping
@@ -202,15 +205,20 @@ AgentEvent (base)
 
 ```
 Coordinator
-├── _client: ClaudeSDKClient
+├── _sdk_session_id: str | None           (SDK session ID for resume)
+├── _previous_summary: str | None         (summary from last session, injected on topic shift)
+├── _client: ClaudeSDKClient | None       (set only during send_message, None between messages)
 ├── _pending_steers: int = 0              (count of steered messages)
+├── _pending_msg_task: asyncio.Task | None  (background per-message post-processing)
+├── _background_tasks: list[asyncio.Task]   (session post-processing from topic shifts)
+├── _build_options(resume=...) → ClaudeAgentOptions  (constructs per-message options)
 ├── send_message(text) → AsyncIterator[AgentEvent]
-│   └── continues past Result when _pending_steers > 0
+│   └── creates fresh ClaudeSDKClient, handles steered messages via sequential receive_response() calls
 └── steer(text) → None
     └── increments _pending_steers, calls client.query()
 ```
 
-The `steer()` method allows channels to inject user messages mid-stream. When a steered message is queued, `send_message()` continues iterating after the current `Result` event, yielding events for the steered message through the same async iterator.
+The `steer()` method allows channels to inject user messages mid-stream. When a steered message is queued, `send_message()` issues additional `receive_response()` calls after the initial response completes, yielding events for each steered message through the same async iterator.
 
 ## Data Flow
 
@@ -221,40 +229,44 @@ The `steer()` method allows channels to inject user messages mid-stream. When a 
 2. Channel calls coordinator.send_message(text)
 3. Coordinator awaits any pending per-message task (logs errors, doesn't propagate)
 4. Coordinator checks for active session; creates one via registry if needed — sets is_new_session flag
-5. If active session has a summary AND cwd is not None, call detect_boundary(text, session.summary, cwd)
-6. If topic shift → run _handle_transition(), re-fetch active session, set is_new_session flag
-7. If continuation or detection error → proceed normally
-8. If new session and pre_pipeline is set: pre-processing pipeline runs context
+5. If boundary detection or pre-processing will run, yield Status("Thinking...")
+6. If active session has a summary AND cwd is not None, call detect_boundary(text, session.summary, cwd, cli_path=cli_path)
+7. If topic shift → run _handle_transition(), re-fetch active session, set is_new_session flag
+8. If continuation or detection error → proceed normally
+9. If new session and pre_pipeline is set: pre-processing pipeline runs context
    providers in parallel; successful results assembled into XML-tagged blocks and prepended to message
-9. Coordinator calls SDK client.query(text) (enriched or original)
-10. Coordinator iterates SDK client.receive_messages(), accumulating response text
-11. For each SDK Message, adapter maps to AgentEvent(s) or filters out
-12. Coordinator yields AgentEvent(s)
-13. TextChunk events are also accumulated for per-message post-processing
-14. On Result event, session metadata updated from Result event
-15. Re-fetch active session, launch per-message pipeline as background task
-16. Stream ends
+10. Coordinator builds ClaudeAgentOptions via _build_options(resume=sdk_session_id or None)
+11. Creates fresh ClaudeSDKClient via `async with ClaudeSDKClient(options)`
+12. Calls client.query(text) (enriched or original)
+13. Coordinator iterates client.receive_response(), accumulating response text
+14. For each SDK Message, adapter maps to AgentEvent(s) or filters out
+15. Coordinator yields AgentEvent(s)
+16. TextChunk events are also accumulated for per-message post-processing
+17. On Result event, sdk_session_id stored on coordinator, session metadata updated
+18. Client context exits (disposed)
+19. Re-fetch active session, launch per-message pipeline as background task
+20. Stream ends
 ```
 
-**Streaming granularity:** The SDK's `receive_messages()` yields complete `Message` objects. Text appears in message-level chunks rather than token-by-token. This is simpler (adapter handles complete, well-typed objects) and still responsive since messages arrive as the agent produces them. The `AgentEvent` contract with channels remains unchanged if finer granularity is needed later.
+**Streaming granularity:** The SDK's `receive_response()` yields complete `Message` objects and stops at `ResultMessage`. Text appears in message-level chunks rather than token-by-token. This is simpler (adapter handles complete, well-typed objects) and still responsive since messages arrive as the agent produces them. The `AgentEvent` contract with channels remains unchanged if finer granularity is needed later.
 
 ### Steering flow
 
 ```
 1. Channel A calls coordinator.send_message("msg_A")
-2. send_message() calls client.query("msg_A"), iterates receive_messages()
+2. send_message() creates ClaudeSDKClient, calls client.query("msg_A"), iterates receive_response()
 3. Events for msg_A stream back, channel renders them
 4. Channel B calls coordinator.steer("msg_B") (e.g., Telegram message during active response)
 5. steer() increments _pending_steers to 1, calls client.query("msg_B")
 6. CLI queues msg_B internally
-7. msg_A completes → receive_messages() yields ResultMessage for msg_A
-8. send_message() checks _pending_steers > 0 → decrements, continues iterating
-9. CLI processes msg_B → receive_messages() yields messages for msg_B
+7. msg_A completes → receive_response() yields ResultMessage for msg_A, iteration ends
+8. send_message() checks _pending_steers > 0 → decrements, calls receive_response() again
+9. CLI processes msg_B → receive_response() yields messages for msg_B
 10. Events for msg_B stream back through the same send_message() iteration
-11. msg_B completes → Result, _pending_steers == 0 → break
+11. msg_B completes → Result, _pending_steers == 0 → client context exits
 ```
 
-The `Result` event serves as a turn boundary. Channels can detect it to reset their rendering state between steered messages. The `send_message()` iteration does not break — it checks the counter and continues.
+The `Result` event serves as a turn boundary. Channels can detect it to reset their rendering state between steered messages. Each pending steer gets its own sequential `receive_response()` call, which picks up the CLI's queued response.
 
 ### Startup flow
 
@@ -271,9 +283,9 @@ The `Result` event serves as a turn boundary. Channels can detect it to reset th
 10. Creates PostProcessingPipeline, registers memory processors (episodic, facts, preferences) and CoreContextProcessor in main phase, registers GitProcessor in finalize phase — all with workspace_path
 11. Creates PreProcessingPipeline, registers MemoryContextProvider(cwd=workspace_path)
 12. Creates MessagePostProcessingPipeline, registers SummaryProcessor with registry and workspace_path
-13. Creates Coordinator with allowed_tools, model, cwd=workspace_path, agents_dict from SkillRegistry, session_registry, system_prompt, pipeline, pre_pipeline, msg_pipeline, permission_mode="bypassPermissions", env={"CLAUDE_CODE_DISABLE_AUTO_MEMORY": "1"}, and on_status callback (for channel display), agents
-14. Enters coordinator async context (connects SDK client with agents passed to ClaudeAgentOptions.agents)
-15. If connection fails → catch SDK error, log + print to stderr, exit
+13. Creates Coordinator with allowed_tools, model, cwd=workspace_path, agents_dict from SkillRegistry, session_registry, system_prompt, pipeline, pre_pipeline, msg_pipeline, permission_mode="bypassPermissions", env={"CLAUDE_CODE_DISABLE_AUTO_MEMORY": "1"}, on_status callback (for channel display), agents, cli_path
+14. Enters coordinator async context (no SDK client connection — clients are created per-message)
+15. If any SDK error occurs during the first message → catch, log + print to stderr, exit
 16. Dispatches based on settings.channel:
     ├─ "repl" → Repl(coordinator, history_path=...)
     └─ "telegram" → TelegramChannel(coordinator, settings.telegram)
@@ -289,25 +301,27 @@ The `Result` event serves as a turn boundary. Channels can detect it to reset th
 3. Captures active session (if any), then closes it via registry (errors logged, not propagated)
 4. If captured session has a valid SDK session ID and a pipeline is registered, coordinator calls on_status callback then triggers post-processing pipeline (errors in both callback and pipeline logged, not propagated)
 5. Awaits all background session post-processing tasks from previous topic shifts via asyncio.gather(return_exceptions=True), logs errors
-6. Coordinator disconnects SDK client
-7. SDK client disconnects, CLI process terminates
-8. finally block: session repository engine disposed
-9. asyncio.run() completes
+6. No SDK disconnect step — per-message clients are already disposed after each exchange
+7. finally block: session repository engine disposed
+8. asyncio.run() completes
 ```
 
 ## Key Decisions
 
-### ClaudeSDKClient over query()
+### Per-message ClaudeSDKClient with resume
 
-**Choice**: Use `ClaudeSDKClient` as the SDK interface, not `query()`
-**Why**: `ClaudeSDKClient` provides native multi-turn conversation (session state managed internally), `interrupt()` for Ctrl+C mid-stream, and lifecycle management (`connect`/`disconnect`). The `query()` function would require manual session ID tracking and lacks interrupt support.
+**Choice**: Create a fresh `ClaudeSDKClient` per `send_message()` call, using `resume=sdk_session_id` for conversation continuity
+**Why**: Eliminates anyio cancel scope leaks that occurred during mid-lifecycle client swaps on topic shifts. Uses the SDK's recommended `receive_response()` pattern (stops at `ResultMessage`) instead of manual iteration over `receive_messages()`. Topic shifts become trivial: just clear the session ID — no client replacement needed. The `interrupt()` method is still available during the per-message client's lifetime.
 **Alternatives Considered**:
-- `query()` with `resume=session_id`: Simpler but no interrupt, manual session tracking
+- Persistent `ClaudeSDKClient` with swap-on-success for topic shifts: caused cancel scope leaks during client replacement, required holding two CLI subprocesses during swap
+- `query()` stateless iterator: lacks `interrupt()` and `steer()` support mid-stream
 
 **Consequences**:
-- Pro: Native multi-turn, interrupt support, clean lifecycle
-- Pro: Future channels benefit from same session management
-- Con: Tighter coupling to SDK client API shape
+- Pro: No cancel scope leaks — each client has a clean lifecycle
+- Pro: Topic shifts are trivial (clear session ID, no client replacement)
+- Pro: `receive_response()` aligns with SDK docs recommendation
+- Pro: `interrupt()` available during each message exchange
+- Con: Client connect/disconnect overhead per message (minimal in practice)
 
 ### Own domain types (AgentEvent)
 
@@ -367,13 +381,24 @@ The `Result` event serves as a turn boundary. Channels can detect it to reset th
 - Pro: Official SDK mechanism, clean implementation
 - Con: Depends on env var contract with Claude Code CLI
 
-### Message-level streaming
+### cli_path configuration for native Claude binary
 
-**Choice**: Use `receive_messages()` for message-level streaming rather than token-level streaming
-**Why**: Complete `Message` objects are simpler to adapt. True token-by-token streaming (`include_partial_messages=True`) adds significant adapter complexity for marginal UX improvement in a developer tool.
+**Choice**: Add `AgentSettings.cli_path: str | None = None` to config, threaded through all `ClaudeAgentOptions` constructors (coordinator, memory context provider, boundary detector, summary processor, all post-processors, `fork_and_consume`)
+**Why**: Allows using a native Claude binary instead of the SDK-bundled one. Useful for development and debugging. The `cli_path` parameter on `ClaudeAgentOptions` is passed as the path to the CLI subprocess.
+
+**Consequences**:
+- Pro: Development flexibility — can point to a local build
+- Pro: Consistent configuration — single setting propagates everywhere
+- Con: Must be threaded through all components that create `ClaudeAgentOptions`
+
+### Message-level streaming via receive_response()
+
+**Choice**: Use `receive_response()` for message-level streaming rather than `receive_messages()` or token-level streaming
+**Why**: `receive_response()` yields complete `Message` objects and stops at `ResultMessage`, per SDK docs recommendation. This avoids the need for manual `break` in async iterators (which can leave SDK resources in an inconsistent state — see DES-005). Complete `Message` objects are simpler to adapt than token-by-token streaming.
 
 **Consequences**:
 - Pro: Simpler adapter — handles complete, well-typed Message objects
+- Pro: Clean iterator lifecycle — `receive_response()` terminates naturally at `ResultMessage`
 - Con: Text appears in message-level chunks rather than character-by-character
 - Note: Can upgrade to token-level streaming later without changing the `AgentEvent` contract
 
@@ -389,7 +414,7 @@ The `Result` event serves as a turn boundary. Channels can detect it to reset th
 
 **Given**: One or more messages have already been sent in the current session
 **When**: A follow-up message is sent
-**Then**: The SDK client maintains conversation context internally. The agent can reference prior messages.
+**Then**: The coordinator creates a fresh `ClaudeSDKClient` with `resume=sdk_session_id`, restoring conversation context. The agent can reference prior messages.
 
 ### Scenario: In-stream error (rate limit, server error)
 
@@ -417,9 +442,10 @@ The `Result` event serves as a turn boundary. Channels can detect it to reset th
 
 ## Notes
 
-- The Claude Agent SDK wraps the Claude Code CLI binary internally — the Python package bundles the CLI
+- The Claude Agent SDK wraps the Claude Code CLI binary internally — the Python package bundles the CLI (unless overridden via `cli_path`)
 - The `AgentEvent` type hierarchy is designed to be extensible — future features can add new event types without modifying existing channels
 - The adapter pattern used here (SDK types → domain types) may become a project-wide pattern if repeated in future features that integrate external services
-- `ClaudeSDKClient.query()` returns `None` — messages are retrieved via `receive_messages()` which yields `AsyncIterator[Message]`
+- `ClaudeSDKClient.query()` returns `None` — messages are retrieved via `receive_response()` which yields `AsyncIterator[Message]` and stops at `ResultMessage` (per SDK docs, preferred over `receive_messages()` which requires manual `break`)
 - The `Message` union type includes `StreamEvent` alongside the main message types — the adapter filters it along with other non-relevant types
 - The `on_status` callback is a lightweight injection point for channels to display post-processing progress. The coordinator has no knowledge of rendering — the callback keeps rendering concerns in the channel layer.
+- Logging configuration suppresses noisy third-party loggers (`sqlalchemy.engine`, `aiosqlite`, `aiogram`, `markdown_it`, `claude_agent_sdk`) to WARNING level. Per-session log rotation renames the previous session's log file on startup. `logger.remove()` is called at the start of `main()` to prevent console leaks before the logging bootstrap hook runs.

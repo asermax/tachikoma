@@ -81,7 +81,8 @@ Settings (root, frozen)
 │   └── data_path: Path (computed property: self.path / ".tachikoma")
 ├── agent: AgentSettings
 │   ├── model: str | None = None (SDK default)
-│   └── allowed_tools: list[str] = ["Read", "Glob", "Grep"]
+│   ├── allowed_tools: list[str] = ["Read", "Glob", "Grep"]
+│   └── cli_path: str | None = None (SDK bundled binary)
 ├── logging: LoggingSettings
 │   ├── level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = "INFO"
 │   └── console: bool = false

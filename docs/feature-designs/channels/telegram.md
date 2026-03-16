@@ -90,6 +90,7 @@ The key components:
 | `TextChunk` | Accumulated in buffer, formatted via telegramify-markdown, sent as progressive message edits |
 | `ToolActivity` | Inline status line appended to current message (e.g., "_Reading src/main.py..._"); replaced by next tool |
 | `Result` | Final edit with complete formatted text; renderer reset for next turn |
+| `Status` | Transient italic message sent via `handle_status()` method; replaced when the first TextChunk or ToolActivity arrives |
 | `Error` | Separate error message sent to chat; conversation continues if recoverable |
 
 **Tool display format:** Uses shared `TOOL_DISPLAY` map from `display.py`. Known tools show contextual details; unknown tools show the tool name.
@@ -244,19 +245,19 @@ The 3800-char safety margin (7% buffer) accounts for entity overhead and encodin
 
 ```
 1. User sends msg A → handler calls coordinator.send_message("A")
-2. send_message() calls client.query("A"), iterates receive_messages()
+2. send_message() creates ClaudeSDKClient, calls client.query("A"), iterates receive_response()
 3. Events for A stream back, channel renders them
 4. User sends msg B while A is streaming
 5. aiogram dispatches new handler → calls coordinator.steer("B")
 6. steer() increments _pending_steers to 1, calls client.query("B")
 7. CLI queues B internally
-8. A completes → receive_messages() yields ResultMessage for A
+8. A completes → receive_response() yields ResultMessage for A, iteration ends
 9. Channel sees Result → calls renderer.finalize() then renderer.reset()
-10. send_message() checks _pending_steers > 0 → decrements, continues iterating
-11. CLI processes B → receive_messages() yields messages for B
+10. send_message() checks _pending_steers > 0 → decrements, calls receive_response() again
+11. CLI processes B → receive_response() yields messages for B
 12. Events for B stream back through the same send_message() iteration
     Channel renders them as a new response message (renderer was reset)
-13. B completes → Result, _pending_steers == 0 → break
+13. B completes → Result, _pending_steers == 0 → client context exits
 ```
 
 The `Result` event serves as a turn boundary signal. The channel finalizes the current response and resets the renderer, so each steered message gets its own Telegram response message(s).
@@ -438,3 +439,5 @@ The `Result` event serves as a turn boundary signal. The channel finalizes the c
 - `telegram_hook` follows DES-003 (subsystem bootstrap hooks): defined in the telegram module, registered in __main__.py, self-skips when `settings.channel != "telegram"`
 - `_pending_steers` is a plain `int` — safe under asyncio's cooperative concurrency (no preemptive thread interruption)
 - The shared `TOOL_DISPLAY` map in `display.py` provides consistent tool formatting across REPL and Telegram channels
+- Polling backoff uses aiogram's `BackoffConfig` dataclass: `BackoffConfig(min_delay=1, max_delay=60, factor=2, jitter=0.1)` — not a plain dict
+- The `ResponseRenderer` exposes a `handle_status()` method for rendering `Status` events as transient italic messages in Telegram. The status message is replaced when the first content event arrives.

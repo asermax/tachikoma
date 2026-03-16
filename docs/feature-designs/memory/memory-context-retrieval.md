@@ -54,7 +54,7 @@ The provider builds a search prompt embedding the user's message, runs the agent
 
 | Layer/Component | Responsibility | Key Decisions |
 |-----------------|----------------|---------------|
-| `src/tachikoma/memory/context_provider.py` | `MemoryContextProvider(ContextProvider)` — uses standalone `query()` with Opus agent and search tools to find relevant memories. `MEMORY_SEARCH_PROMPT` constant co-located with provider. Extracts result from `ResultMessage`. | Opus with `effort="low"` for better relevance assessment at controlled cost; `max_turns=8` as safety net; prompt uses Glob→Grep→Read narrowing strategy; `cwd` is workspace root so agent can navigate to discover memory structure |
+| `src/tachikoma/memory/context_provider.py` | `MemoryContextProvider(ContextProvider)` — uses standalone `query()` with Opus agent and search tools to find relevant memories. Accepts `cli_path` parameter. `MEMORY_SEARCH_PROMPT` constant co-located with provider. Extracts result from `ResultMessage`. Fully consumes the query() generator (DES-005). | Opus with `effort="low"` for better relevance assessment at controlled cost; `max_turns=8` as safety net; prompt uses Glob→Grep→Read narrowing strategy; `cwd` is workspace root so agent can navigate to discover memory structure |
 
 ### Cross-Layer Contracts
 
@@ -87,7 +87,8 @@ sequenceDiagram
 
 ```
 MemoryContextProvider(ContextProvider)
-├── _cwd: Path     (workspace directory — agent navigates from here to discover memories/)
+├── _cwd: Path           (workspace directory — agent navigates from here to discover memories/)
+├── _cli_path: str | None  (optional Claude CLI binary path)
 └── provide(message: str) → ContextResult | None
 
 MEMORY_SEARCH_PROMPT: str  (module-level constant, embeds {message} placeholder)
@@ -104,7 +105,7 @@ For the `PreProcessingPipeline`, `ContextProvider` ABC, and `ContextResult` mode
 2. Builds search prompt by embedding user message into MEMORY_SEARCH_PROMPT
 3. Creates ClaudeAgentOptions(model="opus", effort="low", max_turns=8,
    allowed_tools=["Read", "Glob", "Grep"],
-   permission_mode="bypassPermissions", cwd=self._cwd)
+   permission_mode="bypassPermissions", cwd=self._cwd, cli_path=self._cli_path)
 4. Calls query(prompt=prompt, options=options)
 5. Async iterates over the returned generator:
    - On ResultMessage:
@@ -210,4 +211,5 @@ For the `PreProcessingPipeline`, `ContextProvider` ABC, and `ContextResult` mode
 
 - The memory search agent's prompt strategy: Glob to discover → Grep to narrow → Read to verify → return ranked list.
 - The `max_turns=8` limit is generous for a typical search flow (1 Glob + 1-2 Grep + 1-3 Read + 1 response = 4-7 turns).
+- The provider fully consumes the `query()` generator (no early `return` or `break` inside `async for`). This follows DES-005 — preventing orphaned SDK resources from busy-looping the event loop.
 - DLT-009 (embedding-based semantic search) could replace or augment the agent-based search in the future. The `ContextProvider` ABC means the memory provider can be swapped without touching the pipeline.

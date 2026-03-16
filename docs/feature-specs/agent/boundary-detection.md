@@ -4,7 +4,7 @@
 
 ## Overview
 
-Detects whether an incoming message continues the current conversation or starts a new topic. When a topic shift is detected, the system closes the current session (triggering post-processing asynchronously), creates a fresh SDK client (discarding the previous session's context), and starts a new session — all before the coordinator processes the message. A per-message post-processing pipeline maintains a rolling conversation summary after each agent response, keeping it ready for the next boundary check.
+Detects whether an incoming message continues the current conversation or starts a new topic. When a topic shift is detected, the system closes the current session (triggering post-processing asynchronously), clears the SDK session ID (so the next message starts a fresh SDK session without prior context), and starts a new session — all before the coordinator processes the message. A per-message post-processing pipeline maintains a rolling conversation summary after each agent response, keeping it ready for the next boundary check.
 
 ## User Stories
 
@@ -96,4 +96,4 @@ Boundary detection is a best-effort enhancement that never blocks normal message
 - Given an active session with no summary yet (first message in session, per-message pipeline hasn't run), when the next message arrives, then boundary detection is skipped and the message proceeds normally
 - Given the coordinator has no workspace directory configured, when a message arrives, then boundary detection is skipped
 - Given the boundary detector encounters an error (SDK failure, timeout, malformed response), when the error occurs, then it is logged and the message proceeds as a continuation (fail-open)
-- Given the SDK conversation context reset fails during a topic shift, when the error occurs, then the error is logged, a new Tachikoma session is still created, and the message is processed — the agent may have stale context but the conversation is not blocked
+- Given a topic shift triggers a session transition, when the SDK session ID is cleared, then the next message creates a fresh SDK session with no prior conversation context

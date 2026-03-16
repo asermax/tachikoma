@@ -63,6 +63,7 @@ The bot progressively edits a single Telegram message as text chunks arrive, thr
 - Given the agent response contains markdown, when rendered in Telegram, then headings, bold, italic, code blocks, and links display correctly via entity-based formatting
 - Given a network error during a message edit, when the edit fails, then the bot skips that edit and continues with the next chunk (no crash, no retry loop)
 - Given a TelegramRetryAfter error on edit, when received, then the bot waits the specified duration before the next edit attempt
+- Given the coordinator yields a Status event (e.g., "Thinking..."), when received before the response stream, then a transient italic status message is sent; this message is replaced when the first TextChunk or ToolActivity arrives
 
 ### Tool Activity Display (R4)
 
