@@ -56,13 +56,6 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 
 ## Deltas
 
-### DLT-002: Send and receive messages via Telegram
-**Status**: ✓ Reconciled
-**Depends on**: None
-**Priority**: 4 (Low)
-**Complexity**: Medium
-**Description**: Integrate with the Telegram Bot API to provide the primary user-facing communication channel for v1. Users send text messages to a Telegram bot, which forwards them to the coordinator agent. The coordinator's responses are sent back through the same channel. This delta covers the full Telegram lifecycle: bot initialization, receiving incoming messages via polling or webhooks, forwarding them into the agent architecture, sending responses back, and managing the connection (including reconnection on disconnects and graceful shutdown). Message validation ensures only expected input reaches the agent.
-
 ### DLT-004: Detect conversation boundaries via inactivity timeout
 **Status**: ✗ Defined
 **Depends on**: None
@@ -146,4 +139,18 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 **Priority**: 5 (Backlog)
 **Complexity**: Easy
 **Description**: Package the agent as an installable CLI tool using uv, enabling easy installation and updates via `uv tool install`. This delta covers project packaging configuration (pyproject.toml entry points, dependencies), a CLI entry point that starts the agent, and documentation for installation. The CLI entry point is the main way users launch the agent — it wires up the agent architecture (DLT-001), loads configuration (DLT-012), and starts the main loop. Using uv tool provides isolated dependency management and simple update path (`uv tool upgrade`).
+
+### DLT-028: Resume conversation on topic revisit
+**Status**: ✗ Defined
+**Depends on**: None
+**Priority**: 3 (Medium)
+**Complexity**: Medium
+**Description**: When the boundary detector identifies a topic shift, compare the incoming message against summaries of recently closed sessions (configurable window, default: last N sessions within the past few hours) to determine if the user is returning to a previously discussed topic. If a match is found, resume that earlier conversation thread instead of starting fresh, and inject a bridging summary covering sessions that occurred in between so the assistant has continuity awareness. This enables natural conversation patterns where users revisit earlier topics (e.g., switching from Python debugging to dinner plans and back to Python debugging) without losing the full conversation history. When no matching closed session is found, the existing behavior applies (fresh session with previous summary injected).
+
+### DLT-029: Complete pending signals lifecycle with removal and auto-injection
+**Status**: ✗ Defined
+**Depends on**: None
+**Priority**: 2 (High)
+**Complexity**: Easy
+**Description**: The context update post-processor currently lacks signal removal capability, causing promoted or irrelevant pending signals to accumulate until they age out after 30 days. This delta completes the signal lifecycle by: (1) auto-injecting current pending signals into the `CONTEXT_UPDATE_PROMPT` so the forked agent sees them without an extra tool call, (2) adding a `remove_pending_signal` MCP tool that removes a signal by matching its text content, and (3) updating prompt instructions and tool descriptions to guide the agent through the full lifecycle — staging ambiguous signals, promoting recurring ones to context files and removing them, and cleaning up stale entries. Scoped to `context/tools.py` and `context/processor.py`.
 
