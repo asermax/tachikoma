@@ -73,7 +73,7 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 ### DLT-010: Queue and process background tasks during idle time
 **Status**: ✗ Defined
 **Depends on**: None
-**Priority**: 4 (Low)
+**Priority**: 2 (High)
 **Complexity**: Medium
 **Description**: Enable the assistant to work proactively by creating, scheduling, and executing background tasks. This delta covers the full task lifecycle across two concerns: (1) **Task creation and storage** — a specialized sub-agent (delegated by the coordinator) handles task creation. It interprets user intent, extracts timing information, and structures task entries (e.g., "remind me about X tomorrow morning", "follow up on topic Y in a few hours", "summarize today's notes"). Tasks are stored in a persistent queue that survives restarts and support both immediate execution (process during next idle period) and time-based scheduling (process at or after a specified time). (2) **Task execution** — when no conversation is active (after DLT-004 detects conversation end), the system picks up eligible tasks — those whose scheduled time has passed or that have no time constraint — and executes them one at a time without interrupting the user. Results are stored and delivered at the start of the user's next interaction.
 
