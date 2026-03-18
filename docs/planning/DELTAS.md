@@ -61,21 +61,21 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 **Depends on**: None
 **Priority**: 4 (Low)
 **Complexity**: Easy
-**Description**: Fallback conversation boundary detection that monitors for periods of user inactivity. After a configurable threshold (~20 minutes by default), the system signals the session registry (DLT-027) to close the current session, triggering downstream post-processing. This serves as a safety net for cases where the user goes silent without a clear topic change — DLT-026's topic-based analysis is the primary boundary mechanism, but it only fires on incoming messages. The inactivity timeout catches the "user walked away" case. The threshold should be configurable per-deployment.
+**Description**: Fallback conversation boundary detection that monitors for periods of user inactivity. After a configurable threshold (~20 minutes by default), the system signals the session registry to close the current session, triggering downstream post-processing. This serves as a safety net for cases where the user goes silent without a clear topic change — the topic-based boundary detector is the primary boundary mechanism, but it only fires on incoming messages. The inactivity timeout catches the "user walked away" case. The threshold should be configurable per-deployment.
 
 ### DLT-009: Search memories by semantic similarity
 **Status**: ✗ Defined
 **Depends on**: None
 **Priority**: 5 (Backlog)
 **Complexity**: Hard
-**Description**: Provide the ability to search stored memories by semantic similarity to a query, enabling the assistant to find relevant past context even when exact keywords don't match. Results are ranked by a combination of semantic relevance and time-based weighting (recent memories rank higher). This is the retrieval engine consumed by the memory context provider (DLT-006) and potentially other components that need to find relevant past context. The delta involves selecting and integrating an embedding model, building and maintaining an index over stored memories, and implementing the search/ranking logic. The embedding model choice should be evaluated during speccing, balancing quality, speed, and self-hosted requirements.
+**Description**: Provide the ability to search stored memories by semantic similarity to a query, enabling the assistant to find relevant past context even when exact keywords don't match. Results are ranked by a combination of semantic relevance and time-based weighting (recent memories rank higher). This is the retrieval engine consumed by the memory context provider and potentially other components that need to find relevant past context. The delta involves selecting and integrating an embedding model, building and maintaining an index over stored memories, and implementing the search/ranking logic. The embedding model choice should be evaluated during speccing, balancing quality, speed, and self-hosted requirements.
 
 ### DLT-010: Queue and process background tasks during idle time
 **Status**: ✗ Defined
 **Depends on**: None
 **Priority**: 4 (Low)
 **Complexity**: Medium
-**Description**: Enable the assistant to work proactively by creating, scheduling, and executing background tasks. This delta covers the full task lifecycle across two concerns: (1) **Task creation and storage** — a specialized sub-agent (delegated by the coordinator via DLT-003) handles task creation. It interprets user intent, extracts timing information, and structures task entries (e.g., "remind me about X tomorrow morning", "follow up on topic Y in a few hours", "summarize today's notes"). Tasks are stored in a persistent queue that survives restarts and support both immediate execution (process during next idle period) and time-based scheduling (process at or after a specified time). (2) **Task execution** — when no conversation is active (after DLT-004 detects conversation end), the system picks up eligible tasks — those whose scheduled time has passed or that have no time constraint — and executes them one at a time without interrupting the user. Results are stored and delivered at the start of the user's next interaction.
+**Description**: Enable the assistant to work proactively by creating, scheduling, and executing background tasks. This delta covers the full task lifecycle across two concerns: (1) **Task creation and storage** — a specialized sub-agent (delegated by the coordinator) handles task creation. It interprets user intent, extracts timing information, and structures task entries (e.g., "remind me about X tomorrow morning", "follow up on topic Y in a few hours", "summarize today's notes"). Tasks are stored in a persistent queue that survives restarts and support both immediate execution (process during next idle period) and time-based scheduling (process at or after a specified time). (2) **Task execution** — when no conversation is active (after DLT-004 detects conversation end), the system picks up eligible tasks — those whose scheduled time has passed or that have no time constraint — and executes them one at a time without interrupting the user. Results are stored and delivered at the start of the user's next interaction.
 
 ### DLT-011: Run as a persistent background service
 **Status**: ✗ Defined
@@ -124,7 +124,7 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 **Depends on**: None
 **Priority**: 3 (Medium)
 **Complexity**: Medium
-**Description**: Build the skills context provider that plugs into the pre-processing pipeline (DLT-006) to automatically detect and inject relevant skills into the agent's context. The provider queries the skill registry (DLT-003) on each incoming message, matches skills against the message using metadata and trigger patterns, and loads matched skill components (instructions, agents, tools) into the coordinator's session. Once a skill is loaded in a session, it persists across subsequent messages without re-detection. Detection should balance precision (don't load irrelevant skills that waste context) with recall (don't miss applicable skills). This delta does NOT cover skill definition, registry, or agent infrastructure (DLT-003), nor constrained execution (post-v1).
+**Description**: Build the skills context provider that plugs into the pre-processing pipeline to automatically detect and inject relevant skills into the agent's context. The provider queries the skill registry on each incoming message, matches skills against the message using metadata and trigger patterns, and loads matched skill components (instructions, agents, tools) into the coordinator's session. Once a skill is loaded in a session, it persists across subsequent messages without re-detection. Detection should balance precision (don't load irrelevant skills that waste context) with recall (don't miss applicable skills). This delta does NOT cover skill definition, registry, or agent infrastructure, nor constrained execution (post-v1).
 
 ### DLT-022: Eval: Skill detection quality
 **Status**: ✗ Defined
@@ -138,7 +138,7 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 **Depends on**: None
 **Priority**: 5 (Backlog)
 **Complexity**: Easy
-**Description**: Package the agent as an installable CLI tool using uv, enabling easy installation and updates via `uv tool install`. This delta covers project packaging configuration (pyproject.toml entry points, dependencies), a CLI entry point that starts the agent, and documentation for installation. The CLI entry point is the main way users launch the agent — it wires up the agent architecture (DLT-001), loads configuration (DLT-012), and starts the main loop. Using uv tool provides isolated dependency management and simple update path (`uv tool upgrade`).
+**Description**: Package the agent as an installable CLI tool using uv, enabling easy installation and updates via `uv tool install`. This delta covers project packaging configuration (pyproject.toml entry points, dependencies), a CLI entry point that starts the agent, and documentation for installation. The CLI entry point is the main way users launch the agent — it wires up the agent architecture, loads configuration, and starts the main loop. Using uv tool provides isolated dependency management and simple update path (`uv tool upgrade`).
 
 ### DLT-028: Resume conversation on topic revisit
 **Status**: ✗ Defined
