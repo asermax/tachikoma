@@ -1,8 +1,9 @@
 """Pending signals tooling for CoreContextProcessor.
 
 Provides SDK MCP tools for managing the pending signals file:
-- read_pending_signals: Read the full list with dates
-- add_pending_signal: Append a new entry with current date
+- add_pending_signal: Stage a new ambiguous signal
+- remove_pending_signal: Remove promoted or stale signals by index
+- parse_pending_signals: Parse file content into (date, text) tuples
 - clean_pending_signals: Auto-cleanup expired entries
 
 Also provides the create_pending_signals_server factory for use in forked sessions.
@@ -23,6 +24,21 @@ PENDING_SIGNALS_HEADER = "# Pending Signals\n\n"
 
 # Regex pattern for parsing dated entries
 _ENTRY_PATTERN = re.compile(r"^- \*\*(\d{4}-\d{2}-\d{2})\*\*:\s*(.+)$", re.MULTILINE)
+
+
+def parse_pending_signals(content: str) -> list[tuple[str, str]]:
+    """Parse pending signals file content into (date, text) tuples.
+
+    This is the public API for parsing pending signals, used by both
+    the cleanup function and the processor for snapshot creation.
+
+    Args:
+        content: The raw content of the pending signals file.
+
+    Returns:
+        List of (date_str, signal_text) tuples. Empty list if no entries found.
+    """
+    return _ENTRY_PATTERN.findall(content)
 
 
 def clean_pending_signals(data_dir: Path, max_age_days: int = 30) -> None:
@@ -55,7 +71,7 @@ def clean_pending_signals(data_dir: Path, max_age_days: int = 30) -> None:
         return
 
     # Parse entries
-    entries = _ENTRY_PATTERN.findall(content)
+    entries = parse_pending_signals(content)
 
     if not entries:
         # File has content but no parseable entries — log warning and continue
@@ -117,82 +133,225 @@ def clean_pending_signals(data_dir: Path, max_age_days: int = 30) -> None:
         )
 
 
-def create_pending_signals_server(data_dir: Path) -> McpSdkServerConfig:
+async def handle_remove_pending_signal(
+    indices: list[int],
+    snapshot: list[tuple[str, str]],
+    data_dir: Path,
+) -> dict:
+    """Handle remove_pending_signal tool logic.
+
+    This function is extracted for testability. It removes signals by their
+    1-based indices from the pre-fork snapshot.
+
+    Args:
+        indices: 1-based indices of signals to remove.
+        snapshot: Pre-fork snapshot of pending signals as (date, text) tuples.
+        data_dir: Path to the .tachikoma directory.
+
+    Returns:
+        Tool response dict with content and optional is_error flag.
+    """
+    # Empty list is a no-op success
+    if not indices:
+        return {
+            "content": [
+                {"type": "text", "text": "No signals removed (empty indices list)"}
+            ]
+        }
+
+    # Validate all indices are within range (all-or-nothing)
+    max_index = len(snapshot)
+    invalid_indices = [i for i in indices if i < 1 or i > max_index]
+
+    if invalid_indices:
+        valid_range = f"1-{max_index}" if max_index > 0 else "none (no signals exist)"
+        return {
+            "content": [
+                {
+                    "type": "text",
+                    "text": f"Invalid indices: {invalid_indices} (valid range: {valid_range})",
+                }
+            ],
+            "is_error": True,
+        }
+
+    # Convert 1-based to 0-based and compute entries to keep
+    # (snapshot is immutable - we compute a filtered copy for writing)
+    indices_to_remove = {i - 1 for i in indices}
+    remaining_entries = [
+        entry for i, entry in enumerate(snapshot) if i not in indices_to_remove
+    ]
+
+    file_path = data_dir / PENDING_SIGNALS_FILENAME
+
+    # If all signals removed, delete the file
+    if not remaining_entries:
+        try:
+            if file_path.exists():
+                file_path.unlink()
+                _log.debug("Deleted pending signals file after removing all signals")
+        except OSError as err:
+            return {
+                "content": [
+                    {"type": "text", "text": f"Error deleting file: {err}"}
+                ],
+                "is_error": True,
+            }
+
+        return {
+            "content": [
+                {
+                    "type": "text",
+                    "text": f"Removed {len(indices)} signal(s). No pending signals remain.",
+                }
+            ]
+        }
+
+    # Write remaining entries back to file
+    new_content = PENDING_SIGNALS_HEADER + "\n".join(
+        f"- **{date}**: {signal}" for date, signal in remaining_entries
+    )
+
+    try:
+        file_path.write_text(new_content)
+        _log.info(
+            "Removed pending signals: count={count} remaining={remaining}",
+            count=len(indices),
+            remaining=len(remaining_entries),
+        )
+
+        return {
+            "content": [
+                {
+                    "type": "text",
+                    "text": (
+                        f"Removed {len(indices)} signal(s). "
+                        f"{len(remaining_entries)} remaining."
+                    ),
+                }
+            ]
+        }
+    except OSError as err:
+        return {
+            "content": [{"type": "text", "text": f"Error writing file: {err}"}],
+            "is_error": True,
+        }
+
+
+async def handle_add_pending_signal(
+    signal: str,
+    data_dir: Path,
+) -> dict:
+    """Handle add_pending_signal tool logic.
+
+    This function is extracted for testability. It appends a new signal
+    entry with today's date.
+
+    Args:
+        signal: The signal text to add.
+        data_dir: Path to the .tachikoma directory.
+
+    Returns:
+        Tool response dict with content and optional is_error flag.
+    """
+    if not signal:
+        return {
+            "content": [{"type": "text", "text": "Error: signal is required"}],
+            "is_error": True,
+        }
+
+    file_path = data_dir / PENDING_SIGNALS_FILENAME
+    today = datetime.now().strftime("%Y-%m-%d")
+    entry = f"- **{today}**: {signal}\n"
+
+    try:
+        # Check if file exists to determine if we need header
+        if file_path.exists():
+            # Append to existing file
+            with file_path.open("a") as f:
+                f.write(entry)
+        else:
+            # Create new file with header
+            file_path.write_text(PENDING_SIGNALS_HEADER + entry)
+
+        _log.info("Added pending signal: signal={signal}", signal=signal)
+
+        return {
+            "content": [
+                {"type": "text", "text": f"Added pending signal dated {today}"}
+            ]
+        }
+    except OSError as err:
+        return {
+            "content": [{"type": "text", "text": f"Error writing file: {err}"}],
+            "is_error": True,
+        }
+
+
+def create_pending_signals_server(
+    data_dir: Path,
+    snapshot: list[tuple[str, str]],
+) -> McpSdkServerConfig:
     """Create an SDK MCP server with pending signals tools.
 
-    The tools have closure over the data_dir path for file operations.
+    The tools have closure over the data_dir path for file operations and
+    the snapshot for index-based removal.
 
     Args:
         data_dir: Path to the .tachikoma directory.
+        snapshot: Pre-fork snapshot of pending signals as (date, text) tuples.
+            Used by the remove tool to resolve indices to entries.
 
     Returns:
         McpSdkServerConfig for use with ClaudeAgentOptions.mcp_servers.
     """
 
     @tool(
-        "read_pending_signals",
-        "Read all pending signals with their dates. Returns empty string if no signals exist.",
-        {},  # Empty input schema — no arguments
+        "remove_pending_signal",
+        "Remove pending signal(s) by their prompt index (S1, S2, etc.). "
+        "Use this when promoting a recurring signal to a context file update "
+        "or when cleaning up stale/irrelevant signals. "
+        "Indices refer to the S1..Sn numbers shown in your prompt.",
+        {
+            "type": "object",
+            "properties": {
+                "indices": {
+                    "type": "array",
+                    "items": {"type": "integer"},
+                    "description": (
+                        "1-based indices of signals to remove "
+                        "(e.g., [1, 3] for S1 and S3)"
+                    ),
+                },
+            },
+            "required": ["indices"],
+        },
     )
-    async def read_pending_signals(args: dict) -> dict:
-        """Read the pending signals file contents."""
-        file_path = data_dir / PENDING_SIGNALS_FILENAME
-
-        try:
-            content = file_path.read_text()
-            return {"content": [{"type": "text", "text": content}]}
-        except FileNotFoundError:
-            return {"content": [{"type": "text", "text": ""}]}
-        except OSError as err:
-            return {
-                "content": [{"type": "text", "text": f"Error reading file: {err}"}],
-                "is_error": True,
-            }
+    async def remove_pending_signal(args: dict) -> dict:
+        """Remove signals by their 1-based indices from the pre-fork snapshot."""
+        return await handle_remove_pending_signal(
+            indices=args.get("indices", []),
+            snapshot=snapshot,
+            data_dir=data_dir,
+        )
 
     @tool(
         "add_pending_signal",
-        "Add a new pending signal with today's date.",
+        "Stage a new ambiguous signal for future recurrence detection. "
+        "Adds the signal with today's date to the pending signals file. "
+        "Use this for one-off observations that might become patterns if they recur.",
         {"signal": str},  # Input schema
     )
     async def add_pending_signal(args: dict) -> dict:
         """Append a new signal entry with today's date."""
-        signal = args.get("signal", "")
-        if not signal:
-            return {
-                "content": [{"type": "text", "text": "Error: signal is required"}],
-                "is_error": True,
-            }
-
-        file_path = data_dir / PENDING_SIGNALS_FILENAME
-        today = datetime.now().strftime("%Y-%m-%d")
-        entry = f"- **{today}**: {signal}\n"
-
-        try:
-            # Check if file exists to determine if we need header
-            if file_path.exists():
-                # Append to existing file
-                with file_path.open("a") as f:
-                    f.write(entry)
-            else:
-                # Create new file with header
-                file_path.write_text(PENDING_SIGNALS_HEADER + entry)
-
-            _log.info("Added pending signal: signal={signal}", signal=signal)
-
-            return {
-                "content": [
-                    {"type": "text", "text": f"Added pending signal dated {today}"}
-                ]
-            }
-        except OSError as err:
-            return {
-                "content": [{"type": "text", "text": f"Error writing file: {err}"}],
-                "is_error": True,
-            }
+        return await handle_add_pending_signal(
+            signal=args.get("signal", ""),
+            data_dir=data_dir,
+        )
 
     return create_sdk_mcp_server(
         name="pending-signals",
         version="1.0.0",
-        tools=[read_pending_signals, add_pending_signal],
+        tools=[remove_pending_signal, add_pending_signal],
     )
 
