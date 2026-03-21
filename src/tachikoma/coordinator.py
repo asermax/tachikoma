@@ -476,7 +476,7 @@ providing context for what the user has been doing in the meantime.
 
                     _log.info(
                         "Session resumed: session_id={id} sdk_session_id={sdk}",
-                        id=resumed_session.id,
+                        id=reopened.id,
                         sdk=self._sdk_session_id,
                     )
                     return True
