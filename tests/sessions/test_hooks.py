@@ -135,10 +135,10 @@ class TestSessionRecoveryHook:
             row = await cursor.fetchone()
             assert row is None
 
-        # Run the hook — should migrate AND recover
+        # Run the hook — should run Alembic migrations AND recover
         await session_recovery_hook(ctx)
 
-        # Verify the column was added
+        # Verify the column was added (Alembic applied the migration)
         async with aiosqlite.connect(db_path) as db:
             cursor = await db.execute(
                 "SELECT * FROM pragma_table_info('sessions') WHERE name='summary'"

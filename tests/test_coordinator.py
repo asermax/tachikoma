@@ -25,6 +25,7 @@ from helpers import make_assistant, make_result
 from tachikoma.coordinator import Coordinator, _derive_transcript_path
 from tachikoma.events import Error, Result, TextChunk, ToolActivity
 from tachikoma.pre_processing import ContextResult
+from tachikoma.boundary import BoundaryResult
 from tachikoma.sessions.errors import SessionRepositoryError
 from tachikoma.sessions.model import Session
 
@@ -1232,7 +1233,7 @@ class TestBoundaryDetection:
         # Mock boundary detection to return continuation
         mock_detect = mocker.patch(
             "tachikoma.coordinator.detect_boundary",
-            return_value=True,
+            return_value=BoundaryResult(continues=True),
         )
 
         async with Coordinator(registry=registry, cwd=Path("/workspace")) as coord:
@@ -1307,7 +1308,7 @@ class TestBoundaryDetection:
 
         mocker.patch(
             "tachikoma.coordinator.detect_boundary",
-            return_value=True,
+            return_value=BoundaryResult(continues=True),
         )
 
         async with Coordinator(
@@ -1347,7 +1348,7 @@ class TestBoundaryDetection:
 
         mock_detect = mocker.patch(
             "tachikoma.coordinator.detect_boundary",
-            return_value=True,
+            return_value=BoundaryResult(continues=True),
         )
 
         async with Coordinator(
@@ -1386,7 +1387,7 @@ class TestSessionTransition:
 
         mocker.patch(
             "tachikoma.coordinator.detect_boundary",
-            return_value=False,  # Topic shift
+            return_value=BoundaryResult(continues=False),  # Topic shift
         )
 
         async with Coordinator(
@@ -1418,7 +1419,7 @@ class TestSessionTransition:
 
         mocker.patch(
             "tachikoma.coordinator.detect_boundary",
-            return_value=False,
+            return_value=BoundaryResult(continues=False),
         )
 
         task_completed = asyncio.Event()
@@ -1463,7 +1464,7 @@ class TestSessionTransition:
 
         mocker.patch(
             "tachikoma.coordinator.detect_boundary",
-            return_value=False,
+            return_value=BoundaryResult(continues=False),
         )
 
         async with Coordinator(
@@ -1496,7 +1497,7 @@ class TestSessionTransition:
 
         mocker.patch(
             "tachikoma.coordinator.detect_boundary",
-            return_value=False,
+            return_value=BoundaryResult(continues=False),
         )
 
         async with Coordinator(
@@ -1528,7 +1529,7 @@ class TestSessionTransition:
 
         mocker.patch(
             "tachikoma.coordinator.detect_boundary",
-            return_value=False,
+            return_value=BoundaryResult(continues=False),
         )
 
         async with Coordinator(
@@ -1563,7 +1564,7 @@ class TestSessionTransition:
 
         mocker.patch(
             "tachikoma.coordinator.detect_boundary",
-            return_value=False,
+            return_value=BoundaryResult(continues=False),
         )
 
         async with Coordinator(
@@ -1596,7 +1597,7 @@ class TestSessionTransition:
 
         mocker.patch(
             "tachikoma.coordinator.detect_boundary",
-            return_value=False,
+            return_value=BoundaryResult(continues=False),
         )
 
         async with Coordinator(
@@ -1677,7 +1678,7 @@ class TestBuildOptions:
 
         mocker.patch(
             "tachikoma.coordinator.detect_boundary",
-            return_value=False,
+            return_value=BoundaryResult(continues=False),
         )
 
         async with Coordinator(
@@ -1712,7 +1713,7 @@ class TestBuildOptions:
 
         mocker.patch(
             "tachikoma.coordinator.detect_boundary",
-            return_value=False,
+            return_value=BoundaryResult(continues=False),
         )
 
         async with Coordinator(
@@ -1749,7 +1750,7 @@ class TestBuildOptions:
 
         mocker.patch(
             "tachikoma.coordinator.detect_boundary",
-            return_value=False,
+            return_value=BoundaryResult(continues=False),
         )
 
         async with Coordinator(
@@ -1794,7 +1795,7 @@ class TestBuildOptions:
 
         mocker.patch(
             "tachikoma.coordinator.detect_boundary",
-            return_value=False,
+            return_value=BoundaryResult(continues=False),
         )
 
         async with Coordinator(
@@ -2013,7 +2014,7 @@ class TestCoordinatorShutdownWithBoundaryDetection:
 
         mocker.patch(
             "tachikoma.coordinator.detect_boundary",
-            return_value=False,
+            return_value=BoundaryResult(continues=False),
         )
 
         async with Coordinator(
@@ -2050,7 +2051,7 @@ class TestCoordinatorShutdownWithBoundaryDetection:
 
         mocker.patch(
             "tachikoma.coordinator.detect_boundary",
-            return_value=False,
+            return_value=BoundaryResult(continues=False),
         )
 
         # Should not raise despite background task failure
