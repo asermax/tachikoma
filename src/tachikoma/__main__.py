@@ -24,8 +24,9 @@ from tachikoma.memory import (
     memory_hook,
 )
 from tachikoma.message_post_processing import MessagePostProcessingPipeline
-from tachikoma.post_processing import FINALIZE_PHASE, PostProcessingPipeline
+from tachikoma.post_processing import FINALIZE_PHASE, PRE_FINALIZE_PHASE, PostProcessingPipeline
 from tachikoma.pre_processing import PreProcessingPipeline
+from tachikoma.projects import ProjectsContextProvider, ProjectsProcessor, projects_hook
 from tachikoma.repl import Repl
 from tachikoma.sessions import session_recovery_hook
 from tachikoma.skills import SkillRegistry, skills_hook
@@ -62,6 +63,7 @@ async def main(
     bootstrap.register("workspace", workspace_hook)
     bootstrap.register("logging", logging_hook)
     bootstrap.register("git", git_hook)
+    bootstrap.register("projects", projects_hook)
     bootstrap.register("skills", skills_hook)
     bootstrap.register("context", context_hook)
     bootstrap.register("memory", memory_hook)
@@ -105,12 +107,17 @@ async def main(
     pipeline.register(PreferencesProcessor(cwd=settings.workspace.path, cli_path=cli_path))
     pipeline.register(CoreContextProcessor(cwd=settings.workspace.path, cli_path=cli_path))
     pipeline.register(
+        ProjectsProcessor(cwd=settings.workspace.path, cli_path=cli_path),
+        phase=PRE_FINALIZE_PHASE,
+    )
+    pipeline.register(
         GitProcessor(cwd=settings.workspace.path, cli_path=cli_path), phase=FINALIZE_PHASE,
     )
 
     # Create and configure the pre-processing pipeline
     pre_pipeline = PreProcessingPipeline()
     pre_pipeline.register(MemoryContextProvider(cwd=settings.workspace.path, cli_path=cli_path))
+    pre_pipeline.register(ProjectsContextProvider(workspace_path=settings.workspace.path))
 
     # Create and configure the per-message post-processing pipeline
     msg_pipeline = MessagePostProcessingPipeline()
