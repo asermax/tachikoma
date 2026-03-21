@@ -154,9 +154,9 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 **Complexity**: Easy
 **Description**: The context update post-processor currently lacks signal removal capability, causing promoted or irrelevant pending signals to accumulate until they age out after 30 days. This delta completes the signal lifecycle by: (1) auto-injecting current pending signals into the `CONTEXT_UPDATE_PROMPT` so the forked agent sees them without an extra tool call, (2) adding a `remove_pending_signal` MCP tool that removes a signal by matching its text content, and (3) updating prompt instructions and tool descriptions to guide the agent through the full lifecycle — staging ambiguous signals, promoting recurring ones to context files and removing them, and cleaning up stale entries. Scoped to `context/tools.py` and `context/processor.py`.
 
-### DLT-030: Add submodule awareness to git commit prompt
+### DLT-030: Manage external project repositories
 **Status**: ✗ Defined
 **Depends on**: None
 **Priority**: 2 (High)
-**Complexity**: Easy
-**Description**: Add submodule awareness to the git post-processor's commit instructions so that the Haiku agent also commits and pushes changes within any git submodules present in the workspace before committing the parent repository. This ensures submodule references in the parent repo point to the latest committed state, preventing dirty-submodule warnings and keeping all data repositories in sync. The initial approach extends the existing `GIT_COMMIT_PROMPT` with submodule handling instructions rather than introducing a separate processor.
+**Complexity**: Medium
+**Description**: Enable the assistant to manage external code repositories alongside its workspace as git submodules within a dedicated directory. On startup, all registered projects are pulled to their latest state. The coordinator can register new projects by name and git URL during conversations. At the end of each session, changes in project repositories are committed and pushed in parallel before the main workspace commit, reusing the same commit generation approach, ensuring submodule references stay in sync. This supports workflows where the user asks the assistant to track and contribute to multiple codebases.
