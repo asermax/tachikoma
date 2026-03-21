@@ -27,9 +27,11 @@ This is distinct from memory extraction: memory processors create individual fil
 | R8 | Plug into the post-processing pipeline as a standard PostProcessor (main phase) |
 | R9 | Pending signals staging mechanism for ambiguous signals |
 | R9.1 | Structured format with entry date, stored at `.tachikoma/pending-signals.md` |
-| R9.2 | Agent accesses pending signals only via provided MCP tools (read and add) — no direct file access; tool design reinforces this constraint |
+| R9.2 | Agent manages pending signals only via auto-injection and MCP tools (add and remove) — no direct file access; tool design reinforces this constraint |
 | R9.3 | Processor auto-clears entries older than 1 month on every run |
-| R9.4 | On recurrence detection, agent promotes the signal to a context file update; the original entry naturally ages out |
+| R9.4 | On recurrence detection, agent promotes the signal to a context file update and removes the promoted entry via the remove tool in the same session |
+| R9.5 | Pending signals are auto-injected into the forked agent's prompt as a numbered list (S1..Sn) so the agent sees them without an extra tool call |
+| R9.6 | A remove tool allows the agent to remove signals by their injected index (single or batch), with all-or-nothing semantics for batch removal |
 | R10 | Log which files were updated for observability |
 | R11 | Clear boundary with memory extraction — context files are foundational identity documents while memory files are individual entries for retrieval; overlap is acceptable since they serve different purposes |
 
@@ -74,13 +76,30 @@ Only high-confidence changes with clear conversational evidence are applied. Amb
 **Acceptance Criteria**:
 - Given context files are updated after a session closes, when the next session starts, then the coordinator loads the updated context files — changes do not take effect mid-conversation, only on the next session
 
-### Pending Signals — Staging (R9, R9.1, R9.2)
+### Pending Signals — Staging (R9, R9.1, R9.2, R9.4)
 
 **Acceptance Criteria**:
 - Given a conversation with an ambiguous signal, when the processor determines it's not confident enough for a direct update, then the signal is added to `.tachikoma/pending-signals.md` via the add tool with the current date
-- Given the pending signals file exists with entries, when the agent needs to check for recurrence, then it reads the full list (with dates) via the read tool
-- Given a new ambiguous signal is semantically similar to one or more existing entries in the pending signals file, when the processor runs, then the agent promotes the signal to a context file update (recurrence detection is LLM-judgment-based using semantic similarity, not exact matching)
-- Given the agent interacts with the pending signals file, then it uses only the provided read and add MCP tools — no direct file modification or deletion
+- Given the pending signals file exists with entries, when the agent needs to check for recurrence, then it reviews the entries injected in its prompt as a numbered list (S1..Sn)
+- Given a new ambiguous signal is semantically similar to one or more existing entries in the pending signals file, when the processor runs, then the agent promotes the signal to a context file update and removes the promoted entry via the remove tool (recurrence detection is LLM-judgment-based using semantic similarity, not exact matching)
+- Given the agent interacts with the pending signals file, then it uses only auto-injection (for visibility) and the provided `add_pending_signal` and `remove_pending_signal` MCP tools — no direct file modification or deletion
+
+### Pending Signals — Auto-Injection (R9.5)
+
+**Acceptance Criteria**:
+- Given the pending signals file contains entries, when the processor builds the prompt before forking, then the entries are embedded directly in the prompt text as a numbered list (S1..Sn) so the agent sees them immediately without a tool call
+- Given the pending signals file is empty or does not exist, when the processor builds the prompt, then the pending signals section indicates no signals are present
+- Given a new signal is added via `add_pending_signal` during the forked session, when the agent reviews the prompt, then the newly added signal is not visible in the injected list (it will appear in the next session's injection)
+
+### Pending Signals — Removal (R9.4, R9.6)
+
+**Acceptance Criteria**:
+- Given the agent determines a signal is stale or irrelevant (e.g., it has not recurred across multiple processor runs), when it decides to clean it up, then the signal is removed via `remove_pending_signal`
+- Given a single index, when the agent calls `remove_pending_signal`, then the signal at that index is removed from the file
+- Given multiple indices, when the agent calls `remove_pending_signal`, then all signals at those indices are removed in a single call
+- Given a batch removal request includes any invalid index, when `remove_pending_signal` is called, then it returns an error and removes no signals (all-or-nothing)
+- Given the prompt contains signals numbered S1..Sn, when the agent removes some signals and later wants to remove others, then these indices remain stable for the entire forked session regardless of intervening removals
+- Given the agent needs to both remove and add signals in the same session, then all removals are performed before any new signals are staged to avoid overwriting freshly-added entries
 
 ### Pending Signals — Auto-Cleanup (R9.3)
 
@@ -105,3 +124,4 @@ Only high-confidence changes with clear conversational evidence are applied. Amb
 **Acceptance Criteria**:
 - Given a context file does not exist (e.g., was deleted after bootstrap), when the processor tries to read it, then it handles the absence gracefully — it may create the file or skip that file's updates without crashing
 - Given the pending signals file is malformed or corrupted, when the processor attempts auto-cleanup, then the error is logged and the processor continues with its other work (forked session still runs)
+- Given all pending signals have been removed via the remove tool during a session, when the last removal completes, then the pending signals file is deleted (consistent with auto-cleanup behavior for empty files)
