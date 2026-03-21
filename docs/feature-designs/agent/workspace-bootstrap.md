@@ -103,7 +103,7 @@ The `BootstrapContext` is frozen (fields can't be reassigned), but `settings_man
 
 ```
 1. __main__.py creates Bootstrap(settings_manager, prompt=input)
-2. Registers hooks: bootstrap.register("workspace", workspace_hook), bootstrap.register("logging", logging_hook), bootstrap.register("git", git_hook), ...
+2. Registers hooks: bootstrap.register("workspace", workspace_hook), bootstrap.register("logging", logging_hook), bootstrap.register("git", git_hook), bootstrap.register("projects", projects_hook), ...
 3. Calls await bootstrap.run()
 4. For each (name, hook) in registration order:
    a. await hook(context)
@@ -208,5 +208,5 @@ The `BootstrapContext` is frozen (fields can't be reassigned), but `settings_man
 
 ## Notes
 
-- Hook registration order in `__main__.py`: workspace → logging → git → skills → context → memory → sessions → telegram. Logging runs before git so that loguru's file handler is configured before any hooks emit log messages. Skills runs before context so that the skills directory is created before context initialization. Telegram runs last so all other subsystems are initialized before channel-specific validation.
+- Hook registration order in `__main__.py`: workspace → logging → git → projects → skills → context → memory → sessions → telegram. Logging runs before git so that loguru's file handler is configured before any hooks emit log messages. Projects runs after git because it needs the git repository initialized. Skills runs before context so that the skills directory is created before context initialization. Telegram runs last so all other subsystems are initialized before channel-specific validation.
 - The hook registration order in `__main__.py` serves as the explicit documentation of initialization sequence — no magic discovery

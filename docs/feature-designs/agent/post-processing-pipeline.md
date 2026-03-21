@@ -22,11 +22,12 @@ After a conversation ends, various post-processing tasks need to run — memory 
 **Interactions:**
 - Coordinator (`core-architecture`): triggers `pipeline.run(session)` on session close
 - Memory processors (`memory-extraction`): register in `main` phase
+- Projects processor (`project-management`): registers in `pre_finalize` phase
 - Git processor (`workspace-version-tracking`): registers in `finalize` phase
 
 ## Design Overview
 
-A `PostProcessingPipeline` manages registered `PostProcessor` instances across sequential phases. Processors declare their phase at registration (defaulting to `main` for backward compatibility). The pipeline runs phases in order — `main` then `finalize` — with processors within each phase executing in parallel via `asyncio.gather`.
+A `PostProcessingPipeline` manages registered `PostProcessor` instances across sequential phases. Processors declare their phase at registration (defaulting to `main` for backward compatibility). The pipeline runs phases in order — `main → pre_finalize → finalize` — with processors within each phase executing in parallel via `asyncio.gather`.
 
 A parallel concept — the `MessagePostProcessingPipeline` — follows a similar structural pattern (processor ABC, serialized execution, error isolation) but as a separate implementation with a distinct per-message processor interface. Unlike this pipeline, it has no phased execution. See [boundary detection design](boundary-detection.md) for details.
 
@@ -37,7 +38,7 @@ A parallel concept — the `MessagePostProcessingPipeline` — follows a similar
 │                                                           │
 │  run(session):                                            │
 │    async with lock:    ◄── serializes concurrent runs     │
-│      for each phase in [main, finalize]:                  │
+│      for each phase in [main, pre_finalize, finalize]:    │
 │        await gather(                                      │
 │          *phase_processors,                               │
 │          return_exceptions=True                           │
@@ -64,6 +65,7 @@ sequenceDiagram
     participant Coordinator
     participant Pipeline as PostProcessingPipeline
     participant MainProcs as Main-Phase Processors
+    participant PreFinalProcs as Pre-Finalize Processors
     participant FinalProcs as Finalize-Phase Processors
 
     Coordinator->>Pipeline: run(session)
@@ -74,8 +76,14 @@ sequenceDiagram
         MainProcs-->>Pipeline: complete (or exception)
     end
 
+    rect rgba(255, 200, 0, 0.1)
+        Note over Pipeline,PreFinalProcs: Phase 2: pre_finalize (parallel)
+        Pipeline->>PreFinalProcs: process(session) [in parallel]
+        PreFinalProcs-->>Pipeline: complete (or exception)
+    end
+
     rect rgba(0, 200, 100, 0.1)
-        Note over Pipeline,FinalProcs: Phase 2: finalize (parallel)
+        Note over Pipeline,FinalProcs: Phase 3: finalize (parallel)
         Pipeline->>FinalProcs: process(session) [in parallel]
         FinalProcs-->>Pipeline: complete (or exception)
     end
@@ -83,7 +91,7 @@ sequenceDiagram
 
 **Integration Points:**
 - Coordinator ↔ Pipeline: `pipeline.run(session)` in `__aexit__`, after session close
-- Pipeline ↔ Processors: `register(processor, phase="main"|"finalize")`, `process(session)` called in parallel within each phase
+- Pipeline ↔ Processors: `register(processor, phase="main"|"pre_finalize"|"finalize")`, `process(session)` called in parallel within each phase
 - `fork_and_consume`: calls `query(prompt, options=ClaudeAgentOptions(resume=session.sdk_session_id, fork_session=True, ...))` — available to processors needing session context
 
 **Error contract:**
@@ -98,14 +106,14 @@ sequenceDiagram
 - **`PromptDrivenProcessor`** (`post_processing.py`): base class for processors that fork the SDK session with a prompt (DES-004). Stores `_prompt`, `_cwd`, and `_cli_path`, implements `process()` via `fork_and_consume()`. Simple subclasses inherit `process()`; complex subclasses override it for pre/post steps and call `fork_and_consume()` directly.
 - **`fork_and_consume` function** (`post_processing.py`): standalone helper encapsulating SDK `query()` forking pattern. Accepts optional `mcp_servers` parameter for providing custom in-process MCP tools to the forked agent, and optional `cli_path` for the Claude CLI binary path. Available to processors needing session context.
 - **`Session` dataclass** (`sessions/model.py`): shared input to the pipeline — processors read `sdk_session_id`.
-- **Phase constants** (`post_processing.py`): `MAIN_PHASE = "main"`, `FINALIZE_PHASE = "finalize"` — centralized alongside pipeline validation logic.
+- **Phase constants** (`post_processing.py`): `MAIN_PHASE = "main"`, `PRE_FINALIZE_PHASE = "pre_finalize"`, `FINALIZE_PHASE = "finalize"` — centralized alongside pipeline validation logic.
 
 ## Modeling
 
 ```
 PostProcessingPipeline
 ├── _phases: dict[str, list[PostProcessor]]  (processors grouped by phase)
-├── _phase_order: list[str]                  (["main", "finalize"])
+├── _phase_order: list[str]                  (["main", "pre_finalize", "finalize"])
 ├── _lock: asyncio.Lock                      (serializes concurrent runs)
 ├── register(processor, phase="main") → None (validates phase, appends)
 └── run(session: Session) → None             (phases sequential, processors parallel)
@@ -135,7 +143,7 @@ erDiagram
 
 ```
 1. pipeline.run(session) acquires asyncio.Lock
-2. For each phase in ["main", "finalize"]:
+2. For each phase in ["main", "pre_finalize", "finalize"]:
    a. Collect processors registered for this phase
    b. If none → skip phase
    c. Run all via asyncio.gather(return_exceptions=True)
@@ -173,8 +181,8 @@ erDiagram
 
 ### Phase set as a fixed collection
 
-**Choice**: Valid phases are `["main", "finalize"]` — a fixed list validated at registration.
-**Why**: Only two phases are needed (regular processing, then cleanup/finalization). Validation at registration catches typos immediately.
+**Choice**: Valid phases are `["main", "pre_finalize", "finalize"]` — a fixed list validated at registration.
+**Why**: Three phases support ordering constraints: regular processing, then pre-finalization tasks (e.g., submodule commits), then cleanup/finalization (e.g., workspace commits). Validation at registration catches typos immediately.
 
 **Consequences**:
 - Pro: Typos caught at startup, not at runtime
@@ -207,9 +215,9 @@ erDiagram
 
 ### Scenario: Normal phased execution
 
-**Given**: Memory processors registered in main phase, git processor in finalize phase
+**Given**: Memory processors registered in main phase, projects processor in pre_finalize phase, git processor in finalize phase
 **When**: Pipeline runs
-**Then**: Main-phase processors execute in parallel. After all complete, finalize-phase processors execute. Error isolation applies per-processor and across phases.
+**Then**: Main-phase processors execute in parallel. After all complete, pre_finalize-phase processors execute. After those complete, finalize-phase processors execute. Error isolation applies per-processor and across phases.
 
 ### Scenario: Main-phase failure doesn't block finalize
 

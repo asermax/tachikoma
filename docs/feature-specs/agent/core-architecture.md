@@ -140,6 +140,7 @@ On the first message of a new session, the coordinator triggers a registered pre
 - Given the pre-processing pipeline fails, when the coordinator handles the error, then the failure is logged and the original unmodified message is sent to the agent
 - Given session creation fails, when the coordinator would run pre-processing, then pre-processing is skipped
 - Given all providers fail or return no results, when the coordinator processes the message, then the original message is sent to the agent unmodified
+- Given context providers return `mcp_servers` in their results, when the coordinator processes pipeline results, then it extracts and merges all `mcp_servers` and stores them per-session for inclusion in `ClaudeAgentOptions`
 
 ### Sub-Agent Delegation (R13)
 
@@ -166,7 +167,7 @@ Before processing a message, the coordinator checks whether it continues the cur
 
 **Acceptance Criteria**:
 - Given an active session with a conversation summary, when a new message arrives, then the coordinator runs boundary detection before processing the message
-- Given a topic shift is detected, when the transition completes, then the current session is closed, a new session is created with the SDK context reset, and the message is processed in the fresh session
+- Given a topic shift is detected, when the transition completes, then the current session is closed, MCP servers are cleared, a new session is created with the SDK context reset, and the message is processed in the fresh session (MCP servers are re-extracted from pre-processing results)
 - Given no active session, no summary, or no workspace directory exists, when a message arrives, then boundary detection is skipped
 - Given boundary detection fails, when the error is caught, then the message proceeds as a continuation (fail-open)
 

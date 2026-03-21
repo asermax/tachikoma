@@ -38,6 +38,7 @@ After all main-phase processors complete (memory extraction writes files), the g
 - Given no uncommitted changes exist, when the git post-processor runs, then it completes as a no-op without spawning an agent
 - Given the agent completes, when the post-processor verifies the workspace, then it logs a warning if uncommitted changes remain
 - Given the agent commits some groups but fails mid-way, then partial commits remain as valid history and uncommitted changes are picked up on the next run
+- Given the projects post-processor has committed and pushed submodule changes in the pre_finalize phase, when the git post-processor runs in the finalize phase, then the resulting submodule reference changes appear in `git status` and are included in the workspace commits alongside other workspace changes
 
 ### Commit Agent Behavior (R3, R7)
 

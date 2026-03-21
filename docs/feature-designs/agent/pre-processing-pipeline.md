@@ -24,7 +24,7 @@ Before the coordinator processes a user message, context providers need to run i
 **Interactions:**
 - Coordinator (`core-architecture`): calls `pipeline.run(message)` on first message of new session, then `assemble_context()` to enrich the message
 - Memory context provider (`memory-context-retrieval`): registers as the first provider (see [memory context retrieval design](../memory/memory-context-retrieval.md))
-- Future providers (DLT-021 skills): will register as additional context providers in the same pipeline
+- Projects context provider (`project-management`): registers alongside other providers, returns both text context and MCP server configurations (see [project-management design](project-management.md))
 
 ## Design Overview
 
@@ -83,7 +83,7 @@ sequenceDiagram
 ### Shared Logic
 
 - **`ContextProvider` ABC** (`pre_processing.py`): shared interface between all context providers. Defines only the `provide()` contract.
-- **`ContextResult` dataclass** (`pre_processing.py`): shared return type for all providers. Tag name validated via regex to ensure valid XML tag format (starts with letter/underscore, contains only alphanumeric, hyphens, underscores).
+- **`ContextResult` dataclass** (`pre_processing.py`): shared return type for all providers. Tag name validated via regex to ensure valid XML tag format (starts with letter/underscore, contains only alphanumeric, hyphens, underscores). Optional `mcp_servers` field allows providers to pass MCP server configurations to the coordinator alongside text context.
 - **`assemble_context()` function** (`pre_processing.py`): standalone helper for wrapping results in XML tags and prepending to message.
 
 ## Modeling
@@ -98,8 +98,9 @@ ContextProvider (ABC)
 └── provide(message: str) → ContextResult | None  (abstract)
 
 ContextResult (dataclass)
-├── tag: str       (validated: non-empty + valid XML tag name via regex)
-└── content: str   (provider's output text)
+├── tag: str                                 (validated: non-empty + valid XML tag name via regex)
+├── content: str                             (provider's output text)
+└── mcp_servers: dict[str, McpServerConfig] | None  (optional MCP server configs for coordinator)
 
 assemble_context(results: list[ContextResult], message: str) → str  (standalone)
 ```
@@ -220,5 +221,5 @@ erDiagram
 
 ## Notes
 
-- The pipeline architecture directly supports DLT-021 (skills context provider) — a skills provider would register alongside the memory provider and run in parallel.
+- The `ContextResult.mcp_servers` field enables context providers to carry both text context and tool capabilities. The coordinator extracts and merges `mcp_servers` from all results per-session, stores them, and passes them to `ClaudeAgentOptions` in `_build_options()`. This is the pipeline-driven capability injection pattern — context providers are the unified entry point for injecting both knowledge and capabilities.
 - Unlike post-processing, the pre-processing pipeline has no concurrency control. This is deliberate — the pipeline is stateless, and concurrent first-messages are prevented by the session registry.
