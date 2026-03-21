@@ -28,7 +28,7 @@ from tachikoma.post_processing import FINALIZE_PHASE, PostProcessingPipeline
 from tachikoma.pre_processing import PreProcessingPipeline
 from tachikoma.repl import Repl
 from tachikoma.sessions import session_recovery_hook
-from tachikoma.skills import SkillRegistry, skills_hook
+from tachikoma.skills import SkillsContextProvider, skills_hook
 from tachikoma.telegram import TelegramChannel, telegram_hook
 from tachikoma.workspace import workspace_hook
 
@@ -81,16 +81,13 @@ async def main(
     repository = bootstrap.extras["session_repository"]
     registry = bootstrap.extras["session_registry"]
 
-    # Create skill registry and discover agents
-    skill_registry = SkillRegistry(settings.workspace.path)
-    agents = skill_registry.get_agents()
-
+    # Skills provider will be registered in pre-processing pipeline
+    # (agents are now detected per-session via SkillsContextProvider)
     _log.info(
-        "Startup complete: workspace={ws}, log_level={level}, channel={ch}, agents={agent_count}",
+        "Startup complete: workspace={ws}, log_level={level}, channel={ch}",
         ws=settings.workspace.path,
         level=settings.logging.level,
         ch=settings.channel,
-        agent_count=len(agents),
     )
 
     # Get the system prompt from the context hook (if available)
@@ -111,6 +108,7 @@ async def main(
     # Create and configure the pre-processing pipeline
     pre_pipeline = PreProcessingPipeline()
     pre_pipeline.register(MemoryContextProvider(cwd=settings.workspace.path, cli_path=cli_path))
+    pre_pipeline.register(SkillsContextProvider(cwd=settings.workspace.path, cli_path=cli_path))
 
     # Create and configure the per-message post-processing pipeline
     msg_pipeline = MessagePostProcessingPipeline()
@@ -133,7 +131,6 @@ async def main(
             permission_mode="bypassPermissions",
             env={"CLAUDE_CODE_DISABLE_AUTO_MEMORY": "1"},
             on_status=lambda msg: console.print(msg, style="dim italic grey50"),
-            agents=agents,
             cli_path=cli_path,
         ) as coordinator:
             # Dispatch based on channel setting
