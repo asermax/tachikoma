@@ -135,6 +135,7 @@ async def main(
             on_status=lambda msg: console.print(msg, style="dim italic grey50"),
             agents=agents,
             cli_path=cli_path,
+            session_resume_window=settings.agent.session_resume_window,
         ) as coordinator:
             # Dispatch based on channel setting
             if settings.channel == "telegram":

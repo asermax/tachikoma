@@ -56,6 +56,10 @@ class AgentSettings(BaseModel):
         default=None,
         description="Path to claude binary (None = SDK bundled binary)",
     )
+    session_resume_window: int = Field(
+        default=86400,
+        description="Lookup window for session resumption matching, in seconds (default: 1 day)",
+    )
 
 
 class LoggingSettings(BaseModel):
@@ -204,6 +208,10 @@ def _generate_default_config(config_path: Path = CONFIG_PATH) -> None:
         if isinstance(default, list):
             items = ", ".join(f'"{item}"' for item in default)
             doc.add(tomlkit.comment(f"{name} = [{items}]"))
+        elif isinstance(default, bool):
+            doc.add(tomlkit.comment(f"{name} = {str(default).lower()}"))
+        elif isinstance(default, int):
+            doc.add(tomlkit.comment(f"{name} = {default}"))
         elif default is None:
             doc.add(tomlkit.comment(f"{name} ="))
         else:
