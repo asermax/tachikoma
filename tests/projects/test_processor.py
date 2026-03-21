@@ -66,9 +66,6 @@ class TestProjectsProcessor:
         """AC: Spawns agent per dirty submodule."""
         processor = ProjectsProcessor(workspace_path)
 
-        async def mock_query(*args, **kwargs):
-            yield MagicMock()
-
         with (
             patch(
                 "tachikoma.projects.processor.list_submodules",
@@ -80,8 +77,8 @@ class TestProjectsProcessor:
                 side_effect=[True, False],  # First dirty, second clean
             ),
             patch(
-                "tachikoma.projects.processor.query",
-                side_effect=mock_query,
+                "tachikoma.projects.processor.query_and_consume",
+                new_callable=AsyncMock,
             ),
             patch(
                 "tachikoma.projects.processor.push",
@@ -96,9 +93,6 @@ class TestProjectsProcessor:
         """AC: Pushes to remote after successful commit."""
         processor = ProjectsProcessor(workspace_path)
 
-        async def mock_query(*args, **kwargs):
-            yield MagicMock()
-
         with (
             patch(
                 "tachikoma.projects.processor.list_submodules",
@@ -111,8 +105,8 @@ class TestProjectsProcessor:
                 return_value=True,
             ),
             patch(
-                "tachikoma.projects.processor.query",
-                side_effect=mock_query,
+                "tachikoma.projects.processor.query_and_consume",
+                new_callable=AsyncMock,
             ),
             patch(
                 "tachikoma.projects.processor.push",
@@ -128,9 +122,6 @@ class TestProjectsProcessor:
     ) -> None:
         """AC: Push failure is logged but doesn't block other submodules."""
         processor = ProjectsProcessor(workspace_path)
-
-        async def mock_query(*args, **kwargs):
-            yield MagicMock()
 
         push_call_count = [0]
 
@@ -151,8 +142,8 @@ class TestProjectsProcessor:
                 return_value=True,
             ),
             patch(
-                "tachikoma.projects.processor.query",
-                side_effect=mock_query,
+                "tachikoma.projects.processor.query_and_consume",
+                new_callable=AsyncMock,
             ),
             patch(
                 "tachikoma.projects.processor.push",
@@ -170,10 +161,6 @@ class TestProjectsProcessor:
         """AC: Commit failure is logged and push is not attempted."""
         processor = ProjectsProcessor(workspace_path)
 
-        async def failing_query(*args, **kwargs):
-            raise RuntimeError("Commit failed")
-            yield  # Make it a generator
-
         with (
             patch(
                 "tachikoma.projects.processor.list_submodules",
@@ -186,8 +173,9 @@ class TestProjectsProcessor:
                 return_value=True,
             ),
             patch(
-                "tachikoma.projects.processor.query",
-                side_effect=failing_query,
+                "tachikoma.projects.processor.query_and_consume",
+                new_callable=AsyncMock,
+                side_effect=RuntimeError("Commit failed"),
             ),
             patch(
                 "tachikoma.projects.processor.push",
@@ -207,11 +195,10 @@ class TestProjectsProcessor:
 
         call_order: list[str] = []
 
-        async def track_query(*args, **kwargs):
+        async def track_query_and_consume(*args, **kwargs):
             call_order.append("query_start")
             await asyncio.sleep(0.05)
             call_order.append("query_end")
-            yield MagicMock()
 
         async def track_push(path: Path) -> None:
             call_order.append(f"push_{path.name}")
@@ -228,8 +215,8 @@ class TestProjectsProcessor:
                 return_value=True,
             ),
             patch(
-                "tachikoma.projects.processor.query",
-                side_effect=track_query,
+                "tachikoma.projects.processor.query_and_consume",
+                side_effect=track_query_and_consume,
             ),
             patch(
                 "tachikoma.projects.processor.push",

@@ -123,7 +123,7 @@ class TestInitSubmodule:
                 returncode=1, stderr=b"submodule not found"
             ),
         ):
-            with pytest.raises(RuntimeError, match="git submodule update --init failed"):
+            with pytest.raises(RuntimeError, match="git submodule update --init .* failed"):
                 await init_submodule(workspace, "projects/my-app")
 
 
@@ -210,7 +210,7 @@ class TestCheckoutBranch:
             new_callable=AsyncMock,
             return_value=AsyncSubprocessMock(returncode=1, stderr=b"branch not found"),
         ):
-            with pytest.raises(RuntimeError, match="git checkout failed"):
+            with pytest.raises(RuntimeError, match="git checkout .* failed"):
                 await checkout_branch(submodule_path, "nonexistent")
 
 
@@ -333,7 +333,7 @@ class TestAddSubmodule:
             new_callable=AsyncMock,
             return_value=AsyncSubprocessMock(returncode=1, stderr=b"already exists"),
         ):
-            with pytest.raises(RuntimeError, match="git submodule add failed"):
+            with pytest.raises(RuntimeError, match="git submodule add .* failed"):
                 await add_submodule(workspace, "my-app", "git@github.com:user/repo.git")
 
 
@@ -367,7 +367,7 @@ class TestRemoveSubmodule:
             new_callable=AsyncMock,
             return_value=AsyncSubprocessMock(returncode=1, stderr=b"not initialized"),
         ):
-            with pytest.raises(RuntimeError, match="git submodule deinit failed"):
+            with pytest.raises(RuntimeError, match="git submodule deinit .* failed"):
                 await remove_submodule(workspace, "my-app")
 
 

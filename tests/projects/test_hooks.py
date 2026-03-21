@@ -175,7 +175,7 @@ class TestProjectsHook:
     async def test_checks_out_default_branch_after_pull(
         self, mock_context: MagicMock, tmp_path: Path
     ) -> None:
-        """Verifies the sync flow: init → fetch → resolve → checkout → pull."""
+        """Verifies the sync flow: init → resolve → checkout → pull."""
         mock_context.settings_manager.settings.workspace.path = tmp_path
         (tmp_path / "projects").mkdir(parents=True, exist_ok=True)
 
@@ -197,10 +197,6 @@ class TestProjectsHook:
                 side_effect=track_call("init"),
             ),
             patch(
-                "tachikoma.projects.hooks.fetch",
-                side_effect=track_call("fetch"),
-            ),
-            patch(
                 "tachikoma.projects.hooks.resolve_default_branch",
                 new_callable=AsyncMock,
                 return_value="main",
@@ -216,5 +212,5 @@ class TestProjectsHook:
         ):
             await projects_hook(mock_context)
 
-        # Verify order
-        assert calls == ["init", "fetch", "checkout", "pull"]
+        # Verify order: pull includes fetch, so no separate fetch step
+        assert calls == ["init", "checkout", "pull"]
