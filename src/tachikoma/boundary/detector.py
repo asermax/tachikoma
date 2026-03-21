@@ -1,9 +1,11 @@
 """Boundary detection for conversation topic shifts.
 
 Uses standalone Opus query with low effort and JSON schema output for fast,
-reliable classification. Returns True for continuation, False for topic shift.
+reliable classification. Returns BoundaryResult with continuation status and
+optional session resumption match.
 """
 
+from dataclasses import dataclass
 from pathlib import Path
 
 from claude_agent_sdk import ClaudeAgentOptions, query
@@ -13,18 +15,56 @@ from loguru import logger
 from tachikoma.boundary.prompts import (
     BOUNDARY_DETECTION_SYSTEM_PROMPT,
     BOUNDARY_DETECTION_USER_PROMPT,
+    CANDIDATES_SECTION_TEMPLATE,
 )
 
 _log = logger.bind(component="boundary")
 
 
+@dataclass(frozen=True)
+class SessionCandidate:
+    """A candidate session for potential resumption.
+
+    Attributes:
+        id: The session ID (used to identify the session for resumption).
+        summary: The conversation summary (used for topic matching).
+    """
+
+    id: str
+    summary: str
+
+
+@dataclass(frozen=True)
+class BoundaryResult:
+    """Result of boundary detection with optional session resumption.
+
+    Attributes:
+        continues: True if the message continues the current conversation,
+            False if it's a new topic.
+        resume_session_id: If a topic shift is detected and a matching candidate
+            session is found, this contains the session ID to resume. None otherwise.
+    """
+
+    continues: bool
+    resume_session_id: str | None = None
+
+
 async def detect_boundary(
-    message: str, summary: str, cwd: Path, *, cli_path: str | None = None
-) -> bool:
+    message: str,
+    summary: str,
+    cwd: Path,
+    *,
+    candidates: list[SessionCandidate] | None = None,
+    cli_path: str | None = None,
+) -> BoundaryResult:
     """Detect whether a message continues the current conversation or starts a new topic.
 
-    **IMPORTANT**: Returns True when the conversation CONTINUES (not when a boundary
-    is detected). Returns False only when there is a clear, unambiguous topic shift.
+    **IMPORTANT**: Returns BoundaryResult where continues=True means the conversation
+    CONTINUES (not when a boundary is detected). continues=False only when there is
+    a clear, unambiguous topic shift.
+
+    When a topic shift is detected and candidate sessions are provided, the detector
+    may return a resume_session_id if a matching previous session is found.
 
     Uses a standalone Opus query with low effort and JSON schema output for fast,
     reliable classification. This call is independent of the coordinator's SDK session.
@@ -33,9 +73,14 @@ async def detect_boundary(
         message: The incoming user message text.
         summary: The current session's rolling conversation summary.
         cwd: The working directory for the SDK subprocess.
+        candidates: Optional list of candidate sessions for resumption matching.
+            Each candidate has an ID and summary for topic matching.
+        cli_path: Optional path to the Claude CLI binary.
 
     Returns:
-        True if the message continues the conversation, False if it's a new topic.
+        BoundaryResult with:
+        - continues: True if the message continues the conversation, False if new topic.
+        - resume_session_id: If a topic shift and matching candidate found, the ID to resume.
 
     Raises:
         Propagates: SDK errors from the query() call. The coordinator handles
@@ -53,8 +98,9 @@ async def detect_boundary(
                 "type": "object",
                 "properties": {
                     "continues_conversation": {"type": "boolean"},
+                    "resume_session_id": {"type": ["string", "null"]},
                 },
-                "required": ["continues_conversation"],
+                "required": ["continues_conversation", "resume_session_id"],
                 "additionalProperties": False,
             },
         },
@@ -62,12 +108,20 @@ async def detect_boundary(
         permission_mode="bypassPermissions",
     )
 
+    # Build user prompt with optional candidates section
     user_prompt = BOUNDARY_DETECTION_USER_PROMPT.format(
         summary=summary, message=message
     )
 
+    if candidates:
+        candidates_text = CANDIDATES_SECTION_TEMPLATE.format(
+            candidates=_format_candidates(candidates)
+        )
+        user_prompt = f"{user_prompt}\n\n{candidates_text}"
+
     # Fully consume the query() generator to ensure proper SDK cleanup.
-    continues = True
+    # Default: fail-open (continues=True, no resume)
+    result = BoundaryResult(continues=True)
     got_result = False
 
     async for sdk_message in query(prompt=user_prompt, options=options):
@@ -83,9 +137,20 @@ async def detect_boundary(
                 continues = bool(
                     sdk_message.structured_output.get("continues_conversation", True)
                 )
+                resume_id = sdk_message.structured_output.get("resume_session_id")
+
+                # Only set resume_session_id if it's a valid non-empty string
+                if resume_id is not None and not isinstance(resume_id, str):
+                    resume_id = None
+                elif resume_id is not None and resume_id == "":
+                    resume_id = None
+
+                result = BoundaryResult(continues=continues, resume_session_id=resume_id)
+
                 _log.debug(
-                    "Boundary detection result: continues={continues}",
+                    "Boundary detection result: continues={continues} resume_id={resume_id}",
                     continues=continues,
+                    resume_id=resume_id,
                 )
             else:
                 _log.warning("Boundary detection returned no structured output")
@@ -93,4 +158,21 @@ async def detect_boundary(
     if not got_result:
         _log.warning("Boundary detection query produced no ResultMessage")
 
-    return continues
+    return result
+
+
+def _format_candidates(candidates: list[SessionCandidate]) -> str:
+    """Format candidates list for the prompt.
+
+    Args:
+        candidates: List of session candidates with ID and summary.
+
+    Returns:
+        Formatted string with numbered list of candidates.
+    """
+    lines = []
+    for i, candidate in enumerate(candidates, start=1):
+        lines.append(f"{i}. Session ID: {candidate.id}")
+        lines.append(f"   Summary: {candidate.summary}")
+
+    return "\n".join(lines)
