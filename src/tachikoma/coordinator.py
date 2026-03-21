@@ -19,7 +19,11 @@ from tachikoma.boundary import detect_boundary
 from tachikoma.events import AgentEvent, Error, Result, Status, TextChunk
 from tachikoma.message_post_processing import MessagePostProcessingPipeline
 from tachikoma.post_processing import PostProcessingPipeline
-from tachikoma.pre_processing import PreProcessingPipeline, assemble_context
+from tachikoma.pre_processing import (
+    McpServerConfig,
+    PreProcessingPipeline,
+    assemble_context,
+)
 from tachikoma.sessions.model import Session
 from tachikoma.sessions.registry import SessionRegistry
 
@@ -85,6 +89,9 @@ class Coordinator:
         # SDK session tracking for resume
         self._sdk_session_id: str | None = None
         self._previous_summary: str | None = None
+
+        # MCP servers extracted from pre-processing pipeline (session-scoped)
+        self._mcp_servers: dict = {}
 
         # Active client (only set during send_message, None between messages)
         self._client: ClaudeSDKClient | None = None
@@ -204,7 +211,7 @@ the user explicitly refers back to it.
                 append=append_text,
             )
 
-        return ClaudeAgentOptions(
+        options = ClaudeAgentOptions(
             allowed_tools=self._allowed_tools,
             model=self._model,
             cwd=self._cwd,
@@ -215,6 +222,11 @@ the user explicitly refers back to it.
             agents=self._agents,
             resume=resume,
         )
+
+        if self._mcp_servers:
+            options.mcp_servers = self._mcp_servers
+
+        return options
 
     async def send_message(self, text: str) -> AsyncIterator[AgentEvent]:
         """Send a user message and yield AgentEvents as the agent responds.
@@ -285,6 +297,12 @@ the user explicitly refers back to it.
             try:
                 results = await self._pre_pipeline.run(text)
                 if results:
+                    # Merge mcp_servers from all results
+                    merged: dict[str, McpServerConfig] = {}
+                    for r in results:
+                        if r.mcp_servers:
+                            merged.update(r.mcp_servers)
+                    self._mcp_servers = merged
                     text = assemble_context(results, text)
             except Exception as exc:
                 _log.exception("Pre-processing failed: err={err}", err=str(exc))
@@ -394,6 +412,7 @@ the user explicitly refers back to it.
         # Save the summary for injection into the new session's system prompt.
         self._sdk_session_id = None
         self._previous_summary = session_snapshot.summary
+        self._mcp_servers = {}
 
         # Create new session in registry
         if self._registry is not None:
