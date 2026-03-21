@@ -9,10 +9,22 @@ import asyncio
 import re
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
+from typing import Union
 
+from claude_agent_sdk.types import (
+    McpHttpServerConfig,
+    McpSdkServerConfig,
+    McpSSEServerConfig,
+    McpStdioServerConfig,
+)
 from loguru import logger
 
 _log = logger.bind(component="pre_processing")
+
+# Type alias for MCP server configurations
+McpServerConfig = Union[
+    McpStdioServerConfig, McpSSEServerConfig, McpHttpServerConfig, McpSdkServerConfig
+]
 
 # Valid XML tag name pattern: must start with letter/underscore, followed by
 # letters, numbers, hyphens, or underscores
@@ -28,10 +40,13 @@ class ContextResult:
             (starts with letter/underscore, contains only alphanumeric, hyphens,
             underscores).
         content: The context content to wrap in XML tags.
+        mcp_servers: Optional MCP server configurations to pass to the coordinator.
+            Used by context providers that also provide tools (e.g., project management).
     """
 
     tag: str
     content: str
+    mcp_servers: dict[str, McpServerConfig] | None = None
 
     def __post_init__(self) -> None:
         """Validate that tag is a valid XML tag name."""
