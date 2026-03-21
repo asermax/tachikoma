@@ -7,36 +7,49 @@
 
 ## Purpose
 
-This document explains the design rationale for the skill system: how skills are structured, discovered, registered, and integrated with the coordinator to enable sub-agent delegation via the SDK.
+This document explains the design rationale for the skill system: how skills are structured, discovered, registered, detected per-session, and integrated with the coordinator to enable targeted sub-agent delegation via the SDK.
 
 ## Problem Context
 
-The coordinator needs to make specialized sub-agents available to the SDK's orchestrator for delegation. Skills provide a structured, discoverable way to organize and define these agents.
+The coordinator needs to make specialized sub-agents available to the SDK's orchestrator for delegation. Skills provide a structured, discoverable way to organize and define these agents. Only relevant skills should be loaded per session to avoid wasting context on irrelevant agents.
 
 **Constraints:**
 - Skills must be directory-based (not single files) to accommodate future expansion
 - Agent definitions must be loadable from markdown files with metadata
-- Agents must be discoverable and loaded at startup before conversations begin
+- Skills must be discoverable at startup; only relevant skills loaded per-session based on LLM classification
 - Invalid or missing skills/agents should not crash the system
-- Agents are passed to the SDK as a dictionary and persist for the session lifetime
+- Detection failures must never block messages — same error contract as other pre-processing providers
+- Detected agents persist for the session lifetime; cleared on topic shift
 
 **Interactions:**
 - Bootstrap process creates the skills directory (via skills hook, see [workspace-bootstrap](workspace-bootstrap.md))
 - Skill registry discovers all skills and agents at startup
-- Coordinator retrieves agents from registry and passes them to SDK (see [core-architecture](core-architecture.md))
-- SDK's internal orchestrator uses agents for delegation decisions
+- Skills context provider classifies relevance per-session via the pre-processing pipeline (see [pre-processing-pipeline](pre-processing-pipeline.md))
+- Coordinator extracts detected agents from pipeline results and passes to SDK (see [core-architecture](core-architecture.md))
+- SDK's internal orchestrator uses detected agents for delegation decisions
 
 ## Design Overview
 
-Three-component architecture: a bootstrap hook creates the directory structure, the skill registry discovers and loads all skills and agents, and the coordinator passes the agents to the SDK.
+Four-component architecture: a bootstrap hook creates the directory structure, the skill registry discovers and loads all skills and agents at startup, a skills context provider classifies relevance per-session, and the coordinator extracts detected agents from pipeline results.
 
 ```
 ┌──────────────────────────────────────────────────────┐
 │              Coordinator Layer                        │
 │  ┌────────────────────────────────────────────┐       │
 │  │  Coordinator                               │       │
-│  │  - Receives agents dict from registry      │       │
+│  │  - Extracts detected agents from pipeline  │       │
+│  │  - Stores agents per-session               │       │
 │  │  - Passes agents to ClaudeAgentOptions     │       │
+│  └────┬───────────────────────────────────────┘       │
+├───────┼──────────────────────────────────────────────┤
+│       │                                               │
+│       ▼                                               │
+│  ┌────────────────────────────────────────────┐       │
+│  │  SkillsContextProvider (PreProcessing)     │       │
+│  │  - Classifies relevance via LLM            │       │
+│  │  - Injects <skills> XML context block      │       │
+│  │  - Returns detected agents on ContextResult│       │
+│  │  - Owns its own SkillRegistry              │       │
 │  └────┬───────────────────────────────────────┘       │
 ├───────┼──────────────────────────────────────────────┤
 │       │                                               │
@@ -45,7 +58,7 @@ Three-component architecture: a bootstrap hook creates the directory structure, 
 │  │  Skill Registry                            │       │
 │  │  - Discovers skills at startup             │       │
 │  │  - Loads agents from each skill            │       │
-│  │  - Provides agents dict to coordinator     │       │
+│  │  - Stores skill body + path at init        │       │
 │  └────┬───────────────────────────────────────┘       │
 ├───────┼──────────────────────────────────────────────┤
 │       │                                               │
@@ -54,7 +67,7 @@ Three-component architecture: a bootstrap hook creates the directory structure, 
 │  │  Skills Directory Structure                │       │
 │  │  workspace/skills/                         │       │
 │  │  ├── skill-name/                           │       │
-│  │  │   ├── SKILL.md (metadata)               │       │
+│  │  │   ├── SKILL.md (metadata + body)        │       │
 │  │  │   └── agents/                           │       │
 │  │  │       ├── agent-1.md                    │       │
 │  │  │       └── agent-2.md                    │       │
@@ -70,34 +83,42 @@ Three-component architecture: a bootstrap hook creates the directory structure, 
 
 | Layer/Component | Responsibility | Key Decisions |
 |-----------------|----------------|---------------|
-| `src/tachikoma/skills/__init__.py` | Re-exports `SkillRegistry`, `Skill`, `skills_hook` | Package module for the skills subsystem |
-| `src/tachikoma/skills/registry.py` | `SkillRegistry` class: discovers skills, loads agents, builds agents dict; `Skill` dataclass for metadata | Uses `python-frontmatter` for parsing; constructs `AgentDefinition` from `claude_agent_sdk.types` directly |
+| `src/tachikoma/skills/__init__.py` | Re-exports `SkillRegistry`, `Skill`, `skills_hook`, `SkillsContextProvider` | Package module for the skills subsystem |
+| `src/tachikoma/skills/registry.py` | `SkillRegistry` class: discovers skills, loads agents, builds agents dict, stores skill body and path; `Skill` dataclass for metadata (name, description, version, body, path) | Uses `python-frontmatter` for parsing; constructs `AgentDefinition` from `claude_agent_sdk.types` directly; body and path stored at init time |
+| `src/tachikoma/skills/context_provider.py` | `SkillsContextProvider(ContextProvider)`: creates its own `SkillRegistry` in `__init__`, classifies relevant skills via standalone `query()` with Opus low effort (DES-006), reads skill body from registry's pre-loaded `Skill.body`, assembles `<skills>` XML block, returns detected agents via `ContextResult.agents` | Self-contained provider (owns registry); no tools for classification agent (pure reasoning); fully consumes query() generator (DES-005); `get_agents_for_skill()` on registry for agent filtering |
 | `src/tachikoma/skills/hooks.py` | `skills_hook` bootstrap callback: creates `workspace/skills/` directory | Follows DES-003 pattern (subsystem-owned hook); directory creation only |
 
 ### Cross-Layer Contracts
 
-**SkillRegistry → Coordinator contract:**
+**SkillsContextProvider → Pipeline → Coordinator contract:**
 
-The registry provides a dictionary of `AgentDefinition` objects indexed by namespace. The coordinator passes this dictionary directly to `ClaudeAgentOptions.agents`.
+The provider classifies relevance, assembles skill content, and returns detected agents on `ContextResult`. The coordinator extracts agents from pipeline results and stores them per-session.
 
 ```
-SkillRegistry(workspace_path)
+SkillsContextProvider(cwd, cli_path)
     │
-    ├── discovers skills in workspace/skills/
-    ├── loads agents from each skill's agents/ subdirectory
-    ├── builds agents dict: {"skill-name/agent-name": AgentDefinition, ...}
+    ├── creates SkillRegistry internally
+    ├── on provide(message):
+    │   ├── loads skill names + descriptions from registry.skills
+    │   ├── classifies via query() [Opus low effort]
+    │   ├── reads skill.body from registry (pre-loaded at init)
+    │   ├── filters agents via registry.get_agents_for_skill()
+    │   └── returns ContextResult(tag="skills", content=XML, agents=filtered_dict)
     │
-    └── get_agents() → dict[str, AgentDefinition]
+    └── Pipeline collects results → Coordinator extracts agents
             │
             ▼
-    Coordinator(agents=registry.get_agents())
+    Coordinator._agents = merged agents from results
             │
-            └── ClaudeAgentOptions(agents=agents)
+            └── ClaudeAgentOptions(agents=self._agents)
 ```
 
 **Integration Points:**
-- SkillRegistry ↔ filesystem: reads `SKILL.md` and agent markdown files from `workspace/skills/`
-- SkillRegistry → Coordinator: provides agents dictionary via `get_agents()`
+- SkillRegistry ↔ filesystem: reads `SKILL.md` (with body) and agent markdown files from `workspace/skills/`
+- SkillsContextProvider ↔ Pipeline: registers via `pipeline.register(provider)`; `provide(message)` called in parallel with memory provider
+- SkillsContextProvider ↔ SkillRegistry: internal — provider creates registry in `__init__`, reads `skills` property and calls `get_agents_for_skill()`
+- SkillsContextProvider ↔ SDK: standalone `query()` call for classification (no tools, low effort, DES-006)
+- Pipeline ↔ Coordinator: `pipeline.run()` returns `list[ContextResult]`; coordinator reads both `content` (text) and `agents` (structured) from results
 - Skills hook ↔ Bootstrap: registered as a standard bootstrap hook (DES-003)
 
 ## Modeling
@@ -126,13 +147,22 @@ flowchart TD
 Skill (dataclass)
 ├── name: str (matches folder name)
 ├── description: str
-└── version: str | None
+├── version: str | None
+├── body: str (SKILL.md content without YAML frontmatter, loaded at init)
+└── path: Path (absolute path to skill directory)
 
 SkillRegistry
 ├── _agents: dict[str, AgentDefinition]
 ├── _skills: dict[str, Skill]
 ├── get_agents() → dict[str, AgentDefinition]
+├── get_agents_for_skill(skill_name: str) → dict[str, AgentDefinition]
 └── skills (property) → dict[str, Skill]
+
+SkillsContextProvider(ContextProvider)
+├── _registry: SkillRegistry     (owned, created in __init__)
+├── _cwd: Path                   (workspace directory)
+├── _cli_path: str | None        (optional Claude CLI binary path)
+└── provide(message: str) → ContextResult | None
 ```
 
 ## Data Flow
@@ -166,14 +196,16 @@ SkillRegistry
 
 ```
 1. Bootstrap runs skills hook → creates workspace/skills/ if missing
-2. __main__.py creates SkillRegistry(workspace_path)
-   → Scans workspace/skills/
-   → Loads all SKILL.md files
-   → Discovers and loads all agents/
-   → Builds agents dictionary
-3. __main__.py passes registry.get_agents() to Coordinator constructor
-4. Coordinator passes agents to ClaudeAgentOptions
-5. SDK orchestrator can delegate to any loaded agent
+2. __main__.py creates SkillsContextProvider(cwd=workspace_path, cli_path=cli_path)
+   → Provider creates SkillRegistry internally
+   → Registry loads all SKILL.md files (including body and path)
+   → Registry discovers and loads all agents/
+3. __main__.py registers SkillsContextProvider in pre-processing pipeline
+4. Coordinator created without agents parameter
+5. Detection happens per-session via pre-processing pipeline:
+   → Provider classifies relevance via LLM
+   → Coordinator extracts detected agents from pipeline results
+   → SDK sees only relevant agents for the session
 ```
 
 ## Key Decisions
@@ -223,17 +255,44 @@ SkillRegistry
 - Pro: Negligible memory cost
 - Con: Slightly more data in memory than strictly needed for current functionality
 
-### Agents Passed to SDK at Initialization
+### Per-Session Agent Detection via Pre-Processing Pipeline
 
-**Choice**: All agents are discovered at startup and passed to the SDK via `ClaudeAgentOptions.agents`.
-**Why**: The SDK's orchestrator requires agents to be known upfront for delegation decisions. Agents must be available for the entire session.
+**Choice**: Agents are detected per-session based on message context via the skills context provider in the pre-processing pipeline, rather than loading all agents at startup.
+**Why**: Loading all agents at startup wastes context and degrades delegation quality when irrelevant agents compete for attention. Per-session detection ensures only relevant agents are available, improving both precision and context efficiency.
 **Alternatives Considered**:
+- All agents at startup (previous approach): Simpler but wastes context on irrelevant agents
 - Dynamic agent loading mid-session: Complex, SDK doesn't support mid-session agent updates
 
 **Consequences**:
-- Pro: Single load at startup, simple lifecycle
-- Pro: Aligns with SDK's design
-- Con: Cannot add agents during conversation
+- Pro: Only relevant agents loaded — no context waste
+- Pro: Detection is session-scoped — persists across messages within a session
+- Pro: Topic shifts trigger re-detection for the new context
+- Con: Adds LLM call per new session for classification (mitigated by Opus low effort)
+
+### Provider Owns Its SkillRegistry
+
+**Choice**: `SkillsContextProvider` creates `SkillRegistry` internally in `__init__`, rather than receiving it via constructor injection.
+**Why**: The coordinator no longer needs agents from the registry directly — agents flow through the pipeline. The provider is the sole consumer, so it can own it. Follows the same self-contained pattern as `MemoryContextProvider`.
+**Alternatives Considered**:
+- Registry passed via constructor from `__main__.py`: Adds coupling for no benefit
+- Registry from bootstrap extras: No standardized pattern exists
+
+**Consequences**:
+- Pro: Self-contained, consistent with `MemoryContextProvider` pattern
+- Pro: Simplifies `__main__.py` wiring — provider only needs `cwd` and `cli_path`
+- Con: If future consumers need the registry, it would need to be extracted
+
+### Skill Body and Path Stored at Registry Init Time
+
+**Choice**: The `Skill` dataclass stores `body` (SKILL.md content without frontmatter) and `path` (directory path) at registry initialization, rather than reading from the filesystem at detection time.
+**Why**: Simpler and avoids duplicate filesystem reads. The registry already reads SKILL.md for metadata — storing the body at the same time is trivial. The provider reads `skill.body` from the registry rather than re-reading from disk.
+**Alternatives Considered**:
+- Read SKILL.md from filesystem at detection time: Avoids storing bodies in memory but adds filesystem reads during the critical path
+
+**Consequences**:
+- Pro: Simpler — body available from the registry without additional filesystem access
+- Pro: No I/O during the detection/classification flow
+- Con: All skill bodies stored in memory (negligible — skill files are small)
 
 ### Graceful Error Handling
 
@@ -251,7 +310,7 @@ SkillRegistry
 
 1. **Agent Uniqueness by Namespace**: Each agent has a unique namespace key (skill-name/agent-name). Skill names are folder names (unique by filesystem constraint) and agent names are filename stems (unique within a skill).
 
-2. **Session Stability**: Once agents are passed to the SDK at initialization, the set of available agents does not change for the session duration.
+2. **Session Stability**: Once agents are detected and loaded for a session, the set of available agents does not change for the session duration. Detection runs on the first message of each new session (including after topic shift transitions).
 
 3. **Graceful Degradation**: Invalid skills or agents do not cause the system to fail. Registry returns whatever agents it successfully loaded.
 
@@ -276,8 +335,30 @@ SkillRegistry
 **Then**: Valid skills load normally. Invalid skills are logged as warnings and skipped. The coordinator starts with the agents from valid skills only.
 **Rationale**: Graceful degradation — one bad skill shouldn't prevent others from loading.
 
+### Scenario: Skill detection on new session
+
+**Given**: Skills exist in the registry and a user sends a message matching one or more skills
+**When**: Pre-processing runs on new session
+**Then**: Provider classifies skills, detects matches, reads body from registry, injects `<skills>` XML block, returns agents for matched skills. Coordinator stores agents for the session. SDK sees only relevant agents.
+**Rationale**: Core detection path — targeted skill loading reduces context waste.
+
+### Scenario: No relevant skills detected
+
+**Given**: Skills exist but none match the user's message
+**When**: Pre-processing runs
+**Then**: Classification returns no relevant skills. Provider returns None (no context block, no agents). Message proceeds with memory context only.
+**Rationale**: Precision — irrelevant skills are not loaded.
+
+### Scenario: Classification agent fails
+
+**Given**: Provider runs but the forked Opus agent fails (SDK error, timeout)
+**When**: Exception is caught
+**Then**: Provider logs the error (DES-002), returns None. No agents loaded, no skills context. Other providers (memory) complete normally.
+**Rationale**: Detection failures never block the message.
+
 ## Notes
 
 - The SDK orchestrator makes delegation decisions opaquely. The application provides agents; the SDK decides how to use them.
 - Tool scoping via agent definition's tools field is enforced by the SDK at invocation time.
-- This design is infrastructure-focused. Intelligence for automatic skill detection builds on top.
+- The classification prompt design is an implementation detail — it embeds all skill names + descriptions and the user message, asking which skills are relevant.
+- The `NO_RELEVANT_SKILLS` sentinel pattern (consistent with `MemoryContextProvider`'s `NO_RELEVANT_MEMORIES`) distinguishes "classified and found nothing" from "agent error."

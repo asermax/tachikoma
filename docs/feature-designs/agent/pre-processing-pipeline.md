@@ -24,7 +24,7 @@ Before the coordinator processes a user message, context providers need to run i
 **Interactions:**
 - Coordinator (`core-architecture`): calls `pipeline.run(message)` on first message of new session, then `assemble_context()` to enrich the message
 - Memory context provider (`memory-context-retrieval`): registers as the first provider (see [memory context retrieval design](../memory/memory-context-retrieval.md))
-- Future providers (DLT-021 skills): will register as additional context providers in the same pipeline
+- Skills context provider (`skills`): registers alongside memory provider, classifies and injects relevant skills (see [skills design](skills.md))
 
 ## Design Overview
 
@@ -35,7 +35,7 @@ A `PreProcessingPipeline` manages registered `ContextProvider` instances. Provid
 │                    PreProcessingPipeline                         │
 │                    (src/tachikoma/pre_processing.py)             │
 │                                                                  │
-│  ContextProvider ABC ──► ContextResult(tag, content)             │
+│  ContextProvider ABC ──► ContextResult(tag, content, agents=None) │
 │                                                                  │
 │  run(message):                                                   │
 │    await gather(                                                 │
@@ -54,7 +54,7 @@ A `PreProcessingPipeline` manages registered `ContextProvider` instances. Provid
 
 | Layer/Component | Responsibility | Key Decisions |
 |-----------------|----------------|---------------|
-| `src/tachikoma/pre_processing.py` | `ContextProvider` ABC (interface only), `ContextResult` dataclass (with `__post_init__` tag validation via regex), `PreProcessingPipeline` class (parallel execution with error isolation), `assemble_context()` standalone function | Mirrors `post_processing.py` pattern — mechanism separate from domain; ABC has no SDK coupling; assembly function is a pure standalone helper; no serialization lock needed (unlike post-processing) because the pipeline is stateless |
+| `src/tachikoma/pre_processing.py` | `ContextProvider` ABC (interface only), `ContextResult` dataclass (with `__post_init__` tag validation via regex, optional `agents` field for structured data), `PreProcessingPipeline` class (parallel execution with error isolation), `assemble_context()` standalone function | Mirrors `post_processing.py` pattern — mechanism separate from domain; assembly function is a pure standalone helper; no serialization lock needed (unlike post-processing) because the pipeline is stateless; `agents` field uses a specific named property (not generic extras) for type safety |
 
 ### Cross-Layer Contracts
 
@@ -83,7 +83,7 @@ sequenceDiagram
 ### Shared Logic
 
 - **`ContextProvider` ABC** (`pre_processing.py`): shared interface between all context providers. Defines only the `provide()` contract.
-- **`ContextResult` dataclass** (`pre_processing.py`): shared return type for all providers. Tag name validated via regex to ensure valid XML tag format (starts with letter/underscore, contains only alphanumeric, hyphens, underscores).
+- **`ContextResult` dataclass** (`pre_processing.py`): shared return type for all providers. Tag name validated via regex to ensure valid XML tag format (starts with letter/underscore, contains only alphanumeric, hyphens, underscores). Optional `agents` field allows providers to return agent definitions alongside text context.
 - **`assemble_context()` function** (`pre_processing.py`): standalone helper for wrapping results in XML tags and prepending to message.
 
 ## Modeling
@@ -98,16 +98,18 @@ ContextProvider (ABC)
 └── provide(message: str) → ContextResult | None  (abstract)
 
 ContextResult (dataclass)
-├── tag: str       (validated: non-empty + valid XML tag name via regex)
-└── content: str   (provider's output text)
+├── tag: str                                           (validated: non-empty + valid XML tag name via regex)
+├── content: str                                       (provider's output text)
+└── agents: dict[str, AgentDefinition] | None = None   (optional structured data for agent definitions)
 
-assemble_context(results: list[ContextResult], message: str) → str  (standalone)
+assemble_context(results: list[ContextResult], message: str) → str  (standalone, handles text only)
 ```
 
 ```mermaid
 erDiagram
     PreProcessingPipeline ||--o{ ContextProvider : "registers"
     ContextProvider ||--o| ContextResult : "returns"
+    ContextResult ||--o| AgentDefinitions : "optionally carries"
     Coordinator ||--o| PreProcessingPipeline : "optionally triggers"
 ```
 
@@ -177,6 +179,20 @@ erDiagram
 - Pro: Simpler implementation — no ordering logic needed
 - Con: Block order may vary between runs (cosmetic, not functional)
 
+### Specific named property for structured data
+
+**Choice**: Add `agents: dict[str, AgentDefinition] | None = None` as a specific named field on `ContextResult`, not a generic extras dict.
+**Why**: Type-safe and self-documenting. The coordinator knows exactly what property to read without runtime type narrowing or key lookups. Backward compatible — existing providers don't set it, defaults to None.
+**Alternatives Considered**:
+- Generic `extras: dict[str, Any] | None`: Flexible but weakly typed; consumption requires `isinstance` checks
+- Separate `ContextResultWithAgents` subclass: Breaks uniform `list[ContextResult]` return type
+
+**Consequences**:
+- Pro: Type-safe at both production (provider) and consumption (coordinator)
+- Pro: Backward compatible — default None means existing providers unchanged
+- Con: Adding new structured data in the future requires a new field on ContextResult (acceptable — each extension is explicit)
+- Con: Introduces `AgentDefinition` import from `claude_agent_sdk.types` into `pre_processing.py` — an intentional tradeoff for type safety
+
 ### XML tag validation via regex
 
 **Choice**: `ContextResult.__post_init__` validates tag names against a regex pattern (`^[a-zA-Z_][a-zA-Z0-9_-]*$`), checking both non-emptiness and valid XML tag name conformance.
@@ -220,5 +236,5 @@ erDiagram
 
 ## Notes
 
-- The pipeline architecture directly supports DLT-021 (skills context provider) — a skills provider would register alongside the memory provider and run in parallel.
+- The pipeline supports both text context (via `assemble_context()`) and structured data (via the `agents` field on `ContextResult`). The pipeline itself only handles text assembly — the coordinator is responsible for extracting structured data from result objects directly.
 - Unlike post-processing, the pre-processing pipeline has no concurrency control. This is deliberate — the pipeline is stateless, and concurrent first-messages are prevented by the session registry.

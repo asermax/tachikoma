@@ -21,6 +21,7 @@ A reusable, pluggable pipeline that runs registered context providers in paralle
 | R3 | Each provider returns a named, XML-tagged context block; the pipeline assembles all results and prepends them to the message text |
 | R4 | Context injection uses XML tags consistent with the existing `<soul>`, `<user>`, `<agents>` convention, generalized for easy addition of new context sources |
 | R5 | Pipeline extensible — adding a new context provider requires only implementing the ABC and registering it; no changes to pipeline or coordinator code |
+| R6 | Context results can optionally carry agent definitions alongside text context, enabling providers to return agents that the coordinator loads for the session. Backward compatible for providers that don't set it |
 
 ## Behaviors
 
@@ -54,3 +55,12 @@ Successful results are assembled into XML-tagged blocks and prepended to the ori
 - Given the XML tag convention, when context is injected, then it is consistent with the existing foundational context tags (`<soul>`, `<user>`, `<agents>`)
 - Given a context result tag name, when it is validated, then it must conform to valid XML tag name format (starts with letter/underscore, contains only alphanumeric, hyphens, underscores)
 - Given no providers return results (all returned None or all failed), when the pipeline assembles context, then the original message is returned unmodified
+
+### Agent Definitions Support (R6)
+
+Context results can optionally carry agent definitions that the coordinator extracts and loads for the session.
+
+**Acceptance Criteria**:
+- Given a provider sets the agents field on its `ContextResult`, when the pipeline collects results, then the agents are available on the result object for the coordinator to extract
+- Given a provider does not set agents (defaults to None), when the pipeline runs, then it continues to work unchanged — backward compatible
+- Given multiple providers return results, when the coordinator processes them, then it extracts and merges agent definitions from all results
