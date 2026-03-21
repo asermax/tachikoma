@@ -71,6 +71,27 @@ class TestContextResult:
         result = ContextResult(tag="my-context", content="content")
         assert result.tag == "my-context"
 
+    def test_mcp_servers_defaults_to_none(self) -> None:
+        """AC: mcp_servers field defaults to None for backward compatibility."""
+        result = ContextResult(tag="test", content="content")
+        assert result.mcp_servers is None
+
+    def test_mcp_servers_can_be_set(self) -> None:
+        """AC: mcp_servers can be set to a dict of server configs."""
+        from claude_agent_sdk import create_sdk_mcp_server, tool
+
+        @tool("test_tool", "A test tool", {})
+        async def test_tool(args: dict) -> dict:
+            return {"content": [{"type": "text", "text": "ok"}]}
+
+        server = create_sdk_mcp_server(name="test", version="1.0.0", tools=[test_tool])
+        mcp_servers = {"test": server}
+
+        result = ContextResult(tag="test", content="content", mcp_servers=mcp_servers)
+        assert result.mcp_servers == mcp_servers
+        # McpSdkServerConfig is a dict with "type" and "sdkServer" keys
+        assert result.mcp_servers["test"]["type"] == "sdk"
+
 
 class TestPreProcessingPipeline:
     """Tests for PreProcessingPipeline."""
