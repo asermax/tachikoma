@@ -24,8 +24,9 @@ _log = logger.bind(component="post_processing")
 
 # Fixed phase identifiers — validated at registration
 MAIN_PHASE = "main"
+PRE_FINALIZE_PHASE = "pre_finalize"
 FINALIZE_PHASE = "finalize"
-_VALID_PHASES = frozenset({MAIN_PHASE, FINALIZE_PHASE})
+_VALID_PHASES = frozenset({MAIN_PHASE, PRE_FINALIZE_PHASE, FINALIZE_PHASE})
 
 
 class PostProcessor(ABC):
@@ -99,7 +100,7 @@ class PostProcessingPipeline:
     """
 
     # Phase execution order
-    _phase_order = [MAIN_PHASE, FINALIZE_PHASE]
+    _phase_order = [MAIN_PHASE, PRE_FINALIZE_PHASE, FINALIZE_PHASE]
 
     def __init__(self) -> None:
         # Pre-populate phases so register() can append without KeyError
