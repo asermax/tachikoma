@@ -302,11 +302,9 @@ providing context for what the user has been doing in the meantime.
                         recent = await self._registry.get_recent_closed(
                             before=now, window=window
                         )
-                        # Build candidates from sessions with summaries
                         candidates = [
                             SessionCandidate(id=s.id, summary=s.summary)
                             for s in recent
-                            if s.summary
                         ]
                     except Exception as exc:
                         _log.exception(
@@ -437,9 +435,9 @@ providing context for what the user has been doing in the meantime.
             True if a previous session was resumed, False if a fresh session was created.
         """
         session_snapshot = previous_session
-        previous_ended_at = session_snapshot.ended_at
 
-        # Close session in registry
+        # Close session in registry — capture the close timestamp for bridging context
+        closed_at = datetime.now(UTC)
         if self._registry is not None:
             try:
                 await self._registry.close_session(session_snapshot.id)
@@ -465,14 +463,13 @@ providing context for what the user has been doing in the meantime.
                     self._sdk_session_id = reopened.sdk_session_id
 
                     # Record the resumption event (best-effort)
-                    if previous_ended_at is not None:
-                        await self._registry.record_resumption(
-                            session_id=reopened.id,
-                            previous_ended_at=previous_ended_at,
-                        )
+                    await self._registry.record_resumption(
+                        session_id=reopened.id,
+                        previous_ended_at=closed_at,
+                    )
 
                     # Assemble bridging context from intermediate sessions
-                    await self._assemble_bridging_context(reopened, previous_ended_at)
+                    await self._assemble_bridging_context(reopened, closed_at)
 
                     _log.info(
                         "Session resumed: session_id={id} sdk_session_id={sdk}",
@@ -505,7 +502,7 @@ providing context for what the user has been doing in the meantime.
         return False
 
     async def _assemble_bridging_context(
-        self, resumed_session: Session, previous_ended_at: datetime | None
+        self, resumed_session: Session, closed_at: datetime
     ) -> None:
         """Assemble bridging context from intermediate sessions.
 
@@ -514,15 +511,15 @@ providing context for what the user has been doing in the meantime.
 
         Args:
             resumed_session: The session being resumed.
-            previous_ended_at: When the current session ended (before resume).
+            closed_at: When the previous session was closed (before resume).
         """
-        if self._registry is None or previous_ended_at is None:
+        if self._registry is None:
             self._bridging_context = None
             return
 
         try:
             now = datetime.now(UTC)
-            intermediate = await self._registry.get_by_time_range(previous_ended_at, now)
+            intermediate = await self._registry.get_by_time_range(closed_at, now)
 
             # Filter: exclude the resumed session, include only those with summaries
             summaries = []

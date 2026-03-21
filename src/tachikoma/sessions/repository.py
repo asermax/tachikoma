@@ -12,7 +12,6 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker, create_async_engine
 
 from tachikoma.sessions.errors import SessionRepositoryError
-from tachikoma.sessions.migrations import migrations_path
 from tachikoma.sessions.model import (
     Base,
     Session,
@@ -250,6 +249,7 @@ class SessionRepository:
         Only returns sessions with:
         - ended_at IS NOT NULL (closed)
         - sdk_session_id IS NOT NULL (can be resumed)
+        - summary IS NOT NULL (has topic context for matching)
         - ended_at > (before - window)
 
         Results are ordered by ended_at descending.
@@ -268,6 +268,7 @@ class SessionRepository:
                     .where(
                         SessionRecord.ended_at.is_not(None),
                         SessionRecord.sdk_session_id.is_not(None),
+                        SessionRecord.summary.is_not(None),
                         SessionRecord.ended_at > cutoff,
                     )
                     .order_by(SessionRecord.ended_at.desc())

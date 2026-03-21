@@ -163,8 +163,6 @@ class SessionRegistry:
             )
             return None
 
-        # Capture the previous ended_at before we clear it
-        previous_ended_at = session.ended_at
         now = datetime.now(UTC)
 
         # Update the session: clear ended_at, set last_resumed_at
@@ -174,15 +172,15 @@ class SessionRegistry:
             last_resumed_at=now,
         )
 
-        # Re-fetch and replace _active_session
-        reopened = await self._repository.get_by_id(session_id)
-        if reopened is not None:
-            self._active_session = reopened
+        # Construct the reopened session from known data (avoids a second DB fetch)
+        from dataclasses import replace
+        reopened = replace(session, ended_at=None, last_resumed_at=now)
+        self._active_session = reopened
 
         _log.info(
             "Session reopened: session_id={id} previous_ended_at={ts}",
             id=session_id,
-            ts=previous_ended_at,
+            ts=session.ended_at,
         )
 
         return reopened
