@@ -26,6 +26,13 @@ PENDING_SIGNALS_HEADER = "# Pending Signals\n\n"
 _ENTRY_PATTERN = re.compile(r"^- \*\*(\d{4}-\d{2}-\d{2})\*\*:\s*(.+)$", re.MULTILINE)
 
 
+def _serialize_entries(entries: list[tuple[str, str]]) -> str:
+    """Serialize (date, text) tuples into the pending signals file format."""
+    return PENDING_SIGNALS_HEADER + "\n".join(
+        f"- **{d}**: {signal}" for d, signal in entries
+    ) + "\n"
+
+
 def parse_pending_signals(content: str) -> list[tuple[str, str]]:
     """Parse pending signals file content into (date, text) tuples.
 
@@ -113,12 +120,8 @@ def clean_pending_signals(data_dir: Path, max_age_days: int = 30) -> None:
         return
 
     # Write back filtered content
-    new_content = PENDING_SIGNALS_HEADER + "\n".join(
-        f"- **{date}**: {signal}" for date, signal in filtered_entries
-    )
-
     try:
-        file_path.write_text(new_content)
+        file_path.write_text(_serialize_entries(filtered_entries))
         removed_count = len(entries) - len(filtered_entries)
         if removed_count > 0:
             _log.debug(
@@ -187,9 +190,8 @@ async def handle_remove_pending_signal(
     # If all signals removed, delete the file
     if not remaining_entries:
         try:
-            if file_path.exists():
-                file_path.unlink()
-                _log.debug("Deleted pending signals file after removing all signals")
+            file_path.unlink(missing_ok=True)
+            _log.debug("Deleted pending signals file after removing all signals")
         except OSError as err:
             return {
                 "content": [
@@ -208,12 +210,8 @@ async def handle_remove_pending_signal(
         }
 
     # Write remaining entries back to file
-    new_content = PENDING_SIGNALS_HEADER + "\n".join(
-        f"- **{date}**: {signal}" for date, signal in remaining_entries
-    )
-
     try:
-        file_path.write_text(new_content)
+        file_path.write_text(_serialize_entries(remaining_entries))
         _log.info(
             "Removed pending signals: count={count} remaining={remaining}",
             count=len(indices),
@@ -261,7 +259,7 @@ async def handle_add_pending_signal(
         }
 
     file_path = data_dir / PENDING_SIGNALS_FILENAME
-    today = datetime.now().strftime("%Y-%m-%d")
+    today = date.today().isoformat()
     entry = f"- **{today}**: {signal}\n"
 
     try:
