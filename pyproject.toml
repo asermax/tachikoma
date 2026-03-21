@@ -10,6 +10,7 @@ dependencies = [
     "tomlkit",
     "sqlalchemy[asyncio]>=2.0",
     "aiosqlite>=0.20",
+    "alembic>=1.13",
     "loguru>=0.7",
     "aiogram>=3.20",
     "telegramify-markdown>=1.0",

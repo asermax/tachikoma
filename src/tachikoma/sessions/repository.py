@@ -4,15 +4,22 @@ Owns the AsyncEngine lifecycle. All callers receive Session dataclasses —
 SQLAlchemy types never leak out of this module.
 """
 
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 from loguru import logger
-from sqlalchemy import select, text
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker, create_async_engine
 
 from tachikoma.sessions.errors import SessionRepositoryError
-from tachikoma.sessions.model import Base, Session, SessionRecord
+from tachikoma.sessions.migrations import migrations_path
+from tachikoma.sessions.model import (
+    Base,
+    Session,
+    SessionRecord,
+    SessionResumption,
+    SessionResumptionRecord,
+)
 
 _log = logger.bind(component="sessions")
 
@@ -37,9 +44,10 @@ class SessionRepository:
         self._session_factory: async_sessionmaker | None = None
 
     async def initialize(self) -> None:
-        """Create the async engine, session factory, and database schema.
+        """Create the async engine, session factory, and run database migrations.
 
         Idempotent: calling multiple times is safe.
+        Uses Alembic for schema migrations instead of create_all().
         """
         url = f"sqlite+aiosqlite:///{self._db_path}"
         self._engine = create_async_engine(url, echo=False)
@@ -47,11 +55,73 @@ class SessionRepository:
         # expire_on_commit=False lets us access attributes after commit without refresh
         self._session_factory = async_sessionmaker(self._engine, expire_on_commit=False)
 
-        # Base.metadata.create_all is synchronous; bridge into the async engine via run_sync
+        # Run Alembic migrations programmatically
+        await self._run_migrations()
+
+        _log.info("Session repository initialized: db_path={path}", path=self._db_path)
+
+    async def _run_migrations(self) -> None:
+        """Run schema migrations.
+
+        For SQLite, we use a simple check-and-add approach:
+        1. create_all() for fresh databases
+        2. Column additions for existing databases
+        """
+        if self._engine is None:
+            return
+
+        # Ensure the database file's parent directory exists
+        self._db_path.parent.mkdir(parents=True, exist_ok=True)
+
+        # Use SQLAlchemy's create_all with checkfirst=True for idempotent creation
         async with self._engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
 
-        _log.info("Session repository initialized: db_path={path}", path=self._db_path)
+            # Check for and add missing columns (for existing databases)
+            # This handles the case where the database was created before DLT-028
+            from sqlalchemy import text
+
+            # Check if summary column exists (added in DLT-027)
+            result = await conn.execute(
+                text("SELECT * FROM pragma_table_info('sessions') WHERE name='summary'")
+            )
+            if result.fetchone() is None:
+                await conn.execute(
+                    text("ALTER TABLE sessions ADD COLUMN summary TEXT")
+                )
+                _log.info("Schema migration: added 'summary' column to sessions table")
+
+            # Check if last_resumed_at column exists (added in DLT-028)
+            result = await conn.execute(
+                text("SELECT * FROM pragma_table_info('sessions') WHERE name='last_resumed_at'")
+            )
+            if result.fetchone() is None:
+                await conn.execute(
+                    text("ALTER TABLE sessions ADD COLUMN last_resumed_at DATETIME")
+                )
+                _log.info("Schema migration: added 'last_resumed_at' column to sessions table")
+
+            # Check if session_resumptions table exists (added in DLT-028)
+            result = await conn.execute(
+                text("SELECT name FROM sqlite_master WHERE type='table' AND name='session_resumptions'")
+            )
+            if result.fetchone() is None:
+                await conn.execute(
+                    text("""
+                        CREATE TABLE session_resumptions (
+                            id INTEGER PRIMARY KEY AUTOINCREMENT,
+                            session_id TEXT NOT NULL REFERENCES sessions(id),
+                            resumed_at DATETIME NOT NULL,
+                            previous_ended_at DATETIME NOT NULL
+                        )
+                    """)
+                )
+                await conn.execute(
+                    text("CREATE INDEX ix_session_resumptions_session_id ON session_resumptions(session_id)")
+                )
+                _log.info("Schema migration: created 'session_resumptions' table")
+
+        _log.debug("Schema migrations completed: db_path={path}", path=self._db_path)
 
     async def close(self) -> None:
         """Dispose the async engine and release all connections."""
@@ -59,26 +129,6 @@ class SessionRepository:
             await self._engine.dispose()
             self._engine = None
             self._session_factory = None
-
-    async def migrate(self) -> None:
-        """Apply schema migrations for columns added after initial creation.
-
-        SQLAlchemy's create_all() only creates missing tables, not columns.
-        This method adds new columns to existing tables as needed.
-        """
-        self._require_initialized()
-
-        # Check if summary column exists via pragma_table_info
-        async with self._engine.connect() as conn:
-            result = await conn.execute(
-                text("SELECT * FROM pragma_table_info('sessions') WHERE name='summary'")
-            )
-            column_exists = result.fetchone() is not None
-
-            if not column_exists:
-                await conn.execute(text("ALTER TABLE sessions ADD COLUMN summary TEXT"))
-                await conn.commit()
-                _log.info("Schema migration: added 'summary' column to sessions table")
 
     # ------------------------------------------------------------------
     # CRUD operations
@@ -96,6 +146,7 @@ class SessionRepository:
                 summary=session.summary,
                 started_at=session.started_at,
                 ended_at=session.ended_at,
+                last_resumed_at=session.last_resumed_at,
             )
 
             async with self._session_factory() as db:  # type: ignore[misc]
@@ -190,6 +241,89 @@ class SessionRepository:
 
         except Exception as exc:
             raise SessionRepositoryError("Failed to get open sessions") from exc
+
+    async def get_recent_closed(
+        self, before: datetime, window: timedelta
+    ) -> list[Session]:
+        """Return recently closed sessions within the time window.
+
+        Only returns sessions with:
+        - ended_at IS NOT NULL (closed)
+        - sdk_session_id IS NOT NULL (can be resumed)
+        - ended_at > (before - window)
+
+        Results are ordered by ended_at descending.
+
+        Args:
+            before: The reference timestamp (typically now).
+            window: How far back to look for closed sessions.
+        """
+        self._require_initialized()
+
+        try:
+            cutoff = before - window
+            async with self._session_factory() as db:  # type: ignore[misc]
+                stmt = (
+                    select(SessionRecord)
+                    .where(
+                        SessionRecord.ended_at.is_not(None),
+                        SessionRecord.sdk_session_id.is_not(None),
+                        SessionRecord.ended_at > cutoff,
+                    )
+                    .order_by(SessionRecord.ended_at.desc())
+                )
+                result = await db.execute(stmt)
+                records = result.scalars().all()
+
+            return [r.to_domain() for r in records]
+
+        except Exception as exc:
+            raise SessionRepositoryError("Failed to query recent closed sessions") from exc
+
+    async def create_resumption(self, resumption: SessionResumption) -> SessionResumption:
+        """Persist a session resumption event."""
+        self._require_initialized()
+
+        try:
+            record = SessionResumptionRecord(
+                session_id=resumption.session_id,
+                resumed_at=resumption.resumed_at,
+                previous_ended_at=resumption.previous_ended_at,
+            )
+
+            async with self._session_factory() as db:  # type: ignore[misc]
+                db.add(record)
+                await db.commit()
+
+            return record.to_domain()
+
+        except Exception as exc:
+            raise SessionRepositoryError(
+                f"Failed to create resumption for session {resumption.session_id}"
+            ) from exc
+
+    async def get_resumptions_for_session(
+        self, session_id: str
+    ) -> list[SessionResumption]:
+        """Return all resumption events for a session, ordered by resumed_at ascending."""
+        self._require_initialized()
+
+        try:
+            async with self._session_factory() as db:  # type: ignore[misc]
+                stmt = (
+                    select(SessionResumptionRecord)
+                    .where(SessionResumptionRecord.session_id == session_id)
+                    .order_by(SessionResumptionRecord.resumed_at.asc())
+                )
+                result = await db.execute(stmt)
+                records = result.scalars().all()
+
+            return [r.to_domain() for r in records]
+
+        except Exception as exc:
+            raise SessionRepositoryError(
+                f"Failed to get resumptions for session {session_id}"
+            ) from exc
 
     # ------------------------------------------------------------------
     # Internal helpers
