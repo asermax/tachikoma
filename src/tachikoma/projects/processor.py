@@ -6,9 +6,9 @@ Spawns Haiku agents to commit changes in dirty submodules after each session.
 import asyncio
 from pathlib import Path
 
-from claude_agent_sdk import ClaudeAgentOptions, query
 from loguru import logger
 
+from tachikoma.git.processor import query_and_consume
 from tachikoma.post_processing import PostProcessor
 from tachikoma.projects.git import is_dirty, list_submodules, push
 from tachikoma.sessions.model import Session
@@ -148,35 +148,15 @@ class ProjectsProcessor(PostProcessor):
         """
         submodule_path = self._cwd / path
 
-        # Spawn agent to create commits
         _log.debug("Spawning commit agent: path={path}", path=path)
-        await self._query_and_consume(submodule_path)
+        await query_and_consume(SUBMODULE_COMMIT_PROMPT, submodule_path, cli_path=self._cli_path)
 
-        # Push to remote
         try:
             await push(submodule_path)
             _log.info("Pushed submodule changes: path={path}", path=path)
         except Exception as e:
-            # Log but don't fail - changes are committed locally
             _log.warning(
                 "Push failed, changes remain committed locally: path={path} err={err}",
                 path=path,
                 err=str(e),
             )
-
-    async def _query_and_consume(self, cwd: Path) -> None:
-        """Spawn a fresh agent and consume its response.
-
-        Args:
-            cwd: The working directory for the agent.
-        """
-        options = ClaudeAgentOptions(
-            model="haiku",
-            cwd=cwd,
-            cli_path=self._cli_path,
-            permission_mode="bypassPermissions",
-        )
-
-        # Fully consume the async iterator to ensure the agent completes
-        async for _ in query(prompt=SUBMODULE_COMMIT_PROMPT, options=options):
-            pass

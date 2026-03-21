@@ -11,7 +11,6 @@ from loguru import logger
 from tachikoma.bootstrap import BootstrapContext
 from tachikoma.projects.git import (
     checkout_branch,
-    fetch,
     init_submodule,
     list_submodules,
     pull,
@@ -29,10 +28,9 @@ async def projects_hook(ctx: BootstrapContext) -> None:
 
     Each submodule is:
     1. Initialized via git submodule update --init
-    2. Fetched to get latest refs
-    3. Resolved to its default branch (from remote HEAD)
-    4. Checked out to the default branch
-    5. Pulled to get latest changes
+    2. Resolved to its default branch (from remote HEAD)
+    3. Checked out to the default branch
+    4. Pulled to get latest changes (includes fetch)
 
     Failures are logged and the hook continues with other submodules.
     Each submodule gets one retry on failure.
@@ -43,7 +41,6 @@ async def projects_hook(ctx: BootstrapContext) -> None:
     workspace_path = ctx.settings_manager.settings.workspace.path
     projects_dir = workspace_path / "projects"
 
-    # Create projects dir (idempotent)
     projects_dir.mkdir(exist_ok=True)
 
     # Discover submodules
@@ -97,7 +94,7 @@ async def _sync_submodule_with_retry(workspace_path: Path, path: str) -> None:
 
 
 async def _sync_submodule(workspace_path: Path, path: str) -> None:
-    """Sync a submodule: init → fetch → resolve → checkout → pull.
+    """Sync a submodule: init → resolve → checkout → pull.
 
     Args:
         workspace_path: The workspace root directory.
@@ -108,19 +105,9 @@ async def _sync_submodule(workspace_path: Path, path: str) -> None:
     """
     submodule_path = workspace_path / path
 
-    # Initialize if needed
     await init_submodule(workspace_path, path)
-
-    # Fetch latest refs
-    await fetch(submodule_path)
-
-    # Resolve default branch from remote HEAD
     default_branch = await resolve_default_branch(submodule_path)
-
-    # Checkout default branch
     await checkout_branch(submodule_path, default_branch)
-
-    # Pull latest changes
     await pull(submodule_path)
 
     _log.debug(

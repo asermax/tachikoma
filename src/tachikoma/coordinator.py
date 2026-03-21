@@ -91,7 +91,7 @@ class Coordinator:
         self._previous_summary: str | None = None
 
         # MCP servers extracted from pre-processing pipeline (session-scoped)
-        self._mcp_servers: dict = {}
+        self._mcp_servers: dict[str, McpServerConfig] = {}
 
         # Active client (only set during send_message, None between messages)
         self._client: ClaudeSDKClient | None = None

@@ -8,6 +8,7 @@ import contextlib
 from pathlib import Path
 
 from claude_agent_sdk import create_sdk_mcp_server, tool
+from claude_agent_sdk.types import McpSdkServerConfig
 from loguru import logger
 
 from tachikoma.projects.git import (
@@ -21,7 +22,7 @@ from tachikoma.projects.git import (
 _log = logger.bind(component="projects")
 
 
-def create_projects_server(workspace_path: Path) -> dict:
+def create_projects_server(workspace_path: Path) -> McpSdkServerConfig:
     """Create SDK MCP server with project management tools.
 
     The tools have closure over the workspace_path for git operations.
@@ -64,7 +65,6 @@ def create_projects_server(workspace_path: Path) -> dict:
 
         project_path = workspace_path / "projects" / name
 
-        # Check if project already exists
         if project_path.exists():
             return {
                 "content": [
@@ -74,13 +74,8 @@ def create_projects_server(workspace_path: Path) -> dict:
             }
 
         try:
-            # Add submodule
             await add_submodule(workspace_path, name, url)
-
-            # Resolve default branch
             default_branch = await resolve_default_branch(project_path)
-
-            # Checkout default branch
             await checkout_branch(project_path, default_branch)
 
             _log.info(
@@ -146,7 +141,6 @@ def create_projects_server(workspace_path: Path) -> dict:
 
         project_path = workspace_path / "projects" / name
 
-        # Check if project exists
         if not project_path.exists():
             return {
                 "content": [
@@ -156,7 +150,6 @@ def create_projects_server(workspace_path: Path) -> dict:
             }
 
         try:
-            # Check for uncommitted changes
             changes = await has_uncommitted_changes_detail(project_path)
 
             if changes and not force:
@@ -172,7 +165,6 @@ def create_projects_server(workspace_path: Path) -> dict:
                     "is_error": True,
                 }
 
-            # Remove submodule
             await remove_submodule(workspace_path, name)
 
             _log.info("Project deregistered: name={name} force={force}", name=name, force=force)
