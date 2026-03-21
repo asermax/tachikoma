@@ -7,7 +7,6 @@ and agent definitions.
 
 from pathlib import Path
 
-import frontmatter
 from claude_agent_sdk import ClaudeAgentOptions, query
 from claude_agent_sdk.types import AgentDefinition, ResultMessage
 from loguru import logger
@@ -16,6 +15,8 @@ from tachikoma.pre_processing import ContextProvider, ContextResult
 from tachikoma.skills.registry import SkillRegistry
 
 _log = logger.bind(component="skills_context")
+
+_NO_RELEVANT_SKILLS = "NO_RELEVANT_SKILLS"
 
 SKILL_CLASSIFICATION_PROMPT = """You are a skill classification agent. Your task is to \
 determine which skills are relevant to the user's current message.
@@ -58,31 +59,15 @@ class SkillsContextProvider(ContextProvider):
     """
 
     def __init__(self, cwd: Path, cli_path: str | None = None) -> None:
-        """Initialize the provider.
-
-        Args:
-            cwd: The workspace directory for reading SKILL.md files.
-            cli_path: Optional path to the Claude CLI binary.
-        """
         self._cwd = cwd
         self._cli_path = cli_path
         self._registry = SkillRegistry(cwd)
 
     async def provide(self, message: str) -> ContextResult | None:
-        """Detect relevant skills and load their content.
-
-        Args:
-            message: The user's message text.
-
-        Returns:
-            ContextResult with relevant skills and their agents,
-            or None if no relevant skills found or an error occurred.
-        """
         # R10: No-op when no skills exist in registry
         if not self._registry.skills:
             return None
 
-        # Build the classification prompt with skill names and descriptions
         skills_list = "\n".join(
             f"- **{name}**: {skill.description}"
             for name, skill in self._registry.skills.items()
@@ -117,18 +102,16 @@ class SkillsContextProvider(ContextProvider):
                     if sdk_message.result is not None:
                         result_text = sdk_message.result.strip()
 
-                        # Check for sentinel
-                        if result_text == "NO_RELEVANT_SKILLS":
+                        if result_text == _NO_RELEVANT_SKILLS:
                             _log.debug("No relevant skills found for message")
                             return None
 
-                        # Parse skill names (one per line)
                         raw_names = [
                             name.strip() for name in result_text.split("\n")
                             if name.strip()
                         ]
 
-                        # Filter against registry keys (R2: discard unrecognized)
+                        # R2: discard unrecognized names
                         valid_names = [name for name in raw_names if name in self._registry.skills]
 
                         if not valid_names:
@@ -150,37 +133,18 @@ class SkillsContextProvider(ContextProvider):
         if not detected_names:
             return None
 
-        # Read SKILL.md body for each detected skill and build XML block
         skill_blocks: list[str] = []
         filtered_agents: dict[str, AgentDefinition] = {}
 
         for skill_name in detected_names:
-            skill_md_path = self._cwd / "skills" / skill_name / "SKILL.md"
+            skill = self._registry.skills[skill_name]
 
-            try:
-                post = frontmatter.load(str(skill_md_path))
-                body = post.content.strip()
-                skill_dir = skill_md_path.parent
-
-                skill_block = (
-                    f'<skill name="{skill_name}" directory="{skill_dir}">\n'
-                    f'{body}\n</skill>'
-                )
-                skill_blocks.append(skill_block)
-
-                # Filter agents by namespace prefix
-                for namespace, agent_def in self._registry.get_agents().items():
-                    if namespace.startswith(f"{skill_name}/"):
-                        filtered_agents[namespace] = agent_def
-
-            except Exception as exc:
-                _log.warning(
-                    "Failed to read SKILL.md for skill: skill={skill}, err={err}",
-                    skill=skill_name,
-                    err=str(exc),
-                )
-                # Graceful degradation: skip this skill, continue with others
-                continue
+            skill_block = (
+                f'<skill name="{skill_name}" directory="{skill.path}">\n'
+                f'{skill.body}\n</skill>'
+            )
+            skill_blocks.append(skill_block)
+            filtered_agents.update(self._registry.get_agents_for_skill(skill_name))
 
         if not skill_blocks:
             return None
