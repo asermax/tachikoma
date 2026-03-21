@@ -118,6 +118,9 @@ class CoreContextProcessor(PromptDrivenProcessor):
         3. Fork with MCP tools for pending signals access
         4. Post-step: Log which files changed (if any)
 
+        If the session was resumed from a previous conversation (indicated by
+        last_resumed_at), an augmentation is appended to the prompt.
+
         Args:
             session: The closed session to process.
         """
@@ -140,10 +143,20 @@ class CoreContextProcessor(PromptDrivenProcessor):
                 # File exists but can't stat — treat as unchanged
                 mtimes_before[filename] = None
 
+        # Build prompt with resumption awareness if applicable
+        prompt = self._prompt
+        if session.last_resumed_at is not None:
+            prompt += (
+                f"\n\nIMPORTANT: This session was resumed from a previous "
+                f"conversation at {session.last_resumed_at}. The user is "
+                f"returning to a topic they discussed earlier. Keep this "
+                f"context in mind when processing."
+            )
+
         # Fork session with pending signals tools
         await fork_and_consume(
             session,
-            self._prompt,
+            prompt,
             self._cwd,
             mcp_servers={"pending-signals": pending_signals_server},
             cli_path=self._cli_path,
