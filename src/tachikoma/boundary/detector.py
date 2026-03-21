@@ -139,10 +139,7 @@ async def detect_boundary(
                 )
                 resume_id = sdk_message.structured_output.get("resume_session_id")
 
-                # Only set resume_session_id if it's a valid non-empty string
-                if resume_id is not None and not isinstance(resume_id, str):
-                    resume_id = None
-                elif resume_id is not None and resume_id == "":
+                if not isinstance(resume_id, str) or resume_id == "":
                     resume_id = None
 
                 result = BoundaryResult(continues=continues, resume_session_id=resume_id)
