@@ -13,7 +13,6 @@ from tachikoma.context.tools import (
     PENDING_SIGNALS_HEADER,
     clean_pending_signals,
     create_pending_signals_server,
-    handle_add_pending_signal,
     handle_remove_pending_signal,
     parse_pending_signals,
 )
@@ -24,7 +23,10 @@ class TestParsePendingSignals:
 
     def test_parses_entries_with_dates(self) -> None:
         """AC: Parses entries into (date, text) tuples."""
-        content = PENDING_SIGNALS_HEADER + "- **2026-03-10**: First signal\n- **2026-03-15**: Second signal\n"
+        content = (
+            PENDING_SIGNALS_HEADER
+            + "- **2026-03-10**: First signal\n- **2026-03-15**: Second signal\n"
+        )
 
         entries = parse_pending_signals(content)
 
@@ -364,7 +366,10 @@ class TestRemovePendingSignal:
     @pytest.mark.asyncio
     async def test_all_signals_removed_deletes_file(self, tmp_path: Path) -> None:
         """AC: All signals removed → file deleted."""
-        content = PENDING_SIGNALS_HEADER + "- **2026-03-10**: Signal 1\n- **2026-03-15**: Signal 2\n"
+        content = (
+            PENDING_SIGNALS_HEADER
+            + "- **2026-03-10**: Signal 1\n- **2026-03-15**: Signal 2\n"
+        )
         (tmp_path / PENDING_SIGNALS_FILENAME).write_text(content)
 
         snapshot = [

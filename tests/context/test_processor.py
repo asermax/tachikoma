@@ -33,7 +33,10 @@ class TestReadPendingSignalsSnapshot:
 
     def test_reads_entries_from_file(self, tmp_path: Path) -> None:
         """AC: Reads and parses entries from pending signals file."""
-        content = PENDING_SIGNALS_HEADER + "- **2026-03-10**: First signal\n- **2026-03-15**: Second signal\n"
+        content = (
+            PENDING_SIGNALS_HEADER
+            + "- **2026-03-10**: First signal\n- **2026-03-15**: Second signal\n"
+        )
         (tmp_path / PENDING_SIGNALS_FILENAME).write_text(content)
 
         snapshot = _read_pending_signals_snapshot(tmp_path)
@@ -220,7 +223,7 @@ class TestContextUpdatePrompt:
         assert "AGENTS.md" in CONTEXT_UPDATE_PROMPT
 
     def test_mentions_pending_signals_tools(self) -> None:
-        """AC: Prompt mentions add_pending_signal and remove_pending_signal tools (not read tool)."""
+        """AC: Prompt mentions add/remove_pending_signal tools (not read tool)."""
         assert "remove_pending_signal" in CONTEXT_UPDATE_PROMPT
         assert "add_pending_signal" in CONTEXT_UPDATE_PROMPT
         assert "read_pending_signals" not in CONTEXT_UPDATE_PROMPT
