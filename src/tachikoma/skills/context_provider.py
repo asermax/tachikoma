@@ -86,7 +86,8 @@ class SkillsContextProvider(ContextProvider):
             cli_path=self._cli_path,
         )
 
-        # Fully consume the query() generator per DES-005
+        # Fully consume the query() generator per DES-005 — no early
+        # return/break inside the async for loop.
         detected_names: list[str] = []
 
         try:
@@ -97,38 +98,36 @@ class SkillsContextProvider(ContextProvider):
                             "Skill classification agent returned error: err={err}",
                             err=sdk_message.result,
                         )
-                        return None
-
-                    if sdk_message.result is not None:
+                    elif sdk_message.result is not None:
                         result_text = sdk_message.result.strip()
 
                         if result_text == _NO_RELEVANT_SKILLS:
                             _log.debug("No relevant skills found for message")
-                            return None
+                        else:
+                            raw_names = [
+                                name.strip() for name in result_text.split("\n")
+                                if name.strip()
+                            ]
 
-                        raw_names = [
-                            name.strip() for name in result_text.split("\n")
-                            if name.strip()
-                        ]
+                            # R2: discard unrecognized names
+                            valid_names = [
+                                name for name in raw_names
+                                if name in self._registry.skills
+                            ]
 
-                        # R2: discard unrecognized names
-                        valid_names = [name for name in raw_names if name in self._registry.skills]
-
-                        if not valid_names:
-                            _log.warning(
-                                "Classification returned no valid skill names: raw={raw}",
-                                raw=raw_names,
-                            )
-                            return None
-
-                        detected_names = valid_names
+                            if not valid_names:
+                                _log.warning(
+                                    "Classification returned no valid skill names: raw={raw}",
+                                    raw=raw_names,
+                                )
+                            else:
+                                detected_names = valid_names
 
         except Exception as exc:
             _log.exception(
                 "Skill classification agent failed: err={err}",
                 err=str(exc),
             )
-            return None
 
         if not detected_names:
             return None
