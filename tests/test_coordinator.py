@@ -1176,6 +1176,155 @@ class TestCoordinatorPreProcessing:
         client.query.assert_awaited_once_with("hello")
 
 
+class TestCoordinatorMcpServers:
+    """Tests for DLT-030: MCP servers extraction from pre-processing results."""
+
+    async def test_extracts_mcp_servers_from_pre_processing_results(
+        self, mock_sdk, mocker
+    ) -> None:
+        """AC: MCP servers from ContextResult are passed to ClaudeAgentOptions."""
+        client, mock_cls = mock_sdk
+        client.receive_response.return_value = _mock_messages(
+            make_assistant([TextBlock(text="Hello!")]),
+            make_result(),
+        )
+
+        # Create a mock MCP server config
+        mock_server = {"type": "sdk", "sdkServer": MagicMock()}
+        pre_pipeline = _make_mock_pre_pipeline()
+        pre_pipeline.run.return_value = [
+            ContextResult(tag="projects", content="Project list", mcp_servers={"projects": mock_server}),
+        ]
+        registry = _make_mock_registry(active_session=None)
+
+        async with Coordinator(registry=registry, pre_pipeline=pre_pipeline) as coord:
+            _ = [e async for e in coord.send_message("hello")]
+
+        # Verify options were built with mcp_servers
+        mock_cls.assert_called_once()
+        options = mock_cls.call_args[0][0]
+        assert options.mcp_servers == {"projects": mock_server}
+
+    async def test_merges_mcp_servers_from_multiple_results(
+        self, mock_sdk, mocker
+    ) -> None:
+        """AC: Multiple ContextResults with mcp_servers are merged."""
+        client, mock_cls = mock_sdk
+        client.receive_response.return_value = _mock_messages(
+            make_assistant([TextBlock(text="Hello!")]),
+            make_result(),
+        )
+
+        server1 = {"type": "sdk", "sdkServer": MagicMock(name="server1")}
+        server2 = {"type": "sdk", "sdkServer": MagicMock(name="server2")}
+
+        pre_pipeline = _make_mock_pre_pipeline()
+        pre_pipeline.run.return_value = [
+            ContextResult(tag="projects", content="Projects", mcp_servers={"projects": server1}),
+            ContextResult(tag="other", content="Other", mcp_servers={"tools": server2}),
+        ]
+        registry = _make_mock_registry(active_session=None)
+
+        async with Coordinator(registry=registry, pre_pipeline=pre_pipeline) as coord:
+            _ = [e async for e in coord.send_message("hello")]
+
+        options = mock_cls.call_args[0][0]
+        assert options.mcp_servers == {"projects": server1, "tools": server2}
+
+    async def test_mcp_servers_persist_across_messages_in_session(
+        self, mock_sdk, mocker
+    ) -> None:
+        """AC: MCP servers persist across messages within the same session."""
+        client, mock_cls = mock_sdk
+        client.receive_response.side_effect = [
+            _mock_messages(make_assistant([TextBlock(text="A")]), make_result()),
+            _mock_messages(make_assistant([TextBlock(text="B")]), make_result()),
+        ]
+
+        mock_server = {"type": "sdk", "sdkServer": MagicMock()}
+        pre_pipeline = _make_mock_pre_pipeline()
+        pre_pipeline.run.return_value = [
+            ContextResult(tag="projects", content="Projects", mcp_servers={"projects": mock_server}),
+        ]
+        registry = _make_mock_registry(active_session=None)
+
+        async with Coordinator(registry=registry, pre_pipeline=pre_pipeline) as coord:
+            _ = [e async for e in coord.send_message("first")]
+            _ = [e async for e in coord.send_message("second")]
+
+        # Both calls should have the same mcp_servers
+        assert mock_cls.call_count == 2
+        options1 = mock_cls.call_args_list[0][0][0]
+        options2 = mock_cls.call_args_list[1][0][0]
+        assert options1.mcp_servers == {"projects": mock_server}
+        assert options2.mcp_servers == {"projects": mock_server}
+
+    async def test_mcp_servers_cleared_on_session_transition(
+        self, mock_sdk, mocker
+    ) -> None:
+        """AC: MCP servers are cleared when transitioning to a new session."""
+        client, mock_cls = mock_sdk
+        client.receive_response.side_effect = [
+            _mock_messages(make_assistant([TextBlock(text="A")]), make_result()),
+            _mock_messages(make_assistant([TextBlock(text="B")]), make_result()),
+        ]
+
+        mock_server = {"type": "sdk", "sdkServer": MagicMock()}
+        pre_pipeline = _make_mock_pre_pipeline()
+        pre_pipeline.run.return_value = [
+            ContextResult(tag="projects", content="Projects", mcp_servers={"projects": mock_server}),
+        ]
+
+        active = Session(
+            id="s1",
+            started_at=datetime.now(UTC),
+            summary="User is discussing Python.",
+            sdk_session_id="sdk-old",
+        )
+        registry = _make_mock_registry(active_session=active)
+
+        # Mock boundary detection to trigger transition
+        mocker.patch(
+            "tachikoma.coordinator.detect_boundary",
+            return_value=False,
+        )
+
+        async with Coordinator(registry=registry, pre_pipeline=pre_pipeline, cwd=Path("/ws")) as coord:
+            _ = [e async for e in coord.send_message("first")]
+
+            # Update mock for second call - no mcp_servers in new session
+            pre_pipeline.run.return_value = []
+
+            _ = [e async for e in coord.send_message("new topic")]
+
+        # First call should have mcp_servers, second call should be empty
+        assert mock_cls.call_count == 2
+        options1 = mock_cls.call_args_list[0][0][0]
+        options2 = mock_cls.call_args_list[1][0][0]
+        assert options1.mcp_servers == {"projects": mock_server}
+        assert options2.mcp_servers == {}
+
+    async def test_no_mcp_servers_when_not_provided(self, mock_sdk) -> None:
+        """AC: No mcp_servers in ContextResult means empty dict in options."""
+        client, mock_cls = mock_sdk
+        client.receive_response.return_value = _mock_messages(
+            make_assistant([TextBlock(text="Hello!")]),
+            make_result(),
+        )
+
+        pre_pipeline = _make_mock_pre_pipeline()
+        pre_pipeline.run.return_value = [
+            ContextResult(tag="memories", content="Some memories"),  # No mcp_servers
+        ]
+        registry = _make_mock_registry(active_session=None)
+
+        async with Coordinator(registry=registry, pre_pipeline=pre_pipeline) as coord:
+            _ = [e async for e in coord.send_message("hello")]
+
+        options = mock_cls.call_args[0][0]
+        assert options.mcp_servers == {}
+
+
 class TestBoundaryDetection:
     """Tests for DLT-026: boundary detection integration in send_message()."""
 
