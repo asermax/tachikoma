@@ -20,7 +20,7 @@ The assistant's foundational context files (SOUL.md, USER.md, AGENTS.md) shape i
 - The processor plugs into the existing post-processing pipeline (main phase), running in parallel with memory extraction processors
 - All file I/O is performed by the forked LLM agent, not by processor code — consistent with the established pattern (DES-004)
 - Ambiguous signals must be staged and only promoted after recurrence, preventing single-conversation noise from altering foundational behavior
-- The pending signals file must be managed through constrained tools (read + add), not direct file access, to prevent accidental deletion or corruption by the agent
+- The pending signals file must be managed through auto-injection (for visibility) and constrained tools (add + remove), not direct file access, to prevent accidental deletion or corruption by the agent
 
 **Interactions:**
 - Post-processing pipeline: processor registers in `main` phase alongside memory processors (see [pipeline design](post-processing-pipeline.md))
@@ -33,10 +33,11 @@ The assistant's foundational context files (SOUL.md, USER.md, AGENTS.md) shape i
 `CoreContextProcessor` extends `PromptDrivenProcessor` (DES-004) and plugs into the post-processing pipeline's main phase. On each run, the processor:
 
 1. **Pre-step (Python code)**: auto-cleans expired entries from the pending signals file
-2. **Creates SDK MCP tools**: in-process `read_pending_signals` and `add_pending_signal` tools
-3. **Snapshots context file mtimes**: records modification times before the fork
-4. **Forks the SDK session**: sends a comprehensive prompt instructing the agent to read context files, analyze the conversation, classify signals, and act accordingly
-5. **Post-step (Python code)**: compares mtimes and logs which files were modified
+2. **Reads and snapshots pending signals**: parses the file into a snapshot (list of tuples), builds a numbered list (S1..Sn), and injects it into the prompt via `str.replace()` on a `{pending_signals_section}` placeholder
+3. **Creates SDK MCP tools**: in-process `add_pending_signal` and `remove_pending_signal` tools via factory (DES-006), passing the snapshot for index-based removal
+4. **Snapshots context file mtimes**: records modification times before the fork
+5. **Forks the SDK session**: sends the formatted prompt instructing the agent to read context files, review injected signals, analyze the conversation, classify signals, and act accordingly
+6. **Post-step (Python code)**: compares mtimes and logs which files were modified
 
 ```
 ┌───────────────────────────────────────────────────────────┐
@@ -79,8 +80,8 @@ The assistant's foundational context files (SOUL.md, USER.md, AGENTS.md) shape i
 | `src/tachikoma/context/` | Package containing all context concerns: loading (startup) and updating (post-processing) | Groups loading, processor, and tools cohesively under one package |
 | `src/tachikoma/context/__init__.py` | Re-exports: `load_context`, `context_hook`, `CoreContextProcessor`, plus all constants from `loading.py` (`CONTEXT_DIR_NAME`, `CONTEXT_FILES`, `DEFAULT_*_CONTENT`, `SYSTEM_PREAMBLE`) | Clean public API; existing imports (`from tachikoma.context import context_hook`) continue to work |
 | `src/tachikoma/context/loading.py` | `load_context()`, `context_hook()`, constants (`CONTEXT_FILES`, `CONTEXT_DIR_NAME`, default content, `SYSTEM_PREAMBLE`) | All startup context behavior; unchanged from original `context.py` |
-| `src/tachikoma/context/processor.py` | `CoreContextProcessor(PromptDrivenProcessor)` + `CONTEXT_UPDATE_PROMPT` constant | Overrides `process()` for pre-step cleanup, MCP tools, and post-step observability; prompt co-located with processor (DES-004) |
-| `src/tachikoma/context/tools.py` | `read_pending_signals` and `add_pending_signal` SDK MCP tools + `create_pending_signals_server()` factory + `clean_pending_signals()` utility | Uses `tool()` and `create_sdk_mcp_server()` from `claude_agent_sdk`; tools have closure over `data_dir` path |
+| `src/tachikoma/context/processor.py` | `CoreContextProcessor(PromptDrivenProcessor)` + `CONTEXT_UPDATE_PROMPT` template constant + `_read_pending_signals_snapshot()` and `_format_pending_signals_section()` module-level helpers | Overrides `process()` for pre-step cleanup, snapshot reading, prompt formatting, MCP tools, and post-step observability; prompt is a template with `{pending_signals_section}` placeholder filled via `str.replace()` (DES-004) |
+| `src/tachikoma/context/tools.py` | `create_pending_signals_server(data_dir, snapshot)` factory (DES-006) + `add_pending_signal` and `remove_pending_signal` SDK MCP tools + `handle_add_pending_signal()` and `handle_remove_pending_signal()` extracted handlers + `clean_pending_signals()` utility + `parse_pending_signals()` public parser | Tools have closure over `data_dir` and `snapshot`; handlers extracted for testability; remove tool uses immutable snapshot for index-based file rewrite |
 
 ### Cross-Layer Contracts
 
@@ -99,15 +100,17 @@ sequenceDiagram
         Proc->>Cleanup: clean_pending_signals(data_dir)
         Cleanup->>FS: read .tachikoma/pending-signals.md
         Cleanup->>FS: write back (expired entries removed)
+        Proc->>FS: read & parse pending signals → snapshot
+        Proc->>Proc: format prompt with numbered signals (S1..Sn)
         Proc->>Proc: snapshot context file mtimes
-        Proc->>Tools: create_pending_signals_server(data_dir)
+        Proc->>Tools: create_pending_signals_server(data_dir, snapshot)
         Tools-->>Proc: McpSdkServerConfig
-        Proc->>SDK: fork_and_consume(session, prompt, cwd, mcp_servers=...)
+        Proc->>SDK: fork_and_consume(session, formatted_prompt, cwd, mcp_servers=...)
         SDK->>FS: agent reads context/ files
-        SDK->>Tools: agent calls read_pending_signals
-        Tools->>FS: read .tachikoma/pending-signals.md
-        Tools-->>SDK: file contents
-        SDK->>FS: agent updates context/ files (if clear signal)
+        Note over SDK: Agent sees signals in prompt (no tool call needed)
+        SDK->>FS: agent updates context/ files (if clear or recurring signal)
+        SDK->>Tools: agent calls remove_pending_signal (after promotion or stale cleanup)
+        Tools->>FS: rewrite pending-signals.md from snapshot minus removed
         SDK->>Tools: agent calls add_pending_signal (if ambiguous)
         Tools->>FS: append to .tachikoma/pending-signals.md
         SDK-->>Proc: async iterator consumed
@@ -118,21 +121,32 @@ sequenceDiagram
 
 **Integration Points:**
 - Processor ↔ Pipeline: registers in default `main` phase via `pipeline.register(CoreContextProcessor(cwd))`
-- Processor ↔ SDK: `fork_and_consume(session, prompt, cwd, mcp_servers={"pending-signals": server})` — standalone `query()`, independent of `ClaudeSDKClient`
+- Processor ↔ SDK: `fork_and_consume(session, formatted_prompt, cwd, mcp_servers={"pending-signals": server})` — standalone `query()`, independent of `ClaudeSDKClient`
+- Processor ↔ Prompt: `CONTEXT_UPDATE_PROMPT` is a template constant; `str.replace()` fills the `{pending_signals_section}` placeholder at runtime into a local `formatted_prompt` variable
 - Forked agent ↔ Context files: agent reads/writes `context/SOUL.md`, `context/USER.md`, `context/AGENTS.md` using standard Claude Code file tools
-- Forked agent ↔ Pending signals: agent uses only the custom `read_pending_signals` and `add_pending_signal` MCP tools — prompt instructs against direct file access
-- Processor ↔ Pending signals file: Python code manages auto-cleanup pre-fork; MCP tools manage agent interactions during fork
+- Forked agent ↔ Pending signals: agent sees current signals via auto-injection in prompt; uses `add_pending_signal` (staging) and `remove_pending_signal` (cleanup) MCP tools — prompt instructs against direct file access
+- Remove tool ↔ File: rewrites file from immutable snapshot minus removed entries (not in-place editing); indices are stable across sequential removals
+- Processor ↔ Pending signals file: Python code manages auto-cleanup pre-fork and snapshot reading; MCP tools manage agent interactions during fork
 - Git processor ↔ Context changes: finalize-phase git processor auto-commits any file changes after all main-phase processors complete
 
 ## Modeling
 
 The domain model remains minimal — no database entities. Context files and pending signals are plain markdown managed by the forked agent (context files) and Python code + MCP tools (pending signals).
 
+The **snapshot** is the key data structure: a `list[tuple[str, str]]` of `(date_str, signal_text)` tuples, created by parsing the pending signals file pre-fork. Indices are 1-based (matching `S1..Sn` in the prompt) and stable for the session.
+
 ```
-CoreContextProcessor(PromptDrivenProcessor)   [DES-004]
-├── _data_dir: Path                           (.tachikoma/)
-├── CONTEXT_UPDATE_PROMPT: str                (module-level constant)
-└── process(session) → cleanup + fork with MCP tools + log changes
+CoreContextProcessor(PromptDrivenProcessor)              [DES-004]
+├── _data_dir: Path                                      (.tachikoma/)
+├── CONTEXT_UPDATE_PROMPT: str                           (module-level template constant)
+└── process(session)
+    ├── clean_pending_signals()                          (pre-step)
+    ├── _read_pending_signals_snapshot()                  (module-level helper → snapshot)
+    ├── _format_pending_signals_section()                 (module-level helper → numbered list)
+    ├── str.replace() → local formatted_prompt           (template stays in self._prompt)
+    ├── create_pending_signals_server(data_dir, snapshot) (DES-006 factory)
+    ├── fork_and_consume(formatted_prompt, …)
+    └── mtime comparison                                 (post-step)
 ```
 
 ### Pending Signals File Format
@@ -164,30 +178,39 @@ The file at `.tachikoma/pending-signals.md` uses a simple structured markdown fo
    b. Parse entries, filter out those older than 30 days
    c. Write back filtered content (or delete file if empty after cleanup)
    d. On parse error: log warning, continue
-3. Create SDK MCP tools:
-   a. Define read_pending_signals and add_pending_signal tools
-   b. Bundle into McpSdkServerConfig via create_sdk_mcp_server()
-4. Snapshot context file mtimes:
+3. Read and snapshot pending signals:
+   a. Read .tachikoma/pending-signals.md (no-op if missing/empty)
+   b. Parse entries with _ENTRY_PATTERN → snapshot: list[(date, text)]
+   c. Build numbered section string (S1..Sn) or "No pending signals"
+   d. Replace {pending_signals_section} placeholder via str.replace() → local formatted_prompt
+4. Create SDK MCP tools:
+   a. Define add_pending_signal and remove_pending_signal tools
+   b. Pass snapshot to factory (remove tool closure)
+   c. Bundle into McpSdkServerConfig via create_sdk_mcp_server() (DES-006)
+5. Snapshot context file mtimes:
    a. Record mtime of context/SOUL.md, USER.md, AGENTS.md
-5. Fork session with custom tools:
-   a. Call fork_and_consume(session, CONTEXT_UPDATE_PROMPT, cwd,
+6. Fork session with custom tools:
+   a. Call fork_and_consume(session, formatted_prompt, cwd,
       mcp_servers={"pending-signals": server})
    b. Forked agent autonomously:
       - Reads all three context files
-      - Reads pending signals via read_pending_signals tool
+      - Reviews pending signals already visible in prompt context
       - Analyzes conversation for context-relevant information
       - For clear, explicit signals:
         → Updates the appropriate context file directly
       - For ambiguous, one-off signals:
-        → Checks pending signals for semantic recurrence
+        → Checks injected signals for semantic recurrence
         → If recurring: promotes to context file update
+          AND removes promoted signal via remove_pending_signal
         → If new: stages via add_pending_signal tool
+      - For stale/irrelevant injected signals:
+        → Removes via remove_pending_signal tool
       - For conversations with no relevant information:
         → Does nothing (no-op)
-6. Post-step — observability:
+7. Post-step — observability:
    a. Compare current mtimes to snapshots
    b. Log which files were modified (if any)
-7. Return to pipeline
+8. Return to pipeline
 ```
 
 ### Fork session data flow
@@ -195,20 +218,28 @@ The file at `.tachikoma/pending-signals.md` uses a simple structured markdown fo
 ```mermaid
 flowchart TD
     Fork[Forked Agent Starts] --> ReadCtx[Read context/SOUL.md, USER.md, AGENTS.md]
-    ReadCtx --> ReadPending[Call read_pending_signals tool]
-    ReadPending --> Analyze[Analyze conversation for signals]
+    ReadCtx --> Review[Review injected pending signals in prompt]
+    Review --> Analyze[Analyze conversation for signals]
     Analyze --> Classify{Signal type?}
 
     Classify -->|Clear & explicit| Update[Update context file directly]
-    Classify -->|Ambiguous / one-off| CheckRecur{Similar pending signal exists?}
-    Classify -->|No relevant info| NoOp[Do nothing]
+    Classify -->|Ambiguous / one-off| CheckRecur{Similar signal in injected list?}
+    Classify -->|No relevant info| CheckStale{Any stale signals in list?}
 
     CheckRecur -->|Yes - recurring| Promote[Promote: update context file]
+    Promote --> Remove1[Remove promoted signal via tool]
     CheckRecur -->|No - first occurrence| Stage[Call add_pending_signal tool]
 
-    Update --> Done[Agent completes]
-    Promote --> Done
+    CheckStale -->|Yes| Remove2[Remove stale signals via tool]
+    CheckStale -->|No| NoOp[Do nothing]
+
+    Update --> CheckStale2{Any stale signals in list?}
+    CheckStale2 -->|Yes| Remove3[Remove stale signals via tool]
+    CheckStale2 -->|No| Done[Agent completes]
+    Remove1 --> Done
     Stage --> Done
+    Remove2 --> Done
+    Remove3 --> Done
     NoOp --> Done
 ```
 
@@ -226,13 +257,14 @@ flowchart TD
 
 ### SDK MCP tools for pending signals
 
-**Choice**: Use the Claude Agent SDK's `tool()` function and `create_sdk_mcp_server()` to create in-process MCP tools for pending signals interaction. `read_pending_signals` uses an empty input schema (no arguments); `add_pending_signal` takes `{"signal": str}`.
-**Why**: The SDK provides first-class support for custom in-process tools. Tools run in the same process with no IPC overhead, have direct access to the filesystem, and integrate cleanly with `ClaudeAgentOptions.mcp_servers`. The tool API reinforces the intended access pattern (read-only + append-only) while the prompt instructs the agent not to access the file directly.
+**Choice**: Use the Claude Agent SDK's `tool()` function and `create_sdk_mcp_server()` to create in-process MCP tools for pending signals interaction (DES-006). `add_pending_signal` takes `{"signal": str}`; `remove_pending_signal` takes `{"indices": list[int]}`. The factory `create_pending_signals_server(data_dir, snapshot)` receives a pre-fork snapshot for index-based removal. Handler logic is extracted into standalone `handle_add_pending_signal()` and `handle_remove_pending_signal()` functions for testability.
+**Why**: The SDK provides first-class support for custom in-process tools. Tools run in the same process with no IPC overhead, have direct access to the filesystem, and integrate cleanly with `ClaudeAgentOptions.mcp_servers`. The tool API reinforces the intended access pattern (auto-injection for reads + tools for add/remove) while the prompt instructs the agent not to access the file directly.
 
 **Consequences**:
 - Pro: Clean, type-safe tool definitions with schema validation
 - Pro: In-process execution — no subprocess overhead
 - Pro: Tools reinforce the intended access pattern alongside prompt instructions
+- Pro: Extracted handlers are testable without SDK overhead
 
 ### Pending signals created on first use (no bootstrap hook)
 
@@ -266,13 +298,13 @@ flowchart TD
 
 **Given**: A conversation where the user says "that was too verbose"
 **When**: The processor runs
-**Then**: The forked agent classifies this as ambiguous. It calls `read_pending_signals` — none found. It calls `add_pending_signal` to stage the signal with today's date. No context files are modified.
+**Then**: The forked agent classifies this as ambiguous. It reviews the injected pending signals list — none similar found. It calls `add_pending_signal` to stage the signal with today's date. No context files are modified.
 
-### Scenario: Recurring signal promoted to update
+### Scenario: Recurring signal promoted and removed
 
-**Given**: A pending signals file contains a previous entry about shorter responses, and the user says "your answers are way too long" in a new conversation
+**Given**: A pending signals file contains a previous entry about shorter responses (injected as S1), and the user says "your answers are way too long" in a new conversation
 **When**: The processor runs
-**Then**: The forked agent reads pending signals and finds a semantically similar entry. It determines this is a recurring pattern and updates SOUL.md with a preference for concise responses. The old entry naturally ages out after 30 days.
+**Then**: The forked agent reviews injected signals and finds S1 is semantically similar. It determines this is a recurring pattern, updates SOUL.md with a preference for concise responses, and calls `remove_pending_signal` with `indices: [1]` to clean up the promoted entry immediately.
 
 ### Scenario: No relevant content in conversation
 
@@ -290,7 +322,7 @@ flowchart TD
 
 **Given**: No `.tachikoma/pending-signals.md` file exists
 **When**: The processor runs
-**Then**: Auto-cleanup is a no-op. The forked agent calls `read_pending_signals` and receives empty content. If it has ambiguous signals, `add_pending_signal` creates the file on first write.
+**Then**: Auto-cleanup is a no-op. Snapshot is empty. The prompt section says "No pending signals at this time." If the agent has ambiguous signals, `add_pending_signal` creates the file on first write.
 
 ### Scenario: Malformed pending signals file
 

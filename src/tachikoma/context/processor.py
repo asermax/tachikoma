@@ -13,8 +13,10 @@ from loguru import logger
 
 from tachikoma.context.loading import CONTEXT_DIR_NAME, CONTEXT_FILES
 from tachikoma.context.tools import (
+    PENDING_SIGNALS_FILENAME,
     clean_pending_signals,
     create_pending_signals_server,
+    parse_pending_signals,
 )
 from tachikoma.post_processing import PromptDrivenProcessor, fork_and_consume
 from tachikoma.sessions.model import Session
@@ -32,8 +34,12 @@ conversation and update the foundational context files when appropriate.
    - `context/USER.md` — What the assistant knows about the user
    - `context/AGENTS.md` — Operational instructions and workflow preferences
 
-2. **Read pending signals:**
-   - Use the `read_pending_signals` tool to check for previously staged signals
+2. **Review pending signals:**
+
+{pending_signals_section}
+
+   Note: Signal indices (S1, S2, etc.) are stable for this session. Use the \
+original numbers even after removals — the indices refer to the positions shown above.
 
 3. **Analyze the conversation** for information that should update these files:
    - User information changes (new job, location, projects) → USER.md
@@ -48,9 +54,13 @@ conversation and update the foundational context files when appropriate.
    - Replace outdated information when there's clear evidence of change
 
    **Ambiguous / one-off signals** (single mention, no clear directive):
-   - Check pending signals for semantic recurrence (is this similar to past signals?)
-   - If recurring pattern detected → promote to context file update
+   - Check the pending signals list above for semantic recurrence
+   - If recurring pattern detected → promote to context file update AND remove \
+the promoted signal via `remove_pending_signal`
    - If first occurrence → stage via `add_pending_signal` tool for future tracking
+
+   **Stale or irrelevant signals in the list:**
+   - Clean them up via `remove_pending_signal` to prevent noise in future sessions
 
    **No relevant information** → do nothing (this is perfectly acceptable)
 
@@ -60,8 +70,26 @@ conversation and update the foundational context files when appropriate.
    - **Read-first**: Always read a file before modifying it
    - **Preserve structure**: Keep existing formatting and organization
    - **Tool-only for pending signals**: Only interact with pending signals through \
-the provided `read_pending_signals` and `add_pending_signal` tools — never access \
+the provided `add_pending_signal` and `remove_pending_signal` tools — never access \
 the file directly
+   - **Order matters**: Perform all removals before staging new signals to avoid \
+overwriting freshly-added entries
+
+## Pending Signals Lifecycle
+
+The pending signals mechanism tracks ambiguous observations that might become \
+patterns if they recur:
+
+1. **Stage**: When you notice a potential signal but it's ambiguous or one-off, \
+use `add_pending_signal` to record it with today's date.
+
+2. **Promote**: When you detect a recurring pattern in pending signals, update \
+the appropriate context file AND use `remove_pending_signal` to clean up the \
+promoted entries.
+
+3. **Cleanup**: When you notice stale or irrelevant signals in the list, use \
+`remove_pending_signal` to remove them proactively rather than waiting for \
+30-day expiry.
 
 ## Examples
 
@@ -71,19 +99,76 @@ Action: Update USER.md with new employer information
 
 ### Ambiguous Signal → Stage
 User: "that was too verbose"
-Action: Check pending signals. If no similar signal, use `add_pending_signal` to \
-stage for recurrence detection.
+Action: Check pending signals above. If no similar signal, use `add_pending_signal` \
+to stage for recurrence detection.
 
-### Recurring Signal → Promote
-Previous signal in pending: "User seemed to prefer shorter responses"
+### Recurring Signal → Promote and Remove
+Pending signals: S1: "User seemed to prefer shorter responses"
 Current message: "your answers are way too long"
-Action: This confirms a pattern → update SOUL.md with preference for concise responses
+Action: This confirms a pattern → update SOUL.md with preference for concise \
+responses, then call `remove_pending_signal` with indices [1] to clean up S1.
+
+### Stale Signal → Cleanup
+Pending signals: S2: "User mentioned liking dark themes" (from 3 weeks ago, \
+no recurrence in subsequent conversations)
+Action: Call `remove_pending_signal` with indices [2] to clean up the stale signal.
 
 ## Remember
 
 These files shape the assistant's identity and behavior across all sessions. \
 Updates should be deliberate and evidence-based. When in doubt, stage the signal \
 for future recurrence detection rather than making premature changes."""
+
+
+def _read_pending_signals_snapshot(data_dir: Path) -> list[tuple[str, str]]:
+    """Read and parse pending signals file into a snapshot.
+
+    The snapshot is a list of (date_str, signal_text) tuples that represents
+    the state of pending signals at the start of the forked session. This
+    snapshot is immutable and used for index-based removal.
+
+    Args:
+        data_dir: Path to the .tachikoma directory.
+
+    Returns:
+        List of (date_str, signal_text) tuples. Empty list if file missing/empty.
+    """
+    file_path = data_dir / PENDING_SIGNALS_FILENAME
+
+    if not file_path.exists():
+        return []
+
+    try:
+        content = file_path.read_text()
+    except OSError:
+        return []
+
+    if not content.strip():
+        return []
+
+    return parse_pending_signals(content)
+
+
+def _format_pending_signals_section(snapshot: list[tuple[str, str]]) -> str:
+    """Format the pending signals snapshot for injection into the prompt.
+
+    Creates a numbered list (S1, S2, ...) that the forked agent can reference
+    when calling remove_pending_signal.
+
+    Args:
+        snapshot: List of (date_str, signal_text) tuples from the snapshot.
+
+    Returns:
+        Formatted string for the {pending_signals_section} placeholder.
+    """
+    if not snapshot:
+        return "No pending signals at this time."
+
+    lines = []
+    for i, (date_str, signal_text) in enumerate(snapshot, start=1):
+        lines.append(f"S{i}: **{date_str}**: {signal_text}")
+
+    return "\n".join(lines)
 
 
 class CoreContextProcessor(PromptDrivenProcessor):
@@ -95,7 +180,8 @@ class CoreContextProcessor(PromptDrivenProcessor):
 
     Extends PromptDrivenProcessor but overrides process() for:
     - Pre-step: auto-cleanup of expired pending signals
-    - MCP tools: pending signals read/add tools for the forked agent
+    - Auto-inject pending signals into prompt
+    - MCP tools: add_pending_signal and remove_pending_signal for the forked agent
     - Post-step: mtime comparison for observability logging
     """
 
@@ -114,9 +200,10 @@ class CoreContextProcessor(PromptDrivenProcessor):
 
         This override adds pre/post steps around the fork:
         1. Pre-step: Clean expired pending signals
-        2. Snapshot context file mtimes
-        3. Fork with MCP tools for pending signals access
-        4. Post-step: Log which files changed (if any)
+        2. Read pending signals snapshot and format prompt
+        3. Snapshot context file mtimes
+        4. Fork with MCP tools (add_pending_signal, remove_pending_signal)
+        5. Post-step: Log which files changed (if any)
 
         Args:
             session: The closed session to process.
@@ -124,8 +211,13 @@ class CoreContextProcessor(PromptDrivenProcessor):
         # Pre-step: Clean expired pending signals
         clean_pending_signals(self._data_dir)
 
-        # Create MCP server with pending signals tools
-        pending_signals_server = create_pending_signals_server(self._data_dir)
+        # Read snapshot and format prompt with pending signals section
+        snapshot = _read_pending_signals_snapshot(self._data_dir)
+        signals_section = _format_pending_signals_section(snapshot)
+        formatted_prompt = self._prompt.replace("{pending_signals_section}", signals_section)
+
+        # Create MCP server with pending signals tools (passing snapshot for remove tool)
+        pending_signals_server = create_pending_signals_server(self._data_dir, snapshot)
 
         # Snapshot context file mtimes before fork
         context_path = self._cwd / CONTEXT_DIR_NAME
@@ -143,7 +235,7 @@ class CoreContextProcessor(PromptDrivenProcessor):
         # Fork session with pending signals tools
         await fork_and_consume(
             session,
-            self._prompt,
+            formatted_prompt,
             self._cwd,
             mcp_servers={"pending-signals": pending_signals_server},
             cli_path=self._cli_path,

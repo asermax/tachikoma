@@ -85,7 +85,7 @@ Four-component architecture: a bootstrap hook creates the directory structure, t
 |-----------------|----------------|---------------|
 | `src/tachikoma/skills/__init__.py` | Re-exports `SkillRegistry`, `Skill`, `skills_hook`, `SkillsContextProvider` | Package module for the skills subsystem |
 | `src/tachikoma/skills/registry.py` | `SkillRegistry` class: discovers skills, loads agents, builds agents dict, stores skill body and path; `Skill` dataclass for metadata (name, description, version, body, path) | Uses `python-frontmatter` for parsing; constructs `AgentDefinition` from `claude_agent_sdk.types` directly; body and path stored at init time |
-| `src/tachikoma/skills/context_provider.py` | `SkillsContextProvider(ContextProvider)`: creates its own `SkillRegistry` in `__init__`, classifies relevant skills via standalone `query()` with Opus low effort (DES-006), reads skill body from registry's pre-loaded `Skill.body`, assembles `<skills>` XML block, returns detected agents via `ContextResult.agents` | Self-contained provider (owns registry); no tools for classification agent (pure reasoning); fully consumes query() generator (DES-005); `get_agents_for_skill()` on registry for agent filtering |
+| `src/tachikoma/skills/context_provider.py` | `SkillsContextProvider(ContextProvider)`: creates its own `SkillRegistry` in `__init__`, classifies relevant skills via standalone `query()` with Opus low effort (DES-007), reads skill body from registry's pre-loaded `Skill.body`, assembles `<skills>` XML block, returns detected agents via `ContextResult.agents` | Self-contained provider (owns registry); no tools for classification agent (pure reasoning); fully consumes query() generator (DES-005); `get_agents_for_skill()` on registry for agent filtering |
 | `src/tachikoma/skills/hooks.py` | `skills_hook` bootstrap callback: creates `workspace/skills/` directory | Follows DES-003 pattern (subsystem-owned hook); directory creation only |
 
 ### Cross-Layer Contracts
@@ -117,7 +117,7 @@ SkillsContextProvider(cwd, cli_path)
 - SkillRegistry ↔ filesystem: reads `SKILL.md` (with body) and agent markdown files from `workspace/skills/`
 - SkillsContextProvider ↔ Pipeline: registers via `pipeline.register(provider)`; `provide(message)` called in parallel with memory provider
 - SkillsContextProvider ↔ SkillRegistry: internal — provider creates registry in `__init__`, reads `skills` property and calls `get_agents_for_skill()`
-- SkillsContextProvider ↔ SDK: standalone `query()` call for classification (no tools, low effort, DES-006)
+- SkillsContextProvider ↔ SDK: standalone `query()` call for classification (no tools, low effort, DES-007)
 - Pipeline ↔ Coordinator: `pipeline.run()` returns `list[ContextResult]`; coordinator reads both `content` (text) and `agents` (structured) from results
 - Skills hook ↔ Bootstrap: registered as a standard bootstrap hook (DES-003)
 

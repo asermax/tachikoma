@@ -1,4 +1,4 @@
-# DES-006: Low-Effort Classification Agent
+# DES-007: Low-Effort Classification Agent
 
 **Scope**: Project-wide
 **Date**: 2026-03-21
