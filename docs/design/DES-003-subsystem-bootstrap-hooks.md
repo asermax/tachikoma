@@ -21,6 +21,7 @@ Each subsystem owns its bootstrap hook in its own module. The `bootstrap.py` mod
 - **memory subsystem** → `src/tachikoma/memory/hooks.py` owns `memory_hook`
 - **sessions subsystem** → `src/tachikoma/sessions/hooks.py` owns `session_recovery_hook`
 - **telegram subsystem** → `src/tachikoma/telegram.py` owns `telegram_hook`
+- **tasks subsystem** → `src/tachikoma/tasks/hooks.py` owns `tasks_hook`
 
 The `__main__.py` entry point registers hooks in order:
 
@@ -75,6 +76,7 @@ from tachikoma.context import context_hook
 from tachikoma.memory import memory_hook
 from tachikoma.sessions import session_recovery_hook
 from tachikoma.telegram import telegram_hook
+from tachikoma.tasks import tasks_hook
 
 bootstrap.register("workspace", workspace_hook)
 bootstrap.register("logging", logging_hook)
@@ -84,6 +86,7 @@ bootstrap.register("context", context_hook)
 bootstrap.register("memory", memory_hook)
 bootstrap.register("sessions", session_recovery_hook)
 bootstrap.register("telegram", telegram_hook)
+bootstrap.register("tasks", tasks_hook)
 ```
 
 ## Benefits

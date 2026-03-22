@@ -78,7 +78,7 @@ The key components:
 | Layer/Component | Responsibility | Key Decisions |
 |-----------------|----------------|---------------|
 | `src/tachikoma/__main__.py` | Cyclopts `App` entry point: parses `--channel`, creates `SettingsManager`, applies CLI overrides, runs bootstrap, dispatches to channel | Replaces bare `asyncio.run(main())` with cyclopts; integrates with SettingsManager + Bootstrap |
-| `src/tachikoma/telegram.py` | `TelegramChannel` class + `ResponseRenderer` class + `telegram_hook` function | High cohesion between channel control flow and response rendering |
+| `src/tachikoma/telegram.py` | `TelegramChannel` class + `ResponseRenderer` class + `telegram_hook` function. Subscribes to `SessionTaskReady` and `TaskNotification` events via `bus.on()` at construction. Shared `_process_through_coordinator()` method handles both user messages and session task delivery. `_handle_notification()` sends notifications directly as Telegram messages with severity emoji prefix | High cohesion between channel control flow and response rendering; event bus subscriptions at construction |
 | `src/tachikoma/coordinator.py` | Existing + new `steer()` method and pending-steers tracking in `send_message()` | Minimal change to core module |
 | `src/tachikoma/config.py` | `TelegramSettings` model added to `Settings` | Extends existing config; optional section (`None` when not configured) |
 | `src/tachikoma/display.py` | `TOOL_DISPLAY` map for tool-specific formatting | Shared between REPL and Telegram channels |
@@ -143,6 +143,7 @@ sequenceDiagram
 - Renderer ↔ telegramify-markdown: converts accumulated markdown to `(text, entities)` tuples on each edit cycle
 - `__main__.py` ↔ SettingsManager: CLI overrides applied via `update_root()` + `reload()` (runtime-only)
 - `telegram_hook` ↔ Bootstrap: follows DES-003 pattern (defined in telegram module, registered in __main__.py, self-skips when channel != "telegram")
+- Channel ↔ Event bus: subscribes to `SessionTaskReady` (session task delivery) and `TaskNotification` (direct notification display) via `bus.on()` at construction (see ADR-009)
 
 ## Modeling
 

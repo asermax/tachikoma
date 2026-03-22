@@ -88,6 +88,12 @@ Settings (root, frozen)
 │   ├── level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = "INFO"
 │   └── console: bool = false
 ├── channel: Literal["repl", "telegram"] = "repl"
+├── tasks: TaskSettings                        (always has default value, never None)
+│   ├── idle_window: int = 300                 (seconds before session is considered idle)
+│   ├── check_interval: int = 300              (session task check interval in seconds)
+│   ├── max_iterations: int = 10               (max evaluator iterations for background tasks)
+│   ├── max_concurrent_background: int = 3     (max parallel background tasks)
+│   └── timezone: str | None = None            (IANA timezone, None = system timezone)
 └── telegram: TelegramSettings | None = None
     ├── bot_token: str
     └── authorized_chat_id: int

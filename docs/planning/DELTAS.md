@@ -70,13 +70,6 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 **Complexity**: Hard
 **Description**: Provide the ability to search stored memories by semantic similarity to a query, enabling the assistant to find relevant past context even when exact keywords don't match. Results are ranked by a combination of semantic relevance and time-based weighting (recent memories rank higher). This is the retrieval engine consumed by the memory context provider and potentially other components that need to find relevant past context. The delta involves selecting and integrating an embedding model, building and maintaining an index over stored memories, and implementing the search/ranking logic. The embedding model choice should be evaluated during speccing, balancing quality, speed, and self-hosted requirements.
 
-### DLT-010: Queue and process background tasks during idle time
-**Status**: ✓ Implementation
-**Depends on**: None
-**Priority**: 2 (High)
-**Complexity**: Hard
-**Description**: Enable the assistant to work proactively by creating, scheduling, and executing tasks. Covers the full task lifecycle: (1) **Task definitions** — persistent cron-like scheduling (via `cronsim`) and one-shot datetime support, managed by the agent through MCP tools (create, list, update, delete). Two task types: session and background. (2) **Instance generation** — a parallel async process evaluates enabled definitions and creates task instances when their schedule fires, with duplicate prevention and catch-up on restart. (3) **Session task execution** — a periodic check loop finds pending session instances, idle-gates by comparing current time against last coordinator message exchange (configurable window, default 5 min), and injects the task prompt into the coordinator as a proactive message that flows through the full pre-processing pipeline and boundary detection. (4) **Background task execution** — pending instances run in fresh isolated sessions with an adapted pipeline (context injection yes, user data extraction no), monitored by an evaluator prompt loop that assesses completion, detects stuck agents, and enforces a max iteration limit. Results can notify the user via transient session task instances based on a configurable notify field.
-
 ### DLT-011: Run as a persistent background service
 **Status**: ✗ Defined
 **Depends on**: DLT-024

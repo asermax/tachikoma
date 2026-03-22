@@ -30,7 +30,7 @@ The REPL uses `prompt_toolkit` for async input with persistent file history. The
 
 | Layer/Component | Responsibility | Key Decisions |
 |-----------------|----------------|---------------|
-| `Repl` | Input loop, control flow, exit conditions, interrupt handling | Owns `PromptSession` with `multiline=True`, custom `KeyBindings` (Enter submits via `validate_and_handle()`, Escape+Enter inserts newline), `prompt_continuation="  "`, `FileHistory` (at `/tmp/tachikoma_repl_history`), and empty-input `Validator` |
+| `Repl` | Input loop, control flow, exit conditions, interrupt handling. Optionally accepts `bus: EventBus` at construction and subscribes to `SessionTaskReady` (queued to `asyncio.Queue`, drained before each input prompt via `_process_queued_tasks()`) and `TaskNotification` (printed directly via `_handle_notification()`). | Owns `PromptSession` with `multiline=True`, custom `KeyBindings` (Enter submits via `validate_and_handle()`, Escape+Enter inserts newline), `prompt_continuation="  "`, `FileHistory` (at `/tmp/tachikoma_repl_history`), and empty-input `Validator` |
 | `Renderer` | Event rendering via rich Console | Owns two Console instances (stdout, stderr). `render()` returns bool: `True` to continue, `False` to exit |
 
 ### Event Rendering

@@ -22,6 +22,7 @@ An interactive terminal REPL that reads user input, sends it through the coordin
 | R2 | Input management: persistent history across sessions, empty input prevention |
 | R3 | Clean exit handling: Ctrl+C, Ctrl+D, exit/quit commands |
 | R4 | Multiline input: Enter submits, Escape+Enter inserts newline |
+| R5 | Event bus integration: subscribe to task events for proactive session task delivery and direct notification display |
 
 ## Behaviors
 
@@ -56,6 +57,15 @@ The REPL accepts multiline input using prompt_toolkit with custom key bindings t
 - Given the user is typing, when they press Enter, then the message is submitted to the coordinator
 - Given the user is composing multiline input, when they press Escape followed by Enter (or Alt+Enter on terminals that encode Alt as Escape prefix), then a newline is inserted at the cursor position
 - Given the user has entered a newline via Escape+Enter, when the continuation line is displayed, then it is indented to align with the prompt's content area
+
+### Event Bus Integration (R5)
+
+The REPL subscribes to task events via the event bus. Session tasks are buffered in an `asyncio.Queue` and processed before each input prompt. Notifications are printed directly.
+
+**Acceptance Criteria**:
+- Given a `SessionTaskReady` event arrives while the REPL is waiting for input, then the task is queued and processed before the next input prompt
+- Given a queued session task is processed, then it is sent through the coordinator and rendered normally
+- Given a `TaskNotification` event is received, then the notification message is printed to the terminal
 
 ### Exit Handling (R3)
 

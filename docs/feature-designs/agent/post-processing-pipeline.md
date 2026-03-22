@@ -238,3 +238,4 @@ erDiagram
 
 - The pipeline's `asyncio.Lock` serialization is forward-looking — currently at most one concurrent invocation per shutdown.
 - `fork_and_consume` fully consumes the async iterator, ensuring the forked session ends cleanly.
+- The background task executor (`tasks/executor.py`) creates a separate `PostProcessingPipeline` instance with only `EpisodicProcessor` (main phase) and `GitProcessor` (finalize phase) — this is a distinct pipeline from the main conversation pipeline assembled in `__main__.py`. See [background task execution design](../tasks/background-task-execution.md).

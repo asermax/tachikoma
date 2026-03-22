@@ -25,6 +25,7 @@ The `ANTHROPIC_API_KEY` is not managed by this system — the Claude SDK reads i
 | R6 | Write-back capability: modules can update and persist configuration values at runtime |
 | R7 | Telegram configuration: optional `[telegram]` section for bot token and authorized chat ID |
 | R8 | CLI override capability: runtime-only overrides via CLI flags without file persistence |
+| R9 | Task scheduler configuration: `[tasks]` section for idle window, check interval, max iterations, max concurrent background, and timezone |
 
 ## Behaviors
 
@@ -86,6 +87,14 @@ The optional `[telegram]` section configures the Telegram bot channel. When the 
 - Given a config file with no `[telegram]` section, when loaded, then `settings.telegram` is None
 - Given a config file with a `[telegram]` section missing a required field, when loaded, then validation fails with a clear error
 - Given the auto-generated default config, when created, then the `[telegram]` section is included (commented out) with annotations
+
+### Task Scheduler Configuration (R9)
+
+The `[tasks]` section configures task scheduler parameters. Unlike `[telegram]`, `settings.tasks` always has a default value (never None) — the task subsystem operates with sensible defaults when no `[tasks]` section is present.
+
+**Acceptance Criteria**:
+- Given a config file with no `[tasks]` section, when loaded, then `settings.tasks` is populated with default values: `idle_window=300`, `check_interval=300`, `max_iterations=10`, `max_concurrent_background=3`, `timezone=None` (system timezone)
+- Given a config file with a `[tasks]` section specifying custom values, when loaded, then those values override the defaults
 
 ### CLI Override (R8)
 
