@@ -286,6 +286,13 @@ the user explicitly refers back to it.
                 results = await self._pre_pipeline.run(text)
                 if results:
                     text = assemble_context(results, text)
+
+                    # Extract agents from pipeline results (DLT-021)
+                    combined_agents: dict[str, AgentDefinition] = {}
+                    for r in results:
+                        if r.agents is not None:
+                            combined_agents.update(r.agents)
+                    self._agents = combined_agents if combined_agents else None
             except Exception as exc:
                 _log.exception("Pre-processing failed: err={err}", err=str(exc))
 
@@ -393,6 +400,7 @@ the user explicitly refers back to it.
         # Clear SDK session so next message starts a fresh conversation.
         # Save the summary for injection into the new session's system prompt.
         self._sdk_session_id = None
+        self._agents = None
         self._previous_summary = session_snapshot.summary
 
         # Create new session in registry

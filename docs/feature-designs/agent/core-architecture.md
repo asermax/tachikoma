@@ -69,8 +69,8 @@ The **Message Adapter** is a pure transformation layer — it maps SDK `Message`
 
 | Layer/Component | Responsibility | Key Decisions |
 |-----------------|----------------|---------------|
-| `src/tachikoma/__main__.py` | Cyclopts CLI entry point: parses `--channel` flag, loads config via SettingsManager, applies CLI overrides at runtime, runs bootstrap hooks (workspace, logging, git, skills, context, memory, session recovery, telegram), creates SkillRegistry, retrieves session objects and system_prompt from bootstrap extras, reads `cli_path` from agent settings and threads it through all pipeline components, creates pre-processing pipeline (registers MemoryContextProvider), post-processing pipeline (registers memory processors and CoreContextProcessor in main phase per DES-004, git in finalize phase), and per-message pipeline (registers SummaryProcessor), wires up coordinator + channel dispatch (REPL or Telegram) with try/finally for engine disposal | Cyclopts for CLI parsing; SettingsManager with runtime-only overrides; SkillRegistry for agent discovery; channel dispatch based on `settings.channel`; enables `python -m tachikoma` |
-| `src/tachikoma/coordinator.py` | Creates a per-message `ClaudeSDKClient`, manages session lifecycle via `resume`, exposes `send_message()`. Accepts `system_prompt`, `permission_mode`, `env`, `agents`, and `cli_path` for SDK configuration, and an optional `on_status` callback for shutdown-phase notifications. Optionally integrates with `SessionRegistry` for persistent session tracking (see [sessions design](sessions.md)), `PreProcessingPipeline` for context enrichment on new sessions (see [pipeline design](pre-processing-pipeline.md)), `PostProcessingPipeline` for post-conversation analysis (see [pipeline design](post-processing-pipeline.md)), and `MessagePostProcessingPipeline` for per-message processing (see [boundary detection design](boundary-detection.md)). Extended with boundary detection gating, per-message post-processing trigger, session transition orchestration (`_handle_transition`), and `_build_options()` for per-message option construction. Stores base system prompt for recomposition on topic shift. Tracks `_sdk_session_id`, `_previous_summary`, `_pending_msg_task`, and `_background_tasks` for lifecycle management. | Async context manager pattern; creates fresh `ClaudeSDKClient` per `send_message()` call with `resume` for continuity; wraps system_prompt in SystemPromptPreset with append mode (see ADR-008); optional registry, pre_pipeline, pipeline, msg_pipeline, and on_status dependencies; passes `system_prompt`, `permission_mode`, `env`, `agents`, and `cli_path` through to `ClaudeAgentOptions` |
+| `src/tachikoma/__main__.py` | Cyclopts CLI entry point: parses `--channel` flag, loads config via SettingsManager, applies CLI overrides at runtime, runs bootstrap hooks (workspace, logging, git, skills, context, memory, session recovery, telegram), retrieves session objects and system_prompt from bootstrap extras, reads `cli_path` from agent settings and threads it through all pipeline components, creates pre-processing pipeline (registers MemoryContextProvider and SkillsContextProvider), post-processing pipeline (registers memory processors and CoreContextProcessor in main phase per DES-004, git in finalize phase), and per-message pipeline (registers SummaryProcessor), wires up coordinator + channel dispatch (REPL or Telegram) with try/finally for engine disposal | Cyclopts for CLI parsing; SettingsManager with runtime-only overrides; SkillsContextProvider is self-contained (owns registry internally); channel dispatch based on `settings.channel`; enables `python -m tachikoma` |
+| `src/tachikoma/coordinator.py` | Creates a per-message `ClaudeSDKClient`, manages session lifecycle via `resume`, exposes `send_message()`. Accepts `system_prompt`, `permission_mode`, `env`, and `cli_path` for SDK configuration, and an optional `on_status` callback for shutdown-phase notifications. Extracts detected agents from pre-processing pipeline results per-session (agents are session-scoped, cleared on topic shift). Optionally integrates with `SessionRegistry` for persistent session tracking (see [sessions design](sessions.md)), `PreProcessingPipeline` for context enrichment on new sessions (see [pipeline design](pre-processing-pipeline.md)), `PostProcessingPipeline` for post-conversation analysis (see [pipeline design](post-processing-pipeline.md)), and `MessagePostProcessingPipeline` for per-message processing (see [boundary detection design](boundary-detection.md)). Extended with boundary detection gating, per-message post-processing trigger, session transition orchestration (`_handle_transition`), and `_build_options()` for per-message option construction. Stores base system prompt for recomposition on topic shift. Tracks `_sdk_session_id`, `_agents`, `_previous_summary`, `_pending_msg_task`, and `_background_tasks` for lifecycle management. | Async context manager pattern; creates fresh `ClaudeSDKClient` per `send_message()` call with `resume` for continuity; wraps system_prompt in SystemPromptPreset with append mode (see ADR-008); optional registry, pre_pipeline, pipeline, msg_pipeline, and on_status dependencies; `_agents` populated from pipeline results (not constructor), cleared on transition |
 | `src/tachikoma/events.py` | `AgentEvent` domain type hierarchy | Dataclasses; no SDK dependency |
 | `src/tachikoma/adapter.py` | Transforms SDK messages to `AgentEvent`s | Pure function, stateless; only module that imports SDK message types |
 
@@ -206,12 +206,13 @@ AgentEvent (base)
 ```
 Coordinator
 ├── _sdk_session_id: str | None           (SDK session ID for resume)
+├── _agents: dict[str, AgentDefinition] | None  (session-scoped: populated from pipeline results, cleared on transition)
 ├── _previous_summary: str | None         (summary from last session, injected on topic shift)
 ├── _client: ClaudeSDKClient | None       (set only during send_message, None between messages)
 ├── _pending_steers: int = 0              (count of steered messages)
 ├── _pending_msg_task: asyncio.Task | None  (background per-message post-processing)
 ├── _background_tasks: list[asyncio.Task]   (session post-processing from topic shifts)
-├── _build_options(resume=...) → ClaudeAgentOptions  (constructs per-message options)
+├── _build_options(resume=...) → ClaudeAgentOptions  (constructs per-message options with self._agents)
 ├── send_message(text) → AsyncIterator[AgentEvent]
 │   └── creates fresh ClaudeSDKClient, handles steered messages via sequential receive_response() calls
 └── steer(text) → None
@@ -234,8 +235,9 @@ The `steer()` method allows channels to inject user messages mid-stream. When a 
 7. If topic shift → run _handle_transition(), re-fetch active session, set is_new_session flag
 8. If continuation or detection error → proceed normally
 9. If new session and pre_pipeline is set: pre-processing pipeline runs context
-   providers in parallel; successful results assembled into XML-tagged blocks and prepended to message
-10. Coordinator builds ClaudeAgentOptions via _build_options(resume=sdk_session_id or None)
+   providers in parallel; successful results assembled into XML-tagged blocks and prepended to message;
+   coordinator extracts agent definitions from results and stores as self._agents
+10. Coordinator builds ClaudeAgentOptions via _build_options(resume=sdk_session_id or None) — includes self._agents
 11. Creates fresh ClaudeSDKClient via `async with ClaudeSDKClient(options)`
 12. Calls client.query(text) (enriched or original)
 13. Coordinator iterates client.receive_response(), accumulating response text
@@ -279,11 +281,11 @@ The `Result` event serves as a turn boundary. Channels can detect it to reset th
 6. If bootstrap fails → catch BootstrapError, log + print to stderr, exit (if logging hook itself failed, log may not reach file)
 7. Reads final settings from SettingsManager
 8. Retrieves session repository, registry, and system_prompt from bootstrap extras
-9. Creates SkillRegistry with workspace_path, discovers and loads all skills and agents
+9. Creates SkillsContextProvider(cwd=workspace_path, cli_path=cli_path) — provider creates SkillRegistry internally (no direct registry creation in startup)
 10. Creates PostProcessingPipeline, registers memory processors (episodic, facts, preferences) and CoreContextProcessor in main phase, registers GitProcessor in finalize phase — all with workspace_path
-11. Creates PreProcessingPipeline, registers MemoryContextProvider(cwd=workspace_path)
+11. Creates PreProcessingPipeline, registers MemoryContextProvider(cwd=workspace_path) and SkillsContextProvider
 12. Creates MessagePostProcessingPipeline, registers SummaryProcessor with registry and workspace_path
-13. Creates Coordinator with allowed_tools, model, cwd=workspace_path, agents_dict from SkillRegistry, session_registry, system_prompt, pipeline, pre_pipeline, msg_pipeline, permission_mode="bypassPermissions", env={"CLAUDE_CODE_DISABLE_AUTO_MEMORY": "1"}, on_status callback (for channel display), agents, cli_path
+13. Creates Coordinator with allowed_tools, model, cwd=workspace_path, session_registry, system_prompt, pipeline, pre_pipeline, msg_pipeline, permission_mode="bypassPermissions", env={"CLAUDE_CODE_DISABLE_AUTO_MEMORY": "1"}, on_status callback (for channel display), cli_path
 14. Enters coordinator async context (no SDK client connection — clients are created per-message)
 15. If any SDK error occurs during the first message → catch, log + print to stderr, exit
 16. Dispatches based on settings.channel:

@@ -9,8 +9,12 @@ import asyncio
 import re
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 from loguru import logger
+
+if TYPE_CHECKING:
+    from claude_agent_sdk.types import AgentDefinition
 
 _log = logger.bind(component="pre_processing")
 
@@ -28,10 +32,14 @@ class ContextResult:
             (starts with letter/underscore, contains only alphanumeric, hyphens,
             underscores).
         content: The context content to wrap in XML tags.
+        agents: Optional dict of agent definitions to load for this session.
+            Providers can return agents that should be available for delegation.
+            Defaults to None for backward compatibility with existing providers.
     """
 
     tag: str
     content: str
+    agents: "dict[str, AgentDefinition] | None" = None
 
     def __post_init__(self) -> None:
         """Validate that tag is a valid XML tag name."""
