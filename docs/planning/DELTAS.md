@@ -148,7 +148,7 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 **Description**: When the boundary detector identifies a topic shift, compare the incoming message against summaries of recently closed sessions (configurable window, default: last N sessions within the past few hours) to determine if the user is returning to a previously discussed topic. If a match is found, resume that earlier conversation thread instead of starting fresh, and inject a bridging summary covering sessions that occurred in between so the assistant has continuity awareness. This enables natural conversation patterns where users revisit earlier topics (e.g., switching from Python debugging to dinner plans and back to Python debugging) without losing the full conversation history. When no matching closed session is found, the existing behavior applies (fresh session with previous summary injected).
 
 ### DLT-029: Complete pending signals lifecycle with removal and auto-injection
-**Status**: ✓ Reconciled
+**Status**: ⧗ Spec
 **Depends on**: None
 **Priority**: 2 (High)
 **Complexity**: Easy
