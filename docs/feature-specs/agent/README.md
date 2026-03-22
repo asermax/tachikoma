@@ -17,6 +17,7 @@ Core agent capabilities: the coordinator loop that receives messages, delegates 
 | [skills](skills.md) | Skill system: directory-based packages, registry, and sub-agent delegation | ✓ |
 | [core-context-updates](core-context-updates.md) | Automated context file updates from conversation learnings | ✓ |
 | [boundary-detection](boundary-detection.md) | Conversation boundary detection via topic analysis and per-message processing | ✓ |
+| [project-management](project-management.md) | External project repository management via git submodules | ✓ |
 
 ## Related Decisions
 

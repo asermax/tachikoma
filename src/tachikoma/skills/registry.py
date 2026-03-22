@@ -26,11 +26,15 @@ class Skill:
     Attributes:
         name: Skill name (matches folder name).
         description: Human-readable description.
+        body: Markdown body content (frontmatter stripped).
+        path: Path to the skill directory.
         version: Optional version string.
     """
 
     name: str
     description: str
+    body: str
+    path: Path
     version: str | None = None
 
 
@@ -66,6 +70,24 @@ class SkillRegistry:
             Dictionary mapping "skill-name/agent-name" to AgentDefinition.
         """
         return self._agents
+
+    def get_agents_for_skill(self, skill_name: str) -> dict[str, AgentDefinition]:
+        """Return agents belonging to a specific skill.
+
+        Args:
+            skill_name: The skill name to filter by.
+
+        Returns:
+            Dictionary mapping "skill-name/agent-name" to AgentDefinition
+            for agents belonging to the given skill.
+        """
+        prefix = f"{skill_name}/"
+
+        return {
+            ns: agent
+            for ns, agent in self._agents.items()
+            if ns.startswith(prefix)
+        }
 
     @property
     def skills(self) -> dict[str, Skill]:
@@ -163,7 +185,13 @@ class SkillRegistry:
         # Store skill metadata (version from YAML is object, need to cast)
         version_str: str | None = version if isinstance(version, str) else None
 
-        skill = Skill(name=name, description=description, version=version_str)
+        skill = Skill(
+            name=name,
+            description=description,
+            body=post.content.strip(),
+            path=skill_dir,
+            version=version_str,
+        )
         self._skills[name] = skill
 
         _log.debug(

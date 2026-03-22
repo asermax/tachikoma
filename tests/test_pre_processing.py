@@ -7,6 +7,8 @@ import asyncio
 from unittest.mock import AsyncMock
 
 import pytest
+from claude_agent_sdk import create_sdk_mcp_server, tool
+from claude_agent_sdk.types import AgentDefinition
 
 from tachikoma.pre_processing import (
     ContextProvider,
@@ -70,6 +72,59 @@ class TestContextResult:
         """AC: Tag containing hyphens is valid."""
         result = ContextResult(tag="my-context", content="content")
         assert result.tag == "my-context"
+
+    def test_mcp_servers_defaults_to_none(self) -> None:
+        """AC: mcp_servers field defaults to None for backward compatibility."""
+        result = ContextResult(tag="test", content="content")
+        assert result.mcp_servers is None
+
+    def test_mcp_servers_can_be_set(self) -> None:
+        """AC: mcp_servers can be set to a dict of server configs."""
+        @tool("test_tool", "A test tool", {})
+        async def test_tool(args: dict) -> dict:
+            return {"content": [{"type": "text", "text": "ok"}]}
+
+        server = create_sdk_mcp_server(name="test", version="1.0.0", tools=[test_tool])
+        mcp_servers = {"test": server}
+
+        result = ContextResult(tag="test", content="content", mcp_servers=mcp_servers)
+        assert result.mcp_servers == mcp_servers
+        # McpSdkServerConfig is a dict with "type" and "sdkServer" keys
+        assert result.mcp_servers["test"]["type"] == "sdk"
+
+    def test_agents_defaults_to_none(self) -> None:
+        """AC: ContextResult without agents field defaults to None."""
+        result = ContextResult(tag="memories", content="test")
+        assert result.agents is None
+
+    def test_agents_can_be_set(self) -> None:
+        """AC: ContextResult with agents dict works correctly."""
+        agents = {
+            "test/agent": AgentDefinition(
+                description="Test agent",
+                prompt="A test prompt",
+            ),
+        }
+        result = ContextResult(tag="skills", content="skill content", agents=agents)
+
+        assert result.agents is not None
+        assert "test/agent" in result.agents
+        assert result.agents["test/agent"].description == "Test agent"
+
+    async def test_existing_providers_still_work_without_agents(self) -> None:
+        """AC: Providers returning ContextResult without agents continue working."""
+        # This simulates how existing providers (like MemoryContextProvider)
+        # create ContextResult without the agents field
+        provider = _make_mock_provider()
+        provider.provide.return_value = ContextResult(tag="memories", content="test")
+
+        pipeline = PreProcessingPipeline()
+        pipeline.register(provider)
+
+        results = await pipeline.run("test")
+
+        assert len(results) == 1
+        assert results[0].agents is None
 
 
 class TestPreProcessingPipeline:

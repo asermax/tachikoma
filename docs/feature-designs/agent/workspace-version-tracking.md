@@ -23,6 +23,7 @@ Workspace changes (memories, context files, configuration) happen as side effect
 - Post-processing pipeline: git processor registers in the `finalize` phase (see [pipeline design](post-processing-pipeline.md))
 - Workspace bootstrap: git hook registers after workspace hook (see [workspace-bootstrap design](workspace-bootstrap.md))
 - Memory extraction processors: their file writes are what the git processor commits
+- Projects processor ([project-management design](project-management.md)): runs in `pre_finalize` phase, commits and pushes submodule changes before GitProcessor. The resulting submodule reference changes appear in `git status` and are committed by GitProcessor alongside other workspace changes — no code change to GitProcessor is needed
 
 ## Design Overview
 

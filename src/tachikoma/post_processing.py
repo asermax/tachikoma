@@ -24,8 +24,9 @@ _log = logger.bind(component="post_processing")
 
 # Fixed phase identifiers — validated at registration
 MAIN_PHASE = "main"
+PRE_FINALIZE_PHASE = "pre_finalize"
 FINALIZE_PHASE = "finalize"
-_VALID_PHASES = frozenset({MAIN_PHASE, FINALIZE_PHASE})
+_VALID_PHASES = frozenset({MAIN_PHASE, PRE_FINALIZE_PHASE, FINALIZE_PHASE})
 
 
 class PostProcessor(ABC):
@@ -119,7 +120,7 @@ class PostProcessingPipeline:
     """
 
     # Phase execution order
-    _phase_order = [MAIN_PHASE, FINALIZE_PHASE]
+    _phase_order = [MAIN_PHASE, PRE_FINALIZE_PHASE, FINALIZE_PHASE]
 
     def __init__(self) -> None:
         # Pre-populate phases so register() can append without KeyError
@@ -131,7 +132,8 @@ class PostProcessingPipeline:
 
         Args:
             processor: The processor to register.
-            phase: The phase to run this processor in. Must be "main" or "finalize".
+            phase: The phase to run this processor in. Must be "main", "pre_finalize",
+                or "finalize".
                 Defaults to "main" for backward compatibility.
 
         Raises:
@@ -145,7 +147,7 @@ class PostProcessingPipeline:
     async def run(self, session: Session) -> None:
         """Run all registered processors in sequential phases.
 
-        Phases run in order (main → finalize). Within each phase,
+        Phases run in order (main → pre_finalize → finalize). Within each phase,
         processors run in parallel. Acquires an internal lock to serialize
         concurrent invocations.
 

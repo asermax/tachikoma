@@ -75,6 +75,7 @@ The following hooks are registered in `__main__.py` and execute in registration 
 - Given the context hook, when it runs, then core context files are initialized and the system prompt is assembled
 - Given the memory hook, when it runs, then `memories/`, `memories/episodic/`, `memories/facts/`, and `memories/preferences/` directories are created if they don't exist
 - Given the session recovery hook, when it runs, then sessions left open from ungraceful shutdowns are detected and closed
+- Given the projects hook, when it runs, then the `projects/` directory is created if it doesn't exist, and all registered submodules are initialized, checked out to their default branch, and pulled to latest in parallel (1 retry per submodule on failure, log and continue)
 
 ### Failure Handling (R7)
 

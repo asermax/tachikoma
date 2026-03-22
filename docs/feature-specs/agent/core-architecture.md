@@ -29,7 +29,7 @@ The core agent loop: receive a user message, pass it to the Claude agent via the
 | R10 | Conversation boundary detection: before processing a message, check whether it continues the current conversation or starts a new one; on topic shift, transition sessions before processing (see [boundary detection](boundary-detection.md)) |
 | R11 | Per-message post-processing: after each agent response, trigger a per-message pipeline for ongoing conversation analysis (see [boundary detection](boundary-detection.md)) |
 | R12 | Pre-processing pipeline: on new session, run registered context providers to enrich the first message before the agent processes it (see [pipeline spec](pre-processing-pipeline.md)) |
-| R13 | Sub-agent delegation: coordinator receives agents dictionary from skill registry and passes to SDK for delegation (see [skills](skills.md)) |
+| R13 | Sub-agent delegation: coordinator receives detected agents from the pre-processing pipeline per-session and passes to SDK for delegation (see [skills](skills.md)) |
 | R14 | Session resumption: on topic shift with a matching recent session, reopen the matched session instead of creating a fresh one; inject bridging context from intermediate sessions; skip pre-processing (resumed SDK session has full prior context) |
 
 ## Behaviors
@@ -141,16 +141,17 @@ On the first message of a new session, the coordinator triggers a registered pre
 - Given the pre-processing pipeline fails, when the coordinator handles the error, then the failure is logged and the original unmodified message is sent to the agent
 - Given session creation fails, when the coordinator would run pre-processing, then pre-processing is skipped
 - Given all providers fail or return no results, when the coordinator processes the message, then the original message is sent to the agent unmodified
+- Given context providers return `mcp_servers` in their results, when the coordinator processes pipeline results, then it extracts and merges all `mcp_servers` and stores them per-session for inclusion in `ClaudeAgentOptions`
 
 ### Sub-Agent Delegation (R13)
 
-The coordinator receives a dictionary of sub-agents from the skill registry and passes them to the SDK for delegation during conversation.
+The coordinator receives detected agents from the pre-processing pipeline per-session and passes them to the SDK for delegation.
 
 **Acceptance Criteria**:
-- Given the coordinator initializes, when it receives an agents dictionary from the skill registry, then it passes the agents to `ClaudeAgentOptions.agents`
-- Given agents are passed to the SDK at initialization, when a conversation is active, then the SDK orchestrator can delegate to those agents based on the message context and agent descriptions
-- Given an agents dictionary is available, when the coordinator creates ClaudeAgentOptions, then all agents are included (SDK handles delegation logic)
-- Given the agent system starts, then the skill registry is populated before the coordinator is created, ensuring agents are available during the first message
+- Given a new session starts and the pre-processing pipeline returns results containing agent definitions, when the coordinator processes the first message, then it extracts agent definitions from the results and stores them for the session
+- Given agents are stored for a session, when subsequent messages arrive, then the coordinator passes the same agents to `ClaudeAgentOptions.agents` (SDK handles delegation logic)
+- Given no agents are detected (no skills relevant or no skills exist), when the coordinator creates ClaudeAgentOptions, then no sub-agents are available for delegation
+- Given a topic shift causes a new session, when the session transition completes, then agents are cleared and re-detected from the pre-processing pipeline on the next message
 
 ### Error Recovery (R4)
 
@@ -167,7 +168,7 @@ Before processing a message, the coordinator checks whether it continues the cur
 
 **Acceptance Criteria**:
 - Given an active session with a conversation summary, when a new message arrives, then the coordinator fetches recent closed session candidates and runs boundary detection (with candidates) before processing the message
-- Given a topic shift is detected with no matching session, when the transition completes, then the current session is closed, a new session is created with the SDK context reset, and the message is processed in the fresh session
+- Given a topic shift is detected with no matching session, when the transition completes, then the current session is closed, MCP servers are cleared, a new session is created with the SDK context reset, and the message is processed in the fresh session (MCP servers are re-extracted from pre-processing results)
 - Given a topic shift is detected with a matching session, when the transition completes, then the current session is closed, the matched session is reopened, bridging context is assembled from intermediate sessions, and the message is processed in the resumed session context
 - Given a session is resumed, when the coordinator processes the next message, then pre-processing is skipped (the resumed SDK session has full prior context) and the bridging context is injected into the system prompt for the first message only
 - Given intermediate sessions exist between the matched session's last close and now, when bridging context is assembled, then their summaries are concatenated chronologically and injected into the system prompt

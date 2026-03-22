@@ -1,0 +1,3 @@
+[submodule "projects/zenki"]
+	path = projects/zenki
+	url = git@github.com:asermax/zenki.git

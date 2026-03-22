@@ -87,3 +87,4 @@ async for sdk_message in query(prompt=prompt, options=options):
 - Related feature: [../feature-designs/agent/core-architecture.md](../feature-designs/agent/core-architecture.md) - Per-message client uses `receive_response()` which avoids this issue
 - Related feature: [../feature-designs/agent/boundary-detection.md](../feature-designs/agent/boundary-detection.md) - Boundary detector and summary processor both use standalone `query()`
 - Related feature: [../feature-designs/memory/memory-context-retrieval.md](../feature-designs/memory/memory-context-retrieval.md) - Memory context provider uses standalone `query()`
+- Related feature: [../feature-designs/agent/skills.md](../feature-designs/agent/skills.md) - Skills context provider uses standalone `query()`
