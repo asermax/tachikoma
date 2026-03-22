@@ -24,7 +24,8 @@ Before the coordinator processes a user message, context providers need to run i
 **Interactions:**
 - Coordinator (`core-architecture`): calls `pipeline.run(message)` on first message of new session, then `assemble_context()` to enrich the message
 - Memory context provider (`memory-context-retrieval`): registers as the first provider (see [memory context retrieval design](../memory/memory-context-retrieval.md))
-- Skills context provider (`skills`): registers alongside memory provider, classifies and injects relevant skills (see [skills design](skills.md))
+- Projects context provider (`project-management`): registers alongside other providers, returns both text context and MCP server configurations (see [project-management design](project-management.md))
+- Skills context provider (`skills`): registers alongside other providers, classifies and injects relevant skills (see [skills design](skills.md))
 
 ## Design Overview
 
@@ -83,7 +84,7 @@ sequenceDiagram
 ### Shared Logic
 
 - **`ContextProvider` ABC** (`pre_processing.py`): shared interface between all context providers. Defines only the `provide()` contract.
-- **`ContextResult` dataclass** (`pre_processing.py`): shared return type for all providers. Tag name validated via regex to ensure valid XML tag format (starts with letter/underscore, contains only alphanumeric, hyphens, underscores). Optional `agents` field allows providers to return agent definitions alongside text context.
+- **`ContextResult` dataclass** (`pre_processing.py`): shared return type for all providers. Tag name validated via regex to ensure valid XML tag format (starts with letter/underscore, contains only alphanumeric, hyphens, underscores). Optional `mcp_servers` field allows providers to pass MCP server configurations to the coordinator alongside text context. Optional `agents` field allows providers to return agent definitions alongside text context.
 - **`assemble_context()` function** (`pre_processing.py`): standalone helper for wrapping results in XML tags and prepending to message.
 
 ## Modeling
@@ -100,6 +101,7 @@ ContextProvider (ABC)
 ContextResult (dataclass)
 ├── tag: str                                           (validated: non-empty + valid XML tag name via regex)
 ├── content: str                                       (provider's output text)
+├── mcp_servers: dict[str, McpServerConfig] | None     (optional MCP server configs for coordinator)
 └── agents: dict[str, AgentDefinition] | None = None   (optional structured data for agent definitions)
 
 assemble_context(results: list[ContextResult], message: str) → str  (standalone, handles text only)
@@ -236,5 +238,5 @@ erDiagram
 
 ## Notes
 
-- The pipeline supports both text context (via `assemble_context()`) and structured data (via the `agents` field on `ContextResult`). The pipeline itself only handles text assembly — the coordinator is responsible for extracting structured data from result objects directly.
+- The pipeline supports both text context (via `assemble_context()`) and structured data (via the `mcp_servers` and `agents` fields on `ContextResult`). The pipeline itself only handles text assembly — the coordinator is responsible for extracting structured data from result objects directly. The `ContextResult.mcp_servers` field enables context providers to carry tool capabilities alongside text context. The coordinator extracts and merges both `mcp_servers` and `agents` from all results per-session, stores them, and passes them to `ClaudeAgentOptions` in `_build_options()`.
 - Unlike post-processing, the pre-processing pipeline has no concurrency control. This is deliberate — the pipeline is stateless, and concurrent first-messages are prevented by the session registry.

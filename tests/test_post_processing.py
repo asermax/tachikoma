@@ -13,6 +13,7 @@ import pytest
 from tachikoma.post_processing import (
     FINALIZE_PHASE,
     MAIN_PHASE,
+    PRE_FINALIZE_PHASE,
     PostProcessingPipeline,
     PostProcessor,
     PromptDrivenProcessor,
@@ -272,7 +273,92 @@ class TestPhasedPipelineExecution:
     def test_phase_constants_are_exported(self) -> None:
         """AC: Phase constants are exported and usable."""
         assert MAIN_PHASE == "main"
+        assert PRE_FINALIZE_PHASE == "pre_finalize"
         assert FINALIZE_PHASE == "finalize"
+
+    async def test_pre_finalize_phase_runs_between_main_and_finalize(self) -> None:
+        """AC: Pre-finalize phase runs after main but before finalize."""
+        call_order: list[str] = []
+
+        async def track_main(session: Session) -> None:
+            call_order.append("main_start")
+            await asyncio.sleep(0.01)
+            call_order.append("main_end")
+
+        async def track_pre_finalize(session: Session) -> None:
+            call_order.append("pre_finalize_start")
+            await asyncio.sleep(0.01)
+            call_order.append("pre_finalize_end")
+
+        async def track_finalize(session: Session) -> None:
+            call_order.append("finalize_start")
+            call_order.append("finalize_end")
+
+        main_processor = _make_mock_processor()
+        main_processor.process.side_effect = track_main
+        pre_finalize_processor = _make_mock_processor()
+        pre_finalize_processor.process.side_effect = track_pre_finalize
+        finalize_processor = _make_mock_processor()
+        finalize_processor.process.side_effect = track_finalize
+
+        pipeline = PostProcessingPipeline()
+        pipeline.register(main_processor, phase=MAIN_PHASE)
+        pipeline.register(pre_finalize_processor, phase=PRE_FINALIZE_PHASE)
+        pipeline.register(finalize_processor, phase=FINALIZE_PHASE)
+
+        await pipeline.run(_make_session())
+
+        # Verify ordering: main → pre_finalize → finalize
+        assert call_order.index("main_end") < call_order.index("pre_finalize_start")
+        assert call_order.index("pre_finalize_end") < call_order.index("finalize_start")
+
+    async def test_pre_finalize_runs_even_when_main_fails(self) -> None:
+        """AC: Pre-finalize and finalize processors run even when main fails."""
+        main_processor = _make_mock_processor()
+        main_processor.process.side_effect = RuntimeError("main failed")
+        pre_finalize_processor = _make_mock_processor()
+        finalize_processor = _make_mock_processor()
+
+        pipeline = PostProcessingPipeline()
+        pipeline.register(main_processor, phase=MAIN_PHASE)
+        pipeline.register(pre_finalize_processor, phase=PRE_FINALIZE_PHASE)
+        pipeline.register(finalize_processor, phase=FINALIZE_PHASE)
+
+        await pipeline.run(_make_session())
+
+        # All should have been called despite main failure
+        main_processor.process.assert_awaited_once()
+        pre_finalize_processor.process.assert_awaited_once()
+        finalize_processor.process.assert_awaited_once()
+
+    async def test_multiple_pre_finalize_processors_run_in_parallel(self) -> None:
+        """AC: Multiple pre-finalize processors run in parallel within the phase."""
+        call_order: list[str] = []
+
+        async def slow_pre_finalize(session: Session) -> None:
+            call_order.append("slow_start")
+            await asyncio.sleep(0.05)
+            call_order.append("slow_end")
+
+        async def fast_pre_finalize(session: Session) -> None:
+            call_order.append("fast_start")
+            await asyncio.sleep(0.01)
+            call_order.append("fast_end")
+
+        slow_processor = _make_mock_processor()
+        slow_processor.process.side_effect = slow_pre_finalize
+        fast_processor = _make_mock_processor()
+        fast_processor.process.side_effect = fast_pre_finalize
+
+        pipeline = PostProcessingPipeline()
+        pipeline.register(slow_processor, phase=PRE_FINALIZE_PHASE)
+        pipeline.register(fast_processor, phase=PRE_FINALIZE_PHASE)
+
+        await pipeline.run(_make_session())
+
+        # Both should have started before either finished (parallel execution)
+        assert call_order.index("slow_start") < call_order.index("slow_end")
+        assert call_order.index("fast_start") < call_order.index("fast_end")
 
 
 class TestForkAndConsume:
