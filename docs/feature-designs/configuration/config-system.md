@@ -82,7 +82,8 @@ Settings (root, frozen)
 ├── agent: AgentSettings
 │   ├── model: str | None = None (SDK default)
 │   ├── allowed_tools: list[str] = ["Read", "Glob", "Grep"]
-│   └── cli_path: str | None = None (SDK bundled binary)
+│   ├── cli_path: str | None = None (SDK bundled binary)
+│   └── session_resume_window: int = 86400 (seconds; lookup window for session resumption matching)
 ├── logging: LoggingSettings
 │   ├── level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = "INFO"
 │   └── console: bool = false

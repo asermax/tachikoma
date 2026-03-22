@@ -24,6 +24,7 @@ A parallel concept — the `MessagePostProcessingPipeline` — follows a similar
 | R4 | Shared processor interface (ABC) that is domain-agnostic and SDK-decoupled |
 | R5 | Phase validation at registration — invalid phases rejected immediately |
 | R6 | Convenience base class for prompt-driven processors that standardizes the fork pattern (DES-004) |
+| R7 | Resumption-aware processing: processors receive session `last_resumed_at` and augment fork prompts to avoid re-extracting already-processed content |
 
 ## Behaviors
 
@@ -70,3 +71,12 @@ A convenience base class standardizes the pattern for processors that fork the S
 - Given a subclass providing a prompt, when `process()` is called, then it forks the SDK session via `fork_and_consume()` with the configured prompt and working directory
 - Given a subclass that overrides `process()`, when it calls `fork_and_consume()` directly, then it can add pre/post steps around the fork
 - Given a subclass that overrides `process()`, when it calls `fork_and_consume()` with `mcp_servers`, then the forked agent has access to the provided MCP tools
+
+### Resumption-Aware Processing (R7)
+
+When a resumed session eventually closes, processors augment their fork prompts with a resumption boundary instruction to avoid re-extracting already-processed content.
+
+**Acceptance Criteria**:
+- Given a session with `last_resumed_at` set, when `PromptDrivenProcessor.process()` runs, then the fork prompt is augmented with a resumption boundary instruction via the shared `augment_prompt_for_resumption()` helper
+- Given a session with `last_resumed_at` as None, when `PromptDrivenProcessor.process()` runs, then the fork prompt is used unchanged
+- Given a subclass that overrides `process()`, when it calls `fork_and_consume()`, then it should also apply resumption augmentation via the shared `augment_prompt_for_resumption()` helper to maintain consistency

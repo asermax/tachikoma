@@ -141,7 +141,7 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 **Description**: Package the agent as an installable CLI tool using uv, enabling easy installation and updates via `uv tool install`. This delta covers project packaging configuration (pyproject.toml entry points, dependencies), a CLI entry point that starts the agent, and documentation for installation. The CLI entry point is the main way users launch the agent — it wires up the agent architecture, loads configuration, and starts the main loop. Using uv tool provides isolated dependency management and simple update path (`uv tool upgrade`).
 
 ### DLT-028: Resume conversation on topic revisit
-**Status**: ✓ Plan
+**Status**: ✓ Reconciled
 **Depends on**: None
 **Priority**: 2 (High)
 **Complexity**: Medium

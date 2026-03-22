@@ -30,6 +30,7 @@ The core agent loop: receive a user message, pass it to the Claude agent via the
 | R11 | Per-message post-processing: after each agent response, trigger a per-message pipeline for ongoing conversation analysis (see [boundary detection](boundary-detection.md)) |
 | R12 | Pre-processing pipeline: on new session, run registered context providers to enrich the first message before the agent processes it (see [pipeline spec](pre-processing-pipeline.md)) |
 | R13 | Sub-agent delegation: coordinator receives agents dictionary from skill registry and passes to SDK for delegation (see [skills](skills.md)) |
+| R14 | Session resumption: on topic shift with a matching recent session, reopen the matched session instead of creating a fresh one; inject bridging context from intermediate sessions; skip pre-processing (resumed SDK session has full prior context) |
 
 ## Behaviors
 
@@ -165,8 +166,14 @@ Transient errors keep the conversation usable. Fatal errors signal channels to e
 Before processing a message, the coordinator checks whether it continues the current conversation or starts a new topic. On topic shift, it orchestrates a session transition before the message reaches the SDK.
 
 **Acceptance Criteria**:
-- Given an active session with a conversation summary, when a new message arrives, then the coordinator runs boundary detection before processing the message
-- Given a topic shift is detected, when the transition completes, then the current session is closed, a new session is created with the SDK context reset, and the message is processed in the fresh session
+- Given an active session with a conversation summary, when a new message arrives, then the coordinator fetches recent closed session candidates and runs boundary detection (with candidates) before processing the message
+- Given a topic shift is detected with no matching session, when the transition completes, then the current session is closed, a new session is created with the SDK context reset, and the message is processed in the fresh session
+- Given a topic shift is detected with a matching session, when the transition completes, then the current session is closed, the matched session is reopened, bridging context is assembled from intermediate sessions, and the message is processed in the resumed session context
+- Given a session is resumed, when the coordinator processes the next message, then pre-processing is skipped (the resumed SDK session has full prior context) and the bridging context is injected into the system prompt for the first message only
+- Given intermediate sessions exist between the matched session's last close and now, when bridging context is assembled, then their summaries are concatenated chronologically and injected into the system prompt
+- Given no intermediate sessions exist, when bridging context is assembled, then no bridging context is appended
+- Given the resume path fails (session not found, already open, reopen error), when the coordinator handles the failure, then it falls back to the fresh-session path with a warning log
+- Given candidate fetching fails, when the error is caught, then boundary detection proceeds without candidates (fail-open)
 - Given no active session, no summary, or no workspace directory exists, when a message arrives, then boundary detection is skipped
 - Given boundary detection fails, when the error is caught, then the message proceeds as a continuation (fail-open)
 

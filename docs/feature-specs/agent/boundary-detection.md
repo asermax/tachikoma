@@ -9,6 +9,7 @@ Detects whether an incoming message continues the current conversation or starts
 ## User Stories
 
 - As a user, I want the assistant to detect when I've changed topics so that each conversation is processed separately and prior context doesn't bleed into unrelated conversations
+- As a user, I want the assistant to recognize when I'm returning to a previously discussed topic so that my earlier conversation context is restored instead of starting from scratch
 
 ## Requirements
 
@@ -30,6 +31,8 @@ Detects whether an incoming message continues the current conversation or starts
 | R12 | Boundary detection operates independently of the coordinator's SDK session |
 | R13 | Rolling conversation summary remains concise and bounded in size regardless of conversation length |
 | R14 | On graceful shutdown, await running background post-processing tasks before exiting |
+| R15 | On topic shift, compare the incoming message against recent closed session summaries and return a matching session ID when found |
+| R16 | Configurable time-based lookup window for recent session candidates, defaulting to 1 day |
 
 ## Behaviors
 
@@ -97,3 +100,17 @@ Boundary detection is a best-effort enhancement that never blocks normal message
 - Given the coordinator has no workspace directory configured, when a message arrives, then boundary detection is skipped
 - Given the boundary detector encounters an error (SDK failure, timeout, malformed response), when the error occurs, then it is logged and the message proceeds as a continuation (fail-open)
 - Given a topic shift triggers a session transition, when the SDK session ID is cleared, then the next message creates a fresh SDK session with no prior conversation context
+
+### Session Resumption Matching (R15, R16)
+
+When a topic shift is detected, the boundary detector also checks whether the incoming message matches a recently closed session. If a match is found, the system resumes that session instead of starting fresh.
+
+**Acceptance Criteria**:
+- Given an active session with a summary and recent closed session candidates within the lookup window, when a new message arrives, then boundary detection receives both the current session summary and the recent session summaries (with their IDs)
+- Given the boundary detector identifies a topic shift that matches a recent closed session, when it returns the result, then the matched session's ID is included alongside the shift classification
+- Given the boundary detector identifies a topic shift that does NOT match any recent session, when it returns the result, then no session ID is returned (null) and the fresh-session path applies
+- Given the boundary detector identifies a continuation, when it returns the result, then no session matching is performed
+- Given no recent closed sessions exist within the lookup window, when boundary detection runs, then it behaves the same as without candidates (shift classification only, no matching possible)
+- Given the boundary detector identifies a topic shift that could match multiple recent sessions, when it selects a match, then it returns the single best match
+- Given a configurable time-based lookup window (default: 1 day), when querying recent sessions for boundary detection, then only sessions closed within that window with non-null SDK session IDs and non-null summaries are included
+- Given the boundary detector returns an invalid or unfound session ID, when the coordinator processes the transition, then it falls back to fresh-session behavior and logs a warning
