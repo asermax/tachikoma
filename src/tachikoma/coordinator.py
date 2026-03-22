@@ -11,7 +11,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import TracebackType
 
-from claude_agent_sdk import ClaudeAgentOptions, ClaudeSDKClient, CLIConnectionError, ProcessError
+from claude_agent_sdk import ClaudeAgentOptions, ClaudeSDKClient, CLIConnectionError, McpSdkServerConfig, ProcessError
 from claude_agent_sdk.types import AgentDefinition, PermissionMode, SystemPromptPreset
 from loguru import logger
 
@@ -73,6 +73,7 @@ class Coordinator:
         agents: dict[str, AgentDefinition] | None = None,
         cli_path: str | None = None,
         session_resume_window: int = 86400,
+        mcp_servers: dict[str, McpSdkServerConfig] | None = None,
     ) -> None:
         # Store individual options for building ClaudeAgentOptions per message
         self._allowed_tools = allowed_tools or []
@@ -83,9 +84,13 @@ class Coordinator:
         self._permission_mode = permission_mode
         self._env = env or {}
         self._agents = agents
+        self._mcp_servers = mcp_servers
 
         # Session resumption configuration
         self._session_resume_window = session_resume_window
+
+        # Last message time tracking for idle gating
+        self._last_message_time: datetime | None = None
 
         # SDK session tracking for resume
         self._sdk_session_id: str | None = None
@@ -174,6 +179,15 @@ class Coordinator:
                     )
             self._background_tasks = []
 
+    @property
+    def last_message_time(self) -> datetime | None:
+        """Return the timestamp of the last message exchange.
+
+        Updated at the start of send_message() and after response completion.
+        Used for idle gating of session tasks.
+        """
+        return self._last_message_time
+
     def _build_options(self, *, resume: str | None = None) -> ClaudeAgentOptions:
         """Build ClaudeAgentOptions for a single message exchange.
 
@@ -243,6 +257,7 @@ providing context for what the user has been doing in the meantime.
             env=self._env,
             agents=self._agents,
             resume=resume,
+            mcp_servers=self._mcp_servers,
         )
 
     async def send_message(self, text: str) -> AsyncIterator[AgentEvent]:
@@ -252,6 +267,9 @@ providing context for what the user has been doing in the meantime.
         for conversation continuity within the same session.
         """
         _log.debug("Message received: length={n}", n=len(text))
+
+        # Track last message time for idle gating
+        self._last_message_time = datetime.now(UTC)
 
         # Await any pending per-message post-processing task before proceeding
         if self._pending_msg_task is not None:
@@ -419,6 +437,9 @@ providing context for what the user has been doing in the meantime.
                 self._pending_msg_task = asyncio.create_task(
                     self._msg_pipeline.run(current_session, text, response_text)
                 )
+
+        # Update last message time after response completes
+        self._last_message_time = datetime.now(UTC)
 
         _log.debug("Response complete")
 

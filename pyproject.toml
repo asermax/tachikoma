@@ -17,6 +17,7 @@ dependencies = [
     "cyclopts",
     "python-frontmatter",
     "bubus>=1.6.0",
+    "cronsim>=2.6",
 ]
 
 [dependency-groups]
