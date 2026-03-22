@@ -31,6 +31,8 @@ The core agent loop: receive a user message, pass it to the Claude agent via the
 | R12 | Pre-processing pipeline: on new session, run registered context providers to enrich the first message before the agent processes it (see [pipeline spec](pre-processing-pipeline.md)) |
 | R13 | Sub-agent delegation: coordinator receives detected agents from the pre-processing pipeline per-session and passes to SDK for delegation (see [skills](skills.md)) |
 | R14 | Session resumption: on topic shift with a matching recent session, reopen the matched session instead of creating a fresh one; inject bridging context from intermediate sessions; skip pre-processing (resumed SDK session has full prior context) |
+| R15 | MCP server registration: coordinator accepts an optional mapping of named MCP server configurations at construction and passes them to `ClaudeAgentOptions` |
+| R16 | Last message time tracking: coordinator tracks the timestamp of the last message exchange for idle gating by external subsystems |
 
 ## Behaviors
 
@@ -185,3 +187,20 @@ After each agent response completes, the coordinator triggers a per-message pipe
 **Acceptance Criteria**:
 - Given the agent completes a response, when the response stream ends, then the per-message pipeline runs asynchronously with the current session (with SDK metadata populated) and the accumulated response text
 - Given no per-message pipeline is registered, when the response completes, then no per-message processing runs
+
+### MCP Server Registration (R15)
+
+The coordinator accepts an optional mapping of named MCP server configurations at construction and passes them to `ClaudeAgentOptions` for every message exchange.
+
+**Acceptance Criteria**:
+- Given the coordinator is created with `mcp_servers`, when `_build_options()` constructs per-message options, then the MCP servers are included in `ClaudeAgentOptions.mcp_servers`
+- Given the coordinator is created without `mcp_servers` (None), when `_build_options()` runs, then no MCP servers are passed to the SDK
+
+### Last Message Time Tracking (R16)
+
+The coordinator tracks the timestamp of the last message exchange, updated on both send and response completion. External subsystems read this property for idle gating.
+
+**Acceptance Criteria**:
+- Given a user message is sent via `send_message()`, when the call begins, then `last_message_time` is updated to the current time
+- Given the agent completes a response, when the Result event is produced, then `last_message_time` is updated to the current time
+- Given an external subsystem reads `last_message_time`, then it receives the timestamp of the most recent message exchange

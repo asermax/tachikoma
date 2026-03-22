@@ -28,6 +28,7 @@ A Telegram bot that receives text messages from a single authorized user, forwar
 | R9 | CLI entry point with `--channel` flag to select between REPL (default) and Telegram; CLI flags override TOML config values at runtime |
 | R10 | Message validation: silently ignore empty messages and non-text content (photos, stickers, voice, etc.) |
 | R11 | Error display: surface coordinator errors (recoverable and non-recoverable) as messages in the Telegram chat |
+| R12 | Event bus integration: subscribe to task events for proactive session task delivery and direct notification display |
 
 ## Behaviors
 
@@ -137,6 +138,15 @@ Coordinator errors are surfaced as messages in the Telegram chat.
 **Acceptance Criteria**:
 - Given the coordinator yields a recoverable Error event, when received, then an error message is sent to the user in the chat and the conversation remains usable
 - Given the coordinator yields a non-recoverable Error event, when received, then an error message is sent to the user and the bot logs the failure
+
+### Event Bus Integration (R12)
+
+The Telegram channel subscribes to task events via the event bus. Session tasks are delivered through the coordinator; notifications are sent directly as messages.
+
+**Acceptance Criteria**:
+- Given a `SessionTaskReady` event is received while idle, then the task prompt is sent through the coordinator via the shared `_process_through_coordinator()` method and the response is rendered normally
+- Given a `SessionTaskReady` event is received while a response is active, then the task prompt is steered into the current stream via `coordinator.steer()`
+- Given a `TaskNotification` event is received, then the notification message is sent directly to the user in the Telegram chat with appropriate severity formatting (ℹ️ for info, ⚠️ for error)
 
 ## User Flow
 

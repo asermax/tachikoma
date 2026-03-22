@@ -1316,10 +1316,10 @@ class TestCoordinatorMcpServers:
         options1 = mock_cls.call_args_list[0][0][0]
         options2 = mock_cls.call_args_list[1][0][0]
         assert options1.mcp_servers == {"projects": mock_server}
-        assert options2.mcp_servers == {}
+        assert options2.mcp_servers is None
 
     async def test_no_mcp_servers_when_not_provided(self, mock_sdk) -> None:
-        """AC: No mcp_servers in ContextResult means empty dict in options."""
+        """AC: No mcp_servers in ContextResult means None in options."""
         client, mock_cls = mock_sdk
         client.receive_response.return_value = _mock_messages(
             make_assistant([TextBlock(text="Hello!")]),
@@ -1336,7 +1336,7 @@ class TestCoordinatorMcpServers:
             _ = [e async for e in coord.send_message("hello")]
 
         options = mock_cls.call_args[0][0]
-        assert options.mcp_servers == {}
+        assert options.mcp_servers is None
 
 
 class TestBoundaryDetection:
@@ -1769,6 +1769,50 @@ class TestSessionTransition:
             _ = [e async for e in coord.send_message("new topic")]
 
         # Despite close error, new session should be created
+        registry.create_session.assert_awaited()
+
+    async def test_session_task_triggers_boundary_detection(
+        self, mock_sdk, mocker,
+    ) -> None:
+        """AC: Session task messages go through boundary detection like user messages.
+
+        Given a session task message is injected, then it goes through the full
+        pre-processing pipeline including boundary detection. If the boundary
+        detector classifies it as a topic change, a new session is created.
+        """
+        client, _ = mock_sdk
+        client.receive_response.return_value = _mock_messages(
+            make_assistant([TextBlock(text="task response")]),
+            make_result(),
+        )
+
+        # Active session with an existing topic
+        active = Session(
+            id="s1",
+            started_at=datetime.now(UTC),
+            summary="User was discussing Python programming.",
+            sdk_session_id="sdk-old",
+        )
+        registry = _make_mock_registry(active_session=active)
+        registry.get_active_session.side_effect = [active, None, None]
+
+        # Boundary detection indicates topic shift for the session task
+        mocker.patch(
+            "tachikoma.coordinator.detect_boundary",
+            return_value=BoundaryResult(continues=False),  # Topic shift
+        )
+
+        async with Coordinator(
+            registry=registry,
+            cwd=Path("/workspace"),
+        ) as coord:
+            # Simulate a session task prompt being sent
+            _ = [e async for e in coord.send_message(
+                "Reminder: review the weekly report"
+            )]
+
+        # Verify boundary detection was triggered (session closed, new created)
+        registry.close_session.assert_awaited_once_with("s1")
         registry.create_session.assert_awaited()
 
 

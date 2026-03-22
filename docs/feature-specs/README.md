@@ -10,3 +10,4 @@ System capabilities organized by domain.
 | [channels](channels/) | Communication interfaces for interacting with the agent |
 | [configuration](configuration/) | Application configuration management |
 | [memory](memory/) | Automatic memory extraction from conversations |
+| [tasks](tasks/) | Proactive task scheduling and execution |

@@ -9,12 +9,14 @@ import asyncio
 import contextlib
 import signal
 import time
+from collections.abc import Awaitable, Callable
 
 from aiogram import Bot, Dispatcher, F, Router
 from aiogram.dispatcher.dispatcher import BackoffConfig
 from aiogram.exceptions import TelegramAPIError, TelegramBadRequest, TelegramRetryAfter
 from aiogram.types import Message
 from aiogram.utils.chat_action import ChatActionSender
+from bubus import EventBus
 from loguru import logger
 from telegramify_markdown import convert
 
@@ -23,6 +25,7 @@ from tachikoma.config import TelegramSettings
 from tachikoma.coordinator import Coordinator
 from tachikoma.display import TOOL_DISPLAY
 from tachikoma.events import Error, Result, Status, TextChunk, ToolActivity
+from tachikoma.tasks.events import SessionTaskReady, TaskNotification
 
 _log = logger.bind(component="telegram")
 
@@ -258,9 +261,18 @@ class TelegramChannel:
     The channel uses aiogram for long polling and message handling.
     It supports steering (injecting mid-stream messages) and graceful
     shutdown with partial response delivery.
+
+    When an event bus is provided, the channel subscribes to:
+    - SessionTaskReady: Proactive tasks from the task scheduler
+    - TaskNotification: Completion/failure notifications from background tasks
     """
 
-    def __init__(self, coordinator: Coordinator, settings: TelegramSettings) -> None:
+    def __init__(
+        self,
+        coordinator: Coordinator,
+        settings: TelegramSettings,
+        bus: EventBus | None = None,
+    ) -> None:
         self._coordinator = coordinator
         self._settings = settings
         self._bot = Bot(token=settings.bot_token)
@@ -268,6 +280,7 @@ class TelegramChannel:
         self._router = Router()
         self._active_renderer: ResponseRenderer | None = None
         self._is_processing: bool = False
+        self._bus = bus
 
         # Set up router with authorization filter
         self._router.message.filter(F.chat.id == settings.authorized_chat_id)
@@ -280,6 +293,11 @@ class TelegramChannel:
 
         # Register shutdown hook
         self._dispatcher.shutdown.register(self._on_shutdown)
+
+        # Subscribe to task events if bus is provided
+        if self._bus is not None:
+            self._bus.on(SessionTaskReady, self._handle_session_task)
+            self._bus.on(TaskNotification, self._handle_notification)
 
     async def run(self) -> None:
         """Start the bot and begin polling for messages.
@@ -321,21 +339,62 @@ class TelegramChannel:
 
     async def _handle_message(self, message: Message) -> None:
         """Handle an incoming message from the authorized user."""
-        # Validate message has text
         if not message.text or not message.text.strip():
             _log.debug("Ignoring empty or non-text message")
             return
 
         text = message.text.strip()
-        chat_id = message.chat.id
 
-        # Check if we're already processing (steering case)
         if self._is_processing:
             _log.debug("Steering mid-stream message")
             await self._coordinator.steer(text)
             return
 
-        # Start processing
+        await self._process_through_coordinator(text)
+
+    async def _on_shutdown(self) -> None:
+        """Send partial response on shutdown if one is active."""
+        if self._active_renderer is not None and self._active_renderer._buffer:
+            _log.info("Sending partial response before shutdown")
+            try:
+                await self._active_renderer.finalize()
+            except TelegramAPIError:
+                _log.warning("Could not send partial response on shutdown")
+
+    async def _handle_session_task(self, event: SessionTaskReady) -> None:
+        """Handle a SessionTaskReady event from the task scheduler.
+
+        This delivers a proactive task message to the user through the coordinator.
+        If the user is currently in a conversation, the message is steered mid-stream.
+        """
+        instance = event.instance
+        _log.info(
+            "Processing session task: id={task_id}, prompt_preview={preview}",
+            task_id=instance.id,
+            preview=instance.prompt[:50] if instance.prompt else "",
+        )
+
+        if self._is_processing:
+            _log.debug("Steering session task mid-stream")
+            await self._coordinator.steer(instance.prompt)
+            return
+
+        await self._process_through_coordinator(
+            instance.prompt, on_complete=event.on_complete,
+        )
+
+    async def _process_through_coordinator(
+        self,
+        text: str,
+        on_complete: Callable[[], Awaitable[None]] | None = None,
+    ) -> None:
+        """Send text through the coordinator and render the response.
+
+        Args:
+            text: The message to send.
+            on_complete: Optional callback invoked after successful processing.
+        """
+        chat_id = self._settings.authorized_chat_id
         self._is_processing = True
         self._active_renderer = ResponseRenderer(self._bot, chat_id)
 
@@ -354,9 +413,11 @@ class TelegramChannel:
                         await self._active_renderer.finalize()
                         self._active_renderer.reset()
 
+            if on_complete is not None:
+                await on_complete()
+
         except Exception as e:
             _log.exception("Error during message processing")
-            # Try to send error message
             with contextlib.suppress(TelegramAPIError):
                 await self._bot.send_message(
                     chat_id,
@@ -368,15 +429,28 @@ class TelegramChannel:
             self._is_processing = False
             self._active_renderer = None
 
-    async def _on_shutdown(self) -> None:
-        """Send partial response on shutdown if one is active."""
-        if self._active_renderer is not None and self._active_renderer._buffer:
-            _log.info("Sending partial response before shutdown")
-            try:
-                await self._active_renderer.finalize()
-            except TelegramAPIError:
-                # Bot session may be closing - log and continue
-                _log.warning("Could not send partial response on shutdown")
+    async def _handle_notification(self, event: TaskNotification) -> None:
+        """Handle a TaskNotification event from the background task executor.
+
+        Notifications are delivered directly to the user via Telegram message.
+        """
+        severity_emoji = "ℹ️" if event.severity == "info" else "⚠️"
+        message = f"{severity_emoji} {event.message}"
+
+        _log.info(
+            "Sending task notification: severity={severity}, source={source}",
+            severity=event.severity,
+            source=event.source_task_id,
+        )
+
+        try:
+            await self._bot.send_message(
+                self._settings.authorized_chat_id,
+                message,
+                parse_mode=None,
+            )
+        except TelegramAPIError:
+            _log.exception("Failed to send task notification")
 
 
 async def telegram_hook(ctx: BootstrapContext) -> None:

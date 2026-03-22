@@ -13,6 +13,7 @@ from tachikoma.config import (
     LoggingSettings,
     Settings,
     SettingsManager,
+    TaskSettings,
     TelegramSettings,
     WorkspaceSettings,
     _generate_default_config,
@@ -604,3 +605,94 @@ class TestSettingsManagerTelegram:
 
         with pytest.raises(KeyError, match="is a section"):
             manager.update_root("workspace", "value")
+
+
+class TestTaskSettings:
+    """Tests for TaskSettings model (DLT-010)."""
+
+    def test_default_idle_window(self) -> None:
+        """AC (DLT-010): tasks.idle_window defaults to 300 seconds."""
+        settings = TaskSettings()
+
+        assert settings.idle_window == 300
+
+    def test_default_check_interval(self) -> None:
+        """AC (DLT-010): tasks.check_interval defaults to 300 seconds."""
+        settings = TaskSettings()
+
+        assert settings.check_interval == 300
+
+    def test_default_max_iterations(self) -> None:
+        """AC (DLT-010): tasks.max_iterations defaults to 10."""
+        settings = TaskSettings()
+
+        assert settings.max_iterations == 10
+
+    def test_default_max_concurrent_background(self) -> None:
+        """AC (DLT-010): tasks.max_concurrent_background defaults to 3."""
+        settings = TaskSettings()
+
+        assert settings.max_concurrent_background == 3
+
+    def test_default_timezone(self) -> None:
+        """AC (DLT-010): tasks.timezone defaults to empty string (system tz)."""
+        settings = TaskSettings()
+
+        assert settings.timezone == ""
+
+    def test_settings_has_tasks_with_defaults(self) -> None:
+        """AC (DLT-010): Settings has tasks field with default TaskSettings."""
+        settings = Settings()
+
+        assert settings.tasks.idle_window == 300
+        assert settings.tasks.max_iterations == 10
+
+    def test_tasks_settings_from_config(self, tmp_path: Path) -> None:
+        """AC (DLT-010): TaskSettings loaded from config."""
+        config_path = tmp_path / "config.toml"
+        config_path.write_text(
+            '[tasks]\nidle_window = 600\nmax_iterations = 20\ntimezone = "America/New_York"\n'
+        )
+
+        settings = load_settings(config_path)
+
+        assert settings.tasks.idle_window == 600
+        assert settings.tasks.max_iterations == 20
+        assert settings.tasks.timezone == "America/New_York"
+
+    def test_tasks_settings_extra_fields_ignored(self) -> None:
+        """AC (DLT-010): Unknown fields in [tasks] are ignored."""
+        settings = Settings.model_validate({
+            "tasks": {"idle_window": 120, "unknown_field": "value"},
+        })
+
+        assert settings.tasks.idle_window == 120
+
+
+class TestTaskSettingsDefaultConfig:
+    """Tests for tasks section in default config generation (DLT-010)."""
+
+    def test_generated_file_contains_tasks_section(self, tmp_path: Path) -> None:
+        """AC (DLT-010): Generated file contains [tasks] section."""
+        config_path = tmp_path / "config.toml"
+        _generate_default_config(config_path)
+
+        content = config_path.read_text()
+
+        assert "[tasks]" in content
+        assert "idle_window" in content
+        assert "check_interval" in content
+        assert "max_iterations" in content
+        assert "max_concurrent_background" in content
+        assert "timezone" in content
+
+    def test_generated_tasks_section_uses_int_format(self, tmp_path: Path) -> None:
+        """AC (DLT-010): Tasks int fields are formatted as ints, not strings."""
+        config_path = tmp_path / "config.toml"
+        _generate_default_config(config_path)
+
+        content = config_path.read_text()
+
+        assert "idle_window = 300" in content
+        assert 'idle_window = "300"' not in content
+        assert "max_iterations = 10" in content

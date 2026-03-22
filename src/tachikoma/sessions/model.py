@@ -5,11 +5,13 @@ Callers work exclusively with the frozen Session dataclass.
 """
 
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import datetime
 from typing import Literal
 
 from sqlalchemy import DateTime, ForeignKey, Index
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
+
+from tachikoma.db_utils import ensure_utc
 
 SessionStatus = Literal["open", "closed", "interrupted"]
 
@@ -100,9 +102,9 @@ class SessionRecord(Base):
             sdk_session_id=self.sdk_session_id,
             transcript_path=self.transcript_path,
             summary=self.summary,
-            started_at=_ensure_utc(self.started_at),  # type: ignore[arg-type]
-            ended_at=_ensure_utc(self.ended_at),
-            last_resumed_at=_ensure_utc(self.last_resumed_at),
+            started_at=ensure_utc(self.started_at),  # type: ignore[arg-type]
+            ended_at=ensure_utc(self.ended_at),
+            last_resumed_at=ensure_utc(self.last_resumed_at),
         )
 
 
@@ -128,21 +130,8 @@ class SessionResumptionRecord(Base):
         """Convert ORM record to domain dataclass."""
         return SessionResumption(
             session_id=self.session_id,
-            resumed_at=_ensure_utc(self.resumed_at),  # type: ignore[arg-type]
-            previous_ended_at=_ensure_utc(self.previous_ended_at),  # type: ignore[arg-type]
+            resumed_at=ensure_utc(self.resumed_at),  # type: ignore[arg-type]
+            previous_ended_at=ensure_utc(self.previous_ended_at),  # type: ignore[arg-type]
         )
 
 
-def _ensure_utc(dt: datetime | None) -> datetime | None:
-    """Re-attach UTC tzinfo to a naive datetime read from SQLite.
-
-    SQLite stores datetimes as text without timezone info. aiosqlite/SQLAlchemy
-    reads them back as naive datetimes. This helper restores the UTC context.
-    """
-    if dt is None:
-        return None
-
-    if dt.tzinfo is None:
-        return dt.replace(tzinfo=UTC)
-
-    return dt

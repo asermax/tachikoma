@@ -86,6 +86,31 @@ class TelegramSettings(BaseModel):
     )
 
 
+class TaskSettings(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="ignore")
+
+    idle_window: int = Field(
+        default=300,
+        description="Seconds before session tasks fire (user must be idle)",
+    )
+    check_interval: int = Field(
+        default=300,
+        description="Session task check interval in seconds",
+    )
+    max_iterations: int = Field(
+        default=10,
+        description="Max evaluator iterations for background tasks",
+    )
+    max_concurrent_background: int = Field(
+        default=3,
+        description="Max concurrent background tasks",
+    )
+    timezone: str = Field(
+        default="",
+        description="Timezone for cron evaluation (empty = system tz)",
+    )
+
+
 class Settings(BaseModel):
     model_config = ConfigDict(frozen=True, extra="ignore")
 
@@ -100,6 +125,7 @@ class Settings(BaseModel):
         default=None,
         description="Telegram bot configuration (required when channel is telegram)",
     )
+    tasks: TaskSettings = Field(default_factory=TaskSettings)
 
 
 class SettingsManager:
@@ -253,6 +279,22 @@ def _generate_default_config(config_path: Path = CONFIG_PATH) -> None:
             doc.add(tomlkit.comment('bot_token = ""'))
         elif name == "authorized_chat_id":
             doc.add(tomlkit.comment("authorized_chat_id = 0"))
+
+    doc.add(tomlkit.nl())
+
+    # [tasks] section
+    doc.add(tomlkit.comment("[tasks]"))
+
+    for name, field_info in TaskSettings.model_fields.items():
+        desc = field_info.description or ""
+        default = field_info.default
+
+        doc.add(tomlkit.comment(f"{desc}"))
+
+        if isinstance(default, int):
+            doc.add(tomlkit.comment(f"{name} = {default}"))
+        elif isinstance(default, str):
+            doc.add(tomlkit.comment(f'{name} = "{default}"'))
 
     try:
         config_path.parent.mkdir(parents=True, exist_ok=True)
