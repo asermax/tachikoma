@@ -112,7 +112,8 @@ class PostProcessingPipeline:
 
         Args:
             processor: The processor to register.
-            phase: The phase to run this processor in. Must be "main" or "finalize".
+            phase: The phase to run this processor in. Must be "main", "pre_finalize",
+                or "finalize".
                 Defaults to "main" for backward compatibility.
 
         Raises:
@@ -126,7 +127,7 @@ class PostProcessingPipeline:
     async def run(self, session: Session) -> None:
         """Run all registered processors in sequential phases.
 
-        Phases run in order (main → finalize). Within each phase,
+        Phases run in order (main → pre_finalize → finalize). Within each phase,
         processors run in parallel. Acquires an internal lock to serialize
         concurrent invocations.
 

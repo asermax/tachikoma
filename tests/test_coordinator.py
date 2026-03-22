@@ -2295,11 +2295,11 @@ class TestCoordinatorPipelineAgents:
         self, mock_sdk, mocker,
     ) -> None:
         """AC: Agents are cleared after topic shift and re-populated from new detection."""
-        client, _ = mock_sdk
-        client.receive_response.return_value = _mock_messages(
-            make_assistant([TextBlock(text="response")]),
-            make_result(),
-        )
+        client, mock_cls = mock_sdk
+        client.receive_response.side_effect = [
+            _mock_messages(make_assistant([TextBlock(text="A")]), make_result()),
+            _mock_messages(make_assistant([TextBlock(text="B")]), make_result()),
+        ]
 
         agents_before = {
             "skills/before/agent": AgentDefinition(
@@ -2321,11 +2321,6 @@ class TestCoordinatorPipelineAgents:
             sdk_session_id="sdk-old",
         )
         registry = _make_mock_registry(active_session=active)
-        registry.get_active_session.side_effect = [
-            active,  # First message: get active
-            None,  # After transition: no active
-            None,  # After create: get active (for metadata update)
-        ]
 
         pre_pipeline = _make_mock_pre_pipeline()
         pre_pipeline.run.side_effect = [
@@ -2335,12 +2330,23 @@ class TestCoordinatorPipelineAgents:
 
         mocker.patch(
             "tachikoma.coordinator.detect_boundary",
-            return_value=False,  # No transition on first message
+            return_value=False,  # Triggers topic shift
         )
 
-        async with Coordinator(registry=registry, pre_pipeline=pre_pipeline) as coord:
-            # Check initial agents state
-            assert coord._agents is None
+        async with Coordinator(
+            registry=registry, pre_pipeline=pre_pipeline, cwd=Path("/ws"),
+        ) as coord:
+            _ = [e async for e in coord.send_message("first")]
+
+            # Update pipeline for second call with new agents
+            _ = [e async for e in coord.send_message("new topic")]
+
+        # First call should have agents_before, second should have agents_after
+        assert mock_cls.call_count == 2
+        options1 = mock_cls.call_args_list[0][0][0]
+        options2 = mock_cls.call_args_list[1][0][0]
+        assert options1.agents == agents_before
+        assert options2.agents == agents_after
 
     async def test_no_agents_when_no_providers_return_agents(
         self, mock_sdk,
