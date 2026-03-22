@@ -3,12 +3,12 @@
 Tests for DLT-002: Send and receive messages via Telegram.
 """
 
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from aiogram.exceptions import TelegramAPIError, TelegramRetryAfter
 
 from tachikoma.events import Error, ToolActivity
-from tachikoma.telegram import ResponseRenderer
+from tachikoma.telegram import ResponseRenderer, TelegramChannel
 
 
 class MockMessage:
@@ -220,6 +220,45 @@ class TestResponseRendererToolHandling:
         assert "🔧 Ran tools" in renderer._buffer
         assert "Response text" in renderer._buffer
 
+    async def test_multiple_tool_text_cycles_insert_multiple_markers(self) -> None:
+        """Each tool→text transition inserts its own "Ran tools" marker (AC1)."""
+        bot = MagicMock()
+        bot.send_message = AsyncMock(return_value=MockMessage(message_id=1))
+        bot.edit_message_text = AsyncMock()
+        renderer = ResponseRenderer(bot, chat_id=123)
+
+        # First cycle: tools → text
+        await renderer.handle_tool(ToolActivity(tool_name="Read", tool_input={"file_path": "a.py"}))
+        renderer._last_edit_time = 0.0
+        await renderer.handle_text("First response")
+
+        # Second cycle: tools → text
+        await renderer.handle_tool(ToolActivity(tool_name="Edit", tool_input={"file_path": "b.py"}))
+        renderer._last_edit_time = 0.0
+        await renderer.handle_text("Second response")
+
+        assert renderer._buffer.count("🔧 Ran tools") == 2
+
+    async def test_consecutive_tool_batches_without_text_produce_single_marker(self) -> None:
+        """Consecutive tools without text between them produce one marker (AC4)."""
+        bot = MagicMock()
+        bot.send_message = AsyncMock(return_value=MockMessage(message_id=1))
+        bot.edit_message_text = AsyncMock()
+        renderer = ResponseRenderer(bot, chat_id=123)
+
+        # First cycle: tools → text
+        await renderer.handle_tool(ToolActivity(tool_name="Read", tool_input={"file_path": "a.py"}))
+        renderer._last_edit_time = 0.0
+        await renderer.handle_text("First response")
+
+        # Second cycle: two tool batches without text, then text
+        await renderer.handle_tool(ToolActivity(tool_name="Grep", tool_input={"pattern": "foo"}))
+        await renderer.handle_tool(ToolActivity(tool_name="Edit", tool_input={"file_path": "b.py"}))
+        renderer._last_edit_time = 0.0
+        await renderer.handle_text("Second response")
+
+        assert renderer._buffer.count("🔧 Ran tools") == 2
+
     async def test_generic_tool_uses_tool_name(self) -> None:
         """Unknown tools display with their name."""
         bot = MagicMock()
@@ -362,3 +401,230 @@ class TestResponseRendererRateLimitHandling:
 
         # Should have attempted edit despite rate limit
         assert bot.edit_message_text.call_count >= 1
+
+
+class TestTelegramChannelStdinShutdown:
+    """Tests for 'q' keypress graceful shutdown in TelegramChannel.run()."""
+
+    def _make_channel(self) -> TelegramChannel:
+        """Build a TelegramChannel with mocked dependencies."""
+        coordinator = MagicMock()
+        settings = MagicMock()
+        settings.bot_token = "123456:ABCdef"
+        settings.authorized_chat_id = 123
+
+        channel = TelegramChannel(coordinator, settings)
+
+        # Replace dispatcher and bot with mocks
+        channel._dispatcher = MagicMock()
+        channel._dispatcher.start_polling = AsyncMock()
+        channel._dispatcher.stop_polling = AsyncMock()
+        channel._dispatcher.include_router = MagicMock()
+        channel._dispatcher.shutdown = MagicMock()
+        channel._bot = MagicMock()
+
+        return channel
+
+    @patch("tachikoma.telegram.tty")
+    @patch("tachikoma.telegram.termios")
+    @patch("tachikoma.telegram.sys")
+    async def test_q_keypress_stops_polling(
+        self, mock_sys: MagicMock, mock_termios: MagicMock, mock_tty: MagicMock,
+    ) -> None:
+        """Pressing 'q' triggers stop_polling()."""
+        channel = self._make_channel()
+
+        mock_sys.stdin.isatty.return_value = True
+        mock_sys.stdin.fileno.return_value = 0
+        mock_termios.tcgetattr.return_value = [0, 0, 0, 0]
+        mock_termios.TCSADRAIN = 1
+
+        # Capture the callback registered with add_reader
+        captured_callback = None
+        loop = MagicMock()
+
+        def capture_add_reader(fd: int, callback: object) -> None:
+            nonlocal captured_callback
+            captured_callback = callback
+
+        loop.add_reader.side_effect = capture_add_reader
+        loop.add_signal_handler = MagicMock()
+        loop.remove_signal_handler = MagicMock()
+        loop.remove_reader = MagicMock()
+
+        with patch("asyncio.get_running_loop", return_value=loop):
+            await channel.run()
+
+        # Simulate 'q' keypress via the captured callback
+        assert captured_callback is not None
+        mock_sys.stdin.read.return_value = "q"
+
+        with patch("asyncio.ensure_future") as mock_ensure:
+            captured_callback()
+            mock_ensure.assert_called_once()
+
+    @patch("tachikoma.telegram.tty")
+    @patch("tachikoma.telegram.termios")
+    @patch("tachikoma.telegram.sys")
+    async def test_q_uppercase_stops_polling(
+        self, mock_sys: MagicMock, mock_termios: MagicMock, mock_tty: MagicMock,
+    ) -> None:
+        """Pressing 'Q' (uppercase) also triggers stop_polling()."""
+        channel = self._make_channel()
+
+        mock_sys.stdin.isatty.return_value = True
+        mock_sys.stdin.fileno.return_value = 0
+        mock_termios.tcgetattr.return_value = [0, 0, 0, 0]
+        mock_termios.TCSADRAIN = 1
+
+        captured_callback = None
+        loop = MagicMock()
+
+        def capture_add_reader(fd: int, callback: object) -> None:
+            nonlocal captured_callback
+            captured_callback = callback
+
+        loop.add_reader.side_effect = capture_add_reader
+        loop.add_signal_handler = MagicMock()
+        loop.remove_signal_handler = MagicMock()
+        loop.remove_reader = MagicMock()
+
+        with patch("asyncio.get_running_loop", return_value=loop):
+            await channel.run()
+
+        assert captured_callback is not None
+        mock_sys.stdin.read.return_value = "Q"
+
+        with patch("asyncio.ensure_future") as mock_ensure:
+            captured_callback()
+            mock_ensure.assert_called_once()
+
+    @patch("tachikoma.telegram.tty")
+    @patch("tachikoma.telegram.termios")
+    @patch("tachikoma.telegram.sys")
+    async def test_non_q_keypress_does_not_stop(
+        self, mock_sys: MagicMock, mock_termios: MagicMock, mock_tty: MagicMock,
+    ) -> None:
+        """Pressing a non-q key does not trigger shutdown."""
+        channel = self._make_channel()
+
+        mock_sys.stdin.isatty.return_value = True
+        mock_sys.stdin.fileno.return_value = 0
+        mock_termios.tcgetattr.return_value = [0, 0, 0, 0]
+        mock_termios.TCSADRAIN = 1
+
+        captured_callback = None
+        loop = MagicMock()
+
+        def capture_add_reader(fd: int, callback: object) -> None:
+            nonlocal captured_callback
+            captured_callback = callback
+
+        loop.add_reader.side_effect = capture_add_reader
+        loop.add_signal_handler = MagicMock()
+        loop.remove_signal_handler = MagicMock()
+        loop.remove_reader = MagicMock()
+
+        with patch("asyncio.get_running_loop", return_value=loop):
+            await channel.run()
+
+        assert captured_callback is not None
+        mock_sys.stdin.read.return_value = "x"
+
+        with patch("asyncio.ensure_future") as mock_ensure:
+            captured_callback()
+            mock_ensure.assert_not_called()
+
+    @patch("tachikoma.telegram.tty")
+    @patch("tachikoma.telegram.termios")
+    @patch("tachikoma.telegram.sys")
+    async def test_stdin_not_tty_skips_reader(
+        self, mock_sys: MagicMock, mock_termios: MagicMock, mock_tty: MagicMock,
+    ) -> None:
+        """Non-TTY stdin skips reader and terminal setup."""
+        channel = self._make_channel()
+
+        mock_sys.stdin.isatty.return_value = False
+
+        loop = MagicMock()
+        loop.add_signal_handler = MagicMock()
+        loop.remove_signal_handler = MagicMock()
+        loop.remove_reader = MagicMock()
+
+        with patch("asyncio.get_running_loop", return_value=loop):
+            await channel.run()
+
+        loop.add_reader.assert_not_called()
+        mock_termios.tcgetattr.assert_not_called()
+        mock_tty.setcbreak.assert_not_called()
+
+    @patch("tachikoma.telegram.tty")
+    @patch("tachikoma.telegram.termios")
+    @patch("tachikoma.telegram.sys")
+    async def test_terminal_restored_on_exit(
+        self, mock_sys: MagicMock, mock_termios: MagicMock, mock_tty: MagicMock,
+    ) -> None:
+        """Terminal settings are restored in the finally block."""
+        channel = self._make_channel()
+
+        mock_sys.stdin.isatty.return_value = True
+        mock_sys.stdin.fileno.return_value = 0
+        original_attrs = [1, 2, 3, 4]
+        mock_termios.tcgetattr.return_value = original_attrs
+        mock_termios.TCSADRAIN = 1
+
+        loop = MagicMock()
+        loop.add_signal_handler = MagicMock()
+        loop.remove_signal_handler = MagicMock()
+        loop.remove_reader = MagicMock()
+        loop.add_reader = MagicMock()
+
+        with patch("asyncio.get_running_loop", return_value=loop):
+            await channel.run()
+
+        # Terminal settings restored
+        mock_termios.tcsetattr.assert_called_once_with(0, 1, original_attrs)
+
+        # Reader cleaned up
+        loop.remove_reader.assert_called_once_with(0)
+
+    @patch("tachikoma.telegram.tty")
+    @patch("tachikoma.telegram.termios")
+    @patch("tachikoma.telegram.sys")
+    async def test_eof_on_stdin_removes_reader(
+        self, mock_sys: MagicMock, mock_termios: MagicMock, mock_tty: MagicMock,
+    ) -> None:
+        """EOF on stdin removes the reader to prevent busy-loop spin."""
+        channel = self._make_channel()
+
+        mock_sys.stdin.isatty.return_value = True
+        mock_sys.stdin.fileno.return_value = 0
+        mock_termios.tcgetattr.return_value = [0, 0, 0, 0]
+        mock_termios.TCSADRAIN = 1
+
+        captured_callback = None
+        loop = MagicMock()
+
+        def capture_add_reader(fd: int, callback: object) -> None:
+            nonlocal captured_callback
+            captured_callback = callback
+
+        loop.add_reader.side_effect = capture_add_reader
+        loop.add_signal_handler = MagicMock()
+        loop.remove_signal_handler = MagicMock()
+        loop.remove_reader = MagicMock()
+
+        with patch("asyncio.get_running_loop", return_value=loop):
+            await channel.run()
+
+        assert captured_callback is not None
+        mock_sys.stdin.read.return_value = ""
+
+        with patch("asyncio.ensure_future") as mock_ensure:
+            captured_callback()
+
+            # Should NOT trigger shutdown
+            mock_ensure.assert_not_called()
+
+            # Should remove reader to prevent spin
+            loop.remove_reader.assert_called_with(0)

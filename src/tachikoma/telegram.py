@@ -8,7 +8,10 @@ and streaming response rendering.
 import asyncio
 import contextlib
 import signal
+import sys
+import termios
 import time
+import tty
 from collections.abc import Awaitable, Callable
 
 from aiogram import Bot, Dispatcher, F, Router
@@ -111,6 +114,7 @@ class ResponseRenderer:
         )
         self._tool_line = f"_{label}_"
         self._had_tools = True
+        self._tools_marker_inserted = False
         await self._flush(force=False)
 
     async def handle_error(self, error: Error) -> None:
@@ -302,16 +306,15 @@ class TelegramChannel:
     async def run(self) -> None:
         """Start the bot and begin polling for messages.
 
-        This method blocks until the bot is stopped (via signal or error).
-        Signals are handled manually (not by aiogram) so that polling stops
-        gracefully without cancelling the task — this allows the Coordinator's
-        post-processing pipeline to run on shutdown.
+        This method blocks until the bot is stopped (via signal, 'q' keypress,
+        or error). Signals are handled manually (not by aiogram) so that
+        polling stops gracefully without cancelling the task — this allows the
+        Coordinator's post-processing pipeline to run on shutdown.
         """
         _log.info(
             "Starting Telegram bot for chat {chat_id}",
             chat_id=self._settings.authorized_chat_id,
         )
-        _log.info("Telegram bot running — send a message to start chatting (Ctrl+C to stop)")
 
         loop = asyncio.get_running_loop()
 
@@ -321,6 +324,37 @@ class TelegramChannel:
 
         for sig in (signal.SIGINT, signal.SIGTERM):
             loop.add_signal_handler(sig, _request_shutdown, sig)
+
+        # Watch stdin for 'q' keypress to allow graceful shutdown from the terminal.
+        # Uses cbreak mode for character-at-a-time input while preserving normal output.
+        stdin_fd: int | None = None
+        old_termios: list | None = None
+
+        if sys.stdin.isatty():
+            stdin_fd = sys.stdin.fileno()
+            old_termios = termios.tcgetattr(stdin_fd)
+            tty.setcbreak(stdin_fd)
+
+            def _on_stdin_readable() -> None:
+                ch = sys.stdin.read(1)
+
+                if not ch:
+                    # EOF — stdin closed; remove reader to avoid busy-loop spin
+                    loop.remove_reader(stdin_fd)
+                    return
+
+                if ch.lower() == "q":
+                    _log.info("Received 'q' keypress, stopping polling")
+                    asyncio.ensure_future(self._dispatcher.stop_polling())
+
+            loop.add_reader(stdin_fd, _on_stdin_readable)
+
+            _log.info(
+                "Telegram bot running — send a message to start chatting "
+                "(press 'q' or Ctrl+C to stop)"
+            )
+        else:
+            _log.info("Telegram bot running — send a message to start chatting (Ctrl+C to stop)")
 
         try:
             await self._dispatcher.start_polling(
@@ -334,6 +368,12 @@ class TelegramChannel:
                 ),
             )
         finally:
+            if stdin_fd is not None:
+                loop.remove_reader(stdin_fd)
+
+            if old_termios is not None:
+                termios.tcsetattr(stdin_fd, termios.TCSADRAIN, old_termios)
+
             for sig in (signal.SIGINT, signal.SIGTERM):
                 loop.remove_signal_handler(sig)
 
