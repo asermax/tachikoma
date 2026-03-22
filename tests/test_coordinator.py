@@ -2220,3 +2220,184 @@ class TestCoordinatorShutdownWithBoundaryDetection:
             pipeline=pipeline,
         ) as coord:
             _ = [e async for e in coord.send_message("new topic")]
+
+
+class TestCoordinatorPipelineAgents:
+    """Tests for DLT-021: agent extraction from pre-processing pipeline results."""
+
+    async def test_agents_from_pipeline_passed_to_sdk(
+        self, mock_sdk,
+    ) -> None:
+        """AC: Agents from ContextResult are passed to SDK options."""
+        client, mock_cls = mock_sdk
+        client.receive_response.return_value = _mock_messages(
+            make_assistant([TextBlock(text="hi")]),
+            make_result(),
+        )
+
+        agents = {
+            "skills/test/agent": AgentDefinition(
+                description="Test agent",
+                prompt="A test prompt",
+            ),
+        }
+        pre_pipeline = _make_mock_pre_pipeline()
+        pre_pipeline.run.return_value = [
+            ContextResult(tag="skills", content="skill content", agents=agents),
+        ]
+        registry = _make_mock_registry(active_session=None)
+
+        async with Coordinator(registry=registry, pre_pipeline=pre_pipeline) as coord:
+            _ = [e async for e in coord.send_message("hello")]
+
+        options = mock_cls.call_args[0][0]
+        assert options.agents == agents
+
+    async def test_agents_persist_across_messages_in_session(
+        self, mock_sdk,
+    ) -> None:
+        """AC: Agents from first message persist across subsequent messages."""
+        client, mock_cls = mock_sdk
+        agents = {
+            "skills/test/agent": AgentDefinition(
+                description="Test agent",
+                prompt="A test prompt",
+            ),
+        }
+
+        active = Session(id="existing", started_at=datetime.now(UTC))
+        registry = _make_mock_registry()
+        registry.get_active_session.side_effect = [None, active, active, active]
+
+        pre_pipeline = _make_mock_pre_pipeline()
+        pre_pipeline.run.return_value = [
+            ContextResult(tag="skills", content="skill content", agents=agents),
+        ]
+
+        client.receive_response.side_effect = [
+            _mock_messages(make_assistant([TextBlock(text="a")]), make_result()),
+            _mock_messages(make_assistant([TextBlock(text="b")]), make_result()),
+        ]
+
+        async with Coordinator(registry=registry, pre_pipeline=pre_pipeline) as coord:
+            _ = [e async for e in coord.send_message("first")]
+            _ = [e async for e in coord.send_message("second")]
+
+        # Both calls should have agents in options
+        for call in mock_cls.call_args_list:
+            options = call[0][0]
+            assert options.agents == agents
+
+        # Pre-processing should only run once (first message)
+        assert pre_pipeline.run.await_count == 1
+
+    async def test_agents_cleared_on_session_transition(
+        self, mock_sdk, mocker,
+    ) -> None:
+        """AC: Agents are cleared after topic shift and re-populated from new detection."""
+        client, _ = mock_sdk
+        client.receive_response.return_value = _mock_messages(
+            make_assistant([TextBlock(text="response")]),
+            make_result(),
+        )
+
+        agents_before = {
+            "skills/before/agent": AgentDefinition(
+                description="Before agent",
+                prompt="Before",
+            ),
+        }
+        agents_after = {
+            "skills/after/agent": AgentDefinition(
+                description="After agent",
+                prompt="After",
+            ),
+        }
+
+        active = Session(
+            id="s1",
+            started_at=datetime.now(UTC),
+            summary="User is discussing topic A",
+            sdk_session_id="sdk-old",
+        )
+        registry = _make_mock_registry(active_session=active)
+        registry.get_active_session.side_effect = [
+            active,  # First message: get active
+            None,  # After transition: no active
+            None,  # After create: get active (for metadata update)
+        ]
+
+        pre_pipeline = _make_mock_pre_pipeline()
+        pre_pipeline.run.side_effect = [
+            [ContextResult(tag="skills", content="before", agents=agents_before)],
+            [ContextResult(tag="skills", content="after", agents=agents_after)],
+        ]
+
+        mocker.patch(
+            "tachikoma.coordinator.detect_boundary",
+            return_value=False,  # No transition on first message
+        )
+
+        async with Coordinator(registry=registry, pre_pipeline=pre_pipeline) as coord:
+            # Check initial agents state
+            assert coord._agents is None
+
+    async def test_no_agents_when_no_providers_return_agents(
+        self, mock_sdk,
+    ) -> None:
+        """AC: When no providers return agents, self._agents remains None."""
+        client, mock_cls = mock_sdk
+        client.receive_response.return_value = _mock_messages(
+            make_assistant([TextBlock(text="hi")]),
+            make_result(),
+        )
+
+        pre_pipeline = _make_mock_pre_pipeline()
+        pre_pipeline.run.return_value = [
+            ContextResult(tag="memories", content="some memories"),  # No agents
+        ]
+        registry = _make_mock_registry(active_session=None)
+
+        async with Coordinator(registry=registry, pre_pipeline=pre_pipeline) as coord:
+            _ = [e async for e in coord.send_message("hello")]
+
+        options = mock_cls.call_args[0][0]
+        assert options.agents is None
+
+    async def test_multiple_providers_agents_merged(
+        self, mock_sdk,
+    ) -> None:
+        """AC: Multiple providers returning agents are merged correctly."""
+        client, mock_cls = mock_sdk
+        client.receive_response.return_value = _mock_messages(
+            make_assistant([TextBlock(text="hi")]),
+            make_result(),
+        )
+
+        agents1 = {
+            "skills/a/agent": AgentDefinition(
+                description="A agent",
+                prompt="A",
+            ),
+        }
+        agents2 = {
+            "skills/b/agent": AgentDefinition(
+                description="B agent",
+                prompt="B",
+            ),
+        }
+
+        pre_pipeline = _make_mock_pre_pipeline()
+        pre_pipeline.run.return_value = [
+            ContextResult(tag="skills", content="a", agents=agents1),
+            ContextResult(tag="more-skills", content="b", agents=agents2),
+        ]
+        registry = _make_mock_registry(active_session=None)
+
+        async with Coordinator(registry=registry, pre_pipeline=pre_pipeline) as coord:
+            _ = [e async for e in coord.send_message("hello")]
+
+        options = mock_cls.call_args[0][0]
+        assert options.agents is not None
+        assert "skills/a/agent" in options.agents
+        assert "skills/b/agent" in options.agents

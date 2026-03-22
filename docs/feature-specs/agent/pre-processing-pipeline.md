@@ -21,7 +21,8 @@ A reusable, pluggable pipeline that runs registered context providers in paralle
 | R3 | Each provider returns a named, XML-tagged context block; the pipeline assembles all results and prepends them to the message text |
 | R4 | Context injection uses XML tags consistent with the existing `<soul>`, `<user>`, `<agents>` convention, generalized for easy addition of new context sources |
 | R5 | Pipeline extensible — adding a new context provider requires only implementing the ABC and registering it; no changes to pipeline or coordinator code |
-| R6 | Context providers can return tool capabilities alongside text context, enabling the pipeline to pass capability requirements to the coordinator for session configuration |
+| R6 | Context providers can return tool capabilities (MCP servers) alongside text context, enabling the pipeline to pass capability requirements to the coordinator for session configuration |
+| R7 | Context results can optionally carry agent definitions alongside text context, enabling providers to return agents that the coordinator loads for the session. Backward compatible for providers that don't set it |
 
 ## Behaviors
 
@@ -64,3 +65,12 @@ Context providers can return structured capabilities (e.g., MCP servers) alongsi
 - Given a context provider returns a `ContextResult` with `mcp_servers`, when the coordinator processes pipeline results, then it extracts and merges `mcp_servers` from all results and passes them to `ClaudeAgentOptions` for the session
 - Given multiple providers return `mcp_servers`, when the coordinator merges them, then all server configurations are combined into a single dictionary
 - Given a session transition occurs, when the coordinator handles the transition, then MCP servers from the previous session are cleared and re-extracted from pipeline results in the new session
+
+### Agent Definitions Support (R7)
+
+Context results can optionally carry agent definitions that the coordinator extracts and loads for the session.
+
+**Acceptance Criteria**:
+- Given a provider sets the agents field on its `ContextResult`, when the pipeline collects results, then the agents are available on the result object for the coordinator to extract
+- Given a provider does not set agents (defaults to None), when the pipeline runs, then it continues to work unchanged — backward compatible
+- Given multiple providers return results, when the coordinator processes them, then it extracts and merges agent definitions from all results

@@ -29,7 +29,7 @@ The core agent loop: receive a user message, pass it to the Claude agent via the
 | R10 | Conversation boundary detection: before processing a message, check whether it continues the current conversation or starts a new one; on topic shift, transition sessions before processing (see [boundary detection](boundary-detection.md)) |
 | R11 | Per-message post-processing: after each agent response, trigger a per-message pipeline for ongoing conversation analysis (see [boundary detection](boundary-detection.md)) |
 | R12 | Pre-processing pipeline: on new session, run registered context providers to enrich the first message before the agent processes it (see [pipeline spec](pre-processing-pipeline.md)) |
-| R13 | Sub-agent delegation: coordinator receives agents dictionary from skill registry and passes to SDK for delegation (see [skills](skills.md)) |
+| R13 | Sub-agent delegation: coordinator receives detected agents from the pre-processing pipeline per-session and passes to SDK for delegation (see [skills](skills.md)) |
 
 ## Behaviors
 
@@ -144,13 +144,13 @@ On the first message of a new session, the coordinator triggers a registered pre
 
 ### Sub-Agent Delegation (R13)
 
-The coordinator receives a dictionary of sub-agents from the skill registry and passes them to the SDK for delegation during conversation.
+The coordinator receives detected agents from the pre-processing pipeline per-session and passes them to the SDK for delegation.
 
 **Acceptance Criteria**:
-- Given the coordinator initializes, when it receives an agents dictionary from the skill registry, then it passes the agents to `ClaudeAgentOptions.agents`
-- Given agents are passed to the SDK at initialization, when a conversation is active, then the SDK orchestrator can delegate to those agents based on the message context and agent descriptions
-- Given an agents dictionary is available, when the coordinator creates ClaudeAgentOptions, then all agents are included (SDK handles delegation logic)
-- Given the agent system starts, then the skill registry is populated before the coordinator is created, ensuring agents are available during the first message
+- Given a new session starts and the pre-processing pipeline returns results containing agent definitions, when the coordinator processes the first message, then it extracts agent definitions from the results and stores them for the session
+- Given agents are stored for a session, when subsequent messages arrive, then the coordinator passes the same agents to `ClaudeAgentOptions.agents` (SDK handles delegation logic)
+- Given no agents are detected (no skills relevant or no skills exist), when the coordinator creates ClaudeAgentOptions, then no sub-agents are available for delegation
+- Given a topic shift causes a new session, when the session transition completes, then agents are cleared and re-detected from the pre-processing pipeline on the next message
 
 ### Error Recovery (R4)
 

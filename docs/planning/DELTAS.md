@@ -119,16 +119,9 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 **Complexity**: Easy
 **Description**: Build an eval suite for the core context update post-processor using the evaluation framework (DLT-015). Tests whether the right updates are being applied to SOUL.md, USER.md, and AGENTS.md from sample conversations. Test cases should cover: detecting explicit user information changes, ignoring ambiguous or uncertain information, not overwriting correct existing information with noise, correctly routing updates to the right file (user info to USER.md, personality feedback to SOUL.md), and handling conversations with no context-file-relevant information. Measures precision (no false updates applied) and conservatism (only high-confidence changes are made).
 
-### DLT-021: Skill detection and context injection
-**Status**: ✗ Defined
-**Depends on**: None
-**Priority**: 3 (Medium)
-**Complexity**: Medium
-**Description**: Build the skills context provider that plugs into the pre-processing pipeline to automatically detect and inject relevant skills into the agent's context. The provider queries the skill registry on each incoming message, matches skills against the message using metadata and trigger patterns, and loads matched skill components (instructions, agents, tools) into the coordinator's session. Once a skill is loaded in a session, it persists across subsequent messages without re-detection. Detection should balance precision (don't load irrelevant skills that waste context) with recall (don't miss applicable skills). This delta does NOT cover skill definition, registry, or agent infrastructure, nor constrained execution (post-v1).
-
 ### DLT-022: Eval: Skill detection quality
 **Status**: ✗ Defined
-**Depends on**: DLT-015, DLT-021
+**Depends on**: DLT-015
 **Priority**: 5 (Backlog)
 **Complexity**: Easy
 **Description**: Build an eval suite for the skills context provider using the evaluation framework (DLT-015). Tests whether the right skills are being detected and injected for given input messages. Test cases should cover: detecting relevant skills when they exist, not injecting irrelevant skills that waste context, handling messages where no skills apply, prioritizing when multiple skills match, and correctly loading skill content into agent context. Measures precision (no irrelevant skills injected) and recall (applicable skills not missed) of the skill detection process.
@@ -146,13 +139,6 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 **Priority**: 2 (High)
 **Complexity**: Medium
 **Description**: When the boundary detector identifies a topic shift, compare the incoming message against summaries of recently closed sessions (configurable window, default: last N sessions within the past few hours) to determine if the user is returning to a previously discussed topic. If a match is found, resume that earlier conversation thread instead of starting fresh, and inject a bridging summary covering sessions that occurred in between so the assistant has continuity awareness. This enables natural conversation patterns where users revisit earlier topics (e.g., switching from Python debugging to dinner plans and back to Python debugging) without losing the full conversation history. When no matching closed session is found, the existing behavior applies (fresh session with previous summary injected).
-
-### DLT-029: Complete pending signals lifecycle with removal and auto-injection
-**Status**: ✓ Reconciled
-**Depends on**: None
-**Priority**: 2 (High)
-**Complexity**: Easy
-**Description**: The context update post-processor currently lacks signal removal capability, causing promoted or irrelevant pending signals to accumulate until they age out after 30 days. This delta completes the signal lifecycle by: (1) auto-injecting current pending signals into the `CONTEXT_UPDATE_PROMPT` so the forked agent sees them without an extra tool call, (2) adding a `remove_pending_signal` MCP tool that removes signals by their injected index, and (3) updating prompt instructions and tool descriptions to guide the agent through the full lifecycle — staging ambiguous signals, promoting recurring ones to context files and removing them, and cleaning up stale entries. Scoped to `context/tools.py` and `context/processor.py`.
 
 ### DLT-030: Manage external project repositories
 **Status**: ✓ Reconciled
