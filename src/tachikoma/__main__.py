@@ -1,9 +1,11 @@
 """Entry point for Tachikoma agent (python -m tachikoma)."""
 
+import asyncio
 import sys
 from pathlib import Path
 from typing import Literal
 
+from bubus import EventBus
 from claude_agent_sdk import CLIConnectionError, CLINotFoundError, ProcessError
 from cyclopts import App
 from loguru import logger
@@ -30,6 +32,15 @@ from tachikoma.repl import Repl
 from tachikoma.sessions import session_recovery_hook
 from tachikoma.skills import SkillRegistry, skills_hook
 from tachikoma.telegram import TelegramChannel, telegram_hook
+from tachikoma.tasks import (
+    TaskRepository,
+    background_task_runner,
+    create_task_tools_server,
+    instance_generator,
+    session_task_scheduler,
+)
+from tachikoma.tasks.events import SessionTaskReady, TaskNotification
+from tachikoma.tasks.hooks import tasks_hook
 from tachikoma.workspace import workspace_hook
 
 _log = logger.bind(component="main")
@@ -66,6 +77,7 @@ async def main(
     bootstrap.register("context", context_hook)
     bootstrap.register("memory", memory_hook)
     bootstrap.register("sessions", session_recovery_hook)
+    bootstrap.register("tasks", tasks_hook)
     bootstrap.register("telegram", telegram_hook)
 
     try:
@@ -80,6 +92,12 @@ async def main(
     # Retrieve the session objects created inside the recovery hook
     repository = bootstrap.extras["session_repository"]
     registry = bootstrap.extras["session_registry"]
+
+    # Retrieve the task objects created inside the tasks hook
+    task_repository: TaskRepository = bootstrap.extras["task_repository"]
+
+    # Create the event bus for task events
+    bus = EventBus()
 
     # Create skill registry and discover agents
     skill_registry = SkillRegistry(settings.workspace.path)
@@ -118,7 +136,13 @@ async def main(
         SummaryProcessor(registry=registry, cwd=settings.workspace.path, cli_path=cli_path),
     )
 
+    # Create the task tools MCP server
+    task_tools = create_task_tools_server(task_repository)
+
     console = Console()
+
+    # Track async tasks for the scheduler loops
+    scheduler_tasks: list[asyncio.Task[None]] = []
 
     try:
         async with Coordinator(
@@ -136,7 +160,43 @@ async def main(
             agents=agents,
             cli_path=cli_path,
             session_resume_window=settings.agent.session_resume_window,
+            mcp_servers={"task-tools": task_tools},
         ) as coordinator:
+            # Start the task scheduler loops
+            scheduler_tasks.append(
+                asyncio.create_task(
+                    instance_generator(task_repository, settings.tasks),
+                    name="instance_generator",
+                )
+            )
+
+            scheduler_tasks.append(
+                asyncio.create_task(
+                    session_task_scheduler(
+                        task_repository,
+                        settings.tasks,
+                        bus,
+                        lambda: coordinator.last_message_time,
+                    ),
+                    name="session_task_scheduler",
+                )
+            )
+
+            scheduler_tasks.append(
+                asyncio.create_task(
+                    background_task_runner(
+                        task_repository,
+                        settings.tasks,
+                        bus,
+                        settings.workspace.path,
+                        cli_path,
+                    ),
+                    name="background_task_runner",
+                )
+            )
+
+            _log.info("Task schedulers started: tasks={count}", count=len(scheduler_tasks))
+
             # Dispatch based on channel setting
             if settings.channel == "telegram":
                 if settings.telegram is None:
@@ -158,9 +218,30 @@ async def main(
         print(str(e), file=sys.stderr)
         sys.exit(1)
     finally:
-        # Always dispose the engine to prevent dangling connections
+        # Cancel scheduler tasks
+        for task in scheduler_tasks:
+            task.cancel()
+
+        # Wait for all tasks to complete
+        if scheduler_tasks:
+            results = await asyncio.gather(*scheduler_tasks, return_exceptions=True)
+            for i, result in enumerate(results):
+                if isinstance(result, Exception) and not isinstance(result, asyncio.CancelledError):
+                    _log.exception(
+                        "Scheduler task {i} failed during shutdown: {err}",
+                        i=i,
+                        err=str(result),
+                    )
+
+        # Stop the event bus
+        bus.stop()
+
+        # Always dispose the engines to prevent dangling connections
         if repository is not None:
             await repository.close()
+
+        if task_repository is not None:
+            await task_repository.close()
 
 
 app()
