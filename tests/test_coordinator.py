@@ -1609,6 +1609,50 @@ class TestSessionTransition:
         # Despite close error, new session should be created
         registry.create_session.assert_awaited()
 
+    async def test_session_task_triggers_boundary_detection(
+        self, mock_sdk, mocker,
+    ) -> None:
+        """AC: Session task messages go through boundary detection like user messages.
+
+        Given a session task message is injected, then it goes through the full
+        pre-processing pipeline including boundary detection. If the boundary
+        detector classifies it as a topic change, a new session is created.
+        """
+        client, _ = mock_sdk
+        client.receive_response.return_value = _mock_messages(
+            make_assistant([TextBlock(text="task response")]),
+            make_result(),
+        )
+
+        # Active session with an existing topic
+        active = Session(
+            id="s1",
+            started_at=datetime.now(UTC),
+            summary="User was discussing Python programming.",
+            sdk_session_id="sdk-old",
+        )
+        registry = _make_mock_registry(active_session=active)
+        registry.get_active_session.side_effect = [active, None, None]
+
+        # Boundary detection indicates topic shift for the session task
+        mocker.patch(
+            "tachikoma.coordinator.detect_boundary",
+            return_value=BoundaryResult(continues=False),  # Topic shift
+        )
+
+        async with Coordinator(
+            registry=registry,
+            cwd=Path("/workspace"),
+        ) as coord:
+            # Simulate a session task prompt being sent
+            _ = [e async for e in coord.send_message(
+                "Reminder: review the weekly report"
+            )]
+
+        # Verify boundary detection was triggered (session closed, new created)
+        registry.close_session.assert_awaited_once_with("s1")
+        registry.create_session.assert_awaited()
+
 
 class TestBuildOptions:
     """Tests for _build_options and resume/session continuity."""

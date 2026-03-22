@@ -206,11 +206,15 @@ async def main(
                     )
                     sys.exit(1)
 
-                telegram_channel = TelegramChannel(coordinator, settings.telegram)
+                telegram_channel = TelegramChannel(coordinator, settings.telegram, bus=bus)
                 await telegram_channel.run()
             else:
                 # Default: REPL channel
-                repl = Repl(coordinator, history_path=Path("/tmp/tachikoma_repl_history"))
+                repl = Repl(
+                    coordinator,
+                    history_path=Path("/tmp/tachikoma_repl_history"),
+                    bus=bus,
+                )
                 await repl.run()
 
     except (CLINotFoundError, CLIConnectionError, ProcessError) as e:
