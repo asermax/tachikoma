@@ -4,7 +4,6 @@ Tests for DLT-010: Queue and process background tasks during idle time.
 """
 
 from datetime import UTC, datetime
-from pathlib import Path
 
 import pytest
 
@@ -13,14 +12,6 @@ from tachikoma.config import SettingsManager
 from tachikoma.tasks.hooks import tasks_hook
 from tachikoma.tasks.repository import TaskRepository
 from tachikoma.tasks.model import TaskInstance
-
-
-@pytest.fixture
-def settings_manager(tmp_path: Path) -> SettingsManager:
-    config_path = tmp_path / "config.toml"
-    workspace_path = tmp_path / "workspace"
-    config_path.write_text(f'[workspace]\npath = "{workspace_path}"\n')
-    return SettingsManager(config_path)
 
 
 @pytest.fixture

@@ -7,6 +7,7 @@ This module contains:
 
 import asyncio
 from collections.abc import Awaitable, Callable
+from dataclasses import replace
 from datetime import UTC, datetime
 from uuid import uuid4
 from zoneinfo import ZoneInfo
@@ -159,18 +160,17 @@ async def instance_generator(
                         task_type=definition.task_type,
                     )
 
-                    # Update definition's last_fired_at
-                    await repository.update_definition(
-                        definition.id,
-                        last_fired_at=now_utc,
-                    )
-
-                    # Auto-disable one-shot after firing
                     if schedule.type == "once":
-                        await repository.update_definition(definition.id, enabled=False)
+                        await repository.update_definition(
+                            definition.id, last_fired_at=now_utc, enabled=False,
+                        )
                         _log.info(
                             "Auto-disabled one-shot definition {name}",
                             name=definition.name,
+                        )
+                    else:
+                        await repository.update_definition(
+                            definition.id, last_fired_at=now_utc,
                         )
 
                 except Exception as exc:
@@ -248,14 +248,12 @@ async def session_task_scheduler(
                                 )
                                 continue
 
-                        # Mark instance as running
                         await repository.update_instance(
                             instance.id,
                             status="running",
                             started_at=now_utc,
                         )
 
-                        # Create completion callback
                         async def on_complete(
                             inst_id: str = instance.id,
                         ) -> None:
@@ -266,20 +264,17 @@ async def session_task_scheduler(
                                 result="Delivered successfully",
                             )
 
-                        # Dispatch SessionTaskReady event
-                        # Note: We need to fetch the instance again to get updated status
-                        updated_instance = await repository.get_instance(instance.id)
-                        if updated_instance is not None:
-                            event = SessionTaskReady(
-                                instance=updated_instance,
-                                on_complete=on_complete,
-                            )
-                            await bus.dispatch(event)
+                        updated_instance = replace(instance, status="running", started_at=now_utc)
+                        event = SessionTaskReady(
+                            instance=updated_instance,
+                            on_complete=on_complete,
+                        )
+                        await bus.dispatch(event)
 
-                            _log.info(
-                                "Dispatched SessionTaskReady for instance {inst_id}",
-                                inst_id=instance.id,
-                            )
+                        _log.info(
+                            "Dispatched SessionTaskReady for instance {inst_id}",
+                            inst_id=instance.id,
+                        )
 
                     except Exception as exc:
                         _log.exception(

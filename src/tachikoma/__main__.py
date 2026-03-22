@@ -93,10 +93,7 @@ async def main(
     repository = bootstrap.extras["session_repository"]
     registry = bootstrap.extras["session_registry"]
 
-    # Retrieve the task objects created inside the tasks hook
     task_repository: TaskRepository = bootstrap.extras["task_repository"]
-
-    # Create the event bus for task events
     bus = EventBus()
 
     # Create skill registry and discover agents
@@ -136,12 +133,10 @@ async def main(
         SummaryProcessor(registry=registry, cwd=settings.workspace.path, cli_path=cli_path),
     )
 
-    # Create the task tools MCP server
     task_tools = create_task_tools_server(task_repository)
 
     console = Console()
 
-    # Track async tasks for the scheduler loops
     scheduler_tasks: list[asyncio.Task[None]] = []
 
     try:
@@ -162,7 +157,6 @@ async def main(
             session_resume_window=settings.agent.session_resume_window,
             mcp_servers={"task-tools": task_tools},
         ) as coordinator:
-            # Start the task scheduler loops
             scheduler_tasks.append(
                 asyncio.create_task(
                     instance_generator(task_repository, settings.tasks),

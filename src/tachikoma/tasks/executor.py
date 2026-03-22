@@ -9,7 +9,7 @@ import asyncio
 import json
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from claude_agent_sdk import ClaudeAgentOptions, ClaudeSDKClient
 from claude_agent_sdk.types import SystemPromptPreset
@@ -20,7 +20,7 @@ from tachikoma.config import TaskSettings
 from tachikoma.post_processing import PostProcessingPipeline
 from tachikoma.pre_processing import PreProcessingPipeline, assemble_context
 from tachikoma.tasks.events import TaskNotification
-from tachikoma.tasks.model import TaskDefinition, TaskInstance, TaskStatus
+from tachikoma.tasks.model import TaskDefinition, TaskInstance
 from tachikoma.tasks.repository import TaskRepository
 
 _log = logger.bind(component="task_executor")
@@ -488,7 +488,7 @@ class BackgroundTaskExecutor:
         instance: TaskInstance,
         definition: TaskDefinition | None,
         message: str,
-        severity: str,
+        severity: Literal["info", "error"],
     ) -> None:
         """Dispatch TaskNotification event.
 

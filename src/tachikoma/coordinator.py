@@ -457,7 +457,7 @@ providing context for what the user has been doing in the meantime.
         """
         session_snapshot = previous_session
 
-        # Close session in registry — capture the close timestamp for bridging context
+        # Capture close timestamp before registry close — needed for bridging context window
         closed_at = datetime.now(UTC)
         if self._registry is not None:
             try:
@@ -475,7 +475,6 @@ providing context for what the user has been doing in the meantime.
             # Prune completed tasks to avoid unbounded growth
             self._background_tasks = [t for t in self._background_tasks if not t.done()]
 
-        # Try resume path if a session ID was provided
         if resume_session_id is not None and self._registry is not None:
             try:
                 reopened = await self._registry.reopen_session(resume_session_id)
