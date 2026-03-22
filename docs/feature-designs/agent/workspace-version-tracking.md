@@ -7,7 +7,7 @@
 
 ## Purpose
 
-This document explains the design rationale for workspace version tracking: how the git module initializes repos, spawns commit agents, and integrates with the post-processing pipeline.
+This document explains the design rationale for workspace version tracking: how the git module initializes repos, spawns commit agents, pushes to remotes, and integrates with the post-processing pipeline.
 
 ## Problem Context
 
@@ -27,11 +27,11 @@ Workspace changes (memories, context files, configuration) happen as side effect
 
 ## Design Overview
 
-Two independent components, plus a system prompt section:
+Three independent components, plus a system prompt section:
 
-1. A **system prompt preamble** "Commits" section (`context/loading.py`) that instructs the assistant not to manually commit — all version control is automated
+1. A **system prompt preamble** "Commits" section (`context/loading.py`) that instructs the assistant not to manually commit or push — all version control is automated
 2. A **git bootstrap hook** that initializes the workspace as a git repo on first run (idempotent)
-3. A **git post-processor** that spawns a lightweight Haiku agent to inspect, group, and commit workspace changes after each session
+3. A **git post-processor** that spawns a lightweight Haiku agent to inspect, group, and commit workspace changes after each session, then pushes to the `origin` remote when one is configured
 
 The post-processor runs in the pipeline's **finalize phase**, ensuring all memory extraction is complete before commits happen.
 
@@ -43,7 +43,7 @@ The post-processor runs in the pipeline's **finalize phase**, ensuring all memor
 |-----------------|----------------|---------------|
 | `src/tachikoma/git/__init__.py` | Re-exports: `git_hook`, `GitProcessor` | Clean public API for the git package |
 | `src/tachikoma/git/hooks.py` | `git_hook`: initializes workspace as git repo | Subsystem-owned hook pattern (DES-003); uses `asyncio.create_subprocess_exec` |
-| `src/tachikoma/git/processor.py` | `GitProcessor(PostProcessor)` + `GIT_COMMIT_PROMPT` + `query_and_consume` helper | Prompt co-located with processor; fresh `query()` (not fork); helper local to module |
+| `src/tachikoma/git/processor.py` | `GitProcessor(PostProcessor)` + `GIT_COMMIT_PROMPT` + `query_and_consume` helper + `_has_remote`/`_push` helpers | Prompt co-located with processor; fresh `query()` (not fork); push helpers local to module |
 
 ### Cross-Layer Contracts
 
@@ -52,6 +52,7 @@ sequenceDiagram
     participant Pipeline as PostProcessingPipeline
     participant Git as GitProcessor
     participant Agent as Haiku Agent (query)
+    participant Remote as origin remote
     participant FS as Workspace Files
 
     Note over Pipeline,FS: Finalize phase (after main-phase processors complete)
@@ -61,6 +62,13 @@ sequenceDiagram
         Git->>Agent: query(prompt, model="haiku")
         Agent->>FS: git add + git commit (per group)
         Agent-->>Git: complete
+        Git->>Git: git remote get-url origin
+        alt origin exists
+            Git->>Remote: git push origin HEAD
+            Remote-->>Git: success / failure (logged)
+        else no origin
+            Git->>Git: skip push (debug log)
+        end
         Git->>Git: git status --porcelain (verify)
     else workspace clean
         Git-->>Pipeline: no-op
@@ -69,7 +77,7 @@ sequenceDiagram
 ```
 
 **Integration Points:**
-- GitProcessor ↔ subprocess: `asyncio.create_subprocess_exec("git", "status", "--porcelain")` for dirty check and post-agent verification
+- GitProcessor ↔ subprocess: `asyncio.create_subprocess_exec("git", "status", "--porcelain")` for dirty check and post-agent verification; `git remote get-url origin` for remote detection; `git push origin HEAD` for pushing
 - GitProcessor ↔ SDK: `query(prompt=GIT_COMMIT_PROMPT, options=ClaudeAgentOptions(model="haiku", cwd=..., permission_mode="bypassPermissions"))` — fresh stateless call, not a session fork
 - Bootstrap ↔ git hook: `git_hook` runs after workspace hook, uses `asyncio.create_subprocess_exec` for `git init`, `git config`, `git commit`
 
@@ -77,6 +85,7 @@ sequenceDiagram
 - Git hook failures propagate as `BootstrapError` (fail-fast, per DES-003)
 - GitProcessor failures caught by pipeline's `asyncio.gather(return_exceptions=True)` (error isolation)
 - Partial commits are valid — if the agent commits 1 of 3 groups then fails, those commits persist
+- Push failures are caught and logged as warnings — commits remain intact and will be pushed on the next session
 
 ### Shared Logic
 
@@ -115,7 +124,7 @@ query_and_consume(prompt, cwd) → None
    g. If any subprocess returns non-zero → raise with stderr output
 ```
 
-### Git post-processor: commit flow
+### Git post-processor: commit and push flow
 
 ```
 1. GitProcessor.process(session) called during finalize phase
@@ -125,7 +134,13 @@ query_and_consume(prompt, cwd) → None
 3. Spawn: query(prompt=GIT_COMMIT_PROMPT, options=ClaudeAgentOptions(
        model="haiku", cwd=self._cwd, permission_mode="bypassPermissions"))
 4. Consume all messages from the async iterator
-5. Run: git status --porcelain (verification)
+5. Run: git remote get-url origin (remote detection)
+   ├─ exit code 0 (origin exists) → continue to push
+   └─ non-zero (no origin) → log debug "no origin remote configured", skip push
+6. Run: git push origin HEAD
+   ├─ success → log info "pushed workspace changes"
+   └─ failure → log warning with error details, continue
+7. Run: git status --porcelain (verification)
    ├─ empty → log debug "all changes committed"
    └─ non-empty → log warning "uncommitted changes remain after git processor"
 ```
@@ -169,6 +184,36 @@ query_and_consume(prompt, cwd) → None
 - Pro: Simplest configuration, no risk of stopping mid-commit
 - Con: Theoretically unbounded cost in pathological cases (mitigated by Haiku's low cost)
 
+### Remote detection via `git remote get-url origin`
+
+**Choice**: Check for the `origin` remote specifically using `git remote get-url origin` (local-only, no network call).
+**Why**: More precise than `git remote` (which lists all remotes). The `origin` remote is the conventional default and matches how `ProjectsProcessor` targets submodule remotes.
+
+**Consequences**:
+- Pro: Near-instant, no network call
+- Pro: Specific to `origin` — avoids accidentally pushing to an unexpected remote
+- Con: Won't push if the user configured a remote with a different name (acceptable — `origin` is conventional)
+
+### `git push origin HEAD` instead of bare `git push`
+
+**Choice**: Use `git push origin HEAD` to push the current branch to a same-named branch on origin.
+**Why**: A bare `git push` depends on `push.default` config and upstream tracking. `origin HEAD` is explicit and works even when the user hasn't set up tracking (e.g., freshly added remote with no upstream configured).
+
+**Consequences**:
+- Pro: Works without upstream tracking configuration
+- Pro: Explicit — no ambiguity about which remote or branch
+- Con: Slightly different from `projects/git.py:push()` which uses bare `git push` (acceptable — submodules always have tracking set up from clone)
+
+### Push is Python-side, not agent-side
+
+**Choice**: The commit agent prompt continues to prohibit `git push`. The processor handles pushing after the agent completes.
+**Why**: Keeps the agent focused on the mechanical commit task. Push is a single command that doesn't need LLM reasoning. Matches the `ProjectsProcessor` pattern where push is done by the processor, not the commit agent.
+
+**Consequences**:
+- Pro: Agent prompt stays simple and focused on commit grouping
+- Pro: Push failure handling is in Python (structured logging, exception handling) rather than relying on agent behavior
+- Con: None significant
+
 ### Git package with separate hook and processor modules
 
 **Choice**: `src/tachikoma/git/` package with `hooks.py` and `processor.py`.
@@ -180,17 +225,29 @@ query_and_consume(prompt, cwd) → None
 
 ## System Behavior
 
-### Scenario: Session ends with workspace changes
+### Scenario: Session ends with workspace changes and origin configured
 
-**Given**: Memory extraction processors wrote files to `memories/episodic/`, `memories/facts/`
+**Given**: Memory extraction processors wrote files to `memories/episodic/`, `memories/facts/`; origin remote is configured
 **When**: The finalize phase runs the git post-processor
-**Then**: `git status --porcelain` detects changes. Haiku agent groups by subdirectory and creates separate commits.
+**Then**: `git status --porcelain` detects changes. Haiku agent groups by subdirectory and creates separate commits. Processor detects origin remote and pushes. Info log emitted.
+
+### Scenario: Session ends with workspace changes, no origin remote
+
+**Given**: Memory extraction processors wrote files; no origin remote configured
+**When**: The finalize phase runs the git post-processor
+**Then**: Changes are committed by agent. Processor detects no origin remote, logs at debug level, skips push.
 
 ### Scenario: Session ends with no changes
 
 **Given**: Memory extraction found nothing to extract
 **When**: The finalize phase runs the git post-processor
-**Then**: `git status --porcelain` returns empty. Processor returns without spawning an agent.
+**Then**: `git status --porcelain` returns empty. Processor returns without spawning an agent or checking for remote.
+
+### Scenario: Push fails (non-fast-forward)
+
+**Given**: Origin remote has advanced since last push
+**When**: Processor attempts `git push origin HEAD` after committing
+**Then**: Push fails. Warning logged with error details. Commits remain intact locally and will be included in the next session's push.
 
 ### Scenario: Agent commits some groups but fails mid-way
 

@@ -4,12 +4,13 @@
 
 ## Overview
 
-Automatic git version tracking for all workspace file changes. Every modification to memories, context files, and configuration is recorded with descriptive commits after each session, providing built-in history and rollback capability. A git post-processor runs in the pipeline's finalization phase — after all other processors complete — spawning a lightweight agent to group changes into cohesive commits.
+Automatic git version tracking for all workspace file changes. Every modification to memories, context files, and configuration is recorded with descriptive commits after each session, providing built-in history and rollback capability. A git post-processor runs in the pipeline's finalization phase — after all other processors complete — spawning a lightweight agent to group changes into cohesive commits. When an `origin` remote is configured, committed changes are pushed automatically.
 
 ## User Stories
 
 - As a user, I want workspace changes automatically version-tracked so that I can review what changed and roll back if needed
 - As the system, I need automatic git version tracking so that every workspace modification is recorded with descriptive commits
+- As a user, I want committed workspace changes pushed to a remote so that my workspace history is backed up and accessible from other machines
 
 ## Requirements
 
@@ -24,10 +25,14 @@ Automatic git version tracking for all workspace file changes. Every modificatio
 | R6 | Commits use a fixed identity via repo-local git config (no global config dependency) |
 | R7 | Linear history on a single branch — no branch operations |
 | R8 | Bootstrap does not create a .gitignore — all workspace content is tracked by default |
+| R9 | After committing, push all changes to the `origin` remote in a single push (Python-side, not by the commit agent) |
+| R10 | If no `origin` remote is configured, skip pushing silently (no-op) |
+| R11 | On push failure, log a warning with the failure reason and continue (commits remain intact) |
+| R12 | System prompt preamble instructs the assistant that workspace changes are pushed automatically when a remote is configured |
 
 ## Behaviors
 
-### Git Post-Processor (R1, R2, R3, R4)
+### Git Post-Processor (R1, R2, R3, R4, R9, R10, R11)
 
 After all main-phase processors complete (memory extraction writes files), the git post-processor checks for uncommitted changes and spawns a Haiku agent to create cohesive commits.
 
@@ -39,6 +44,9 @@ After all main-phase processors complete (memory extraction writes files), the g
 - Given the agent completes, when the post-processor verifies the workspace, then it logs a warning if uncommitted changes remain
 - Given the agent commits some groups but fails mid-way, then partial commits remain as valid history and uncommitted changes are picked up on the next run
 - Given the projects post-processor has committed and pushed submodule changes in the pre_finalize phase, when the git post-processor runs in the finalize phase, then the resulting submodule reference changes appear in `git status` and are included in the workspace commits alongside other workspace changes
+- Given an `origin` remote is configured and changes were committed, when the commit agent completes, then the post-processor pushes all committed changes to origin in a single push and logs at info level
+- Given no `origin` remote is configured, when the commit agent completes, then the post-processor skips pushing with a debug-level log only
+- Given a push fails (e.g., non-fast-forward, auth error), when the push is attempted, then a warning is logged with the failure reason and the processor completes normally (commits remain intact)
 
 ### Commit Agent Behavior (R3, R7)
 
