@@ -33,17 +33,24 @@ def create_task_tools_server(repository: TaskRepository) -> McpSdkServerConfig:
 
     @tool(
         "list_tasks",
-        "List all task definitions with their current status.",
-        {},  # No input parameters
+        "List task definitions. Shows active tasks by default;"
+        " set archived=true to see disabled tasks.",
+        {"archived": bool},
     )
     async def list_tasks(args: dict) -> dict:
-        """List all task definitions."""
+        """List task definitions, filtered by active/archived status."""
         try:
-            definitions = await repository.list_definitions()
+            archived = args.get("archived", False)
+
+            if archived:
+                definitions = await repository.list_disabled_definitions()
+            else:
+                definitions = await repository.list_enabled_definitions()
 
             if not definitions:
+                label = "archived" if archived else "active"
                 return {
-                    "content": [{"type": "text", "text": "No task definitions found."}],
+                    "content": [{"type": "text", "text": f"No {label} tasks found."}],
                 }
 
             lines = ["# Task Definitions\n"]
@@ -154,7 +161,7 @@ def create_task_tools_server(repository: TaskRepository) -> McpSdkServerConfig:
             id=str(uuid4()),
             name=name,
             schedule=schedule_config,
-            task_type=task_type,  # type: ignore[arg-type]
+            task_type=task_type,
             prompt=prompt,
             enabled=enabled,
             notify=notify,
