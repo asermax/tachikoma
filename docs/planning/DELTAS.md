@@ -56,13 +56,6 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 
 ## Deltas
 
-### DLT-004: Detect conversation boundaries via inactivity timeout
-**Status**: ✗ Defined
-**Depends on**: None
-**Priority**: 4 (Low)
-**Complexity**: Easy
-**Description**: Fallback conversation boundary detection that monitors for periods of user inactivity. After a configurable threshold (~20 minutes by default), the system signals the session registry to close the current session, triggering downstream post-processing. This serves as a safety net for cases where the user goes silent without a clear topic change — the topic-based boundary detector is the primary boundary mechanism, but it only fires on incoming messages. The inactivity timeout catches the "user walked away" case. The threshold should be configurable per-deployment.
-
 ### DLT-009: Search memories by semantic similarity
 **Status**: ✗ Defined
 **Depends on**: None
@@ -73,21 +66,21 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 ### DLT-011: Run as a persistent background service
 **Status**: ✗ Defined
 **Depends on**: DLT-024
-**Priority**: 5 (Backlog)
+**Priority**: 3 (Medium)
 **Complexity**: Easy
 **Description**: Run the assistant as a persistent background process that starts automatically on system boot and restarts on failure. This delta covers service lifecycle and process management only — it ensures the application is always running and recovers from crashes. Specific reconnection logic (Telegram) and state persistence (memory files) are handled by their respective deltas. Implementation should use standard Linux service management (e.g., systemd) appropriate for a single-user, self-hosted deployment.
 
 ### DLT-014: Add LLM observability for agent interactions
 **Status**: ✗ Defined
 **Depends on**: None
-**Priority**: 4 (Low)
+**Priority**: 3 (Medium)
 **Complexity**: Medium
 **Description**: Track LLM calls across the entire system — the coordinator and all sub-agents — to provide visibility into how the underlying model is being used. Capture inputs (prompts/context sent), outputs (responses received), token usage, latency, and estimated costs per call. This enables understanding of which operations are expensive, identifying prompt quality issues, and optimizing token budgets over time. Local/self-hosted tooling is preferred over cloud analytics services; the specific solution should be evaluated during speccing to find the best fit for a single-user, privacy-conscious deployment.
 
 ### DLT-015: Set up evaluation framework for agent pipelines
 **Status**: ✗ Defined
 **Depends on**: None
-**Priority**: 5 (Backlog)
+**Priority**: 3 (Medium)
 **Complexity**: Medium
 **Description**: Establish the foundation for testing agent processing pipelines with reproducible, automated test cases. The framework should support defining input scenarios (e.g., a conversation transcript, a user message with known relevant memories), running them through specific pipelines (pre-processing, post-processing), and comparing outputs against expected results using configurable assertions. This enables quality assurance for LLM-powered pipelines without relying on manual testing, and provides a regression safety net as pipelines evolve. The framework should be runnable locally and produce clear pass/fail reports.
 
@@ -122,13 +115,27 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 ### DLT-024: Package and install agent as a uv tool
 **Status**: ✗ Defined
 **Depends on**: None
-**Priority**: 5 (Backlog)
+**Priority**: 3 (Medium)
 **Complexity**: Easy
 **Description**: Package the agent as an installable CLI tool using uv, enabling easy installation and updates via `uv tool install`. This delta covers project packaging configuration (pyproject.toml entry points, dependencies), a CLI entry point that starts the agent, and documentation for installation. The CLI entry point is the main way users launch the agent — it wires up the agent architecture, loads configuration, and starts the main loop. Using uv tool provides isolated dependency management and simple update path (`uv tool upgrade`).
 
-### DLT-030: Manage external project repositories
-**Status**: ✓ Reconciled
+### DLT-031: Granular processing status messages
+**Status**: ✗ Defined
+**Depends on**: None
+**Priority**: 3 (Medium)
+**Complexity**: Medium
+**Description**: Replace the single hardcoded "Thinking..." status message with granular, component-driven status updates during pre-processing and post-processing. Each pipeline component (context providers, post-processors, boundary detection) reports what it is currently doing via a status callback, and the coordinator forwards these as Status events to the active channel. This gives users real-time visibility into what the assistant is doing behind the scenes (e.g., "Searching memories...", "Detecting topic shift...", "Extracting memories...") instead of a generic indicator.
+
+### DLT-032: Guide the assistant through skill authoring
+**Status**: ✗ Defined
 **Depends on**: None
 **Priority**: 2 (High)
+**Complexity**: Easy
+**Description**: Developers extending the system need the assistant to understand how to scaffold new skills correctly. Provide a built-in skill that activates when a user asks to create, define, or set up a new skill, injecting the full context the assistant needs — directory conventions, available capabilities, detection tuning guidance, and prompt-writing best practices — so it can produce well-structured skills without external documentation.
+
+### DLT-033: Validate skill quality during authoring
+**Status**: ✗ Defined
+**Depends on**: DLT-032, DLT-015
+**Priority**: 4 (Low)
 **Complexity**: Medium
-**Description**: Enable the assistant to manage external code repositories alongside its workspace as git submodules within a dedicated directory. On startup, all registered projects are pulled to their latest state. The coordinator can register new projects by name and git URL during conversations. At the end of each session, changes in project repositories are committed and pushed in parallel before the main workspace commit, reusing the same commit generation approach, ensuring submodule references stay in sync. This supports workflows where the user asks the assistant to track and contribute to multiple codebases.
+**Description**: During skill authoring, the assistant needs to verify that a new skill works correctly before finalizing it. Provide an interactive validation tool the assistant invokes mid-authoring to check two aspects: (1) detection quality — running the skill's description against synthetic messages via the evaluation framework to measure whether it triggers on relevant messages and avoids false matches, reporting precision/recall scores and actionable feedback; and (2) structural correctness — verifying required frontmatter fields, description completeness, agent definition validity, and adherence to skill conventions. Results include suggestions so the assistant can iteratively refine the skill until it passes quality thresholds, closing the authoring feedback loop without manual testing. This is distinct from the offline skill detection eval suite, which evolves the detection engine itself — this tool evolves individual skill descriptions to work well with the detection logic.
