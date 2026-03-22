@@ -145,6 +145,8 @@ class TestSummaryProcessor:
         call_kwargs = mock_query.call_args
         options = call_kwargs[1]["options"]
         assert options.allowed_tools == []
+        assert options.max_turns == 3
+        assert options.permission_mode is None
 
     async def test_propagates_query_errors(self, mocker: pytest.MockerFixture) -> None:
         """AC: SDK errors propagate to pipeline for error isolation."""

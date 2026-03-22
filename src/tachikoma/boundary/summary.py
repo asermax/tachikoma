@@ -62,14 +62,20 @@ class SummaryProcessor(MessagePostProcessor):
             agent_response=agent_response,
         )
 
+        # Defense in depth for tool-less agents (see DES-007 "Disabling Tools"):
+        # 1. Default permission mode — headless query() has no can_use_tool callback,
+        #    so any tool permission request raises an exception.
+        # 2. allowed_tools=[] — documents intent. Currently a no-op due to an SDK bug
+        #    (empty list is falsy, so --allowedTools is never passed to CLI).
+        # 3. max_turns=3 — hard limit prevents runaway execution.
         options = ClaudeAgentOptions(
             model="opus",
             effort="low",
+            max_turns=3,
             cwd=self._cwd,
             cli_path=self._cli_path,
             system_prompt=SUMMARY_SYSTEM_PROMPT,
             allowed_tools=[],
-            permission_mode="bypassPermissions",
         )
 
         # Collect response text from the assistant

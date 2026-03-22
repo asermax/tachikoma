@@ -411,6 +411,8 @@ class TestDetectBoundary:
         call_kwargs = mock_query.call_args
         options = call_kwargs[1]["options"]
         assert options.allowed_tools == []
+        assert options.max_turns == 3
+        assert options.permission_mode is None
 
     async def test_includes_candidates_in_prompt_when_provided(
         self, mocker: pytest.MockerFixture

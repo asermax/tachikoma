@@ -109,9 +109,9 @@ class TestSkillsContextProvider:
         assert options.model == "opus"
         assert options.effort == "low"
         assert options.max_turns == 3
-        # No tools for classification (empty list or None is acceptable)
-        assert options.allowed_tools is None or options.allowed_tools == []
-        assert options.permission_mode == "bypassPermissions"
+        # No tools for classification — defense in depth (see DES-007)
+        assert options.allowed_tools == []
+        assert options.permission_mode is None
         assert options.cwd == tmp_path
         assert options.cli_path == "/custom/cli"
         assert result is None
