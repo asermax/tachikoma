@@ -22,10 +22,10 @@ from claude_agent_sdk.types import (
 )
 from helpers import make_assistant, make_result
 
+from tachikoma.boundary import BoundaryResult
 from tachikoma.coordinator import Coordinator, _derive_transcript_path
 from tachikoma.events import Error, Result, TextChunk, ToolActivity
 from tachikoma.pre_processing import ContextResult
-from tachikoma.boundary import BoundaryResult
 from tachikoma.sessions.errors import SessionRepositoryError
 from tachikoma.sessions.model import Session
 
@@ -311,6 +311,8 @@ def _make_mock_registry(active_session=None):
     )
     registry.close_session = AsyncMock()
     registry.update_metadata = AsyncMock()
+    registry.get_recent_closed = AsyncMock(return_value=[])
+    registry.reopen_session = AsyncMock(return_value=None)
     return registry
 
 
@@ -1296,7 +1298,7 @@ class TestCoordinatorMcpServers:
         # Mock boundary detection to trigger transition
         mocker.patch(
             "tachikoma.coordinator.detect_boundary",
-            return_value=False,
+            return_value=BoundaryResult(continues=False),
         )
 
         async with Coordinator(
@@ -2331,7 +2333,7 @@ class TestCoordinatorPipelineAgents:
 
         mocker.patch(
             "tachikoma.coordinator.detect_boundary",
-            return_value=False,  # Triggers topic shift
+            return_value=BoundaryResult(continues=False),
         )
 
         async with Coordinator(

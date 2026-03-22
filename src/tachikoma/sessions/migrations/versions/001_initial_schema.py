@@ -7,11 +7,10 @@ Create Date: 2026-03-21
 Captures the pre-Alembic schema as the baseline for existing databases.
 """
 
-from typing import Sequence
+from collections.abc import Sequence
 
-from alembic import op
 import sqlalchemy as sa
-
+from alembic import op
 
 # Revision identifiers, used by Alembic.
 revision: str = "001_initial"

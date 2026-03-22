@@ -78,7 +78,7 @@ class SessionRepository:
 
             # Check for and add missing columns (for existing databases)
             # This handles the case where the database was created before DLT-028
-            from sqlalchemy import text
+            from sqlalchemy import text  # noqa: PLC0415
 
             # Check if summary column exists (added in DLT-027)
             result = await conn.execute(
@@ -102,7 +102,10 @@ class SessionRepository:
 
             # Check if session_resumptions table exists (added in DLT-028)
             result = await conn.execute(
-                text("SELECT name FROM sqlite_master WHERE type='table' AND name='session_resumptions'")
+                text(
+                    "SELECT name FROM sqlite_master"
+                    " WHERE type='table' AND name='session_resumptions'"
+                )
             )
             if result.fetchone() is None:
                 await conn.execute(
@@ -116,7 +119,10 @@ class SessionRepository:
                     """)
                 )
                 await conn.execute(
-                    text("CREATE INDEX ix_session_resumptions_session_id ON session_resumptions(session_id)")
+                    text(
+                        "CREATE INDEX ix_session_resumptions_session_id"
+                        " ON session_resumptions(session_id)"
+                    )
                 )
                 _log.info("Schema migration: created 'session_resumptions' table")
 

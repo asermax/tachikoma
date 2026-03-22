@@ -333,7 +333,8 @@ providing context for what the user has been doing in the meantime.
                 )
                 if not result.continues:
                     _log.info(
-                        "Topic shift detected, transitioning to new session (resume_id={resume_id})",
+                        "Topic shift detected, transitioning session"
+                        " (resume_id={resume_id})",
                         resume_id=result.resume_session_id,
                     )
                     resumed = await self._handle_transition(
