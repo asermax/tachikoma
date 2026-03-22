@@ -1,32 +1,32 @@
 """Bootstrap hook for the task subsystem.
 
-Initializes the task repository, runs crash recovery, and creates the event bus.
+Initializes the task repository and runs crash recovery.
 """
 
 from loguru import logger
 
 from tachikoma.bootstrap import BootstrapContext
+from tachikoma.database import Database
 from tachikoma.tasks.repository import TaskRepository
 
 _log = logger.bind(component="tasks")
 
 
 async def tasks_hook(ctx: BootstrapContext) -> None:
-    """Bootstrap hook: initialize task repository and event bus.
+    """Bootstrap hook: initialize task repository and run crash recovery.
 
-    Creates the TaskRepository, runs crash recovery, and creates the EventBus.
-    Stores artifacts in ctx.extras for retrieval after bootstrap completes.
+    Retrieves the shared Database from ctx.extras, creates the
+    TaskRepository, and runs crash recovery. Stores the repository
+    in ctx.extras for retrieval after bootstrap completes.
 
     Keys written to ctx.extras:
         "task_repository" -> TaskRepository instance
     """
     _log.info("Tasks hook started")
 
-    data_path = ctx.settings_manager.settings.workspace.data_path
+    database: Database = ctx.extras["database"]
 
-    # Create and initialize the task repository
-    repository = TaskRepository(data_path / "tasks.db")
-    await repository.initialize()
+    repository = TaskRepository(database.session_factory)
 
     # Run crash recovery: mark any running instances as failed
     count = await repository.mark_running_as_failed("system restart")

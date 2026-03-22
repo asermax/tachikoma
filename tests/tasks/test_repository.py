@@ -4,53 +4,11 @@ Uses real SQLite databases in tmp_path (no mocking of the DB layer).
 """
 
 from datetime import UTC, datetime
-from pathlib import Path
 
-import aiosqlite
-import pytest
-
-from tachikoma.tasks.errors import TaskRepositoryError
 from tachikoma.tasks.model import ScheduleConfig
 from tachikoma.tasks.repository import TaskRepository
 
 from .conftest import _make_definition, _make_instance, _utcnow
-
-
-class TestRepositoryInitialization:
-    """Tests for schema auto-creation and engine lifecycle."""
-
-    async def test_creates_database_file_on_initialize(self, tmp_path: Path) -> None:
-        """AC: database file does not exist → created on initialize()."""
-        db_path = tmp_path / "tasks.db"
-        assert not db_path.exists()
-
-        repo = TaskRepository(db_path)
-        await repo.initialize()
-        await repo.close()
-
-        assert db_path.exists()
-
-    async def test_initialize_is_idempotent(self, tmp_path: Path) -> None:
-        """Schema creation twice raises no errors."""
-        db_path = tmp_path / "tasks.db"
-        repo = TaskRepository(db_path)
-
-        await repo.initialize()
-        await repo.close()
-
-        # Second initialization on same DB should succeed
-        repo2 = TaskRepository(db_path)
-        await repo2.initialize()
-        await repo2.close()
-
-    async def test_requires_initialization_before_operations(
-        self, tmp_path: Path
-    ) -> None:
-        """AC: operations before initialize() raise TaskRepositoryError."""
-        repo = TaskRepository(tmp_path / "tasks.db")
-
-        with pytest.raises(TaskRepositoryError, match="not initialized"):
-            await repo.list_definitions()
 
 
 class TestRepositoryDefinitionCRUD:
@@ -119,6 +77,20 @@ class TestRepositoryDefinitionCRUD:
         assert "enabled-1" in ids
         assert "enabled-2" in ids
         assert "disabled-1" not in ids
+
+    async def test_list_disabled_definitions(self, repo: TaskRepository) -> None:
+        """AC: list_disabled_definitions filters by enabled=False."""
+        await repo.create_definition(_make_definition("enabled-1", enabled=True))
+        await repo.create_definition(_make_definition("disabled-1", enabled=False))
+        await repo.create_definition(_make_definition("disabled-2", enabled=False))
+
+        disabled = await repo.list_disabled_definitions()
+
+        assert len(disabled) == 2
+        ids = {d.id for d in disabled}
+        assert "disabled-1" in ids
+        assert "disabled-2" in ids
+        assert "enabled-1" not in ids
 
     async def test_update_definition(self, repo: TaskRepository) -> None:
         """AC: update_definition modifies fields."""
@@ -295,7 +267,7 @@ class TestRepositoryCrashRecovery:
         count = await repo.mark_running_as_failed("system restart")
 
         assert count == 2
-        # Verify they're marked as failed
+
         inst1 = await repo.get_instance("running-1")
         inst2 = await repo.get_instance("running-2")
         pending = await repo.get_instance("pending-1")
@@ -317,85 +289,3 @@ class TestRepositoryCrashRecovery:
         count = await repo.mark_running_as_failed("system restart")
 
         assert count == 0
-
-
-class TestRepositoryClose:
-    """Tests for engine disposal."""
-
-    async def test_close_disposes_engine(self, tmp_path: Path) -> None:
-        """AC: close() disposes the engine without error."""
-        repo = TaskRepository(tmp_path / "tasks.db")
-        await repo.initialize()
-
-        await repo.close()
-
-        # After close, further operations should raise
-        with pytest.raises(TaskRepositoryError):
-            await repo.list_definitions()
-
-
-class TestRepositorySchemaMigration:
-    """Tests for schema creation."""
-
-    async def test_initialize_creates_full_schema(self, tmp_path: Path) -> None:
-        """AC: initialize() creates both tables with all expected columns."""
-        db_path = tmp_path / "tasks.db"
-
-        repo = TaskRepository(db_path)
-        await repo.initialize()
-        await repo.close()
-
-        # Verify task_definitions table columns
-        async with aiosqlite.connect(db_path) as db:
-            cursor = await db.execute("PRAGMA table_info('task_definitions')")
-            columns = {row[1] for row in await cursor.fetchall()}
-
-        expected_columns = {
-            "id",
-            "name",
-            "schedule",
-            "task_type",
-            "prompt",
-            "notify",
-            "enabled",
-            "last_fired_at",
-            "created_at",
-        }
-        assert expected_columns.issubset(columns)
-
-        # Verify task_instances table columns
-        async with aiosqlite.connect(db_path) as db:
-            cursor = await db.execute("PRAGMA table_info('task_instances')")
-            columns = {row[1] for row in await cursor.fetchall()}
-
-        expected_instance_columns = {
-            "id",
-            "definition_id",
-            "task_type",
-            "status",
-            "prompt",
-            "scheduled_for",
-            "started_at",
-            "completed_at",
-            "result",
-            "created_at",
-        }
-        assert expected_instance_columns.issubset(columns)
-
-    async def test_initialize_creates_indexes(self, tmp_path: Path) -> None:
-        """AC: initialize() creates expected indexes."""
-        db_path = tmp_path / "tasks.db"
-
-        repo = TaskRepository(db_path)
-        await repo.initialize()
-        await repo.close()
-
-        # Verify indexes exist
-        async with aiosqlite.connect(db_path) as db:
-            cursor = await db.execute(
-                "SELECT name FROM sqlite_master WHERE type='index'"
-            )
-            indexes = {row[0] for row in await cursor.fetchall()}
-
-        assert "ix_task_instances_status" in indexes
-        assert "ix_task_instances_task_type" in indexes

@@ -9,6 +9,7 @@ import pytest
 
 from tachikoma.bootstrap import BootstrapContext
 from tachikoma.config import SettingsManager
+from tachikoma.database import Database
 from tachikoma.tasks.hooks import tasks_hook
 from tachikoma.tasks.model import TaskInstance
 from tachikoma.tasks.repository import TaskRepository
@@ -22,12 +23,15 @@ async def ctx(settings_manager: SettingsManager) -> BootstrapContext:
     ws.data_path.mkdir(exist_ok=True)
 
     ctx = BootstrapContext(settings_manager=settings_manager, prompt=input)
+
+    # Initialize the shared database (normally done by database_hook)
+    database = Database(ws.data_path / "tachikoma.db")
+    await database.initialize()
+    ctx.extras["database"] = database
+
     yield ctx
 
-    # Close the repository if the hook created one, to release SQLite connections
-    repo = ctx.extras.get("task_repository")
-    if repo is not None:
-        await repo.close()
+    await database.close()
 
 
 class TestTasksHook:
@@ -40,27 +44,14 @@ class TestTasksHook:
         assert "task_repository" in ctx.extras
         assert isinstance(ctx.extras["task_repository"], TaskRepository)
 
-    async def test_creates_database_file(
-        self, ctx: BootstrapContext, settings_manager: SettingsManager
-    ) -> None:
-        """AC: hook creates the tasks.db file in the data directory."""
-        db_path = settings_manager.settings.workspace.data_path / "tasks.db"
-        assert not db_path.exists()
-
-        await tasks_hook(ctx)
-
-        assert db_path.exists()
-
     async def test_crash_recovery_marks_running_as_failed(
-        self, ctx: BootstrapContext, settings_manager: SettingsManager
+        self, ctx: BootstrapContext
     ) -> None:
         """AC: hook marks any running instances as failed on startup."""
-        data_path = settings_manager.settings.workspace.data_path
+        database: Database = ctx.extras["database"]
 
-        # Pre-populate a database with a running instance
-        repo = TaskRepository(data_path / "tasks.db")
-        await repo.initialize()
-
+        # Pre-populate with a running instance
+        repo = TaskRepository(database.session_factory)
         running_instance = TaskInstance(
             id="running-abc",
             definition_id=None,
@@ -72,7 +63,6 @@ class TestTasksHook:
             created_at=datetime.now(UTC),
         )
         await repo.create_instance(running_instance)
-        await repo.close()
 
         # Run the hook — should mark running as failed
         await tasks_hook(ctx)
@@ -96,15 +86,13 @@ class TestTasksHook:
         assert len(pending) == 0
 
     async def test_only_marks_running_not_pending(
-        self, ctx: BootstrapContext, settings_manager: SettingsManager
+        self, ctx: BootstrapContext
     ) -> None:
         """AC: hook only marks 'running' instances, not 'pending' ones."""
-        data_path = settings_manager.settings.workspace.data_path
+        database: Database = ctx.extras["database"]
 
         # Pre-populate with both running and pending instances
-        repo = TaskRepository(data_path / "tasks.db")
-        await repo.initialize()
-
+        repo = TaskRepository(database.session_factory)
         running = TaskInstance(
             id="running-xyz",
             definition_id=None,
@@ -126,7 +114,6 @@ class TestTasksHook:
         )
         await repo.create_instance(running)
         await repo.create_instance(pending)
-        await repo.close()
 
         # Run the hook
         await tasks_hook(ctx)

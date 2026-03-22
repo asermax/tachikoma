@@ -1,19 +1,17 @@
 """SessionRepository: async SQLAlchemy persistence layer for conversation sessions.
 
-Owns the AsyncEngine lifecycle. All callers receive Session dataclasses —
-SQLAlchemy types never leak out of this module.
+All callers receive Session dataclasses — SQLAlchemy types never leak out
+of this module.
 """
 
 from datetime import datetime, timedelta
-from pathlib import Path
 
 from loguru import logger
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker, create_async_engine
+from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from tachikoma.sessions.errors import SessionRepositoryError
 from tachikoma.sessions.model import (
-    Base,
     Session,
     SessionRecord,
     SessionResumption,
@@ -26,114 +24,16 @@ _log = logger.bind(component="sessions")
 class SessionRepository:
     """Async repository for conversation sessions backed by SQLite via aiosqlite.
 
+    Receives a shared session factory from the Database class.
+
     Usage::
 
-        repo = SessionRepository(data_path / "sessions.db")
-        await repo.initialize()
-        try:
-            session = await repo.create(session_obj)
-            ...
-        finally:
-            await repo.close()
+        repo = SessionRepository(database.session_factory)
+        session = await repo.create(session_obj)
     """
 
-    def __init__(self, db_path: Path) -> None:
-        self._db_path = db_path
-        self._engine: AsyncEngine | None = None
-        self._session_factory: async_sessionmaker | None = None
-
-    async def initialize(self) -> None:
-        """Create the async engine, session factory, and run database migrations.
-
-        Idempotent: calling multiple times is safe.
-        Uses Alembic for schema migrations instead of create_all().
-        """
-        url = f"sqlite+aiosqlite:///{self._db_path}"
-        self._engine = create_async_engine(url, echo=False)
-
-        # expire_on_commit=False lets us access attributes after commit without refresh
-        self._session_factory = async_sessionmaker(self._engine, expire_on_commit=False)
-
-        # Run Alembic migrations programmatically
-        await self._run_migrations()
-
-        _log.info("Session repository initialized: db_path={path}", path=self._db_path)
-
-    async def _run_migrations(self) -> None:
-        """Run schema migrations.
-
-        For SQLite, we use a simple check-and-add approach:
-        1. create_all() for fresh databases
-        2. Column additions for existing databases
-        """
-        if self._engine is None:
-            return
-
-        # Ensure the database file's parent directory exists
-        self._db_path.parent.mkdir(parents=True, exist_ok=True)
-
-        # Use SQLAlchemy's create_all with checkfirst=True for idempotent creation
-        async with self._engine.begin() as conn:
-            await conn.run_sync(Base.metadata.create_all)
-
-            # Check for and add missing columns (for existing databases)
-            # This handles the case where the database was created before DLT-028
-            from sqlalchemy import text  # noqa: PLC0415
-
-            # Check if summary column exists (added in DLT-027)
-            result = await conn.execute(
-                text("SELECT * FROM pragma_table_info('sessions') WHERE name='summary'")
-            )
-            if result.fetchone() is None:
-                await conn.execute(
-                    text("ALTER TABLE sessions ADD COLUMN summary TEXT")
-                )
-                _log.info("Schema migration: added 'summary' column to sessions table")
-
-            # Check if last_resumed_at column exists (added in DLT-028)
-            result = await conn.execute(
-                text("SELECT * FROM pragma_table_info('sessions') WHERE name='last_resumed_at'")
-            )
-            if result.fetchone() is None:
-                await conn.execute(
-                    text("ALTER TABLE sessions ADD COLUMN last_resumed_at DATETIME")
-                )
-                _log.info("Schema migration: added 'last_resumed_at' column to sessions table")
-
-            # Check if session_resumptions table exists (added in DLT-028)
-            result = await conn.execute(
-                text(
-                    "SELECT name FROM sqlite_master"
-                    " WHERE type='table' AND name='session_resumptions'"
-                )
-            )
-            if result.fetchone() is None:
-                await conn.execute(
-                    text("""
-                        CREATE TABLE session_resumptions (
-                            id INTEGER PRIMARY KEY AUTOINCREMENT,
-                            session_id TEXT NOT NULL REFERENCES sessions(id),
-                            resumed_at DATETIME NOT NULL,
-                            previous_ended_at DATETIME NOT NULL
-                        )
-                    """)
-                )
-                await conn.execute(
-                    text(
-                        "CREATE INDEX ix_session_resumptions_session_id"
-                        " ON session_resumptions(session_id)"
-                    )
-                )
-                _log.info("Schema migration: created 'session_resumptions' table")
-
-        _log.debug("Schema migrations completed: db_path={path}", path=self._db_path)
-
-    async def close(self) -> None:
-        """Dispose the async engine and release all connections."""
-        if self._engine is not None:
-            await self._engine.dispose()
-            self._engine = None
-            self._session_factory = None
+    def __init__(self, session_factory: async_sessionmaker) -> None:
+        self._session_factory = session_factory
 
     # ------------------------------------------------------------------
     # CRUD operations
@@ -141,8 +41,6 @@ class SessionRepository:
 
     async def create(self, session: Session) -> Session:
         """Persist a new session and return it."""
-        self._require_initialized()
-
         try:
             record = SessionRecord(
                 id=session.id,
@@ -154,7 +52,7 @@ class SessionRepository:
                 last_resumed_at=session.last_resumed_at,
             )
 
-            async with self._session_factory() as db:  # type: ignore[misc]
+            async with self._session_factory() as db:
                 db.add(record)
                 await db.commit()
 
@@ -168,10 +66,8 @@ class SessionRepository:
 
         Accepted fields: sdk_session_id, transcript_path, summary, ended_at.
         """
-        self._require_initialized()
-
         try:
-            async with self._session_factory() as db:  # type: ignore[misc]
+            async with self._session_factory() as db:
                 result = await db.execute(
                     select(SessionRecord).where(SessionRecord.id == session_id)
                 )
@@ -190,10 +86,8 @@ class SessionRepository:
 
     async def get_by_id(self, session_id: str) -> Session | None:
         """Return the session with the given ID, or None if not found."""
-        self._require_initialized()
-
         try:
-            async with self._session_factory() as db:  # type: ignore[misc]
+            async with self._session_factory() as db:
                 result = await db.execute(
                     select(SessionRecord).where(SessionRecord.id == session_id)
                 )
@@ -211,10 +105,8 @@ class SessionRepository:
         their started_at is before range_end (overlap semantics).
         Results are ordered by started_at descending.
         """
-        self._require_initialized()
-
         try:
-            async with self._session_factory() as db:  # type: ignore[misc]
+            async with self._session_factory() as db:
                 stmt = (
                     select(SessionRecord)
                     .where(
@@ -234,10 +126,8 @@ class SessionRepository:
 
     async def get_open_sessions(self) -> list[Session]:
         """Return all sessions with null ended_at (open / not yet closed)."""
-        self._require_initialized()
-
         try:
-            async with self._session_factory() as db:  # type: ignore[misc]
+            async with self._session_factory() as db:
                 stmt = select(SessionRecord).where(SessionRecord.ended_at.is_(None))
                 result = await db.execute(stmt)
                 records = result.scalars().all()
@@ -264,11 +154,9 @@ class SessionRepository:
             before: The reference timestamp (typically now).
             window: How far back to look for closed sessions.
         """
-        self._require_initialized()
-
         try:
             cutoff = before - window
-            async with self._session_factory() as db:  # type: ignore[misc]
+            async with self._session_factory() as db:
                 stmt = (
                     select(SessionRecord)
                     .where(
@@ -289,8 +177,6 @@ class SessionRepository:
 
     async def create_resumption(self, resumption: SessionResumption) -> SessionResumption:
         """Persist a session resumption event."""
-        self._require_initialized()
-
         try:
             record = SessionResumptionRecord(
                 session_id=resumption.session_id,
@@ -298,7 +184,7 @@ class SessionRepository:
                 previous_ended_at=resumption.previous_ended_at,
             )
 
-            async with self._session_factory() as db:  # type: ignore[misc]
+            async with self._session_factory() as db:
                 db.add(record)
                 await db.commit()
 
@@ -313,10 +199,8 @@ class SessionRepository:
         self, session_id: str
     ) -> list[SessionResumption]:
         """Return all resumption events for a session, ordered by resumed_at ascending."""
-        self._require_initialized()
-
         try:
-            async with self._session_factory() as db:  # type: ignore[misc]
+            async with self._session_factory() as db:
                 stmt = (
                     select(SessionResumptionRecord)
                     .where(SessionResumptionRecord.session_id == session_id)
@@ -331,13 +215,3 @@ class SessionRepository:
             raise SessionRepositoryError(
                 f"Failed to get resumptions for session {session_id}"
             ) from exc
-
-    # ------------------------------------------------------------------
-    # Internal helpers
-    # ------------------------------------------------------------------
-
-    def _require_initialized(self) -> None:
-        if self._engine is None or self._session_factory is None:
-            raise SessionRepositoryError(
-                "SessionRepository is not initialized. Call initialize() first."
-            )

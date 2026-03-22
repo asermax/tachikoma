@@ -10,8 +10,9 @@ from datetime import UTC, datetime
 from typing import Literal
 
 from sqlalchemy import DateTime, ForeignKey, Index, String
-from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
+from sqlalchemy.orm import Mapped, mapped_column
 
+from tachikoma.database import Base
 from tachikoma.db_utils import ensure_utc
 
 # ---------------------------------------------------------------------------
@@ -102,13 +103,7 @@ class TaskInstance:
 # ---------------------------------------------------------------------------
 
 
-class TaskBase(DeclarativeBase):
-    """Base class for task ORM models — separate from sessions Base."""
-
-    pass
-
-
-class TaskDefinitionRecord(TaskBase):
+class TaskDefinitionRecord(Base):
     """SQLAlchemy ORM model for the task_definitions table.
 
     Internal to the persistence layer; callers never see this type.
@@ -144,7 +139,7 @@ class TaskDefinitionRecord(TaskBase):
         )
 
 
-class TaskInstanceRecord(TaskBase):
+class TaskInstanceRecord(Base):
     """SQLAlchemy ORM model for the task_instances table.
 
     Internal to the persistence layer; callers never see this type.

@@ -16,6 +16,7 @@ from tachikoma.boundary import SummaryProcessor
 from tachikoma.config import SettingsManager
 from tachikoma.context import CoreContextProcessor, context_hook
 from tachikoma.coordinator import Coordinator
+from tachikoma.database import Database, database_hook
 from tachikoma.git import GitProcessor, git_hook
 from tachikoma.logging import logging_hook
 from tachikoma.memory import (
@@ -72,6 +73,7 @@ async def main(
     bootstrap = Bootstrap(settings_manager)
     bootstrap.register("workspace", workspace_hook)
     bootstrap.register("logging", logging_hook)
+    bootstrap.register("database", database_hook)
     bootstrap.register("git", git_hook)
     bootstrap.register("projects", projects_hook)
     bootstrap.register("skills", skills_hook)
@@ -90,10 +92,9 @@ async def main(
 
     settings = settings_manager.settings
 
-    # Retrieve the session objects created inside the recovery hook
-    repository = bootstrap.extras["session_repository"]
+    # Retrieve the shared database and subsystem objects from bootstrap
+    database: Database = bootstrap.extras["database"]
     registry = bootstrap.extras["session_registry"]
-
     task_repository: TaskRepository = bootstrap.extras["task_repository"]
     bus = EventBus()
 
@@ -235,14 +236,11 @@ async def main(
                     )
 
         # Stop the event bus
-        bus.stop()
+        await bus.stop()
 
-        # Always dispose the engines to prevent dangling connections
-        if repository is not None:
-            await repository.close()
-
-        if task_repository is not None:
-            await task_repository.close()
+        # Dispose the shared database engine to prevent dangling connections
+        if database is not None:
+            await database.close()
 
 
 app()

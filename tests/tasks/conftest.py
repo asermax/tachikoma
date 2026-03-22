@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pytest
 
+from tachikoma.database import Database
 from tachikoma.tasks.model import (
     ScheduleConfig,
     TaskDefinition,
@@ -70,7 +71,7 @@ def _make_instance(
 @pytest.fixture
 async def repo(tmp_path: Path) -> TaskRepository:
     """Initialized TaskRepository backed by a temp SQLite file."""
-    repository = TaskRepository(tmp_path / "tasks.db")
-    await repository.initialize()
-    yield repository
-    await repository.close()
+    database = Database(tmp_path / "tachikoma.db")
+    await database.initialize()
+    yield TaskRepository(database.session_factory)
+    await database.close()

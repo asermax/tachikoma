@@ -9,8 +9,9 @@ from datetime import datetime
 from typing import Literal
 
 from sqlalchemy import DateTime, ForeignKey, Index
-from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
+from sqlalchemy.orm import Mapped, mapped_column
 
+from tachikoma.database import Base
 from tachikoma.db_utils import ensure_utc
 
 SessionStatus = Literal["open", "closed", "interrupted"]
@@ -63,9 +64,6 @@ class SessionResumption:
 # ---------------------------------------------------------------------------
 # SQLAlchemy ORM — internal to the persistence layer
 # ---------------------------------------------------------------------------
-
-class Base(DeclarativeBase):
-    pass
 
 
 class SessionRecord(Base):

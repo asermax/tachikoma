@@ -1,19 +1,17 @@
 """TaskRepository: async SQLAlchemy persistence layer for task definitions and instances.
 
-Owns the AsyncEngine lifecycle. All callers receive frozen dataclasses —
-SQLAlchemy types never leak out of this module.
+All callers receive frozen dataclasses — SQLAlchemy types never leak out
+of this module.
 """
 
 from datetime import UTC, datetime
-from pathlib import Path
 
 from loguru import logger
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker, create_async_engine
+from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from tachikoma.tasks.errors import TaskRepositoryError
 from tachikoma.tasks.model import (
-    TaskBase,
     TaskDefinition,
     TaskDefinitionRecord,
     TaskInstance,
@@ -27,62 +25,16 @@ _log = logger.bind(component="tasks")
 class TaskRepository:
     """Async repository for task definitions and instances backed by SQLite via aiosqlite.
 
+    Receives a shared session factory from the Database class.
+
     Usage::
 
-        repo = TaskRepository(data_path / "tasks.db")
-        await repo.initialize()
-        try:
-            definition = await repo.create_definition(definition_obj)
-            ...
-        finally:
-            await repo.close()
+        repo = TaskRepository(database.session_factory)
+        definition = await repo.create_definition(definition_obj)
     """
 
-    def __init__(self, db_path: Path) -> None:
-        self._db_path = db_path
-        self._engine: AsyncEngine | None = None
-        self._session_factory: async_sessionmaker | None = None
-
-    async def initialize(self) -> None:
-        """Create the async engine, session factory, and run database migrations.
-
-        Idempotent: calling multiple times is safe.
-        """
-        url = f"sqlite+aiosqlite:///{self._db_path}"
-        self._engine = create_async_engine(url, echo=False)
-
-        # expire_on_commit=False lets us access attributes after commit without refresh
-        self._session_factory = async_sessionmaker(self._engine, expire_on_commit=False)
-
-        # Run schema migrations
-        await self._run_migrations()
-
-        _log.info("Task repository initialized: db_path={path}", path=self._db_path)
-
-    async def _run_migrations(self) -> None:
-        """Run schema migrations using SQLAlchemy's create_all.
-
-        For the tasks subsystem, we use a simpler approach than the sessions
-        subsystem since we're starting fresh without legacy databases to migrate.
-        """
-        if self._engine is None:
-            return
-
-        # Ensure the database file's parent directory exists
-        self._db_path.parent.mkdir(parents=True, exist_ok=True)
-
-        # Use SQLAlchemy's create_all with checkfirst=True for idempotent creation
-        async with self._engine.begin() as conn:
-            await conn.run_sync(TaskBase.metadata.create_all)
-
-        _log.debug("Schema migrations completed: db_path={path}", path=self._db_path)
-
-    async def close(self) -> None:
-        """Dispose the async engine and release all connections."""
-        if self._engine is not None:
-            await self._engine.dispose()
-            self._engine = None
-            self._session_factory = None
+    def __init__(self, session_factory: async_sessionmaker) -> None:
+        self._session_factory = session_factory
 
     # ------------------------------------------------------------------
     # Definition CRUD operations
@@ -90,8 +42,6 @@ class TaskRepository:
 
     async def create_definition(self, definition: TaskDefinition) -> TaskDefinition:
         """Persist a new task definition and return it."""
-        self._require_initialized()
-
         try:
             record = TaskDefinitionRecord(
                 id=definition.id,
@@ -105,7 +55,7 @@ class TaskRepository:
                 created_at=definition.created_at or datetime.now(UTC),
             )
 
-            async with self._session_factory() as db:  # type: ignore[misc]
+            async with self._session_factory() as db:
                 db.add(record)
                 await db.commit()
 
@@ -118,10 +68,8 @@ class TaskRepository:
 
     async def get_definition(self, definition_id: str) -> TaskDefinition | None:
         """Return the task definition with the given ID, or None if not found."""
-        self._require_initialized()
-
         try:
-            async with self._session_factory() as db:  # type: ignore[misc]
+            async with self._session_factory() as db:
                 result = await db.execute(
                     select(TaskDefinitionRecord).where(
                         TaskDefinitionRecord.id == definition_id
@@ -138,10 +86,8 @@ class TaskRepository:
 
     async def list_definitions(self) -> list[TaskDefinition]:
         """Return all task definitions."""
-        self._require_initialized()
-
         try:
-            async with self._session_factory() as db:  # type: ignore[misc]
+            async with self._session_factory() as db:
                 result = await db.execute(select(TaskDefinitionRecord))
                 records = result.scalars().all()
 
@@ -152,10 +98,8 @@ class TaskRepository:
 
     async def list_enabled_definitions(self) -> list[TaskDefinition]:
         """Return all enabled task definitions."""
-        self._require_initialized()
-
         try:
-            async with self._session_factory() as db:  # type: ignore[misc]
+            async with self._session_factory() as db:
                 result = await db.execute(
                     select(TaskDefinitionRecord).where(
                         TaskDefinitionRecord.enabled == True  # noqa: E712
@@ -168,16 +112,30 @@ class TaskRepository:
         except Exception as exc:
             raise TaskRepositoryError("Failed to list enabled task definitions") from exc
 
+    async def list_disabled_definitions(self) -> list[TaskDefinition]:
+        """Return all disabled (archived) task definitions."""
+        try:
+            async with self._session_factory() as db:
+                result = await db.execute(
+                    select(TaskDefinitionRecord).where(
+                        TaskDefinitionRecord.enabled == False  # noqa: E712
+                    )
+                )
+                records = result.scalars().all()
+
+            return [r.to_domain() for r in records]
+
+        except Exception as exc:
+            raise TaskRepositoryError("Failed to list disabled task definitions") from exc
+
     async def update_definition(self, definition_id: str, **fields) -> None:
         """Update arbitrary fields on a task definition by ID.
 
         Accepted fields: name, schedule, task_type, prompt, notify, enabled,
         last_fired_at.
         """
-        self._require_initialized()
-
         try:
-            async with self._session_factory() as db:  # type: ignore[misc]
+            async with self._session_factory() as db:
                 result = await db.execute(
                     select(TaskDefinitionRecord).where(
                         TaskDefinitionRecord.id == definition_id
@@ -203,10 +161,8 @@ class TaskRepository:
 
     async def delete_definition(self, definition_id: str) -> bool:
         """Delete a task definition by ID. Returns True if deleted."""
-        self._require_initialized()
-
         try:
-            async with self._session_factory() as db:  # type: ignore[misc]
+            async with self._session_factory() as db:
                 result = await db.execute(
                     select(TaskDefinitionRecord).where(
                         TaskDefinitionRecord.id == definition_id
@@ -233,8 +189,6 @@ class TaskRepository:
 
     async def create_instance(self, instance: TaskInstance) -> TaskInstance:
         """Persist a new task instance and return it."""
-        self._require_initialized()
-
         try:
             record = TaskInstanceRecord(
                 id=instance.id,
@@ -249,7 +203,7 @@ class TaskRepository:
                 created_at=instance.created_at or datetime.now(UTC),
             )
 
-            async with self._session_factory() as db:  # type: ignore[misc]
+            async with self._session_factory() as db:
                 db.add(record)
                 await db.commit()
 
@@ -262,10 +216,8 @@ class TaskRepository:
 
     async def get_instance(self, instance_id: str) -> TaskInstance | None:
         """Return the task instance with the given ID, or None if not found."""
-        self._require_initialized()
-
         try:
-            async with self._session_factory() as db:  # type: ignore[misc]
+            async with self._session_factory() as db:
                 result = await db.execute(
                     select(TaskInstanceRecord).where(
                         TaskInstanceRecord.id == instance_id
@@ -280,10 +232,8 @@ class TaskRepository:
 
     async def get_pending_instances(self, task_type: TaskType) -> list[TaskInstance]:
         """Return all pending task instances of the given type."""
-        self._require_initialized()
-
         try:
-            async with self._session_factory() as db:  # type: ignore[misc]
+            async with self._session_factory() as db:
                 result = await db.execute(
                     select(TaskInstanceRecord)
                     .where(TaskInstanceRecord.status == "pending")
@@ -305,10 +255,8 @@ class TaskRepository:
 
         Used for duplicate prevention — only one active instance per definition.
         """
-        self._require_initialized()
-
         try:
-            async with self._session_factory() as db:  # type: ignore[misc]
+            async with self._session_factory() as db:
                 result = await db.execute(
                     select(TaskInstanceRecord)
                     .where(TaskInstanceRecord.definition_id == definition_id)
@@ -330,10 +278,8 @@ class TaskRepository:
 
         Accepted fields: status, started_at, completed_at, result.
         """
-        self._require_initialized()
-
         try:
-            async with self._session_factory() as db:  # type: ignore[misc]
+            async with self._session_factory() as db:
                 result = await db.execute(
                     select(TaskInstanceRecord).where(
                         TaskInstanceRecord.id == instance_id
@@ -359,10 +305,8 @@ class TaskRepository:
 
         Used for transient notification cleanup after delivery.
         """
-        self._require_initialized()
-
         try:
-            async with self._session_factory() as db:  # type: ignore[misc]
+            async with self._session_factory() as db:
                 result = await db.execute(
                     select(TaskInstanceRecord).where(
                         TaskInstanceRecord.id == instance_id
@@ -391,11 +335,9 @@ class TaskRepository:
 
         Returns the number of instances marked as failed.
         """
-        self._require_initialized()
-
         try:
             count = 0
-            async with self._session_factory() as db:  # type: ignore[misc]
+            async with self._session_factory() as db:
                 result = await db.execute(
                     select(TaskInstanceRecord).where(
                         TaskInstanceRecord.status == "running"
@@ -421,13 +363,3 @@ class TaskRepository:
 
         except Exception as exc:
             raise TaskRepositoryError("Failed to mark running instances as failed") from exc
-
-    # ------------------------------------------------------------------
-    # Internal helpers
-    # ------------------------------------------------------------------
-
-    def _require_initialized(self) -> None:
-        if self._engine is None or self._session_factory is None:
-            raise TaskRepositoryError(
-                "TaskRepository is not initialized. Call initialize() first."
-            )

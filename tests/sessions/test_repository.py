@@ -7,10 +7,9 @@ Uses real SQLite databases in tmp_path (no mocking of the DB layer).
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
-import aiosqlite
 import pytest
 
-from tachikoma.sessions.errors import SessionRepositoryError
+from tachikoma.database import Database
 from tachikoma.sessions.model import Session
 from tachikoma.sessions.repository import SessionRepository
 
@@ -40,45 +39,10 @@ def _make_session(
 @pytest.fixture
 async def repo(tmp_path: Path) -> SessionRepository:
     """Initialized SessionRepository backed by a temp SQLite file."""
-    repository = SessionRepository(tmp_path / "sessions.db")
-    await repository.initialize()
-    yield repository
-    await repository.close()
-
-
-class TestRepositoryInitialization:
-    """Tests for schema auto-creation and engine lifecycle."""
-
-    async def test_creates_database_file_on_initialize(self, tmp_path: Path) -> None:
-        """AC: database file does not exist → created on initialize()."""
-        db_path = tmp_path / "sessions.db"
-        assert not db_path.exists()
-
-        repo = SessionRepository(db_path)
-        await repo.initialize()
-        await repo.close()
-
-        assert db_path.exists()
-
-    async def test_initialize_is_idempotent(self, tmp_path: Path) -> None:
-        """Schema creation twice raises no errors (create_all is idempotent)."""
-        db_path = tmp_path / "sessions.db"
-        repo = SessionRepository(db_path)
-
-        await repo.initialize()
-        await repo.close()
-
-        # Second initialization on same DB should succeed
-        repo2 = SessionRepository(db_path)
-        await repo2.initialize()
-        await repo2.close()
-
-    async def test_requires_initialization_before_operations(self, tmp_path: Path) -> None:
-        """AC: operations before initialize() raise SessionRepositoryError."""
-        repo = SessionRepository(tmp_path / "sessions.db")
-
-        with pytest.raises(SessionRepositoryError, match="not initialized"):
-            await repo.get_open_sessions()
+    database = Database(tmp_path / "tachikoma.db")
+    await database.initialize()
+    yield SessionRepository(database.session_factory)
+    await database.close()
 
 
 class TestRepositoryCreate:
@@ -211,14 +175,11 @@ class TestRepositoryGetByTimeRange:
         """AC: sessions whose span overlaps the query range are returned."""
         base = _utcnow()
 
-        # Session that starts and ends within the range
         s1 = _make_session("s1", started_at=base + timedelta(hours=1))
-        # Session that starts before and ends within the range
         s2 = _make_session("s2", started_at=base - timedelta(hours=1))
 
         await repo.create(s1)
         await repo.create(s2)
-        # Close them via update to persist ended_at
         await repo.update("s1", ended_at=base + timedelta(hours=2))
         await repo.update("s2", ended_at=base + timedelta(hours=1))
 
@@ -232,7 +193,6 @@ class TestRepositoryGetByTimeRange:
         """AC: sessions entirely outside the range are not returned."""
         base = _utcnow()
 
-        # Session that ended before the range starts
         past = _make_session("past", started_at=base - timedelta(hours=5))
         await repo.create(past)
         await repo.update("past", ended_at=base - timedelta(hours=3))
@@ -248,7 +208,6 @@ class TestRepositoryGetByTimeRange:
         """AC: open sessions (null ended_at) are included if started_at < range_end."""
         base = _utcnow()
 
-        # Open session started in the middle of the range
         open_session = _make_session("open1", started_at=base + timedelta(hours=1))
         await repo.create(open_session)
 
@@ -280,110 +239,3 @@ class TestRepositoryGetByTimeRange:
 
         assert results[0].id == "later"
         assert results[1].id == "earlier"
-
-
-class TestRepositoryClose:
-    """Tests for engine disposal."""
-
-    async def test_close_disposes_engine(self, tmp_path: Path) -> None:
-        """AC: close() disposes the engine without error."""
-        repo = SessionRepository(tmp_path / "sessions.db")
-        await repo.initialize()
-
-        await repo.close()
-
-        # After close, further operations should raise
-        with pytest.raises(SessionRepositoryError):
-            await repo.get_open_sessions()
-
-
-class TestRepositoryMigration:
-    """Tests for Alembic schema migrations."""
-
-    async def test_initialize_creates_full_schema(self, tmp_path: Path) -> None:
-        """AC: initialize() creates the sessions table with all expected columns."""
-        db_path = tmp_path / "sessions.db"
-
-        repo = SessionRepository(db_path)
-        await repo.initialize()
-        await repo.close()
-
-        # Verify all expected columns exist
-        async with aiosqlite.connect(db_path) as db:
-            cursor = await db.execute("PRAGMA table_info('sessions')")
-            columns = {row[1] for row in await cursor.fetchall()}
-
-        expected_columns = {
-            "id",
-            "sdk_session_id",
-            "transcript_path",
-            "summary",
-            "started_at",
-            "ended_at",
-            "last_resumed_at",
-        }
-        assert expected_columns.issubset(columns)
-
-    async def test_initialize_migrates_existing_database(
-        self, tmp_path: Path
-    ) -> None:
-        """AC: initialize() adds new columns to existing database via Alembic."""
-        db_path = tmp_path / "sessions.db"
-
-        # Create a table with the OLD schema (no last_resumed_at)
-        async with aiosqlite.connect(db_path) as db:
-            await db.execute(
-                """CREATE TABLE sessions (
-                    id TEXT PRIMARY KEY,
-                    sdk_session_id TEXT,
-                    transcript_path TEXT,
-                    summary TEXT,
-                    started_at TEXT,
-                    ended_at TEXT
-                )"""
-            )
-            # Add alembic_version to mark the old baseline as applied
-            await db.execute(
-                """CREATE TABLE alembic_version (
-                    version_num TEXT PRIMARY KEY
-                )"""
-            )
-            await db.execute(
-                "INSERT INTO alembic_version (version_num) VALUES ('001_initial')"
-            )
-            await db.commit()
-
-        # Verify last_resumed_at column doesn't exist
-        async with aiosqlite.connect(db_path) as db:
-            cursor = await db.execute(
-                "SELECT * FROM pragma_table_info('sessions') WHERE name='last_resumed_at'"
-            )
-            row = await cursor.fetchone()
-            assert row is None
-
-        # Initialize should run pending migrations
-        repo = SessionRepository(db_path)
-        await repo.initialize()
-        await repo.close()
-
-        # Verify the column was added
-        async with aiosqlite.connect(db_path) as db:
-            cursor = await db.execute(
-                "SELECT * FROM pragma_table_info('sessions') WHERE name='last_resumed_at'"
-            )
-            row = await cursor.fetchone()
-            assert row is not None
-
-    async def test_initialize_is_idempotent(self, tmp_path: Path) -> None:
-        """AC: calling initialize() multiple times is safe (Alembic upgrade head)."""
-        db_path = tmp_path / "sessions.db"
-
-        repo = SessionRepository(db_path)
-        await repo.initialize()
-
-        # Second initialization should succeed without error
-        await repo.close()
-        repo2 = SessionRepository(db_path)
-        await repo2.initialize()
-        await repo2.close()
-
