@@ -4,7 +4,7 @@
 
 ## Overview
 
-A reusable, pluggable pipeline that runs registered processors after conversation end. The pipeline supports phased execution — processors declare which phase they run in, phases execute sequentially, and processors within each phase run in parallel with error isolation. The pipeline is domain-agnostic; it knows nothing about what processors do.
+A reusable, pluggable pipeline that runs registered processors after conversation end. The pipeline supports phased execution — processors declare which phase they run in, phases execute sequentially (`main → pre_finalize → finalize`), and processors within each phase run in parallel with error isolation. The pipeline is domain-agnostic; it knows nothing about what processors do.
 
 A parallel concept — the `MessagePostProcessingPipeline` — follows a similar structural pattern (processor ABC, serialized execution, error isolation) but as a separate implementation with a distinct per-message processor interface that receives the active session, user message, and agent response. It has no phased execution. See [boundary detection](boundary-detection.md) for details.
 
@@ -18,7 +18,7 @@ A parallel concept — the `MessagePostProcessingPipeline` — follows a similar
 | ID | Requirement |
 |----|-------------|
 | R0 | Reusable pipeline that runs registered processors after session close |
-| R1 | Phased execution — processors declare a phase at registration; phases run sequentially, processors within a phase run in parallel |
+| R1 | Phased execution — processors declare a phase at registration; phases run sequentially (`main → pre_finalize → finalize`), processors within a phase run in parallel |
 | R2 | Error isolation — individual processor failures are logged but don't prevent other processors or subsequent phases from completing |
 | R3 | Concurrent invocations serialized via lock |
 | R4 | Shared processor interface (ABC) that is domain-agnostic and SDK-decoupled |
@@ -35,15 +35,16 @@ Processors register with the pipeline, optionally declaring a phase. Invalid pha
 **Acceptance Criteria**:
 - Given a processor is registered without a phase, when it is added to the pipeline, then it defaults to the main phase
 - Given a processor is registered with `phase="finalize"`, when it is added, then it is placed in the finalize phase
+- Given a processor is registered with `phase="pre_finalize"`, when it is added, then it is placed in the pre_finalize phase
 - Given a processor is registered with an invalid phase, when `register()` is called, then a `ValueError` is raised listing valid phases
 - Given multiple processors register for the same phase, when the pipeline runs, then they execute in parallel
 
 ### Phased Execution (R1, R2)
 
-The pipeline runs phases sequentially (main → finalize). Within each phase, processors run in parallel. Failures in one phase do not prevent subsequent phases from running.
+The pipeline runs phases sequentially (`main → pre_finalize → finalize`). Within each phase, processors run in parallel. Failures in one phase do not prevent subsequent phases from running.
 
 **Acceptance Criteria**:
-- Given processors in both main and finalize phases, when the pipeline runs, then main-phase processors complete before finalize-phase processors start
+- Given processors in main, pre_finalize, and finalize phases, when the pipeline runs, then main-phase processors complete before pre_finalize-phase processors start, and pre_finalize-phase processors complete before finalize-phase processors start
 - Given a main-phase processor fails, when the finalize phase begins, then finalize-phase processors still run
 - Given a phase has no registered processors, when the pipeline runs that phase, then it is skipped
 - Given a processor fails, when other processors in the same phase are running, then they complete normally

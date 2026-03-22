@@ -45,7 +45,7 @@ def run_migrations_from_url(url: str) -> None:
     This is primarily for CLI usage. The async repository uses run_migrations()
     via run_sync instead.
     """
-    from sqlalchemy import create_engine
+    from sqlalchemy import create_engine  # noqa: PLC0415
 
     connectable = create_engine(url, poolclass=pool.NullPool)
 

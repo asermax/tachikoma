@@ -4,13 +4,13 @@
 
 ## Overview
 
-The skill system provides a structured way to organize and manage specialized sub-agents. Skills are directory-based packages containing YAML-formatted agent definitions. A skill registry discovers all skills at startup and makes them available to the coordinator, which passes them to the Claude Code SDK for delegation. The SDK's internal orchestrator uses the available agents to decide when and how to delegate specialized work.
+The skill system provides a structured way to organize, detect, and delegate specialized sub-agents. Skills are directory-based packages containing YAML-formatted agent definitions. A skill registry discovers all skills at startup. On each new session, a skills context provider classifies which skills are relevant to the user's message, injects their content as context, and loads only the matched skills' agents into the SDK for delegation. Detection persists for the session — subsequent messages use the same detected skills without re-running classification.
 
 ## User Stories
 
 - As the system, I need a way to organize sub-agents into reusable skill packages so that specialized work can be delegated to focused agents
 - As a skill developer, I want a clear directory structure and format so that I can define agents without coupling to the core system
-- As the SDK, I need all available agents to be known at session initialization so that I can make delegation decisions throughout the conversation
+- As the assistant, I want only relevant skills detected and loaded per session so that I have specialized knowledge and agents when needed without wasting context on irrelevant skills
 
 ## Requirements
 
@@ -20,11 +20,17 @@ The skill system provides a structured way to organize and manage specialized su
 | R1 | Skill registry discovery at startup |
 | R2 | Agent definition loading from markdown files with YAML metadata |
 | R3 | Agent namespacing to prevent collisions |
-| R4 | Agents passed to SDK at initialization |
+| R4 | Relevant agents loaded per-session based on detection results and passed to SDK for delegation |
 | R5 | Session-lifetime agent persistence |
 | R6 | Tool scoping via agent definition metadata |
 | R7 | Bootstrap hook for idempotent skills directory creation |
 | R8 | Graceful error handling for invalid skills/agents |
+| R9 | Skill detection via LLM: classify relevance using skill names, descriptions, and user message |
+| R10 | Inject matched skill content (body without frontmatter) and directory path as `<skills>` XML context block |
+| R11 | Detected skills persist for the session; on topic shift (new session), detection runs again |
+| R12 | Detection quality: balance precision (don't waste context on irrelevant skills) with recall (don't miss applicable skills) |
+| R13 | When no skills exist in the registry, provider is a no-op (no context, no agents, no LLM call) |
+| R14 | Graceful error handling for detection — failures never block the message; message proceeds with no skills/agents |
 
 ## Behaviors
 
@@ -52,13 +58,14 @@ The skill registry discovers all skills and agents at startup, building an index
 - Given agents from multiple skills, when indexed, then they are namespaced by skill (e.g., "skill-name/agent-name")
 - Given an invalid skill, when the registry encounters it, then a warning is logged and loading continues
 
-### Coordinator Integration (R4, R5)
+### Coordinator Integration (R4, R11)
 
-The coordinator retrieves the agents dictionary from the registry and passes it to the SDK.
+The coordinator receives detected agents from the pre-processing pipeline per-session and passes them to the SDK.
 
 **Acceptance Criteria**:
-- Given the coordinator initializes, when it requests agents from the registry, then all discovered agents are available
-- Given agents passed to the SDK at initialization, when a conversation is active, then the same agents remain available (no mid-session updates)
+- Given the pre-processing pipeline returns results containing agent definitions, when the coordinator processes them, then the detected agents are passed to `ClaudeAgentOptions.agents` for the session
+- Given agents are loaded for a session, when subsequent messages arrive in the same session, then the same agents remain available without re-detection
+- Given a new session starts after a topic shift, when skill detection runs again, then agents are re-detected based on the new message context
 
 ### Tool Scoping (R6)
 
@@ -85,8 +92,33 @@ Invalid skills and agents are gracefully skipped with diagnostic logging.
 - Given an agent definition is invalid, when loaded, then a warning is logged and the agent is skipped
 - Given the registry encounters an error, then the coordinator continues with whatever agents were successfully loaded
 
+### Skill Detection (R9, R12, R13)
+
+On the first message of a new session, the skills context provider classifies which skills are relevant to the user's message.
+
+**Acceptance Criteria**:
+- Given skills exist in the registry and a new session starts, when the first message arrives, then the skills context provider classifies relevance using LLM-based analysis with all skill names and descriptions
+- Given the classification completes, when the response is parsed, then unrecognized skill names are discarded
+- Given no skills exist in the registry, when the provider runs, then it returns immediately with no context and no agents (no LLM call made)
+
+### Skill Content Injection (R10)
+
+Detected skills' content is injected as a `<skills>` XML context block.
+
+**Acceptance Criteria**:
+- Given skills are detected as relevant, when the provider assembles the result, then it returns a `<skills>` XML context block containing each matched skill's content body (markdown without YAML frontmatter) and its directory path
+- Given multiple skills are detected, when the context block is assembled, then each skill's content is clearly delineated with its name and directory path
+- Given no skills are detected as relevant, when the provider completes, then it returns no text context and no agent definitions
+
+### Detection Error Handling (R14)
+
+Detection failures are handled gracefully without blocking the message.
+
+**Acceptance Criteria**:
+- Given the skills detection agent fails (SDK error, timeout), when the provider catches the error, then it logs the failure and returns no context and no agents
+- Given the detection agent returns an unrecognizable response (no valid skill names parseable), when the provider processes it, then it logs a warning and returns no context and no agents
+
 ## Out of Scope
 
-- Automatic skill detection and injection (DLT-021)
 - Custom MCP tools per-agent
 - Skill-level markdown instructions

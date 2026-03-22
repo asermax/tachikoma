@@ -26,11 +26,12 @@ from tachikoma.memory import (
     memory_hook,
 )
 from tachikoma.message_post_processing import MessagePostProcessingPipeline
-from tachikoma.post_processing import FINALIZE_PHASE, PostProcessingPipeline
+from tachikoma.post_processing import FINALIZE_PHASE, PRE_FINALIZE_PHASE, PostProcessingPipeline
 from tachikoma.pre_processing import PreProcessingPipeline
+from tachikoma.projects import ProjectsContextProvider, ProjectsProcessor, projects_hook
 from tachikoma.repl import Repl
 from tachikoma.sessions import session_recovery_hook
-from tachikoma.skills import SkillRegistry, skills_hook
+from tachikoma.skills import SkillsContextProvider, skills_hook
 from tachikoma.telegram import TelegramChannel, telegram_hook
 from tachikoma.tasks import (
     TaskRepository,
@@ -73,6 +74,7 @@ async def main(
     bootstrap.register("workspace", workspace_hook)
     bootstrap.register("logging", logging_hook)
     bootstrap.register("git", git_hook)
+    bootstrap.register("projects", projects_hook)
     bootstrap.register("skills", skills_hook)
     bootstrap.register("context", context_hook)
     bootstrap.register("memory", memory_hook)
@@ -96,16 +98,13 @@ async def main(
     task_repository: TaskRepository = bootstrap.extras["task_repository"]
     bus = EventBus()
 
-    # Create skill registry and discover agents
-    skill_registry = SkillRegistry(settings.workspace.path)
-    agents = skill_registry.get_agents()
-
+    # Skills provider will be registered in pre-processing pipeline
+    # (agents are now detected per-session via SkillsContextProvider)
     _log.info(
-        "Startup complete: workspace={ws}, log_level={level}, channel={ch}, agents={agent_count}",
+        "Startup complete: workspace={ws}, log_level={level}, channel={ch}",
         ws=settings.workspace.path,
         level=settings.logging.level,
         ch=settings.channel,
-        agent_count=len(agents),
     )
 
     # Get the system prompt from the context hook (if available)
@@ -120,12 +119,18 @@ async def main(
     pipeline.register(PreferencesProcessor(cwd=settings.workspace.path, cli_path=cli_path))
     pipeline.register(CoreContextProcessor(cwd=settings.workspace.path, cli_path=cli_path))
     pipeline.register(
+        ProjectsProcessor(cwd=settings.workspace.path, cli_path=cli_path),
+        phase=PRE_FINALIZE_PHASE,
+    )
+    pipeline.register(
         GitProcessor(cwd=settings.workspace.path, cli_path=cli_path), phase=FINALIZE_PHASE,
     )
 
     # Create and configure the pre-processing pipeline
     pre_pipeline = PreProcessingPipeline()
     pre_pipeline.register(MemoryContextProvider(cwd=settings.workspace.path, cli_path=cli_path))
+    pre_pipeline.register(ProjectsContextProvider(workspace_path=settings.workspace.path))
+    pre_pipeline.register(SkillsContextProvider(cwd=settings.workspace.path, cli_path=cli_path))
 
     # Create and configure the per-message post-processing pipeline
     msg_pipeline = MessagePostProcessingPipeline()
@@ -152,7 +157,6 @@ async def main(
             permission_mode="bypassPermissions",
             env={"CLAUDE_CODE_DISABLE_AUTO_MEMORY": "1"},
             on_status=lambda msg: console.print(msg, style="dim italic grey50"),
-            agents=agents,
             cli_path=cli_path,
             session_resume_window=settings.agent.session_resume_window,
             mcp_servers={"task-tools": task_tools},

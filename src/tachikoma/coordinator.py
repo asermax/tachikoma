@@ -20,7 +20,11 @@ from tachikoma.boundary import BoundaryResult, SessionCandidate, detect_boundary
 from tachikoma.events import AgentEvent, Error, Result, Status, TextChunk
 from tachikoma.message_post_processing import MessagePostProcessingPipeline
 from tachikoma.post_processing import PostProcessingPipeline
-from tachikoma.pre_processing import PreProcessingPipeline, assemble_context
+from tachikoma.pre_processing import (
+    McpServerConfig,
+    PreProcessingPipeline,
+    assemble_context,
+)
 from tachikoma.sessions.model import Session
 from tachikoma.sessions.registry import SessionRegistry
 
@@ -96,6 +100,9 @@ class Coordinator:
         self._sdk_session_id: str | None = None
         self._previous_summary: str | None = None
         self._bridging_context: str | None = None
+
+        # MCP servers extracted from pre-processing pipeline (session-scoped)
+        self._mcp_servers: dict[str, McpServerConfig] = {}
 
         # Active client (only set during send_message, None between messages)
         self._client: ClaudeSDKClient | None = None
@@ -247,7 +254,7 @@ providing context for what the user has been doing in the meantime.
                 append=append_text,
             )
 
-        return ClaudeAgentOptions(
+        options = ClaudeAgentOptions(
             allowed_tools=self._allowed_tools,
             model=self._model,
             cwd=self._cwd,
@@ -259,6 +266,11 @@ providing context for what the user has been doing in the meantime.
             resume=resume,
             mcp_servers=self._mcp_servers,
         )
+
+        if self._mcp_servers:
+            options.mcp_servers = self._mcp_servers
+
+        return options
 
     async def send_message(self, text: str) -> AsyncIterator[AgentEvent]:
         """Send a user message and yield AgentEvents as the agent responds.
@@ -339,7 +351,8 @@ providing context for what the user has been doing in the meantime.
                 )
                 if not result.continues:
                     _log.info(
-                        "Topic shift detected, transitioning to new session (resume_id={resume_id})",
+                        "Topic shift detected, transitioning session"
+                        " (resume_id={resume_id})",
                         resume_id=result.resume_session_id,
                     )
                     resumed = await self._handle_transition(
@@ -360,7 +373,20 @@ providing context for what the user has been doing in the meantime.
             try:
                 results = await self._pre_pipeline.run(text)
                 if results:
+                    # Merge mcp_servers from all results
+                    merged: dict[str, McpServerConfig] = {}
+                    for r in results:
+                        if r.mcp_servers:
+                            merged.update(r.mcp_servers)
+                    self._mcp_servers = merged
                     text = assemble_context(results, text)
+
+                    # Extract agents from pipeline results (DLT-021)
+                    combined_agents: dict[str, AgentDefinition] = {}
+                    for r in results:
+                        if r.agents is not None:
+                            combined_agents.update(r.agents)
+                    self._agents = combined_agents if combined_agents else None
             except Exception as exc:
                 _log.exception("Pre-processing failed: err={err}", err=str(exc))
 
@@ -507,7 +533,9 @@ providing context for what the user has been doing in the meantime.
         # Fresh-session path: clear SDK session so next message starts fresh
         # Save the summary for injection into the new session's system prompt
         self._sdk_session_id = None
+        self._agents = None
         self._previous_summary = session_snapshot.summary
+        self._mcp_servers = {}
 
         # Create new session in registry
         if self._registry is not None:

@@ -173,7 +173,7 @@ class SessionRegistry:
         )
 
         # Construct the reopened session from known data (avoids a second DB fetch)
-        from dataclasses import replace
+        from dataclasses import replace  # noqa: PLC0415
         reopened = replace(session, ended_at=None, last_resumed_at=now)
         self._active_session = reopened
 

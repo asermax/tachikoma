@@ -19,6 +19,7 @@ Each subsystem owns its bootstrap hook in its own module. The `bootstrap.py` mod
 - **context subsystem** → `src/tachikoma/context/loading.py` owns `context_hook`
 - **skills subsystem** → `src/tachikoma/skills/hooks.py` owns `skills_hook`
 - **memory subsystem** → `src/tachikoma/memory/hooks.py` owns `memory_hook`
+- **projects subsystem** → `src/tachikoma/projects/hooks.py` owns `projects_hook`
 - **sessions subsystem** → `src/tachikoma/sessions/hooks.py` owns `session_recovery_hook`
 - **telegram subsystem** → `src/tachikoma/telegram.py` owns `telegram_hook`
 - **tasks subsystem** → `src/tachikoma/tasks/hooks.py` owns `tasks_hook`
@@ -71,6 +72,7 @@ async def context_hook(ctx: BootstrapContext) -> None:
 from tachikoma.workspace import workspace_hook
 from tachikoma.git import git_hook
 from tachikoma.logging import logging_hook
+from tachikoma.projects import projects_hook
 from tachikoma.skills import skills_hook
 from tachikoma.context import context_hook
 from tachikoma.memory import memory_hook
@@ -81,6 +83,7 @@ from tachikoma.tasks import tasks_hook
 bootstrap.register("workspace", workspace_hook)
 bootstrap.register("logging", logging_hook)
 bootstrap.register("git", git_hook)
+bootstrap.register("projects", projects_hook)
 bootstrap.register("skills", skills_hook)
 bootstrap.register("context", context_hook)
 bootstrap.register("memory", memory_hook)
