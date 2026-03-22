@@ -174,7 +174,7 @@ ResponseRenderer
 ├── _buffer: str                          (accumulated markdown text)
 ├── _tool_line: str | None                (current tool status line)
 ├── _had_tools: bool                      (whether tools ran, for "🔧 Ran tools" marker)
-├── _tools_marker_inserted: bool          (whether marker was already inserted)
+├── _tools_marker_inserted: bool          (whether marker was inserted for current tool batch; reset per ToolActivity)
 ├── _last_edit_time: float                (monotonic timestamp of last edit)
 └── _message_count: int                   (tracks messages sent in current response)
 ```
@@ -413,6 +413,12 @@ The `Result` event serves as a turn boundary signal. The channel finalizes the c
 **When**: The bot is streaming a response
 **Then**: aiogram's internal signal handler sets the stop event, ending the polling loop. The `@dp.shutdown()` hook fires and sends a final edit with the partial response. The process exits cleanly.
 
+### Scenario: Graceful shutdown via q keypress
+
+**Given**: The bot is running in Telegram mode in a TTY
+**When**: The user presses `q` in the terminal
+**Then**: The stdin reader detects the keypress, calls `stop_polling()` (same as SIGINT handler), and the bot exits cleanly. Terminal settings are restored via `tcsetattr()` with `TCSADRAIN` to let pending output flush.
+
 ### Scenario: Unauthorized user
 
 **Given**: The bot is running
@@ -442,3 +448,4 @@ The `Result` event serves as a turn boundary signal. The channel finalizes the c
 - The shared `TOOL_DISPLAY` map in `display.py` provides consistent tool formatting across REPL and Telegram channels
 - Polling backoff uses aiogram's `BackoffConfig` dataclass: `BackoffConfig(min_delay=1, max_delay=60, factor=2, jitter=0.1)` — not a plain dict
 - The `ResponseRenderer` exposes a `handle_status()` method for rendering `Status` events as transient italic messages in Telegram. The status message is replaced when the first content event arrives.
+- The `q` keypress shutdown uses `tty.setcbreak()` + `loop.add_reader()` to monitor stdin character-by-character without blocking. Guarded by `sys.stdin.isatty()` to skip in non-TTY environments. EOF on stdin removes the reader to prevent busy-loop spin.

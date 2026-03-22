@@ -20,10 +20,10 @@ A Telegram bot that receives text messages from a single authorized user, forwar
 | R1 | Bot initialization: connect to Telegram API, validate bot token at startup, handle unreachable API |
 | R2 | Message receiving: accept incoming text messages and forward them to the coordinator; steering support for mid-stream message injection |
 | R3 | Response rendering: stream agent response via progressive message edits with correct markdown formatting, splitting at paragraph boundaries before hitting the Telegram message size limit; respect Telegram API rate limits on edits |
-| R4 | Tool activity display: show tool activity as an inline status line within the current response message; each new tool replaces the previous tool line; when text resumes, the tool line becomes "🔧 Ran tools" and text continues below it |
+| R4 | Tool activity display: show tool activity as an inline status line within the current response message; each new tool replaces the previous tool line; when text resumes, each tool→text transition inserts a "🔧 Ran tools" marker and text continues below it |
 | R5 | User authorization: only process messages from the configured authorized user; silently ignore all others |
 | R6 | Connection resilience: detect polling disconnects and reconnect automatically with backoff |
-| R7 | Graceful shutdown: clean exit on SIGTERM/SIGINT; in-flight responses are sent as-is (partial text delivered) before stopping |
+| R7 | Graceful shutdown: clean exit on SIGTERM/SIGINT or `q` keypress (when running in a TTY); in-flight responses are sent as-is (partial text delivered) before stopping |
 | R8 | Telegram configuration: bot token and authorized chat ID stored in TOML config `[telegram]` section |
 | R9 | CLI entry point with `--channel` flag to select between REPL (default) and Telegram; CLI flags override TOML config values at runtime |
 | R10 | Message validation: silently ignore empty messages and non-text content (photos, stickers, voice, etc.) |
@@ -68,13 +68,14 @@ The bot progressively edits a single Telegram message as text chunks arrive, thr
 
 ### Tool Activity Display (R4)
 
-Tool activity appears as an inline status line within the current response message. Each new tool replaces the previous line. When text resumes, a "Ran tools" marker is inserted.
+Tool activity appears as an inline status line within the current response message. Each new tool replaces the previous line. When text resumes after tools, a "Ran tools" marker is inserted at each tool→text boundary.
 
 **Acceptance Criteria**:
 - Given the agent completes a tool while text is streaming, when the ToolActivity event arrives, then a tool status line (e.g., "_Reading src/main.py..._") is appended to the current response message via edit
 - Given another tool completes, when the new ToolActivity event arrives, then the previous tool line in the message is replaced with the new tool's status line
 - Given tools complete before any text has streamed, when the first ToolActivity arrives, then the response message is created with just the tool status line
 - Given tool execution finishes and text streaming resumes, when the first TextChunk arrives after tools, then the tool line becomes "_🔧 Ran tools_" and new text continues below it in the same message
+- Given a response contains multiple tool→text transitions (e.g., tools run, text streams, tools run again, text streams again), when each transition from ToolActivity to TextChunk occurs, then each transition independently inserts its own "🔧 Ran tools" marker
 - Given tool activity occurs near the message size boundary, when there's insufficient room, then the current message is sent and the tool line starts the next message
 - Given an unknown tool, when a ToolActivity event arrives, then the tool name is shown as a fallback
 
@@ -97,11 +98,14 @@ The bot handles polling disconnects and transient network errors gracefully.
 
 ### Graceful Shutdown (R7)
 
-The bot exits cleanly on signals, delivering any partial response before stopping.
+The bot exits cleanly on signals or `q` keypress, delivering any partial response before stopping. The `q` shortcut is available when running in a TTY; non-TTY environments (e.g., systemd) use signals only.
 
 **Acceptance Criteria**:
 - Given SIGTERM or SIGINT is received, when the bot is idle, then it stops polling and exits cleanly
 - Given SIGTERM or SIGINT is received, when a response is in-flight, then the partial response accumulated so far is sent as a final message and the bot exits
+- Given the bot is running in a TTY, when the user presses `q`, then it initiates the same shutdown sequence as SIGINT (stops polling, delivers any in-flight partial response, and exits cleanly)
+- Given the bot is running without a TTY, when started, then no stdin reader is registered and shutdown is signal-only
+- Given the bot is running in a TTY, when shutdown completes by any means, then terminal settings are restored to their original state
 
 ### Telegram Configuration (R8)
 

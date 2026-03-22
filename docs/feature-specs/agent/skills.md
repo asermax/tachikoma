@@ -31,6 +31,7 @@ The skill system provides a structured way to organize, detect, and delegate spe
 | R12 | Detection quality: balance precision (don't waste context on irrelevant skills) with recall (don't miss applicable skills) |
 | R13 | When no skills exist in the registry, provider is a no-op (no context, no agents, no LLM call) |
 | R14 | Graceful error handling for detection — failures never block the message; message proceeds with no skills/agents |
+| R15 | Base system prompt preamble includes a static Skills section so the agent has foundational awareness of the skill system independent of per-session detection |
 
 ## Behaviors
 
@@ -47,6 +48,16 @@ Agent definitions are individual markdown files with YAML frontmatter containing
 - Given a skill directory, when it contains a SKILL.md file with valid YAML frontmatter, then the skill is recognized as valid
 - Given a skill, when agents/ subdirectory exists, then .md files within it are loaded as agent definitions
 - Given a skill with no agents/ subdirectory, when loaded, then the skill is valid (agents are optional)
+
+### Preamble Awareness (R15)
+
+The base system prompt preamble includes a static Skills section that gives the agent foundational awareness of the skill system, independent of per-session detection.
+
+**Acceptance Criteria**:
+- Given the system prompt is assembled, then the preamble Skills section describes the `skills/` directory structure including `SKILL.md` and `agents/` subdirectory
+- Given the preamble Skills section, then it explains per-session detection and contextual injection of relevant skills
+- Given the preamble Skills section, then it states the agent can create and manage skills by reading and writing files
+- Given the preamble Skills section, then it explicitly distinguishes from Claude Code's native skills and slash commands
 
 ### Skill Registry (R1, R2, R3)
 

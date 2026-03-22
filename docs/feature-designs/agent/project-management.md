@@ -31,13 +31,14 @@ Git submodules satisfy the first two constraints natively: they isolate each pro
 
 ## Design Overview
 
-A `projects` package (`src/tachikoma/projects/`) with five components:
+A `projects` package (`src/tachikoma/projects/`) with five components, plus a system prompt section:
 
-1. **Bootstrap hook** — creates `projects/` dir, initializes and pulls all submodules on startup
-2. **Post-processor** — commits and pushes dirty submodules at session end, before GitProcessor
-3. **Context provider** — injects project awareness and MCP tools at session start
-4. **MCP tools** — `register_project` and `deregister_project` available to coordinator during conversations
-5. **Git helpers** — shared async subprocess wrappers for submodule operations
+1. **System prompt preamble** — permanent "Projects" section in `SYSTEM_PREAMBLE` (`context/loading.py`) explaining the projects system, available MCP tools, and structure — ensures baseline understanding before any runtime context is injected
+2. **Bootstrap hook** — creates `projects/` dir, initializes and pulls all submodules on startup
+3. **Post-processor** — commits and pushes dirty submodules at session end, before GitProcessor
+4. **Context provider** — injects project awareness and MCP tools at session start
+5. **MCP tools** — `register_project` and `deregister_project` available to coordinator during conversations
+6. **Git helpers** — shared async subprocess wrappers for submodule operations
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐

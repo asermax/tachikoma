@@ -27,10 +27,11 @@ Workspace changes (memories, context files, configuration) happen as side effect
 
 ## Design Overview
 
-Two independent components:
+Two independent components, plus a system prompt section:
 
-1. A **git bootstrap hook** that initializes the workspace as a git repo on first run (idempotent)
-2. A **git post-processor** that spawns a lightweight Haiku agent to inspect, group, and commit workspace changes after each session
+1. A **system prompt preamble** "Commits" section (`context/loading.py`) that instructs the assistant not to manually commit — all version control is automated
+2. A **git bootstrap hook** that initializes the workspace as a git repo on first run (idempotent)
+3. A **git post-processor** that spawns a lightweight Haiku agent to inspect, group, and commit workspace changes after each session
 
 The post-processor runs in the pipeline's **finalize phase**, ensuring all memory extraction is complete before commits happen.
 

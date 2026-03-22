@@ -20,7 +20,9 @@ The pattern established:
 - ORM models (`DeclarativeBase` subclasses) are internal to the persistence layer
 - Callers receive frozen dataclasses (domain types) — no SQLAlchemy imports leak
 - Each persistent feature organizes as a package: `model.py`, `repository.py`, `registry.py`
-- Engine lifecycle: create in bootstrap, dispose in `__main__.py`'s finally block
+- All subsystems share a single `Database` class (`src/tachikoma/database.py`) with one `Base(DeclarativeBase)`, one `AsyncEngine`, and one `async_sessionmaker` backed by `tachikoma.db`
+- Repositories receive the shared `session_factory` via dependency injection
+- Engine lifecycle: `database_hook` creates the shared `Database` in bootstrap, `__main__.py`'s finally block calls `database.close()`
 
 ## Consequences
 

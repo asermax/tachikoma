@@ -43,21 +43,20 @@ Four components implement session tracking:
 │                │        Persistence Layer                       │
 │                ▼                                               │
 │  ┌────────────────────────────────────────────────────────┐   │
-│  │  SessionRepository (SQLAlchemy 2.0 async)              │   │
-│  │  ┌──────────────────────┐                              │   │
-│  │  │  AsyncEngine         │ sqlite+aiosqlite             │   │
-│  │  │  async_sessionmaker  │                              │   │
-│  │  └──────────┬───────────┘                              │   │
-│  └─────────────┼──────────────────────────────────────────┘   │
+│  │  SessionRepository (receives shared session_factory)   │   │
+│  └─────────────┬──────────────────────────────────────────┘   │
 │                │                                               │
 │                ▼                                               │
 │  ┌────────────────────────────────────────────────────────┐   │
-│  │  sessions.db  (.tachikoma/sessions.db)                 │   │
+│  │  Database (shared AsyncEngine + async_sessionmaker)    │   │
+│  │  → tachikoma.db (.tachikoma/tachikoma.db)              │   │
 │  └────────────────────────────────────────────────────────┘   │
 ├──────────────────────────────────────────────────────────────┤
 │                     Bootstrap Layer                             │
 │  ┌────────────────────────────────────────────────────────┐   │
+│  │  database_hook (async) → creates shared Database       │   │
 │  │  session_recovery_hook (async)                          │   │
+│  │  → creates SessionRepository(database.session_factory)  │   │
 │  │  → registry.recover_interrupted()                       │   │
 │  └────────────────────────────────────────────────────────┘   │
 └──────────────────────────────────────────────────────────────┘
@@ -72,10 +71,10 @@ The **SessionRegistry** is the facade that the coordinator calls. It owns the bu
 | Layer/Component | Responsibility | Key Decisions |
 |-----------------|----------------|---------------|
 | `src/tachikoma/sessions/model.py` | SQLAlchemy ORM models (`SessionRecord`, `SessionResumptionRecord`) + frozen dataclasses (`Session`, `SessionResumption`) + `DeclarativeBase` | Separate ORM models from domain dataclasses; callers never see SQLAlchemy types |
-| `src/tachikoma/sessions/repository.py` | `SessionRepository`: async engine lifecycle, CRUD operations, schema creation, time-range queries, `_run_migrations()` for schema evolution (uses `create_all()` for fresh databases plus `pragma_table_info` checks and `ALTER TABLE`/`CREATE TABLE` for existing databases), `get_recent_closed()` for resumption candidates, `create_resumption()`/`get_resumptions_for_session()` for resumption tracking | Owns SQLAlchemy engine + session factory; all SQL is behind async methods |
+| `src/tachikoma/sessions/repository.py` | `SessionRepository`: CRUD operations, time-range queries, `get_recent_closed()` for resumption candidates, `create_resumption()`/`get_resumptions_for_session()` for resumption tracking | Receives shared `async_sessionmaker` from `Database`; all SQL is behind async methods |
 | `src/tachikoma/sessions/registry.py` | `SessionRegistry`: business logic facade, creation lock, crash recovery, status derivation, `update_summary()` for persisting rolling summaries, `reopen_session()` for session resumption (uses `dataclasses.replace()` to construct reopened session — avoids redundant DB fetch), `get_recent_closed()` for candidate queries, `record_resumption()` for best-effort tracking | Receives repository via constructor; owns the `asyncio.Lock` |
 | `src/tachikoma/sessions/errors.py` | `SessionRepositoryError`: wraps SQLAlchemy exceptions for clean error contract | Callers catch one domain exception, not SQLAlchemy internals |
-| `src/tachikoma/sessions/hooks.py` | `session_recovery_hook`: creates repository + registry, runs recovery, stores on context extras | Registered as bootstrap hook; runs after workspace hook |
+| `src/tachikoma/sessions/hooks.py` | `session_recovery_hook`: retrieves shared `Database` from extras, creates repository + registry, runs recovery, stores on context extras | Registered as bootstrap hook; runs after `database_hook` |
 | `src/tachikoma/sessions/__init__.py` | Re-exports public API: `Session`, `SessionResumption`, `SessionRegistry`, `SessionRepository`, `SessionRepositoryError` | Clean public API for the sessions package |
 
 ### Cross-Layer Contracts
@@ -87,7 +86,7 @@ sequenceDiagram
     participant Coord as Coordinator
     participant Registry as SessionRegistry
     participant Repo as SessionRepository
-    participant DB as sessions.db
+    participant DB as tachikoma.db
 
     Note over Channel,DB: First message in a conversation
     User->>Channel: sends message
@@ -116,7 +115,7 @@ sequenceDiagram
 - Coordinator → SessionRegistry: `get_active_session()` + `create_session()` on first message, `update_metadata()` on Result events, `close_session()` on shutdown and topic shift, `get_recent_closed()` for resumption candidates, `reopen_session()` for session resumption, `record_resumption()` for best-effort tracking, `get_by_time_range()` for bridging context assembly
 - SummaryProcessor → SessionRegistry: `update_summary()` after each per-message pipeline run (see [boundary detection design](boundary-detection.md))
 - SessionRegistry → SessionRepository: all persistence delegated
-- SessionRepository → SQLAlchemy AsyncEngine → aiosqlite → sessions.db
+- SessionRepository → shared Database (AsyncEngine → aiosqlite → tachikoma.db)
 - Bootstrap → SessionRegistry: `recover_interrupted()` on startup via `session_recovery_hook`
 
 **Session close mechanism:**
@@ -133,7 +132,7 @@ Repository methods raise `SessionRepositoryError` on persistence failures (wrapp
 ### Shared Logic
 
 - **`Session` dataclass** (`sessions/model.py`): shared between registry (produces) and future consumers like post-processing pipelines. No SQLAlchemy dependency for consumers.
-- **`SessionRepository`** lifecycle: created in the recovery hook, stored on `ctx.extras`, engine disposed in `__main__.py`'s finally block.
+- **`SessionRepository`** lifecycle: created in the recovery hook with the shared `database.session_factory`, stored on `ctx.extras`. The shared `Database` engine is disposed in `__main__.py`'s finally block.
 
 ## Modeling
 
@@ -250,18 +249,15 @@ The `transcript_path` is derived from the SDK session ID using the known Claude 
 ### Crash recovery (bootstrap)
 
 ```
-1. session_recovery_hook runs (after workspace_hook)
-2. Creates SessionRepository(data_path / "sessions.db")
-3. await repository.initialize() — creates engine, session factory, and runs
-   _run_migrations() which handles both fresh and existing databases:
-   - create_all() for fresh databases (creates all tables from ORM metadata)
-   - pragma_table_info checks + ALTER TABLE for column additions on existing databases
-   - sqlite_master checks + CREATE TABLE for new tables on existing databases
-4. Creates SessionRegistry(repository)
-5. Calls registry.recover_interrupted():
+1. database_hook runs (after workspace_hook) — creates shared Database
+2. session_recovery_hook runs (after database_hook)
+3. Retrieves Database from ctx.extras["database"]
+4. Creates SessionRepository(database.session_factory)
+5. Creates SessionRegistry(repository)
+6. Calls registry.recover_interrupted():
    a. Queries open sessions (ended_at IS NULL)
    b. For each: sets ended_at from transcript file mtime (if available) or current time
-6. Stores repository + registry on ctx.extras for __main__.py retrieval
+7. Stores repository + registry on ctx.extras for __main__.py retrieval
 ```
 
 ### Summary update (per-message pipeline)
@@ -465,7 +461,7 @@ The `transcript_path` is derived from the SDK session ID using the known Claude 
 
 ## Notes
 
-- The sessions package structure sets a precedent for future persistence needs (e.g., tasks could follow the same model/repository/registry pattern)
-- `expire_on_commit=False` is used on the `async_sessionmaker` to allow attribute access on `SessionRecord` instances after commit (before `to_domain()` conversion)
+- All persistent subsystems (sessions, tasks) share a single `Database` instance with one `AsyncEngine` and `async_sessionmaker` backed by `tachikoma.db`
+- `expire_on_commit=False` is used on the shared `async_sessionmaker` to allow attribute access on `SessionRecord` instances after commit (before `to_domain()` conversion)
 - SQLite stores datetimes as naive ISO strings; a `_ensure_utc()` helper restores UTC tzinfo on read so callers always receive timezone-aware datetimes
-- The `BootstrapContext.extras` field is used to pass the repository and registry from the recovery hook to `__main__.py` — see [workspace-bootstrap design](workspace-bootstrap.md)
+- The `BootstrapContext.extras` field is used to pass the `Database`, repository, and registry between hooks and to `__main__.py` — see [workspace-bootstrap design](workspace-bootstrap.md)

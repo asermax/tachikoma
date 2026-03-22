@@ -78,9 +78,10 @@ At session end, the projects post-processor commits and pushes changes in each d
 
 ### Project Context Injection (R6)
 
-At session start, the context provider injects project awareness and provides MCP tools for project management. The MCP tools are always available — even when no projects are registered — so the agent can register its first project.
+At session start, the context provider injects project awareness and provides MCP tools for project management. The MCP tools are always available — even when no projects are registered — so the agent can register its first project. The system prompt preamble also includes a permanent "Projects" section explaining the projects system purpose, structure, and available tools — ensuring the assistant understands project management even before any projects are registered or any `<projects>` context is injected.
 
 **Acceptance Criteria**:
+- Given the system prompt is assembled, then it includes a "Projects" section in the preamble explaining the projects system, MCP tools, and structure
 - Given registered projects exist, when a new session starts, then the pre-processing context provider injects a context block listing all projects with their names, paths, and current branch, along with MCP tools for project management
 - Given no projects are registered, when a new session starts, then the context provider returns a guidance message ("No projects registered. Use register_project to add one.") with MCP tools available
 - Given a project's directory is missing or corrupted, when the context provider runs, then it logs a warning and excludes that project from the context block

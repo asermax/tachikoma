@@ -72,7 +72,7 @@ The registry supports querying sessions by time range and by ID.
 
 ### Persistence (R6, R7)
 
-The session registry is stored at `.tachikoma/sessions.db` and auto-creates its storage structure on first access.
+The session registry is stored in the shared `.tachikoma/tachikoma.db` database and auto-creates its storage structure on first access.
 
 **Acceptance Criteria**:
 - Given the registry is stored in the workspace data folder, when the application restarts, then all previously recorded sessions are still queryable

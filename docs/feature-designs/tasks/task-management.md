@@ -27,7 +27,7 @@ Tachikoma needs persistent task definitions that the agent can create and manage
 
 ## Design Overview
 
-The task management subsystem lives in `src/tachikoma/tasks/` as a self-contained package. It follows the same persistence patterns as the sessions subsystem: frozen dataclasses for domain types, ORM models internal to the repository, and a repository class providing async CRUD operations. A separate SQLite database file (`tasks.db`) keeps task data independent from session data.
+The task management subsystem lives in `src/tachikoma/tasks/` as a self-contained package. It follows the same persistence patterns as the sessions subsystem: frozen dataclasses for domain types, ORM models internal to the repository, and a repository class providing async CRUD operations. All tables live in the shared `tachikoma.db` database alongside session tables.
 
 ## Components
 
@@ -37,11 +37,12 @@ The task management subsystem lives in `src/tachikoma/tasks/` as a self-containe
 |-----------------|----------------|---------------|
 | `src/tachikoma/tasks/__init__.py` | Public API re-exports | Clean package interface |
 | `src/tachikoma/tasks/model.py` | `TaskDefinition` and `TaskInstance` frozen dataclasses (domain types); `TaskDefinitionRecord` and `TaskInstanceRecord` ORM models; `TaskStatus` and `TaskType` constant maps; `ScheduleConfig` type | Domain types frozen; ORM models internal to persistence; schedule stored as JSON column |
-| `src/tachikoma/tasks/repository.py` | `TaskRepository` — async SQLAlchemy CRUD for definitions and instances; separate DB file (`tasks.db`); crash recovery (mark running as failed) | Own DB file; follows ADR-007 pattern |
-| `src/tachikoma/tasks/tools.py` | `create_task_tools_server()` — MCP server factory; `list_tasks`, `create_task`, `update_task`, `delete_task` with `cronsim` validation | Tools validate cron expressions at creation time; follows DES-006 (SDK MCP Tool Server Factory) |
-| `src/tachikoma/tasks/hooks.py` | `tasks_hook` — bootstrap hook (DES-003): creates repository, initializes DB, runs crash recovery; stores `task_repository` in `bootstrap.extras` | Subsystem-owned hook; idempotent |
+| `src/tachikoma/tasks/repository.py` | `TaskRepository` — async SQLAlchemy CRUD for definitions and instances; `list_enabled_definitions()` and `list_disabled_definitions()` for filtered queries; crash recovery (mark running as failed) | Receives shared `async_sessionmaker` from `Database`; follows ADR-007 pattern |
+| `src/tachikoma/tasks/tools.py` | `create_task_tools_server()` — MCP server factory; `list_tasks` (defaults to enabled-only, `archived` parameter for disabled), `create_task`, `update_task`, `delete_task` with `cronsim` validation | Tools validate cron expressions at creation time; `list_tasks` uses `archived` parameter to toggle between enabled/disabled views; follows DES-006 |
+| `src/tachikoma/tasks/hooks.py` | `tasks_hook` — bootstrap hook (DES-003): retrieves shared `Database` from extras, creates repository, runs crash recovery; stores `task_repository` in `bootstrap.extras` | Subsystem-owned hook; runs after `database_hook` |
 | `src/tachikoma/tasks/scheduler.py` | `instance_generator()` — async loop evaluating definitions via `cronsim` | Plain async function started as `asyncio.Task` |
-| `src/tachikoma/tasks/migrations/` | Alembic migration environment and revision; separate from sessions; `TaskBase` metadata | Alembic scaffolded for future schema evolution; `create_all` used for initial creation |
+| `src/tachikoma/database.py` | Shared `Database` class with `Base(DeclarativeBase)`, `AsyncEngine`, `async_sessionmaker`; `database_hook` bootstrap hook | All ORM models share one `Base`; single engine for all subsystems |
+| `src/tachikoma/context/loading.py` (`SYSTEM_PREAMBLE`) | Static tasks documentation in the system prompt preamble: task types, scheduling formats, MCP tools, and notify field | Part of the `SYSTEM_PREAMBLE` constant; loaded once at startup; follows ADR-008 append pattern |
 
 ### Cross-Layer Contracts
 
@@ -176,7 +177,7 @@ stateDiagram-v2
 4. Sleep until next tick
 ```
 
-### Task MCP tool flow
+### Task creation flow
 
 ```
 1. Coordinator builds ClaudeAgentOptions with mcp_servers={"task-tools": server}
@@ -192,19 +193,28 @@ stateDiagram-v2
 7. Agent confirms to user
 ```
 
+### Task listing flow
+
+```
+1. Agent calls list_tasks (optionally with archived=true)
+2. Tool checks archived parameter (default: false)
+3. If archived: calls repository.list_disabled_definitions()
+   If not archived: calls repository.list_enabled_definitions()
+4. Returns formatted list or "No active/archived tasks found."
+```
+
 ## Key Decisions
 
-### Separate database file for tasks
+### Shared database file
 
-**Choice**: Store task definitions and instances in `tasks.db`, separate from `sessions.db`.
-**Why**: The task subsystem is independent of the sessions subsystem — they share no tables or queries. Separate DB files enable independent lifecycle management and avoid lock contention.
-**Alternatives Considered**:
-- Shared DB with sessions: simpler but couples unrelated concerns
+**Choice**: Store task definitions and instances in the shared `tachikoma.db` alongside session tables.
+**Why**: All persistent subsystems share a single `Database` class with one `AsyncEngine` and `async_sessionmaker`. This simplifies engine lifecycle (one create, one dispose), reduces resource usage, and establishes a cleaner foundation as more persistent features are added.
 
 **Consequences**:
-- Pro: Independent lifecycle — task DB can be reset/migrated independently
-- Pro: No lock contention between session and task operations
-- Con: Two DB files to manage and dispose on shutdown
+- Pro: Single engine lifecycle — simpler shutdown, fewer resources
+- Pro: All subsystems use the same `Base(DeclarativeBase)` and `session_factory`
+- Pro: Future persistent features follow the same pattern naturally
+- Con: Cannot reset task data independently of session data
 
 ### MCP tools on coordinator
 
@@ -216,15 +226,25 @@ stateDiagram-v2
 - Pro: Follows established MCP tool pattern
 - Con: Tools are available in every turn (minor overhead)
 
-### Alembic scaffolded for future evolution
+### Task guidance in system preamble
 
-**Choice**: Alembic migration infrastructure is present but the repository uses `TaskBase.metadata.create_all` for initial table creation.
-**Why**: Starting fresh with no legacy data to migrate, `create_all` is the simplest path. Alembic is scaffolded for future schema changes that need proper migration support.
+**Choice**: Include task types, scheduling formats, tool descriptions, and the notify field in `SYSTEM_PREAMBLE` as a static Tasks section.
+**Why**: The agent needs task domain knowledge to interpret user requests (e.g., choosing session vs background type) before invoking MCP tools. Tool schemas describe parameters but not when to use them.
+
+**Consequences**:
+- Pro: Agent has task context regardless of whether tasks exist
+- Pro: Follows ADR-008 append pattern, consistent with Skills preamble section
+- Con: Preamble content must be kept in sync with tool behavior
+
+### Schema creation via create_all with pragma-based upgrades
+
+**Choice**: The shared `Database.initialize()` uses `Base.metadata.create_all()` for table creation, with pragma-based column checks for upgrading existing databases.
+**Why**: Starting fresh with `create_all` is the simplest path. Pragma-based checks handle incremental schema evolution (e.g., adding columns) without requiring a full migration framework.
 
 **Consequences**:
 - Pro: Simplest initial setup
-- Pro: Migration infrastructure ready for schema evolution
-- Con: Must switch to `alembic upgrade head` if schema changes are needed later
+- Pro: Handles both fresh and existing databases
+- Con: Manual pragma checks for each new column addition
 
 ## System Behavior
 

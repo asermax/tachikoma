@@ -24,6 +24,7 @@ Persistent task definitions with cron-like scheduling, automatic instance genera
 | R6 | Catch-up on missed schedules after restart using `last_fired_at` |
 | R7 | Task definitions and instances survive restarts (persistent storage) |
 | R8 | Bootstrap step to initialize task database tables and run crash recovery |
+| R9 | Base system prompt preamble includes a static Tasks section so the agent has foundational awareness of the task system regardless of whether tasks currently exist |
 
 ## Behaviors
 
@@ -38,7 +39,9 @@ The agent manages task definitions through MCP tools exposed during conversation
 - Given the agent calls `create_task` with an invalid cron expression, then the tool returns a clear error message
 - Given the agent calls `create_task` without a required field (name, schedule, type, or prompt), then the tool returns a clear error identifying the missing field
 - Given the agent calls `create_task` with a type value other than "session" or "background", then the tool returns a clear error
-- Given the agent calls `list_tasks`, then it receives all task definitions with their current enabled status, schedule, and last_fired_at information
+- Given the agent calls `list_tasks` with no arguments, then it receives only enabled task definitions with their current status, schedule, and last_fired_at information
+- Given the agent calls `list_tasks` with `archived=true`, then it receives only disabled task definitions
+- Given the agent calls `list_tasks` and no matching definitions exist (no enabled tasks by default, or no disabled tasks when archived), then a clear "no tasks found" message is returned
 - Given the agent calls `update_task` with a modified schedule or prompt, then the definition is updated and future instances use the new configuration
 - Given the agent calls `delete_task`, then the definition is removed and no further instances are generated
 
@@ -59,10 +62,19 @@ An async loop continuously evaluates enabled definitions and creates pending ins
 Task data survives restarts. The bootstrap hook initializes the database and performs crash recovery.
 
 **Acceptance Criteria**:
-- Given the application starts for the first time, then the bootstrap step creates the task database tables
+- Given the application starts for the first time, then the bootstrap step creates the task tables in the shared database
 - Given the application restarts, then all previously created task definitions and pending instances are available
 - Given the application shuts down gracefully, then the background task runner cancels running executions, which mark their instances as `failed` with a cancellation reason; any instances not cleanly marked are caught by crash recovery on next startup
 - Given the system crashed, when the bootstrap hook runs, then all previously-running instances are marked as `failed` (crash recovery)
+
+### Preamble Awareness (R9)
+
+The base system prompt preamble includes a static Tasks section that gives the agent foundational awareness of the task system.
+
+**Acceptance Criteria**:
+- Given the system prompt is assembled, then the preamble Tasks section describes task types (session and background) and when to use each
+- Given the preamble Tasks section, then it explains scheduling formats (cron expressions and ISO datetimes)
+- Given the preamble Tasks section, then it lists the available task MCP tools with descriptions, including `create_task` parameter guidance (name, schedule, type, prompt, notify) and `list_tasks` filtering behavior (archived parameter)
 
 ## Requires
 
