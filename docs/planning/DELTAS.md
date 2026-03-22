@@ -57,7 +57,7 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 ## Deltas
 
 ### DLT-004: Detect conversation boundaries via inactivity timeout
-**Status**: ✓ Spec
+**Status**: ⧗ Design
 **Depends on**: None
 **Priority**: 4 (Low)
 **Complexity**: Easy
