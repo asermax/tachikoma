@@ -11,7 +11,13 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import TracebackType
 
-from claude_agent_sdk import ClaudeAgentOptions, ClaudeSDKClient, CLIConnectionError, McpSdkServerConfig, ProcessError
+from claude_agent_sdk import (
+    ClaudeAgentOptions,
+    ClaudeSDKClient,
+    CLIConnectionError,
+    McpSdkServerConfig,
+    ProcessError,
+)
 from claude_agent_sdk.types import AgentDefinition, PermissionMode, SystemPromptPreset
 from loguru import logger
 
@@ -88,7 +94,7 @@ class Coordinator:
         self._permission_mode = permission_mode
         self._env = env or {}
         self._agents = agents
-        self._mcp_servers = mcp_servers
+        self._base_mcp_servers: dict[str, McpSdkServerConfig] = mcp_servers or {}
 
         # Session resumption configuration
         self._session_resume_window = session_resume_window
@@ -254,6 +260,8 @@ providing context for what the user has been doing in the meantime.
                 append=append_text,
             )
 
+        all_mcp_servers = {**self._base_mcp_servers, **self._mcp_servers}
+
         options = ClaudeAgentOptions(
             allowed_tools=self._allowed_tools,
             model=self._model,
@@ -264,11 +272,8 @@ providing context for what the user has been doing in the meantime.
             env=self._env,
             agents=self._agents,
             resume=resume,
-            mcp_servers=self._mcp_servers,
+            mcp_servers=all_mcp_servers if all_mcp_servers else None,
         )
-
-        if self._mcp_servers:
-            options.mcp_servers = self._mcp_servers
 
         return options
 

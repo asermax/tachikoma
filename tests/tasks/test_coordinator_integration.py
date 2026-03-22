@@ -3,10 +3,7 @@
 Tests for the new coordinator parameters: last_message_time and mcp_servers.
 """
 
-from datetime import UTC, datetime
-from unittest.mock import AsyncMock, MagicMock
-
-import pytest
+from unittest.mock import MagicMock
 
 from tachikoma.coordinator import Coordinator
 
@@ -33,16 +30,16 @@ class TestCoordinatorMcpServers:
         coordinator = Coordinator(mcp_servers={"test": mock_server})
 
         # Verify it's stored
-        assert coordinator._mcp_servers == {"test": mock_server}
+        assert coordinator._base_mcp_servers == {"test": mock_server}
 
-    async def test_mcp_servers_none_by_default(self) -> None:
-        """AC: mcp_servers defaults to None."""
+    async def test_mcp_servers_empty_by_default(self) -> None:
+        """AC: mcp_servers defaults to empty dict."""
         coordinator = Coordinator()
 
-        assert coordinator._mcp_servers is None
+        assert coordinator._base_mcp_servers == {}
 
     async def test_mcp_servers_empty_dict(self) -> None:
         """AC: mcp_servers can be an empty dict."""
         coordinator = Coordinator(mcp_servers={})
 
-        assert coordinator._mcp_servers == {}
+        assert coordinator._base_mcp_servers == {}

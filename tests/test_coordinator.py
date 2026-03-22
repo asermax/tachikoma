@@ -1316,10 +1316,10 @@ class TestCoordinatorMcpServers:
         options1 = mock_cls.call_args_list[0][0][0]
         options2 = mock_cls.call_args_list[1][0][0]
         assert options1.mcp_servers == {"projects": mock_server}
-        assert options2.mcp_servers == {}
+        assert options2.mcp_servers is None
 
     async def test_no_mcp_servers_when_not_provided(self, mock_sdk) -> None:
-        """AC: No mcp_servers in ContextResult means empty dict in options."""
+        """AC: No mcp_servers in ContextResult means None in options."""
         client, mock_cls = mock_sdk
         client.receive_response.return_value = _mock_messages(
             make_assistant([TextBlock(text="Hello!")]),
@@ -1336,7 +1336,7 @@ class TestCoordinatorMcpServers:
             _ = [e async for e in coord.send_message("hello")]
 
         options = mock_cls.call_args[0][0]
-        assert options.mcp_servers == {}
+        assert options.mcp_servers is None
 
 
 class TestBoundaryDetection:

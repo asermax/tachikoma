@@ -32,7 +32,6 @@ from tachikoma.projects import ProjectsContextProvider, ProjectsProcessor, proje
 from tachikoma.repl import Repl
 from tachikoma.sessions import session_recovery_hook
 from tachikoma.skills import SkillsContextProvider, skills_hook
-from tachikoma.telegram import TelegramChannel, telegram_hook
 from tachikoma.tasks import (
     TaskRepository,
     background_task_runner,
@@ -40,8 +39,8 @@ from tachikoma.tasks import (
     instance_generator,
     session_task_scheduler,
 )
-from tachikoma.tasks.events import SessionTaskReady, TaskNotification
 from tachikoma.tasks.hooks import tasks_hook
+from tachikoma.telegram import TelegramChannel, telegram_hook
 from tachikoma.workspace import workspace_hook
 
 _log = logger.bind(component="main")
