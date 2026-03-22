@@ -4,6 +4,7 @@ Keeps the ORM models (TaskDefinitionRecord, TaskInstanceRecord) internal to
 the persistence layer. Callers work exclusively with frozen dataclasses.
 """
 
+import json
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Literal
@@ -11,28 +12,14 @@ from typing import Literal
 from sqlalchemy import DateTime, ForeignKey, Index, String
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
+from tachikoma.db_utils import ensure_utc
+
 # ---------------------------------------------------------------------------
 # Domain types — public API
 # ---------------------------------------------------------------------------
 
-TASK_STATUS = {
-    "pending": "pending",
-    "running": "running",
-    "completed": "completed",
-    "failed": "failed",
-}
 TaskStatus = Literal["pending", "running", "completed", "failed"]
-
-TASK_TYPE = {
-    "session": "session",
-    "background": "background",
-}
 TaskType = Literal["session", "background"]
-
-SCHEDULE_TYPE = {
-    "cron": "cron",
-    "once": "once",
-}
 ScheduleType = Literal["cron", "once"]
 
 
@@ -49,8 +36,6 @@ class ScheduleConfig:
 
     def to_json(self) -> str:
         """Serialize to JSON string for storage."""
-        import json
-
         data = {"type": self.type}
         if self.expression is not None:
             data["expression"] = self.expression
@@ -61,8 +46,6 @@ class ScheduleConfig:
     @classmethod
     def from_json(cls, json_str: str) -> "ScheduleConfig":
         """Deserialize from JSON string."""
-        import json
-
         data = json.loads(json_str)
         at = None
         if "at" in data and data["at"] is not None:
@@ -156,8 +139,8 @@ class TaskDefinitionRecord(TaskBase):
             prompt=self.prompt,
             notify=self.notify,
             enabled=self.enabled,
-            last_fired_at=_ensure_utc(self.last_fired_at),
-            created_at=_ensure_utc(self.created_at),  # type: ignore[arg-type]
+            last_fired_at=ensure_utc(self.last_fired_at),
+            created_at=ensure_utc(self.created_at),  # type: ignore[arg-type]
         )
 
 
@@ -200,24 +183,9 @@ class TaskInstanceRecord(TaskBase):
             task_type=self.task_type,  # type: ignore[arg-type]
             status=self.status,  # type: ignore[arg-type]
             prompt=self.prompt,
-            scheduled_for=_ensure_utc(self.scheduled_for),  # type: ignore[arg-type]
-            started_at=_ensure_utc(self.started_at),
-            completed_at=_ensure_utc(self.completed_at),
+            scheduled_for=ensure_utc(self.scheduled_for),  # type: ignore[arg-type]
+            started_at=ensure_utc(self.started_at),
+            completed_at=ensure_utc(self.completed_at),
             result=self.result,
-            created_at=_ensure_utc(self.created_at),  # type: ignore[arg-type]
+            created_at=ensure_utc(self.created_at),  # type: ignore[arg-type]
         )
-
-
-def _ensure_utc(dt: datetime | None) -> datetime | None:
-    """Re-attach UTC tzinfo to a naive datetime read from SQLite.
-
-    SQLite stores datetimes as text without timezone info. aiosqlite/SQLAlchemy
-    reads them back as naive datetimes. This helper restores the UTC context.
-    """
-    if dt is None:
-        return None
-
-    if dt.tzinfo is None:
-        return dt.replace(tzinfo=UTC)
-
-    return dt

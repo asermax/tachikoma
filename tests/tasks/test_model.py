@@ -4,13 +4,13 @@ from datetime import UTC, datetime
 
 import pytest
 
+from tachikoma.db_utils import ensure_utc
 from tachikoma.tasks.model import (
     ScheduleConfig,
     TaskDefinition,
     TaskDefinitionRecord,
     TaskInstance,
     TaskInstanceRecord,
-    _ensure_utc,
 )
 
 
@@ -69,16 +69,16 @@ class TestScheduleConfig:
 
 
 class TestEnsureUtc:
-    """Tests for _ensure_utc helper."""
+    """Tests for ensure_utc helper."""
 
     def test_none_returns_none(self) -> None:
         """AC: None input returns None."""
-        assert _ensure_utc(None) is None
+        assert ensure_utc(None) is None
 
     def test_naive_gets_utc(self) -> None:
         """AC: Naive datetime gets UTC tzinfo."""
         naive = datetime(2026, 3, 22, 10, 0)
-        result = _ensure_utc(naive)
+        result = ensure_utc(naive)
 
         assert result is not None
         assert result.tzinfo == UTC
@@ -91,7 +91,7 @@ class TestEnsureUtc:
         from zoneinfo import ZoneInfo
 
         aware = datetime(2026, 3, 22, 10, 0, tzinfo=ZoneInfo("America/New_York"))
-        result = _ensure_utc(aware)
+        result = ensure_utc(aware)
 
         assert result is aware  # Same object returned
 
