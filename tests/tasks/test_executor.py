@@ -1,17 +1,15 @@
 """Tests for background task executor."""
 
 import asyncio
-from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-
 from bubus import EventBus
+
 from tachikoma.config import TaskSettings
 from tachikoma.tasks.events import TaskNotification
-from tachikoma.tasks.model import ScheduleConfig, TaskDefinition, TaskInstance
+from tachikoma.tasks.executor import BackgroundTaskExecutor, background_task_runner
 from tachikoma.tasks.repository import TaskRepository
-from tachikoma.tasks.executor import background_task_runner, BackgroundTaskExecutor
 
 from .conftest import _make_definition, _make_instance
 

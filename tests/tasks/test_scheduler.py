@@ -2,14 +2,14 @@
 
 import asyncio
 from datetime import UTC, datetime, timedelta
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock
 
 import pytest
-
 from bubus import EventBus
+
 from tachikoma.config import TaskSettings
 from tachikoma.tasks.events import SessionTaskReady
-from tachikoma.tasks.model import ScheduleConfig, TaskDefinition, TaskInstance
+from tachikoma.tasks.model import ScheduleConfig
 from tachikoma.tasks.repository import TaskRepository
 from tachikoma.tasks.scheduler import instance_generator, session_task_scheduler
 

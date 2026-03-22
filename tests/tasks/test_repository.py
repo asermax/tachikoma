@@ -3,14 +3,14 @@
 Uses real SQLite databases in tmp_path (no mocking of the DB layer).
 """
 
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from pathlib import Path
 
 import aiosqlite
 import pytest
 
 from tachikoma.tasks.errors import TaskRepositoryError
-from tachikoma.tasks.model import ScheduleConfig, TaskDefinition, TaskInstance
+from tachikoma.tasks.model import ScheduleConfig
 from tachikoma.tasks.repository import TaskRepository
 
 from .conftest import _make_definition, _make_instance, _utcnow

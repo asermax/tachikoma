@@ -6,7 +6,6 @@ from unittest.mock import AsyncMock
 import pytest
 
 from tachikoma.tasks.events import SessionTaskReady, TaskNotification
-from tachikoma.tasks.model import TaskInstance
 
 from .conftest import _make_instance
 

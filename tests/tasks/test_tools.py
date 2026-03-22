@@ -2,8 +2,6 @@
 
 from datetime import UTC, datetime
 
-import pytest
-
 from tachikoma.tasks.model import ScheduleConfig
 from tachikoma.tasks.repository import TaskRepository
 from tachikoma.tasks.tools import (
@@ -11,8 +9,6 @@ from tachikoma.tasks.tools import (
     _parse_schedule,
     create_task_tools_server,
 )
-
-from .conftest import _make_definition
 
 
 class TestParseSchedule:

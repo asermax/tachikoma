@@ -10,8 +10,8 @@ import pytest
 from tachikoma.bootstrap import BootstrapContext
 from tachikoma.config import SettingsManager
 from tachikoma.tasks.hooks import tasks_hook
-from tachikoma.tasks.repository import TaskRepository
 from tachikoma.tasks.model import TaskInstance
+from tachikoma.tasks.repository import TaskRepository
 
 
 @pytest.fixture

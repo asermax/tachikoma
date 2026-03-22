@@ -6,20 +6,20 @@ This module contains:
 """
 
 import asyncio
-from collections.abc import Awaitable, Callable
+from collections.abc import Callable
 from dataclasses import replace
 from datetime import UTC, datetime
 from uuid import uuid4
 from zoneinfo import ZoneInfo
 
+from bubus import EventBus
 from cronsim import CronSim
 from cronsim.cronsim import CronSimError
 from loguru import logger
 
 from tachikoma.config import TaskSettings
-from bubus import EventBus
 from tachikoma.tasks.events import SessionTaskReady
-from tachikoma.tasks.model import TaskDefinition, TaskInstance
+from tachikoma.tasks.model import TaskInstance
 from tachikoma.tasks.repository import TaskRepository
 
 _log = logger.bind(component="task_scheduler")

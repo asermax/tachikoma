@@ -5,7 +5,7 @@ and other subsystems.
 """
 
 from collections.abc import Awaitable, Callable
-from typing import Any, Literal
+from typing import Literal
 
 from bubus import BaseEvent
 from pydantic import Field

@@ -6,7 +6,6 @@ SQLAlchemy types never leak out of this module.
 
 from datetime import UTC, datetime
 from pathlib import Path
-from uuid import uuid4
 
 from loguru import logger
 from sqlalchemy import select
@@ -19,7 +18,6 @@ from tachikoma.tasks.model import (
     TaskDefinitionRecord,
     TaskInstance,
     TaskInstanceRecord,
-    TaskStatus,
     TaskType,
 )
 
