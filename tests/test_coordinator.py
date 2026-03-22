@@ -1193,7 +1193,10 @@ class TestCoordinatorMcpServers:
         mock_server = {"type": "sdk", "sdkServer": MagicMock()}
         pre_pipeline = _make_mock_pre_pipeline()
         pre_pipeline.run.return_value = [
-            ContextResult(tag="projects", content="Project list", mcp_servers={"projects": mock_server}),
+            ContextResult(
+                tag="projects", content="Project list",
+                mcp_servers={"projects": mock_server},
+            ),
         ]
         registry = _make_mock_registry(active_session=None)
 
@@ -1244,7 +1247,10 @@ class TestCoordinatorMcpServers:
         mock_server = {"type": "sdk", "sdkServer": MagicMock()}
         pre_pipeline = _make_mock_pre_pipeline()
         pre_pipeline.run.return_value = [
-            ContextResult(tag="projects", content="Projects", mcp_servers={"projects": mock_server}),
+            ContextResult(
+                tag="projects", content="Projects",
+                mcp_servers={"projects": mock_server},
+            ),
         ]
         registry = _make_mock_registry(active_session=None)
 
@@ -1272,7 +1278,10 @@ class TestCoordinatorMcpServers:
         mock_server = {"type": "sdk", "sdkServer": MagicMock()}
         pre_pipeline = _make_mock_pre_pipeline()
         pre_pipeline.run.return_value = [
-            ContextResult(tag="projects", content="Projects", mcp_servers={"projects": mock_server}),
+            ContextResult(
+                tag="projects", content="Projects",
+                mcp_servers={"projects": mock_server},
+            ),
         ]
 
         active = Session(
@@ -1289,7 +1298,9 @@ class TestCoordinatorMcpServers:
             return_value=False,
         )
 
-        async with Coordinator(registry=registry, pre_pipeline=pre_pipeline, cwd=Path("/ws")) as coord:
+        async with Coordinator(
+            registry=registry, pre_pipeline=pre_pipeline, cwd=Path("/ws"),
+        ) as coord:
             _ = [e async for e in coord.send_message("first")]
 
             # Update mock for second call - no mcp_servers in new session

@@ -9,7 +9,6 @@ import asyncio
 import re
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import Union
 
 from claude_agent_sdk.types import (
     McpHttpServerConfig,
@@ -22,9 +21,9 @@ from loguru import logger
 _log = logger.bind(component="pre_processing")
 
 # Type alias for MCP server configurations
-McpServerConfig = Union[
-    McpStdioServerConfig, McpSSEServerConfig, McpHttpServerConfig, McpSdkServerConfig
-]
+McpServerConfig = (
+    McpStdioServerConfig | McpSSEServerConfig | McpHttpServerConfig | McpSdkServerConfig
+)
 
 # Valid XML tag name pattern: must start with letter/underscore, followed by
 # letters, numbers, hyphens, or underscores

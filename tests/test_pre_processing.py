@@ -7,6 +7,7 @@ import asyncio
 from unittest.mock import AsyncMock
 
 import pytest
+from claude_agent_sdk import create_sdk_mcp_server, tool
 
 from tachikoma.pre_processing import (
     ContextProvider,
@@ -78,8 +79,6 @@ class TestContextResult:
 
     def test_mcp_servers_can_be_set(self) -> None:
         """AC: mcp_servers can be set to a dict of server configs."""
-        from claude_agent_sdk import create_sdk_mcp_server, tool
-
         @tool("test_tool", "A test tool", {})
         async def test_tool(args: dict) -> dict:
             return {"content": [{"type": "text", "text": "ok"}]}

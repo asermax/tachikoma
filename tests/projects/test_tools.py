@@ -2,8 +2,6 @@
 
 from pathlib import Path
 
-import pytest
-
 from tachikoma.projects.tools import create_projects_server
 
 

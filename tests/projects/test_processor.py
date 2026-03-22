@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from tachikoma.projects.processor import ProjectsProcessor, SUBMODULE_COMMIT_PROMPT
+from tachikoma.projects.processor import SUBMODULE_COMMIT_PROMPT, ProjectsProcessor
 
 
 @pytest.fixture
@@ -240,15 +240,6 @@ class TestSubmoduleCommitPrompt:
     def test_uses_only_allowed_git_commands(self) -> None:
         """AC: Prompt only allows status, diff, log, add, commit."""
         allowed = {"git status", "git diff", "git log", "git add", "git commit"}
-        forbidden = {
-            "git push",
-            "git branch",
-            "git checkout",
-            "git reset",
-            "git rebase",
-            "git merge",
-            "git stash",
-        }
 
         # Check the prompt mentions the allowed commands
         for cmd in allowed:

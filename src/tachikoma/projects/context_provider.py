@@ -73,7 +73,7 @@ class ProjectsContextProvider(ContextProvider):
         Returns:
             Formatted string like "- my-app: main", or None on error.
         """
-        name = path.split("/")[-1] if "/" in path else path
+        name = path.rsplit("/", maxsplit=1)[-1] if "/" in path else path
         submodule_path = self._workspace_path / path
 
         try:

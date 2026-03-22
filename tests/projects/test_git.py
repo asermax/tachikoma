@@ -1,6 +1,5 @@
 """Tests for git helpers in the projects package."""
 
-import asyncio
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
@@ -122,9 +121,8 @@ class TestInitSubmodule:
             return_value=AsyncSubprocessMock(
                 returncode=1, stderr=b"submodule not found"
             ),
-        ):
-            with pytest.raises(RuntimeError, match="git submodule update --init .* failed"):
-                await init_submodule(workspace, "projects/my-app")
+        ), pytest.raises(RuntimeError, match="git submodule update --init .* failed"):
+            await init_submodule(workspace, "projects/my-app")
 
 
 @pytest.mark.asyncio
@@ -209,9 +207,8 @@ class TestCheckoutBranch:
             "asyncio.create_subprocess_exec",
             new_callable=AsyncMock,
             return_value=AsyncSubprocessMock(returncode=1, stderr=b"branch not found"),
-        ):
-            with pytest.raises(RuntimeError, match="git checkout .* failed"):
-                await checkout_branch(submodule_path, "nonexistent")
+        ), pytest.raises(RuntimeError, match="git checkout .* failed"):
+            await checkout_branch(submodule_path, "nonexistent")
 
 
 @pytest.mark.asyncio
@@ -233,9 +230,8 @@ class TestFetch:
             "asyncio.create_subprocess_exec",
             new_callable=AsyncMock,
             return_value=AsyncSubprocessMock(returncode=1, stderr=b"network error"),
-        ):
-            with pytest.raises(RuntimeError, match="git fetch failed"):
-                await fetch(submodule_path)
+        ), pytest.raises(RuntimeError, match="git fetch failed"):
+            await fetch(submodule_path)
 
 
 @pytest.mark.asyncio
@@ -257,9 +253,8 @@ class TestPull:
             "asyncio.create_subprocess_exec",
             new_callable=AsyncMock,
             return_value=AsyncSubprocessMock(returncode=1, stderr=b"merge conflict"),
-        ):
-            with pytest.raises(RuntimeError, match="git pull failed"):
-                await pull(submodule_path)
+        ), pytest.raises(RuntimeError, match="git pull failed"):
+            await pull(submodule_path)
 
 
 @pytest.mark.asyncio
@@ -308,9 +303,8 @@ class TestPush:
             return_value=AsyncSubprocessMock(
                 returncode=1, stderr=b"non-fast-forward"
             ),
-        ):
-            with pytest.raises(RuntimeError, match="git push failed"):
-                await push(submodule_path)
+        ), pytest.raises(RuntimeError, match="git push failed"):
+            await push(submodule_path)
 
 
 @pytest.mark.asyncio
@@ -332,9 +326,8 @@ class TestAddSubmodule:
             "asyncio.create_subprocess_exec",
             new_callable=AsyncMock,
             return_value=AsyncSubprocessMock(returncode=1, stderr=b"already exists"),
-        ):
-            with pytest.raises(RuntimeError, match="git submodule add .* failed"):
-                await add_submodule(workspace, "my-app", "git@github.com:user/repo.git")
+        ), pytest.raises(RuntimeError, match="git submodule add .* failed"):
+            await add_submodule(workspace, "my-app", "git@github.com:user/repo.git")
 
 
 @pytest.mark.asyncio
@@ -366,9 +359,8 @@ class TestRemoveSubmodule:
             "asyncio.create_subprocess_exec",
             new_callable=AsyncMock,
             return_value=AsyncSubprocessMock(returncode=1, stderr=b"not initialized"),
-        ):
-            with pytest.raises(RuntimeError, match="git submodule deinit .* failed"):
-                await remove_submodule(workspace, "my-app")
+        ), pytest.raises(RuntimeError, match="git submodule deinit .* failed"):
+            await remove_submodule(workspace, "my-app")
 
 
 @pytest.mark.asyncio
