@@ -16,7 +16,7 @@ Tachikoma needs persistent task definitions that the agent can create and manage
 **Constraints:**
 - SQLAlchemy async + aiosqlite is the established persistence pattern (ADR-007)
 - Bootstrap hooks (DES-003) are the initialization mechanism
-- MCP tools follow the existing `create_pending_signals_server` factory pattern
+- MCP tools follow the existing SDK MCP Tool Server Factory pattern (DES-006)
 - Task data must be independent of the sessions subsystem
 
 **Interactions:**
@@ -38,7 +38,7 @@ The task management subsystem lives in `src/tachikoma/tasks/` as a self-containe
 | `src/tachikoma/tasks/__init__.py` | Public API re-exports | Clean package interface |
 | `src/tachikoma/tasks/model.py` | `TaskDefinition` and `TaskInstance` frozen dataclasses (domain types); `TaskDefinitionRecord` and `TaskInstanceRecord` ORM models; `TaskStatus` and `TaskType` constant maps; `ScheduleConfig` type | Domain types frozen; ORM models internal to persistence; schedule stored as JSON column |
 | `src/tachikoma/tasks/repository.py` | `TaskRepository` — async SQLAlchemy CRUD for definitions and instances; separate DB file (`tasks.db`); crash recovery (mark running as failed) | Own DB file; follows ADR-007 pattern |
-| `src/tachikoma/tasks/tools.py` | `create_task_tools_server()` — MCP server factory; `list_tasks`, `create_task`, `update_task`, `delete_task` with `cronsim` validation | Tools validate cron expressions at creation time; follows `create_pending_signals_server` pattern |
+| `src/tachikoma/tasks/tools.py` | `create_task_tools_server()` — MCP server factory; `list_tasks`, `create_task`, `update_task`, `delete_task` with `cronsim` validation | Tools validate cron expressions at creation time; follows DES-006 (SDK MCP Tool Server Factory) |
 | `src/tachikoma/tasks/hooks.py` | `tasks_hook` — bootstrap hook (DES-003): creates repository, initializes DB, runs crash recovery; stores `task_repository` in `bootstrap.extras` | Subsystem-owned hook; idempotent |
 | `src/tachikoma/tasks/scheduler.py` | `instance_generator()` — async loop evaluating definitions via `cronsim` | Plain async function started as `asyncio.Task` |
 | `src/tachikoma/tasks/migrations/` | Alembic migration environment and revision; separate from sessions; `TaskBase` metadata | Alembic scaffolded for future schema evolution; `create_all` used for initial creation |
@@ -209,7 +209,7 @@ stateDiagram-v2
 ### MCP tools on coordinator
 
 **Choice**: Register the task tools MCP server on the coordinator's `ClaudeAgentOptions.mcp_servers`, making them available in every conversation turn.
-**Why**: The agent needs to create/manage tasks during live conversations. The MCP tool pattern (`create_pending_signals_server`) creates `McpSdkServerConfig` instances — the same approach works for coordinator-level registration.
+**Why**: The agent needs to create/manage tasks during live conversations. The MCP tool pattern (DES-006) creates `McpSdkServerConfig` instances via factory functions — the same approach works for coordinator-level registration.
 
 **Consequences**:
 - Pro: Agent can manage tasks naturally during conversation
