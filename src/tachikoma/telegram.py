@@ -9,6 +9,7 @@ import asyncio
 import contextlib
 import signal
 import time
+from collections.abc import Awaitable, Callable
 
 from aiogram import Bot, Dispatcher, F, Router
 from aiogram.dispatcher.dispatcher import BackoffConfig
@@ -338,21 +339,62 @@ class TelegramChannel:
 
     async def _handle_message(self, message: Message) -> None:
         """Handle an incoming message from the authorized user."""
-        # Validate message has text
         if not message.text or not message.text.strip():
             _log.debug("Ignoring empty or non-text message")
             return
 
         text = message.text.strip()
-        chat_id = message.chat.id
 
-        # Check if we're already processing (steering case)
         if self._is_processing:
             _log.debug("Steering mid-stream message")
             await self._coordinator.steer(text)
             return
 
-        # Start processing
+        await self._process_through_coordinator(text)
+
+    async def _on_shutdown(self) -> None:
+        """Send partial response on shutdown if one is active."""
+        if self._active_renderer is not None and self._active_renderer._buffer:
+            _log.info("Sending partial response before shutdown")
+            try:
+                await self._active_renderer.finalize()
+            except TelegramAPIError:
+                _log.warning("Could not send partial response on shutdown")
+
+    async def _handle_session_task(self, event: SessionTaskReady) -> None:
+        """Handle a SessionTaskReady event from the task scheduler.
+
+        This delivers a proactive task message to the user through the coordinator.
+        If the user is currently in a conversation, the message is steered mid-stream.
+        """
+        instance = event.instance
+        _log.info(
+            "Processing session task: id={task_id}, prompt_preview={preview}",
+            task_id=instance.id,
+            preview=instance.prompt[:50] if instance.prompt else "",
+        )
+
+        if self._is_processing:
+            _log.debug("Steering session task mid-stream")
+            await self._coordinator.steer(instance.prompt)
+            return
+
+        await self._process_through_coordinator(
+            instance.prompt, on_complete=event.on_complete,
+        )
+
+    async def _process_through_coordinator(
+        self,
+        text: str,
+        on_complete: Callable[[], Awaitable[None]] | None = None,
+    ) -> None:
+        """Send text through the coordinator and render the response.
+
+        Args:
+            text: The message to send.
+            on_complete: Optional callback invoked after successful processing.
+        """
+        chat_id = self._settings.authorized_chat_id
         self._is_processing = True
         self._active_renderer = ResponseRenderer(self._bot, chat_id)
 
@@ -371,81 +413,15 @@ class TelegramChannel:
                         await self._active_renderer.finalize()
                         self._active_renderer.reset()
 
+            if on_complete is not None:
+                await on_complete()
+
         except Exception as e:
             _log.exception("Error during message processing")
-            # Try to send error message
             with contextlib.suppress(TelegramAPIError):
                 await self._bot.send_message(
                     chat_id,
                     f"⚠️ Error: {e!s}",
-                    parse_mode=None,
-                )
-
-        finally:
-            self._is_processing = False
-            self._active_renderer = None
-
-    async def _on_shutdown(self) -> None:
-        """Send partial response on shutdown if one is active."""
-        if self._active_renderer is not None and self._active_renderer._buffer:
-            _log.info("Sending partial response before shutdown")
-            try:
-                await self._active_renderer.finalize()
-            except TelegramAPIError:
-                # Bot session may be closing - log and continue
-                _log.warning("Could not send partial response on shutdown")
-
-    async def _handle_session_task(self, event: SessionTaskReady) -> None:
-        """Handle a SessionTaskReady event from the task scheduler.
-
-        This delivers a proactive task message to the user through the coordinator.
-        If the user is currently in a conversation, the message is steered mid-stream.
-        """
-        instance = event.instance
-        _log.info(
-            "Processing session task: id={task_id}, prompt_preview={preview}",
-            task_id=instance.id,
-            preview=instance.prompt[:50] if instance.prompt else "",
-        )
-
-        chat_id = self._settings.authorized_chat_id
-
-        # Check if we're already processing (steering case)
-        if self._is_processing:
-            _log.debug("Steering session task mid-stream")
-            await self._coordinator.steer(instance.prompt)
-            return
-
-        # Start processing
-        self._is_processing = True
-        self._active_renderer = ResponseRenderer(self._bot, chat_id)
-
-        try:
-            async with ChatActionSender(bot=self._bot, chat_id=chat_id, action="typing"):
-                async for ev in self._coordinator.send_message(instance.prompt):
-                    if isinstance(ev, Status):
-                        await self._active_renderer.handle_status(ev.message)
-                    elif isinstance(ev, TextChunk):
-                        await self._active_renderer.handle_text(ev.text)
-                    elif isinstance(ev, ToolActivity):
-                        await self._active_renderer.handle_tool(ev)
-                    elif isinstance(ev, Error):
-                        await self._active_renderer.handle_error(ev)
-                    elif isinstance(ev, Result):
-                        await self._active_renderer.finalize()
-                        self._active_renderer.reset()
-
-            # Mark task as completed via callback
-            if event.on_complete is not None:
-                await event.on_complete()
-
-        except Exception as e:
-            _log.exception("Error during session task processing")
-            # Try to send error message
-            with contextlib.suppress(TelegramAPIError):
-                await self._bot.send_message(
-                    chat_id,
-                    f"⚠️ Error processing task: {e!s}",
                     parse_mode=None,
                 )
 
