@@ -70,7 +70,7 @@ No database entities. Project state is entirely filesystem-derived — `.gitmodu
 | `src/tachikoma/projects/hooks.py` | Bootstrap hook (`projects_hook`) | Follows DES-003; runs after git hook in registration order |
 | `src/tachikoma/projects/processor.py` | `ProjectsProcessor` post-processor | Extends `PostProcessor` directly (not `PromptDrivenProcessor` — no session fork needed); session param unused; registered in `pre_finalize` phase |
 | `src/tachikoma/projects/context_provider.py` | `ProjectsContextProvider` pre-processor | Extends `ContextProvider`; always returns a `ContextResult` (never `None`) with MCP tools and project info or guidance text |
-| `src/tachikoma/projects/tools.py` | MCP tool definitions + server factory | Follows `context/tools.py` pattern; closure over workspace path |
+| `src/tachikoma/projects/tools.py` | MCP tool server factory (DES-006) + extracted handlers | Factory `create_projects_server(workspace_path)` defines tools via closure; `handle_register_project()` and `handle_deregister_project()` extracted for testability |
 | `src/tachikoma/projects/git.py` | Shared async git helpers | Pure subprocess wrappers; no SDK dependency |
 
 ### Cross-Layer Contracts
@@ -331,6 +331,6 @@ sequenceDiagram
 
 - The `query_and_consume()` function from `git/processor.py` is reused for submodule commit generation — no duplication needed. This creates a `projects → git` cross-subsystem import for a generic utility. If more subsystems need fresh agent spawning, extract to a shared module.
 - All git operations use `asyncio.create_subprocess_exec()` for async subprocess management.
-- The MCP tool pattern follows `context/tools.py` exactly: `@tool()` decorator with closure over workspace path, `create_sdk_mcp_server()` factory.
+- The MCP tool pattern follows DES-006 (SDK MCP Tool Server Factory): factory takes `workspace_path`, defines tools via closure, handler logic extracted into standalone `handle_register_project()` and `handle_deregister_project()` for testability.
 - Per DES-005, all `query()` generators are fully consumed (no early `break` or `return`).
 - The context provider always returns a `ContextResult` (never `None`) because MCP tools must be available even when no projects are registered, so the user can register their first project.

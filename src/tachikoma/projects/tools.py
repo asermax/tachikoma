@@ -1,7 +1,8 @@
 """MCP tools for project management.
 
 Provides tools for registering and deregistering project submodules
-during conversations.
+during conversations. Follows DES-006 (SDK MCP Tool Server Factory):
+factory takes config, handlers are extracted for testability.
 """
 
 import contextlib
@@ -22,10 +23,160 @@ from tachikoma.projects.git import (
 _log = logger.bind(component="projects")
 
 
-def create_projects_server(workspace_path: Path) -> McpSdkServerConfig:
-    """Create SDK MCP server with project management tools.
+async def handle_register_project(name: str, url: str, workspace_path: Path) -> dict:
+    """Register a new project by adding it as a git submodule.
 
-    The tools have closure over the workspace_path for git operations.
+    Args:
+        name: Project name (directory under projects/).
+        url: Git remote URL.
+        workspace_path: The workspace root directory.
+
+    Returns:
+        MCP tool response dict.
+    """
+    if not name:
+        return {
+            "content": [{"type": "text", "text": "Error: 'name' is required"}],
+            "is_error": True,
+        }
+
+    if not url:
+        return {
+            "content": [{"type": "text", "text": "Error: 'url' is required"}],
+            "is_error": True,
+        }
+
+    project_path = workspace_path / "projects" / name
+
+    if project_path.exists():
+        return {
+            "content": [
+                {"type": "text", "text": f"Error: Project '{name}' already exists"}
+            ],
+            "is_error": True,
+        }
+
+    try:
+        await add_submodule(workspace_path, name, url)
+        default_branch = await resolve_default_branch(project_path)
+        await checkout_branch(project_path, default_branch)
+
+        _log.info(
+            "Project registered: name={name} url={url} branch={branch}",
+            name=name,
+            url=url,
+            branch=default_branch,
+        )
+
+        return {
+            "content": [
+                {
+                    "type": "text",
+                    "text": f"Registered project '{name}' (branch: {default_branch}). "
+                    f"The project is now available under projects/{name}. "
+                    f"Changes will be committed to the workspace at session end.",
+                }
+            ]
+        }
+
+    except Exception as e:
+        # Cleanup partial state on failure
+        if project_path.exists():
+            with contextlib.suppress(Exception):
+                await remove_submodule(workspace_path, name)
+
+        error_msg = str(e)
+        _log.warning(
+            "Project registration failed: name={name} err={err}",
+            name=name,
+            err=error_msg,
+        )
+
+        return {
+            "content": [
+                {"type": "text", "text": f"Error registering project: {error_msg}"}
+            ],
+            "is_error": True,
+        }
+
+
+async def handle_deregister_project(
+    name: str, force: bool, workspace_path: Path,
+) -> dict:
+    """Deregister a project by removing the git submodule.
+
+    Args:
+        name: Project name (directory under projects/).
+        force: If true, remove even with uncommitted changes.
+        workspace_path: The workspace root directory.
+
+    Returns:
+        MCP tool response dict.
+    """
+    if not name:
+        return {
+            "content": [{"type": "text", "text": "Error: 'name' is required"}],
+            "is_error": True,
+        }
+
+    project_path = workspace_path / "projects" / name
+
+    if not project_path.exists():
+        return {
+            "content": [
+                {"type": "text", "text": f"Error: Project '{name}' not found"}
+            ],
+            "is_error": True,
+        }
+
+    try:
+        changes = await has_uncommitted_changes_detail(project_path)
+
+        if changes and not force:
+            return {
+                "content": [
+                    {
+                        "type": "text",
+                        "text": f"Warning: Project '{name}' has uncommitted changes:\n"
+                        f"{changes}\n\n"
+                        f"Use force=true to remove anyway (changes will be lost).",
+                    }
+                ],
+                "is_error": True,
+            }
+
+        await remove_submodule(workspace_path, name)
+
+        _log.info("Project deregistered: name={name} force={force}", name=name, force=force)
+
+        return {
+            "content": [
+                {
+                    "type": "text",
+                    "text": f"Deregistered project '{name}'. "
+                    f"Changes will be committed to the workspace at session end.",
+                }
+            ]
+        }
+
+    except Exception as e:
+        error_msg = str(e)
+        _log.warning(
+            "Project deregistration failed: name={name} err={err}",
+            name=name,
+            err=error_msg,
+        )
+
+        return {
+            "content": [
+                {"type": "text", "text": f"Error deregistering project: {error_msg}"}
+            ],
+            "is_error": True,
+        }
+
+
+def create_projects_server(workspace_path: Path) -> McpSdkServerConfig:
+    """Factory: create SDK MCP server with project management tools (DES-006).
 
     Args:
         workspace_path: The workspace root directory.
@@ -40,81 +191,9 @@ def create_projects_server(workspace_path: Path) -> McpSdkServerConfig:
         {"name": str, "url": str},
     )
     async def register_project(args: dict) -> dict:
-        """Register a new project by adding it as a git submodule.
-
-        Args:
-            args: Must contain 'name' (project name) and 'url' (git remote URL).
-
-        Returns:
-            Success message or error with is_error=True.
-        """
-        name = args.get("name", "")
-        url = args.get("url", "")
-
-        if not name:
-            return {
-                "content": [{"type": "text", "text": "Error: 'name' is required"}],
-                "is_error": True,
-            }
-
-        if not url:
-            return {
-                "content": [{"type": "text", "text": "Error: 'url' is required"}],
-                "is_error": True,
-            }
-
-        project_path = workspace_path / "projects" / name
-
-        if project_path.exists():
-            return {
-                "content": [
-                    {"type": "text", "text": f"Error: Project '{name}' already exists"}
-                ],
-                "is_error": True,
-            }
-
-        try:
-            await add_submodule(workspace_path, name, url)
-            default_branch = await resolve_default_branch(project_path)
-            await checkout_branch(project_path, default_branch)
-
-            _log.info(
-                "Project registered: name={name} url={url} branch={branch}",
-                name=name,
-                url=url,
-                branch=default_branch,
-            )
-
-            return {
-                "content": [
-                    {
-                        "type": "text",
-                        "text": f"Registered project '{name}' (branch: {default_branch}). "
-                        f"The project is now available under projects/{name}. "
-                        f"Changes will be committed to the workspace at session end.",
-                    }
-                ]
-            }
-
-        except Exception as e:
-            # Cleanup partial state on failure
-            if project_path.exists():
-                with contextlib.suppress(Exception):
-                    await remove_submodule(workspace_path, name)
-
-            error_msg = str(e)
-            _log.warning(
-                "Project registration failed: name={name} err={err}",
-                name=name,
-                err=error_msg,
-            )
-
-            return {
-                "content": [
-                    {"type": "text", "text": f"Error registering project: {error_msg}"}
-                ],
-                "is_error": True,
-            }
+        return await handle_register_project(
+            args.get("name", ""), args.get("url", ""), workspace_path,
+        )
 
     @tool(
         "deregister_project",
@@ -122,77 +201,9 @@ def create_projects_server(workspace_path: Path) -> McpSdkServerConfig:
         {"name": str, "force": bool},
     )
     async def deregister_project(args: dict) -> dict:
-        """Deregister a project by removing the git submodule.
-
-        Args:
-            args: Must contain 'name'. Optional 'force' (default false).
-
-        Returns:
-            Success message, warning, or error with is_error=True.
-        """
-        name = args.get("name", "")
-        force = args.get("force", False)
-
-        if not name:
-            return {
-                "content": [{"type": "text", "text": "Error: 'name' is required"}],
-                "is_error": True,
-            }
-
-        project_path = workspace_path / "projects" / name
-
-        if not project_path.exists():
-            return {
-                "content": [
-                    {"type": "text", "text": f"Error: Project '{name}' not found"}
-                ],
-                "is_error": True,
-            }
-
-        try:
-            changes = await has_uncommitted_changes_detail(project_path)
-
-            if changes and not force:
-                return {
-                    "content": [
-                        {
-                            "type": "text",
-                            "text": f"Warning: Project '{name}' has uncommitted changes:\n"
-                            f"{changes}\n\n"
-                            f"Use force=true to remove anyway (changes will be lost).",
-                        }
-                    ],
-                    "is_error": True,
-                }
-
-            await remove_submodule(workspace_path, name)
-
-            _log.info("Project deregistered: name={name} force={force}", name=name, force=force)
-
-            return {
-                "content": [
-                    {
-                        "type": "text",
-                        "text": f"Deregistered project '{name}'. "
-                        f"Changes will be committed to the workspace at session end.",
-                    }
-                ]
-            }
-
-        except Exception as e:
-            error_msg = str(e)
-            _log.warning(
-                "Project deregistration failed: name={name} err={err}",
-                name=name,
-                err=error_msg,
-            )
-
-            return {
-                "content": [
-                    {"type": "text", "text": f"Error deregistering project: {error_msg}"}
-                ],
-                "is_error": True,
-            }
+        return await handle_deregister_project(
+            args.get("name", ""), args.get("force", False), workspace_path,
+        )
 
     return create_sdk_mcp_server(
         name="projects",
