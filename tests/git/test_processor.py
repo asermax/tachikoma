@@ -38,6 +38,11 @@ class TestGitProcessor:
             "tachikoma.git.processor.query_and_consume",
             new_callable=AsyncMock,
         )
+        mocker.patch(
+            "tachikoma.git.processor._has_remote",
+            new_callable=AsyncMock,
+            return_value=False,
+        )
 
         processor = GitProcessor(cwd=Path("/workspace"))
         await processor.process(_make_session())
@@ -78,12 +83,121 @@ class TestGitProcessor:
             "tachikoma.git.processor.query_and_consume",
             new_callable=AsyncMock,
         )
+        mocker.patch(
+            "tachikoma.git.processor._has_remote",
+            new_callable=AsyncMock,
+            return_value=False,
+        )
 
         processor = GitProcessor(cwd=Path("/workspace"))
         await processor.process(_make_session())
 
         # Should have called status twice (before and after agent)
         assert mock_status.call_count == 2
+
+    async def test_pushes_when_remote_exists(
+        self, mocker: pytest.MockerFixture
+    ) -> None:
+        """AC1: Processor pushes after committing when origin remote exists."""
+        mocker.patch(
+            "tachikoma.git.processor._check_git_status",
+            new_callable=AsyncMock,
+            side_effect=[True, False],
+        )
+        mocker.patch(
+            "tachikoma.git.processor.query_and_consume",
+            new_callable=AsyncMock,
+        )
+        mocker.patch(
+            "tachikoma.git.processor._has_remote",
+            new_callable=AsyncMock,
+            return_value=True,
+        )
+        mock_push = mocker.patch(
+            "tachikoma.git.processor._push",
+            new_callable=AsyncMock,
+        )
+
+        processor = GitProcessor(cwd=Path("/workspace"))
+        await processor.process(_make_session())
+
+        mock_push.assert_awaited_once_with(Path("/workspace"))
+
+    async def test_skips_push_when_no_remote(
+        self, mocker: pytest.MockerFixture
+    ) -> None:
+        """AC2: Processor skips push when no origin remote is configured."""
+        mocker.patch(
+            "tachikoma.git.processor._check_git_status",
+            new_callable=AsyncMock,
+            side_effect=[True, False],
+        )
+        mocker.patch(
+            "tachikoma.git.processor.query_and_consume",
+            new_callable=AsyncMock,
+        )
+        mocker.patch(
+            "tachikoma.git.processor._has_remote",
+            new_callable=AsyncMock,
+            return_value=False,
+        )
+        mock_push = mocker.patch(
+            "tachikoma.git.processor._push",
+            new_callable=AsyncMock,
+        )
+
+        processor = GitProcessor(cwd=Path("/workspace"))
+        await processor.process(_make_session())
+
+        mock_push.assert_not_awaited()
+
+    async def test_push_failure_logs_warning_and_continues(
+        self, mocker: pytest.MockerFixture
+    ) -> None:
+        """AC3: Push failure logs warning with details; processor completes normally."""
+        mocker.patch(
+            "tachikoma.git.processor._check_git_status",
+            new_callable=AsyncMock,
+            side_effect=[True, False],
+        )
+        mocker.patch(
+            "tachikoma.git.processor.query_and_consume",
+            new_callable=AsyncMock,
+        )
+        mocker.patch(
+            "tachikoma.git.processor._has_remote",
+            new_callable=AsyncMock,
+            return_value=True,
+        )
+        mocker.patch(
+            "tachikoma.git.processor._push",
+            new_callable=AsyncMock,
+            side_effect=RuntimeError("non-fast-forward"),
+        )
+
+        processor = GitProcessor(cwd=Path("/workspace"))
+
+        # Should not raise — push failure is caught and logged
+        await processor.process(_make_session())
+
+    async def test_no_push_when_workspace_clean(
+        self, mocker: pytest.MockerFixture
+    ) -> None:
+        """AC: No push attempted when workspace is clean (early return before push)."""
+        mocker.patch(
+            "tachikoma.git.processor._check_git_status",
+            new_callable=AsyncMock,
+            return_value=False,
+        )
+        mock_has_remote = mocker.patch(
+            "tachikoma.git.processor._has_remote",
+            new_callable=AsyncMock,
+        )
+
+        processor = GitProcessor(cwd=Path("/workspace"))
+        await processor.process(_make_session())
+
+        mock_has_remote.assert_not_awaited()
 
 
 class TestQueryAndConsume:

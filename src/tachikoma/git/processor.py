@@ -84,9 +84,10 @@ async def query_and_consume(
 
 
 class GitProcessor(PostProcessor):
-    """Post-processor for committing workspace changes.
+    """Post-processor for committing and pushing workspace changes.
 
-    Spawns a Haiku agent to inspect and commit changes after each session.
+    Spawns a Haiku agent to inspect and commit changes after each session,
+    then pushes to the origin remote if one is configured.
     Runs in the finalize phase after all other processors complete.
     """
 
@@ -101,7 +102,7 @@ class GitProcessor(PostProcessor):
         self._cli_path = cli_path
 
     async def process(self, session: Session) -> None:
-        """Commit workspace changes if any exist.
+        """Commit and push workspace changes if any exist.
 
         Args:
             session: The closed session (not used, but required by interface).
@@ -117,6 +118,21 @@ class GitProcessor(PostProcessor):
 
         # Spawn agent to handle commits
         await query_and_consume(GIT_COMMIT_PROMPT, self._cwd, cli_path=self._cli_path)
+
+        # Push to remote if configured (partial commits are valid and worth pushing)
+        has_remote = await _has_remote(self._cwd)
+
+        if has_remote:
+            try:
+                await _push(self._cwd)
+                _log.info("Pushed workspace changes")
+            except Exception as e:
+                _log.warning(
+                    "Push failed, changes remain committed locally: err={err}",
+                    err=str(e),
+                )
+        else:
+            _log.debug("No origin remote configured, skipping push")
 
         # Verify all changes were committed
         still_dirty = await _check_git_status(self._cwd)
@@ -144,3 +160,58 @@ async def _check_git_status(cwd: Path) -> bool:
 
     stdout, _ = await proc.communicate()
     return bool(stdout.strip())
+
+
+async def _has_remote(cwd: Path) -> bool:
+    """Check if the origin remote is configured.
+
+    Uses ``git remote get-url origin`` which is a local-only check
+    (no network call).
+
+    Args:
+        cwd: The workspace directory.
+
+    Returns:
+        True if origin remote exists, False otherwise.
+    """
+    proc = await asyncio.create_subprocess_exec(
+        "git",
+        "remote",
+        "get-url",
+        "origin",
+        cwd=cwd,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+
+    await proc.communicate()
+    return proc.returncode == 0
+
+
+async def _push(cwd: Path) -> None:
+    """Push commits to the origin remote.
+
+    Uses ``git push origin HEAD`` to avoid dependence on upstream tracking
+    configuration.
+
+    Args:
+        cwd: The workspace directory.
+
+    Raises:
+        RuntimeError: If the push command fails.
+    """
+    proc = await asyncio.create_subprocess_exec(
+        "git",
+        "push",
+        "origin",
+        "HEAD",
+        cwd=cwd,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+
+    _, stderr = await proc.communicate()
+
+    if proc.returncode != 0:
+        error_msg = stderr.decode().strip() or f"exit code {proc.returncode}"
+        raise RuntimeError(f"git push failed: {error_msg}")

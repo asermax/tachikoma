@@ -173,8 +173,8 @@ due to auth, guide them to configure their credentials externally.
 Do NOT manually run git commit, git add, or git push — in either the workspace or project \
 repositories. All version control is handled automatically:
 
-- **Workspace**: After each session ends, a post-processing step inspects all changes and \
-creates descriptive, grouped commits automatically.
+- **Workspace**: After each session ends, a post-processing step inspects all changes, \
+creates descriptive grouped commits, and pushes to the remote when one is configured.
 - **Projects**: Each project submodule with uncommitted changes is also committed and pushed \
 to its remote automatically at session end.
 
