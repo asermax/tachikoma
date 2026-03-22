@@ -62,16 +62,16 @@ Three new mechanisms layer onto the existing coordinator:
 
 | Layer/Component | Responsibility | Key Decisions |
 |-----------------|----------------|---------------|
-| `src/tachikoma/boundary/__init__.py` | Re-exports public API: `detect_boundary`, `SummaryProcessor` | New package for boundary detection |
-| `src/tachikoma/boundary/detector.py` | `detect_boundary(message, summary, cwd, *, cli_path=None)` — standalone `query()` with Opus low effort, JSON schema output, returns `bool` (`True` = continues conversation). `cwd` is passed from the coordinator's `self._cwd`. Fully consumes the query() generator (DES-005). Includes structured logging for results and warnings. | Independent of coordinator; pure function + SDK call |
-| `src/tachikoma/boundary/prompts.py` | Prompt templates for boundary detection and summary generation | Separated for easy iteration and testing |
+| `src/tachikoma/boundary/__init__.py` | Re-exports public API: `detect_boundary`, `BoundaryResult`, `SessionCandidate`, `SummaryProcessor` | New package for boundary detection |
+| `src/tachikoma/boundary/detector.py` | `detect_boundary(message, summary, cwd, *, candidates=None, cli_path=None)` — standalone `query()` with Opus low effort, JSON schema output, returns `BoundaryResult(continues, resume_session_id)`. Accepts optional `candidates: list[SessionCandidate]` for session matching. `cwd` is passed from the coordinator's `self._cwd`. Fully consumes the query() generator (DES-005). Includes structured logging for results and warnings. Validates `resume_session_id` (sanitizes empty strings and non-string values to None). | Independent of coordinator; pure function + SDK call |
+| `src/tachikoma/boundary/prompts.py` | Prompt templates for boundary detection (including session matching instructions) and summary generation. Includes `CANDIDATES_SECTION_TEMPLATE` for formatting candidate sessions into the user prompt. | Separated for easy iteration and testing |
 | `src/tachikoma/boundary/summary.py` | `SummaryProcessor` — `MessagePostProcessor` that calls standalone `query()` with Opus low effort to update the rolling summary. Accepts `cli_path` parameter. Logs a warning on empty responses. Fully consumes the query() generator (DES-005). | Uses incremental pattern: previous summary + latest exchange → updated summary |
 | `src/tachikoma/message_post_processing.py` | `MessagePostProcessor` ABC (`process(session, user_message, agent_response)`) and `MessagePostProcessingPipeline` class | Parallel to `post_processing.py` but with a different interface reflecting the per-message context |
 
 ### Cross-Layer Contracts
 
 **Integration Points:**
-- Coordinator ↔ `detect_boundary`: pure function call, returns `bool`, catches all errors and defaults to `True` (continuation). Skipped when `cwd is None`.
+- Coordinator ↔ `detect_boundary`: pure function call, accepts optional `candidates: list[SessionCandidate]`, returns `BoundaryResult`, catches all errors and defaults to `BoundaryResult(continues=True)` (continuation). Skipped when `cwd is None`.
 - Coordinator ↔ `MessagePostProcessingPipeline`: `run(session, user_message, agent_response)`, launched as `asyncio.Task`, reference stored on coordinator
 - `SummaryProcessor` ↔ `SessionRegistry`: calls `update_summary()` to persist the rolling summary
 
@@ -83,7 +83,9 @@ Three new mechanisms layer onto the existing coordinator:
 ### Shared Logic
 
 - **`MessagePostProcessor` ABC** (`message_post_processing.py`): shared interface for per-message processors. Separate from session-level `PostProcessor`.
-- **`Session` dataclass** (`sessions/model.py`): extended with `summary` field. Shared input to both pipelines and the boundary detector.
+- **`BoundaryResult` dataclass** (`boundary/detector.py`): shared between detector (produces) and coordinator (consumes). Contains `continues: bool` and `resume_session_id: str | None`.
+- **`SessionCandidate`** (`boundary/detector.py`): lightweight `(id, summary)` pair passed to the detector. Avoids coupling the boundary package to the full `Session` dataclass.
+- **`Session` dataclass** (`sessions/model.py`): extended with `summary` and `last_resumed_at` fields. Shared input to both pipelines and the boundary detector.
 - **Prompt templates** (`boundary/prompts.py`): shared between summary processor and boundary detector. Centralized for easy iteration.
 
 ## Modeling
@@ -109,11 +111,19 @@ SummaryProcessor (MessagePostProcessor)
 └── process(session, user_message, agent_response) → None
     └── standalone query() with Opus low effort → update summary
 
-detect_boundary(message: str, summary: str, cwd: Path, *, cli_path: str | None = None) → bool
-└── standalone query() with Opus low effort, JSON schema → True (continues) / False (shift)
+BoundaryResult (frozen dataclass)
+├── continues: bool                        (True = continuation, False = topic shift)
+└── resume_session_id: str | None          (matched session ID, only when continues=False)
+
+SessionCandidate (frozen dataclass)
+├── id: str                                (session ID)
+└── summary: str                           (session summary for LLM matching)
+
+detect_boundary(message: str, summary: str, cwd: Path, *, candidates: list[SessionCandidate] | None = None, cli_path: str | None = None) → BoundaryResult
+└── standalone query() with Opus low effort, JSON schema → BoundaryResult
 ```
 
-The function returns a Python `bool`, while the underlying query returns `{"continues_conversation": boolean}` JSON — the function parses and converts the structured output.
+The function returns a `BoundaryResult`, while the underlying query returns `{"continues_conversation": boolean, "resume_session_id": string | null}` JSON — the function parses and converts the structured output. When candidates are provided, the prompt includes their summaries for the LLM to match against.
 
 ### Component relationships
 
@@ -136,9 +146,11 @@ erDiagram
    - If no task: proceed immediately
 3. Coordinator checks for active session; creates one if needed (existing behavior)
 4. If active session exists AND session has a summary AND cwd is not None:
-   a. Call detect_boundary(text, session.summary, cwd) (S5)
-   b. Standalone Opus low effort query returns {"continues_conversation": true}
-   c. Proceed normally
+   a. Fetch recent closed session candidates via registry.get_recent_closed()
+   b. Build SessionCandidate list from sessions (id + summary pairs)
+   c. Call detect_boundary(text, session.summary, cwd, candidates=candidates)
+   d. Standalone Opus low effort query returns {"continues_conversation": true, "resume_session_id": null}
+   e. Proceed normally
 5. Coordinator calls SDK client.query(text), streams response (existing behavior)
 6. During streaming, coordinator accumulates response text:
    - Initialize response_chunks: list[str] = []
@@ -156,29 +168,44 @@ erDiagram
 8. Channel renders response (events were yielded during step 6)
 ```
 
-### Topic shift flow
+### Topic shift flow (fresh session — no match)
 
 ```
 1. Steps 1-3 same as above
-4. detect_boundary returns {"continues_conversation": false}
+4. detect_boundary returns BoundaryResult(continues=False, resume_session_id=None)
 5. Coordinator calls _handle_transition(previous_session):
-   a. Capture active session snapshot (frozen Session dataclass)
-   b. Close session in registry (try/except, log errors) (S7)
-   c. If session had sdk_session_id:
-      - Fire session post-processing as background task (S9):
-        task = asyncio.create_task(pipeline.run(session))
-        Add task to _background_tasks list
+   a. Capture close timestamp, close session in registry (try/except, log errors)
+   b. If session had sdk_session_id:
+      - Fire session post-processing as background task
       - Prune completed tasks from list (avoid unbounded growth)
-      - Note: on_status callback is NOT called for transition-triggered
-        post-processing (only on shutdown)
-   d. Clear SDK session ID (self._sdk_session_id = None)
+   c. No resume_session_id → fresh-session path:
+      - Clear SDK session ID (self._sdk_session_id = None)
       - Store previous summary (self._previous_summary = session.summary)
-      - Next message will start a fresh SDK session (no resume)
-      - _build_options() will inject previous summary into system prompt
-        for the first message only, then clear it
-   e. Create new session in registry (try/except, log errors) (S7)
-6. Coordinator creates fresh ClaudeSDKClient (no resume), calls client.query(text)
-7. Normal streaming + per-message post-processing trigger
+      - Create new session in registry (try/except, log errors)
+   d. Return False (fresh session)
+6. is_new_session = True, resume_id = None
+7. Pre-processing runs, coordinator creates fresh ClaudeSDKClient (no resume)
+8. Normal streaming + per-message post-processing trigger
+```
+
+### Topic shift flow (session resumption — match found)
+
+```
+1. Steps 1-3 same as normal message flow
+4. detect_boundary returns BoundaryResult(continues=False, resume_session_id="abc123")
+5. Coordinator calls _handle_transition(previous_session, resume_session_id="abc123"):
+   a. Capture close timestamp, close session in registry
+   b. Fire async session post-processing for closed session
+   c. resume_session_id present → resume path:
+      - Reopen matched session via registry.reopen_session()
+      - If reopen succeeds: set _sdk_session_id to matched session's sdk_session_id,
+        record resumption (best-effort), assemble bridging context, return True
+      - If reopen fails: fall through to fresh-session path, return False
+6. is_new_session = False (resumed), resume_id = self._sdk_session_id
+7. Pre-processing skipped (resumed SDK session has full prior context)
+8. _build_options(resume=resume_id) appends bridging context to system prompt
+9. ClaudeSDKClient created with resume=sdk_session_id, restoring full prior context
+10. Normal streaming + per-message post-processing trigger
 ```
 
 ### System prompt composition on topic shift
@@ -199,6 +226,31 @@ erDiagram
 
 3. Clear _previous_summary after use (only the first message of the new
    session needs the summary context)
+4. Wrap in SystemPromptPreset(type="preset", preset="claude_code", append=...)
+5. Return ClaudeAgentOptions with the composed system prompt
+```
+
+### System prompt composition on session resumption
+
+```
+1. _build_options() reads base system prompt
+2. If _bridging_context is set, append bridging context section:
+
+   {base_system_prompt}
+
+   # Resumed Conversation
+   You are resuming a previous conversation with the user. The full prior
+   conversation context is available through the SDK session history.
+
+   Since your last exchange, the following conversations occurred:
+
+   {bridging_context}
+
+   Use this context to understand what happened between sessions, but focus
+   on the user's current message.
+
+3. Clear _bridging_context after use (one-time injection, same pattern
+   as _previous_summary)
 4. Wrap in SystemPromptPreset(type="preset", preset="claude_code", append=...)
 5. Return ClaudeAgentOptions with the composed system prompt
 ```
@@ -309,11 +361,17 @@ erDiagram
 **When**: A new message arrives on the same topic
 **Then**: Pending per-message task is awaited, boundary detector classifies as continuation, message is processed normally by the existing SDK session, per-message pipeline is triggered as a background task to update the summary.
 
-### Scenario: Topic shift detected
+### Scenario: Topic shift detected (fresh session)
 
-**Given**: An active session with a summary about "Python testing"
+**Given**: An active session with a summary about "Python testing," no recent closed sessions match the new topic
 **When**: A new message arrives about "What should I have for dinner?"
-**Then**: Boundary detector classifies as topic shift. Transition orchestrator: closes current session, fires async session post-processing (memory extraction), resets SDK client with summary of previous conversation in system prompt, creates new session, processes the message in the fresh context.
+**Then**: Boundary detector classifies as topic shift with `resume_session_id=None`. Transition orchestrator: closes current session, fires async session post-processing (memory extraction), resets SDK client with summary of previous conversation in system prompt, creates new session, processes the message in the fresh context.
+
+### Scenario: Topic shift matches a recent session (resumption)
+
+**Given**: An active session about "dinner plans," a closed session from 2 hours ago about "Python testing" within the lookup window
+**When**: The user sends "Let's get back to the Python tests"
+**Then**: Boundary detector classifies as topic shift with `resume_session_id` pointing to the Python testing session. Coordinator closes the dinner session, fires its post-processing, reopens the Python testing session, records a resumption event, assembles bridging context (the dinner session summary), injects it into the system prompt. The next SDK call uses `resume=<python_session_sdk_id>`, restoring full Python testing conversation history. Pre-processing is skipped.
 
 ### Scenario: First message (no prior session)
 

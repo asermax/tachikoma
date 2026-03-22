@@ -25,6 +25,18 @@ A message is a NEW TOPIC only when:
 - There is no logical connection between the current topic and the new message
 - The user is clearly switching to a different domain/activity
 
+**Session Matching (when candidate sessions are provided)**
+
+If you detect a topic shift AND a list of previous session candidates is provided:
+1. Compare the new message's topic to each candidate's summary
+2. If ONE candidate clearly matches the new topic (same subject matter, related domain), return its session ID
+3. If MULTIPLE candidates match, return the one with the strongest topical alignment
+4. If NO candidates match, return null for resume_session_id
+
+A candidate matches when:
+- The new message's topic is the same as or directly related to the candidate's summary
+- The user appears to be returning to a previously discussed topic
+
 **Examples:**
 
 Current: Python debugging → New: "What about async/await?" → CONTINUATION
@@ -33,7 +45,9 @@ Current: Project architecture → New: "Can you review this code?" → CONTINUAT
 Current: Work project → New: "Let's plan my vacation" → NEW TOPIC
 Current: API design → New: "How do I handle errors?" → CONTINUATION
 
-Respond with a JSON object containing a single boolean field: {"continues_conversation": true} or {"continues_conversation": false}"""
+Current: API design → New: "Remember that Python debugging we did?" → NEW TOPIC + candidate match if available
+
+Respond with a JSON object: {"continues_conversation": boolean, "resume_session_id": string or null}"""
 
 BOUNDARY_DETECTION_USER_PROMPT = """Current conversation summary:
 {summary}
@@ -73,3 +87,9 @@ User: {user_message}
 Assistant: {agent_response}
 
 Please provide an updated summary of this conversation (5-8 sentences, topic-focused):"""
+
+CANDIDATES_SECTION_TEMPLATE = """**Previous Session Candidates**
+
+If this is a topic shift, check if the new message matches one of these previous conversation sessions:
+
+{candidates}"""

@@ -10,6 +10,7 @@ A persistent registry of conversation sessions that tracks when conversations st
 
 - As a post-processing pipeline, I need to query completed sessions so that I can find conversations to analyze
 - As the system, I need a persistent record of session lifecycles so that conversation boundaries and metadata survive restarts
+- As a user, I want the system to reopen a previous session when I return to a topic so that my earlier conversation context is restored
 
 ## Requirements
 
@@ -26,6 +27,10 @@ A persistent registry of conversation sessions that tracks when conversations st
 | R8 | On startup, detect sessions left open from ungraceful shutdowns and mark them as interrupted |
 | R9 | Session tracking failures must not interrupt active conversations |
 | R10 | Rolling conversation summary is updated on the session record by per-message post-processing |
+| R11 | Reopen a closed session by clearing its `ended_at` and setting `last_resumed_at`, making it the active session again |
+| R12 | Track each resumption with a dedicated SessionResumption record capturing session ID, resumption timestamp, and previous close timestamp |
+| R13 | Query recently closed sessions within a configurable time window for resumption candidate matching |
+| R14 | Track `last_resumed_at` timestamp on sessions for downstream processor awareness |
 
 ## Behaviors
 
@@ -89,6 +94,34 @@ When the per-message pipeline completes, it updates the session's rolling conver
 **Acceptance Criteria**:
 - Given an active session, when the per-message pipeline produces a new summary, then the session's `summary` field is updated and persisted
 - Given the session is a frozen dataclass, when the summary is updated, then the active session reference is refreshed with the updated value
+
+### Session Reopening (R11, R14)
+
+The registry can reopen a closed session, making it the active session again for resumption.
+
+**Acceptance Criteria**:
+- Given a closed session with a valid ID, when `reopen_session()` is called, then its `ended_at` is cleared, `last_resumed_at` is set to the current timestamp, and it becomes the active session
+- Given a session ID that does not exist, when `reopen_session()` is called, then it returns None and logs a warning
+- Given a session that is already open, when `reopen_session()` is called, then it returns None and logs a warning
+- Given a session that is already the active session, when `reopen_session()` is called, then it returns None and logs a warning
+
+### Resumption Tracking (R12)
+
+Each resumption event is recorded as a dedicated `SessionResumption` record for audit and history.
+
+**Acceptance Criteria**:
+- Given a session is successfully resumed, then a `SessionResumption` record is created capturing the session ID, resumption timestamp, and previous close timestamp
+- Given a session has been resumed multiple times, when its resumption history is queried, then all resumption records are available in chronological order
+- Given resumption tracking fails (database error), then the session is still resumed successfully — tracking is best-effort
+
+### Recent Sessions Query (R13)
+
+The registry provides a query for recently closed sessions within a configurable time window.
+
+**Acceptance Criteria**:
+- Given a time window and reference timestamp, when `get_recent_closed()` is called, then only sessions closed within that window with non-null SDK session IDs and non-null summaries are returned
+- Given sessions closed outside the time window, when queried, then they are excluded
+- Given only interrupted sessions (no `sdk_session_id`) exist within the window, when queried, then they are excluded
 
 ### Graceful Degradation (R9)
 

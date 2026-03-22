@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Literal
 
-from sqlalchemy import DateTime, Index
+from sqlalchemy import DateTime, ForeignKey, Index
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 SessionStatus = Literal["open", "closed", "interrupted"]
@@ -27,6 +27,7 @@ class Session:
     transcript_path: str | None = None
     summary: str | None = None
     ended_at: datetime | None = None
+    last_resumed_at: datetime | None = None
 
     @property
     def status(self) -> SessionStatus:
@@ -43,6 +44,18 @@ class Session:
             return "closed"
 
         return "interrupted"
+
+
+@dataclass(frozen=True)
+class SessionResumption:
+    """Domain representation of a session resumption event.
+
+    Tracks when a session was reopened to continue a previous conversation.
+    """
+
+    session_id: str
+    resumed_at: datetime
+    previous_ended_at: datetime
 
 
 # ---------------------------------------------------------------------------
@@ -70,6 +83,7 @@ class SessionRecord(Base):
     # so datetimes round-trip with their tzinfo intact.
     started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
+    last_resumed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
 
     __table_args__ = (
         Index("ix_sessions_started_at", "started_at"),
@@ -88,6 +102,34 @@ class SessionRecord(Base):
             summary=self.summary,
             started_at=_ensure_utc(self.started_at),  # type: ignore[arg-type]
             ended_at=_ensure_utc(self.ended_at),
+            last_resumed_at=_ensure_utc(self.last_resumed_at),
+        )
+
+
+class SessionResumptionRecord(Base):
+    """SQLAlchemy ORM model for the session_resumptions table.
+
+    Internal to the persistence layer; callers never see this type.
+    Use to_domain() to convert to the SessionResumption dataclass.
+    """
+
+    __tablename__ = "session_resumptions"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    session_id: Mapped[str] = mapped_column(ForeignKey("sessions.id"))
+    resumed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    previous_ended_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+    __table_args__ = (
+        Index("ix_session_resumptions_session_id", "session_id"),
+    )
+
+    def to_domain(self) -> SessionResumption:
+        """Convert ORM record to domain dataclass."""
+        return SessionResumption(
+            session_id=self.session_id,
+            resumed_at=_ensure_utc(self.resumed_at),  # type: ignore[arg-type]
+            previous_ended_at=_ensure_utc(self.previous_ended_at),  # type: ignore[arg-type]
         )
 
 

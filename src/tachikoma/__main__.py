@@ -139,6 +139,7 @@ async def main(
             env={"CLAUDE_CODE_DISABLE_AUTO_MEMORY": "1"},
             on_status=lambda msg: console.print(msg, style="dim italic grey50"),
             cli_path=cli_path,
+            session_resume_window=settings.agent.session_resume_window,
         ) as coordinator:
             # Dispatch based on channel setting
             if settings.channel == "telegram":

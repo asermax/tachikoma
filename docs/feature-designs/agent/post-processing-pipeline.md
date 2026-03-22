@@ -46,7 +46,7 @@ A parallel concept — the `MessagePostProcessingPipeline` — follows a similar
 └───────────────────────────────────────────────────────────┘
 ```
 
-A `PromptDrivenProcessor` base class (DES-004) standardizes the pattern for processors that fork the SDK session with a prompt. Accepts an optional `cli_path` parameter. Simple processors inherit `process()` from the base; complex processors override it for pre/post steps while still using `fork_and_consume()` internally.
+A `PromptDrivenProcessor` base class (DES-004) standardizes the pattern for processors that fork the SDK session with a prompt. Accepts an optional `cli_path` parameter. Simple processors inherit `process()` from the base; complex processors override it for pre/post steps while still using `fork_and_consume()` internally. The base `process()` method automatically applies resumption-aware prompt augmentation via `augment_prompt_for_resumption()` when `session.last_resumed_at` is set.
 
 A standalone `fork_and_consume()` helper encapsulates the SDK session forking pattern, available to any processor that needs to fork a session. It accepts an optional `mcp_servers` parameter for providing custom in-process MCP tools to the forked agent, and an optional `cli_path` parameter for the Claude CLI binary path.
 
@@ -56,7 +56,7 @@ A standalone `fork_and_consume()` helper encapsulates the SDK session forking pa
 
 | Layer/Component | Responsibility | Key Decisions |
 |-----------------|----------------|---------------|
-| `src/tachikoma/post_processing.py` | `PostProcessor` ABC (interface only), `PromptDrivenProcessor` base class (DES-004, accepts `cli_path`), `PostProcessingPipeline` class (with phased execution), `fork_and_consume` standalone helper (with optional `mcp_servers` and `cli_path`), phase constants (`MAIN_PHASE`, `FINALIZE_PHASE`) | Separate module from any processor domain; ABC has no SDK coupling; `PromptDrivenProcessor` standardizes the fork pattern; fork helper uses standalone `query()` and accepts optional `mcp_servers` for custom in-process tools and `cli_path` for native binary; pipeline supports sequential phases for ordering dependencies |
+| `src/tachikoma/post_processing.py` | `PostProcessor` ABC (interface only), `PromptDrivenProcessor` base class (DES-004, accepts `cli_path`), `PostProcessingPipeline` class (with phased execution), `fork_and_consume` standalone helper (with optional `mcp_servers` and `cli_path`), `augment_prompt_for_resumption(prompt, session)` shared helper for resumption-aware prompt augmentation, phase constants (`MAIN_PHASE`, `FINALIZE_PHASE`) | Separate module from any processor domain; ABC has no SDK coupling; `PromptDrivenProcessor` standardizes the fork pattern with built-in resumption awareness; fork helper uses standalone `query()` and accepts optional `mcp_servers` for custom in-process tools and `cli_path` for native binary; pipeline supports sequential phases for ordering dependencies |
 
 ### Cross-Layer Contracts
 
@@ -103,7 +103,8 @@ sequenceDiagram
 ### Shared Logic
 
 - **`PostProcessor` ABC** (`post_processing.py`): shared interface between all processors. Defines only the `process()` contract.
-- **`PromptDrivenProcessor`** (`post_processing.py`): base class for processors that fork the SDK session with a prompt (DES-004). Stores `_prompt`, `_cwd`, and `_cli_path`, implements `process()` via `fork_and_consume()`. Simple subclasses inherit `process()`; complex subclasses override it for pre/post steps and call `fork_and_consume()` directly.
+- **`PromptDrivenProcessor`** (`post_processing.py`): base class for processors that fork the SDK session with a prompt (DES-004). Stores `_prompt`, `_cwd`, and `_cli_path`, implements `process()` via `augment_prompt_for_resumption()` + `fork_and_consume()`. Simple subclasses inherit `process()`; complex subclasses override it for pre/post steps and must call `augment_prompt_for_resumption()` before `fork_and_consume()` to maintain resumption awareness.
+- **`augment_prompt_for_resumption` function** (`post_processing.py`): standalone helper that appends a resumption boundary instruction to a prompt when `session.last_resumed_at` is set. Used by `PromptDrivenProcessor.process()` automatically; must be called explicitly by subclasses that override `process()`.
 - **`fork_and_consume` function** (`post_processing.py`): standalone helper encapsulating SDK `query()` forking pattern. Accepts optional `mcp_servers` parameter for providing custom in-process MCP tools to the forked agent, and optional `cli_path` for the Claude CLI binary path. Available to processors needing session context.
 - **`Session` dataclass** (`sessions/model.py`): shared input to the pipeline — processors read `sdk_session_id`.
 - **Phase constants** (`post_processing.py`): `MAIN_PHASE = "main"`, `PRE_FINALIZE_PHASE = "pre_finalize"`, `FINALIZE_PHASE = "finalize"` — centralized alongside pipeline validation logic.
@@ -125,7 +126,11 @@ PromptDrivenProcessor(PostProcessor)                    [DES-004]
 ├── _prompt: str
 ├── _cwd: Path
 ├── _cli_path: str | None
-└── process(session) → fork_and_consume(session, prompt, cwd, cli_path=cli_path)
+└── process(session) → augment_prompt_for_resumption(prompt, session) + fork_and_consume(session, augmented_prompt, cwd, cli_path=cli_path)
+
+augment_prompt_for_resumption(prompt: str, session: Session) → str  (standalone helper)
+└── If session.last_resumed_at is set, appends resumption boundary instruction
+    If None, returns prompt unchanged
 
 fork_and_consume(session, prompt, cwd, mcp_servers=None, cli_path=None) → None  (standalone helper)
 ```

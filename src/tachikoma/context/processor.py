@@ -18,7 +18,11 @@ from tachikoma.context.tools import (
     create_pending_signals_server,
     parse_pending_signals,
 )
-from tachikoma.post_processing import PromptDrivenProcessor, fork_and_consume
+from tachikoma.post_processing import (
+    PromptDrivenProcessor,
+    augment_prompt_for_resumption,
+    fork_and_consume,
+)
 from tachikoma.sessions.model import Session
 
 _log = logger.bind(component="core_context_processor")
@@ -232,10 +236,12 @@ class CoreContextProcessor(PromptDrivenProcessor):
                 # File exists but can't stat — treat as unchanged
                 mtimes_before[filename] = None
 
+        prompt = augment_prompt_for_resumption(formatted_prompt, session)
+
         # Fork session with pending signals tools
         await fork_and_consume(
             session,
-            formatted_prompt,
+            prompt,
             self._cwd,
             mcp_servers={"pending-signals": pending_signals_server},
             cli_path=self._cli_path,

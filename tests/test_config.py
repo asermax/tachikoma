@@ -52,6 +52,20 @@ class TestSettingsModel:
 
         assert settings.agent.allowed_tools == ["Read", "Glob", "Grep"]
 
+    def test_default_session_resume_window(self) -> None:
+        """AC (DLT-028): agent.session_resume_window defaults to 86400 (1 day)."""
+        settings = Settings()
+
+        assert settings.agent.session_resume_window == 86400
+
+    def test_custom_session_resume_window(self) -> None:
+        """AC (DLT-028): agent.session_resume_window can be customized."""
+        settings = Settings.model_validate({
+            "agent": {"session_resume_window": 3600},
+        })
+
+        assert settings.agent.session_resume_window == 3600
+
     def test_frozen_prevents_mutation(self) -> None:
         """Settings instances are immutable."""
         settings = Settings()
@@ -148,6 +162,18 @@ class TestDefaultConfigGeneration:
         assert "logging" in content.lower()
         assert "level" in content
         assert "console" in content
+
+    def test_generated_file_contains_session_resume_window(self, tmp_path: Path) -> None:
+        """AC (DLT-028): Generated file contains session_resume_window with int format."""
+        config_path = tmp_path / "config.toml"
+        _generate_default_config(config_path)
+
+        content = config_path.read_text()
+
+        assert "session_resume_window" in content
+        # Should be formatted as int, not quoted string
+        assert "session_resume_window = 86400" in content
+        assert 'session_resume_window = "86400"' not in content
 
     def test_creates_parent_directories(self, tmp_path: Path) -> None:
         """AC (R4): Missing directory is created before writing."""

@@ -7,6 +7,7 @@ continuity. Topic shifts simply start a new session without resume.
 
 import asyncio
 from collections.abc import AsyncIterator, Callable
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import TracebackType
 
@@ -15,7 +16,7 @@ from claude_agent_sdk.types import AgentDefinition, PermissionMode, SystemPrompt
 from loguru import logger
 
 from tachikoma.adapter import adapt
-from tachikoma.boundary import detect_boundary
+from tachikoma.boundary import BoundaryResult, SessionCandidate, detect_boundary
 from tachikoma.events import AgentEvent, Error, Result, Status, TextChunk
 from tachikoma.message_post_processing import MessagePostProcessingPipeline
 from tachikoma.post_processing import PostProcessingPipeline
@@ -75,6 +76,7 @@ class Coordinator:
         on_status: Callable[[str], None] | None = None,
         agents: dict[str, AgentDefinition] | None = None,
         cli_path: str | None = None,
+        session_resume_window: int = 86400,
     ) -> None:
         # Store individual options for building ClaudeAgentOptions per message
         self._allowed_tools = allowed_tools or []
@@ -86,9 +88,13 @@ class Coordinator:
         self._env = env or {}
         self._agents = agents
 
+        # Session resumption configuration
+        self._session_resume_window = session_resume_window
+
         # SDK session tracking for resume
         self._sdk_session_id: str | None = None
         self._previous_summary: str | None = None
+        self._bridging_context: str | None = None
 
         # MCP servers extracted from pre-processing pipeline (session-scoped)
         self._mcp_servers: dict[str, McpServerConfig] = {}
@@ -180,6 +186,9 @@ class Coordinator:
 
         On topic shift, the previous conversation summary is appended to the
         system prompt for the first message of the new session only.
+
+        On session resumption, bridging context is appended to provide context
+        about conversations that occurred between the original session and now.
         """
         append_text = self._base_system_prompt or ""
 
@@ -202,6 +211,26 @@ the user explicitly refers back to it.
             # Clear after first use — only the first message of the new session
             # needs the summary context
             self._previous_summary = None
+
+        if self._bridging_context is not None:
+            bridging_section = f"""
+
+# Resumed Conversation
+You are resuming a previous conversation that the user had earlier. The
+following summaries describe conversations that occurred between then and now,
+providing context for what the user has been doing in the meantime.
+
+{self._bridging_context}"""
+
+            append_text = (
+                append_text + bridging_section
+                if append_text
+                else bridging_section[1:]
+            )
+
+            # Clear after first use — only the first message of the resumed session
+            # needs the bridging context
+            self._bridging_context = None
 
         sdk_system_prompt = None
         if append_text:
@@ -276,15 +305,44 @@ the user explicitly refers back to it.
         # Boundary detection: check if the message continues the current topic
         if will_detect_boundary:
             try:
-                continues = await detect_boundary(
-                    text, active.summary, self._cwd, cli_path=self._cli_path
+                # Query recent closed sessions as candidates for resumption
+                candidates: list[SessionCandidate] | None = None
+                if self._registry is not None:
+                    try:
+                        now = datetime.now(UTC)
+                        window = timedelta(seconds=self._session_resume_window)
+                        recent = await self._registry.get_recent_closed(
+                            before=now, window=window
+                        )
+                        candidates = [
+                            SessionCandidate(id=s.id, summary=s.summary)
+                            for s in recent
+                        ]
+                    except Exception as exc:
+                        _log.exception(
+                            "Failed to query resume candidates: err={err}",
+                            err=str(exc),
+                        )
+
+                result: BoundaryResult = await detect_boundary(
+                    text,
+                    active.summary,
+                    self._cwd,
+                    candidates=candidates,
+                    cli_path=self._cli_path,
                 )
-                if not continues:
-                    _log.info("Topic shift detected, transitioning to new session")
-                    await self._handle_transition(active)
+                if not result.continues:
+                    _log.info(
+                        "Topic shift detected, transitioning session"
+                        " (resume_id={resume_id})",
+                        resume_id=result.resume_session_id,
+                    )
+                    resumed = await self._handle_transition(
+                        active, resume_session_id=result.resume_session_id
+                    )
                     # Re-fetch active session after transition
                     active = await self._registry.get_active_session()
-                    is_new_session = True
+                    is_new_session = not resumed
             except Exception as exc:
                 # Boundary detection failures default to continuation (fail-open)
                 _log.exception(
@@ -390,15 +448,22 @@ the user explicitly refers back to it.
 
         _log.debug("Response complete")
 
-    async def _handle_transition(self, previous_session: Session) -> None:
+    async def _handle_transition(
+        self, previous_session: Session, *, resume_session_id: str | None = None
+    ) -> bool:
         """Handle session transition on topic shift.
 
-        Closes the current session, fires async post-processing, clears the
-        SDK session ID (so the next message starts fresh), and creates a new session.
+        Closes the current session, fires async post-processing, then either:
+        - Resumes a previous session if resume_session_id is provided and valid
+        - Creates a fresh session if no resume or resume fails
+
+        Returns:
+            True if a previous session was resumed, False if a fresh session was created.
         """
         session_snapshot = previous_session
 
-        # Close session in registry
+        # Close session in registry — capture the close timestamp for bridging context
+        closed_at = datetime.now(UTC)
         if self._registry is not None:
             try:
                 await self._registry.close_session(session_snapshot.id)
@@ -415,8 +480,38 @@ the user explicitly refers back to it.
             # Prune completed tasks to avoid unbounded growth
             self._background_tasks = [t for t in self._background_tasks if not t.done()]
 
-        # Clear SDK session so next message starts a fresh conversation.
-        # Save the summary for injection into the new session's system prompt.
+        # Try resume path if a session ID was provided
+        if resume_session_id is not None and self._registry is not None:
+            try:
+                reopened = await self._registry.reopen_session(resume_session_id)
+                if reopened is not None:
+                    # Resume successful — set SDK session ID and assemble bridging context
+                    self._sdk_session_id = reopened.sdk_session_id
+
+                    # Record the resumption event (best-effort)
+                    await self._registry.record_resumption(
+                        session_id=reopened.id,
+                        previous_ended_at=closed_at,
+                    )
+
+                    # Assemble bridging context from intermediate sessions
+                    await self._assemble_bridging_context(reopened, closed_at)
+
+                    _log.info(
+                        "Session resumed: session_id={id} sdk_session_id={sdk}",
+                        id=reopened.id,
+                        sdk=self._sdk_session_id,
+                    )
+                    return True
+
+            except Exception as exc:
+                _log.exception(
+                    "Failed to resume session, falling back to fresh: err={err}",
+                    err=str(exc),
+                )
+
+        # Fresh-session path: clear SDK session so next message starts fresh
+        # Save the summary for injection into the new session's system prompt
         self._sdk_session_id = None
         self._agents = None
         self._previous_summary = session_snapshot.summary
@@ -431,6 +526,51 @@ the user explicitly refers back to it.
                     "Failed to create new session during transition: err={err}",
                     err=str(exc),
                 )
+
+        return False
+
+    async def _assemble_bridging_context(
+        self, resumed_session: Session, closed_at: datetime
+    ) -> None:
+        """Assemble bridging context from intermediate sessions.
+
+        Finds sessions that occurred between when the resumed session ended
+        and now, concatenates their summaries to provide context.
+
+        Args:
+            resumed_session: The session being resumed.
+            closed_at: When the previous session was closed (before resume).
+        """
+        if self._registry is None:
+            self._bridging_context = None
+            return
+
+        try:
+            now = datetime.now(UTC)
+            intermediate = await self._registry.get_by_time_range(closed_at, now)
+
+            # Filter: exclude the resumed session, include only those with summaries
+            summaries = []
+            for session in intermediate:
+                if session.id != resumed_session.id and session.summary:
+                    summaries.append(session.summary)
+
+            if summaries:
+                # Concatenate chronologically (earliest first - get_by_time_range returns DESC)
+                self._bridging_context = "\n\n".join(reversed(summaries))
+                _log.debug(
+                    "Bridging context assembled: session_count={n}",
+                    n=len(summaries),
+                )
+            else:
+                self._bridging_context = None
+
+        except Exception as exc:
+            _log.exception(
+                "Failed to assemble bridging context: err={err}",
+                err=str(exc),
+            )
+            self._bridging_context = None
 
     async def interrupt(self) -> None:
         """Interrupt the current agent response."""

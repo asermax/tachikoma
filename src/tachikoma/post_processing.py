@@ -76,13 +76,33 @@ class PromptDrivenProcessor(PostProcessor):
     async def process(self, session: Session) -> None:
         """Process by forking the SDK session with the configured prompt.
 
+        If the session was resumed from a previous conversation (indicated by
+        last_resumed_at), an augmentation is appended to the prompt to provide
+        context to the forked agent.
+
         Args:
             session: The closed session to process.
         """
         name = self.__class__.__name__
         _log.info("Processor started: processor={name}", name=name)
-        await fork_and_consume(session, self._prompt, self._cwd, cli_path=self._cli_path)
+
+        prompt = augment_prompt_for_resumption(self._prompt, session)
+        await fork_and_consume(session, prompt, self._cwd, cli_path=self._cli_path)
         _log.info("Processor completed: processor={name}", name=name)
+
+
+def augment_prompt_for_resumption(prompt: str, session: Session) -> str:
+    """Append resumption awareness to a prompt if the session was resumed."""
+    if session.last_resumed_at is None:
+        return prompt
+
+    return (
+        f"{prompt}\n\n"
+        f"IMPORTANT: This session was resumed from a previous "
+        f"conversation at {session.last_resumed_at}. The user is "
+        f"returning to a topic they discussed earlier. Keep this "
+        f"context in mind when processing."
+    )
 
 
 class PostProcessingPipeline:

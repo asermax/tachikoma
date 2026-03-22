@@ -6,12 +6,12 @@ crash recovery. Delegates all persistence to SessionRepository.
 
 import asyncio
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from loguru import logger
 
-from tachikoma.sessions.model import Session
+from tachikoma.sessions.model import Session, SessionResumption
 from tachikoma.sessions.repository import SessionRepository
 
 _log = logger.bind(component="sessions")
@@ -124,6 +124,124 @@ class SessionRegistry:
     async def get_active_session(self) -> Session | None:
         """Return the currently active session, or None if no session is open."""
         return self._active_session
+
+    async def reopen_session(self, session_id: str) -> Session | None:
+        """Reopen a closed session for resumption.
+
+        Validates that the session exists, is closed, and is not already active.
+        On success, clears ended_at and sets last_resumed_at, then updates
+        _active_session to the reopened session.
+
+        Args:
+            session_id: The ID of the closed session to reopen.
+
+        Returns:
+            The reopened Session, or None if validation failed.
+        """
+        # Fetch the session
+        session = await self._repository.get_by_id(session_id)
+        if session is None:
+            _log.warning(
+                "Cannot reopen session: not found session_id={id}",
+                id=session_id,
+            )
+            return None
+
+        # Validate it's closed
+        if session.ended_at is None:
+            _log.warning(
+                "Cannot reopen session: already open session_id={id}",
+                id=session_id,
+            )
+            return None
+
+        # Validate it's not already active (edge case)
+        if self._active_session is not None and self._active_session.id == session_id:
+            _log.warning(
+                "Cannot reopen session: already active session_id={id}",
+                id=session_id,
+            )
+            return None
+
+        now = datetime.now(UTC)
+
+        # Update the session: clear ended_at, set last_resumed_at
+        await self._repository.update(
+            session_id,
+            ended_at=None,
+            last_resumed_at=now,
+        )
+
+        # Construct the reopened session from known data (avoids a second DB fetch)
+        from dataclasses import replace  # noqa: PLC0415
+        reopened = replace(session, ended_at=None, last_resumed_at=now)
+        self._active_session = reopened
+
+        _log.info(
+            "Session reopened: session_id={id} previous_ended_at={ts}",
+            id=session_id,
+            ts=session.ended_at,
+        )
+
+        return reopened
+
+    async def get_recent_closed(
+        self, before: datetime, window: timedelta
+    ) -> list[Session]:
+        """Return recently closed sessions within the time window.
+
+        Delegates to repository. Used by coordinator to find resumption candidates.
+
+        Args:
+            before: The reference timestamp (typically now).
+            window: How far back to look for closed sessions.
+        """
+        return await self._repository.get_recent_closed(before, window)
+
+    async def record_resumption(
+        self, session_id: str, previous_ended_at: datetime
+    ) -> None:
+        """Record a session resumption event.
+
+        Creates a SessionResumption record. Failures are logged but not raised
+        (tracking is best-effort per R7).
+
+        Args:
+            session_id: The ID of the resumed session.
+            previous_ended_at: When the session was closed before this resumption.
+        """
+        try:
+            resumption = SessionResumption(
+                session_id=session_id,
+                resumed_at=datetime.now(UTC),
+                previous_ended_at=previous_ended_at,
+            )
+            await self._repository.create_resumption(resumption)
+
+            _log.debug(
+                "Resumption recorded: session_id={id} previous_ended_at={ts}",
+                id=session_id,
+                ts=previous_ended_at,
+            )
+        except Exception as exc:
+            # Best-effort tracking: log but don't raise
+            _log.warning(
+                "Failed to record resumption (best-effort): session_id={id} err={err}",
+                id=session_id,
+                err=str(exc),
+            )
+
+    async def get_by_time_range(self, start: datetime, end: datetime) -> list[Session]:
+        """Return sessions whose time span overlaps the given [start, end) range.
+
+        Delegates to repository. Used by coordinator to find intermediate sessions
+        for bridging context.
+
+        Args:
+            start: Start of the time range.
+            end: End of the time range.
+        """
+        return await self._repository.get_by_time_range(start, end)
 
     async def recover_interrupted(self) -> None:
         """Close any sessions left open from a previous ungraceful shutdown.

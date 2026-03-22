@@ -298,69 +298,92 @@ class TestRepositoryClose:
 
 
 class TestRepositoryMigration:
-    """Tests for schema migration."""
+    """Tests for Alembic schema migrations."""
 
-    async def test_migrate_adds_summary_column_to_existing_table(
-        self, tmp_path: Path
-    ) -> None:
-        """AC: migrate() adds summary column if it doesn't exist."""
-
+    async def test_initialize_creates_full_schema(self, tmp_path: Path) -> None:
+        """AC: initialize() creates the sessions table with all expected columns."""
         db_path = tmp_path / "sessions.db"
 
-        # Create a table without the summary column (simulating old schema)
+        repo = SessionRepository(db_path)
+        await repo.initialize()
+        await repo.close()
+
+        # Verify all expected columns exist
+        async with aiosqlite.connect(db_path) as db:
+            cursor = await db.execute("PRAGMA table_info('sessions')")
+            columns = {row[1] for row in await cursor.fetchall()}
+
+        expected_columns = {
+            "id",
+            "sdk_session_id",
+            "transcript_path",
+            "summary",
+            "started_at",
+            "ended_at",
+            "last_resumed_at",
+        }
+        assert expected_columns.issubset(columns)
+
+    async def test_initialize_migrates_existing_database(
+        self, tmp_path: Path
+    ) -> None:
+        """AC: initialize() adds new columns to existing database via Alembic."""
+        db_path = tmp_path / "sessions.db"
+
+        # Create a table with the OLD schema (no last_resumed_at)
         async with aiosqlite.connect(db_path) as db:
             await db.execute(
                 """CREATE TABLE sessions (
                     id TEXT PRIMARY KEY,
                     sdk_session_id TEXT,
                     transcript_path TEXT,
+                    summary TEXT,
                     started_at TEXT,
                     ended_at TEXT
                 )"""
             )
+            # Add alembic_version to mark the old baseline as applied
+            await db.execute(
+                """CREATE TABLE alembic_version (
+                    version_num TEXT PRIMARY KEY
+                )"""
+            )
+            await db.execute(
+                "INSERT INTO alembic_version (version_num) VALUES ('001_initial')"
+            )
             await db.commit()
 
-        # Verify summary column doesn't exist
+        # Verify last_resumed_at column doesn't exist
         async with aiosqlite.connect(db_path) as db:
             cursor = await db.execute(
-                "SELECT * FROM pragma_table_info('sessions') WHERE name='summary'"
+                "SELECT * FROM pragma_table_info('sessions') WHERE name='last_resumed_at'"
             )
             row = await cursor.fetchone()
             assert row is None
 
-        # Initialize and migrate
+        # Initialize should run pending migrations
         repo = SessionRepository(db_path)
         await repo.initialize()
-        await repo.migrate()
+        await repo.close()
 
-        # Verify summary column now exists
+        # Verify the column was added
         async with aiosqlite.connect(db_path) as db:
             cursor = await db.execute(
-                "SELECT * FROM pragma_table_info('sessions') WHERE name='summary'"
+                "SELECT * FROM pragma_table_info('sessions') WHERE name='last_resumed_at'"
             )
             row = await cursor.fetchone()
             assert row is not None
 
-        await repo.close()
-
-    async def test_migrate_noop_when_column_exists(self, tmp_path: Path) -> None:
-        """AC: migrate() is idempotent when column already exists."""
+    async def test_initialize_is_idempotent(self, tmp_path: Path) -> None:
+        """AC: calling initialize() multiple times is safe (Alembic upgrade head)."""
         db_path = tmp_path / "sessions.db"
 
-        # Normal initialization creates the full schema including summary
         repo = SessionRepository(db_path)
         await repo.initialize()
 
-        # Running migrate on fresh DB should not error
-        await repo.migrate()
-
-        # Verify the column exists
-
-        async with aiosqlite.connect(db_path) as db:
-            cursor = await db.execute(
-                "SELECT * FROM pragma_table_info('sessions') WHERE name='summary'"
-            )
-            row = await cursor.fetchone()
-            assert row is not None
-
+        # Second initialization should succeed without error
         await repo.close()
+        repo2 = SessionRepository(db_path)
+        await repo2.initialize()
+        await repo2.close()
+

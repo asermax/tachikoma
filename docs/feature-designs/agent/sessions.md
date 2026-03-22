@@ -71,12 +71,12 @@ The **SessionRegistry** is the facade that the coordinator calls. It owns the bu
 
 | Layer/Component | Responsibility | Key Decisions |
 |-----------------|----------------|---------------|
-| `src/tachikoma/sessions/model.py` | SQLAlchemy ORM model (`SessionRecord`) + frozen dataclass (`Session`) + `DeclarativeBase` | Separate ORM model from domain dataclass; callers never see SQLAlchemy types |
-| `src/tachikoma/sessions/repository.py` | `SessionRepository`: async engine lifecycle, CRUD operations, schema creation, time-range queries, `migrate()` for schema evolution (checks `pragma_table_info` for column existence, runs `ALTER TABLE` if missing) | Owns SQLAlchemy engine + session factory; all SQL is behind async methods |
-| `src/tachikoma/sessions/registry.py` | `SessionRegistry`: business logic facade, creation lock, crash recovery, status derivation, `update_summary()` for persisting rolling summaries (re-fetch-and-replace pattern, same as `update_metadata()`) | Receives repository via constructor; owns the `asyncio.Lock` |
+| `src/tachikoma/sessions/model.py` | SQLAlchemy ORM models (`SessionRecord`, `SessionResumptionRecord`) + frozen dataclasses (`Session`, `SessionResumption`) + `DeclarativeBase` | Separate ORM models from domain dataclasses; callers never see SQLAlchemy types |
+| `src/tachikoma/sessions/repository.py` | `SessionRepository`: async engine lifecycle, CRUD operations, schema creation, time-range queries, `_run_migrations()` for schema evolution (uses `create_all()` for fresh databases plus `pragma_table_info` checks and `ALTER TABLE`/`CREATE TABLE` for existing databases), `get_recent_closed()` for resumption candidates, `create_resumption()`/`get_resumptions_for_session()` for resumption tracking | Owns SQLAlchemy engine + session factory; all SQL is behind async methods |
+| `src/tachikoma/sessions/registry.py` | `SessionRegistry`: business logic facade, creation lock, crash recovery, status derivation, `update_summary()` for persisting rolling summaries, `reopen_session()` for session resumption (uses `dataclasses.replace()` to construct reopened session — avoids redundant DB fetch), `get_recent_closed()` for candidate queries, `record_resumption()` for best-effort tracking | Receives repository via constructor; owns the `asyncio.Lock` |
 | `src/tachikoma/sessions/errors.py` | `SessionRepositoryError`: wraps SQLAlchemy exceptions for clean error contract | Callers catch one domain exception, not SQLAlchemy internals |
 | `src/tachikoma/sessions/hooks.py` | `session_recovery_hook`: creates repository + registry, runs recovery, stores on context extras | Registered as bootstrap hook; runs after workspace hook |
-| `src/tachikoma/sessions/__init__.py` | Re-exports public API: `Session`, `SessionRegistry`, `SessionRepository`, `SessionRepositoryError` | Clean public API for the sessions package |
+| `src/tachikoma/sessions/__init__.py` | Re-exports public API: `Session`, `SessionResumption`, `SessionRegistry`, `SessionRepository`, `SessionRepositoryError` | Clean public API for the sessions package |
 
 ### Cross-Layer Contracts
 
@@ -113,7 +113,7 @@ sequenceDiagram
 ```
 
 **Integration Points:**
-- Coordinator → SessionRegistry: `get_active_session()` + `create_session()` on first message, `update_metadata()` on Result events, `close_session()` on shutdown and topic shift
+- Coordinator → SessionRegistry: `get_active_session()` + `create_session()` on first message, `update_metadata()` on Result events, `close_session()` on shutdown and topic shift, `get_recent_closed()` for resumption candidates, `reopen_session()` for session resumption, `record_resumption()` for best-effort tracking, `get_by_time_range()` for bridging context assembly
 - SummaryProcessor → SessionRegistry: `update_summary()` after each per-message pipeline run (see [boundary detection design](boundary-detection.md))
 - SessionRegistry → SessionRepository: all persistence delegated
 - SessionRepository → SQLAlchemy AsyncEngine → aiosqlite → sessions.db
@@ -141,6 +141,7 @@ Repository methods raise `SessionRepositoryError` on persistence failures (wrapp
 
 ```mermaid
 erDiagram
+    Session ||--o{ SessionResumption : "tracked by"
     Session {
         string id PK "UUID4 hex string"
         string sdk_session_id "nullable - set on Result event"
@@ -148,6 +149,13 @@ erDiagram
         string summary "nullable - rolling conversation summary"
         datetime started_at "UTC - set on creation"
         datetime ended_at "nullable UTC - set on close"
+        datetime last_resumed_at "nullable UTC - set on reopen"
+    }
+    SessionResumption {
+        int id PK "autoincrement"
+        string session_id FK "references sessions.id"
+        datetime resumed_at "UTC - when resumption occurred"
+        datetime previous_ended_at "UTC - close timestamp before resumption"
     }
 ```
 
@@ -160,11 +168,17 @@ Session (frozen dataclass)
 ├── transcript_path: str | None       (derived from SDK session ID)
 ├── summary: str | None               (rolling conversation summary, updated by per-message pipeline)
 ├── started_at: datetime              (UTC, set at creation time)
-├── ended_at: datetime | None         (UTC, set when session closes)
+├── ended_at: datetime | None         (UTC, set when session closes; cleared on reopen)
+├── last_resumed_at: datetime | None  (UTC, set when session is reopened for resumption)
 └── status: SessionStatus (property)  (derived, not persisted)
     ├── "open"        — ended_at is None
     ├── "closed"      — ended_at is set AND sdk_session_id is set
     └── "interrupted" — ended_at is set AND sdk_session_id is None
+
+SessionResumption (frozen dataclass)
+├── session_id: str                   (FK → sessions.id)
+├── resumed_at: datetime              (UTC, when resumption occurred)
+└── previous_ended_at: datetime       (UTC, close timestamp before this resumption)
 ```
 
 `SessionStatus` is a `Literal["open", "closed", "interrupted"]` type.
@@ -180,10 +194,19 @@ SessionRecord (DeclarativeBase)
 ├── summary: Mapped[str | None]       (rolling conversation summary)
 ├── started_at: Mapped[datetime]      (DateTime(timezone=True))
 ├── ended_at: Mapped[datetime | None] (DateTime(timezone=True))
+├── last_resumed_at: Mapped[datetime | None] (DateTime(timezone=True))
 └── index on started_at               (for time-range queries)
+
+SessionResumptionRecord (DeclarativeBase)
+├── __tablename__ = "session_resumptions"
+├── id: Mapped[int]                   (primary_key=True, autoincrement)
+├── session_id: Mapped[str]           (ForeignKey("sessions.id"))
+├── resumed_at: Mapped[datetime]      (DateTime(timezone=True))
+├── previous_ended_at: Mapped[datetime] (DateTime(timezone=True))
+└── index on session_id
 ```
 
-The ORM model is internal to the persistence layer. A `to_domain()` method on `SessionRecord` converts to the frozen `Session` dataclass. The registry and all callers work exclusively with `Session` instances.
+The ORM models are internal to the persistence layer. A `to_domain()` method on each record converts to the frozen dataclass. The registry and all callers work exclusively with domain instances.
 
 ## Data Flow
 
@@ -229,8 +252,11 @@ The `transcript_path` is derived from the SDK session ID using the known Claude 
 ```
 1. session_recovery_hook runs (after workspace_hook)
 2. Creates SessionRepository(data_path / "sessions.db")
-3. await repository.initialize() — creates engine, runs schema creation via run_sync
-3b. await repository.migrate() — applies schema migrations for new columns (checks pragma_table_info, runs ALTER TABLE if missing)
+3. await repository.initialize() — creates engine, session factory, and runs
+   _run_migrations() which handles both fresh and existing databases:
+   - create_all() for fresh databases (creates all tables from ORM metadata)
+   - pragma_table_info checks + ALTER TABLE for column additions on existing databases
+   - sqlite_master checks + CREATE TABLE for new tables on existing databases
 4. Creates SessionRegistry(repository)
 5. Calls registry.recover_interrupted():
    a. Queries open sessions (ended_at IS NULL)
@@ -247,6 +273,45 @@ The `transcript_path` is derived from the SDK session ID using the known Claude 
 4. Registry re-fetches session via repository.get_by_id()
 5. Registry replaces _active_session with new frozen Session instance
    (same re-fetch-and-replace pattern as update_metadata())
+```
+
+### Session reopen (resumption)
+
+```
+1. Coordinator calls registry.reopen_session(session_id)
+2. Registry fetches session via repository.get_by_id()
+3. Registry validates: exists, is closed (ended_at not None), is not already active
+4. If invalid: log warning, return None
+5. Registry calls repository.update(id, ended_at=None, last_resumed_at=now)
+6. Registry constructs reopened Session via dataclasses.replace()
+   (avoids a second DB fetch since all field values are known)
+7. Registry sets _active_session = reopened
+8. Returns reopened Session
+```
+
+### Recent sessions query (resumption candidates)
+
+```
+1. Coordinator calls registry.get_recent_closed(before=now, window=timedelta)
+2. Registry delegates to repository.get_recent_closed(before, window)
+3. Repository queries:
+   SELECT * FROM sessions
+   WHERE ended_at IS NOT NULL
+     AND sdk_session_id IS NOT NULL
+     AND summary IS NOT NULL
+     AND ended_at > (before - window)
+   ORDER BY ended_at DESC
+4. Returns list of Session dataclass instances
+```
+
+### Resumption tracking
+
+```
+1. Coordinator calls registry.record_resumption(session_id, previous_ended_at)
+2. Registry creates SessionResumption(session_id, resumed_at=now, previous_ended_at)
+3. Registry calls repository.create_resumption(resumption)
+4. Repository persists SessionResumptionRecord, commits
+5. On failure: error logged, not raised (best-effort per R7)
 ```
 
 ### Query by time range
@@ -360,6 +425,36 @@ The `transcript_path` is derived from the SDK session ID using the known Claude 
 **When**: The recovery hook runs
 **Then**: No changes are made. The hook completes silently.
 **Rationale**: Idempotent — safe to run on every launch.
+
+### Scenario: Session reopened for resumption
+
+**Given**: A closed session with `sdk_session_id` and `ended_at` set
+**When**: The coordinator calls `reopen_session()` with the session ID
+**Then**: `ended_at` is cleared, `last_resumed_at` is set to now, the session becomes the active session. The registry constructs the reopened session via `dataclasses.replace()` without a redundant DB fetch.
+
+### Scenario: Reopen fails — session not found
+
+**Given**: A session ID that doesn't exist in the database
+**When**: `reopen_session()` is called
+**Then**: A warning is logged and None is returned. The coordinator falls back to fresh-session behavior.
+
+### Scenario: Resumption tracking recorded
+
+**Given**: A session was successfully reopened
+**When**: `record_resumption()` is called
+**Then**: A `SessionResumption` record is persisted with the session ID, current timestamp, and previous close timestamp.
+
+### Scenario: Resumption tracking fails gracefully
+
+**Given**: A session was successfully reopened
+**When**: `record_resumption()` encounters a database error
+**Then**: The error is logged but the session remains resumed — tracking is best-effort.
+
+### Scenario: Session resumed, closed, then resumed again
+
+**Given**: A session that was previously resumed and then closed again
+**When**: `reopen_session()` is called again
+**Then**: `ended_at` is cleared, `last_resumed_at` is updated to the new timestamp. A second `SessionResumption` record is created.
 
 ### Scenario: Session tracking failure during conversation
 

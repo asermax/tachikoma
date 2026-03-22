@@ -2,7 +2,7 @@
 
 **Scope**: Project-wide
 **Date**: 2026-03-15
-**Last Updated**: 2026-03-15
+**Last Updated**: 2026-03-21
 
 ## Pattern
 
@@ -75,28 +75,40 @@ class MyProcessor(PostProcessor):
 
 **Why**: This reimplements the same pattern that `PromptDrivenProcessor` already provides. It adds unnecessary boilerplate and creates inconsistency with other processors.
 
+## Resumption Augmentation Contract
+
+The base `process()` method automatically calls `augment_prompt_for_resumption(self._prompt, session)` before `fork_and_consume()`. This appends a resumption boundary instruction when `session.last_resumed_at` is set, telling the forked agent to skip already-processed content.
+
+**Subclasses that override `process()` must also call `augment_prompt_for_resumption()`** before passing the prompt to `fork_and_consume()`. This is a convention, not an enforced contract — but omitting it means the forked agent will re-extract content from the pre-resumption part of the conversation.
+
+```python
+from tachikoma.post_processing import (
+    PromptDrivenProcessor, augment_prompt_for_resumption, fork_and_consume,
+)
+
+class ComplexProcessor(PromptDrivenProcessor):
+    async def process(self, session: Session) -> None:
+        # Pre-step
+        await some_pre_step()
+
+        # Apply resumption augmentation before forking
+        prompt = augment_prompt_for_resumption(self._prompt, session)
+
+        # Fork with custom tools
+        await fork_and_consume(
+            session, prompt, self._cwd,
+            mcp_servers={"custom": custom_server},
+        )
+
+        # Post-step
+        await some_post_step()
+```
+
 ## Exceptions
 
 When a processor needs radically different forking behavior (e.g., different session handling, custom options beyond `mcp_servers`), it may be appropriate to extend `PostProcessor` directly. However, consider whether the base class can be extended to support the new use case first.
 
-When a processor needs pre/post steps around the fork:
-```python
-class ComplexProcessor(PromptDrivenProcessor):
-    async def process(self, session: Session) -> None:
-        # Pre-step: cleanup, setup, etc.
-        await some_pre_step()
-
-        # Fork with custom tools
-        await fork_and_consume(
-            session, self._prompt, self._cwd,
-            mcp_servers={"custom": custom_server},
-        )
-
-        # Post-step: logging, validation, etc.
-        await some_post_step()
-```
-
-This is the expected pattern for complex processors — override `process()` entirely and call `fork_and_consume()` directly.
+When a processor needs pre/post steps around the fork, override `process()` entirely, call `augment_prompt_for_resumption()` on the prompt, then call `fork_and_consume()` directly (see example above).
 
 ---
 

@@ -117,3 +117,4 @@ return None
 - See also: [DES-002](DES-002-logging-conventions.md) - Logging conventions for error handling
 - Related feature: [../feature-designs/memory/memory-context-retrieval.md](../feature-designs/memory/memory-context-retrieval.md) - Memory context provider (first instance)
 - Related feature: [../feature-designs/agent/skills.md](../feature-designs/agent/skills.md) - Skills context provider (second instance)
+- Related feature: [../feature-designs/agent/boundary-detection.md](../feature-designs/agent/boundary-detection.md) - Boundary detector uses same standalone `query()` with Opus low effort pattern (not a context provider, but same technical approach)

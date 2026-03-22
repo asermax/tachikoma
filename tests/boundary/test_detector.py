@@ -1,6 +1,7 @@
 """Tests for boundary detection.
 
 Tests for DLT-026: Detect conversation boundaries via topic analysis.
+Tests for DLT-028: Resume conversation on topic revisit.
 """
 
 from pathlib import Path
@@ -8,15 +9,63 @@ from pathlib import Path
 import pytest
 from claude_agent_sdk.types import ResultMessage
 
-from tachikoma.boundary.detector import detect_boundary
+from tachikoma.boundary.detector import (
+    BoundaryResult,
+    SessionCandidate,
+    detect_boundary,
+)
+
+
+class TestSessionCandidate:
+    """Tests for SessionCandidate dataclass."""
+
+    def test_instantiates_with_required_fields(self) -> None:
+        """AC: SessionCandidate has id and summary fields."""
+        candidate = SessionCandidate(id="session-123", summary="Discussion about Python")
+
+        assert candidate.id == "session-123"
+        assert candidate.summary == "Discussion about Python"
+
+    def test_is_frozen(self) -> None:
+        """AC: SessionCandidate is immutable."""
+        candidate = SessionCandidate(id="session-123", summary="Summary")
+
+        with pytest.raises(AttributeError):
+            candidate.id = "new-id"
+
+
+class TestBoundaryResult:
+    """Tests for BoundaryResult dataclass."""
+
+    def test_instantiates_with_continues_only(self) -> None:
+        """AC: BoundaryResult can be created with just continues field."""
+        result = BoundaryResult(continues=True)
+
+        assert result.continues is True
+        assert result.resume_session_id is None
+
+    def test_instantiates_with_all_fields(self) -> None:
+        """AC: BoundaryResult can include resume_session_id."""
+        result = BoundaryResult(continues=False, resume_session_id="session-456")
+
+        assert result.continues is False
+        assert result.resume_session_id == "session-456"
+
+    def test_is_frozen(self) -> None:
+        """AC: BoundaryResult is immutable."""
+        result = BoundaryResult(continues=True)
+
+        with pytest.raises(AttributeError):
+            result.continues = False
 
 
 class TestDetectBoundary:
     """Tests for detect_boundary() function."""
 
-    async def test_returns_true_for_continuation(self, mocker: pytest.MockerFixture) -> None:
-        """AC: Continuation returns True."""
-        # Mock the query to return a continuation result
+    async def test_returns_boundary_result_for_continuation(
+        self, mocker: pytest.MockerFixture
+    ) -> None:
+        """AC: Continuation returns BoundaryResult with continues=True."""
         async def fake_query(*args, **kwargs):
             yield ResultMessage(
                 subtype="success",
@@ -27,7 +76,7 @@ class TestDetectBoundary:
                 session_id="test-session",
                 total_cost_usd=0.01,
                 usage={"input_tokens": 10},
-                structured_output={"continues_conversation": True},
+                structured_output={"continues_conversation": True, "resume_session_id": None},
             )
 
         mocker.patch("tachikoma.boundary.detector.query", side_effect=fake_query)
@@ -38,10 +87,14 @@ class TestDetectBoundary:
             cwd=Path("/workspace"),
         )
 
-        assert result is True
+        assert isinstance(result, BoundaryResult)
+        assert result.continues is True
+        assert result.resume_session_id is None
 
-    async def test_returns_false_for_topic_shift(self, mocker: pytest.MockerFixture) -> None:
-        """AC: Topic shift returns False."""
+    async def test_returns_boundary_result_for_topic_shift(
+        self, mocker: pytest.MockerFixture
+    ) -> None:
+        """AC: Topic shift returns BoundaryResult with continues=False."""
         async def fake_query(*args, **kwargs):
             yield ResultMessage(
                 subtype="success",
@@ -52,7 +105,7 @@ class TestDetectBoundary:
                 session_id="test-session",
                 total_cost_usd=0.01,
                 usage={"input_tokens": 10},
-                structured_output={"continues_conversation": False},
+                structured_output={"continues_conversation": False, "resume_session_id": None},
             )
 
         mocker.patch("tachikoma.boundary.detector.query", side_effect=fake_query)
@@ -63,7 +116,112 @@ class TestDetectBoundary:
             cwd=Path("/workspace"),
         )
 
-        assert result is False
+        assert isinstance(result, BoundaryResult)
+        assert result.continues is False
+        assert result.resume_session_id is None
+
+    async def test_returns_resume_session_id_when_match_found(
+        self, mocker: pytest.MockerFixture
+    ) -> None:
+        """AC: Topic shift with matching candidate returns resume_session_id."""
+        async def fake_query(*args, **kwargs):
+            yield ResultMessage(
+                subtype="success",
+                duration_ms=100,
+                duration_api_ms=80,
+                is_error=False,
+                num_turns=1,
+                session_id="test-session",
+                total_cost_usd=0.01,
+                usage={"input_tokens": 10},
+                structured_output={
+                    "continues_conversation": False,
+                    "resume_session_id": "session-123",
+                },
+            )
+
+        mocker.patch("tachikoma.boundary.detector.query", side_effect=fake_query)
+
+        candidates = [
+            SessionCandidate(id="session-123", summary="Discussion about Python debugging"),
+        ]
+
+        result = await detect_boundary(
+            message="Remember that Python debugging we did?",
+            summary="User is discussing meal planning.",
+            cwd=Path("/workspace"),
+            candidates=candidates,
+        )
+
+        assert isinstance(result, BoundaryResult)
+        assert result.continues is False
+        assert result.resume_session_id == "session-123"
+
+    async def test_returns_none_resume_id_when_no_match(
+        self, mocker: pytest.MockerFixture
+    ) -> None:
+        """AC: Topic shift without match returns resume_session_id=None."""
+        async def fake_query(*args, **kwargs):
+            yield ResultMessage(
+                subtype="success",
+                duration_ms=100,
+                duration_api_ms=80,
+                is_error=False,
+                num_turns=1,
+                session_id="test-session",
+                total_cost_usd=0.01,
+                usage={"input_tokens": 10},
+                structured_output={
+                    "continues_conversation": False,
+                    "resume_session_id": None,
+                },
+            )
+
+        mocker.patch("tachikoma.boundary.detector.query", side_effect=fake_query)
+
+        candidates = [
+            SessionCandidate(id="session-123", summary="Discussion about cooking"),
+        ]
+
+        result = await detect_boundary(
+            message="Let's talk about space exploration",
+            summary="User is discussing Python testing.",
+            cwd=Path("/workspace"),
+            candidates=candidates,
+        )
+
+        assert isinstance(result, BoundaryResult)
+        assert result.continues is False
+        assert result.resume_session_id is None
+
+    async def test_with_empty_candidates_list(
+        self, mocker: pytest.MockerFixture
+    ) -> None:
+        """AC: Empty candidates list works correctly."""
+        async def fake_query(*args, **kwargs):
+            yield ResultMessage(
+                subtype="success",
+                duration_ms=100,
+                duration_api_ms=80,
+                is_error=False,
+                num_turns=1,
+                session_id="test-session",
+                total_cost_usd=0.01,
+                usage={"input_tokens": 10},
+                structured_output={"continues_conversation": True, "resume_session_id": None},
+            )
+
+        mocker.patch("tachikoma.boundary.detector.query", side_effect=fake_query)
+
+        result = await detect_boundary(
+            message="Hello",
+            summary="Test summary",
+            cwd=Path("/workspace"),
+            candidates=[],
+        )
+
+        assert result.continues is True
+        assert result.resume_session_id is None
 
     async def test_passes_opus_low_effort_model_to_options(
         self, mocker: pytest.MockerFixture
@@ -81,7 +239,7 @@ class TestDetectBoundary:
                 session_id="test-session",
                 total_cost_usd=0.01,
                 usage={"input_tokens": 10},
-                structured_output={"continues_conversation": True},
+                structured_output={"continues_conversation": True, "resume_session_id": None},
             )
 
         mock_query.return_value = fake_query_gen()
@@ -98,10 +256,10 @@ class TestDetectBoundary:
         assert options.model == "opus"
         assert options.effort == "low"
 
-    async def test_passes_json_schema_output_format(
+    async def test_passes_json_schema_output_format_with_resume_field(
         self, mocker: pytest.MockerFixture
     ) -> None:
-        """AC: Uses JSON schema for reliable parsing."""
+        """AC: Uses JSON schema with continues_conversation and resume_session_id."""
         mock_query = mocker.patch("tachikoma.boundary.detector.query")
 
         async def fake_query_gen(*args, **kwargs):
@@ -114,7 +272,7 @@ class TestDetectBoundary:
                 session_id="test-session",
                 total_cost_usd=0.01,
                 usage={"input_tokens": 10},
-                structured_output={"continues_conversation": True},
+                structured_output={"continues_conversation": True, "resume_session_id": None},
             )
 
         mock_query.return_value = fake_query_gen()
@@ -130,6 +288,7 @@ class TestDetectBoundary:
         assert options.output_format is not None
         assert options.output_format["type"] == "json_schema"
         assert "continues_conversation" in options.output_format["schema"]["properties"]
+        assert "resume_session_id" in options.output_format["schema"]["properties"]
 
     async def test_propagates_query_errors(self, mocker: pytest.MockerFixture) -> None:
         """AC: SDK errors propagate (coordinator handles fail-open)."""
@@ -149,7 +308,7 @@ class TestDetectBoundary:
     async def test_defaults_to_continuation_when_no_structured_output(
         self, mocker: pytest.MockerFixture
     ) -> None:
-        """AC: Returns True (continuation) when structured_output is None."""
+        """AC: Returns BoundaryResult(continues=True) when structured_output is None."""
         async def fake_query(*args, **kwargs):
             yield ResultMessage(
                 subtype="success",
@@ -171,12 +330,13 @@ class TestDetectBoundary:
             cwd=Path("/workspace"),
         )
 
-        assert result is True
+        assert result.continues is True
+        assert result.resume_session_id is None
 
     async def test_defaults_to_continuation_when_no_result_message(
         self, mocker: pytest.MockerFixture
     ) -> None:
-        """AC: Returns True (continuation) when no ResultMessage received."""
+        """AC: Returns BoundaryResult(continues=True) when no ResultMessage received."""
         async def fake_query(*args, **kwargs):
             # Yield nothing - no messages
             return
@@ -190,7 +350,8 @@ class TestDetectBoundary:
             cwd=Path("/workspace"),
         )
 
-        assert result is True
+        assert result.continues is True
+        assert result.resume_session_id is None
 
     async def test_passes_cwd_to_options(self, mocker: pytest.MockerFixture) -> None:
         """AC: Working directory is passed to SDK options."""
@@ -206,7 +367,7 @@ class TestDetectBoundary:
                 session_id="test-session",
                 total_cost_usd=0.01,
                 usage={"input_tokens": 10},
-                structured_output={"continues_conversation": True},
+                structured_output={"continues_conversation": True, "resume_session_id": None},
             )
 
         mock_query.return_value = fake_query_gen()
@@ -236,7 +397,7 @@ class TestDetectBoundary:
                 session_id="test-session",
                 total_cost_usd=0.01,
                 usage={"input_tokens": 10},
-                structured_output={"continues_conversation": True},
+                structured_output={"continues_conversation": True, "resume_session_id": None},
             )
 
         mock_query.return_value = fake_query_gen()
@@ -250,3 +411,101 @@ class TestDetectBoundary:
         call_kwargs = mock_query.call_args
         options = call_kwargs[1]["options"]
         assert options.allowed_tools == []
+
+    async def test_includes_candidates_in_prompt_when_provided(
+        self, mocker: pytest.MockerFixture
+    ) -> None:
+        """AC: Candidates are formatted into the user prompt."""
+        mock_query = mocker.patch("tachikoma.boundary.detector.query")
+
+        async def fake_query_gen(*args, **kwargs):
+            yield ResultMessage(
+                subtype="success",
+                duration_ms=100,
+                duration_api_ms=80,
+                is_error=False,
+                num_turns=1,
+                session_id="test-session",
+                total_cost_usd=0.01,
+                usage={"input_tokens": 10},
+                structured_output={"continues_conversation": True, "resume_session_id": None},
+            )
+
+        mock_query.return_value = fake_query_gen()
+
+        candidates = [
+            SessionCandidate(id="session-123", summary="Discussion about Python"),
+        ]
+
+        await detect_boundary(
+            message="Hello",
+            summary="Test summary",
+            cwd=Path("/workspace"),
+            candidates=candidates,
+        )
+
+        call_kwargs = mock_query.call_args
+        prompt = call_kwargs[1]["prompt"]
+        assert "session-123" in prompt
+        assert "Discussion about Python" in prompt
+
+    async def test_does_not_include_candidates_when_not_provided(
+        self, mocker: pytest.MockerFixture
+    ) -> None:
+        """AC: Candidates section is not added when no candidates provided."""
+        mock_query = mocker.patch("tachikoma.boundary.detector.query")
+
+        async def fake_query_gen(*args, **kwargs):
+            yield ResultMessage(
+                subtype="success",
+                duration_ms=100,
+                duration_api_ms=80,
+                is_error=False,
+                num_turns=1,
+                session_id="test-session",
+                total_cost_usd=0.01,
+                usage={"input_tokens": 10},
+                structured_output={"continues_conversation": True, "resume_session_id": None},
+            )
+
+        mock_query.return_value = fake_query_gen()
+
+        await detect_boundary(
+            message="Hello",
+            summary="Test summary",
+            cwd=Path("/workspace"),
+        )
+
+        call_kwargs = mock_query.call_args
+        prompt = call_kwargs[1]["prompt"]
+        assert "Previous Session Candidates" not in prompt
+
+    async def test_empty_string_resume_id_treated_as_none(
+        self, mocker: pytest.MockerFixture
+    ) -> None:
+        """AC: Empty string resume_session_id is converted to None."""
+        async def fake_query(*args, **kwargs):
+            yield ResultMessage(
+                subtype="success",
+                duration_ms=100,
+                duration_api_ms=80,
+                is_error=False,
+                num_turns=1,
+                session_id="test-session",
+                total_cost_usd=0.01,
+                usage={"input_tokens": 10},
+                structured_output={
+                    "continues_conversation": False,
+                    "resume_session_id": "",
+                },
+            )
+
+        mocker.patch("tachikoma.boundary.detector.query", side_effect=fake_query)
+
+        result = await detect_boundary(
+            message="New topic",
+            summary="Old topic",
+            cwd=Path("/workspace"),
+        )
+
+        assert result.resume_session_id is None
