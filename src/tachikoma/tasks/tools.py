@@ -304,8 +304,8 @@ def create_task_tools_server(repository: TaskRepository) -> McpSdkServerConfig:
             }
 
     return create_sdk_mcp_server(
-        "task-tools",
-        [list_tasks, create_task, update_task, delete_task],
+        name="task-tools",
+        tools=[list_tasks, create_task, update_task, delete_task],
     )
 
 

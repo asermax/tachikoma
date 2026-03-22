@@ -22,6 +22,7 @@ from tachikoma.tasks.model import (
 )
 from tachikoma.tasks.repository import TaskRepository
 from tachikoma.tasks.scheduler import instance_generator, session_task_scheduler
+from tachikoma.tasks.tools import create_task_tools_server
 
 __all__ = [
     "BackgroundTaskExecutor",
@@ -35,6 +36,7 @@ __all__ = [
     "TaskStatus",
     "TaskType",
     "background_task_runner",
+    "create_task_tools_server",
     "instance_generator",
     "session_task_scheduler",
 ]
