@@ -63,7 +63,7 @@ Three new mechanisms layer onto the existing coordinator:
 | Layer/Component | Responsibility | Key Decisions |
 |-----------------|----------------|---------------|
 | `src/tachikoma/boundary/__init__.py` | Re-exports public API: `detect_boundary`, `BoundaryResult`, `SessionCandidate`, `SummaryProcessor` | New package for boundary detection |
-| `src/tachikoma/boundary/detector.py` | `detect_boundary(message, summary, cwd, *, candidates=None, cli_path=None)` — standalone `query()` with Opus low effort, JSON schema output, returns `BoundaryResult(continues, resume_session_id)`. Accepts optional `candidates: list[SessionCandidate]` for session matching. `cwd` is passed from the coordinator's `self._cwd`. Fully consumes the query() generator (DES-005). Includes structured logging for results and warnings. Validates `resume_session_id` (sanitizes empty strings and non-string values to None). | Independent of coordinator; pure function + SDK call |
+| `src/tachikoma/boundary/detector.py` | `detect_boundary(message, summary, cwd, *, candidates=None, cli_path=None)` — standalone `query()` with Opus low effort, JSON schema output, returns `BoundaryResult(continues, resume_session_id)`. Uses defense-in-depth tool restriction: default permission mode, `allowed_tools=[]`, `max_turns=3` (DES-007 "Disabling Tools"). Accepts optional `candidates: list[SessionCandidate]` for session matching. `cwd` is passed from the coordinator's `self._cwd`. Fully consumes the query() generator (DES-005). Includes structured logging for results and warnings. Validates `resume_session_id` (sanitizes empty strings and non-string values to None). | Independent of coordinator; pure function + SDK call |
 | `src/tachikoma/boundary/prompts.py` | Prompt templates for boundary detection (including session matching instructions) and summary generation. Includes `CANDIDATES_SECTION_TEMPLATE` for formatting candidate sessions into the user prompt. | Separated for easy iteration and testing |
 | `src/tachikoma/boundary/summary.py` | `SummaryProcessor` — `MessagePostProcessor` that calls standalone `query()` with Opus low effort to update the rolling summary. Accepts `cli_path` parameter. Logs a warning on empty responses. Fully consumes the query() generator (DES-005). | Uses incremental pattern: previous summary + latest exchange → updated summary |
 | `src/tachikoma/message_post_processing.py` | `MessagePostProcessor` ABC (`process(session, user_message, agent_response)`) and `MessagePostProcessingPipeline` class | Parallel to `post_processing.py` but with a different interface reflecting the per-message context |
@@ -264,9 +264,9 @@ erDiagram
    - System: "You are a conversation summarizer..."
    - User: previous summary + latest exchange + instructions
 4. Call standalone query() with:
-   - model="opus", effort="low"
+   - model="opus", effort="low", max_turns=3
    - system_prompt=SUMMARY_SYSTEM_PROMPT (plain string, not Claude Code preset)
-   - No tools (summary is a text-only task)
+   - No tools: allowed_tools=[], default permission mode (DES-007 "Disabling Tools")
    - cwd from constructor
 5. Consume response, extract text from AssistantMessage
 6. Call registry.update_summary(session.id, extracted_text)

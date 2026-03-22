@@ -2,7 +2,7 @@
 
 **Scope**: Project-wide
 **Date**: 2026-03-21
-**Last Updated**: 2026-03-21
+**Last Updated**: 2026-03-22
 
 ## Pattern
 
@@ -20,14 +20,13 @@ Codifying the invariant core ensures consistency across providers while document
 
 **Invariant core** (same across all providers):
 - `model="opus"`, `effort="low"`
-- `permission_mode="bypassPermissions"`
 - Sentinel string for "no results" (e.g., `NO_RELEVANT_MEMORIES`, `NO_RELEVANT_SKILLS`)
 - Full generator consumption (DES-005)
 - Graceful error handling: catch exceptions, log per DES-002, return None
 - Structured logging with provider context
 
 **Variable parts** (differ per provider):
-- Tool access: some providers need tools (e.g., `allowed_tools=["Read", "Glob", "Grep"]` with `max_turns=8` for memory), others need none (e.g., skills classification uses no tools with `max_turns=3`)
+- Tool access and permission mode (see "Disabling Tools" section below)
 - Prompt content and result parsing logic
 - Sentinel string value
 
@@ -56,7 +55,7 @@ async def _classify(self, message: str) -> str | None:
         model="opus",
         effort="low",
         max_turns=3,
-        permission_mode="bypassPermissions",
+        allowed_tools=[],
         cwd=self._cwd,
         cli_path=self._cli_path,
     )
@@ -74,7 +73,7 @@ async def _classify(self, message: str) -> str | None:
     return result
 ```
 
-**Why**: Uses the standard invariant core (Opus low effort, bypass permissions, full generator consumption, sentinel pattern, graceful error handling). Variable parts (tools, max_turns, prompt) are provider-specific.
+**Why**: Uses the standard invariant core (Opus low effort, full generator consumption, sentinel pattern, graceful error handling) with the tool-less agent pattern (default permission mode, `allowed_tools=[]`, `max_turns=3`). See "Disabling Tools" section for rationale.
 
 ### Don't Do This
 
@@ -101,6 +100,22 @@ return None
 ```
 
 **Why**: Without a sentinel, the provider can't distinguish "classified and found nothing" from "agent error or unparseable response." The sentinel enables different logging and handling for each case.
+
+## Disabling Tools
+
+Agents that should not use tools require defense in depth to prevent rogue execution. This is critical because the `allowed_tools` parameter has an SDK bug where an empty list `[]` is treated as falsy and never passed to the CLI — so `allowed_tools=[]` alone does not restrict tools.
+
+**For agents that need tools** (e.g., memory context provider):
+- `permission_mode="bypassPermissions"` — tools must execute without interactive approval
+- `allowed_tools=["Read", "Glob", "Grep"]` — explicit tool allowlist
+- `max_turns=8` — generous limit for multi-step tool use
+
+**For agents that should NOT use tools** (e.g., boundary detection, summarization, skill classification):
+- Omit `permission_mode` (default mode) — headless `query()` calls have no `can_use_tool` callback, so any tool permission request raises an exception
+- `allowed_tools=[]` — documents intent; will also enforce once the SDK bug is fixed
+- `max_turns=3` — hard limit prevents runaway execution as an additional safeguard
+
+The three layers work independently: default permission mode denies tools at the permission level, `allowed_tools=[]` will deny at the allowlist level (once fixed), and `max_turns=3` caps execution regardless.
 
 ## Exceptions
 
