@@ -119,16 +119,9 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 **Complexity**: Easy
 **Description**: Build an eval suite for the core context update post-processor using the evaluation framework (DLT-015). Tests whether the right updates are being applied to SOUL.md, USER.md, and AGENTS.md from sample conversations. Test cases should cover: detecting explicit user information changes, ignoring ambiguous or uncertain information, not overwriting correct existing information with noise, correctly routing updates to the right file (user info to USER.md, personality feedback to SOUL.md), and handling conversations with no context-file-relevant information. Measures precision (no false updates applied) and conservatism (only high-confidence changes are made).
 
-### DLT-021: Skill detection and context injection
-**Status**: ✓ Reconciled
-**Depends on**: None
-**Priority**: 3 (Medium)
-**Complexity**: Medium
-**Description**: Build the skills context provider that plugs into the pre-processing pipeline to automatically detect and inject relevant skills into the agent's context. On a new session's first message, the provider queries the skill registry for all available skills, classifies which are relevant using LLM-based analysis, then injects matched skills' instruction text and directory paths as an XML context block. Matched skills' agent definitions are loaded into the SDK client for delegation. Once skills are loaded in a session, they persist across subsequent messages without re-detection. Detection should balance precision (don't load irrelevant skills that waste context) with recall (don't miss applicable skills). This delta does NOT cover skill definition, registry, or agent infrastructure, nor constrained execution (post-v1).
-
 ### DLT-022: Eval: Skill detection quality
 **Status**: ✗ Defined
-**Depends on**: DLT-015, DLT-021
+**Depends on**: DLT-015
 **Priority**: 5 (Backlog)
 **Complexity**: Easy
 **Description**: Build an eval suite for the skills context provider using the evaluation framework (DLT-015). Tests whether the right skills are being detected and injected for given input messages. Test cases should cover: detecting relevant skills when they exist, not injecting irrelevant skills that waste context, handling messages where no skills apply, prioritizing when multiple skills match, and correctly loading skill content into agent context. Measures precision (no irrelevant skills injected) and recall (applicable skills not missed) of the skill detection process.
