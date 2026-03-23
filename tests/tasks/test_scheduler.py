@@ -1,6 +1,7 @@
 """Tests for task scheduler and instance generator."""
 
 import asyncio
+import contextlib
 from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock
 
@@ -38,10 +39,8 @@ class TestInstanceGenerator:
 
         # Cancel the task
         task.cancel()
-        try:
+        with contextlib.suppress(asyncio.CancelledError):
             await task
-        except asyncio.CancelledError:
-            pass
 
         # Check that an instance was created
         instances = await repo.get_pending_instances("session")
@@ -60,10 +59,8 @@ class TestInstanceGenerator:
         task = asyncio.create_task(instance_generator(repo, settings))
         await asyncio.sleep(0.1)
         task.cancel()
-        try:
+        with contextlib.suppress(asyncio.CancelledError):
             await task
-        except asyncio.CancelledError:
-            pass
 
         # No instances should be created
         instances = await repo.get_pending_instances("session")
@@ -85,10 +82,8 @@ class TestInstanceGenerator:
         task = asyncio.create_task(instance_generator(repo, settings))
         await asyncio.sleep(0.1)
         task.cancel()
-        try:
+        with contextlib.suppress(asyncio.CancelledError):
             await task
-        except asyncio.CancelledError:
-            pass
 
         # Should still only have one instance
         instances = await repo.get_pending_instances("session")
@@ -109,10 +104,8 @@ class TestInstanceGenerator:
         task = asyncio.create_task(instance_generator(repo, settings))
         await asyncio.sleep(0.1)
         task.cancel()
-        try:
+        with contextlib.suppress(asyncio.CancelledError):
             await task
-        except asyncio.CancelledError:
-            pass
 
         # Check definition is disabled
         updated_def = await repo.get_definition("def-1")
@@ -140,10 +133,8 @@ class TestInstanceGenerator:
         task = asyncio.create_task(instance_generator(repo, settings))
         await asyncio.sleep(0.1)
         task.cancel()
-        try:
+        with contextlib.suppress(asyncio.CancelledError):
             await task
-        except asyncio.CancelledError:
-            pass
 
         # No new instance should be created
         instances = await repo.get_pending_instances("session")
@@ -177,17 +168,16 @@ class TestSessionTaskScheduler:
 
         # Mock last_message_time to be old (idle)
         last_msg_time = datetime.now(UTC) - timedelta(minutes=10)
-        get_last_msg_time = lambda: last_msg_time
+        def get_last_msg_time():
+            return last_msg_time
 
         task = asyncio.create_task(
             session_task_scheduler(repo, settings, bus, get_last_msg_time)
         )
         await asyncio.sleep(0.1)
         task.cancel()
-        try:
+        with contextlib.suppress(asyncio.CancelledError):
             await task
-        except asyncio.CancelledError:
-            pass
 
         # Check event was dispatched
         assert len(dispatched_events) == 1
@@ -210,17 +200,16 @@ class TestSessionTaskScheduler:
 
         # Mock last_message_time to be recent (user active)
         last_msg_time = datetime.now(UTC) - timedelta(seconds=30)
-        get_last_msg_time = lambda: last_msg_time
+        def get_last_msg_time():
+            return last_msg_time
 
         task = asyncio.create_task(
             session_task_scheduler(repo, settings, bus, get_last_msg_time)
         )
         await asyncio.sleep(0.1)
         task.cancel()
-        try:
+        with contextlib.suppress(asyncio.CancelledError):
             await task
-        except asyncio.CancelledError:
-            pass
 
         # No event should be dispatched
         bus.dispatch.assert_not_called()
@@ -236,17 +225,16 @@ class TestSessionTaskScheduler:
         settings = TaskSettings(idle_window=0, check_interval=300)
         bus = EventBus()
         bus.dispatch = AsyncMock()
-        get_last_msg_time = lambda: None
+        def get_last_msg_time():
+            return None
 
         task = asyncio.create_task(
             session_task_scheduler(repo, settings, bus, get_last_msg_time)
         )
         await asyncio.sleep(0.1)
         task.cancel()
-        try:
+        with contextlib.suppress(asyncio.CancelledError):
             await task
-        except asyncio.CancelledError:
-            pass
 
         # No event should be dispatched
         bus.dispatch.assert_not_called()
@@ -271,17 +259,16 @@ class TestSessionTaskScheduler:
 
         bus.dispatch = AsyncMock(side_effect=capture_dispatch)
 
-        get_last_msg_time = lambda: datetime.now(UTC) - timedelta(hours=1)
+        def get_last_msg_time():
+            return datetime.now(UTC) - timedelta(hours=1)
 
         task = asyncio.create_task(
             session_task_scheduler(repo, settings, bus, get_last_msg_time)
         )
         await asyncio.sleep(0.1)
         task.cancel()
-        try:
+        with contextlib.suppress(asyncio.CancelledError):
             await task
-        except asyncio.CancelledError:
-            pass
 
         # Get the dispatched event and call on_complete
         assert len(dispatched_events) == 1

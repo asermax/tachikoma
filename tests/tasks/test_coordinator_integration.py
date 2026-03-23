@@ -5,6 +5,8 @@ Tests for the new coordinator parameters: last_message_time and mcp_servers.
 
 from unittest.mock import MagicMock
 
+from claude_agent_sdk import McpSdkServerConfig
+
 from tachikoma.coordinator import Coordinator
 
 
@@ -23,8 +25,6 @@ class TestCoordinatorMcpServers:
 
     async def test_mcp_servers_stored(self) -> None:
         """AC: mcp_servers is stored in coordinator."""
-        from claude_agent_sdk import McpSdkServerConfig
-
         # Create a mock server config
         mock_server = MagicMock(spec=McpSdkServerConfig)
         coordinator = Coordinator(mcp_servers={"test": mock_server})

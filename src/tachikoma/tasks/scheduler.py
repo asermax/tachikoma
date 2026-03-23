@@ -114,14 +114,15 @@ async def instance_generator(
                             # No more occurrences
                             continue
 
-                    elif schedule.type == "once" and schedule.at:
-                        # One-shot schedule: check if target time has passed
-                        # and definition hasn't fired yet
-                        if definition.last_fired_at is None:
-                            # Compare schedule.at (should be UTC) to now
-                            if schedule.at <= now_utc:
-                                should_fire = True
-                                schedule_time = schedule.at
+                    elif (
+                        schedule.type == "once"
+                        and schedule.at
+                        and definition.last_fired_at is None
+                        and schedule.at <= now_utc
+                    ):
+                        # One-shot: fire if target time passed and hasn't fired yet
+                        should_fire = True
+                        schedule_time = schedule.at
 
                     if not should_fire:
                         continue

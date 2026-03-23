@@ -1,6 +1,5 @@
 """Tests for task event classes."""
 
-from datetime import UTC, datetime
 from unittest.mock import AsyncMock
 
 import pytest
@@ -15,7 +14,6 @@ class TestSessionTaskReady:
 
     def test_construction(self) -> None:
         """AC: SessionTaskReady event is created with all required fields."""
-        now = datetime.now(UTC)
         instance = _make_instance("inst-1", task_type="session", status="pending")
         mock_callback = AsyncMock()
 

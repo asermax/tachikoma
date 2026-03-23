@@ -339,7 +339,7 @@ class BackgroundTaskExecutor:
         """
         try:
             # Import here to avoid circular dependency
-            from tachikoma.memory.context_provider import MemoryContextProvider
+            from tachikoma.memory.context_provider import MemoryContextProvider  # noqa: PLC0415
 
             pipeline = PreProcessingPipeline()
             pipeline.register(MemoryContextProvider(self._agent_defaults))
@@ -370,7 +370,7 @@ class BackgroundTaskExecutor:
         Returns:
             Parsed evaluator result with status and feedback
         """
-        from claude_agent_sdk import ClaudeAgentOptions, query
+        from claude_agent_sdk import ClaudeAgentOptions, query  # noqa: PLC0415
 
         eval_prompt = EVALUATOR_PROMPT_TEMPLATE.format(
             task_prompt=task_prompt,
@@ -425,9 +425,9 @@ class BackgroundTaskExecutor:
 
         try:
             # Import processors here to avoid circular dependencies
-            from tachikoma.git.processor import GitProcessor
-            from tachikoma.memory.episodic import EpisodicProcessor
-            from tachikoma.sessions.model import Session
+            from tachikoma.git.processor import GitProcessor  # noqa: PLC0415
+            from tachikoma.memory.episodic import EpisodicProcessor  # noqa: PLC0415
+            from tachikoma.sessions.model import Session  # noqa: PLC0415
 
             # Build a minimal Session for the pipeline
             session = Session(

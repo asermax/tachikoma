@@ -115,7 +115,9 @@ def create_task_tools_server(repository: TaskRepository) -> McpSdkServerConfig:
         if errors:
             return {
                 "is_error": True,
-                "content": [{"type": "text", "text": f"Missing required fields: {', '.join(errors)}"}],
+                "content": [
+                    {"type": "text", "text": f"Missing required fields: {', '.join(errors)}"},
+                ],
             }
 
         # Validate type
@@ -138,20 +140,30 @@ def create_task_tools_server(repository: TaskRepository) -> McpSdkServerConfig:
                 "content": [
                     {
                         "type": "text",
-                        "text": f"Invalid schedule '{schedule}'. Use a cron expression (e.g., '0 9 * * *') or an ISO datetime (e.g., '2026-03-22T10:00:00Z').",
+                        "text": (
+                            f"Invalid schedule '{schedule}'. Use a cron expression"
+                            " (e.g., '0 9 * * *') or an ISO datetime"
+                            " (e.g., '2026-03-22T10:00:00Z')."
+                        ),
                     }
                 ],
             }
 
         # For one-shot schedules, validate the datetime is in the future
-        if schedule_config.type == "once" and schedule_config.at is not None:
-            if schedule_config.at <= datetime.now(UTC):
+        if (
+            schedule_config.type == "once"
+            and schedule_config.at is not None
+            and schedule_config.at <= datetime.now(UTC)
+        ):
                 return {
                     "is_error": True,
                     "content": [
                         {
                             "type": "text",
-                            "text": f"One-shot schedule datetime must be in the future. Got: {schedule_config.at.isoformat()}",
+                            "text": (
+                                "One-shot schedule datetime must be in the future."
+                                f" Got: {schedule_config.at.isoformat()}"
+                            ),
                         }
                     ],
                 }
@@ -240,7 +252,10 @@ def create_task_tools_server(repository: TaskRepository) -> McpSdkServerConfig:
                     "content": [
                         {
                             "type": "text",
-                            "text": f"Invalid schedule '{schedule}'. Use a cron expression or ISO datetime.",
+                            "text": (
+                                f"Invalid schedule '{schedule}'."
+                                " Use a cron expression or ISO datetime."
+                            ),
                         }
                     ],
                 }

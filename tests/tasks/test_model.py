@@ -57,7 +57,7 @@ class TestScheduleConfig:
 
     def test_once_naive_datetime_gets_utc(self) -> None:
         """AC: Naive datetime in JSON gets UTC tzinfo."""
-        import json
+        import json  # noqa: PLC0415
 
         # Simulate stored JSON without timezone
         json_str = json.dumps({"type": "once", "at": "2026-03-22T10:00:00"})
@@ -88,7 +88,7 @@ class TestEnsureUtc:
 
     def test_aware_unchanged(self) -> None:
         """AC: Timezone-aware datetime is unchanged."""
-        from zoneinfo import ZoneInfo
+        from zoneinfo import ZoneInfo  # noqa: PLC0415
 
         aware = datetime(2026, 3, 22, 10, 0, tzinfo=ZoneInfo("America/New_York"))
         result = ensure_utc(aware)

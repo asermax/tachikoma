@@ -552,7 +552,9 @@ class TestCoordinatorPermissionAndEnv:
         )
 
         async with Coordinator(
-            agent_defaults=AgentDefaults(cwd=Path.cwd(), env={"CLAUDE_CODE_DISABLE_AUTO_MEMORY": "1"}),
+            agent_defaults=AgentDefaults(
+                cwd=Path.cwd(), env={"CLAUDE_CODE_DISABLE_AUTO_MEMORY": "1"}
+            ),
         ) as coord:
             _ = await _send(coord, "hello")
 
@@ -1239,7 +1241,9 @@ class TestCoordinatorMcpServers:
         )
 
         async with Coordinator(
-            registry=registry, pre_pipeline=pre_pipeline, agent_defaults=AgentDefaults(cwd=Path("/ws")),
+            registry=registry,
+            pre_pipeline=pre_pipeline,
+            agent_defaults=AgentDefaults(cwd=Path("/ws")),
         ) as coord:
             _ = await _send(coord, "first")
 
@@ -1288,7 +1292,9 @@ class TestBoundaryDetection:
         )
         registry = _make_mock_registry(active_session=None)
 
-        async with Coordinator(registry=registry, agent_defaults=AgentDefaults(cwd=Path("/workspace"))) as coord:
+        async with Coordinator(
+            registry=registry, agent_defaults=AgentDefaults(cwd=Path("/workspace"))
+        ) as coord:
             _ = await _send(coord, "hello")
 
         # No boundary detection call should happen - message should be processed normally
@@ -1308,7 +1314,9 @@ class TestBoundaryDetection:
         )
         registry = _make_mock_registry(active_session=active)
 
-        async with Coordinator(registry=registry, agent_defaults=AgentDefaults(cwd=Path("/workspace"))) as coord:
+        async with Coordinator(
+            registry=registry, agent_defaults=AgentDefaults(cwd=Path("/workspace"))
+        ) as coord:
             _ = await _send(coord, "hello")
 
         # Message should be processed without triggering transition
@@ -1335,7 +1343,9 @@ class TestBoundaryDetection:
             return_value=BoundaryResult(continues=True),
         )
 
-        async with Coordinator(registry=registry, agent_defaults=AgentDefaults(cwd=Path("/workspace"))) as coord:
+        async with Coordinator(
+            registry=registry, agent_defaults=AgentDefaults(cwd=Path("/workspace"))
+        ) as coord:
             events = await _send(coord, "tell me more")
 
         # Should NOT trigger transition (close_session called only once at shutdown)
@@ -1368,7 +1378,9 @@ class TestBoundaryDetection:
             side_effect=RuntimeError("SDK error"),
         )
 
-        async with Coordinator(registry=registry, agent_defaults=AgentDefaults(cwd=Path("/workspace"))) as coord:
+        async with Coordinator(
+            registry=registry, agent_defaults=AgentDefaults(cwd=Path("/workspace"))
+        ) as coord:
             events = await _send(coord, "hello")
 
         # Error should be caught, message should still be processed
@@ -2316,7 +2328,9 @@ class TestCoordinatorPipelineAgents:
         )
 
         async with Coordinator(
-            registry=registry, pre_pipeline=pre_pipeline, agent_defaults=AgentDefaults(cwd=Path("/ws")),
+            registry=registry,
+            pre_pipeline=pre_pipeline,
+            agent_defaults=AgentDefaults(cwd=Path("/ws")),
         ) as coord:
             _ = await _send(coord, "first")
 

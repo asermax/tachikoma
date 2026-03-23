@@ -1,6 +1,7 @@
 """Tests for background task executor."""
 
 import asyncio
+import contextlib
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -46,10 +47,8 @@ class TestBackgroundTaskRunner:
             )
             await asyncio.sleep(0.2)
             task.cancel()
-            try:
+            with contextlib.suppress(asyncio.CancelledError):
                 await task
-            except asyncio.CancelledError:
-                pass
 
         assert "inst-1" in executed_instances
 
@@ -86,10 +85,8 @@ class TestBackgroundTaskRunner:
             )
             await asyncio.sleep(0.5)
             task.cancel()
-            try:
+            with contextlib.suppress(asyncio.CancelledError):
                 await task
-            except asyncio.CancelledError:
-                pass
 
         assert max_concurrent <= 2
 
@@ -110,10 +107,8 @@ class TestBackgroundTaskRunner:
             )
             await asyncio.sleep(0.2)
             task.cancel()
-            try:
+            with contextlib.suppress(asyncio.CancelledError):
                 await task
-            except asyncio.CancelledError:
-                pass
 
         assert len(execute_called) == 0
 
@@ -181,14 +176,11 @@ class TestBackgroundTaskExecutor:
                 mock_query.return_value = mock_eval_query()
 
                 # Mock pre-processing to return original prompt
-                with patch.object(
-                    executor,
-                    "_run_preprocessing",
-                    return_value="Test task",
+                with (
+                    patch.object(executor, "_run_preprocessing", return_value="Test task"),
+                    patch.object(executor, "_run_postprocessing", return_value=None),
                 ):
-                    # Mock post-processing
-                    with patch.object(executor, "_run_postprocessing", return_value=None):
-                        await executor.execute(instance)
+                    await executor.execute(instance)
 
         # Verify instance is completed
         updated = await repo.get_instance("inst-1")
@@ -303,9 +295,11 @@ class TestBackgroundTaskExecutor:
 
                 mock_query.return_value = mock_eval_query()
 
-                with patch.object(executor, "_run_preprocessing", return_value="Test task"):
-                    with patch.object(executor, "_run_postprocessing", return_value=None):
-                        await executor.execute(instance)
+                with (
+                    patch.object(executor, "_run_preprocessing", return_value="Test task"),
+                    patch.object(executor, "_run_postprocessing", return_value=None),
+                ):
+                    await executor.execute(instance)
 
         # No notification should be dispatched (notify is null)
         assert len(dispatched_events) == 0
@@ -352,7 +346,9 @@ class TestBackgroundTaskExecutor:
             with patch("claude_agent_sdk.query") as mock_query:
                 eval_result = MagicMock()
                 # Evaluator always says continue
-                eval_result.content = [MagicMock(text='{"status": "continue", "feedback": "Keep going"}')]
+                eval_result.content = [
+                    MagicMock(text='{"status": "continue", "feedback": "Keep going"}')
+                ]
 
                 async def mock_eval_query(*args, **kwargs):
                     yield eval_result
