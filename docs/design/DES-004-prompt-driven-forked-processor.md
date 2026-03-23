@@ -13,7 +13,7 @@ The pattern: extend `PromptDrivenProcessor`, provide a prompt constant, and call
 ## Rationale
 
 All prompt-driven processors follow the same structure:
-1. Store a prompt constant and `AgentDefaults` (cwd, cli_path, env)
+1. Store a prompt constant and `AgentDefaults` (cwd, cli_path, env, model)
 2. In `process()`, fork the SDK session with the prompt
 3. Let the forked agent autonomously manage files
 

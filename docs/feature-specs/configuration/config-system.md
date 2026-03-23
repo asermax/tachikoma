@@ -36,7 +36,7 @@ The system loads parameters from the TOML config file at startup, applying defau
 **Acceptance Criteria**:
 - Given a valid TOML config file, when the application starts, then all parameters are loaded and available to components
 - Given a config file with no `[workspace]` section, when loaded, then `workspace.path` defaults to `~/tachikoma`
-- Given a config file with no `[agent]` section, when loaded, then `agent.model` defaults to `None` (SDK default), `agent.allowed_tools` defaults to `["Read", "Glob", "Grep"]`, `agent.cli_path` defaults to `None` (SDK bundled binary), `agent.session_resume_window` defaults to `86400` (1 day in seconds), and `agent.env` defaults to `{}` (empty dict)
+- Given a config file with no `[agent]` section, when loaded, then `agent.model` defaults to `None` (SDK default), `agent.sub_agent_model` defaults to `"opus"` (sub-agent default), `agent.allowed_tools` defaults to `["Read", "Glob", "Grep"]`, `agent.cli_path` defaults to `None` (SDK bundled binary), `agent.session_resume_window` defaults to `86400` (1 day in seconds), and `agent.env` defaults to `{}` (empty dict)
 - Given a config file with an `[agent.env]` section containing string key-value pairs, when loaded, then `agent.env` contains those values
 - Given a config file with an `[agent.env]` section containing non-string values (e.g., `FOO = 42`), when the application starts, then it exits with a clear validation error
 - Given a config file with no `[logging]` section, when loaded, then `logging.level` defaults to `"INFO"` and `logging.console` defaults to `false`
