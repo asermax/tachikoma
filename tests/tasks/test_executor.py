@@ -1,11 +1,13 @@
 """Tests for background task executor."""
 
 import asyncio
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from bubus import EventBus
 
+from tachikoma.agent_defaults import AgentDefaults
 from tachikoma.config import TaskSettings
 from tachikoma.tasks.events import TaskNotification
 from tachikoma.tasks.executor import BackgroundTaskExecutor, background_task_runner
@@ -40,7 +42,7 @@ class TestBackgroundTaskRunner:
 
         with patch.object(BackgroundTaskExecutor, "execute", mock_execute):
             task = asyncio.create_task(
-                background_task_runner(repo, settings, bus, cwd="/tmp")
+                background_task_runner(repo, settings, bus, AgentDefaults(cwd=Path("/tmp")))
             )
             await asyncio.sleep(0.2)
             task.cancel()
@@ -80,7 +82,7 @@ class TestBackgroundTaskRunner:
 
         with patch.object(BackgroundTaskExecutor, "execute", mock_execute):
             task = asyncio.create_task(
-                background_task_runner(repo, settings, bus, cwd="/tmp")
+                background_task_runner(repo, settings, bus, AgentDefaults(cwd=Path("/tmp")))
             )
             await asyncio.sleep(0.5)
             task.cancel()
@@ -104,7 +106,7 @@ class TestBackgroundTaskRunner:
 
         with patch.object(BackgroundTaskExecutor, "execute", mock_execute):
             task = asyncio.create_task(
-                background_task_runner(repo, settings, bus, cwd="/tmp")
+                background_task_runner(repo, settings, bus, AgentDefaults(cwd=Path("/tmp")))
             )
             await asyncio.sleep(0.2)
             task.cancel()
@@ -145,7 +147,7 @@ class TestBackgroundTaskExecutor:
             repository=repo,
             settings=settings,
             bus=bus,
-            cwd="/tmp",
+            agent_defaults=AgentDefaults(cwd=Path("/tmp")),
         )
 
         # Mock SDK client and evaluator
@@ -218,7 +220,7 @@ class TestBackgroundTaskExecutor:
             repository=repo,
             settings=settings,
             bus=bus,
-            cwd="/tmp",
+            agent_defaults=AgentDefaults(cwd=Path("/tmp")),
         )
 
         # Mock SDK client to raise exception
@@ -271,7 +273,7 @@ class TestBackgroundTaskExecutor:
             repository=repo,
             settings=settings,
             bus=bus,
-            cwd="/tmp",
+            agent_defaults=AgentDefaults(cwd=Path("/tmp")),
         )
 
         # Mock SDK client and evaluator
@@ -327,7 +329,7 @@ class TestBackgroundTaskExecutor:
             repository=repo,
             settings=settings,
             bus=bus,
-            cwd="/tmp",
+            agent_defaults=AgentDefaults(cwd=Path("/tmp")),
         )
 
         with patch("tachikoma.tasks.executor.ClaudeSDKClient") as mock_client_class:

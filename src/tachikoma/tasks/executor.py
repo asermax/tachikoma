@@ -8,7 +8,6 @@ This module contains:
 import asyncio
 import json
 from datetime import UTC, datetime
-from pathlib import Path
 from typing import Any, Literal
 
 from bubus import EventBus
@@ -16,6 +15,7 @@ from claude_agent_sdk import ClaudeAgentOptions, ClaudeSDKClient
 from claude_agent_sdk.types import SystemPromptPreset
 from loguru import logger
 
+from tachikoma.agent_defaults import AgentDefaults
 from tachikoma.config import TaskSettings
 from tachikoma.post_processing import PostProcessingPipeline
 from tachikoma.pre_processing import PreProcessingPipeline, assemble_context
@@ -63,8 +63,7 @@ async def background_task_runner(
     repository: TaskRepository,
     settings: TaskSettings,
     bus: EventBus,
-    cwd: Path,
-    cli_path: str | None = None,
+    agent_defaults: AgentDefaults,
 ) -> None:
     """Async loop that picks up and executes pending background tasks.
 
@@ -75,8 +74,7 @@ async def background_task_runner(
         repository: TaskRepository for persistence
         settings: TaskSettings with max_concurrent_background and other config
         bus: EventBus for dispatching TaskNotification events
-        cwd: Working directory for background tasks
-        cli_path: Optional path to Claude CLI binary
+        agent_defaults: Common SDK options (cwd, cli_path, env)
     """
     semaphore = asyncio.Semaphore(settings.max_concurrent_background)
     running_tasks: dict[str, asyncio.Task[None]] = {}
@@ -111,8 +109,7 @@ async def background_task_runner(
                             repository=repository,
                             settings=settings,
                             bus=bus,
-                            cwd=cwd,
-                            cli_path=cli_path,
+                            agent_defaults=agent_defaults,
                         )
                         await executor.execute(inst)
 
@@ -177,14 +174,13 @@ class BackgroundTaskExecutor:
         repository: TaskRepository,
         settings: TaskSettings,
         bus: EventBus,
-        cwd: Path,
-        cli_path: str | None = None,
+        agent_defaults: AgentDefaults,
     ) -> None:
         self._repository = repository
         self._settings = settings
         self._bus = bus
-        self._cwd = cwd
-        self._cli_path = cli_path
+        self._agent_defaults = agent_defaults
+        self._cwd = agent_defaults.cwd
 
     async def execute(self, instance: TaskInstance) -> None:
         """Execute a background task instance.
@@ -217,8 +213,9 @@ class BackgroundTaskExecutor:
 
             # Build SDK options with adapted system prompt
             options = ClaudeAgentOptions(
-                cwd=self._cwd,
-                cli_path=self._cli_path,
+                cwd=self._agent_defaults.cwd,
+                cli_path=self._agent_defaults.cli_path,
+                env=self._agent_defaults.env,
                 system_prompt=SystemPromptPreset(
                     type="preset",
                     preset="claude_code",
@@ -345,7 +342,7 @@ class BackgroundTaskExecutor:
             from tachikoma.memory.context_provider import MemoryContextProvider
 
             pipeline = PreProcessingPipeline()
-            pipeline.register(MemoryContextProvider(self._cwd, cli_path=self._cli_path))
+            pipeline.register(MemoryContextProvider(self._agent_defaults))
 
             results = await pipeline.run(prompt)
             if results:
@@ -382,8 +379,9 @@ class BackgroundTaskExecutor:
 
         options = ClaudeAgentOptions(
             model="claude-3-5-haiku-20241022",  # Lightweight model for evaluation
-            cwd=self._cwd,
-            cli_path=self._cli_path,
+            cwd=self._agent_defaults.cwd,
+            cli_path=self._agent_defaults.cli_path,
+            env=self._agent_defaults.env,
         )
 
         response_text = ""
@@ -443,11 +441,11 @@ class BackgroundTaskExecutor:
 
             pipeline = PostProcessingPipeline()
             pipeline.register(
-                EpisodicProcessor(self._cwd, cli_path=self._cli_path),
+                EpisodicProcessor(self._agent_defaults),
                 phase="main",
             )
             pipeline.register(
-                GitProcessor(self._cwd, cli_path=self._cli_path),
+                GitProcessor(self._agent_defaults),
                 phase="finalize",
             )
 

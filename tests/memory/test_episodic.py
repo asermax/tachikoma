@@ -9,6 +9,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
+from tachikoma.agent_defaults import AgentDefaults
 from tachikoma.memory.episodic import EPISODIC_PROMPT, EpisodicProcessor
 from tachikoma.sessions.model import Session
 
@@ -35,10 +36,11 @@ class TestEpisodicProcessor:
         session = _make_session()
         cwd = Path("/workspace")
 
-        processor = EpisodicProcessor(cwd=cwd)
+        defaults = AgentDefaults(cwd=cwd)
+        processor = EpisodicProcessor(defaults)
         await processor.process(session)
 
-        mock_fork.assert_awaited_once_with(session, EPISODIC_PROMPT, cwd, cli_path=None)
+        mock_fork.assert_awaited_once_with(session, EPISODIC_PROMPT, defaults)
 
     def test_prompt_references_correct_subdirectory(self) -> None:
         """AC: Prompt mentions the episodic subdirectory path."""
@@ -75,7 +77,7 @@ class TestEpisodicProcessor:
         )
         session = _make_session()
 
-        processor = EpisodicProcessor(cwd=Path("/workspace"))
+        processor = EpisodicProcessor(AgentDefaults(cwd=Path("/workspace")))
 
         with pytest.raises(RuntimeError, match="SDK error"):
             await processor.process(session)

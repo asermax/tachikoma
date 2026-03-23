@@ -11,6 +11,7 @@ from pathlib import Path
 
 from loguru import logger
 
+from tachikoma.agent_defaults import AgentDefaults
 from tachikoma.context.loading import CONTEXT_DIR_NAME, CONTEXT_FILES
 from tachikoma.context.tools import (
     PENDING_SIGNALS_FILENAME,
@@ -189,15 +190,14 @@ class CoreContextProcessor(PromptDrivenProcessor):
     - Post-step: mtime comparison for observability logging
     """
 
-    def __init__(self, cwd: Path, cli_path: str | None = None) -> None:
+    def __init__(self, agent_defaults: AgentDefaults) -> None:
         """Initialize the processor.
 
         Args:
-            cwd: The workspace directory containing the context/ folder.
-            cli_path: Optional path to the Claude CLI binary.
+            agent_defaults: Common SDK options (cwd, cli_path, env).
         """
-        super().__init__(CONTEXT_UPDATE_PROMPT, cwd, cli_path=cli_path)
-        self._data_dir = cwd / ".tachikoma"
+        super().__init__(CONTEXT_UPDATE_PROMPT, agent_defaults)
+        self._data_dir = agent_defaults.cwd / ".tachikoma"
 
     async def process(self, session: Session) -> None:
         """Process the session and update context files.
@@ -242,9 +242,8 @@ class CoreContextProcessor(PromptDrivenProcessor):
         await fork_and_consume(
             session,
             prompt,
-            self._cwd,
+            self._agent_defaults,
             mcp_servers={"pending-signals": pending_signals_server},
-            cli_path=self._cli_path,
         )
 
         # Post-step: Compare mtimes and log changes

@@ -6,12 +6,12 @@ optional session resumption match.
 """
 
 from dataclasses import dataclass
-from pathlib import Path
 
 from claude_agent_sdk import ClaudeAgentOptions, query
 from claude_agent_sdk.types import ResultMessage
 from loguru import logger
 
+from tachikoma.agent_defaults import AgentDefaults
 from tachikoma.boundary.prompts import (
     BOUNDARY_DETECTION_SYSTEM_PROMPT,
     BOUNDARY_DETECTION_USER_PROMPT,
@@ -52,10 +52,9 @@ class BoundaryResult:
 async def detect_boundary(
     message: str,
     summary: str,
-    cwd: Path,
+    agent_defaults: AgentDefaults,
     *,
     candidates: list[SessionCandidate] | None = None,
-    cli_path: str | None = None,
 ) -> BoundaryResult:
     """Detect whether a message continues the current conversation or starts a new topic.
 
@@ -72,10 +71,9 @@ async def detect_boundary(
     Args:
         message: The incoming user message text.
         summary: The current session's rolling conversation summary.
-        cwd: The working directory for the SDK subprocess.
+        agent_defaults: Common SDK options (cwd, cli_path, env).
         candidates: Optional list of candidate sessions for resumption matching.
             Each candidate has an ID and summary for topic matching.
-        cli_path: Optional path to the Claude CLI binary.
 
     Returns:
         BoundaryResult with:
@@ -96,9 +94,11 @@ async def detect_boundary(
         model="opus",
         effort="low",
         max_turns=3,
-        cwd=cwd,
-        cli_path=cli_path,
+        cwd=agent_defaults.cwd,
+        cli_path=agent_defaults.cli_path,
+        env=agent_defaults.env,
         system_prompt=BOUNDARY_DETECTION_SYSTEM_PROMPT,
+        allowed_tools=[],
         output_format={
             "type": "json_schema",
             "schema": {
@@ -111,7 +111,6 @@ async def detect_boundary(
                 "additionalProperties": False,
             },
         },
-        allowed_tools=[],
     )
 
     # Build user prompt with optional candidates section

@@ -9,6 +9,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
+from tachikoma.agent_defaults import AgentDefaults
 from tachikoma.context.processor import (
     CONTEXT_UPDATE_PROMPT,
     CoreContextProcessor,
@@ -118,7 +119,7 @@ class TestCoreContextProcessor:
         )
         session = _make_session()
 
-        processor = CoreContextProcessor(cwd=tmp_path)
+        processor = CoreContextProcessor(AgentDefaults(cwd=tmp_path))
         await processor.process(session)
 
         # Should be called with .tachikoma directory
@@ -138,7 +139,7 @@ class TestCoreContextProcessor:
         mock_create_server.return_value = {"type": "sdk"}
 
         session = _make_session()
-        processor = CoreContextProcessor(cwd=tmp_path)
+        processor = CoreContextProcessor(AgentDefaults(cwd=tmp_path))
         await processor.process(session)
 
         # Should be called with .tachikoma directory and a snapshot (list)
@@ -157,7 +158,7 @@ class TestCoreContextProcessor:
         )
         session = _make_session()
 
-        processor = CoreContextProcessor(cwd=tmp_path)
+        processor = CoreContextProcessor(AgentDefaults(cwd=tmp_path))
         await processor.process(session)
 
         mock_fork.assert_awaited_once()
@@ -167,7 +168,7 @@ class TestCoreContextProcessor:
         prompt_arg = call_args[0][1]
         assert "{pending_signals_section}" not in prompt_arg  # Placeholder should be replaced
         assert "No pending signals at this time." in prompt_arg  # Empty state message
-        assert call_args[0][2] == tmp_path  # cwd
+        assert call_args[0][2] == AgentDefaults(cwd=tmp_path)  # agent_defaults
         assert "mcp_servers" in call_args[1]
         assert "pending-signals" in call_args[1]["mcp_servers"]
 
@@ -206,7 +207,7 @@ class TestCoreContextProcessor:
         session = _make_session()
 
         # Don't create context directory
-        processor = CoreContextProcessor(cwd=tmp_path)
+        processor = CoreContextProcessor(AgentDefaults(cwd=tmp_path))
         # Should not raise
         await processor.process(session)
 

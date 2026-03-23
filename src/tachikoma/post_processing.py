@@ -7,7 +7,6 @@ other post-conversation handlers.
 
 import asyncio
 from abc import ABC, abstractmethod
-from pathlib import Path
 
 from claude_agent_sdk import ClaudeAgentOptions, query
 from claude_agent_sdk.types import (
@@ -18,6 +17,7 @@ from claude_agent_sdk.types import (
 )
 from loguru import logger
 
+from tachikoma.agent_defaults import AgentDefaults
 from tachikoma.sessions.model import Session
 
 _log = logger.bind(component="post_processing")
@@ -61,17 +61,16 @@ class PromptDrivenProcessor(PostProcessor):
     See DES-004 for the pattern documentation.
     """
 
-    def __init__(self, prompt: str, cwd: Path, cli_path: str | None = None) -> None:
+    def __init__(self, prompt: str, agent_defaults: AgentDefaults) -> None:
         """Initialize the processor.
 
         Args:
             prompt: The prompt to send to the forked agent.
-            cwd: The workspace directory for the forked agent.
-            cli_path: Optional path to the Claude CLI binary.
+            agent_defaults: Common SDK options (cwd, cli_path, env).
         """
         self._prompt = prompt
-        self._cwd = cwd
-        self._cli_path = cli_path
+        self._agent_defaults = agent_defaults
+        self._cwd = agent_defaults.cwd
 
     async def process(self, session: Session) -> None:
         """Process by forking the SDK session with the configured prompt.
@@ -87,7 +86,7 @@ class PromptDrivenProcessor(PostProcessor):
         _log.info("Processor started: processor={name}", name=name)
 
         prompt = augment_prompt_for_resumption(self._prompt, session)
-        await fork_and_consume(session, prompt, self._cwd, cli_path=self._cli_path)
+        await fork_and_consume(session, prompt, self._agent_defaults)
         _log.info("Processor completed: processor={name}", name=name)
 
 
@@ -190,13 +189,12 @@ class PostProcessingPipeline:
 async def fork_and_consume(
     session: Session,
     prompt: str,
-    cwd: Path,
+    agent_defaults: AgentDefaults,
     mcp_servers: dict[
         str,
         McpStdioServerConfig | McpSSEServerConfig | McpHttpServerConfig | McpSdkServerConfig,
     ]
     | None = None,
-    cli_path: str | None = None,
 ) -> None:
     """Fork the SDK session and consume the agent's response.
 
@@ -207,7 +205,7 @@ async def fork_and_consume(
     Args:
         session: The session to fork (must have sdk_session_id).
         prompt: The extraction prompt to send to the forked agent.
-        cwd: The working directory for the forked agent.
+        agent_defaults: Common SDK options (cwd, cli_path, env).
         mcp_servers: Optional MCP servers to provide to the forked agent.
             Can include in-process SDK MCP servers (from create_sdk_mcp_server())
             or external server configs.
@@ -222,8 +220,9 @@ async def fork_and_consume(
         )
 
     options = ClaudeAgentOptions(
-        cwd=cwd,
-        cli_path=cli_path,
+        cwd=agent_defaults.cwd,
+        cli_path=agent_defaults.cli_path,
+        env=agent_defaults.env,
         resume=session.sdk_session_id,
         fork_session=True,
         permission_mode="bypassPermissions",

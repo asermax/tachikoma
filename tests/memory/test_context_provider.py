@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 from claude_agent_sdk.types import ResultMessage
 
+from tachikoma.agent_defaults import AgentDefaults
 from tachikoma.memory.context_provider import MEMORY_SEARCH_PROMPT, MemoryContextProvider
 from tachikoma.pre_processing import ContextResult
 
@@ -44,7 +45,7 @@ class TestMemoryContextProvider:
         mock_query.return_value = _make_query_result(content)
 
         cwd = Path("/workspace")
-        provider = MemoryContextProvider(cwd=cwd)
+        provider = MemoryContextProvider(AgentDefaults(cwd=cwd))
 
         result = await provider.provide("What restaurant did I like?")
 
@@ -69,7 +70,7 @@ class TestMemoryContextProvider:
         content = "## Relevant Memories\n1. **memories/episodic/2026-03-13.md** — Summary"
         mock_query.return_value = _make_query_result(content)
 
-        provider = MemoryContextProvider(cwd=Path("/workspace"))
+        provider = MemoryContextProvider(AgentDefaults(cwd=Path("/workspace")))
         result = await provider.provide("Tell me about yesterday")
 
         assert result is not None
@@ -85,7 +86,7 @@ class TestMemoryContextProvider:
 
         mock_query.return_value = _make_query_result("NO_RELEVANT_MEMORIES")
 
-        provider = MemoryContextProvider(cwd=Path("/workspace"))
+        provider = MemoryContextProvider(AgentDefaults(cwd=Path("/workspace")))
         result = await provider.provide("What's the weather?")
 
         assert result is None
@@ -98,7 +99,7 @@ class TestMemoryContextProvider:
 
         mock_query.return_value = _make_query_result("Error occurred", is_error=True)
 
-        provider = MemoryContextProvider(cwd=Path("/workspace"))
+        provider = MemoryContextProvider(AgentDefaults(cwd=Path("/workspace")))
         result = await provider.provide("Hello")
 
         assert result is None
@@ -111,7 +112,7 @@ class TestMemoryContextProvider:
 
         mock_query.return_value = _make_query_result(None)
 
-        provider = MemoryContextProvider(cwd=Path("/workspace"))
+        provider = MemoryContextProvider(AgentDefaults(cwd=Path("/workspace")))
         result = await provider.provide("Hello")
 
         assert result is None
@@ -124,7 +125,7 @@ class TestMemoryContextProvider:
 
         mock_query.return_value = _make_query_result("NO_RELEVANT_MEMORIES")
 
-        provider = MemoryContextProvider(cwd=Path("/workspace"))
+        provider = MemoryContextProvider(AgentDefaults(cwd=Path("/workspace")))
         await provider.provide("What was that restaurant I liked?")
 
         call_kwargs = mock_query.call_args[1]
@@ -137,7 +138,7 @@ class TestMemoryContextProvider:
         mock_query = mocker.patch("tachikoma.memory.context_provider.query")
         mock_query.side_effect = RuntimeError("SDK error")
 
-        provider = MemoryContextProvider(cwd=Path("/workspace"))
+        provider = MemoryContextProvider(AgentDefaults(cwd=Path("/workspace")))
         result = await provider.provide("Hello")
 
         assert result is None

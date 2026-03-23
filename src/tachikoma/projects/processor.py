@@ -4,10 +4,10 @@ Spawns Haiku agents to commit changes in dirty submodules after each session.
 """
 
 import asyncio
-from pathlib import Path
 
 from loguru import logger
 
+from tachikoma.agent_defaults import AgentDefaults
 from tachikoma.git.processor import query_and_consume
 from tachikoma.post_processing import PostProcessor
 from tachikoma.projects.git import is_dirty, list_submodules, push
@@ -63,15 +63,14 @@ class ProjectsProcessor(PostProcessor):
     each submodule's remote. Runs in the pre_finalize phase before GitProcessor.
     """
 
-    def __init__(self, cwd: Path, cli_path: str | None = None) -> None:
+    def __init__(self, agent_defaults: AgentDefaults) -> None:
         """Initialize the processor.
 
         Args:
-            cwd: The workspace directory.
-            cli_path: Optional path to the Claude CLI binary.
+            agent_defaults: Common SDK options (cwd, cli_path, env).
         """
-        self._cwd = cwd
-        self._cli_path = cli_path
+        self._agent_defaults = agent_defaults
+        self._cwd = agent_defaults.cwd
 
     async def process(self, session: Session) -> None:
         """Process dirty submodules: commit and push changes.
@@ -149,7 +148,12 @@ class ProjectsProcessor(PostProcessor):
         submodule_path = self._cwd / path
 
         _log.debug("Spawning commit agent: path={path}", path=path)
-        await query_and_consume(SUBMODULE_COMMIT_PROMPT, submodule_path, cli_path=self._cli_path)
+        submodule_defaults = AgentDefaults(
+            cwd=submodule_path,
+            cli_path=self._agent_defaults.cli_path,
+            env=self._agent_defaults.env,
+        )
+        await query_and_consume(SUBMODULE_COMMIT_PROMPT, submodule_defaults)
 
         try:
             await push(submodule_path)

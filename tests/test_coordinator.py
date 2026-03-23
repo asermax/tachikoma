@@ -22,6 +22,7 @@ from claude_agent_sdk.types import (
 )
 from helpers import make_assistant, make_result
 
+from tachikoma.agent_defaults import AgentDefaults
 from tachikoma.boundary import BoundaryResult
 from tachikoma.coordinator import Coordinator, _derive_transcript_path
 from tachikoma.events import Error, Result, TextChunk, ToolActivity
@@ -200,7 +201,7 @@ class TestCoordinatorSendMessage:
             make_result(),
         )
 
-        async with Coordinator(cwd=Path("/workspace")) as coord:
+        async with Coordinator(agent_defaults=AgentDefaults(cwd=Path("/workspace"))) as coord:
             _ = [e async for e in coord.send_message("hello")]
 
         options = mock_cls.call_args[0][0]
@@ -544,7 +545,9 @@ class TestCoordinatorPermissionAndEnv:
             make_result(),
         )
 
-        async with Coordinator(env={"CLAUDE_CODE_DISABLE_AUTO_MEMORY": "1"}) as coord:
+        async with Coordinator(
+            agent_defaults=AgentDefaults(cwd=Path.cwd(), env={"CLAUDE_CODE_DISABLE_AUTO_MEMORY": "1"}),
+        ) as coord:
             _ = [e async for e in coord.send_message("hello")]
 
         options = mock_cls.call_args[0][0]
@@ -1302,7 +1305,7 @@ class TestCoordinatorMcpServers:
         )
 
         async with Coordinator(
-            registry=registry, pre_pipeline=pre_pipeline, cwd=Path("/ws"),
+            registry=registry, pre_pipeline=pre_pipeline, agent_defaults=AgentDefaults(cwd=Path("/ws")),
         ) as coord:
             _ = [e async for e in coord.send_message("first")]
 
@@ -1351,7 +1354,7 @@ class TestBoundaryDetection:
         )
         registry = _make_mock_registry(active_session=None)
 
-        async with Coordinator(registry=registry, cwd=Path("/workspace")) as coord:
+        async with Coordinator(registry=registry, agent_defaults=AgentDefaults(cwd=Path("/workspace"))) as coord:
             _ = [e async for e in coord.send_message("hello")]
 
         # No boundary detection call should happen - message should be processed normally
@@ -1371,7 +1374,7 @@ class TestBoundaryDetection:
         )
         registry = _make_mock_registry(active_session=active)
 
-        async with Coordinator(registry=registry, cwd=Path("/workspace")) as coord:
+        async with Coordinator(registry=registry, agent_defaults=AgentDefaults(cwd=Path("/workspace"))) as coord:
             _ = [e async for e in coord.send_message("hello")]
 
         # Message should be processed without triggering transition
@@ -1398,7 +1401,7 @@ class TestBoundaryDetection:
             return_value=BoundaryResult(continues=True),
         )
 
-        async with Coordinator(registry=registry, cwd=Path("/workspace")) as coord:
+        async with Coordinator(registry=registry, agent_defaults=AgentDefaults(cwd=Path("/workspace"))) as coord:
             events = [e async for e in coord.send_message("tell me more")]
 
         # Should NOT trigger transition (close_session called only once at shutdown)
@@ -1431,7 +1434,7 @@ class TestBoundaryDetection:
             side_effect=RuntimeError("SDK error"),
         )
 
-        async with Coordinator(registry=registry, cwd=Path("/workspace")) as coord:
+        async with Coordinator(registry=registry, agent_defaults=AgentDefaults(cwd=Path("/workspace"))) as coord:
             events = [e async for e in coord.send_message("hello")]
 
         # Error should be caught, message should still be processed
@@ -1475,7 +1478,7 @@ class TestBoundaryDetection:
 
         async with Coordinator(
             registry=registry,
-            cwd=Path("/workspace"),
+            agent_defaults=AgentDefaults(cwd=Path("/workspace")),
             msg_pipeline=msg_pipeline,
         ) as coord:
             # First message triggers per-message pipeline
@@ -1515,7 +1518,7 @@ class TestBoundaryDetection:
 
         async with Coordinator(
             registry=registry,
-            cwd=Path("/workspace"),
+            agent_defaults=AgentDefaults(cwd=Path("/workspace")),
             msg_pipeline=msg_pipeline,
         ) as coord:
             _ = [e async for e in coord.send_message("first")]
@@ -1554,7 +1557,7 @@ class TestSessionTransition:
 
         async with Coordinator(
             registry=registry,
-            cwd=Path("/workspace"),
+            agent_defaults=AgentDefaults(cwd=Path("/workspace")),
         ) as coord:
             _ = [e async for e in coord.send_message("what's for dinner?")]
 
@@ -1593,7 +1596,7 @@ class TestSessionTransition:
 
         async with Coordinator(
             registry=registry,
-            cwd=Path("/workspace"),
+            agent_defaults=AgentDefaults(cwd=Path("/workspace")),
             pipeline=pipeline,
         ) as coord:
             _ = [e async for e in coord.send_message("new topic")]
@@ -1631,7 +1634,7 @@ class TestSessionTransition:
 
         async with Coordinator(
             registry=registry,
-            cwd=Path("/workspace"),
+            agent_defaults=AgentDefaults(cwd=Path("/workspace")),
             pipeline=pipeline,
         ) as coord:
             _ = [e async for e in coord.send_message("new topic")]
@@ -1664,7 +1667,7 @@ class TestSessionTransition:
 
         async with Coordinator(
             registry=registry,
-            cwd=Path("/workspace"),
+            agent_defaults=AgentDefaults(cwd=Path("/workspace")),
         ) as coord:
             _ = [e async for e in coord.send_message("new topic")]
 
@@ -1696,7 +1699,7 @@ class TestSessionTransition:
 
         async with Coordinator(
             registry=registry,
-            cwd=Path("/workspace"),
+            agent_defaults=AgentDefaults(cwd=Path("/workspace")),
         ) as coord:
             # _previous_summary is consumed during _build_options in send_message,
             # but we can verify the transition set it by checking the options used
@@ -1731,7 +1734,7 @@ class TestSessionTransition:
 
         async with Coordinator(
             registry=registry,
-            cwd=Path("/workspace"),
+            agent_defaults=AgentDefaults(cwd=Path("/workspace")),
         ) as coord:
             _ = [e async for e in coord.send_message("new topic")]
 
@@ -1764,7 +1767,7 @@ class TestSessionTransition:
 
         async with Coordinator(
             registry=registry,
-            cwd=Path("/workspace"),
+            agent_defaults=AgentDefaults(cwd=Path("/workspace")),
         ) as coord:
             _ = [e async for e in coord.send_message("new topic")]
 
@@ -1804,7 +1807,7 @@ class TestSessionTransition:
 
         async with Coordinator(
             registry=registry,
-            cwd=Path("/workspace"),
+            agent_defaults=AgentDefaults(cwd=Path("/workspace")),
         ) as coord:
             # Simulate a session task prompt being sent
             _ = [e async for e in coord.send_message(
@@ -1889,7 +1892,7 @@ class TestBuildOptions:
 
         async with Coordinator(
             registry=registry,
-            cwd=Path("/workspace"),
+            agent_defaults=AgentDefaults(cwd=Path("/workspace")),
         ) as coord:
             # Seed _sdk_session_id as if there was a previous message in that session
             coord._sdk_session_id = "sdk-old"
@@ -1924,7 +1927,7 @@ class TestBuildOptions:
 
         async with Coordinator(
             registry=registry,
-            cwd=Path("/workspace"),
+            agent_defaults=AgentDefaults(cwd=Path("/workspace")),
             system_prompt="Base prompt",
         ) as coord:
             _ = [e async for e in coord.send_message("new topic")]
@@ -1961,7 +1964,7 @@ class TestBuildOptions:
 
         async with Coordinator(
             registry=registry,
-            cwd=Path("/workspace"),
+            agent_defaults=AgentDefaults(cwd=Path("/workspace")),
             system_prompt=None,  # No base prompt
         ) as coord:
             _ = [e async for e in coord.send_message("new topic")]
@@ -2006,7 +2009,7 @@ class TestBuildOptions:
 
         async with Coordinator(
             registry=registry,
-            cwd=Path("/workspace"),
+            agent_defaults=AgentDefaults(cwd=Path("/workspace")),
             system_prompt="Base prompt",
         ) as coord:
             _ = [e async for e in coord.send_message("new topic")]
@@ -2045,7 +2048,7 @@ class TestPerMessagePostProcessing:
 
         async with Coordinator(
             registry=registry,
-            cwd=Path("/workspace"),
+            agent_defaults=AgentDefaults(cwd=Path("/workspace")),
             msg_pipeline=msg_pipeline,
         ) as coord:
             _ = [e async for e in coord.send_message("hello")]
@@ -2076,7 +2079,7 @@ class TestPerMessagePostProcessing:
 
         async with Coordinator(
             registry=registry,
-            cwd=Path("/workspace"),
+            agent_defaults=AgentDefaults(cwd=Path("/workspace")),
             msg_pipeline=msg_pipeline,
         ) as coord:
             _ = [e async for e in coord.send_message("hello")]
@@ -2107,7 +2110,7 @@ class TestPerMessagePostProcessing:
         # Should not raise
         async with Coordinator(
             registry=registry,
-            cwd=Path("/workspace"),
+            agent_defaults=AgentDefaults(cwd=Path("/workspace")),
         ) as coord:
             _ = [e async for e in coord.send_message("hello")]
 
@@ -2138,7 +2141,7 @@ class TestPerMessagePostProcessing:
 
         async with Coordinator(
             registry=registry,
-            cwd=Path("/workspace"),
+            agent_defaults=AgentDefaults(cwd=Path("/workspace")),
             msg_pipeline=msg_pipeline,
         ) as coord:
             _ = [e async for e in coord.send_message("hello")]
@@ -2181,7 +2184,7 @@ class TestCoordinatorShutdownWithBoundaryDetection:
 
         async with Coordinator(
             registry=registry,
-            cwd=Path("/workspace"),
+            agent_defaults=AgentDefaults(cwd=Path("/workspace")),
             msg_pipeline=msg_pipeline,
             pipeline=_make_mock_pipeline(),
         ) as coord:
@@ -2225,7 +2228,7 @@ class TestCoordinatorShutdownWithBoundaryDetection:
 
         async with Coordinator(
             registry=registry,
-            cwd=Path("/workspace"),
+            agent_defaults=AgentDefaults(cwd=Path("/workspace")),
             pipeline=pipeline,
         ) as coord:
             _ = [e async for e in coord.send_message("new topic")]
@@ -2263,7 +2266,7 @@ class TestCoordinatorShutdownWithBoundaryDetection:
         # Should not raise despite background task failure
         async with Coordinator(
             registry=registry,
-            cwd=Path("/workspace"),
+            agent_defaults=AgentDefaults(cwd=Path("/workspace")),
             pipeline=pipeline,
         ) as coord:
             _ = [e async for e in coord.send_message("new topic")]
@@ -2381,7 +2384,7 @@ class TestCoordinatorPipelineAgents:
         )
 
         async with Coordinator(
-            registry=registry, pre_pipeline=pre_pipeline, cwd=Path("/ws"),
+            registry=registry, pre_pipeline=pre_pipeline, agent_defaults=AgentDefaults(cwd=Path("/ws")),
         ) as coord:
             _ = [e async for e in coord.send_message("first")]
 

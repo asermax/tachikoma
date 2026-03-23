@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 from claude_agent_sdk.types import ResultMessage
 
+from tachikoma.agent_defaults import AgentDefaults
 from tachikoma.pre_processing import ContextResult
 from tachikoma.skills.context_provider import (
     SKILL_CLASSIFICATION_PROMPT,
@@ -71,7 +72,7 @@ class TestSkillsContextProvider:
         skills_dir = tmp_path / "skills"
         skills_dir.mkdir()
 
-        provider = SkillsContextProvider(cwd=tmp_path)
+        provider = SkillsContextProvider(AgentDefaults(cwd=tmp_path))
 
         result = await provider.provide("hello")
 
@@ -99,7 +100,7 @@ class TestSkillsContextProvider:
 
         mock_query.return_value = _make_query_result("NO_RELEVANT_SKILLS")
 
-        provider = SkillsContextProvider(cwd=tmp_path, cli_path="/custom/cli")
+        provider = SkillsContextProvider(AgentDefaults(cwd=tmp_path, cli_path="/custom/cli"))
         result = await provider.provide("hello")
 
         mock_query.assert_called_once()
@@ -137,7 +138,7 @@ class TestSkillsContextProvider:
 
         mock_query.return_value = _make_query_result("NO_RELEVANT_SKILLS")
 
-        provider = SkillsContextProvider(cwd=tmp_path)
+        provider = SkillsContextProvider(AgentDefaults(cwd=tmp_path))
         await provider.provide("Find my documents")
 
         call_kwargs = mock_query.call_args[1]
@@ -168,7 +169,7 @@ class TestSkillsContextProvider:
 
         mock_query.return_value = _make_query_result("test-skill")
 
-        provider = SkillsContextProvider(cwd=tmp_path)
+        provider = SkillsContextProvider(AgentDefaults(cwd=tmp_path))
         result = await provider.provide("hello")
 
         assert result is not None
@@ -198,7 +199,7 @@ class TestSkillsContextProvider:
 
         mock_query.return_value = _make_query_result("my-skill")
 
-        provider = SkillsContextProvider(cwd=tmp_path)
+        provider = SkillsContextProvider(AgentDefaults(cwd=tmp_path))
         result = await provider.provide("hello")
 
         assert result is not None
@@ -266,7 +267,7 @@ class TestSkillsContextProvider:
 
         mock_query.return_value = _make_query_result("search")
 
-        provider = SkillsContextProvider(cwd=tmp_path)
+        provider = SkillsContextProvider(AgentDefaults(cwd=tmp_path))
         result = await provider.provide("search for something")
 
         assert result is not None
@@ -294,7 +295,7 @@ class TestSkillsContextProvider:
 
         mock_query.return_value = _make_query_result("NO_RELEVANT_SKILLS")
 
-        provider = SkillsContextProvider(cwd=tmp_path)
+        provider = SkillsContextProvider(AgentDefaults(cwd=tmp_path))
         result = await provider.provide("hello")
 
         assert result is None
@@ -320,7 +321,7 @@ class TestSkillsContextProvider:
         # Agent returns valid name + fake name
         mock_query.return_value = _make_query_result("real-skill\nfake-skill\nanother-fake")
 
-        provider = SkillsContextProvider(cwd=tmp_path)
+        provider = SkillsContextProvider(AgentDefaults(cwd=tmp_path))
         result = await provider.provide("hello")
 
         assert result is not None
@@ -346,7 +347,7 @@ class TestSkillsContextProvider:
             "Content"
         )
 
-        provider = SkillsContextProvider(cwd=tmp_path)
+        provider = SkillsContextProvider(AgentDefaults(cwd=tmp_path))
         result = await provider.provide("hello")
 
         assert result is None
@@ -371,7 +372,7 @@ class TestSkillsContextProvider:
 
         mock_query.return_value = _make_query_result("Error", is_error=True)
 
-        provider = SkillsContextProvider(cwd=tmp_path)
+        provider = SkillsContextProvider(AgentDefaults(cwd=tmp_path))
         result = await provider.provide("hello")
 
         assert result is None
@@ -398,7 +399,7 @@ class TestSkillsContextProvider:
         # Only return the valid skill (unreadable ones are filtered by registry)
         mock_query.return_value = _make_query_result("valid-skill")
 
-        provider = SkillsContextProvider(cwd=tmp_path)
+        provider = SkillsContextProvider(AgentDefaults(cwd=tmp_path))
         result = await provider.provide("hello")
 
         assert result is not None
@@ -457,7 +458,7 @@ class TestSkillsContextProvider:
 
         mock_query.return_value = _make_query_result("skill-a\nskill-b")
 
-        provider = SkillsContextProvider(cwd=tmp_path)
+        provider = SkillsContextProvider(AgentDefaults(cwd=tmp_path))
         result = await provider.provide("hello")
 
         assert result is not None
@@ -499,7 +500,7 @@ class TestSkillsContextProvider:
 
         mock_query.return_value = _make_query_result("test")
 
-        provider = SkillsContextProvider(cwd=tmp_path)
+        provider = SkillsContextProvider(AgentDefaults(cwd=tmp_path))
 
         # Get registry agents before the call
         registry_agents_before = provider._registry.get_agents().copy()

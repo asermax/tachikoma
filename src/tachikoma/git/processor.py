@@ -9,6 +9,7 @@ from pathlib import Path
 from claude_agent_sdk import ClaudeAgentOptions, query
 from loguru import logger
 
+from tachikoma.agent_defaults import AgentDefaults
 from tachikoma.post_processing import PostProcessor
 from tachikoma.sessions.model import Session
 
@@ -55,9 +56,7 @@ Remember: These commits provide version history for the workspace. Good commit
 messages help understand what changed and when."""
 
 
-async def query_and_consume(
-    prompt: str, cwd: Path, cli_path: str | None = None
-) -> None:
+async def query_and_consume(prompt: str, agent_defaults: AgentDefaults) -> None:
     """Spawn a fresh agent and consume its response.
 
     Creates a fresh query() call with no session forking. Used for
@@ -65,16 +64,16 @@ async def query_and_consume(
 
     Args:
         prompt: The prompt to send to the agent.
-        cwd: The working directory for the agent.
-        cli_path: Optional path to the Claude CLI binary.
+        agent_defaults: Common SDK options (cwd, cli_path, env).
 
     Raises:
         Propagates: SDK errors from the query() call.
     """
     options = ClaudeAgentOptions(
         model="haiku",
-        cwd=cwd,
-        cli_path=cli_path,
+        cwd=agent_defaults.cwd,
+        cli_path=agent_defaults.cli_path,
+        env=agent_defaults.env,
         permission_mode="bypassPermissions",
     )
 
@@ -91,15 +90,14 @@ class GitProcessor(PostProcessor):
     Runs in the finalize phase after all other processors complete.
     """
 
-    def __init__(self, cwd: Path, cli_path: str | None = None) -> None:
+    def __init__(self, agent_defaults: AgentDefaults) -> None:
         """Initialize the processor.
 
         Args:
-            cwd: The workspace directory for git operations.
-            cli_path: Optional path to the Claude CLI binary.
+            agent_defaults: Common SDK options (cwd, cli_path, env).
         """
-        self._cwd = cwd
-        self._cli_path = cli_path
+        self._agent_defaults = agent_defaults
+        self._cwd = agent_defaults.cwd
 
     async def process(self, session: Session) -> None:
         """Commit and push workspace changes if any exist.
@@ -117,7 +115,7 @@ class GitProcessor(PostProcessor):
         _log.debug("Workspace has uncommitted changes, spawning commit agent")
 
         # Spawn agent to handle commits
-        await query_and_consume(GIT_COMMIT_PROMPT, self._cwd, cli_path=self._cli_path)
+        await query_and_consume(GIT_COMMIT_PROMPT, self._agent_defaults)
 
         # Push to remote if configured (partial commits are valid and worth pushing)
         has_remote = await _has_remote(self._cwd)

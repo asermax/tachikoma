@@ -4,12 +4,11 @@ Uses an Opus agent to search stored memories for context relevant
 to the current user message.
 """
 
-from pathlib import Path
-
 from claude_agent_sdk import ClaudeAgentOptions, query
 from claude_agent_sdk.types import ResultMessage
 from loguru import logger
 
+from tachikoma.agent_defaults import AgentDefaults
 from tachikoma.pre_processing import ContextProvider, ContextResult
 
 _log = logger.bind(component="memory_context")
@@ -68,15 +67,13 @@ class MemoryContextProvider(ContextProvider):
     with the "memories" tag containing a ranked list of relevant files.
     """
 
-    def __init__(self, cwd: Path, cli_path: str | None = None) -> None:
+    def __init__(self, agent_defaults: AgentDefaults) -> None:
         """Initialize the provider.
 
         Args:
-            cwd: The workspace directory for the agent's cwd.
-            cli_path: Optional path to the Claude CLI binary.
+            agent_defaults: Common SDK options (cwd, cli_path, env).
         """
-        self._cwd = cwd
-        self._cli_path = cli_path
+        self._agent_defaults = agent_defaults
 
     async def provide(self, message: str) -> ContextResult | None:
         """Search memories for context relevant to the message.
@@ -96,8 +93,9 @@ class MemoryContextProvider(ContextProvider):
             max_turns=8,
             allowed_tools=["Read", "Glob", "Grep"],
             permission_mode="bypassPermissions",
-            cwd=self._cwd,
-            cli_path=self._cli_path,
+            cwd=self._agent_defaults.cwd,
+            cli_path=self._agent_defaults.cli_path,
+            env=self._agent_defaults.env,
         )
 
         # Fully consume the query() generator to ensure proper SDK cleanup.

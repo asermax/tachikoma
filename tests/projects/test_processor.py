@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from tachikoma.agent_defaults import AgentDefaults
 from tachikoma.projects.processor import SUBMODULE_COMMIT_PROMPT, ProjectsProcessor
 
 
@@ -31,7 +32,7 @@ class TestProjectsProcessor:
         self, workspace_path: Path, mock_session: MagicMock
     ) -> None:
         """AC: Completes without error when no submodules exist."""
-        processor = ProjectsProcessor(workspace_path)
+        processor = ProjectsProcessor(AgentDefaults(cwd=workspace_path))
 
         with patch(
             "tachikoma.projects.processor.list_submodules",
@@ -44,7 +45,7 @@ class TestProjectsProcessor:
         self, workspace_path: Path, mock_session: MagicMock
     ) -> None:
         """AC: Skips processing when all submodules are clean."""
-        processor = ProjectsProcessor(workspace_path)
+        processor = ProjectsProcessor(AgentDefaults(cwd=workspace_path))
 
         with (
             patch(
@@ -64,7 +65,7 @@ class TestProjectsProcessor:
         self, workspace_path: Path, mock_session: MagicMock
     ) -> None:
         """AC: Spawns agent per dirty submodule."""
-        processor = ProjectsProcessor(workspace_path)
+        processor = ProjectsProcessor(AgentDefaults(cwd=workspace_path))
 
         with (
             patch(
@@ -91,7 +92,7 @@ class TestProjectsProcessor:
         self, workspace_path: Path, mock_session: MagicMock
     ) -> None:
         """AC: Pushes to remote after successful commit."""
-        processor = ProjectsProcessor(workspace_path)
+        processor = ProjectsProcessor(AgentDefaults(cwd=workspace_path))
 
         with (
             patch(
@@ -121,7 +122,7 @@ class TestProjectsProcessor:
         self, workspace_path: Path, mock_session: MagicMock
     ) -> None:
         """AC: Push failure is logged but doesn't block other submodules."""
-        processor = ProjectsProcessor(workspace_path)
+        processor = ProjectsProcessor(AgentDefaults(cwd=workspace_path))
 
         push_call_count = [0]
 
@@ -159,7 +160,7 @@ class TestProjectsProcessor:
         self, workspace_path: Path, mock_session: MagicMock
     ) -> None:
         """AC: Commit failure is logged and push is not attempted."""
-        processor = ProjectsProcessor(workspace_path)
+        processor = ProjectsProcessor(AgentDefaults(cwd=workspace_path))
 
         with (
             patch(
@@ -191,7 +192,7 @@ class TestProjectsProcessor:
         self, workspace_path: Path, mock_session: MagicMock
     ) -> None:
         """AC: Multiple dirty submodules are processed in parallel."""
-        processor = ProjectsProcessor(workspace_path)
+        processor = ProjectsProcessor(AgentDefaults(cwd=workspace_path))
 
         call_order: list[str] = []
 

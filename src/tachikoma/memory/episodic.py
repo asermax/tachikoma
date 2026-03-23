@@ -3,8 +3,7 @@
 Extracts date-stamped summaries of conversations from completed sessions.
 """
 
-from pathlib import Path
-
+from tachikoma.agent_defaults import AgentDefaults
 from tachikoma.post_processing import PromptDrivenProcessor
 
 EPISODIC_PROMPT = """You are a memory extraction agent. Your task is to analyze
@@ -45,11 +44,10 @@ class EpisodicProcessor(PromptDrivenProcessor):
     Creates or updates date-stamped summary files in memories/episodic/.
     """
 
-    def __init__(self, cwd: Path, cli_path: str | None = None) -> None:
+    def __init__(self, agent_defaults: AgentDefaults) -> None:
         """Initialize the processor.
 
         Args:
-            cwd: The workspace directory for the forked agent.
-            cli_path: Optional path to the Claude CLI binary.
+            agent_defaults: Common SDK options (cwd, cli_path, env).
         """
-        super().__init__(EPISODIC_PROMPT, cwd, cli_path=cli_path)
+        super().__init__(EPISODIC_PROMPT, agent_defaults)

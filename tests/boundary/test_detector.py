@@ -9,6 +9,7 @@ from pathlib import Path
 import pytest
 from claude_agent_sdk.types import ResultMessage
 
+from tachikoma.agent_defaults import AgentDefaults
 from tachikoma.boundary.detector import (
     BoundaryResult,
     SessionCandidate,
@@ -84,7 +85,7 @@ class TestDetectBoundary:
         result = await detect_boundary(
             message="Tell me more about that",
             summary="User is asking about Python testing.",
-            cwd=Path("/workspace"),
+            agent_defaults=AgentDefaults(cwd=Path("/workspace")),
         )
 
         assert isinstance(result, BoundaryResult)
@@ -113,7 +114,7 @@ class TestDetectBoundary:
         result = await detect_boundary(
             message="What should I cook for dinner?",
             summary="User is discussing Python testing frameworks.",
-            cwd=Path("/workspace"),
+            agent_defaults=AgentDefaults(cwd=Path("/workspace")),
         )
 
         assert isinstance(result, BoundaryResult)
@@ -149,7 +150,7 @@ class TestDetectBoundary:
         result = await detect_boundary(
             message="Remember that Python debugging we did?",
             summary="User is discussing meal planning.",
-            cwd=Path("/workspace"),
+            agent_defaults=AgentDefaults(cwd=Path("/workspace")),
             candidates=candidates,
         )
 
@@ -186,7 +187,7 @@ class TestDetectBoundary:
         result = await detect_boundary(
             message="Let's talk about space exploration",
             summary="User is discussing Python testing.",
-            cwd=Path("/workspace"),
+            agent_defaults=AgentDefaults(cwd=Path("/workspace")),
             candidates=candidates,
         )
 
@@ -216,7 +217,7 @@ class TestDetectBoundary:
         result = await detect_boundary(
             message="Hello",
             summary="Test summary",
-            cwd=Path("/workspace"),
+            agent_defaults=AgentDefaults(cwd=Path("/workspace")),
             candidates=[],
         )
 
@@ -247,7 +248,7 @@ class TestDetectBoundary:
         await detect_boundary(
             message="Hello",
             summary="Test summary",
-            cwd=Path("/workspace"),
+            agent_defaults=AgentDefaults(cwd=Path("/workspace")),
         )
 
         # Verify the options include opus model with low effort
@@ -280,7 +281,7 @@ class TestDetectBoundary:
         await detect_boundary(
             message="Hello",
             summary="Test summary",
-            cwd=Path("/workspace"),
+            agent_defaults=AgentDefaults(cwd=Path("/workspace")),
         )
 
         call_kwargs = mock_query.call_args
@@ -302,7 +303,7 @@ class TestDetectBoundary:
             await detect_boundary(
                 message="Hello",
                 summary="Test summary",
-                cwd=Path("/workspace"),
+                agent_defaults=AgentDefaults(cwd=Path("/workspace")),
             )
 
     async def test_defaults_to_continuation_when_no_structured_output(
@@ -327,7 +328,7 @@ class TestDetectBoundary:
         result = await detect_boundary(
             message="Hello",
             summary="Test summary",
-            cwd=Path("/workspace"),
+            agent_defaults=AgentDefaults(cwd=Path("/workspace")),
         )
 
         assert result.continues is True
@@ -347,7 +348,7 @@ class TestDetectBoundary:
         result = await detect_boundary(
             message="Hello",
             summary="Test summary",
-            cwd=Path("/workspace"),
+            agent_defaults=AgentDefaults(cwd=Path("/workspace")),
         )
 
         assert result.continues is True
@@ -376,7 +377,7 @@ class TestDetectBoundary:
         await detect_boundary(
             message="Hello",
             summary="Test summary",
-            cwd=cwd,
+            agent_defaults=AgentDefaults(cwd=cwd),
         )
 
         call_kwargs = mock_query.call_args
@@ -405,7 +406,7 @@ class TestDetectBoundary:
         await detect_boundary(
             message="Hello",
             summary="Test summary",
-            cwd=Path("/workspace"),
+            agent_defaults=AgentDefaults(cwd=Path("/workspace")),
         )
 
         call_kwargs = mock_query.call_args
@@ -442,7 +443,7 @@ class TestDetectBoundary:
         await detect_boundary(
             message="Hello",
             summary="Test summary",
-            cwd=Path("/workspace"),
+            agent_defaults=AgentDefaults(cwd=Path("/workspace")),
             candidates=candidates,
         )
 
@@ -475,7 +476,7 @@ class TestDetectBoundary:
         await detect_boundary(
             message="Hello",
             summary="Test summary",
-            cwd=Path("/workspace"),
+            agent_defaults=AgentDefaults(cwd=Path("/workspace")),
         )
 
         call_kwargs = mock_query.call_args
@@ -507,7 +508,7 @@ class TestDetectBoundary:
         result = await detect_boundary(
             message="New topic",
             summary="Old topic",
-            cwd=Path("/workspace"),
+            agent_defaults=AgentDefaults(cwd=Path("/workspace")),
         )
 
         assert result.resume_session_id is None

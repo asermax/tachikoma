@@ -5,12 +5,11 @@ current user message, then injects the matched skills' content
 and agent definitions.
 """
 
-from pathlib import Path
-
 from claude_agent_sdk import ClaudeAgentOptions, query
 from claude_agent_sdk.types import AgentDefinition, ResultMessage
 from loguru import logger
 
+from tachikoma.agent_defaults import AgentDefaults
 from tachikoma.pre_processing import ContextProvider, ContextResult
 from tachikoma.skills.registry import SkillRegistry
 
@@ -58,10 +57,9 @@ class SkillsContextProvider(ContextProvider):
     with the "skills" tag containing skill content and their agents.
     """
 
-    def __init__(self, cwd: Path, cli_path: str | None = None) -> None:
-        self._cwd = cwd
-        self._cli_path = cli_path
-        self._registry = SkillRegistry(cwd)
+    def __init__(self, agent_defaults: AgentDefaults) -> None:
+        self._agent_defaults = agent_defaults
+        self._registry = SkillRegistry(agent_defaults.cwd)
 
     async def provide(self, message: str) -> ContextResult | None:
         # R10: No-op when no skills exist in registry
@@ -88,8 +86,9 @@ class SkillsContextProvider(ContextProvider):
             effort="low",
             max_turns=3,
             allowed_tools=[],
-            cwd=self._cwd,
-            cli_path=self._cli_path,
+            cwd=self._agent_defaults.cwd,
+            cli_path=self._agent_defaults.cli_path,
+            env=self._agent_defaults.env,
         )
 
         # Fully consume the query() generator per DES-005 — no early

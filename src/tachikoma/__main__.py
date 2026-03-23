@@ -11,6 +11,7 @@ from cyclopts import App
 from loguru import logger
 from rich.console import Console
 
+from tachikoma.agent_defaults import AgentDefaults, merge_env
 from tachikoma.bootstrap import Bootstrap, BootstrapError
 from tachikoma.boundary import SummaryProcessor
 from tachikoma.config import SettingsManager
@@ -110,33 +111,37 @@ async def main(
     # Get the system prompt from the context hook (if available)
     system_prompt = bootstrap.extras.get("system_prompt")
 
-    cli_path = settings.agent.cli_path
+    # Build AgentDefaults: merge hardcoded env with config env (collision = error)
+    try:
+        merged_env = merge_env(settings.agent.env)
+    except ValueError as e:
+        print(f"Configuration error: {e}", file=sys.stderr)
+        sys.exit(1)
+
+    agent_defaults = AgentDefaults(
+        cwd=settings.workspace.path,
+        cli_path=settings.agent.cli_path,
+        env=merged_env,
+    )
 
     # Create and configure the session post-processing pipeline
     pipeline = PostProcessingPipeline()
-    pipeline.register(EpisodicProcessor(cwd=settings.workspace.path, cli_path=cli_path))
-    pipeline.register(FactsProcessor(cwd=settings.workspace.path, cli_path=cli_path))
-    pipeline.register(PreferencesProcessor(cwd=settings.workspace.path, cli_path=cli_path))
-    pipeline.register(CoreContextProcessor(cwd=settings.workspace.path, cli_path=cli_path))
-    pipeline.register(
-        ProjectsProcessor(cwd=settings.workspace.path, cli_path=cli_path),
-        phase=PRE_FINALIZE_PHASE,
-    )
-    pipeline.register(
-        GitProcessor(cwd=settings.workspace.path, cli_path=cli_path), phase=FINALIZE_PHASE,
-    )
+    pipeline.register(EpisodicProcessor(agent_defaults))
+    pipeline.register(FactsProcessor(agent_defaults))
+    pipeline.register(PreferencesProcessor(agent_defaults))
+    pipeline.register(CoreContextProcessor(agent_defaults))
+    pipeline.register(ProjectsProcessor(agent_defaults), phase=PRE_FINALIZE_PHASE)
+    pipeline.register(GitProcessor(agent_defaults), phase=FINALIZE_PHASE)
 
     # Create and configure the pre-processing pipeline
     pre_pipeline = PreProcessingPipeline()
-    pre_pipeline.register(MemoryContextProvider(cwd=settings.workspace.path, cli_path=cli_path))
+    pre_pipeline.register(MemoryContextProvider(agent_defaults))
     pre_pipeline.register(ProjectsContextProvider(workspace_path=settings.workspace.path))
-    pre_pipeline.register(SkillsContextProvider(cwd=settings.workspace.path, cli_path=cli_path))
+    pre_pipeline.register(SkillsContextProvider(agent_defaults))
 
     # Create and configure the per-message post-processing pipeline
     msg_pipeline = MessagePostProcessingPipeline()
-    msg_pipeline.register(
-        SummaryProcessor(registry=registry, cwd=settings.workspace.path, cli_path=cli_path),
-    )
+    msg_pipeline.register(SummaryProcessor(registry=registry, agent_defaults=agent_defaults))
 
     task_tools = create_task_tools_server(task_repository)
 
@@ -148,16 +153,14 @@ async def main(
         async with Coordinator(
             allowed_tools=settings.agent.allowed_tools,
             model=settings.agent.model,
-            cwd=settings.workspace.path,
+            agent_defaults=agent_defaults,
             registry=registry,
             system_prompt=system_prompt,
             pipeline=pipeline,
             pre_pipeline=pre_pipeline,
             msg_pipeline=msg_pipeline,
             permission_mode="bypassPermissions",
-            env={"CLAUDE_CODE_DISABLE_AUTO_MEMORY": "1"},
             on_status=lambda msg: console.print(msg, style="dim italic grey50"),
-            cli_path=cli_path,
             session_resume_window=settings.agent.session_resume_window,
             mcp_servers={"task-tools": task_tools},
         ) as coordinator:
@@ -186,8 +189,7 @@ async def main(
                         task_repository,
                         settings.tasks,
                         bus,
-                        settings.workspace.path,
-                        cli_path,
+                        agent_defaults,
                     ),
                     name="background_task_runner",
                 )

@@ -9,6 +9,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
+from tachikoma.agent_defaults import AgentDefaults
 from tachikoma.memory.preferences import PREFERENCES_PROMPT, PreferencesProcessor
 from tachikoma.sessions.model import Session
 
@@ -35,10 +36,11 @@ class TestPreferencesProcessor:
         session = _make_session()
         cwd = Path("/workspace")
 
-        processor = PreferencesProcessor(cwd=cwd)
+        defaults = AgentDefaults(cwd=cwd)
+        processor = PreferencesProcessor(defaults)
         await processor.process(session)
 
-        mock_fork.assert_awaited_once_with(session, PREFERENCES_PROMPT, cwd, cli_path=None)
+        mock_fork.assert_awaited_once_with(session, PREFERENCES_PROMPT, defaults)
 
     def test_prompt_references_correct_subdirectory(self) -> None:
         """AC: Prompt mentions the preferences subdirectory path."""
@@ -70,7 +72,7 @@ class TestPreferencesProcessor:
         )
         session = _make_session()
 
-        processor = PreferencesProcessor(cwd=Path("/workspace"))
+        processor = PreferencesProcessor(AgentDefaults(cwd=Path("/workspace")))
 
         with pytest.raises(RuntimeError, match="SDK error"):
             await processor.process(session)

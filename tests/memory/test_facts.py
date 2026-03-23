@@ -9,6 +9,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
+from tachikoma.agent_defaults import AgentDefaults
 from tachikoma.memory.facts import FACTS_PROMPT, FactsProcessor
 from tachikoma.sessions.model import Session
 
@@ -35,10 +36,11 @@ class TestFactsProcessor:
         session = _make_session()
         cwd = Path("/workspace")
 
-        processor = FactsProcessor(cwd=cwd)
+        defaults = AgentDefaults(cwd=cwd)
+        processor = FactsProcessor(defaults)
         await processor.process(session)
 
-        mock_fork.assert_awaited_once_with(session, FACTS_PROMPT, cwd, cli_path=None)
+        mock_fork.assert_awaited_once_with(session, FACTS_PROMPT, defaults)
 
     def test_prompt_references_correct_subdirectory(self) -> None:
         """AC: Prompt mentions the facts subdirectory path."""
@@ -67,7 +69,7 @@ class TestFactsProcessor:
         )
         session = _make_session()
 
-        processor = FactsProcessor(cwd=Path("/workspace"))
+        processor = FactsProcessor(AgentDefaults(cwd=Path("/workspace")))
 
         with pytest.raises(RuntimeError, match="SDK error"):
             await processor.process(session)

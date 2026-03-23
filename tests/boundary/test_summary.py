@@ -10,6 +10,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from claude_agent_sdk.types import AssistantMessage, TextBlock
 
+from tachikoma.agent_defaults import AgentDefaults
 from tachikoma.boundary.summary import SummaryProcessor
 from tachikoma.sessions.model import Session
 
@@ -40,7 +41,7 @@ class TestSummaryProcessor:
 
         mock_query.return_value = fake_query()
 
-        processor = SummaryProcessor(mock_registry, Path("/workspace"))
+        processor = SummaryProcessor(mock_registry, AgentDefaults(cwd=Path("/workspace")))
         session = _make_session()
 
         await processor.process(session, "Hello", "Hi there!")
@@ -65,7 +66,7 @@ class TestSummaryProcessor:
 
         mock_query.return_value = fake_query()
 
-        processor = SummaryProcessor(mock_registry, Path("/workspace"))
+        processor = SummaryProcessor(mock_registry, AgentDefaults(cwd=Path("/workspace")))
         session = _make_session()
 
         await processor.process(session, "Tell me about pytest", "Pytest is...")
@@ -88,7 +89,7 @@ class TestSummaryProcessor:
 
         mock_query.return_value = fake_query()
 
-        processor = SummaryProcessor(mock_registry, Path("/workspace"))
+        processor = SummaryProcessor(mock_registry, AgentDefaults(cwd=Path("/workspace")))
         session = _make_session(summary=None)
 
         await processor.process(session, "Hello", "Hi there!")
@@ -112,7 +113,7 @@ class TestSummaryProcessor:
 
         mock_query.return_value = fake_query()
 
-        processor = SummaryProcessor(mock_registry, Path("/workspace"))
+        processor = SummaryProcessor(mock_registry, AgentDefaults(cwd=Path("/workspace")))
         existing_summary = "User discussed Python testing."
         session = _make_session(summary=existing_summary)
 
@@ -137,7 +138,7 @@ class TestSummaryProcessor:
 
         mock_query.return_value = fake_query()
 
-        processor = SummaryProcessor(mock_registry, Path("/workspace"))
+        processor = SummaryProcessor(mock_registry, AgentDefaults(cwd=Path("/workspace")))
         session = _make_session()
 
         await processor.process(session, "Hello", "Hi there!")
@@ -159,7 +160,7 @@ class TestSummaryProcessor:
         mock_registry = MagicMock()
         mock_registry.update_summary = AsyncMock()
 
-        processor = SummaryProcessor(mock_registry, Path("/workspace"))
+        processor = SummaryProcessor(mock_registry, AgentDefaults(cwd=Path("/workspace")))
         session = _make_session()
 
         with pytest.raises(RuntimeError, match="SDK error"):

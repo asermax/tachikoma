@@ -9,6 +9,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from tachikoma.agent_defaults import AgentDefaults
 from tachikoma.git.processor import GIT_COMMIT_PROMPT, GitProcessor, query_and_consume
 from tachikoma.sessions.model import Session
 
@@ -44,11 +45,11 @@ class TestGitProcessor:
             return_value=False,
         )
 
-        processor = GitProcessor(cwd=Path("/workspace"))
+        processor = GitProcessor(AgentDefaults(cwd=Path("/workspace")))
         await processor.process(_make_session())
 
         mock_query.assert_awaited_once_with(
-            GIT_COMMIT_PROMPT, Path("/workspace"), cli_path=None,
+            GIT_COMMIT_PROMPT, AgentDefaults(cwd=Path("/workspace")),
         )
 
     async def test_no_op_when_workspace_clean(
@@ -65,7 +66,7 @@ class TestGitProcessor:
             new_callable=AsyncMock,
         )
 
-        processor = GitProcessor(cwd=Path("/workspace"))
+        processor = GitProcessor(AgentDefaults(cwd=Path("/workspace")))
         await processor.process(_make_session())
 
         mock_query.assert_not_awaited()
@@ -89,7 +90,7 @@ class TestGitProcessor:
             return_value=False,
         )
 
-        processor = GitProcessor(cwd=Path("/workspace"))
+        processor = GitProcessor(AgentDefaults(cwd=Path("/workspace")))
         await processor.process(_make_session())
 
         # Should have called status twice (before and after agent)
@@ -118,7 +119,7 @@ class TestGitProcessor:
             new_callable=AsyncMock,
         )
 
-        processor = GitProcessor(cwd=Path("/workspace"))
+        processor = GitProcessor(AgentDefaults(cwd=Path("/workspace")))
         await processor.process(_make_session())
 
         mock_push.assert_awaited_once_with(Path("/workspace"))
@@ -146,7 +147,7 @@ class TestGitProcessor:
             new_callable=AsyncMock,
         )
 
-        processor = GitProcessor(cwd=Path("/workspace"))
+        processor = GitProcessor(AgentDefaults(cwd=Path("/workspace")))
         await processor.process(_make_session())
 
         mock_push.assert_not_awaited()
@@ -175,7 +176,7 @@ class TestGitProcessor:
             side_effect=RuntimeError("non-fast-forward"),
         )
 
-        processor = GitProcessor(cwd=Path("/workspace"))
+        processor = GitProcessor(AgentDefaults(cwd=Path("/workspace")))
 
         # Should not raise — push failure is caught and logged
         await processor.process(_make_session())
@@ -194,7 +195,7 @@ class TestGitProcessor:
             new_callable=AsyncMock,
         )
 
-        processor = GitProcessor(cwd=Path("/workspace"))
+        processor = GitProcessor(AgentDefaults(cwd=Path("/workspace")))
         await processor.process(_make_session())
 
         mock_has_remote.assert_not_awaited()
@@ -214,7 +215,8 @@ class TestQueryAndConsume:
 
         mock_query.return_value = fake_query()
 
-        await query_and_consume("test prompt", Path("/workspace"))
+        defaults = AgentDefaults(cwd=Path("/workspace"))
+        await query_and_consume("test prompt", defaults)
 
         mock_query.assert_called_once()
         call_kwargs = mock_query.call_args
@@ -239,7 +241,7 @@ class TestQueryAndConsume:
 
         mocker.patch("tachikoma.git.processor.query", side_effect=fake_query)
 
-        await query_and_consume("prompt", Path("/workspace"))
+        await query_and_consume("prompt", AgentDefaults(cwd=Path("/workspace")))
 
         assert consume_count == 3
 
@@ -252,7 +254,7 @@ class TestQueryAndConsume:
         mocker.patch("tachikoma.git.processor.query", side_effect=failing_query)
 
         with pytest.raises(RuntimeError, match="SDK error"):
-            await query_and_consume("prompt", Path("/workspace"))
+            await query_and_consume("prompt", AgentDefaults(cwd=Path("/workspace")))
 
 
 class TestGitCommitPrompt:

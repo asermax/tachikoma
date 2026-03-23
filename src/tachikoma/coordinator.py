@@ -22,6 +22,7 @@ from claude_agent_sdk.types import AgentDefinition, PermissionMode, SystemPrompt
 from loguru import logger
 
 from tachikoma.adapter import adapt
+from tachikoma.agent_defaults import AgentDefaults
 from tachikoma.boundary import BoundaryResult, SessionCandidate, detect_boundary
 from tachikoma.events import AgentEvent, Error, Result, Status, TextChunk
 from tachikoma.message_post_processing import MessagePostProcessingPipeline
@@ -71,28 +72,25 @@ class Coordinator:
         self,
         allowed_tools: list[str] | None = None,
         model: str | None = None,
-        cwd: Path | None = None,
+        agent_defaults: AgentDefaults | None = None,
         registry: SessionRegistry | None = None,
         system_prompt: str | None = None,
         pipeline: PostProcessingPipeline | None = None,
         pre_pipeline: PreProcessingPipeline | None = None,
         msg_pipeline: MessagePostProcessingPipeline | None = None,
         permission_mode: PermissionMode | None = None,
-        env: dict[str, str] | None = None,
         on_status: Callable[[str], None] | None = None,
         agents: dict[str, AgentDefinition] | None = None,
-        cli_path: str | None = None,
         session_resume_window: int = 86400,
         mcp_servers: dict[str, McpSdkServerConfig] | None = None,
     ) -> None:
         # Store individual options for building ClaudeAgentOptions per message
         self._allowed_tools = allowed_tools or []
         self._model = model
-        self._cwd = cwd
-        self._cli_path = cli_path
+        self._agent_defaults = agent_defaults or AgentDefaults(cwd=Path.cwd())
+        self._cwd = self._agent_defaults.cwd
         self._base_system_prompt = system_prompt
         self._permission_mode = permission_mode
-        self._env = env or {}
         self._agents = agents
         self._base_mcp_servers: dict[str, McpSdkServerConfig] = mcp_servers or {}
 
@@ -265,11 +263,11 @@ providing context for what the user has been doing in the meantime.
         options = ClaudeAgentOptions(
             allowed_tools=self._allowed_tools,
             model=self._model,
-            cwd=self._cwd,
-            cli_path=self._cli_path,
+            cwd=self._agent_defaults.cwd,
+            cli_path=self._agent_defaults.cli_path,
+            env=self._agent_defaults.env,
             system_prompt=sdk_system_prompt,
             permission_mode=self._permission_mode,
-            env=self._env,
             agents=self._agents,
             resume=resume,
             mcp_servers=all_mcp_servers if all_mcp_servers else None,
@@ -350,9 +348,8 @@ providing context for what the user has been doing in the meantime.
                 result: BoundaryResult = await detect_boundary(
                     text,
                     active.summary,
-                    self._cwd,
+                    self._agent_defaults,
                     candidates=candidates,
-                    cli_path=self._cli_path,
                 )
                 if not result.continues:
                     _log.info(
