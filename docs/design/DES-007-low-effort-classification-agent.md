@@ -117,6 +117,8 @@ Agents that should not use tools require defense in depth to prevent rogue execu
 
 The three layers work independently: default permission mode denies tools at the permission level, `allowed_tools=[]` will deny at the allowlist level (once fixed), and `max_turns=3` caps execution regardless.
 
+**Implementation**: All tool-less call sites use the same inline pattern with the defense-in-depth comment referencing this section. See `boundary/detector.py`, `boundary/summary.py`, and `skills/context_provider.py` for examples.
+
 ## Exceptions
 
 - If a provider needs higher effort (e.g., complex multi-step reasoning), it should document why in its design and may use `effort="medium"` or higher.
