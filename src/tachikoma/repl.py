@@ -130,7 +130,8 @@ class Repl:
             _log.debug("Message received: length={n}", n=len(text))
 
             try:
-                async for event in self._coordinator.send_message(text):
+                self._coordinator.enqueue(text)
+                async for event in self._coordinator.send_message():
                     if not self._renderer.render(event):
                         return
             except KeyboardInterrupt:
@@ -164,7 +165,8 @@ class Repl:
         )
 
         try:
-            async for ev in self._coordinator.send_message(instance.prompt):
+            self._coordinator.enqueue(instance.prompt)
+            async for ev in self._coordinator.send_message():
                 if not self._renderer.render(ev):
                     return
 

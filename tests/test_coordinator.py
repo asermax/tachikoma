@@ -36,17 +36,23 @@ async def _mock_messages(*messages):
         yield msg
 
 
+async def _send(coord, text):
+    """Enqueue a message and collect all events from send_message()."""
+    coord.enqueue(text)
+    return [e async for e in coord.send_message()]
+
+
 @pytest.fixture
 def mock_sdk(mocker):
     """Mock the ClaudeSDKClient class.
 
-    The coordinator now creates a fresh ``async with ClaudeSDKClient(options)``
-    per ``send_message()`` call, so we mock the class to return a mock client
-    whose ``__aenter__`` yields itself.
+    The coordinator creates a ``ClaudeSDKClient``, calls ``connect()`` with a
+    message source generator, and later ``disconnect()``.  We mock the class
+    so that ``connect()`` simply stores the generator for later inspection.
     """
     mock_client = MagicMock()
-    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-    mock_client.__aexit__ = AsyncMock(return_value=False)
+    mock_client.connect = AsyncMock()
+    mock_client.disconnect = AsyncMock()
     mock_client.query = AsyncMock()
     mock_client.interrupt = AsyncMock()
     mock_client.receive_response = MagicMock()
@@ -76,11 +82,11 @@ class TestCoordinatorLifecycle:
             pass
 
         # No connect/disconnect calls — per-message lifecycle only
-        client.__aenter__.assert_not_awaited()
-        client.__aexit__.assert_not_awaited()
+        client.connect.assert_not_awaited()
+        client.disconnect.assert_not_awaited()
 
     async def test_send_message_creates_client_per_call(self, mock_sdk) -> None:
-        """Each send_message() creates a fresh ClaudeSDKClient via async with."""
+        """Each send_message() creates a fresh ClaudeSDKClient via connect/disconnect."""
         client, mock_cls = mock_sdk
         client.receive_response.return_value = _mock_messages(
             make_assistant([TextBlock(text="A")]),
@@ -88,26 +94,26 @@ class TestCoordinatorLifecycle:
         )
 
         async with Coordinator() as coord:
-            _ = [e async for e in coord.send_message("first")]
+            _ = await _send(coord, "first")
 
             client.receive_response.return_value = _mock_messages(
                 make_assistant([TextBlock(text="B")]),
                 make_result(),
             )
-            _ = [e async for e in coord.send_message("second")]
+            _ = await _send(coord, "second")
 
         # Two send_message calls → two ClaudeSDKClient instantiations
         assert mock_cls.call_count == 2
-        assert client.__aenter__.await_count == 2
-        assert client.__aexit__.await_count == 2
+        assert client.connect.await_count == 2
+        assert client.disconnect.await_count == 2
 
     async def test_connect_failure_in_send_message_yields_error(self, mock_sdk) -> None:
         """Client creation failure inside send_message() yields a recoverable Error."""
         client, _ = mock_sdk
-        client.__aenter__.side_effect = CLIConnectionError("no CLI")
+        client.connect.side_effect = CLIConnectionError("no CLI")
 
         async with Coordinator() as coord:
-            events = [e async for e in coord.send_message("hello")]
+            events = await _send(coord, "hello")
 
         assert isinstance(events[-1], Error)
         assert events[-1].recoverable is True
@@ -123,7 +129,7 @@ class TestCoordinatorSendMessage:
         )
 
         async with Coordinator() as coord:
-            events = [e async for e in coord.send_message("hi")]
+            events = await _send(coord, "hi")
 
         text_events = [e for e in events if isinstance(e, TextChunk)]
         assert len(text_events) == 1
@@ -141,7 +147,7 @@ class TestCoordinatorSendMessage:
         )
 
         async with Coordinator() as coord:
-            events = [e async for e in coord.send_message("read main.py")]
+            events = await _send(coord, "read main.py")
 
         tool_events = [e for e in events if isinstance(e, ToolActivity)]
         assert len(tool_events) == 1
@@ -155,7 +161,7 @@ class TestCoordinatorSendMessage:
         )
 
         async with Coordinator() as coord:
-            events = [e async for e in coord.send_message("do it")]
+            events = await _send(coord, "do it")
 
         result_events = [e for e in events if isinstance(e, Result)]
         assert len(result_events) == 1
@@ -173,7 +179,7 @@ class TestCoordinatorSendMessage:
         )
 
         async with Coordinator() as coord:
-            events = [e async for e in coord.send_message("search")]
+            events = await _send(coord, "search")
 
         text_events = [e for e in events if isinstance(e, TextChunk)]
         assert len(text_events) == 2
@@ -188,7 +194,7 @@ class TestCoordinatorSendMessage:
         )
 
         async with Coordinator(allowed_tools=["Read", "Glob"]) as coord:
-            _ = [e async for e in coord.send_message("hello")]
+            _ = await _send(coord, "hello")
 
         options = mock_cls.call_args[0][0]
         assert options.allowed_tools == ["Read", "Glob"]
@@ -202,7 +208,7 @@ class TestCoordinatorSendMessage:
         )
 
         async with Coordinator(agent_defaults=AgentDefaults(cwd=Path("/workspace"))) as coord:
-            _ = [e async for e in coord.send_message("hello")]
+            _ = await _send(coord, "hello")
 
         options = mock_cls.call_args[0][0]
         assert options.cwd == Path("/workspace")
@@ -219,7 +225,7 @@ class TestCoordinatorErrorHandling:
         client.receive_response.return_value = _failing_messages()
 
         async with Coordinator() as coord:
-            events = [e async for e in coord.send_message("hello")]
+            events = await _send(coord, "hello")
 
         assert isinstance(events[-1], Error)
         assert events[-1].recoverable is True
@@ -235,7 +241,7 @@ class TestCoordinatorErrorHandling:
         client.receive_response.return_value = _crashing_messages()
 
         async with Coordinator() as coord:
-            events = [e async for e in coord.send_message("hello")]
+            events = await _send(coord, "hello")
 
         assert isinstance(events[-1], Error)
         assert events[-1].recoverable is True
@@ -255,8 +261,8 @@ class TestCoordinatorErrorHandling:
         client.receive_response.side_effect = [_failing(), _ok()]
 
         async with Coordinator() as coord:
-            events1 = [e async for e in coord.send_message("first")]
-            events2 = [e async for e in coord.send_message("second")]
+            events1 = await _send(coord, "first")
+            events2 = await _send(coord, "second")
 
         assert isinstance(events1[-1], Error)
 
@@ -282,7 +288,7 @@ class TestCoordinatorInterrupt:
         async with Coordinator() as coord:
 
             async def consume():
-                return [e async for e in coord.send_message("hi")]
+                return await _send(coord, "hi")
 
             task = asyncio.create_task(consume())
             await asyncio.sleep(0.01)
@@ -331,7 +337,7 @@ class TestCoordinatorSessionTracking:
         registry = _make_mock_registry(active_session=None)
 
         async with Coordinator(registry=registry) as coord:
-            _ = [e async for e in coord.send_message("hello")]
+            _ = await _send(coord, "hello")
 
         registry.create_session.assert_awaited_once()
 
@@ -350,8 +356,8 @@ class TestCoordinatorSessionTracking:
         ]
 
         async with Coordinator(registry=registry) as coord:
-            _ = [e async for e in coord.send_message("first")]
-            _ = [e async for e in coord.send_message("second")]
+            _ = await _send(coord, "first")
+            _ = await _send(coord, "second")
 
         assert registry.create_session.await_count == 1
 
@@ -366,7 +372,7 @@ class TestCoordinatorSessionTracking:
         registry = _make_mock_registry(active_session=None)
 
         async with Coordinator(registry=registry) as coord:
-            _ = [e async for e in coord.send_message("hello")]
+            _ = await _send(coord, "hello")
 
         registry.update_metadata.assert_awaited_once()
         call_kwargs = registry.update_metadata.call_args[1]
@@ -392,7 +398,7 @@ class TestCoordinatorSessionTracking:
         )
 
         async with Coordinator() as coord:
-            events = [e async for e in coord.send_message("hi")]
+            events = await _send(coord, "hi")
 
         text_events = [e for e in events if isinstance(e, TextChunk)]
         assert len(text_events) == 1
@@ -409,7 +415,7 @@ class TestCoordinatorSessionTracking:
         registry.create_session.side_effect = SessionRepositoryError("DB down")
 
         async with Coordinator(registry=registry) as coord:
-            events = [e async for e in coord.send_message("hi")]
+            events = await _send(coord, "hi")
 
         text_events = [e for e in events if isinstance(e, TextChunk)]
         assert len(text_events) == 1
@@ -466,7 +472,7 @@ class TestCoordinatorSystemPrompt:
         )
 
         async with Coordinator(system_prompt="Custom prompt") as coord:
-            _ = [e async for e in coord.send_message("hello")]
+            _ = await _send(coord, "hello")
 
         options = mock_cls.call_args[0][0]
         assert options.system_prompt is not None
@@ -485,7 +491,7 @@ class TestCoordinatorSystemPrompt:
         )
 
         async with Coordinator() as coord:
-            _ = [e async for e in coord.send_message("hello")]
+            _ = await _send(coord, "hello")
 
         options = mock_cls.call_args[0][0]
         assert options.system_prompt is None
@@ -499,7 +505,7 @@ class TestCoordinatorSystemPrompt:
         )
 
         async with Coordinator(system_prompt="Custom prompt") as coord:
-            events = [e async for e in coord.send_message("hi")]
+            events = await _send(coord, "hi")
 
         text_events = [e for e in events if isinstance(e, TextChunk)]
         assert len(text_events) == 1
@@ -518,7 +524,7 @@ class TestCoordinatorPermissionAndEnv:
         )
 
         async with Coordinator(permission_mode="bypassPermissions") as coord:
-            _ = [e async for e in coord.send_message("hello")]
+            _ = await _send(coord, "hello")
 
         options = mock_cls.call_args[0][0]
         assert options.permission_mode == "bypassPermissions"
@@ -532,7 +538,7 @@ class TestCoordinatorPermissionAndEnv:
         )
 
         async with Coordinator() as coord:
-            _ = [e async for e in coord.send_message("hello")]
+            _ = await _send(coord, "hello")
 
         options = mock_cls.call_args[0][0]
         assert options.permission_mode is None
@@ -548,7 +554,7 @@ class TestCoordinatorPermissionAndEnv:
         async with Coordinator(
             agent_defaults=AgentDefaults(cwd=Path.cwd(), env={"CLAUDE_CODE_DISABLE_AUTO_MEMORY": "1"}),
         ) as coord:
-            _ = [e async for e in coord.send_message("hello")]
+            _ = await _send(coord, "hello")
 
         options = mock_cls.call_args[0][0]
         assert options.env == {"CLAUDE_CODE_DISABLE_AUTO_MEMORY": "1"}
@@ -562,7 +568,7 @@ class TestCoordinatorPermissionAndEnv:
         )
 
         async with Coordinator() as coord:
-            _ = [e async for e in coord.send_message("hello")]
+            _ = await _send(coord, "hello")
 
         options = mock_cls.call_args[0][0]
         assert options.env == {}
@@ -745,109 +751,25 @@ class TestCoordinatorPostProcessing:
         on_status.assert_not_called()
 
 
-class TestCoordinatorSteering:
-    """Tests for DLT-002: steering mechanism in the coordinator."""
+class TestCoordinatorMessageBuffer:
+    """Tests for message buffer mechanism replacing steer()."""
 
-    async def test_steer_calls_client_query(self, mock_sdk) -> None:
-        """AC: steer() calls client.query() with the text during send_message."""
-        client, _ = mock_sdk
-
-        steered = asyncio.Event()
-
-        async def _slow_messages():
-            yield make_assistant([TextBlock(text="thinking...")])
-            await steered.wait()
-            yield make_result()
-
-        client.receive_response.return_value = _slow_messages()
-
-        async with Coordinator() as coord:
-
-            async def consume():
-                return [e async for e in coord.send_message("hi")]
-
-            task = asyncio.create_task(consume())
-            await asyncio.sleep(0.01)
-
-            await coord.steer("follow-up message")
-            steered.set()
-            await task
-
-        # query is called twice: once for the initial send_message, once for steer
-        assert client.query.await_count == 2
-        assert client.query.call_args_list[1][0][0] == "follow-up message"
-
-    async def test_steer_increments_pending_counter(self, mock_sdk) -> None:
-        """AC: steer() increments _pending_steers counter."""
-        client, _ = mock_sdk
-
-        steered = asyncio.Event()
-
-        async def _slow_messages():
-            yield make_assistant([TextBlock(text="thinking...")])
-            await steered.wait()
-            yield make_result()
-
-        client.receive_response.return_value = _slow_messages()
-
-        async with Coordinator() as coord:
-
-            async def consume():
-                return [e async for e in coord.send_message("hi")]
-
-            task = asyncio.create_task(consume())
-            await asyncio.sleep(0.01)
-
-            assert coord._pending_steers == 0
-            await coord.steer("message 1")
-            assert coord._pending_steers == 1
-            await coord.steer("message 2")
-            assert coord._pending_steers == 2
-
-            steered.set()
-            await task
-
-    async def test_steer_without_active_client_raises_runtime_error(self, mock_sdk) -> None:
-        """AC: steer() without active client raises RuntimeError."""
+    async def test_enqueue_always_succeeds(self) -> None:
+        """AC: enqueue() succeeds on a bare coordinator (no client needed)."""
         coord = Coordinator()
+        coord.enqueue("hello")
 
-        with pytest.raises(RuntimeError, match="not connected"):
-            await coord.steer("message")
+        assert coord._message_buffer.qsize() == 1
 
-    async def test_send_message_processes_steered_responses(self, mock_sdk) -> None:
-        """AC: send_message() handles additional receive_response() calls for steered messages."""
-        client, _ = mock_sdk
+    async def test_enqueue_is_synchronous(self) -> None:
+        """AC: enqueue() is a plain method, not a coroutine."""
+        coord = Coordinator()
+        result = coord.enqueue("hello")
 
-        # First receive_response: initial response
-        # Second receive_response: steered response
-        client.receive_response.side_effect = [
-            _mock_messages(
-                make_assistant([TextBlock(text="A")]),
-                make_result(),
-            ),
-            _mock_messages(
-                make_assistant([TextBlock(text="B")]),
-                make_result(),
-            ),
-        ]
+        assert result is None
 
-        async with Coordinator() as coord:
-            # Pre-set pending steer so the loop fires a second receive_response
-            coord._pending_steers = 1
-
-            events = [e async for e in coord.send_message("initial")]
-
-        # Should see events from both responses
-        result_events = [e for e in events if isinstance(e, Result)]
-        text_events = [e for e in events if isinstance(e, TextChunk)]
-
-        assert len(result_events) == 2
-        assert len(text_events) == 2
-        assert text_events[0].text == "A"
-        assert text_events[1].text == "B"
-
-    async def test_send_message_breaks_after_final_result(self, mock_sdk) -> None:
-        """AC: send_message() breaks after final Result when counter reaches 0."""
+    async def test_send_message_reads_from_buffer(self, mock_sdk) -> None:
+        """AC: send_message() reads initial message from buffer."""
         client, _ = mock_sdk
         client.receive_response.return_value = _mock_messages(
             make_assistant([TextBlock(text="response")]),
@@ -855,44 +777,54 @@ class TestCoordinatorSteering:
         )
 
         async with Coordinator() as coord:
-            events = [e async for e in coord.send_message("initial")]
+            events = await _send(coord, "hello")
 
-        # Should see exactly one Result
-        result_events = [e for e in events if isinstance(e, Result)]
-        assert len(result_events) == 1
+        text_events = [e for e in events if isinstance(e, TextChunk)]
+        assert len(text_events) == 1
+        assert text_events[0].text == "response"
 
-    async def test_pending_steers_decremented_on_each_response(self, mock_sdk) -> None:
-        """AC: _pending_steers is decremented on each steered receive_response."""
+    async def test_send_message_returns_empty_when_buffer_empty(self, mock_sdk) -> None:
+        """AC: send_message() returns immediately if buffer is empty."""
+        async with Coordinator() as coord:
+            events = [e async for e in coord.send_message()]
+
+        assert events == []
+
+    async def test_buffer_preserved_on_stream_error(self, mock_sdk) -> None:
+        """AC: buffer is not cleared on CLIConnectionError."""
         client, _ = mock_sdk
 
-        # Three sequential receive_response calls: initial + 2 steered
-        client.receive_response.side_effect = [
-            _mock_messages(
-                make_assistant([TextBlock(text="A")]),
-                make_result(),
-            ),
-            _mock_messages(
-                make_assistant([TextBlock(text="B")]),
-                make_result(),
-            ),
-            _mock_messages(
-                make_assistant([TextBlock(text="C")]),
-                make_result(),
-            ),
-        ]
+        async def _failing():
+            raise CLIConnectionError("connection lost")
+            yield  # noqa: RUF027 — makes this an async generator
+
+        client.receive_response.return_value = _failing()
 
         async with Coordinator() as coord:
-            # Queue two steers
-            coord._pending_steers = 2
+            coord.enqueue("will survive")
+            coord.enqueue("initial")
+            events = [e async for e in coord.send_message()]
 
-            events = [e async for e in coord.send_message("initial")]
+        error_events = [e for e in events if isinstance(e, Error)]
+        assert len(error_events) == 1
 
-            # Counter should be 0 after all responses
-            assert coord._pending_steers == 0
+        # The first message ("will survive") was consumed as the initial message
+        # "initial" should still be in the buffer
+        assert not coord._message_buffer.empty()
 
-        # Should see three Result events
+    async def test_send_message_exits_after_response(self, mock_sdk) -> None:
+        """AC: send_message() returns after one receive_response cycle."""
+        client, _ = mock_sdk
+        client.receive_response.return_value = _mock_messages(
+            make_assistant([TextBlock(text="response")]),
+            make_result(),
+        )
+
+        async with Coordinator() as coord:
+            events = await _send(coord, "initial")
+
         result_events = [e for e in events if isinstance(e, Result)]
-        assert len(result_events) == 3
+        assert len(result_events) == 1
 
 
 class TestCoordinatorAgents:
@@ -914,7 +846,7 @@ class TestCoordinatorAgents:
         }
 
         async with Coordinator(agents=agents) as coord:
-            _ = [e async for e in coord.send_message("hello")]
+            _ = await _send(coord, "hello")
 
         options = mock_cls.call_args[0][0]
         assert options.agents == agents
@@ -928,7 +860,7 @@ class TestCoordinatorAgents:
         )
 
         async with Coordinator() as coord:
-            _ = [e async for e in coord.send_message("hello")]
+            _ = await _send(coord, "hello")
 
         options = mock_cls.call_args[0][0]
         assert options.agents is None
@@ -950,7 +882,7 @@ class TestCoordinatorAgents:
         }
 
         async with Coordinator(agents=agents) as coord:
-            _ = [e async for e in coord.send_message("hello")]
+            _ = await _send(coord, "hello")
 
         options = mock_cls.call_args[0][0]
         assert options.agents["search/query"].tools == ["Read", "Glob", "Grep"]
@@ -972,7 +904,7 @@ class TestCoordinatorAgents:
         }
 
         async with Coordinator(agents=agents) as coord:
-            _ = [e async for e in coord.send_message("hello")]
+            _ = await _send(coord, "hello")
 
         options = mock_cls.call_args[0][0]
         assert options.agents["analysis/deep"].model == "opus"
@@ -993,7 +925,7 @@ class TestCoordinatorAgents:
         }
 
         async with Coordinator(agents=agents) as coord:
-            events = [e async for e in coord.send_message("hi")]
+            events = await _send(coord, "hi")
 
         text_events = [e for e in events if isinstance(e, TextChunk)]
         assert len(text_events) == 1
@@ -1016,8 +948,8 @@ class TestCoordinatorAgents:
         ]
 
         async with Coordinator(agents=agents) as coord:
-            _ = [e async for e in coord.send_message("first")]
-            _ = [e async for e in coord.send_message("second")]
+            _ = await _send(coord, "first")
+            _ = await _send(coord, "second")
 
         # Both calls should have agents in options
         for call in mock_cls.call_args_list:
@@ -1052,14 +984,16 @@ class TestCoordinatorPreProcessing:
         registry = _make_mock_registry(active_session=None)
 
         async with Coordinator(registry=registry, pre_pipeline=pre_pipeline) as coord:
-            _ = [e async for e in coord.send_message("hello")]
+            _ = await _send(coord, "hello")
 
         pre_pipeline.run.assert_awaited_once_with("hello")
-        # Verify the enriched message was sent to the SDK
-        client.query.assert_awaited_once()
-        query_text = client.query.call_args[0][0]
-        assert "<memories>" in query_text
-        assert "hello" in query_text
+
+        # Verify the enriched message was passed to connect() via the generator
+        client.connect.assert_awaited_once()
+        generator = client.connect.call_args[0][0]
+        first_msg = await generator.__anext__()
+        assert "<memories>" in first_msg["message"]["content"]
+        assert "hello" in first_msg["message"]["content"]
 
     async def test_skips_pre_pipeline_on_subsequent_message(
         self, mock_sdk,
@@ -1080,8 +1014,8 @@ class TestCoordinatorPreProcessing:
         pre_pipeline.run.return_value = [ContextResult(tag="memories", content="ctx")]
 
         async with Coordinator(registry=registry, pre_pipeline=pre_pipeline) as coord:
-            _ = [e async for e in coord.send_message("first")]
-            _ = [e async for e in coord.send_message("second")]
+            _ = await _send(coord, "first")
+            _ = await _send(coord, "second")
 
         # Pre-processing should only run on the first message
         assert pre_pipeline.run.await_count == 1
@@ -1098,10 +1032,10 @@ class TestCoordinatorPreProcessing:
         registry = _make_mock_registry(active_session=None)
 
         async with Coordinator(registry=registry) as coord:
-            _ = [e async for e in coord.send_message("hello")]
+            _ = await _send(coord, "hello")
 
         # Message should be sent without enrichment
-        client.query.assert_awaited_once_with("hello")
+        client.connect.assert_awaited_once()
 
     async def test_skips_pre_pipeline_when_no_registry(
         self, mock_sdk,
@@ -1116,10 +1050,10 @@ class TestCoordinatorPreProcessing:
         pre_pipeline = _make_mock_pre_pipeline()
 
         async with Coordinator(pre_pipeline=pre_pipeline) as coord:
-            _ = [e async for e in coord.send_message("hello")]
+            _ = await _send(coord, "hello")
 
         pre_pipeline.run.assert_not_awaited()
-        client.query.assert_awaited_once_with("hello")
+        client.connect.assert_awaited_once()
 
     async def test_pre_pipeline_failure_sends_original_message(
         self, mock_sdk,
@@ -1136,10 +1070,10 @@ class TestCoordinatorPreProcessing:
         registry = _make_mock_registry(active_session=None)
 
         async with Coordinator(registry=registry, pre_pipeline=pre_pipeline) as coord:
-            _ = [e async for e in coord.send_message("hello")]
+            _ = await _send(coord, "hello")
 
         # Original message should be sent despite failure
-        client.query.assert_awaited_once_with("hello")
+        client.connect.assert_awaited_once()
 
     async def test_pre_pipeline_empty_results_sends_original_message(
         self, mock_sdk,
@@ -1156,10 +1090,10 @@ class TestCoordinatorPreProcessing:
         registry = _make_mock_registry(active_session=None)
 
         async with Coordinator(registry=registry, pre_pipeline=pre_pipeline) as coord:
-            _ = [e async for e in coord.send_message("hello")]
+            _ = await _send(coord, "hello")
 
         # Original message should be sent (assemble_context returns original on empty)
-        client.query.assert_awaited_once_with("hello")
+        client.connect.assert_awaited_once()
 
     async def test_session_creation_failure_skips_pre_pipeline(
         self, mock_sdk,
@@ -1176,10 +1110,10 @@ class TestCoordinatorPreProcessing:
         registry.create_session.side_effect = SessionRepositoryError("DB error")
 
         async with Coordinator(registry=registry, pre_pipeline=pre_pipeline) as coord:
-            _ = [e async for e in coord.send_message("hello")]
+            _ = await _send(coord, "hello")
 
         pre_pipeline.run.assert_not_awaited()
-        client.query.assert_awaited_once_with("hello")
+        client.connect.assert_awaited_once()
 
 
 class TestCoordinatorMcpServers:
@@ -1207,7 +1141,7 @@ class TestCoordinatorMcpServers:
         registry = _make_mock_registry(active_session=None)
 
         async with Coordinator(registry=registry, pre_pipeline=pre_pipeline) as coord:
-            _ = [e async for e in coord.send_message("hello")]
+            _ = await _send(coord, "hello")
 
         # Verify options were built with mcp_servers
         mock_cls.assert_called_once()
@@ -1235,7 +1169,7 @@ class TestCoordinatorMcpServers:
         registry = _make_mock_registry(active_session=None)
 
         async with Coordinator(registry=registry, pre_pipeline=pre_pipeline) as coord:
-            _ = [e async for e in coord.send_message("hello")]
+            _ = await _send(coord, "hello")
 
         options = mock_cls.call_args[0][0]
         assert options.mcp_servers == {"projects": server1, "tools": server2}
@@ -1261,8 +1195,8 @@ class TestCoordinatorMcpServers:
         registry = _make_mock_registry(active_session=None)
 
         async with Coordinator(registry=registry, pre_pipeline=pre_pipeline) as coord:
-            _ = [e async for e in coord.send_message("first")]
-            _ = [e async for e in coord.send_message("second")]
+            _ = await _send(coord, "first")
+            _ = await _send(coord, "second")
 
         # Both calls should have the same mcp_servers
         assert mock_cls.call_count == 2
@@ -1307,19 +1241,19 @@ class TestCoordinatorMcpServers:
         async with Coordinator(
             registry=registry, pre_pipeline=pre_pipeline, agent_defaults=AgentDefaults(cwd=Path("/ws")),
         ) as coord:
-            _ = [e async for e in coord.send_message("first")]
+            _ = await _send(coord, "first")
 
             # Update mock for second call - no mcp_servers in new session
             pre_pipeline.run.return_value = []
 
-            _ = [e async for e in coord.send_message("new topic")]
+            _ = await _send(coord, "new topic")
 
         # First call should have mcp_servers, second call should be empty
         assert mock_cls.call_count == 2
         options1 = mock_cls.call_args_list[0][0][0]
         options2 = mock_cls.call_args_list[1][0][0]
         assert options1.mcp_servers == {"projects": mock_server}
-        assert options2.mcp_servers is None
+        assert options2.mcp_servers == {}
 
     async def test_no_mcp_servers_when_not_provided(self, mock_sdk) -> None:
         """AC: No mcp_servers in ContextResult means None in options."""
@@ -1336,10 +1270,10 @@ class TestCoordinatorMcpServers:
         registry = _make_mock_registry(active_session=None)
 
         async with Coordinator(registry=registry, pre_pipeline=pre_pipeline) as coord:
-            _ = [e async for e in coord.send_message("hello")]
+            _ = await _send(coord, "hello")
 
         options = mock_cls.call_args[0][0]
-        assert options.mcp_servers is None
+        assert options.mcp_servers == {}
 
 
 class TestBoundaryDetection:
@@ -1355,7 +1289,7 @@ class TestBoundaryDetection:
         registry = _make_mock_registry(active_session=None)
 
         async with Coordinator(registry=registry, agent_defaults=AgentDefaults(cwd=Path("/workspace"))) as coord:
-            _ = [e async for e in coord.send_message("hello")]
+            _ = await _send(coord, "hello")
 
         # No boundary detection call should happen - message should be processed normally
         registry.create_session.assert_awaited_once()
@@ -1375,7 +1309,7 @@ class TestBoundaryDetection:
         registry = _make_mock_registry(active_session=active)
 
         async with Coordinator(registry=registry, agent_defaults=AgentDefaults(cwd=Path("/workspace"))) as coord:
-            _ = [e async for e in coord.send_message("hello")]
+            _ = await _send(coord, "hello")
 
         # Message should be processed without triggering transition
         registry.create_session.assert_not_awaited()
@@ -1402,7 +1336,7 @@ class TestBoundaryDetection:
         )
 
         async with Coordinator(registry=registry, agent_defaults=AgentDefaults(cwd=Path("/workspace"))) as coord:
-            events = [e async for e in coord.send_message("tell me more")]
+            events = await _send(coord, "tell me more")
 
         # Should NOT trigger transition (close_session called only once at shutdown)
         mock_detect.assert_awaited_once()
@@ -1435,7 +1369,7 @@ class TestBoundaryDetection:
         )
 
         async with Coordinator(registry=registry, agent_defaults=AgentDefaults(cwd=Path("/workspace"))) as coord:
-            events = [e async for e in coord.send_message("hello")]
+            events = await _send(coord, "hello")
 
         # Error should be caught, message should still be processed
         mock_detect.assert_awaited_once()
@@ -1482,11 +1416,11 @@ class TestBoundaryDetection:
             msg_pipeline=msg_pipeline,
         ) as coord:
             # First message triggers per-message pipeline
-            _ = [e async for e in coord.send_message("first")]
+            _ = await _send(coord, "first")
             # Give the background task time to start
             await asyncio.sleep(0.01)
             # Second message should await pending task before detection
-            _ = [e async for e in coord.send_message("second")]
+            _ = await _send(coord, "second")
 
         # The pending task should have been awaited before detection
         assert "msg_pipeline_start" in call_order
@@ -1521,9 +1455,9 @@ class TestBoundaryDetection:
             agent_defaults=AgentDefaults(cwd=Path("/workspace")),
             msg_pipeline=msg_pipeline,
         ) as coord:
-            _ = [e async for e in coord.send_message("first")]
+            _ = await _send(coord, "first")
             # Second message should not raise despite pending task failure
-            _ = [e async for e in coord.send_message("second")]
+            _ = await _send(coord, "second")
 
         # Detection should still have been called
         mock_detect.assert_awaited()
@@ -1559,7 +1493,7 @@ class TestSessionTransition:
             registry=registry,
             agent_defaults=AgentDefaults(cwd=Path("/workspace")),
         ) as coord:
-            _ = [e async for e in coord.send_message("what's for dinner?")]
+            _ = await _send(coord, "what's for dinner?")
 
         registry.close_session.assert_awaited_once_with("s1")
 
@@ -1599,7 +1533,7 @@ class TestSessionTransition:
             agent_defaults=AgentDefaults(cwd=Path("/workspace")),
             pipeline=pipeline,
         ) as coord:
-            _ = [e async for e in coord.send_message("new topic")]
+            _ = await _send(coord, "new topic")
             # Give background task time to start
             await asyncio.sleep(0.05)
 
@@ -1637,7 +1571,7 @@ class TestSessionTransition:
             agent_defaults=AgentDefaults(cwd=Path("/workspace")),
             pipeline=pipeline,
         ) as coord:
-            _ = [e async for e in coord.send_message("new topic")]
+            _ = await _send(coord, "new topic")
 
         # Pipeline should NOT have been called for transition
         pipeline.run.assert_not_awaited()
@@ -1669,7 +1603,7 @@ class TestSessionTransition:
             registry=registry,
             agent_defaults=AgentDefaults(cwd=Path("/workspace")),
         ) as coord:
-            _ = [e async for e in coord.send_message("new topic")]
+            _ = await _send(coord, "new topic")
 
             # After transition, _sdk_session_id should be None
             assert coord._sdk_session_id is None
@@ -1703,7 +1637,7 @@ class TestSessionTransition:
         ) as coord:
             # _previous_summary is consumed during _build_options in send_message,
             # but we can verify the transition set it by checking the options used
-            _ = [e async for e in coord.send_message("new topic")]
+            _ = await _send(coord, "new topic")
 
             # After _build_options consumed it, it should be None again
             assert coord._previous_summary is None
@@ -1736,7 +1670,7 @@ class TestSessionTransition:
             registry=registry,
             agent_defaults=AgentDefaults(cwd=Path("/workspace")),
         ) as coord:
-            _ = [e async for e in coord.send_message("new topic")]
+            _ = await _send(coord, "new topic")
 
         # New session should be created
         registry.create_session.assert_awaited()
@@ -1769,7 +1703,7 @@ class TestSessionTransition:
             registry=registry,
             agent_defaults=AgentDefaults(cwd=Path("/workspace")),
         ) as coord:
-            _ = [e async for e in coord.send_message("new topic")]
+            _ = await _send(coord, "new topic")
 
         # Despite close error, new session should be created
         registry.create_session.assert_awaited()
@@ -1810,9 +1744,7 @@ class TestSessionTransition:
             agent_defaults=AgentDefaults(cwd=Path("/workspace")),
         ) as coord:
             # Simulate a session task prompt being sent
-            _ = [e async for e in coord.send_message(
-                "Reminder: review the weekly report"
-            )]
+            _ = await _send(coord, "Reminder: review the weekly report")
 
         # Verify boundary detection was triggered (session closed, new created)
         registry.close_session.assert_awaited_once_with("s1")
@@ -1842,8 +1774,8 @@ class TestBuildOptions:
         registry.get_active_session.side_effect = [None, active, active, active]
 
         async with Coordinator(registry=registry) as coord:
-            _ = [e async for e in coord.send_message("first")]
-            _ = [e async for e in coord.send_message("second")]
+            _ = await _send(coord, "first")
+            _ = await _send(coord, "second")
 
         # First call: new session, resume=None
         first_options = mock_cls.call_args_list[0][0][0]
@@ -1864,7 +1796,7 @@ class TestBuildOptions:
         registry = _make_mock_registry(active_session=None)
 
         async with Coordinator(registry=registry) as coord:
-            _ = [e async for e in coord.send_message("hello")]
+            _ = await _send(coord, "hello")
 
         options = mock_cls.call_args[0][0]
         assert options.resume is None
@@ -1896,7 +1828,7 @@ class TestBuildOptions:
         ) as coord:
             # Seed _sdk_session_id as if there was a previous message in that session
             coord._sdk_session_id = "sdk-old"
-            _ = [e async for e in coord.send_message("new topic")]
+            _ = await _send(coord, "new topic")
 
         # After topic shift, options.resume should be None (new session)
         options = mock_cls.call_args[0][0]
@@ -1930,7 +1862,7 @@ class TestBuildOptions:
             agent_defaults=AgentDefaults(cwd=Path("/workspace")),
             system_prompt="Base prompt",
         ) as coord:
-            _ = [e async for e in coord.send_message("new topic")]
+            _ = await _send(coord, "new topic")
 
         # The options used for the message should have the summary in the system prompt
         options = mock_cls.call_args[0][0]
@@ -1967,7 +1899,7 @@ class TestBuildOptions:
             agent_defaults=AgentDefaults(cwd=Path("/workspace")),
             system_prompt=None,  # No base prompt
         ) as coord:
-            _ = [e async for e in coord.send_message("new topic")]
+            _ = await _send(coord, "new topic")
 
         # Should still have a system prompt with the summary
         options = mock_cls.call_args[0][0]
@@ -2012,8 +1944,8 @@ class TestBuildOptions:
             agent_defaults=AgentDefaults(cwd=Path("/workspace")),
             system_prompt="Base prompt",
         ) as coord:
-            _ = [e async for e in coord.send_message("new topic")]
-            _ = [e async for e in coord.send_message("follow-up")]
+            _ = await _send(coord, "new topic")
+            _ = await _send(coord, "follow-up")
 
         # First message after shift: summary injected
         first_options = mock_cls.call_args_list[0][0][0]
@@ -2051,7 +1983,7 @@ class TestPerMessagePostProcessing:
             agent_defaults=AgentDefaults(cwd=Path("/workspace")),
             msg_pipeline=msg_pipeline,
         ) as coord:
-            _ = [e async for e in coord.send_message("hello")]
+            _ = await _send(coord, "hello")
 
         # Give the background task time to be scheduled
         await asyncio.sleep(0.05)
@@ -2082,7 +2014,7 @@ class TestPerMessagePostProcessing:
             agent_defaults=AgentDefaults(cwd=Path("/workspace")),
             msg_pipeline=msg_pipeline,
         ) as coord:
-            _ = [e async for e in coord.send_message("hello")]
+            _ = await _send(coord, "hello")
 
         await asyncio.sleep(0.05)
 
@@ -2112,7 +2044,7 @@ class TestPerMessagePostProcessing:
             registry=registry,
             agent_defaults=AgentDefaults(cwd=Path("/workspace")),
         ) as coord:
-            _ = [e async for e in coord.send_message("hello")]
+            _ = await _send(coord, "hello")
 
     async def test_pipeline_receives_current_session(
         self, mock_sdk,
@@ -2144,7 +2076,7 @@ class TestPerMessagePostProcessing:
             agent_defaults=AgentDefaults(cwd=Path("/workspace")),
             msg_pipeline=msg_pipeline,
         ) as coord:
-            _ = [e async for e in coord.send_message("hello")]
+            _ = await _send(coord, "hello")
 
         await asyncio.sleep(0.05)
 
@@ -2188,7 +2120,7 @@ class TestCoordinatorShutdownWithBoundaryDetection:
             msg_pipeline=msg_pipeline,
             pipeline=_make_mock_pipeline(),
         ) as coord:
-            _ = [e async for e in coord.send_message("hello")]
+            _ = await _send(coord, "hello")
             # Exit immediately while task is pending
 
         # The task should have been awaited and completed
@@ -2231,7 +2163,7 @@ class TestCoordinatorShutdownWithBoundaryDetection:
             agent_defaults=AgentDefaults(cwd=Path("/workspace")),
             pipeline=pipeline,
         ) as coord:
-            _ = [e async for e in coord.send_message("new topic")]
+            _ = await _send(coord, "new topic")
             # Exit while background task is running
 
         # The background task should have been awaited
@@ -2269,7 +2201,7 @@ class TestCoordinatorShutdownWithBoundaryDetection:
             agent_defaults=AgentDefaults(cwd=Path("/workspace")),
             pipeline=pipeline,
         ) as coord:
-            _ = [e async for e in coord.send_message("new topic")]
+            _ = await _send(coord, "new topic")
 
 
 class TestCoordinatorPipelineAgents:
@@ -2298,7 +2230,7 @@ class TestCoordinatorPipelineAgents:
         registry = _make_mock_registry(active_session=None)
 
         async with Coordinator(registry=registry, pre_pipeline=pre_pipeline) as coord:
-            _ = [e async for e in coord.send_message("hello")]
+            _ = await _send(coord, "hello")
 
         options = mock_cls.call_args[0][0]
         assert options.agents == agents
@@ -2330,8 +2262,8 @@ class TestCoordinatorPipelineAgents:
         ]
 
         async with Coordinator(registry=registry, pre_pipeline=pre_pipeline) as coord:
-            _ = [e async for e in coord.send_message("first")]
-            _ = [e async for e in coord.send_message("second")]
+            _ = await _send(coord, "first")
+            _ = await _send(coord, "second")
 
         # Both calls should have agents in options
         for call in mock_cls.call_args_list:
@@ -2386,10 +2318,10 @@ class TestCoordinatorPipelineAgents:
         async with Coordinator(
             registry=registry, pre_pipeline=pre_pipeline, agent_defaults=AgentDefaults(cwd=Path("/ws")),
         ) as coord:
-            _ = [e async for e in coord.send_message("first")]
+            _ = await _send(coord, "first")
 
             # Update pipeline for second call with new agents
-            _ = [e async for e in coord.send_message("new topic")]
+            _ = await _send(coord, "new topic")
 
         # First call should have agents_before, second should have agents_after
         assert mock_cls.call_count == 2
@@ -2415,7 +2347,7 @@ class TestCoordinatorPipelineAgents:
         registry = _make_mock_registry(active_session=None)
 
         async with Coordinator(registry=registry, pre_pipeline=pre_pipeline) as coord:
-            _ = [e async for e in coord.send_message("hello")]
+            _ = await _send(coord, "hello")
 
         options = mock_cls.call_args[0][0]
         assert options.agents is None
@@ -2451,7 +2383,7 @@ class TestCoordinatorPipelineAgents:
         registry = _make_mock_registry(active_session=None)
 
         async with Coordinator(registry=registry, pre_pipeline=pre_pipeline) as coord:
-            _ = [e async for e in coord.send_message("hello")]
+            _ = await _send(coord, "hello")
 
         options = mock_cls.call_args[0][0]
         assert options.agents is not None

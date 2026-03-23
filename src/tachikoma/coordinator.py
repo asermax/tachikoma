@@ -10,6 +10,7 @@ from collections.abc import AsyncIterator, Callable
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import TracebackType
+from typing import Any
 
 from claude_agent_sdk import (
     ClaudeAgentOptions,
@@ -38,6 +39,32 @@ from tachikoma.sessions.registry import SessionRegistry
 _log = logger.bind(component="coordinator")
 
 
+def _user_message(content: str) -> dict[str, Any]:
+    """Build an SDK user message dict from text content."""
+    return {
+        "type": "user",
+        "message": {"role": "user", "content": content},
+        "parent_tool_use_id": None,
+    }
+
+
+async def _message_source(
+    initial: str, buffer: asyncio.Queue[str],
+) -> AsyncIterator[dict[str, Any]]:
+    """Long-lived generator feeding messages from buffer to SDK.
+
+    Yields the enriched initial message first (pre-processed by send_message),
+    then reads subsequent messages from the buffer as they arrive.
+    Runs as a concurrent task managed by the SDK via ``connect()``.
+    Cancelled automatically when ``client.disconnect()`` tears down the
+    SDK's internal task group.
+    """
+    yield _user_message(initial)
+
+    while True:
+        yield _user_message(await buffer.get())
+
+
 def _derive_transcript_path(sdk_session_id: str, cwd: Path | None) -> str:
     """Compute the Claude SDK transcript file path from an SDK session ID.
 
@@ -64,7 +91,8 @@ class Coordinator:
     Usage::
 
         async with Coordinator(allowed_tools=["Read", "Glob", "Grep"]) as coord:
-            async for event in coord.send_message("hello"):
+            coord.enqueue("hello")
+            async for event in coord.send_message():
                 ...
     """
 
@@ -116,7 +144,7 @@ class Coordinator:
         self._pre_pipeline = pre_pipeline
         self._msg_pipeline = msg_pipeline
         self._on_status = on_status
-        self._pending_steers: int = 0
+        self._message_buffer: asyncio.Queue[str] = asyncio.Queue()
 
         # Pending per-message post-processing task
         self._pending_msg_task: asyncio.Task[None] | None = None
@@ -270,17 +298,26 @@ providing context for what the user has been doing in the meantime.
             permission_mode=self._permission_mode,
             agents=self._agents,
             resume=resume,
-            mcp_servers=all_mcp_servers if all_mcp_servers else None,
+            mcp_servers=all_mcp_servers,
         )
 
         return options
 
-    async def send_message(self, text: str) -> AsyncIterator[AgentEvent]:
-        """Send a user message and yield AgentEvents as the agent responds.
+    async def send_message(self) -> AsyncIterator[AgentEvent]:
+        """Consume the next buffered message and yield AgentEvents.
 
-        Creates a fresh ClaudeSDKClient for this exchange. Uses ``resume``
+        Reads the first message from ``_message_buffer`` for boundary detection
+        and pre-processing, then passes a long-lived generator to the SDK via
+        ``connect()``.  The generator yields the enriched initial message first,
+        then reads subsequent messages from the buffer as they arrive.
+
+        Creates a fresh ClaudeSDKClient for this exchange.  Uses ``resume``
         for conversation continuity within the same session.
         """
+        if self._message_buffer.empty():
+            return
+
+        text = self._message_buffer.get_nowait()
         _log.debug("Message received: length={n}", n=len(text))
 
         # Track last message time for idle gating
@@ -325,6 +362,9 @@ providing context for what the user has been doing in the meantime.
 
         # Boundary detection: check if the message continues the current topic
         if will_detect_boundary:
+            assert active is not None and active.summary is not None
+            assert self._registry is not None
+
             try:
                 # Query recent closed sessions as candidates for resumption
                 candidates: list[SessionCandidate] | None = None
@@ -338,6 +378,7 @@ providing context for what the user has been doing in the meantime.
                         candidates = [
                             SessionCandidate(id=s.id, summary=s.summary)
                             for s in recent
+                            if s.summary is not None
                         ]
                     except Exception as exc:
                         _log.exception(
@@ -399,58 +440,50 @@ providing context for what the user has been doing in the meantime.
         options = self._build_options(resume=resume_id)
         response_chunks: list[str] = []
 
+        client = ClaudeSDKClient(options)
+
         try:
-            async with ClaudeSDKClient(options) as client:
-                self._client = client
-                await client.query(text)
+            await client.connect(
+                _message_source(text, self._message_buffer),
+            )
+            self._client = client
 
-                # Process the response (receive_response stops at ResultMessage)
-                async for sdk_message in client.receive_response():
-                    for event in adapt(sdk_message):
-                        yield event
+            async for sdk_message in client.receive_response():
+                for event in adapt(sdk_message):
+                    yield event
 
-                        if isinstance(event, TextChunk):
-                            response_chunks.append(event.text)
+                    if isinstance(event, TextChunk):
+                        response_chunks.append(event.text)
 
-                        if (
-                            isinstance(event, Result)
-                            and self._registry is not None
-                            and active is not None
-                            and event.session_id
-                        ):
-                            self._sdk_session_id = event.session_id
-                            try:
-                                transcript_path = _derive_transcript_path(
-                                    event.session_id, self._cwd
-                                )
-                                await self._registry.update_metadata(
-                                    session_id=active.id,
-                                    sdk_session_id=event.session_id,
-                                    transcript_path=transcript_path,
-                                )
-                            except Exception as exc:
-                                _log.exception(
-                                    "Failed to update session metadata: err={err}",
-                                    err=str(exc),
-                                )
-
-                # Handle steered messages: each pending steer gets its own
-                # receive_response() call which picks up the CLI's queued response
-                while self._pending_steers > 0:
-                    self._pending_steers -= 1
-                    async for sdk_message in client.receive_response():
-                        for event in adapt(sdk_message):
-                            yield event
-
-                            if isinstance(event, TextChunk):
-                                response_chunks.append(event.text)
-
-                self._client = None
+                    if (
+                        isinstance(event, Result)
+                        and self._registry is not None
+                        and active is not None
+                        and event.session_id
+                    ):
+                        self._sdk_session_id = event.session_id
+                        try:
+                            transcript_path = _derive_transcript_path(
+                                event.session_id, self._cwd
+                            )
+                            await self._registry.update_metadata(
+                                session_id=active.id,
+                                sdk_session_id=event.session_id,
+                                transcript_path=transcript_path,
+                            )
+                        except Exception as exc:
+                            _log.exception(
+                                "Failed to update session metadata: err={err}",
+                                err=str(exc),
+                            )
 
         except (CLIConnectionError, ProcessError) as exc:
-            self._client = None
             _log.error("Stream error (recoverable): err={err}", err=str(exc))
             yield Error(message=str(exc), recoverable=True)
+
+        finally:
+            await client.disconnect()
+            self._client = None
 
         # Trigger per-message post-processing after response completes
         if (
@@ -599,15 +632,18 @@ providing context for what the user has been doing in the meantime.
         if self._client is not None:
             await self._client.interrupt()
 
-    async def steer(self, text: str) -> None:
-        """Inject a user message mid-stream via client.query().
+    def enqueue(self, text: str) -> None:
+        """Buffer a message for processing.
 
-        The message is queued by the CLI and processed after the current turn completes.
-        The send_message() iteration continues yielding events for the steered message.
+        Always succeeds regardless of coordinator state.  If a session is
+        active, the long-lived generator will pick up the message and yield
+        it to the SDK.  If idle, the channel is responsible for triggering
+        ``send_message()``.
         """
-        if self._client is None:
-            raise RuntimeError("Coordinator is not connected. Use as an async context manager.")
+        self._message_buffer.put_nowait(text)
+        _log.debug("Message buffered: queue_size={n}", n=self._message_buffer.qsize())
 
-        self._pending_steers += 1
-        await self._client.query(text)
-        _log.debug("Steered message queued: pending_steers={n}", n=self._pending_steers)
+    @property
+    def has_pending_messages(self) -> bool:
+        """Whether the message buffer has items waiting to be processed."""
+        return not self._message_buffer.empty()

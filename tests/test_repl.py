@@ -195,7 +195,7 @@ class TestReplControlFlow:
         coordinator = MagicMock()
         coordinator.interrupt = AsyncMock()
 
-        async def _raise_on_iter(text):
+        async def _raise_on_iter():
             raise KeyboardInterrupt
             yield  # make it an async generator
 
@@ -211,7 +211,7 @@ class TestReplControlFlow:
     async def test_exits_on_non_recoverable_error(self, tmp_path: Path, mocker) -> None:
         coordinator = MagicMock()
 
-        async def _fatal_stream(text):
+        async def _fatal_stream():
             yield Error(message="auth failed", recoverable=False)
 
         coordinator.send_message = MagicMock(side_effect=_fatal_stream)
@@ -225,7 +225,7 @@ class TestReplControlFlow:
         coordinator = MagicMock()
         call_count = 0
 
-        async def _stream(text):
+        async def _stream():
             nonlocal call_count
             call_count += 1
 
@@ -254,7 +254,7 @@ class TestReplMultilineInput:
         """Multiline text (containing newlines) is submitted as-is to the coordinator."""
         coordinator = MagicMock()
 
-        async def _stream(text):
+        async def _stream():
             yield Result()
 
         coordinator.send_message = MagicMock(side_effect=_stream)
@@ -268,7 +268,7 @@ class TestReplMultilineInput:
 
         await repl.run()
 
-        coordinator.send_message.assert_called_once_with("line1\nline2\nline3")
+        coordinator.enqueue.assert_called_once_with("line1\nline2\nline3")
 
 
 class TestReplInputValidation:

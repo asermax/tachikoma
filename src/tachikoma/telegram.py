@@ -61,8 +61,7 @@ class ResponseRenderer:
     def reset(self) -> None:
         """Clear all state for a new response.
 
-        Called after each Result event to prepare for the next turn
-        (e.g., when steering is active).
+        Called after each Result event to prepare for the next turn.
         """
         self._current_message_id = None
         self._buffer = ""
@@ -71,7 +70,7 @@ class ResponseRenderer:
         self._tools_marker_inserted = False
         self._last_edit_time = 0.0
         # Note: _message_count is NOT reset - it tracks total messages
-        # for the entire response cycle including steered messages
+        # for the entire response cycle including buffered messages
 
     async def handle_status(self, message: str) -> None:
         """Handle a Status event by sending a transient status message.
@@ -176,7 +175,7 @@ class ResponseRenderer:
                     self._chat_id,
                     text,
                     parse_mode=None,
-                    entities=[e.to_dict() for e in entities],
+                    entities=[e.to_dict() for e in entities],  # type: ignore[arg-type]
                 )
                 self._current_message_id = msg.message_id
                 self._message_count += 1
@@ -192,7 +191,7 @@ class ResponseRenderer:
                     chat_id=self._chat_id,
                     message_id=self._current_message_id,
                     parse_mode=None,
-                    entities=[e.to_dict() for e in entities],
+                    entities=[e.to_dict() for e in entities],  # type: ignore[arg-type]
                 )
                 _log.debug("Edited message: id={id}", id=self._current_message_id)
 
@@ -263,7 +262,8 @@ class TelegramChannel:
     """Telegram bot channel that receives messages and renders agent responses.
 
     The channel uses aiogram for long polling and message handling.
-    It supports steering (injecting mid-stream messages) and graceful
+    Mid-stream messages are buffered via the coordinator's ``enqueue()``
+    and processed after the current response completes.  Supports graceful
     shutdown with partial response delivery.
 
     When an event bus is provided, the channel subscribes to:
@@ -371,7 +371,7 @@ class TelegramChannel:
             if stdin_fd is not None:
                 loop.remove_reader(stdin_fd)
 
-            if old_termios is not None:
+            if old_termios is not None and stdin_fd is not None:
                 termios.tcsetattr(stdin_fd, termios.TCSADRAIN, old_termios)
 
             for sig in (signal.SIGINT, signal.SIGTERM):
@@ -384,13 +384,13 @@ class TelegramChannel:
             return
 
         text = message.text.strip()
+        self._coordinator.enqueue(text)
 
         if self._is_processing:
-            _log.debug("Steering mid-stream message")
-            await self._coordinator.steer(text)
+            _log.debug("Buffered mid-stream message")
             return
 
-        await self._process_through_coordinator(text)
+        await self._process_through_coordinator()
 
     async def _on_shutdown(self) -> None:
         """Send partial response on shutdown if one is active."""
@@ -405,7 +405,7 @@ class TelegramChannel:
         """Handle a SessionTaskReady event from the task scheduler.
 
         This delivers a proactive task message to the user through the coordinator.
-        If the user is currently in a conversation, the message is steered mid-stream.
+        If the user is currently in a conversation, the message is buffered.
         """
         instance = event.instance
         _log.info(
@@ -414,25 +414,27 @@ class TelegramChannel:
             preview=instance.prompt[:50] if instance.prompt else "",
         )
 
+        self._coordinator.enqueue(instance.prompt)
+
         if self._is_processing:
-            _log.debug("Steering session task mid-stream")
-            await self._coordinator.steer(instance.prompt)
+            _log.debug("Buffered session task mid-stream")
             return
 
-        await self._process_through_coordinator(
-            instance.prompt, on_complete=event.on_complete,
-        )
+        await self._process_through_coordinator(on_complete=event.on_complete)
 
     async def _process_through_coordinator(
         self,
-        text: str,
         on_complete: Callable[[], Awaitable[None]] | None = None,
     ) -> None:
-        """Send text through the coordinator and render the response.
+        """Process buffered messages through the coordinator and render responses.
+
+        Drains the coordinator's message buffer in a loop.  Each iteration
+        calls ``send_message()`` which runs the full pipeline (boundary
+        detection, pre-processing, SDK session).  The loop continues until
+        the buffer is empty.
 
         Args:
-            text: The message to send.
-            on_complete: Optional callback invoked after successful processing.
+            on_complete: Optional callback invoked after the buffer is drained.
         """
         chat_id = self._settings.authorized_chat_id
         self._is_processing = True
@@ -440,18 +442,19 @@ class TelegramChannel:
 
         try:
             async with ChatActionSender(bot=self._bot, chat_id=chat_id, action="typing"):
-                async for event in self._coordinator.send_message(text):
-                    if isinstance(event, Status):
-                        await self._active_renderer.handle_status(event.message)
-                    elif isinstance(event, TextChunk):
-                        await self._active_renderer.handle_text(event.text)
-                    elif isinstance(event, ToolActivity):
-                        await self._active_renderer.handle_tool(event)
-                    elif isinstance(event, Error):
-                        await self._active_renderer.handle_error(event)
-                    elif isinstance(event, Result):
-                        await self._active_renderer.finalize()
-                        self._active_renderer.reset()
+                while self._coordinator.has_pending_messages:
+                    async for event in self._coordinator.send_message():
+                        if isinstance(event, Status):
+                            await self._active_renderer.handle_status(event.message)
+                        elif isinstance(event, TextChunk):
+                            await self._active_renderer.handle_text(event.text)
+                        elif isinstance(event, ToolActivity):
+                            await self._active_renderer.handle_tool(event)
+                        elif isinstance(event, Error):
+                            await self._active_renderer.handle_error(event)
+                        elif isinstance(event, Result):
+                            await self._active_renderer.finalize()
+                            self._active_renderer.reset()
 
             if on_complete is not None:
                 await on_complete()
