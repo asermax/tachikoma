@@ -161,12 +161,12 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 **Complexity**: Easy
 **Description**: Automatically close a session after a configurable period of inactivity so that post-processing (memory extraction, context updates, git commit) triggers without requiring the user to explicitly end the conversation or wait for a topic shift. The idle timeout is measured from the last message exchange and is configurable via the application settings. This complements boundary-detection-based session closing by handling the case where a conversation simply trails off.
 
-### DLT-037: Deliver notifications during active streaming
+### DLT-037: Ensure Telegram push notifications for streamed responses
 **Status**: ✗ Defined
 **Depends on**: None
 **Priority**: 1 (Critical)
-**Complexity**: Medium
-**Description**: Enable task notifications and scheduled alerts to reach the user even while the agent is actively streaming a response in Telegram. Currently, notifications arriving during an active stream may be blocked or delayed because the renderer is editing the response message. This delta ensures notifications are delivered within a reasonable window regardless of streaming state, without disrupting the active response rendering.
+**Complexity**: Easy
+**Description**: The Telegram channel streams responses by creating a single message and progressively editing it. Telegram only delivers push notifications for new messages, not edits — so if the user sends a message and closes the app before the response starts, they never receive a push notification that the agent replied. This delta ensures users receive a Telegram push notification for every agent response, even when the response is delivered via progressive message editing. The specific mechanism (e.g., sending a brief new message after streaming completes, or restructuring how the first message is created) should be evaluated during speccing.
 
 ### DLT-038: Hot-reload skills at runtime
 **Status**: ✗ Defined
