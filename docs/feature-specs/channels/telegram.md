@@ -18,7 +18,7 @@ A Telegram bot that receives text messages from a single authorized user, forwar
 |----|-------------|
 | R0 | Telegram bot that receives user messages and sends coordinator responses back through Telegram |
 | R1 | Bot initialization: connect to Telegram API, validate bot token at startup, handle unreachable API |
-| R2 | Message receiving: accept incoming text messages and forward them to the coordinator; steering support for mid-stream message injection |
+| R2 | Message receiving: accept incoming text messages and forward them to the coordinator; message buffering for mid-stream messages |
 | R3 | Response rendering: stream agent response via progressive message edits with correct markdown formatting, splitting at paragraph boundaries before hitting the Telegram message size limit; respect Telegram API rate limits on edits |
 | R4 | Tool activity display: show tool activity as an inline status line within the current response message; each new tool replaces the previous tool line; when text resumes, each tool→text transition inserts a "🔧 Ran tools" marker and text continues below it |
 | R5 | User authorization: only process messages from the configured authorized user; silently ignore all others |
@@ -44,12 +44,12 @@ The bot connects to the Telegram API at startup, validates the bot token, and be
 
 ### Message Receiving (R2)
 
-The bot accepts incoming text messages from the authorized user and forwards them to the coordinator. Messages arriving during an active response are steered into the current stream via `coordinator.steer()`.
+The bot accepts incoming text messages from the authorized user and forwards them to the coordinator. Messages arriving during an active response are buffered via `coordinator.enqueue()` and processed by the generator within the same session, or as new sessions after completion.
 
 **Acceptance Criteria**:
 - Given the bot is running, when an authorized user sends a text message, then the message text is forwarded to the coordinator via `send_message()`
-- Given the bot is streaming a response to message A, when the user sends message B, then `steer()` is called to inject message B mid-stream; B's response flows through the same iterator after A completes
-- Given multiple messages arrive while a response is streaming, when each arrives, then each is steered and processed in order
+- Given the bot is streaming a response to message A, when the user sends message B, then `enqueue()` is called to buffer message B; B is processed by the message source generator within the same session or as a new session after completion
+- Given multiple messages arrive while a response is streaming, when each arrives, then each is enqueued and processed in order
 
 ### Response Rendering (R3)
 
@@ -149,7 +149,7 @@ The Telegram channel subscribes to task events via the event bus. Session tasks 
 
 **Acceptance Criteria**:
 - Given a `SessionTaskReady` event is received while idle, then the task prompt is sent through the coordinator via the shared `_process_through_coordinator()` method and the response is rendered normally
-- Given a `SessionTaskReady` event is received while a response is active, then the task prompt is steered into the current stream via `coordinator.steer()`
+- Given a `SessionTaskReady` event is received while a response is active, then the task prompt is buffered via `coordinator.enqueue()` and processed after the current response completes
 - Given a `TaskNotification` event is received, then the notification message is sent directly to the user in the Telegram chat with appropriate severity formatting (ℹ️ for info, ⚠️ for error)
 
 ## User Flow
@@ -206,7 +206,7 @@ The Telegram channel subscribes to task events via the event bus. Session tasks 
 
 **Happy path**: The bot receives the message, confirms the sender is authorized, checks it's a non-empty text message, sends a typing indicator, and forwards the text to the coordinator. As the agent processes and responds, the bot progressively edits a single message showing the accumulating text (throttled for rate limits). Tool activity appears as an inline status line within the same message — appended below any text already streamed. Each new tool replaces the previous tool line. When text resumes, the tool line becomes "_🔧 Ran tools_" and new text continues below it. If the response exceeds the message size limit, it splits at the last paragraph boundary and continues in a new message. The final response is delivered as one or more formatted messages.
 
-**Steering path**: If the user sends another message while a response is streaming, the bot calls `coordinator.steer()` to inject the message mid-stream. The current iterator continues and yields events for the steered message after the current one completes. Each steered message gets its own response message(s) in the chat.
+**Buffering path**: If the user sends another message while a response is streaming, the channel calls `coordinator.enqueue()` to buffer the message. The message source generator feeds it into the same session, or remaining buffered messages are processed as new full-pipeline sessions after the current one completes. Each buffered message gets its own response message(s) in the chat.
 
 **Decision points**: Authorization check (authorized → process, unauthorized → drop). Message type check (text → process, non-text → drop). Empty check (empty → drop). Message length check (under limit → continue editing, approaching limit → split at paragraph boundary). Error type (recoverable → show error, continue; non-recoverable → show error, log).
 
@@ -219,7 +219,7 @@ Dependencies:
 
 Assumes existing:
 - Coordinator `send_message()` async iterator API (core-architecture)
-- Coordinator `steer()` method for mid-stream injection (core-architecture)
+- Coordinator `enqueue()` method for message buffering (core-architecture)
 - Configuration system with TOML loading and auto-generation (config-system)
 - Domain event model: TextChunk, ToolActivity, Result, Error (core-architecture)
 - Bootstrap hook system (config-system)

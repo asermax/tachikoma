@@ -7,7 +7,7 @@
 
 ## Purpose
 
-This document explains the design rationale for the Telegram channel: the bot lifecycle, response rendering, steering mechanism, and configuration approach.
+This document explains the design rationale for the Telegram channel: the bot lifecycle, response rendering, message buffering mechanism, and configuration approach.
 
 ## Problem Context
 
@@ -18,10 +18,10 @@ Tachikoma needs a production-facing communication channel beyond the development
 - Telegram's Bot API has rate limits (~30 msg/sec global, ~5 edits/min per message) and a 4096-character message size limit
 - Telegram's MarkdownV2 format has strict escaping rules that break with partial markdown during streaming
 - The CLI entry point must support channel selection while integrating with SettingsManager and bootstrap sequence
-- Messages arriving while the agent is responding should be steered into the active stream
+- Messages arriving while the agent is responding should be buffered and processed in order
 
 **Interactions:**
-- Coordinator layer (core-architecture): `send_message()` for normal turns, `steer()` for mid-stream message injection
+- Coordinator layer (core-architecture): `send_message()` for normal turns, `enqueue()` for message buffering
 - Configuration system (config-system): `[telegram]` section in Settings model
 - Bootstrap system (config-system): `telegram_hook` validates Telegram config, prompts for missing values
 - SettingsManager (config-system): CLI flag overrides applied as runtime-only settings
@@ -58,8 +58,8 @@ The Telegram channel follows the same pattern as the REPL: a `TelegramChannel` c
 │                   Coordinator Layer                             │
 │  ┌────────────────────────────────────────────────────────┐   │
 │  │  Coordinator                                           │   │
-│  │  send_message(text) → AsyncIterator[AgentEvent]        │   │
-│  │  steer(text) → None  (mid-stream injection)            │   │
+│  │  send_message() → AsyncIterator[AgentEvent]             │   │
+│  │  enqueue(text) → None  (message buffering)             │   │
 │  └────────────────────────────────────────────────────────┘   │
 └──────────────────────────────────────────────────────────────┘
 ```
@@ -67,7 +67,7 @@ The Telegram channel follows the same pattern as the REPL: a `TelegramChannel` c
 The key components:
 - **`TelegramChannel`**: owns the aiogram lifecycle, handles message events, renders responses
 - **`ResponseRenderer`**: manages progressive message editing, tool lines, splitting, and formatting
-- **`Coordinator.steer()`**: injects a user message mid-stream via `client.query()`
+- **`Coordinator.enqueue()`**: buffers a user message into `_message_buffer` for processing by the message source generator
 - **Cyclopts CLI**: parses `--channel` flag and applies overrides to SettingsManager
 - **Telegram bootstrap hook**: validates config when Telegram channel is selected (follows DES-003)
 
@@ -79,7 +79,7 @@ The key components:
 |-----------------|----------------|---------------|
 | `src/tachikoma/__main__.py` | Cyclopts `App` entry point: parses `--channel`, creates `SettingsManager`, applies CLI overrides, runs bootstrap, dispatches to channel | Replaces bare `asyncio.run(main())` with cyclopts; integrates with SettingsManager + Bootstrap |
 | `src/tachikoma/telegram.py` | `TelegramChannel` class + `ResponseRenderer` class + `telegram_hook` function. Subscribes to `SessionTaskReady` and `TaskNotification` events via `bus.on()` at construction. Shared `_process_through_coordinator()` method handles both user messages and session task delivery. `_handle_notification()` sends notifications directly as Telegram messages with severity emoji prefix | High cohesion between channel control flow and response rendering; event bus subscriptions at construction |
-| `src/tachikoma/coordinator.py` | Existing + new `steer()` method and pending-steers tracking in `send_message()` | Minimal change to core module |
+| `src/tachikoma/coordinator.py` | Existing + `enqueue()` method, `_message_buffer` queue, `has_pending_messages` property, and `_message_source()` async generator passed to `client.connect()` | Message buffer replaces steer/pending-steers pattern |
 | `src/tachikoma/config.py` | `TelegramSettings` model added to `Settings` | Extends existing config; optional section (`None` when not configured) |
 | `src/tachikoma/display.py` | `TOOL_DISPLAY` map for tool-specific formatting | Shared between REPL and Telegram channels |
 
@@ -132,13 +132,13 @@ sequenceDiagram
 
     Note over User,TG: If user sends another message during streaming:
     TG->>Channel: aiogram dispatches handler
-    Channel->>Coord: steer(text)
-    Coord->>SDK: query(text) [queued by CLI]
-    Note over Coord,SDK: send_message() continues past Result,<br/>yields events for steered message too
+    Channel->>Coord: enqueue(text)
+    Note over Coord: Message buffered in _message_buffer queue
+    Note over Coord,SDK: _message_source() generator feeds buffered<br/>messages to client.connect() within the same session,<br/>or channel drains remaining as new sessions
 ```
 
 **Integration Points:**
-- Channel ↔ Coordinator: `send_message()` (async iterator) and `steer()` (fire-and-forget mid-stream injection)
+- Channel ↔ Coordinator: `send_message()` (async iterator), `enqueue()` (sync buffer write), `has_pending_messages` (drain check)
 - Channel ↔ aiogram: `Router` handler receives `Message`, `Bot` sends/edits messages
 - Renderer ↔ telegramify-markdown: converts accumulated markdown to `(text, entities)` tuples on each edit cycle
 - `__main__.py` ↔ SettingsManager: CLI overrides applied via `update_root()` + `reload()` (runtime-only)
@@ -179,16 +179,18 @@ ResponseRenderer
 └── _message_count: int                   (tracks messages sent in current response)
 ```
 
-The renderer exposes a `reset()` method that clears all state for a new response. The channel calls `reset()` after each `Result` event, so steered messages start with a fresh renderer.
+The renderer exposes a `reset()` method that clears all state for a new response. The channel calls `reset()` after each `Result` event, so buffered messages start with a fresh renderer.
 
 ### Coordinator additions
 
 ```
 Coordinator (existing)
 ├── _client: ClaudeSDKClient
-├── _pending_steers: int = 0              (new: count of steered messages)
-├── send_message(text) → AsyncIterator    (modified: continues past Result when _pending_steers > 0)
-└── steer(text) → None                    (new: increments counter, calls client.query())
+├── _message_buffer: asyncio.Queue[str]   (unbounded FIFO queue)
+├── has_pending_messages: bool             (property: True when buffer is non-empty)
+├── send_message() → AsyncIterator        (reads from buffer; no text parameter)
+├── enqueue(text) → None                  (sync, zero preconditions, puts message in buffer)
+└── _message_source(initial, buffer)      (long-lived async generator passed to client.connect())
 ```
 
 ## Data Flow
@@ -242,26 +244,26 @@ Coordinator (existing)
 
 The 3800-char safety margin (7% buffer) accounts for entity overhead and encoding variations.
 
-### Steering flow
+### Message buffer flow
 
 ```
-1. User sends msg A → handler calls coordinator.send_message("A")
-2. send_message() creates ClaudeSDKClient, calls client.query("A"), iterates receive_response()
-3. Events for A stream back, channel renders them
-4. User sends msg B while A is streaming
-5. aiogram dispatches new handler → calls coordinator.steer("B")
-6. steer() increments _pending_steers to 1, calls client.query("B")
-7. CLI queues B internally
-8. A completes → receive_response() yields ResultMessage for A, iteration ends
-9. Channel sees Result → calls renderer.finalize() then renderer.reset()
-10. send_message() checks _pending_steers > 0 → decrements, calls receive_response() again
-11. CLI processes B → receive_response() yields messages for B
-12. Events for B stream back through the same send_message() iteration
-    Channel renders them as a new response message (renderer was reset)
-13. B completes → Result, _pending_steers == 0 → client context exits
+1. Channel calls coordinator.enqueue("A"), then triggers processing if idle
+2. send_message() reads from _message_buffer, passes initial message + buffer to _message_source()
+3. _message_source(initial, buffer) is a long-lived async generator passed to client.connect()
+4. Generator yields "A" first, then awaits further messages from the buffer
+5. Events for A stream back, channel renders them
+6. User sends msg B while A is streaming
+7. aiogram dispatches new handler → channel calls coordinator.enqueue("B")
+8. _message_source() generator picks up B from the buffer and yields it to the SDK session
+9. Events for B stream back through the same session
+   Channel renders them as a new response message (renderer was reset)
+10. Session completes when no more buffered messages remain
+11. Channel has an outer drain loop: if has_pending_messages is True after session ends,
+    remaining buffered messages are processed as new full-pipeline sessions
+12. on_complete callback is called after the buffer is empty
 ```
 
-The `Result` event serves as a turn boundary signal. The channel finalizes the current response and resets the renderer, so each steered message gets its own Telegram response message(s).
+The `Result` event serves as a turn boundary signal. The channel finalizes the current response and resets the renderer, so each buffered message gets its own Telegram response message(s).
 
 ### Startup flow (with bootstrap integration)
 
@@ -333,16 +335,17 @@ The `Result` event serves as a turn boundary signal. The channel finalizes the c
 - Pro: Conservative interval avoids rate limit issues
 - Note: If 2s proves too aggressive, the interval is a single constant to adjust
 
-### Steering via Coordinator.steer()
+### Message buffer via Coordinator.enqueue()
 
-**Choice**: Add a `steer(text)` method to the Coordinator that injects a message mid-stream by calling `client.query(text)` directly, with `send_message()` continuing past `Result` events when steered messages are pending
-**Why**: The Claude Agent SDK's `query()` writes to the CLI's stdin, and the CLI queues messages internally — processing them after the current turn completes. This allows seamless message injection without interrupting the current response.
-**Sources**: Claude Agent SDK Python source, CLI internals analysis
+**Choice**: Replace `steer()` + `_pending_steers` with an `asyncio.Queue`-based message buffer. `enqueue(text)` is sync and zero-precondition. `_message_source(initial, buffer)` is a long-lived async generator passed to `client.connect()` (SDK-managed concurrent task). The channel calls `enqueue()`, then triggers processing if idle. An outer drain loop processes remaining buffered messages as new full-pipeline sessions.
+**Why**: The queue-based approach decouples message arrival from processing, eliminates the counter-based coordination, and integrates cleanly with the SDK's `client.connect()` message source contract. `send_message()` no longer takes a text parameter — it reads from the buffer.
+**Sources**: Claude Agent SDK Python source, asyncio.Queue documentation
 
 **Consequences**:
 - Pro: Seamless UX — user can send messages anytime, no "please wait" state
-- Pro: Minimal coordinator change — one new method + counter in send_message loop
-- Pro: Conversation context preserved — steered messages are full turns in the same session
+- Pro: Simpler coordinator state — unbounded FIFO queue replaces counter + direct query calls
+- Pro: Conversation context preserved — buffered messages are full turns in the same or subsequent sessions
+- Pro: `enqueue()` is sync with zero preconditions — safe to call from any context
 
 ### Cyclopts with SettingsManager integration
 
@@ -389,11 +392,11 @@ The `Result` event serves as a turn boundary signal. The channel finalizes the c
 **When**: The application starts with `--channel telegram`
 **Then**: The `telegram_hook` catches the API error and exits with a clear error message before entering the main loop.
 
-### Scenario: Steering mid-stream
+### Scenario: Buffering mid-stream
 
 **Given**: The bot is streaming a response to message A
 **When**: The user sends message B
-**Then**: The handler calls `coordinator.steer("B")`. The CLI queues B. After A's response completes, the same `send_message()` iteration continues and streams B's response. The channel renders B's response as a new message in the chat.
+**Then**: The channel calls `coordinator.enqueue("B")`. The message source generator picks up B from the buffer and yields it to the SDK session. B's response streams back through the same session or is processed as a new session after A completes. The channel renders B's response as a new message in the chat.
 
 ### Scenario: Message splitting at paragraph boundary
 
@@ -444,7 +447,7 @@ The `Result` event serves as a turn boundary signal. The channel finalizes the c
 - cyclopts: https://cyclopts.readthedocs.io/en/stable/
 - The `ResponseRenderer` in `telegram.py` follows the same pattern as `Renderer` in `repl.py` — both consume `AgentEvent`s and render them to their respective outputs
 - `telegram_hook` follows DES-003 (subsystem bootstrap hooks): defined in the telegram module, registered in __main__.py, self-skips when `settings.channel != "telegram"`
-- `_pending_steers` is a plain `int` — safe under asyncio's cooperative concurrency (no preemptive thread interruption)
+- `_message_buffer` is an `asyncio.Queue` — safe under asyncio's cooperative concurrency and supports sync `put_nowait()` via `enqueue()`
 - The shared `TOOL_DISPLAY` map in `display.py` provides consistent tool formatting across REPL and Telegram channels
 - Polling backoff uses aiogram's `BackoffConfig` dataclass: `BackoffConfig(min_delay=1, max_delay=60, factor=2, jitter=0.1)` — not a plain dict
 - The `ResponseRenderer` exposes a `handle_status()` method for rendering `Status` events as transient italic messages in Telegram. The status message is replaced when the first content event arrives.

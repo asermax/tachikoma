@@ -20,7 +20,7 @@ Session tasks are proactive messages that Tachikoma injects into the main conver
 | R2 | Session task messages go through the full pre-processing pipeline and trigger boundary detection if topic changed |
 | R3 | Periodic check loop (~5 min interval) for pending session task instances |
 | R4 | Event bus delivery: scheduler dispatches typed events, channels subscribe and deliver via coordinator |
-| R5 | Channels handle concurrent user messages during session task processing according to their concurrency model (steering in Telegram, queuing in REPL) |
+| R5 | Channels handle concurrent user messages during session task processing according to their concurrency model (buffering in Telegram, queuing in REPL) |
 
 ## Behaviors
 
@@ -56,7 +56,7 @@ The scheduler dispatches `SessionTaskReady` events on the bus. Channels subscrib
 When a user sends a message while a session task is being processed, each channel handles it according to its concurrency model.
 
 **Acceptance Criteria**:
-- Given a session task is being processed in Telegram and the user sends a message, then the user's message is steered into the current stream via `coordinator.steer()`
+- Given a session task is being processed in Telegram and the user sends a message, then the user's message is buffered via `coordinator.enqueue()` and processed within the same session or as a new session after completion
 - Given a session task is being processed in the REPL, then user input is handled at the next input cycle (single-threaded input loop)
 
 ## Requires
@@ -66,7 +66,7 @@ Dependencies:
 
 Assumes existing:
 - Task management with persistent instances (task-management)
-- Coordinator `send_message()` and `steer()` APIs (core-architecture)
+- Coordinator `send_message()` and `enqueue()` APIs (core-architecture)
 - Event bus for typed event dispatch (ADR-009)
 - Channel event subscriptions (telegram, terminal-repl)
 - Pre-processing and boundary detection pipelines (core-architecture)

@@ -101,7 +101,7 @@ sequenceDiagram
 
 ### Channel delivery patterns
 
-**Telegram**: The `_handle_session_task` handler checks if a response is currently active. If idle, it calls the shared `_process_through_coordinator()` method with the task prompt and completion callback. If the user is mid-conversation, the task is steered via `coordinator.steer()`.
+**Telegram**: The `_handle_session_task` handler checks if a response is currently active. If idle, it calls the shared `_process_through_coordinator()` method with the task prompt and completion callback. If the user is mid-conversation, the task is buffered via `coordinator.enqueue()`.
 
 **REPL**: The handler enqueues `SessionTaskReady` events into an `asyncio.Queue`. The REPL's main loop drains the queue before each input prompt via `_process_queued_tasks()`, processing each task through the coordinator.
 
@@ -144,4 +144,4 @@ sequenceDiagram
 
 **Given**: A session task is being processed via Telegram
 **When**: The user sends a message simultaneously
-**Then**: The user's message is steered into the current stream via `coordinator.steer()`.
+**Then**: The user's message is buffered via `coordinator.enqueue()` and processed within the same session or as a new session after completion.
