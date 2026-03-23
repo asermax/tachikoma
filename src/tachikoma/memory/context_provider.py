@@ -88,7 +88,7 @@ class MemoryContextProvider(ContextProvider):
         prompt = MEMORY_SEARCH_PROMPT.format(message=message)
 
         options = ClaudeAgentOptions(
-            model="opus",
+            model=self._agent_defaults.model,
             effort="low",
             max_turns=8,
             allowed_tools=["Read", "Glob", "Grep"],

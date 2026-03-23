@@ -7,7 +7,6 @@ a new common option means changing one dataclass instead of 10+ signatures.
 from dataclasses import dataclass, field
 from pathlib import Path
 
-
 HARDCODED_ENV = {"CLAUDE_CODE_DISABLE_AUTO_MEMORY": "1"}
 """Environment variables that are always set and cannot be overridden via config."""
 
@@ -20,11 +19,13 @@ class AgentDefaults:
         cwd: Workspace directory for the agent.
         cli_path: Optional path to the Claude CLI binary (None = SDK bundled).
         env: Environment variables forwarded to CLI subprocesses.
+        model: Default model for sub-agents (memory, summary, boundary, skills).
     """
 
     cwd: Path
     cli_path: str | None = None
     env: dict[str, str] = field(default_factory=dict)
+    model: str = "opus"
 
 
 def merge_env(config_env: dict[str, str]) -> dict[str, str]:

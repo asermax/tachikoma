@@ -122,6 +122,7 @@ async def main(
         cwd=settings.workspace.path,
         cli_path=settings.agent.cli_path,
         env=merged_env,
+        model=settings.agent.sub_agent_model,
     )
 
     # Create and configure the session post-processing pipeline

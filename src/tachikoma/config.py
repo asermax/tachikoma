@@ -56,6 +56,10 @@ class AgentSettings(BaseModel):
         default=None,
         description="Path to claude binary (None = SDK bundled binary)",
     )
+    sub_agent_model: str = Field(
+        default="opus",
+        description="Model used by background sub-agents (memory, summary, boundary, skills)",
+    )
     session_resume_window: int = Field(
         default=86400,
         description="Lookup window for session resumption matching, in seconds (default: 1 day)",

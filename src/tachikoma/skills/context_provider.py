@@ -82,7 +82,7 @@ class SkillsContextProvider(ContextProvider):
         #    (empty list is falsy, so --allowedTools is never passed to CLI).
         # 3. max_turns=3 — hard limit prevents runaway execution.
         options = ClaudeAgentOptions(
-            model="opus",
+            model=self._agent_defaults.model,
             effort="low",
             max_turns=3,
             allowed_tools=[],

@@ -91,7 +91,7 @@ async def detect_boundary(
     #    (empty list is falsy, so --allowedTools is never passed to CLI).
     # 3. max_turns=3 — hard limit prevents runaway execution.
     options = ClaudeAgentOptions(
-        model="opus",
+        model=agent_defaults.model,
         effort="low",
         max_turns=3,
         cwd=agent_defaults.cwd,
