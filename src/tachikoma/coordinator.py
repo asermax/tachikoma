@@ -59,10 +59,13 @@ async def _message_source(
     Cancelled automatically when ``client.disconnect()`` tears down the
     SDK's internal task group.
     """
+    _log.debug("Message source: yielding initial message")
     yield _user_message(initial)
 
     while True:
-        yield _user_message(await buffer.get())
+        text = await buffer.get()
+        _log.debug("Message source: yielding buffered message")
+        yield _user_message(text)
 
 
 def _derive_transcript_path(sdk_session_id: str, cwd: Path | None) -> str:
