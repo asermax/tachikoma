@@ -31,7 +31,7 @@ RUNNER_CHECK_INTERVAL_SECONDS = 30
 # Background task system prompt
 BACKGROUND_TASK_SYSTEM_PROMPT = """You are a background task agent. You are executing a scheduled task autonomously. Complete the task described below. Your work will be saved automatically.
 
-You are operating without direct user interaction. Work through the task methodically, and when you believe the task is complete, provide a clear summary of what was accomplished."""
+You are operating without direct user interaction. Work through the task methodically, and when you believe the task is complete, provide a clear summary of what was accomplished."""  # noqa: E501
 
 # Evaluator prompt for assessing task completion
 EVALUATOR_PROMPT_TEMPLATE = """You are a task completion evaluator. Assess whether the following background task has been completed.
@@ -56,7 +56,7 @@ If the agent should continue working:
 If the agent is stuck or looping:
 {{"status": "stuck", "feedback": "Description of why the agent appears stuck"}}
 
-Respond with ONLY the JSON object, no markdown formatting."""
+Respond with ONLY the JSON object, no markdown formatting."""  # noqa: E501
 
 
 async def background_task_runner(

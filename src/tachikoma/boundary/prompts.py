@@ -47,7 +47,7 @@ Current: API design → New: "How do I handle errors?" → CONTINUATION
 
 Current: API design → New: "Remember that Python debugging we did?" → NEW TOPIC + candidate match if available
 
-Respond with a JSON object: {"continues_conversation": boolean, "resume_session_id": string or null}"""
+Respond with a JSON object: {"continues_conversation": boolean, "resume_session_id": string or null}"""  # noqa: E501
 
 BOUNDARY_DETECTION_USER_PROMPT = """Current conversation summary:
 {summary}
@@ -76,7 +76,7 @@ If this is the first exchange (no previous summary), create a new summary captur
 - Keep the summary concise and scannable
 - Focus on what would help someone understand what this conversation is about
 - Omit minor details; capture the essence
-- If the topic shifts, the summary should reflect the new primary topic"""
+- If the topic shifts, the summary should reflect the new primary topic"""  # noqa: E501
 
 SUMMARY_USER_PROMPT = """{previous_summary_section}
 
@@ -92,4 +92,4 @@ CANDIDATES_SECTION_TEMPLATE = """**Previous Session Candidates**
 
 If this is a topic shift, check if the new message matches one of these previous conversation sessions:
 
-{candidates}"""
+{candidates}"""  # noqa: E501

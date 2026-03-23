@@ -81,6 +81,20 @@ convention = "google"
 - **Description**: Traditional Python toolchain using multiple specialized tools
 - **Why not chosen**: Slower and requires managing multiple configurations
 
+### Rule Suppressions
+
+Avoid `per-file-ignores` in `pyproject.toml` — prefer inline `# noqa` comments so suppressions stay visible next to the code that needs them.
+
+### Line Length in Multiline Strings
+
+For multiline string literals (e.g. prompt templates) that naturally exceed the line-length limit, add `# noqa: E501` on the closing `"""`. Ruff applies this suppression to all lines within the string.
+
+```python
+PROMPT = """This is a long prompt template that exceeds
+the line-length limit on several lines because it contains
+natural-language text that shouldn't be arbitrarily wrapped."""  # noqa: E501
+```
+
 ---
 
 ## Notes

@@ -41,10 +41,6 @@ line-length = 100
 src = ["src"]
 lint.select = ["C4", "E", "ERA", "F", "I", "PLC", "SIM", "TID", "UP", "N", "W"]
 
-[tool.ruff.lint.per-file-ignores]
-"src/tachikoma/boundary/prompts.py" = ["E501"]
-"src/tachikoma/tasks/executor.py" = ["E501"]
-
 [tool.ruff.lint.pydocstyle]
 convention = "google"
 
