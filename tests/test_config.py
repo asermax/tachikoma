@@ -67,6 +67,27 @@ class TestSettingsModel:
 
         assert settings.agent.session_resume_window == 3600
 
+    def test_default_agent_env_is_empty_dict(self) -> None:
+        """AC: agent.env defaults to empty dict."""
+        settings = Settings()
+
+        assert settings.agent.env == {}
+
+    def test_agent_env_with_string_values(self) -> None:
+        """AC: agent.env accepts string key-value pairs."""
+        settings = Settings.model_validate({
+            "agent": {"env": {"FOO": "bar", "BAZ": "qux"}},
+        })
+
+        assert settings.agent.env == {"FOO": "bar", "BAZ": "qux"}
+
+    def test_agent_env_rejects_non_string_values(self) -> None:
+        """AC: agent.env rejects non-string values with a clear error."""
+        with pytest.raises(ValidationError, match="env"):
+            Settings.model_validate({
+                "agent": {"env": {"FOO": 42}},
+            })
+
     def test_frozen_prevents_mutation(self) -> None:
         """Settings instances are immutable."""
         settings = Settings()
@@ -348,6 +369,37 @@ class TestLoadSettings:
         err = capsys.readouterr().err
         assert "logging" in err
         assert "level" in err
+
+    def test_agent_env_from_config(self, tmp_path: Path) -> None:
+        """AC: [agent.env] with string values loads correctly."""
+        config_path = tmp_path / "config.toml"
+        config_path.write_text(
+            '[agent.env]\nFOO = "bar"\nBAZ = "qux"\n'
+        )
+
+        settings = load_settings(config_path)
+
+        assert settings.agent.env == {"FOO": "bar", "BAZ": "qux"}
+
+    def test_agent_env_missing_defaults_to_empty_dict(self, tmp_path: Path) -> None:
+        """AC: Missing [agent.env] defaults to empty dict."""
+        config_path = tmp_path / "config.toml"
+        config_path.write_text('[agent]\nmodel = "opus"\n')
+
+        settings = load_settings(config_path)
+
+        assert settings.agent.env == {}
+
+    def test_agent_env_non_string_value_exits_with_error(self, tmp_path: Path, capsys) -> None:
+        """AC: Non-string env values (e.g., FOO = 42) fail validation."""
+        config_path = tmp_path / "config.toml"
+        config_path.write_text("[agent.env]\nFOO = 42\n")
+
+        with pytest.raises(SystemExit):
+            load_settings(config_path)
+
+        err = capsys.readouterr().err
+        assert "env" in err
 
 
 class TestSettingsManager:

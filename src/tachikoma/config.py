@@ -60,6 +60,30 @@ class AgentSettings(BaseModel):
         default=86400,
         description="Lookup window for session resumption matching, in seconds (default: 1 day)",
     )
+    env: dict[str, str] = Field(
+        default_factory=dict,
+        description="Extra environment variables passed to all Claude SDK sessions",
+    )
+
+    @field_validator("env", mode="before")
+    @classmethod
+    def validate_env_values(cls, v: object) -> object:
+        if not isinstance(v, dict):
+            return v
+
+        non_string = {
+            k: type(val).__name__
+            for k, val in v.items()
+            if not isinstance(val, str)
+        }
+
+        if non_string:
+            details = ", ".join(f"{k} ({t})" for k, t in non_string.items())
+            raise ValueError(
+                f"All env values must be strings, got non-string values: {details}"
+            )
+
+        return v
 
 
 class LoggingSettings(BaseModel):
@@ -226,6 +250,10 @@ def _generate_default_config(config_path: Path = CONFIG_PATH) -> None:
     doc.add(tomlkit.comment("[agent]"))
 
     for name, field_info in AgentSettings.model_fields.items():
+        # env is a sub-table, handled separately below
+        if name == "env":
+            continue
+
         desc = field_info.description or ""
         default = field_info.default
 
@@ -242,6 +270,13 @@ def _generate_default_config(config_path: Path = CONFIG_PATH) -> None:
             doc.add(tomlkit.comment(f"{name} ="))
         else:
             doc.add(tomlkit.comment(f'{name} = "{default}"'))
+
+    doc.add(tomlkit.nl())
+
+    # [agent.env] sub-table
+    doc.add(tomlkit.comment("[agent.env]"))
+    doc.add(tomlkit.comment("Extra environment variables passed to all Claude SDK sessions"))
+    doc.add(tomlkit.comment('FOO = "bar"'))
 
     doc.add(tomlkit.nl())
 
