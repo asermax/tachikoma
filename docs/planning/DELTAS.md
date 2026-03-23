@@ -80,7 +80,7 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 ### DLT-015: Set up evaluation framework for agent pipelines
 **Status**: ✗ Defined
 **Depends on**: None
-**Priority**: 3 (Medium)
+**Priority**: 4 (Low)
 **Complexity**: Medium
 **Description**: Establish the foundation for testing agent processing pipelines with reproducible, automated test cases. The framework should support defining input scenarios (e.g., a conversation transcript, a user message with known relevant memories), running them through specific pipelines (pre-processing, post-processing), and comparing outputs against expected results using configurable assertions. This enables quality assurance for LLM-powered pipelines without relying on manual testing, and provides a regression safety net as pipelines evolve. The framework should be runnable locally and produce clear pass/fail reports.
 
@@ -143,7 +143,7 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 ### DLT-034: Summarize agent actions instead of generic tool markers
 **Status**: ✗ Defined
 **Depends on**: None
-**Priority**: 2 (High)
+**Priority**: 1 (Critical)
 **Complexity**: Medium
 **Description**: Replace the generic "Ran tools" marker in Telegram responses with a concise summary of what the agent actually did (e.g., "Read 3 files and searched for logging config" instead of "🔧 Ran tools"). The summary is generated from the sequence of ToolActivity events captured during the response, condensed into a human-readable action description that helps users understand what happened without reading tool-by-tool output.
 
@@ -157,21 +157,21 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 ### DLT-036: Auto-close idle sessions
 **Status**: ✗ Defined
 **Depends on**: None
-**Priority**: 2 (High)
+**Priority**: 1 (Critical)
 **Complexity**: Easy
 **Description**: Automatically close a session after a configurable period of inactivity so that post-processing (memory extraction, context updates, git commit) triggers without requiring the user to explicitly end the conversation or wait for a topic shift. The idle timeout is measured from the last message exchange and is configurable via the application settings. This complements boundary-detection-based session closing by handling the case where a conversation simply trails off.
 
 ### DLT-037: Deliver notifications during active streaming
 **Status**: ✗ Defined
 **Depends on**: None
-**Priority**: 2 (High)
+**Priority**: 1 (Critical)
 **Complexity**: Medium
 **Description**: Enable task notifications and scheduled alerts to reach the user even while the agent is actively streaming a response in Telegram. Currently, notifications arriving during an active stream may be blocked or delayed because the renderer is editing the response message. This delta ensures notifications are delivered within a reasonable window regardless of streaming state, without disrupting the active response rendering.
 
 ### DLT-038: Hot-reload skills at runtime
 **Status**: ✗ Defined
 **Depends on**: None
-**Priority**: 2 (High)
+**Priority**: 1 (Critical)
 **Complexity**: Easy
 **Description**: Reload the skill registry when skills are added or modified at runtime, without requiring an application restart. Currently the skill registry loads once during bootstrap and never refreshes. Since the agent can create and modify skill files during execution, newly authored or updated skills are invisible until the next restart. This delta adds a mechanism to detect skill changes and re-index skills so they become available immediately.
 
