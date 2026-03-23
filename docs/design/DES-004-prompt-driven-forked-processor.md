@@ -8,12 +8,12 @@
 
 Post-processors that fork the SDK session with a prompt should extend `PromptDrivenProcessor` rather than implementing the full `PostProcessor` interface directly. This base class provides a reusable structure for prompt-driven extraction and update logic.
 
-The pattern: extend `PromptDrivenProcessor`, provide a prompt constant, and call `super().__init__()` with the prompt and working directory. The base class handles storing prompt/cwd and implementing `process()` via `fork_and_consume()`.
+The pattern: extend `PromptDrivenProcessor`, provide a prompt constant, and call `super().__init__()` with the prompt and an `AgentDefaults` instance. The base class handles storing prompt/agent_defaults and implementing `process()` via `fork_and_consume()`.
 
 ## Rationale
 
 All prompt-driven processors follow the same structure:
-1. Store a prompt constant and working directory
+1. Store a prompt constant and `AgentDefaults` (cwd, cli_path, env)
 2. In `process()`, fork the SDK session with the prompt
 3. Let the forked agent autonomously manage files
 
@@ -28,10 +28,8 @@ Extracting this into a base class:
 ### Do This
 
 ```python
-from pathlib import Path
-
+from tachikoma.agent_defaults import AgentDefaults
 from tachikoma.post_processing import PromptDrivenProcessor
-from tachikoma.sessions.model import Session
 
 MY_PROMPT = """\
 You are a memory extraction agent...
@@ -45,19 +43,17 @@ Instructions:
 class MyProcessor(PromptDrivenProcessor):
     """Processor that extracts memories from conversations."""
 
-    def __init__(self, cwd: Path) -> None:
-        super().__init__(MY_PROMPT, cwd)
+    def __init__(self, agent_defaults: AgentDefaults) -> None:
+        super().__init__(MY_PROMPT, agent_defaults)
 ```
 
-**Why**: Simple, minimal boilerplate. The processor inherits `process()` from the base class, which calls `fork_and_consume()` with the prompt and cwd.
+**Why**: Simple, minimal boilerplate. The processor inherits `process()` from the base class, which calls `fork_and_consume()` with the prompt and agent_defaults.
 
 ### Don't Do This
 
 ```python
-from pathlib import Path
-
+from tachikoma.agent_defaults import AgentDefaults
 from tachikoma.post_processing import PostProcessor, fork_and_consume
-from tachikoma.sessions.model import Session
 
 MY_PROMPT = """\
 You are a memory extraction agent...
@@ -66,11 +62,11 @@ You are a memory extraction agent...
 class MyProcessor(PostProcessor):
     """Processor that manually implements the fork pattern."""
 
-    def __init__(self, cwd: Path) -> None:
-        self._cwd = cwd
+    def __init__(self, agent_defaults: AgentDefaults) -> None:
+        self._agent_defaults = agent_defaults
 
     async def process(self, session: Session) -> None:
-        await fork_and_consume(session, MY_PROMPT, self._cwd)
+        await fork_and_consume(session, MY_PROMPT, self._agent_defaults)
 ```
 
 **Why**: This reimplements the same pattern that `PromptDrivenProcessor` already provides. It adds unnecessary boilerplate and creates inconsistency with other processors.
@@ -96,7 +92,7 @@ class ComplexProcessor(PromptDrivenProcessor):
 
         # Fork with custom tools
         await fork_and_consume(
-            session, prompt, self._cwd,
+            session, prompt, self._agent_defaults,
             mcp_servers={"custom": custom_server},
         )
 

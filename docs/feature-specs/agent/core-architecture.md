@@ -114,12 +114,14 @@ The agent operates with full tool access, bypassing Claude Code's default permis
 **Acceptance Criteria**:
 - Given the coordinator is created, then `ClaudeAgentOptions.permission_mode` is set to `"bypassPermissions"`
 
-### Auto-Memory Disabled (R8)
+### Auto-Memory Disabled and Configurable Env (R8)
 
-Claude Code's built-in auto-memory feature is disabled so that Tachikoma's own memory system (context files + post-processing extraction) is the sole memory mechanism.
+Claude Code's built-in auto-memory feature is disabled so that Tachikoma's own memory system (context files + post-processing extraction) is the sole memory mechanism. Additionally, users can pass custom environment variables to all SDK sessions via the `[agent.env]` config section. Hardcoded defaults (like `CLAUDE_CODE_DISABLE_AUTO_MEMORY=1`) cannot be overridden via config — collisions raise a startup error.
 
 **Acceptance Criteria**:
 - Given the coordinator is created, then `ClaudeAgentOptions.env` includes `CLAUDE_CODE_DISABLE_AUTO_MEMORY=1`
+- Given `[agent.env]` contains custom values, when any SDK session is created (coordinator, sub-agents, post-processors), then `ClaudeAgentOptions.env` includes both the hardcoded defaults and the custom values
+- Given `[agent.env]` contains a key that collides with a hardcoded default, when the application starts, then it exits with a clear error
 
 ### Foundational Context (R9)
 

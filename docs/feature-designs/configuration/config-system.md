@@ -83,7 +83,8 @@ Settings (root, frozen)
 │   ├── model: str | None = None (SDK default)
 │   ├── allowed_tools: list[str] = ["Read", "Glob", "Grep"]
 │   ├── cli_path: str | None = None (SDK bundled binary)
-│   └── session_resume_window: int = 86400 (seconds; lookup window for session resumption matching)
+│   ├── session_resume_window: int = 86400 (seconds; lookup window for session resumption matching)
+│   └── env: dict[str, str] = {} (extra env vars for SDK sessions; validated: all values must be strings)
 ├── logging: LoggingSettings
 │   ├── level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = "INFO"
 │   └── console: bool = false
