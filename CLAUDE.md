@@ -8,25 +8,22 @@ Tachikoma is a proactive personal assistant built on Claude Agent SDK. It mainta
 
 ## Commands
 
+All commands are available as `just` recipes. **Always use them to validate changes** — run `just check` (or the relevant subset) before considering any task complete.
+
 ```bash
-# Dependencies
-uv sync --all-groups
+just install                         # uv sync --all-groups
+just run                             # run the agent (REPL by default)
+just run --channel telegram          # run via Telegram
 
-# Run the agent (REPL by default, or --channel telegram)
-just run
-just run --channel telegram
-
-# Tests
-just test                          # all tests (excludes @slow)
+just test                            # all tests (excludes @slow)
 just test tests/test_coordinator.py  # single file
-just test -k "test_name"           # single test by name
-just test -m slow                  # slow tests only
+just test -k "test_name"            # single test by name
+just test -m slow                   # slow tests only
 
-# Quality
-just lint       # ruff check
-just fmt        # ruff format
-just typecheck  # ty check
-just check      # lint + typecheck + test
+just lint                            # ruff check
+just fmt                             # ruff format
+just typecheck                       # ty check
+just check                           # lint + typecheck + test (all quality gates)
 ```
 
 ## Architecture
