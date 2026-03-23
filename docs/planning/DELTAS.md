@@ -139,3 +139,52 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 **Priority**: 4 (Low)
 **Complexity**: Medium
 **Description**: During skill authoring, the assistant needs to verify that a new skill works correctly before finalizing it. Provide an interactive validation tool the assistant invokes mid-authoring to check two aspects: (1) detection quality — running the skill's description against synthetic messages via the evaluation framework to measure whether it triggers on relevant messages and avoids false matches, reporting precision/recall scores and actionable feedback; and (2) structural correctness — verifying required frontmatter fields, description completeness, agent definition validity, and adherence to skill conventions. Results include suggestions so the assistant can iteratively refine the skill until it passes quality thresholds, closing the authoring feedback loop without manual testing. This is distinct from the offline skill detection eval suite, which evolves the detection engine itself — this tool evolves individual skill descriptions to work well with the detection logic.
+
+### DLT-034: Summarize agent actions instead of generic tool markers
+**Status**: ✗ Defined
+**Depends on**: None
+**Priority**: 2 (High)
+**Complexity**: Medium
+**Description**: Replace the generic "Ran tools" marker in Telegram responses with a concise summary of what the agent actually did (e.g., "Read 3 files and searched for logging config" instead of "🔧 Ran tools"). The summary is generated from the sequence of ToolActivity events captured during the response, condensed into a human-readable action description that helps users understand what happened without reading tool-by-tool output.
+
+### DLT-035: Receive images and audio from Telegram
+**Status**: ✗ Defined
+**Depends on**: None
+**Priority**: 3 (Medium)
+**Complexity**: Medium
+**Description**: Accept image and audio messages from the Telegram channel and forward them to the agent for processing. Currently the Telegram handler only accepts text messages and silently ignores all other content types. This delta adds support for photos, voice messages, and audio files, forwarding them to the agent as multimodal input for processing.
+
+### DLT-036: Auto-close idle sessions
+**Status**: ✗ Defined
+**Depends on**: None
+**Priority**: 2 (High)
+**Complexity**: Easy
+**Description**: Automatically close a session after a configurable period of inactivity so that post-processing (memory extraction, context updates, git commit) triggers without requiring the user to explicitly end the conversation or wait for a topic shift. The idle timeout is measured from the last message exchange and is configurable via the application settings. This complements boundary-detection-based session closing by handling the case where a conversation simply trails off.
+
+### DLT-037: Deliver notifications during active streaming
+**Status**: ✗ Defined
+**Depends on**: None
+**Priority**: 2 (High)
+**Complexity**: Medium
+**Description**: Enable task notifications and scheduled alerts to reach the user even while the agent is actively streaming a response in Telegram. Currently, notifications arriving during an active stream may be blocked or delayed because the renderer is editing the response message. This delta ensures notifications are delivered within a reasonable window regardless of streaming state, without disrupting the active response rendering.
+
+### DLT-038: Hot-reload skills at runtime
+**Status**: ✗ Defined
+**Depends on**: None
+**Priority**: 2 (High)
+**Complexity**: Easy
+**Description**: Reload the skill registry when skills are added or modified at runtime, without requiring an application restart. Currently the skill registry loads once during bootstrap and never refreshes. Since the agent can create and modify skill files during execution, newly authored or updated skills are invisible until the next restart. This delta adds a mechanism to detect skill changes and re-index skills so they become available immediately.
+
+### DLT-039: Extract shared base for pipeline execution
+**Status**: ✗ Defined
+**Depends on**: None
+**Priority**: 4 (Low)
+**Complexity**: Medium
+**Description**: The three pipelines (pre-processing, post-processing, and per-message post-processing) each independently implement the same parallel-with-isolation execution and error-gathering pattern, creating a maintenance risk when the pattern needs to change. Extract that shared orchestration logic into a common base so each pipeline becomes a thin specialization rather than a separate implementation with duplicated logic.
+
+### DLT-040: Extract prompt-driven processor and fork-and-consume primitives
+**Status**: ✗ Defined
+**Depends on**: None
+**Priority**: 4 (Low)
+**Complexity**: Easy
+**Description**: The prompt-driven processor pattern and the fork-and-consume helper are currently embedded in the post-processing module, but they represent general-purpose primitives used by any session-forking processor. Move them into standalone reusable modules so future processors can adopt them without depending on the post-processing pipeline.
