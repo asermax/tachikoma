@@ -45,7 +45,7 @@ class AgentSettings(BaseModel):
     model_config = ConfigDict(frozen=True, extra="ignore")
 
     model: str | None = Field(
-        default=None,
+        default="opus",
         description="Claude model to use (None = SDK default)",
     )
     allowed_tools: list[str] = Field(
@@ -75,17 +75,11 @@ class AgentSettings(BaseModel):
         if not isinstance(v, dict):
             return v
 
-        non_string = {
-            k: type(val).__name__
-            for k, val in v.items()
-            if not isinstance(val, str)
-        }
+        non_string = {k: type(val).__name__ for k, val in v.items() if not isinstance(val, str)}
 
         if non_string:
             details = ", ".join(f"{k} ({t})" for k, t in non_string.items())
-            raise ValueError(
-                f"All env values must be strings, got non-string values: {details}"
-            )
+            raise ValueError(f"All env values must be strings, got non-string values: {details}")
 
         return v
 
