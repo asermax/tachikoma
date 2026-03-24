@@ -133,12 +133,12 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 **Complexity**: Easy
 **Description**: Developers extending the system need the assistant to understand how to scaffold new skills correctly. Provide a built-in skill that activates when a user asks to create, define, or set up a new skill, injecting the full context the assistant needs — directory conventions, available capabilities, detection tuning guidance, and prompt-writing best practices — so it can produce well-structured skills without external documentation.
 
-### DLT-033: Validate skill quality during authoring
+### DLT-033: Validate skill detection quality during authoring
 **Status**: ✗ Defined
-**Depends on**: DLT-032, DLT-015
+**Depends on**: DLT-032, DLT-015, DLT-054
 **Priority**: 4 (Low)
 **Complexity**: Medium
-**Description**: During skill authoring, the assistant needs to verify that a new skill works correctly before finalizing it. Provide an interactive validation tool the assistant invokes mid-authoring to check two aspects: (1) detection quality — running the skill's description against synthetic messages via the evaluation framework to measure whether it triggers on relevant messages and avoids false matches, reporting precision/recall scores and actionable feedback; and (2) structural correctness — verifying required frontmatter fields, description completeness, agent definition validity, and adherence to skill conventions. Results include suggestions so the assistant can iteratively refine the skill until it passes quality thresholds, closing the authoring feedback loop without manual testing. This is distinct from the offline skill detection eval suite, which evolves the detection engine itself — this tool evolves individual skill descriptions to work well with the detection logic.
+**Description**: During skill authoring, the assistant needs to verify that a new skill's description triggers correctly on relevant messages. Provide a validation tool that runs the skill's description against synthetic messages via the evaluation framework to measure whether it triggers on relevant messages and avoids false matches, reporting precision/recall scores and actionable feedback. Results include suggestions so the assistant can iteratively refine the skill's description until it passes quality thresholds, closing the authoring feedback loop without manual testing. The tool is exposed on the skill authoring guide skill via the skill-provided MCP tools capability. This is distinct from the offline skill detection eval suite, which evolves the detection engine itself — this tool evolves individual skill descriptions to work well with the existing detection logic.
 
 ### DLT-034: Summarize agent actions instead of generic tool markers
 **Status**: ✗ Defined
@@ -300,3 +300,10 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 **Priority**: 5 (Backlog)
 **Complexity**: Medium
 **Description**: Allow skills to expose MCP tool servers that become available to the main agent when the skill is activated. Currently skills can provide delegated agents but cannot give the main agent direct access to custom tools. This delta extends the skill definition format to declare MCP tool servers (either inline tool definitions or references to tool server scripts), and the skills context provider includes them in the ContextResult's mcp_servers field when the skill matches. This enables skills to provide interactive capabilities the agent can invoke directly (e.g., a "calendar" skill that provides tools to check availability and create events) rather than only through delegated agents.
+
+### DLT-057: Validate skill structure and metadata
+**Status**: ✗ Defined
+**Depends on**: DLT-032, DLT-054
+**Priority**: 3 (Medium)
+**Complexity**: Easy
+**Description**: Skill authoring requires that new skills conform to the system's directory conventions and metadata contracts, but violations are only caught at runtime when the registry silently skips invalid entries. Provide a validation tool that checks a skill's structural correctness: SKILL.md exists with a valid description, agent definition files in agents/ have required frontmatter fields (description) and valid optional fields (model literals, tools as string lists), and the directory layout follows expected patterns. Results include actionable diagnostics listing each violation so the assistant can fix issues before finalizing a new skill. The tool is exposed on the skill authoring guide skill via the skill-provided MCP tools capability.
