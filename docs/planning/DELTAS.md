@@ -127,7 +127,7 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 **Description**: Replace the single hardcoded "Thinking..." status message with granular, component-driven status updates during pre-processing and post-processing. Each pipeline component (context providers, post-processors, boundary detection) reports what it is currently doing via a status callback, and the coordinator forwards these as Status events to the active channel. This gives users real-time visibility into what the assistant is doing behind the scenes (e.g., "Searching memories...", "Detecting topic shift...", "Extracting memories...") instead of a generic indicator.
 
 ### DLT-032: Guide the assistant through skill authoring
-**Status**: ✗ Defined
+**Status**: ⧗ Spec
 **Depends on**: None
 **Priority**: 2 (High)
 **Complexity**: Easy
