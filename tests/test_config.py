@@ -41,11 +41,11 @@ class TestSettingsModel:
 
         assert ws.path == Path.home() / "custom"
 
-    def test_default_agent_model_is_none(self) -> None:
-        """AC (R2): agent.model defaults to None (SDK default)."""
+    def test_default_agent_model_is_opus(self) -> None:
+        """AC (R2): agent.model defaults to 'opus'."""
         settings = Settings()
 
-        assert settings.agent.model is None
+        assert settings.agent.model == "opus"
 
     def test_default_agent_allowed_tools(self) -> None:
         """AC (R2): agent.allowed_tools defaults to Read, Glob, Grep."""
@@ -109,7 +109,7 @@ class TestSettingsModel:
         settings = Settings.model_validate({})
 
         assert settings.workspace.path == Path.home() / "tachikoma"
-        assert settings.agent.model is None
+        assert settings.agent.model == "opus"
         assert settings.agent.allowed_tools == ["Read", "Glob", "Grep"]
 
     def test_partial_config_uses_defaults_for_missing(self) -> None:
@@ -119,7 +119,7 @@ class TestSettingsModel:
         })
 
         assert settings.workspace.path == Path.home() / "custom"
-        assert settings.agent.model is None
+        assert settings.agent.model == "opus"
 
     def test_data_path_returns_tachikoma_subfolder(self) -> None:
         """AC (R1, DLT-023): data_path is .tachikoma under workspace path."""
@@ -223,7 +223,7 @@ class TestLoadSettings:
 
         assert config_path.exists()
         assert settings.workspace.path == Path.home() / "tachikoma"
-        assert settings.agent.model is None
+        assert settings.agent.model == "opus"
 
     def test_empty_file_loads_all_defaults(self, tmp_path: Path) -> None:
         """AC (R2): Empty config file uses all defaults."""
@@ -233,7 +233,7 @@ class TestLoadSettings:
         settings = load_settings(config_path)
 
         assert settings.workspace.path == Path.home() / "tachikoma"
-        assert settings.agent.model is None
+        assert settings.agent.model == "opus"
         assert settings.agent.allowed_tools == ["Read", "Glob", "Grep"]
 
     def test_partial_config_merges_with_defaults(self, tmp_path: Path) -> None:
@@ -244,7 +244,7 @@ class TestLoadSettings:
         settings = load_settings(config_path)
 
         assert settings.workspace.path == Path.home() / "custom"
-        assert settings.agent.model is None
+        assert settings.agent.model == "opus"
 
     def test_full_config_loads_all_values(self, tmp_path: Path) -> None:
         """AC (R1): All parameters loaded from valid config."""
