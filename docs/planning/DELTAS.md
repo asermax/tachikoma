@@ -190,11 +190,11 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 **Description**: The prompt-driven processor pattern and the fork-and-consume helper are currently embedded in the post-processing module, but they represent general-purpose primitives used by any session-forking processor. Move them into standalone reusable modules so future processors can adopt them without depending on the post-processing pipeline.
 
 ### DLT-041: Persist session context to database
-**Status**: ⧗ Spec
+**Status**: ✓ Spec
 **Depends on**: None
 **Priority**: 1 (Critical)
 **Complexity**: Medium
-**Description**: Session context is currently held only in memory, making it unavailable for inspection, debugging, or future tooling that needs to know what the agent was told. This delta introduces a `SessionContext` model associated with `Session` to persist all context injected into a session — both foundational context (soul, user knowledge, agent guidelines) assembled at session start and first-message-dependent context (memories, projects, skills) gathered during pre-processing. Each entry carries an owner identifier for traceability and an injection order for deterministic assembly. The coordinator saves context entries when a new session is created and loads them back when resuming or inspecting a session, replacing ephemeral coordinator state with a queryable, persistent record of what context the agent was given for each session.
+**Description**: Session context is currently held only in memory, making it unavailable for inspection, debugging, or future tooling that needs to know what the agent was told. This delta introduces a `SessionContext` model associated with `Session` to persist all context injected into a session — both foundational context (soul, user knowledge, agent guidelines) assembled at session start and first-message-dependent context (memories, projects, skills) gathered during pre-processing. Each entry carries an owner identifier for traceability and an injection order for deterministic assembly. The coordinator saves context entries when a new session is created; entries are queryable by session ID for inspection, debugging, and future tooling such as context invalidation and refresh (DLT-042/043).
 
 ### DLT-042: Add invalidation and refresh support to persisted context entries
 **Status**: ✗ Defined
