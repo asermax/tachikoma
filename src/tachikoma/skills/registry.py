@@ -42,7 +42,7 @@ class SkillRegistry:
     """Discovers and loads skills and their agents at startup.
 
     Skills are directory-based packages in workspace/skills/ containing:
-    - SKILL.md: Metadata file with YAML frontmatter (name, description, version)
+    - SKILL.md: Metadata file with YAML frontmatter (description, version)
     - agents/: Optional subdirectory with agent definition files (.md)
 
     Agent definitions are markdown files with YAML frontmatter containing:
@@ -156,29 +156,14 @@ class SkillRegistry:
             return
 
         # Extract and validate skill metadata
-        name = post.metadata.get("name", "")
         description = post.metadata.get("description", "")
         version = post.metadata.get("version")
-
-        if not name or not isinstance(name, str):
-            _log.warning(
-                "Skill has missing or invalid name: skill={skill}",
-                skill=skill_dir.name,
-            )
-            return
+        name = skill_dir.name
 
         if not description or not isinstance(description, str):
             _log.warning(
                 "Skill has missing or invalid description: skill={skill}",
-                skill=skill_dir.name,
-            )
-            return
-
-        if name != skill_dir.name:
-            _log.warning(
-                "Skill name mismatch: folder={folder}, frontmatter={frontmatter}",
-                folder=skill_dir.name,
-                frontmatter=name,
+                skill=name,
             )
             return
 

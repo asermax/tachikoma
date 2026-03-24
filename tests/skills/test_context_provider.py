@@ -91,7 +91,6 @@ class TestSkillsContextProvider:
         skill_md = skills_dir / "SKILL.md"
         skill_md.write_text(
             "---\n"
-            "name: test-skill\n"
             "description: A test skill\n"
             "---\n"
             "\n"
@@ -129,7 +128,6 @@ class TestSkillsContextProvider:
         skill_md = skills_dir / "SKILL.md"
         skill_md.write_text(
             "---\n"
-            "name: search\n"
             "description: Search for things\n"
             "---\n"
             "\n"
@@ -160,7 +158,6 @@ class TestSkillsContextProvider:
         skill_md = skills_dir / "SKILL.md"
         skill_md.write_text(
             "---\n"
-            "name: test-skill\n"
             "description: A test\n"
             "---\n"
             "\n"
@@ -188,7 +185,6 @@ class TestSkillsContextProvider:
         skill_md = skills_dir / "SKILL.md"
         skill_md.write_text(
             "---\n"
-            "name: my-skill\n"
             "description: Test\n"
             "---\n"
             "\n"
@@ -209,7 +205,7 @@ class TestSkillsContextProvider:
         assert "This is the body." in result.content
         # Frontmatter should NOT be in content
         assert "---" not in result.content
-        assert "name: my-skill" not in result.content
+        assert "description: Test" not in result.content
 
     async def test_filters_agents_by_detected_skill_prefix(
         self, mocker: pytest.MockerFixture, tmp_path: Path
@@ -223,7 +219,6 @@ class TestSkillsContextProvider:
         skill_md = skills_dir / "SKILL.md"
         skill_md.write_text(
             "---\n"
-            "name: search\n"
             "description: Search\n"
             "---\n"
             "\n"
@@ -247,7 +242,6 @@ class TestSkillsContextProvider:
         other_md = other_dir / "SKILL.md"
         other_md.write_text(
             "---\n"
-            "name: other\n"
             "description: Other\n"
             "---\n"
             "\n"
@@ -286,7 +280,6 @@ class TestSkillsContextProvider:
         skill_md = skills_dir / "SKILL.md"
         skill_md.write_text(
             "---\n"
-            "name: test\n"
             "description: Test\n"
             "---\n"
             "\n"
@@ -311,7 +304,6 @@ class TestSkillsContextProvider:
         skill_md = skills_dir / "SKILL.md"
         skill_md.write_text(
             "---\n"
-            "name: real-skill\n"
             "description: Real\n"
             "---\n"
             "\n"
@@ -340,7 +332,6 @@ class TestSkillsContextProvider:
         skill_md = skills_dir / "SKILL.md"
         skill_md.write_text(
             "---\n"
-            "name: test\n"
             "description: Test\n"
             "---\n"
             "\n"
@@ -363,7 +354,6 @@ class TestSkillsContextProvider:
         skill_md = skills_dir / "SKILL.md"
         skill_md.write_text(
             "---\n"
-            "name: test\n"
             "description: Test\n"
             "---\n"
             "\n"
@@ -389,7 +379,6 @@ class TestSkillsContextProvider:
         skill_md = skills_dir / "SKILL.md"
         skill_md.write_text(
             "---\n"
-            "name: valid-skill\n"
             "description: A valid skill\n"
             "---\n"
             "\n"
@@ -418,7 +407,6 @@ class TestSkillsContextProvider:
         skill_md1 = skills_dir1 / "SKILL.md"
         skill_md1.write_text(
             "---\n"
-            "name: skill-a\n"
             "description: A\n"
             "---\n"
             "\n"
@@ -440,7 +428,6 @@ class TestSkillsContextProvider:
         skill_md2 = skills_dir2 / "SKILL.md"
         skill_md2.write_text(
             "---\n"
-            "name: skill-b\n"
             "description: B\n"
             "---\n"
             "\n"
@@ -481,7 +468,6 @@ class TestSkillsContextProvider:
         skill_md = skills_dir / "SKILL.md"
         skill_md.write_text(
             "---\n"
-            "name: test\n"
             "description: Test\n"
             "---\n"
             "\n"

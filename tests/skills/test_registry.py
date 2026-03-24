@@ -19,7 +19,6 @@ def create_skill(
     skill_dir.mkdir(parents=True, exist_ok=True)
 
     frontmatter = f"""---
-name: "{name}"
 description: "{description}"
 """
     if version:
@@ -124,8 +123,8 @@ class TestSkillValidation:
 
         assert registry.skills == {}
 
-    def test_empty_name(self, tmp_path: Path) -> None:
-        """AC: SKILL.md with empty name is skipped."""
+    def test_no_name_in_frontmatter(self, tmp_path: Path) -> None:
+        """AC1: SKILL.md without name field loads using folder name."""
         workspace = tmp_path / "workspace"
         skills_dir = workspace / "skills"
         skills_dir.mkdir(parents=True)
@@ -133,14 +132,14 @@ class TestSkillValidation:
         skill_dir = skills_dir / "test-skill"
         skill_dir.mkdir()
         (skill_dir / "SKILL.md").write_text("""---
-name: ""
 description: "A description"
 ---
 """)
 
         registry = SkillRegistry(workspace)
 
-        assert registry.skills == {}
+        assert "test-skill" in registry.skills
+        assert registry.skills["test-skill"].name == "test-skill"
 
     def test_empty_description(self, tmp_path: Path) -> None:
         """AC: SKILL.md with empty description is skipped."""
@@ -151,7 +150,6 @@ description: "A description"
         skill_dir = skills_dir / "test-skill"
         skill_dir.mkdir()
         (skill_dir / "SKILL.md").write_text("""---
-name: "test-skill"
 description: ""
 ---
 """)
@@ -160,8 +158,8 @@ description: ""
 
         assert registry.skills == {}
 
-    def test_name_mismatch(self, tmp_path: Path) -> None:
-        """AC: SKILL.md name ≠ folder name is skipped."""
+    def test_frontmatter_name_ignored_when_mismatched(self, tmp_path: Path) -> None:
+        """AC3: SKILL.md name ≠ folder name — folder name wins, no error."""
         workspace = tmp_path / "workspace"
         skills_dir = workspace / "skills"
         skills_dir.mkdir(parents=True)
@@ -176,7 +174,27 @@ description: "A description"
 
         registry = SkillRegistry(workspace)
 
-        assert registry.skills == {}
+        assert "folder-name" in registry.skills
+        assert registry.skills["folder-name"].name == "folder-name"
+
+    def test_frontmatter_name_ignored_when_matching(self, tmp_path: Path) -> None:
+        """AC2: SKILL.md name matches folder — loads normally."""
+        workspace = tmp_path / "workspace"
+        skills_dir = workspace / "skills"
+        skills_dir.mkdir(parents=True)
+
+        skill_dir = skills_dir / "my-skill"
+        skill_dir.mkdir()
+        (skill_dir / "SKILL.md").write_text("""---
+name: "my-skill"
+description: "A description"
+---
+""")
+
+        registry = SkillRegistry(workspace)
+
+        assert "my-skill" in registry.skills
+        assert registry.skills["my-skill"].name == "my-skill"
 
     def test_valid_skill_md(self, tmp_path: Path) -> None:
         """AC: Valid SKILL.md is loaded correctly."""

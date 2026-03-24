@@ -136,7 +136,7 @@ directory.
 
 Each skill is a directory containing:
 
-- **SKILL.md** — Metadata (name, description in YAML frontmatter) and the skill's content body
+- **SKILL.md** — Metadata (description, version in YAML frontmatter) and the skill's content body
 - **agents/** — Optional subdirectory with agent definitions as markdown files \
 (YAML frontmatter for description, model, tools; markdown body for the agent's system prompt)
 - Other optional subdirectories (e.g., `references/`, `data/`) for organizing skill-related content
