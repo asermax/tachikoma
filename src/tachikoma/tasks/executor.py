@@ -17,7 +17,7 @@ from loguru import logger
 
 from tachikoma.agent_defaults import AgentDefaults
 from tachikoma.config import TaskSettings
-from tachikoma.post_processing import PostProcessingPipeline
+from tachikoma.post_processing import PostProcessingPipeline, fork_and_capture
 from tachikoma.pre_processing import PreProcessingPipeline, assemble_context
 from tachikoma.tasks.events import TaskNotification
 from tachikoma.tasks.model import TaskDefinition, TaskInstance
@@ -274,6 +274,7 @@ class BackgroundTaskExecutor:
                         await self._dispatch_notification(
                             instance,
                             definition,
+                            sdk_session_id=sdk_session_id,
                             message=feedback,
                             severity="info",
                         )
@@ -285,6 +286,7 @@ class BackgroundTaskExecutor:
                         await self._dispatch_notification(
                             instance,
                             definition,
+                            sdk_session_id=sdk_session_id,
                             message=f"Task failed: {feedback}",
                             severity="error",
                         )
@@ -305,6 +307,7 @@ class BackgroundTaskExecutor:
                 await self._dispatch_notification(
                     instance,
                     definition,
+                    sdk_session_id=sdk_session_id,
                     message=f"Task failed: reached max iterations ({max_iterations})",
                     severity="error",
                 )
@@ -324,6 +327,7 @@ class BackgroundTaskExecutor:
             await self._dispatch_notification(
                 instance,
                 None,
+                sdk_session_id=sdk_session_id,
                 message=f"Task failed with error: {exc}",
                 severity="error",
             )
@@ -485,6 +489,7 @@ class BackgroundTaskExecutor:
         self,
         instance: TaskInstance,
         definition: TaskDefinition | None,
+        sdk_session_id: str | None,
         message: str,
         severity: Literal["info", "error"],
     ) -> None:
@@ -494,10 +499,15 @@ class BackgroundTaskExecutor:
         - Task completed successfully and definition has non-null notify field, OR
         - Task failed (always notify on failure)
 
+        For success notifications with ``definition.notify`` set, forks the
+        task's SDK session with the notify prompt to generate a context-aware
+        notification message. Falls back to the evaluator feedback on failure.
+
         Args:
             instance: The task instance
             definition: The task definition (may be None for transient instances)
-            message: The notification message
+            sdk_session_id: The SDK session ID from the task execution
+            message: Fallback notification message (evaluator feedback)
             severity: "info" or "error"
         """
         # Check if we should notify
@@ -510,8 +520,9 @@ class BackgroundTaskExecutor:
         elif definition is not None and definition.notify:
             # Notify on success if definition.notify is set
             should_notify = True
-            # Use definition.notify as the notification template
-            notification_message = definition.notify
+            notification_message = await self._generate_notification(
+                sdk_session_id, definition.notify, fallback=message,
+            )
 
         if not should_notify:
             return
@@ -528,3 +539,52 @@ class BackgroundTaskExecutor:
             inst_id=instance.id,
             severity=severity,
         )
+
+    async def _generate_notification(
+        self,
+        sdk_session_id: str | None,
+        notify_prompt: str,
+        fallback: str,
+    ) -> str:
+        """Generate a notification message by forking the task session.
+
+        Forks the task's SDK session with the notify prompt, letting the
+        agent generate a context-aware notification from the conversation
+        history. Falls back to the provided fallback message if the fork
+        fails or produces no text.
+
+        Args:
+            sdk_session_id: The SDK session ID from the task execution.
+            notify_prompt: The notification generation instruction.
+            fallback: Message to use if generation fails.
+
+        Returns:
+            The generated notification message, or fallback on failure.
+        """
+        if sdk_session_id is None:
+            _log.warning("No SDK session ID, using fallback notification")
+            return fallback
+
+        try:
+            from tachikoma.sessions.model import Session  # noqa: PLC0415
+
+            session = Session(
+                id="notification-gen",
+                sdk_session_id=sdk_session_id,
+                started_at=datetime.now(UTC),
+            )
+
+            generated = await fork_and_capture(session, notify_prompt, self._agent_defaults)
+
+            if generated.strip():
+                return generated.strip()
+
+            _log.warning("Fork produced no text, using fallback notification")
+            return fallback
+
+        except Exception as exc:
+            _log.warning(
+                "Notification generation failed, using fallback: {err}",
+                err=str(exc),
+            )
+            return fallback

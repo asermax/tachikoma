@@ -80,7 +80,10 @@ sequenceDiagram
             alt complete
                 Exec->>Repo: mark completed
                 opt notify field set
-                    Exec->>Bus: dispatch(TaskNotification(message, severity="info"))
+                    Note over Exec: Fork session with notify prompt
+                    Exec->>SDK: fork_and_capture(notify_prompt)
+                    SDK-->>Exec: generated notification text
+                    Exec->>Bus: dispatch(TaskNotification(generated_text, severity="info"))
                 end
             else not complete
                 Exec->>SDK: query(evaluator_feedback) [resume]
@@ -103,6 +106,7 @@ sequenceDiagram
 - Executor ↔ Evaluator: lightweight model assessment after each agent response
 - Executor ↔ Event bus: dispatches `TaskNotification` on completion/failure
 - Executor ↔ Pipeline: separate `PostProcessingPipeline` instance with selective processors
+- Executor ↔ `fork_and_capture` (`post_processing.py`): forks task session for notification generation
 
 **Error contract:**
 - Runner loop errors: logged, continues on next tick
@@ -130,12 +134,18 @@ sequenceDiagram
       iv.  If complete: break loop
       v.   If stuck or max iterations: mark failed, break
    e. Run adapted post-processing pipeline on the executor's session
-   f. If complete and notify is set: dispatch TaskNotification(message, severity="info") on bus
-   g. If failed: dispatch TaskNotification(message, severity="error") on bus
+   f. If complete and notify is set: fork session with notify prompt via fork_and_capture,
+      use generated text as notification message (fall back to evaluator feedback on failure),
+      dispatch TaskNotification(generated_text, severity="info") on bus
+   g. If failed: dispatch TaskNotification(raw_error_message, severity="error") on bus
 4. Sleep until next tick
 ```
 
-### Notification delivery
+### Notification generation and delivery
+
+For success notifications with `definition.notify` set, the executor forks the task's SDK session with the `notify` instruction as a prompt via `fork_and_capture`. The forked agent has full task conversation context and generates a user-facing notification message. The `notify` field is sent verbatim — the user controls the notification instruction when creating the task.
+
+Fallback chain: if `sdk_session_id` is unavailable, the fork fails, or no text is produced, the evaluator's completion feedback is used as the notification message. Error notifications always use the raw error message directly (no fork).
 
 Channels subscribe to `TaskNotification` events via `bus.on(TaskNotification, handler)`:
 
@@ -174,6 +184,17 @@ Channels subscribe to `TaskNotification` events via `bus.on(TaskNotification, ha
 - Pro: Fast assessment turnaround
 - Con: Less nuanced assessment than a larger model
 
+### Fork-based notification generation
+
+**Choice**: Generate success notification messages by forking the task's SDK session with `definition.notify` as a prompt, using `fork_and_capture` to capture the agent's text response.
+**Why**: The `notify` field is described as "an instruction for generating a notification message." Treating it as a prompt and forking the session gives the notification agent full context about what the task accomplished, producing richer notifications than a static template string. The fork pattern is already established for post-processors (DES-004).
+
+**Consequences**:
+- Pro: Context-aware notifications that summarize actual task outcomes
+- Pro: Users control notification quality via the prompt they write in `notify`
+- Con: Adds latency (one additional SDK invocation per success notification)
+- Con: Fallback needed when fork fails
+
 ### Semaphore-based concurrency gating
 
 **Choice**: Use `asyncio.Semaphore(max_concurrent_background)` to limit concurrent background tasks.
@@ -190,7 +211,7 @@ Channels subscribe to `TaskNotification` events via `bus.on(TaskNotification, ha
 
 **Given**: A pending background task with `notify` set
 **When**: The executor runs and the evaluator marks it complete
-**Then**: The instance is marked completed, post-processing runs (episodic + git), and a `TaskNotification` event with severity "info" is dispatched.
+**Then**: The instance is marked completed, post-processing runs (episodic + git), the task session is forked with the `notify` prompt to generate a notification message, and a `TaskNotification` event with the generated text and severity "info" is dispatched.
 
 ### Scenario: Background task stuck
 

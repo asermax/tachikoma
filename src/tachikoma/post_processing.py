@@ -238,3 +238,61 @@ async def fork_and_consume(
         pass
 
     _log.debug("Fork completed: sdk_session_id={sid}", sid=session.sdk_session_id[:8])
+
+
+async def fork_and_capture(
+    session: Session,
+    prompt: str,
+    agent_defaults: AgentDefaults,
+) -> str:
+    """Fork the SDK session and capture the agent's text response.
+
+    Same fork pattern as fork_and_consume but captures and returns the
+    concatenated text content from all content blocks in the response
+    stream. Returns empty string if no text is produced.
+
+    Args:
+        session: The session to fork (must have sdk_session_id).
+        prompt: The prompt to send to the forked agent.
+        agent_defaults: Common SDK options (cwd, cli_path, env).
+
+    Returns:
+        Concatenated text from all content blocks in the response.
+
+    Raises:
+        RuntimeError: If session has no sdk_session_id.
+        Propagates: SDK errors from the query() call.
+    """
+    if session.sdk_session_id is None:
+        raise RuntimeError(
+            f"Cannot fork session {session.id}: no sdk_session_id available"
+        )
+
+    _log.debug("Forking session for capture: sdk_session_id={sid}", sid=session.sdk_session_id[:8])
+
+    options = ClaudeAgentOptions(
+        cwd=agent_defaults.cwd,
+        cli_path=agent_defaults.cli_path,
+        env=agent_defaults.env,
+        resume=session.sdk_session_id,
+        fork_session=True,
+        permission_mode="bypassPermissions",
+    )
+
+    # Fully consume the async iterator per DES-005, capturing text content
+    chunks: list[str] = []
+
+    async for message in query(prompt=prompt, options=options):
+        if hasattr(message, "content"):
+            for block in message.content:
+                if hasattr(block, "text"):
+                    chunks.append(block.text)
+
+    result = "".join(chunks)
+    _log.debug(
+        "Fork capture completed: sdk_session_id={sid}, text_length={length}",
+        sid=session.sdk_session_id[:8],
+        length=len(result),
+    )
+
+    return result

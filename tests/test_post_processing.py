@@ -18,6 +18,7 @@ from tachikoma.post_processing import (
     PostProcessingPipeline,
     PostProcessor,
     PromptDrivenProcessor,
+    fork_and_capture,
     fork_and_consume,
 )
 from tachikoma.sessions.model import Session
@@ -469,6 +470,108 @@ class TestForkAndConsume:
         call_kwargs = mock_query.call_args
         options = call_kwargs[1]["options"]
         assert options.mcp_servers == {}
+
+
+class TestForkAndCapture:
+    """Tests for fork_and_capture helper."""
+
+    async def test_captures_text_from_content_blocks(self, mocker: pytest.MockerFixture) -> None:
+        """AC: Text from content blocks is captured and concatenated."""
+        msg1 = MagicMock()
+        msg1.content = [MagicMock(text="Hello ")]
+
+        msg2 = MagicMock()
+        msg2.content = [MagicMock(text="world")]
+
+        async def fake_query(*args, **kwargs):
+            yield msg1
+            yield msg2
+
+        mocker.patch("tachikoma.post_processing.query", side_effect=fake_query)
+
+        session = _make_session(sdk_session_id="sdk-test-123")
+        result = await fork_and_capture(
+            session, "Generate notification", AgentDefaults(cwd=Path("/workspace")),
+        )
+
+        assert result == "Hello world"
+
+    async def test_returns_empty_string_when_no_text(self, mocker: pytest.MockerFixture) -> None:
+        """AC: Returns empty string when no text blocks in response."""
+        msg = MagicMock(spec=[])  # No content attribute
+
+        async def fake_query(*args, **kwargs):
+            yield msg
+
+        mocker.patch("tachikoma.post_processing.query", side_effect=fake_query)
+
+        session = _make_session(sdk_session_id="sdk-test-123")
+        result = await fork_and_capture(
+            session, "prompt", AgentDefaults(cwd=Path("/workspace")),
+        )
+
+        assert result == ""
+
+    async def test_fully_consumes_generator(self, mocker: pytest.MockerFixture) -> None:
+        """AC: DES-005 compliance — generator is fully consumed."""
+        consume_count = 0
+
+        async def fake_query(*args, **kwargs):
+            nonlocal consume_count
+            for _ in range(3):
+                consume_count += 1
+                yield MagicMock(spec=[])
+
+        mocker.patch("tachikoma.post_processing.query", side_effect=fake_query)
+
+        session = _make_session(sdk_session_id="sdk-test")
+        await fork_and_capture(session, "prompt", AgentDefaults(cwd=Path("/workspace")))
+
+        assert consume_count == 3
+
+    async def test_calls_query_with_fork_options(self, mocker: pytest.MockerFixture) -> None:
+        """AC: query() called with correct resume, fork_session, cwd."""
+        mock_query = mocker.patch("tachikoma.post_processing.query")
+
+        async def fake_query(*args, **kwargs):
+            yield MagicMock(spec=[])
+
+        mock_query.return_value = fake_query()
+
+        session = _make_session(sdk_session_id="sdk-test-123")
+        await fork_and_capture(
+            session, "Test prompt", AgentDefaults(cwd=Path("/workspace")),
+        )
+
+        mock_query.assert_called_once()
+        call_kwargs = mock_query.call_args
+        assert call_kwargs[1]["prompt"] == "Test prompt"
+
+        options = call_kwargs[1]["options"]
+        assert options.cwd == Path("/workspace")
+        assert options.resume == "sdk-test-123"
+        assert options.fork_session is True
+        assert options.permission_mode == "bypassPermissions"
+
+    async def test_raises_when_no_sdk_session_id(self) -> None:
+        """AC: Raises RuntimeError when session has no sdk_session_id."""
+        session = _make_session(sdk_session_id=None)
+
+        with pytest.raises(RuntimeError, match="no sdk_session_id"):
+            await fork_and_capture(session, "prompt", AgentDefaults(cwd=Path("/workspace")))
+
+    async def test_propagates_query_error(self, mocker: pytest.MockerFixture) -> None:
+        """AC: Exceptions from query() propagate."""
+        async def failing_query(*args, **kwargs):
+            raise RuntimeError("SDK error")
+            yield  # make it a generator
+
+        mocker.patch("tachikoma.post_processing.query", side_effect=failing_query)
+
+        session = _make_session(sdk_session_id="sdk-test")
+
+        with pytest.raises(RuntimeError, match="SDK error"):
+            await fork_and_capture(session, "prompt", AgentDefaults(cwd=Path("/workspace")))
 
 
 class TestPromptDrivenProcessor:
