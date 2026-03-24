@@ -84,7 +84,7 @@ Five-component architecture: a bootstrap hook creates the directory structure, t
 | Layer/Component | Responsibility | Key Decisions |
 |-----------------|----------------|---------------|
 | `src/tachikoma/skills/__init__.py` | Re-exports `SkillRegistry`, `Skill`, `skills_hook`, `SkillsContextProvider` | Package module for the skills subsystem |
-| `src/tachikoma/skills/registry.py` | `SkillRegistry` class: discovers skills, loads agents, builds agents dict, stores skill body and path; `Skill` dataclass for metadata (name, description, version, body, path) | Uses `python-frontmatter` for parsing; constructs `AgentDefinition` from `claude_agent_sdk.types` directly; body and path stored at init time |
+| `src/tachikoma/skills/registry.py` | `SkillRegistry` class: discovers skills, loads agents, builds agents dict, stores skill body and path; `Skill` dataclass for metadata (name from folder, description, version, body, path) | Uses `python-frontmatter` for parsing; constructs `AgentDefinition` from `claude_agent_sdk.types` directly; name derived from folder, body and path stored at init time |
 | `src/tachikoma/skills/context_provider.py` | `SkillsContextProvider(ContextProvider)`: creates its own `SkillRegistry` in `__init__`, classifies relevant skills via standalone `query()` with Opus low effort (DES-007), reads skill body from registry's pre-loaded `Skill.body`, assembles `<skills>` XML block, returns detected agents via `ContextResult.agents` | Self-contained provider (owns registry); no tools for classification agent (pure reasoning); fully consumes query() generator (DES-005); `get_agents_for_skill()` on registry for agent filtering |
 | `src/tachikoma/skills/hooks.py` | `skills_hook` bootstrap callback: creates `workspace/skills/` directory | Follows DES-003 pattern (subsystem-owned hook); directory creation only |
 | `src/tachikoma/context/loading.py` (`SYSTEM_PREAMBLE`) | Static skills documentation in the system prompt preamble: location, structure, detection, management, and disambiguation from Claude Code's native skills | Part of the `SYSTEM_PREAMBLE` constant; loaded once at startup; independent of per-session detection; follows ADR-008 append pattern |
@@ -147,7 +147,7 @@ flowchart TD
 
 ```
 Skill (dataclass)
-├── name: str (matches folder name)
+├── name: str (derived from folder name)
 ├── description: str
 ├── version: str | None
 ├── body: str (SKILL.md content without YAML frontmatter, loaded at init)
@@ -180,7 +180,7 @@ SkillsContextProvider(ContextProvider)
    a. Check for SKILL.md
       ├─ Not found → log warning, skip directory
       └─ Found → parse YAML frontmatter
-   b. Validate skill metadata (name, description, name == folder name)
+   b. Derive name from folder, validate description (required)
       ├─ Invalid → log warning, skip skill
       └─ Valid → store Skill metadata, proceed to agents
    c. Check for agents/ subdirectory

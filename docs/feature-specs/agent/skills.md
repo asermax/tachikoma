@@ -38,7 +38,7 @@ The skill system provides a structured way to organize, detect, and delegate spe
 ### Skill Organization (R0)
 
 Skills are directory-based packages in `workspace/skills/`. Each skill contains:
-- `SKILL.md`: Metadata file with skill name, description, and version (YAML frontmatter)
+- `SKILL.md`: Metadata file with description and version (YAML frontmatter); the skill name is derived from the folder name
 - `agents/`: Subdirectory containing agent definition files (optional if no agents)
 
 Agent definitions are individual markdown files with YAML frontmatter containing description, model, tools, and a markdown body for system context.
