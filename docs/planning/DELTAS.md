@@ -237,3 +237,66 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 **Priority**: 2 (High)
 **Complexity**: Medium
 **Description**: When a conversation grows long enough that the SDK's auto-compaction would compress away injected context (memories, skills, foundational files), proactively detect context pressure and perform an explicit handoff — close the current session with a structured summary and open a new one with fresh context injection plus the summary as bridging context. This replaces opaque auto-compaction with a controlled transition that guarantees critical context survives. The detection mechanism (token estimation, message count heuristic, or SDK signal) and the summary format should be evaluated during speccing. The handoff reuses the existing session close/reopen infrastructure and bridging context assembly.
+
+### DLT-048: Plugin system with install, discovery, and loading
+**Status**: ✗ Defined
+**Depends on**: None
+**Priority**: 5 (Backlog)
+**Complexity**: Hard
+**Description**: Introduce a directory-based plugin system that allows extending the assistant with additional capabilities. A plugin is a self-describing directory with a manifest file that declares its structure and contributions — context providers, post-processors, skills, channels, or MCP tools. Plugins are installed by copying from a source location (local path or remote repository) into a managed plugins directory within the workspace. At startup, the plugin loader discovers installed plugins, validates their manifests, and feeds declared contributions into the existing registration points (bootstrap, pipelines, coordinator). Plugin loading is fail-safe: a broken plugin is logged and skipped without affecting the rest of the system. Plugin-specific configuration is managed through the existing TOML config under a plugins section.
+
+### DLT-055: Plugin update mechanism
+**Status**: ✗ Defined
+**Depends on**: DLT-048
+**Priority**: 5 (Backlog)
+**Complexity**: Medium
+**Description**: Add an update mechanism to the plugin system that checks whether installed plugins' sources have newer versions available and synchronizes the local copy. Updates can be triggered explicitly by the user or run automatically at startup. The synchronization strategy depends on the source type (re-copy for local paths, pull for remote repositories). Failed updates should leave the existing plugin intact rather than corrupting it. This enables plugin authors to publish improvements and bug fixes that users can pull in without manually reinstalling.
+
+### DLT-056: Plugin removal
+**Status**: ✗ Defined
+**Depends on**: DLT-048
+**Priority**: 5 (Backlog)
+**Complexity**: Easy
+**Description**: Add a removal mechanism to the plugin system that cleanly uninstalls a plugin by removing its directory from the managed plugins location and cleaning up any related configuration. This completes the plugin lifecycle by allowing users to discard plugins they no longer need.
+
+### DLT-049: Plugin hook for custom context providers
+**Status**: ✗ Defined
+**Depends on**: DLT-048
+**Priority**: 5 (Backlog)
+**Complexity**: Easy
+**Description**: Allow plugins to contribute context providers that participate in the pre-processing pipeline. Plugin-declared providers implement the existing ContextProvider interface and are registered into the PreProcessingPipeline alongside built-in providers during plugin loading. This enables plugins to inject custom context (e.g., calendar events, external knowledge bases, CRM data) into every agent conversation without modifying the core system.
+
+### DLT-050: Plugin hook for custom post-processors
+**Status**: ✗ Defined
+**Depends on**: DLT-048
+**Priority**: 5 (Backlog)
+**Complexity**: Easy
+**Description**: Allow plugins to contribute post-processors that participate in the post-processing pipeline. Plugin-declared processors implement the existing PostProcessor interface (or extend PromptDrivenProcessor) and are registered into the PostProcessingPipeline at a plugin-specified phase (main, pre_finalize, finalize) during plugin loading. This enables plugins to perform custom extraction, side effects, or integrations after a session closes (e.g., syncing extracted action items to a task tracker, sending conversation summaries to a webhook).
+
+### DLT-051: Plugin hook for bundled skills
+**Status**: ✗ Defined
+**Depends on**: DLT-048, DLT-054
+**Priority**: 5 (Backlog)
+**Complexity**: Easy
+**Description**: Allow plugins to bundle pre-defined skills (with their agent definitions and MCP tool servers) that become available in the skill registry alongside user-authored skills. During plugin loading, each plugin's declared skill directories are added to the skill registry's search paths, making their skills discoverable by the skills context provider. This includes skills that provide MCP tool servers, which requires the skill-provided MCP tools capability to be in place. This enables plugins to ship ready-to-use capabilities (e.g., a "code review" plugin that includes a skill with specialized agents, prompts, and tools) without requiring users to manually copy skill files into the workspace.
+
+### DLT-052: Concurrent secondary channels
+**Status**: ✗ Defined
+**Depends on**: None
+**Priority**: 5 (Backlog)
+**Complexity**: Medium
+**Description**: Support running multiple communication channels concurrently instead of the current single-channel-per-run model. A user designates one primary channel for interactive conversations (REPL or Telegram as today) while additional secondary channels run alongside it, each able to receive and respond to messages through the same assistant. This enables scenarios like receiving proactive notifications through Telegram while working interactively via the REPL, or running plugin-contributed channels alongside built-in ones. Secondary channels follow the same interface as primary channels but are distinguished from the primary so the system can route responses and notifications correctly.
+
+### DLT-053: Plugin hook for secondary channels
+**Status**: ✗ Defined
+**Depends on**: DLT-048, DLT-052
+**Priority**: 5 (Backlog)
+**Complexity**: Easy
+**Description**: Allow plugins to contribute secondary channels that run alongside the primary channel. Plugin-declared channels implement the same channel interface used by the built-in REPL and Telegram channels and are launched as secondary channels during startup using the concurrent channel infrastructure. This enables plugins to add new communication surfaces (e.g., a Slack channel, a web API, a Matrix bridge) without modifying the core application.
+
+### DLT-054: Skill-provided MCP tools
+**Status**: ✗ Defined
+**Depends on**: None
+**Priority**: 5 (Backlog)
+**Complexity**: Medium
+**Description**: Allow skills to expose MCP tool servers that become available to the main agent when the skill is activated. Currently skills can provide delegated agents but cannot give the main agent direct access to custom tools. This delta extends the skill definition format to declare MCP tool servers (either inline tool definitions or references to tool server scripts), and the skills context provider includes them in the ContextResult's mcp_servers field when the skill matches. This enables skills to provide interactive capabilities the agent can invoke directly (e.g., a "calendar" skill that provides tools to check availability and create events) rather than only through delegated agents.
