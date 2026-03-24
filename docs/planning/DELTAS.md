@@ -66,16 +66,9 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 ### DLT-011: Run as a persistent background service
 **Status**: ✗ Defined
 **Depends on**: DLT-024
-**Priority**: 3 (Medium)
+**Priority**: 2 (High)
 **Complexity**: Easy
 **Description**: Run the assistant as a persistent background process that starts automatically on system boot and restarts on failure. This delta covers service lifecycle and process management only — it ensures the application is always running and recovers from crashes. Specific reconnection logic (Telegram) and state persistence (memory files) are handled by their respective deltas. Implementation should use standard Linux service management (e.g., systemd) appropriate for a single-user, self-hosted deployment.
-
-### DLT-014: Add LLM observability for agent interactions
-**Status**: ✗ Defined
-**Depends on**: None
-**Priority**: 3 (Medium)
-**Complexity**: Medium
-**Description**: Track LLM calls across the entire system — the coordinator and all sub-agents — to provide visibility into how the underlying model is being used. Capture inputs (prompts/context sent), outputs (responses received), token usage, latency, and estimated costs per call. This enables understanding of which operations are expensive, identifying prompt quality issues, and optimizing token budgets over time. Local/self-hosted tooling is preferred over cloud analytics services; the specific solution should be evaluated during speccing to find the best fit for a single-user, privacy-conscious deployment.
 
 ### DLT-015: Set up evaluation framework for agent pipelines
 **Status**: ✗ Defined
@@ -307,3 +300,17 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 **Priority**: 3 (Medium)
 **Complexity**: Easy
 **Description**: Skill authoring requires that new skills conform to the system's directory conventions and metadata contracts, but violations are only caught at runtime when the registry silently skips invalid entries. Provide a validation tool that checks a skill's structural correctness: SKILL.md exists with a valid description, agent definition files in agents/ have required frontmatter fields (description) and valid optional fields (model literals, tools as string lists), and the directory layout follows expected patterns. Results include actionable diagnostics listing each violation so the assistant can fix issues before finalizing a new skill. The tool is exposed on the skill authoring guide skill via the skill-provided MCP tools capability.
+
+### DLT-058: Manual session close command
+**Status**: ✗ Defined
+**Depends on**: None
+**Priority**: 5 (Backlog)
+**Complexity**: Easy
+**Description**: Provide a user-facing command to explicitly close the current session, triggering all post-processing (memory extraction, context updates, git commit) without requiring a topic shift or application restart. Currently sessions only close via boundary detection or graceful shutdown, leaving no way for the user to signal "I'm done with this topic." The command is invoked through the active channel (e.g., `/close` in Telegram, a REPL command) and delegates to the coordinator's existing session close logic. This also serves as the fallback mechanism when automatic boundary detection is disabled via configuration.
+
+### DLT-059: Disable optional subsystems via configuration
+**Status**: ✗ Defined
+**Depends on**: DLT-058
+**Priority**: 5 (Backlog)
+**Complexity**: Medium
+**Description**: Some users may not need all of Tachikoma's capabilities active — whether to simplify behavior, reduce resource usage, or tailor the assistant to a specific workflow. This delta adds per-feature enabled/disabled toggles to the application configuration, covering memory, session boundary detection, and projects. When a subsystem is disabled, all of its behavior is cleanly removed: it does not initialize at startup, does not contribute context or post-processing, and does not influence conversation flow. Disabling boundary detection means the manual session close command becomes the only way to trigger session post-processing mid-conversation. Toggles live in a `[features]` configuration section with boolean flags that default to enabled, preserving current behavior for users who do not customize.
