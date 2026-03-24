@@ -127,6 +127,7 @@ class SkillsContextProvider(ContextProvider):
                                 )
                             else:
                                 detected_names = valid_names
+                                _log.debug("Skills detected: names={names}", names=detected_names)
 
         except Exception as exc:
             _log.exception(

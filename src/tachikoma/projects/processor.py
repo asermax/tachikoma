@@ -78,6 +78,8 @@ class ProjectsProcessor(PostProcessor):
         Args:
             session: The closed session (not used, but required by interface).
         """
+        _log.info("Processor started: processor=ProjectsProcessor")
+
         # Discover submodules
         submodule_paths = await list_submodules(self._cwd)
         if not submodule_paths:
@@ -126,6 +128,8 @@ class ProjectsProcessor(PostProcessor):
                     path=path,
                     err=str(result),
                 )
+
+        _log.info("Processor completed: processor=ProjectsProcessor")
 
     async def _is_dirty(self, path: str) -> bool:
         """Check if a submodule has uncommitted changes.

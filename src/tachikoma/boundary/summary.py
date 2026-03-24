@@ -45,6 +45,8 @@ class SummaryProcessor(MessagePostProcessor):
             user_message: The user's input text.
             agent_response: The agent's response text.
         """
+        _log.debug("Generating summary: session_id={id}", id=session.id[:8])
+
         # Build the previous summary section
         if session.summary is None:
             previous_summary_section = "No previous summary. This is the first exchange."
@@ -85,6 +87,7 @@ class SummaryProcessor(MessagePostProcessor):
         # Update the session summary if we got a response
         if response_text.strip():
             await self._registry.update_summary(session.id, response_text.strip())
+            _log.debug("Summary updated: session_id={id}", id=session.id[:8])
         else:
             _log.warning(
                 "Summary processor received empty response: session_id={id}",

@@ -212,6 +212,8 @@ class CoreContextProcessor(PromptDrivenProcessor):
         Args:
             session: The closed session to process.
         """
+        _log.info("Processor started: processor=CoreContextProcessor")
+
         # Pre-step: Clean expired pending signals
         clean_pending_signals(self._data_dir)
 
@@ -267,3 +269,5 @@ class CoreContextProcessor(PromptDrivenProcessor):
                 and mtime_after != mtime_before
             ):
                 _log.info("Context file updated: file={file}", file=filename)
+
+        _log.info("Processor completed: processor=CoreContextProcessor")

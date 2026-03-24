@@ -77,9 +77,13 @@ async def query_and_consume(prompt: str, agent_defaults: AgentDefaults) -> None:
         permission_mode="bypassPermissions",
     )
 
+    _log.debug("Spawning query agent")
+
     # Fully consume the async iterator to ensure the agent completes
     async for _ in query(prompt=prompt, options=options):
         pass
+
+    _log.debug("Query agent completed")
 
 
 class GitProcessor(PostProcessor):
@@ -105,6 +109,8 @@ class GitProcessor(PostProcessor):
         Args:
             session: The closed session (not used, but required by interface).
         """
+        _log.info("Processor started: processor=GitProcessor")
+
         # Check if there are any uncommitted changes
         is_dirty = await _check_git_status(self._cwd)
 
@@ -136,6 +142,8 @@ class GitProcessor(PostProcessor):
         still_dirty = await _check_git_status(self._cwd)
         if still_dirty:
             _log.warning("Uncommitted changes remain after git processor")
+
+        _log.info("Processor completed: processor=GitProcessor")
 
 
 async def _check_git_status(cwd: Path) -> bool:

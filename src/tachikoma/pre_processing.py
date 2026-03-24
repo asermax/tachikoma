@@ -128,6 +128,9 @@ class PreProcessingPipeline:
         if not self._providers:
             return []
 
+        names = [p.__class__.__name__ for p in self._providers]
+        _log.info("Pipeline started: providers={names}", names=names)
+
         results = await asyncio.gather(
             *[p.provide(message) for p in self._providers],
             return_exceptions=True,
@@ -145,6 +148,7 @@ class PreProcessingPipeline:
             elif result is not None:
                 successful.append(result)
 
+        _log.info("Pipeline completed: results={count}", count=len(successful))
         return successful
 
 

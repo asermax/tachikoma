@@ -219,6 +219,8 @@ async def fork_and_consume(
             f"Cannot fork session {session.id}: no sdk_session_id available"
         )
 
+    _log.debug("Forking session: sdk_session_id={sid}", sid=session.sdk_session_id[:8])
+
     options = ClaudeAgentOptions(
         cwd=agent_defaults.cwd,
         cli_path=agent_defaults.cli_path,
@@ -234,3 +236,5 @@ async def fork_and_consume(
     # Fully consume the async iterator to ensure the forked session ends cleanly
     async for _ in query(prompt=prompt, options=options):
         pass
+
+    _log.debug("Fork completed: sdk_session_id={sid}", sid=session.sdk_session_id[:8])

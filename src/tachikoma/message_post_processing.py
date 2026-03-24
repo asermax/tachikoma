@@ -74,6 +74,9 @@ class MessagePostProcessingPipeline:
             if not self._processors:
                 return
 
+            names = [p.__class__.__name__ for p in self._processors]
+            _log.info("Pipeline started: processors={names}", names=names)
+
             results = await asyncio.gather(
                 *[
                     p.process(session, user_message, agent_response)
@@ -89,3 +92,5 @@ class MessagePostProcessingPipeline:
                         name=processor.__class__.__name__,
                         err=str(result),
                     )
+
+            _log.info("Pipeline completed")

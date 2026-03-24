@@ -116,6 +116,7 @@ class MemoryContextProvider(ContextProvider):
                             _log.debug("No relevant memories found for message")
                         else:
                             result = ContextResult(tag="memories", content=sdk_message.result)
+                            _log.debug("Memory context provided")
 
         except Exception as exc:
             _log.exception(
