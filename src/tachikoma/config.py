@@ -64,6 +64,10 @@ class AgentSettings(BaseModel):
         default=86400,
         description="Lookup window for session resumption matching, in seconds (default: 1 day)",
     )
+    session_idle_timeout: int = Field(
+        default=900,
+        description="Seconds of inactivity before auto-closing session (0 = disabled)",
+    )
     env: dict[str, str] = Field(
         default_factory=dict,
         description="Extra environment variables passed to all Claude SDK sessions",
