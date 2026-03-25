@@ -190,11 +190,11 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 **Description**: The prompt-driven processor pattern and the fork-and-consume helper are currently embedded in the post-processing module, but they represent general-purpose primitives used by any session-forking processor. Move them into standalone reusable modules so future processors can adopt them without depending on the post-processing pipeline.
 
 ### DLT-041: Persist session context to database
-**Status**: ⧗ Design
+**Status**: ✓ Spec
 **Depends on**: None
 **Priority**: 1 (Critical)
 **Complexity**: Medium
-**Description**: Session context is currently held only in memory, making it unavailable for inspection, debugging, or future tooling that needs to know what the agent was told. This delta introduces a `SessionContext` model associated with `Session` to persist all context injected into a session — both foundational context (soul, user knowledge, agent guidelines) assembled at session start and first-message-dependent context (memories, projects, skills) gathered during pre-processing. Each entry carries an owner identifier for traceability and an injection order for deterministic assembly. The coordinator saves context entries when a new session is created; entries are queryable by session ID for inspection, debugging, and future tooling such as context invalidation and refresh (DLT-042/043).
+**Description**: Session context is currently held only in memory, making it unavailable for inspection, debugging, or future tooling that needs to know what the agent was told. This delta introduces a `SessionContextEntry` model associated with `Session` to persist all context injected into a session — foundational files (SOUL.md, USER.md, AGENTS.md as one entry), pre-processing results (memories, projects, skills — one entry each), and session transition context (previous summary, bridging context). Persisted entries become the canonical source for system prompt assembly: the coordinator rebuilds the system prompt from database entries on every SDK client creation, replacing both the current in-memory prompt construction and message-text context injection (`assemble_context()`). A generalized assembly function makes this usable by both normal client creation and forked sessions (opt-in). Entries are queryable by session ID for inspection, debugging, and future tooling such as context invalidation and refresh (DLT-042/043).
 
 ### DLT-042: Add invalidation and refresh support to persisted context entries
 **Status**: ✗ Defined
