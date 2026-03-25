@@ -155,7 +155,7 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 **Description**: Accept image and audio messages from the Telegram channel and forward them to the agent for processing. Currently the Telegram handler only accepts text messages and silently ignores all other content types. This delta adds support for photos, voice messages, and audio files, forwarding them to the agent as multimodal input for processing.
 
 ### DLT-036: Auto-close idle sessions
-**Status**: ✓ Spec
+**Status**: ⧗ Design
 **Depends on**: None
 **Priority**: 1 (Critical)
 **Complexity**: Easy
