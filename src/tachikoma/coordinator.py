@@ -113,6 +113,7 @@ class Coordinator:
         on_status: Callable[[str], None] | None = None,
         agents: dict[str, AgentDefinition] | None = None,
         session_resume_window: int = 86400,
+        session_idle_timeout: int = 900,
         mcp_servers: dict[str, McpSdkServerConfig] | None = None,
     ) -> None:
         # Store individual options for building ClaudeAgentOptions per message
@@ -127,6 +128,10 @@ class Coordinator:
 
         # Session resumption configuration
         self._session_resume_window = session_resume_window
+
+        # Idle session auto-close configuration
+        self._idle_timeout = session_idle_timeout
+        self._idle_close_task: asyncio.Task[None] | None = None
 
         # Last message time tracking for idle gating
         self._last_message_time: datetime | None = None
@@ -650,3 +655,18 @@ providing context for what the user has been doing in the meantime.
     def has_pending_messages(self) -> bool:
         """Whether the message buffer has items waiting to be processed."""
         return not self._message_buffer.empty()
+
+    @property
+    def _is_busy(self) -> bool:
+        """Whether the coordinator is actively processing.
+
+        Used by idle close to avoid interrupting:
+        - Message exchange in progress (_client is not None)
+        - Messages queued but not yet picked up (has_pending_messages)
+        - Per-message post-processing in flight (_pending_msg_task)
+        """
+        return (
+            self._client is not None
+            or self.has_pending_messages
+            or (self._pending_msg_task is not None and not self._pending_msg_task.done())
+        )
