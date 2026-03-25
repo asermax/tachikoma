@@ -321,3 +321,17 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 **Priority**: 5 (Backlog)
 **Complexity**: Medium
 **Description**: Some users may not need all of Tachikoma's capabilities active — whether to simplify behavior, reduce resource usage, or tailor the assistant to a specific workflow. This delta adds per-feature enabled/disabled toggles to the application configuration, covering memory, session boundary detection, and projects. When a subsystem is disabled, all of its behavior is cleanly removed: it does not initialize at startup, does not contribute context or post-processing, and does not influence conversation flow. Disabling boundary detection means the manual session close command becomes the only way to trigger session post-processing mid-conversation. Toggles live in a `[features]` configuration section with boolean flags that default to enabled, preserving current behavior for users who do not customize.
+
+### DLT-060: Check for agent updates and notify user
+**Status**: ✗ Defined
+**Depends on**: DLT-024
+**Priority**: 4 (Low)
+**Complexity**: Medium
+**Description**: Users running the agent need to stay current with bug fixes and features without manually checking for releases. This delta periodically checks for newer versions, notifies the user through their active channel when an update is available, and captures their choice (confirm, defer, or skip). Configuration includes how often checks occur. The apply action is handled by a separate delta.
+
+### DLT-061: Apply agent update
+**Status**: ✗ Defined
+**Depends on**: DLT-060
+**Priority**: 4 (Low)
+**Complexity**: Medium
+**Description**: Apply a confirmed agent update using uv's upgrade mechanism. This delta executes when the user has confirmed an update via the notification from the update check delta, performing the actual update and optionally restarting the agent to run the new version.
