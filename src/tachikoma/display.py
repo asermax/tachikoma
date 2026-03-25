@@ -116,7 +116,7 @@ def summarize_tool_activity(activities: list[ToolActivity]) -> str:
                     # Unknown tool fallback
                     phrases.append(f"used {tool_name}")
 
-    # Cap at 5 groups + "and more"
+    # Cap at 5 phrases + "and more"
     if len(phrases) > 5:
         phrases = phrases[:5]
         phrases.append("and more")

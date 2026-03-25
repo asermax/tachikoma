@@ -71,7 +71,7 @@ class TestSummarizeSingleTool:
         activity = ToolActivity(tool_name="Bash", tool_input={"command": long_cmd})
         result = summarize_tool_activity([activity])
         assert result.endswith("...")
-        assert len(result) == 43  # 40 chars + "..." + "R" from "Ran"
+        assert len(result) == 43  # 40 chars of command + "..."
 
     def test_bash_with_neither(self) -> None:
         """AC: Bash with neither description nor command falls back gracefully."""
