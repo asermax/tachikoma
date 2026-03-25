@@ -195,9 +195,10 @@ class TestSummarizeBashDescription:
         assert summarize_tool_activity([activity]) == "Run tests"
 
     def test_single_char_description(self) -> None:
-        """AC: Single-char description is lowercased."""
+        """AC: Single-char description is lowercased then capitalized by summarizer."""
         activity = ToolActivity(tool_name="Bash", tool_input={"description": "R"})
-        assert summarize_tool_activity([activity]) == "r"
+        # Formatter lowercases to "r", summarizer capitalizes final result to "R"
+        assert summarize_tool_activity([activity]) == "R"
 
     def test_description_preference_over_command(self) -> None:
         """AC: Description is preferred over command when both present."""
