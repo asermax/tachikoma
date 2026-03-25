@@ -131,8 +131,12 @@ class ResponseRenderer:
 
     async def finalize(self) -> None:
         """Send the final state of the current message, bypassing throttle."""
+        if self._tool_activities:
+            summary = summarize_tool_activity(self._tool_activities)
+            self._buffer += f"_🔧 {summary}_\n"
+            self._tool_activities = []
+
         self._tool_line = None
-        self._tool_activities = []  # Clear for shutdown safety
         await self._flush(force=True)
 
     async def _flush(self, force: bool = False) -> None:
