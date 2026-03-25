@@ -31,7 +31,7 @@ class TestResponseRendererState:
         assert renderer._current_message_id is None
         assert renderer._buffer == ""
         assert renderer._tool_line is None
-        assert renderer._had_tools is False
+        assert renderer._tool_activities == []
         assert renderer._last_edit_time == 0.0
         assert renderer._message_count == 0
 
@@ -42,7 +42,7 @@ class TestResponseRendererState:
         renderer._current_message_id = 42
         renderer._buffer = "some text"
         renderer._tool_line = "tool line"
-        renderer._had_tools = True
+        renderer._tool_activities = [ToolActivity(tool_name="Read", tool_input={})]
         renderer._last_edit_time = 100.0
         renderer._message_count = 5
 
@@ -51,7 +51,7 @@ class TestResponseRendererState:
         assert renderer._current_message_id is None
         assert renderer._buffer == ""
         assert renderer._tool_line is None
-        assert renderer._had_tools is False
+        assert renderer._tool_activities == []
         assert renderer._last_edit_time == 0.0
         # Message count is NOT reset
         assert renderer._message_count == 5
@@ -201,8 +201,8 @@ class TestResponseRendererToolHandling:
 
         bot.send_message.assert_called_once()
 
-    async def test_text_after_tools_inserts_ran_tools_marker(self) -> None:
-        """Text after tools gets "🔧 Ran tools" marker."""
+    async def test_text_after_tools_inserts_summary_marker(self) -> None:
+        """Text after tools gets a summary marker with tool details."""
         bot = MagicMock()
         bot.send_message = AsyncMock(return_value=MockMessage(message_id=1))
         bot.edit_message_text = AsyncMock()
@@ -211,17 +211,18 @@ class TestResponseRendererToolHandling:
         # Tool activity
         activity = ToolActivity(tool_name="Read", tool_input={"file_path": "file.py"})
         await renderer.handle_tool(activity)
-        assert renderer._had_tools is True
+        assert len(renderer._tool_activities) == 1
 
-        # Text after tools - the marker should be inserted before the text
+        # Text after tools - the summary marker should be inserted before the text
         renderer._last_edit_time = 0.0  # Reset throttle
         await renderer.handle_text("Response text")
 
-        assert "🔧 Ran tools" in renderer._buffer
+        assert "🔧" in renderer._buffer
+        assert "Read file.py" in renderer._buffer  # Summary includes tool details
         assert "Response text" in renderer._buffer
 
     async def test_multiple_tool_text_cycles_insert_multiple_markers(self) -> None:
-        """Each tool→text transition inserts its own "Ran tools" marker (AC1)."""
+        """Each tool→text transition inserts its own summary marker (AC1)."""
         bot = MagicMock()
         bot.send_message = AsyncMock(return_value=MockMessage(message_id=1))
         bot.edit_message_text = AsyncMock()
@@ -237,10 +238,10 @@ class TestResponseRendererToolHandling:
         renderer._last_edit_time = 0.0
         await renderer.handle_text("Second response")
 
-        assert renderer._buffer.count("🔧 Ran tools") == 2
+        assert renderer._buffer.count("🔧") == 2
 
     async def test_consecutive_tool_batches_without_text_produce_single_marker(self) -> None:
-        """Consecutive tools without text between them produce one marker (AC4)."""
+        """Consecutive tools without text between them produce one summary (AC4)."""
         bot = MagicMock()
         bot.send_message = AsyncMock(return_value=MockMessage(message_id=1))
         bot.edit_message_text = AsyncMock()
@@ -257,7 +258,7 @@ class TestResponseRendererToolHandling:
         renderer._last_edit_time = 0.0
         await renderer.handle_text("Second response")
 
-        assert renderer._buffer.count("🔧 Ran tools") == 2
+        assert renderer._buffer.count("🔧") == 2
 
     async def test_generic_tool_uses_tool_name(self) -> None:
         """Unknown tools display with their name."""
@@ -429,7 +430,10 @@ class TestTelegramChannelStdinShutdown:
     @patch("tachikoma.telegram.termios")
     @patch("tachikoma.telegram.sys")
     async def test_q_keypress_stops_polling(
-        self, mock_sys: MagicMock, mock_termios: MagicMock, mock_tty: MagicMock,
+        self,
+        mock_sys: MagicMock,
+        mock_termios: MagicMock,
+        mock_tty: MagicMock,
     ) -> None:
         """Pressing 'q' triggers stop_polling()."""
         channel = self._make_channel()
@@ -467,7 +471,10 @@ class TestTelegramChannelStdinShutdown:
     @patch("tachikoma.telegram.termios")
     @patch("tachikoma.telegram.sys")
     async def test_q_uppercase_stops_polling(
-        self, mock_sys: MagicMock, mock_termios: MagicMock, mock_tty: MagicMock,
+        self,
+        mock_sys: MagicMock,
+        mock_termios: MagicMock,
+        mock_tty: MagicMock,
     ) -> None:
         """Pressing 'Q' (uppercase) also triggers stop_polling()."""
         channel = self._make_channel()
@@ -503,7 +510,10 @@ class TestTelegramChannelStdinShutdown:
     @patch("tachikoma.telegram.termios")
     @patch("tachikoma.telegram.sys")
     async def test_non_q_keypress_does_not_stop(
-        self, mock_sys: MagicMock, mock_termios: MagicMock, mock_tty: MagicMock,
+        self,
+        mock_sys: MagicMock,
+        mock_termios: MagicMock,
+        mock_tty: MagicMock,
     ) -> None:
         """Pressing a non-q key does not trigger shutdown."""
         channel = self._make_channel()
@@ -539,7 +549,10 @@ class TestTelegramChannelStdinShutdown:
     @patch("tachikoma.telegram.termios")
     @patch("tachikoma.telegram.sys")
     async def test_stdin_not_tty_skips_reader(
-        self, mock_sys: MagicMock, mock_termios: MagicMock, mock_tty: MagicMock,
+        self,
+        mock_sys: MagicMock,
+        mock_termios: MagicMock,
+        mock_tty: MagicMock,
     ) -> None:
         """Non-TTY stdin skips reader and terminal setup."""
         channel = self._make_channel()
@@ -562,7 +575,10 @@ class TestTelegramChannelStdinShutdown:
     @patch("tachikoma.telegram.termios")
     @patch("tachikoma.telegram.sys")
     async def test_terminal_restored_on_exit(
-        self, mock_sys: MagicMock, mock_termios: MagicMock, mock_tty: MagicMock,
+        self,
+        mock_sys: MagicMock,
+        mock_termios: MagicMock,
+        mock_tty: MagicMock,
     ) -> None:
         """Terminal settings are restored in the finally block."""
         channel = self._make_channel()
@@ -592,7 +608,10 @@ class TestTelegramChannelStdinShutdown:
     @patch("tachikoma.telegram.termios")
     @patch("tachikoma.telegram.sys")
     async def test_eof_on_stdin_removes_reader(
-        self, mock_sys: MagicMock, mock_termios: MagicMock, mock_tty: MagicMock,
+        self,
+        mock_sys: MagicMock,
+        mock_termios: MagicMock,
+        mock_tty: MagicMock,
     ) -> None:
         """EOF on stdin removes the reader to prevent busy-loop spin."""
         channel = self._make_channel()

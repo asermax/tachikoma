@@ -112,11 +112,13 @@ async def resolve_default_branch(submodule_path: Path) -> str:
         The default branch name (e.g., "main", "master").
     """
     rc, output = await _run_git_capture(
-        "symbolic-ref", "refs/remotes/origin/HEAD", cwd=submodule_path,
+        "symbolic-ref",
+        "refs/remotes/origin/HEAD",
+        cwd=submodule_path,
     )
 
     if rc == 0 and output.startswith("refs/remotes/origin/"):
-        return output[len("refs/remotes/origin/"):]
+        return output[len("refs/remotes/origin/") :]
 
     # Fallback: network call via remote show
     rc, output = await _run_git_capture("remote", "show", "origin", cwd=submodule_path)

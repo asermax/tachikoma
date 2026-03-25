@@ -90,9 +90,7 @@ class TestMessagePostProcessingPipeline:
         """AC: Concurrent run() calls execute sequentially (lock test)."""
         call_times: list[tuple[float, str]] = []
 
-        async def track_process(
-            session: Session, user_message: str, agent_response: str
-        ) -> None:
+        async def track_process(session: Session, user_message: str, agent_response: str) -> None:
             call_times.append((asyncio.get_event_loop().time(), "start"))
             await asyncio.sleep(0.05)
             call_times.append((asyncio.get_event_loop().time(), "end"))
@@ -132,16 +130,12 @@ class TestMessagePostProcessingPipeline:
         """AC: Multiple processors run in parallel within a single run() call."""
         call_order: list[str] = []
 
-        async def slow_process(
-            session: Session, user_message: str, agent_response: str
-        ) -> None:
+        async def slow_process(session: Session, user_message: str, agent_response: str) -> None:
             call_order.append("slow_start")
             await asyncio.sleep(0.05)
             call_order.append("slow_end")
 
-        async def fast_process(
-            session: Session, user_message: str, agent_response: str
-        ) -> None:
+        async def fast_process(session: Session, user_message: str, agent_response: str) -> None:
             call_order.append("fast_start")
             await asyncio.sleep(0.01)
             call_order.append("fast_end")

@@ -59,7 +59,8 @@ def mock_sdk(mocker):
     mock_client.receive_response = MagicMock()
 
     mock_cls = mocker.patch(
-        "tachikoma.coordinator.ClaudeSDKClient", return_value=mock_client,
+        "tachikoma.coordinator.ClaudeSDKClient",
+        return_value=mock_client,
     )
     return mock_client, mock_cls
 
@@ -463,7 +464,8 @@ class TestCoordinatorSystemPrompt:
     """Tests for DLT-005: system prompt integration in the coordinator."""
 
     async def test_system_prompt_provided_sets_sdk_system_prompt(
-        self, mock_sdk,
+        self,
+        mock_sdk,
     ) -> None:
         """AC: Given system_prompt is provided -> system_prompt is a SystemPromptPreset."""
         client, mock_cls = mock_sdk
@@ -482,7 +484,8 @@ class TestCoordinatorSystemPrompt:
         assert options.system_prompt["append"] == "Custom prompt"
 
     async def test_system_prompt_none_leaves_unset(
-        self, mock_sdk,
+        self,
+        mock_sdk,
     ) -> None:
         """AC: Given system_prompt is None -> ClaudeAgentOptions.system_prompt is None."""
         client, mock_cls = mock_sdk
@@ -719,7 +722,9 @@ class TestCoordinatorPostProcessing:
         pipeline.run.side_effect = AsyncMock(side_effect=lambda s: call_order.append("pipeline"))
 
         async with Coordinator(
-            registry=registry, pipeline=pipeline, on_status=on_status,
+            registry=registry,
+            pipeline=pipeline,
+            on_status=on_status,
         ):
             pass
 
@@ -747,7 +752,9 @@ class TestCoordinatorPostProcessing:
         on_status = MagicMock()
 
         async with Coordinator(
-            registry=registry, pipeline=pipeline, on_status=on_status,
+            registry=registry,
+            pipeline=pipeline,
+            on_status=on_status,
         ):
             pass
 
@@ -971,7 +978,8 @@ class TestCoordinatorPreProcessing:
     """Tests for DLT-006: pre-processing pipeline integration."""
 
     async def test_runs_pre_pipeline_on_first_message_of_new_session(
-        self, mock_sdk,
+        self,
+        mock_sdk,
     ) -> None:
         """AC: First message of new session triggers pre_pipeline.run()."""
         client, _ = mock_sdk
@@ -999,7 +1007,8 @@ class TestCoordinatorPreProcessing:
         assert "hello" in first_msg["message"]["content"]
 
     async def test_skips_pre_pipeline_on_subsequent_message(
-        self, mock_sdk,
+        self,
+        mock_sdk,
     ) -> None:
         """AC: Second message in same session does not trigger pre-processing."""
         client, _ = mock_sdk
@@ -1024,7 +1033,8 @@ class TestCoordinatorPreProcessing:
         assert pre_pipeline.run.await_count == 1
 
     async def test_skips_pre_pipeline_when_no_pipeline_provided(
-        self, mock_sdk,
+        self,
+        mock_sdk,
     ) -> None:
         """AC: No pre_pipeline means message is sent unmodified."""
         client, _ = mock_sdk
@@ -1041,7 +1051,8 @@ class TestCoordinatorPreProcessing:
         client.connect.assert_awaited_once()
 
     async def test_skips_pre_pipeline_when_no_registry(
-        self, mock_sdk,
+        self,
+        mock_sdk,
     ) -> None:
         """AC: No registry means pre-processing is skipped."""
         client, _ = mock_sdk
@@ -1059,7 +1070,8 @@ class TestCoordinatorPreProcessing:
         client.connect.assert_awaited_once()
 
     async def test_pre_pipeline_failure_sends_original_message(
-        self, mock_sdk,
+        self,
+        mock_sdk,
     ) -> None:
         """AC: Pre-processing failure logs error and sends original message."""
         client, _ = mock_sdk
@@ -1079,7 +1091,8 @@ class TestCoordinatorPreProcessing:
         client.connect.assert_awaited_once()
 
     async def test_pre_pipeline_empty_results_sends_original_message(
-        self, mock_sdk,
+        self,
+        mock_sdk,
     ) -> None:
         """AC: Empty results from pre_pipeline sends original message."""
         client, _ = mock_sdk
@@ -1099,7 +1112,8 @@ class TestCoordinatorPreProcessing:
         client.connect.assert_awaited_once()
 
     async def test_session_creation_failure_skips_pre_pipeline(
-        self, mock_sdk,
+        self,
+        mock_sdk,
     ) -> None:
         """AC: Session creation failure means pre-processing is skipped."""
         client, _ = mock_sdk
@@ -1122,9 +1136,7 @@ class TestCoordinatorPreProcessing:
 class TestCoordinatorMcpServers:
     """Tests for DLT-030: MCP servers extraction from pre-processing results."""
 
-    async def test_extracts_mcp_servers_from_pre_processing_results(
-        self, mock_sdk, mocker
-    ) -> None:
+    async def test_extracts_mcp_servers_from_pre_processing_results(self, mock_sdk, mocker) -> None:
         """AC: MCP servers from ContextResult are passed to ClaudeAgentOptions."""
         client, mock_cls = mock_sdk
         client.receive_response.return_value = _mock_messages(
@@ -1137,7 +1149,8 @@ class TestCoordinatorMcpServers:
         pre_pipeline = _make_mock_pre_pipeline()
         pre_pipeline.run.return_value = [
             ContextResult(
-                tag="projects", content="Project list",
+                tag="projects",
+                content="Project list",
                 mcp_servers={"projects": mock_server},
             ),
         ]
@@ -1151,9 +1164,7 @@ class TestCoordinatorMcpServers:
         options = mock_cls.call_args[0][0]
         assert options.mcp_servers == {"projects": mock_server}
 
-    async def test_merges_mcp_servers_from_multiple_results(
-        self, mock_sdk, mocker
-    ) -> None:
+    async def test_merges_mcp_servers_from_multiple_results(self, mock_sdk, mocker) -> None:
         """AC: Multiple ContextResults with mcp_servers are merged."""
         client, mock_cls = mock_sdk
         client.receive_response.return_value = _mock_messages(
@@ -1177,9 +1188,7 @@ class TestCoordinatorMcpServers:
         options = mock_cls.call_args[0][0]
         assert options.mcp_servers == {"projects": server1, "tools": server2}
 
-    async def test_mcp_servers_persist_across_messages_in_session(
-        self, mock_sdk, mocker
-    ) -> None:
+    async def test_mcp_servers_persist_across_messages_in_session(self, mock_sdk, mocker) -> None:
         """AC: MCP servers persist across messages within the same session."""
         client, mock_cls = mock_sdk
         client.receive_response.side_effect = [
@@ -1191,7 +1200,8 @@ class TestCoordinatorMcpServers:
         pre_pipeline = _make_mock_pre_pipeline()
         pre_pipeline.run.return_value = [
             ContextResult(
-                tag="projects", content="Projects",
+                tag="projects",
+                content="Projects",
                 mcp_servers={"projects": mock_server},
             ),
         ]
@@ -1208,9 +1218,7 @@ class TestCoordinatorMcpServers:
         assert options1.mcp_servers == {"projects": mock_server}
         assert options2.mcp_servers == {"projects": mock_server}
 
-    async def test_mcp_servers_cleared_on_session_transition(
-        self, mock_sdk, mocker
-    ) -> None:
+    async def test_mcp_servers_cleared_on_session_transition(self, mock_sdk, mocker) -> None:
         """AC: MCP servers are cleared when transitioning to a new session."""
         client, mock_cls = mock_sdk
         client.receive_response.side_effect = [
@@ -1222,7 +1230,8 @@ class TestCoordinatorMcpServers:
         pre_pipeline = _make_mock_pre_pipeline()
         pre_pipeline.run.return_value = [
             ContextResult(
-                tag="projects", content="Projects",
+                tag="projects",
+                content="Projects",
                 mcp_servers={"projects": mock_server},
             ),
         ]
@@ -1357,7 +1366,9 @@ class TestBoundaryDetection:
         assert text_events[0].text == "continuing"
 
     async def test_boundary_detection_error_defaults_to_continuation(
-        self, mock_sdk, mocker,
+        self,
+        mock_sdk,
+        mocker,
     ) -> None:
         """AC: Boundary detection errors are caught, message processed as continuation."""
         client, _ = mock_sdk
@@ -1392,7 +1403,9 @@ class TestBoundaryDetection:
         assert text_events[0].text == "still works"
 
     async def test_awaits_pending_task_before_detection(
-        self, mock_sdk, mocker,
+        self,
+        mock_sdk,
+        mocker,
     ) -> None:
         """AC: Pending per-message task is awaited before boundary detection runs."""
         client, _ = mock_sdk
@@ -1440,7 +1453,9 @@ class TestBoundaryDetection:
         assert "msg_pipeline_end" in call_order
 
     async def test_pending_task_failure_logged_not_propagated(
-        self, mock_sdk, mocker,
+        self,
+        mock_sdk,
+        mocker,
     ) -> None:
         """AC: Pending task failure is logged but doesn't block message processing."""
         client, _ = mock_sdk
@@ -1480,7 +1495,9 @@ class TestSessionTransition:
     """Tests for DLT-026: session transition on topic shift."""
 
     async def test_closes_current_session_on_topic_shift(
-        self, mock_sdk, mocker,
+        self,
+        mock_sdk,
+        mocker,
     ) -> None:
         """AC: Topic shift closes the current session."""
         client, _ = mock_sdk
@@ -1511,7 +1528,9 @@ class TestSessionTransition:
         registry.close_session.assert_awaited_once_with("s1")
 
     async def test_fires_async_session_post_processing(
-        self, mock_sdk, mocker,
+        self,
+        mock_sdk,
+        mocker,
     ) -> None:
         """AC: Session post-processing is fired as background task on topic shift."""
         client, _ = mock_sdk
@@ -1556,7 +1575,9 @@ class TestSessionTransition:
         assert session_arg.id == "s1"
 
     async def test_skips_session_post_processing_when_no_sdk_session_id(
-        self, mock_sdk, mocker,
+        self,
+        mock_sdk,
+        mocker,
     ) -> None:
         """AC: No session post-processing when session has no sdk_session_id."""
         client, _ = mock_sdk
@@ -1590,7 +1611,9 @@ class TestSessionTransition:
         pipeline.run.assert_not_awaited()
 
     async def test_clears_sdk_session_id_on_topic_shift(
-        self, mock_sdk, mocker,
+        self,
+        mock_sdk,
+        mocker,
     ) -> None:
         """AC: Topic shift clears _sdk_session_id so next message starts fresh."""
         client, mock_cls = mock_sdk
@@ -1622,7 +1645,9 @@ class TestSessionTransition:
             assert coord._sdk_session_id is None
 
     async def test_stores_previous_summary_on_topic_shift(
-        self, mock_sdk, mocker,
+        self,
+        mock_sdk,
+        mocker,
     ) -> None:
         """AC: Topic shift stores previous session's summary in _previous_summary."""
         client, _ = mock_sdk
@@ -1656,7 +1681,9 @@ class TestSessionTransition:
             assert coord._previous_summary is None
 
     async def test_creates_new_session_after_transition(
-        self, mock_sdk, mocker,
+        self,
+        mock_sdk,
+        mocker,
     ) -> None:
         """AC: New session is created after transition."""
         client, _ = mock_sdk
@@ -1689,7 +1716,9 @@ class TestSessionTransition:
         registry.create_session.assert_awaited()
 
     async def test_session_close_error_does_not_block_transition(
-        self, mock_sdk, mocker,
+        self,
+        mock_sdk,
+        mocker,
     ) -> None:
         """AC: Session close error is logged but transition continues."""
         client, _ = mock_sdk
@@ -1722,7 +1751,9 @@ class TestSessionTransition:
         registry.create_session.assert_awaited()
 
     async def test_session_task_triggers_boundary_detection(
-        self, mock_sdk, mocker,
+        self,
+        mock_sdk,
+        mocker,
     ) -> None:
         """AC: Session task messages go through boundary detection like user messages.
 
@@ -1848,7 +1879,9 @@ class TestBuildOptions:
         assert options.resume is None
 
     async def test_previous_summary_injected_into_system_prompt(
-        self, mock_sdk, mocker,
+        self,
+        mock_sdk,
+        mocker,
     ) -> None:
         """AC: Previous conversation summary is injected into system prompt after topic shift."""
         client, mock_cls = mock_sdk
@@ -1885,7 +1918,9 @@ class TestBuildOptions:
         assert "Base prompt" in append_text
 
     async def test_previous_summary_with_none_base_prompt(
-        self, mock_sdk, mocker,
+        self,
+        mock_sdk,
+        mocker,
     ) -> None:
         """AC: When base system prompt is None, only summary section is used."""
         client, mock_cls = mock_sdk
@@ -1921,7 +1956,9 @@ class TestBuildOptions:
         assert "Summary text" in append_text
 
     async def test_previous_summary_cleared_after_first_use(
-        self, mock_sdk, mocker,
+        self,
+        mock_sdk,
+        mocker,
     ) -> None:
         """AC: Previous summary is cleared after the first message of the new session."""
         client, mock_cls = mock_sdk
@@ -1944,7 +1981,11 @@ class TestBuildOptions:
         new_session = Session(id="s2", started_at=datetime.now(UTC))
         registry = _make_mock_registry(active_session=active)
         registry.get_active_session.side_effect = [
-            active, None, new_session, new_session, new_session,
+            active,
+            None,
+            new_session,
+            new_session,
+            new_session,
         ]
 
         mocker.patch(
@@ -1973,7 +2014,8 @@ class TestPerMessagePostProcessing:
     """Tests for DLT-026: per-message post-processing pipeline trigger."""
 
     async def test_triggers_msg_pipeline_after_result(
-        self, mock_sdk,
+        self,
+        mock_sdk,
     ) -> None:
         """AC: Per-message pipeline is triggered after Result event."""
         client, _ = mock_sdk
@@ -2004,7 +2046,8 @@ class TestPerMessagePostProcessing:
         msg_pipeline.run.assert_awaited_once()
 
     async def test_passes_accumulated_response_text(
-        self, mock_sdk,
+        self,
+        mock_sdk,
     ) -> None:
         """AC: Accumulated response text is passed to the pipeline."""
         client, _ = mock_sdk
@@ -2037,7 +2080,8 @@ class TestPerMessagePostProcessing:
         assert agent_response == "Hello there!"
 
     async def test_skips_pipeline_when_no_msg_pipeline(
-        self, mock_sdk,
+        self,
+        mock_sdk,
     ) -> None:
         """AC: No msg_pipeline parameter means no error on response."""
         client, _ = mock_sdk
@@ -2060,7 +2104,8 @@ class TestPerMessagePostProcessing:
             _ = await _send(coord, "hello")
 
     async def test_pipeline_receives_current_session(
-        self, mock_sdk,
+        self,
+        mock_sdk,
     ) -> None:
         """AC: Session passed to pipeline has latest metadata."""
         client, _ = mock_sdk
@@ -2103,7 +2148,8 @@ class TestCoordinatorShutdownWithBoundaryDetection:
     """Tests for DLT-026: shutdown with background tasks from boundary detection."""
 
     async def test_awaits_pending_msg_task_on_shutdown(
-        self, mock_sdk,
+        self,
+        mock_sdk,
     ) -> None:
         """AC: Pending per-message task is awaited on shutdown."""
         client, _ = mock_sdk
@@ -2140,7 +2186,9 @@ class TestCoordinatorShutdownWithBoundaryDetection:
         assert task_completed.is_set()
 
     async def test_awaits_background_tasks_on_shutdown(
-        self, mock_sdk, mocker,
+        self,
+        mock_sdk,
+        mocker,
     ) -> None:
         """AC: Background session post-processing tasks are awaited on shutdown."""
         client, _ = mock_sdk
@@ -2183,7 +2231,9 @@ class TestCoordinatorShutdownWithBoundaryDetection:
         assert task_completed.is_set()
 
     async def test_background_task_failure_does_not_block_shutdown(
-        self, mock_sdk, mocker,
+        self,
+        mock_sdk,
+        mocker,
     ) -> None:
         """AC: Background task failure is logged but doesn't block shutdown."""
         client, _ = mock_sdk
@@ -2221,7 +2271,8 @@ class TestCoordinatorPipelineAgents:
     """Tests for DLT-021: agent extraction from pre-processing pipeline results."""
 
     async def test_agents_from_pipeline_passed_to_sdk(
-        self, mock_sdk,
+        self,
+        mock_sdk,
     ) -> None:
         """AC: Agents from ContextResult are passed to SDK options."""
         client, mock_cls = mock_sdk
@@ -2249,7 +2300,8 @@ class TestCoordinatorPipelineAgents:
         assert options.agents == agents
 
     async def test_agents_persist_across_messages_in_session(
-        self, mock_sdk,
+        self,
+        mock_sdk,
     ) -> None:
         """AC: Agents from first message persist across subsequent messages."""
         client, mock_cls = mock_sdk
@@ -2287,7 +2339,9 @@ class TestCoordinatorPipelineAgents:
         assert pre_pipeline.run.await_count == 1
 
     async def test_agents_cleared_on_session_transition(
-        self, mock_sdk, mocker,
+        self,
+        mock_sdk,
+        mocker,
     ) -> None:
         """AC: Agents are cleared after topic shift and re-populated from new detection."""
         client, mock_cls = mock_sdk
@@ -2346,7 +2400,8 @@ class TestCoordinatorPipelineAgents:
         assert options2.agents == agents_after
 
     async def test_no_agents_when_no_providers_return_agents(
-        self, mock_sdk,
+        self,
+        mock_sdk,
     ) -> None:
         """AC: When no providers return agents, self._agents remains None."""
         client, mock_cls = mock_sdk
@@ -2368,7 +2423,8 @@ class TestCoordinatorPipelineAgents:
         assert options.agents is None
 
     async def test_multiple_providers_agents_merged(
-        self, mock_sdk,
+        self,
+        mock_sdk,
     ) -> None:
         """AC: Multiple providers returning agents are merged correctly."""
         client, mock_cls = mock_sdk

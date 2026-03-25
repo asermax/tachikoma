@@ -60,9 +60,7 @@ class TestProjectsContextProvider:
         assert result.mcp_servers is not None
         assert "projects" in result.mcp_servers
 
-    async def test_reports_commit_hash_for_detached_head(
-        self, workspace_path: Path
-    ) -> None:
+    async def test_reports_commit_hash_for_detached_head(self, workspace_path: Path) -> None:
         """Reports commit hash when submodule is in detached HEAD state."""
         provider = ProjectsContextProvider(workspace_path)
 
@@ -153,9 +151,7 @@ class TestProjectsContextProvider:
         assert result.mcp_servers is not None
         assert "projects" in result.mcp_servers
 
-    async def test_content_includes_registered_projects_header(
-        self, workspace_path: Path
-    ) -> None:
+    async def test_content_includes_registered_projects_header(self, workspace_path: Path) -> None:
         """Content includes 'Registered Projects' header when projects exist."""
         provider = ProjectsContextProvider(workspace_path)
 
@@ -176,9 +172,7 @@ class TestProjectsContextProvider:
         assert result is not None
         assert "## Registered Projects" in result.content
 
-    async def test_message_parameter_unused(
-        self, workspace_path: Path
-    ) -> None:
+    async def test_message_parameter_unused(self, workspace_path: Path) -> None:
         """The message parameter is unused - projects context is static."""
         provider = ProjectsContextProvider(workspace_path)
 

@@ -29,9 +29,11 @@ class TestAdaptAssistantMessage:
         assert events[0].text == "Hello!"
 
     def test_maps_tool_use_block_to_tool_activity(self) -> None:
-        msg = make_assistant([
-            ToolUseBlock(id="tool-1", name="Read", input={"file_path": "/tmp/f.txt"}),
-        ])
+        msg = make_assistant(
+            [
+                ToolUseBlock(id="tool-1", name="Read", input={"file_path": "/tmp/f.txt"}),
+            ]
+        )
 
         events = adapt(msg)
 
@@ -99,10 +101,12 @@ class TestAdaptAssistantMessage:
         assert events[0].recoverable is True
 
     def test_multiple_content_blocks_produce_multiple_events(self) -> None:
-        msg = make_assistant([
-            TextBlock(text="Let me check..."),
-            ToolUseBlock(id="tool-1", name="Grep", input={"pattern": "TODO"}),
-        ])
+        msg = make_assistant(
+            [
+                TextBlock(text="Let me check..."),
+                ToolUseBlock(id="tool-1", name="Grep", input={"pattern": "TODO"}),
+            ]
+        )
 
         events = adapt(msg)
 

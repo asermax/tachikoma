@@ -28,9 +28,9 @@ _ENTRY_PATTERN = re.compile(r"^- \*\*(\d{4}-\d{2}-\d{2})\*\*:\s*(.+)$", re.MULTI
 
 def _serialize_entries(entries: list[tuple[str, str]]) -> str:
     """Serialize (date, text) tuples into the pending signals file format."""
-    return PENDING_SIGNALS_HEADER + "\n".join(
-        f"- **{d}**: {signal}" for d, signal in entries
-    ) + "\n"
+    return (
+        PENDING_SIGNALS_HEADER + "\n".join(f"- **{d}**: {signal}" for d, signal in entries) + "\n"
+    )
 
 
 def parse_pending_signals(content: str) -> list[tuple[str, str]]:
@@ -156,11 +156,7 @@ async def handle_remove_pending_signal(
     """
     # Empty list is a no-op success
     if not indices:
-        return {
-            "content": [
-                {"type": "text", "text": "No signals removed (empty indices list)"}
-            ]
-        }
+        return {"content": [{"type": "text", "text": "No signals removed (empty indices list)"}]}
 
     # Validate all indices are within range (all-or-nothing)
     max_index = len(snapshot)
@@ -181,9 +177,7 @@ async def handle_remove_pending_signal(
     # Convert 1-based to 0-based and compute entries to keep
     # (snapshot is immutable - we compute a filtered copy for writing)
     indices_to_remove = {i - 1 for i in indices}
-    remaining_entries = [
-        entry for i, entry in enumerate(snapshot) if i not in indices_to_remove
-    ]
+    remaining_entries = [entry for i, entry in enumerate(snapshot) if i not in indices_to_remove]
 
     file_path = data_dir / PENDING_SIGNALS_FILENAME
 
@@ -194,9 +188,7 @@ async def handle_remove_pending_signal(
             _log.debug("Deleted pending signals file after removing all signals")
         except OSError as err:
             return {
-                "content": [
-                    {"type": "text", "text": f"Error deleting file: {err}"}
-                ],
+                "content": [{"type": "text", "text": f"Error deleting file: {err}"}],
                 "is_error": True,
             }
 
@@ -223,8 +215,7 @@ async def handle_remove_pending_signal(
                 {
                     "type": "text",
                     "text": (
-                        f"Removed {len(indices)} signal(s). "
-                        f"{len(remaining_entries)} remaining."
+                        f"Removed {len(indices)} signal(s). {len(remaining_entries)} remaining."
                     ),
                 }
             ]
@@ -274,11 +265,7 @@ async def handle_add_pending_signal(
 
         _log.info("Added pending signal: signal={signal}", signal=signal)
 
-        return {
-            "content": [
-                {"type": "text", "text": f"Added pending signal dated {today}"}
-            ]
-        }
+        return {"content": [{"type": "text", "text": f"Added pending signal dated {today}"}]}
     except OSError as err:
         return {
             "content": [{"type": "text", "text": f"Error writing file: {err}"}],
@@ -317,8 +304,7 @@ def create_pending_signals_server(
                     "type": "array",
                     "items": {"type": "integer"},
                     "description": (
-                        "1-based indices of signals to remove "
-                        "(e.g., [1, 3] for S1 and S3)"
+                        "1-based indices of signals to remove (e.g., [1, 3] for S1 and S3)"
                     ),
                 },
             },
@@ -352,4 +338,3 @@ def create_pending_signals_server(
         version="1.0.0",
         tools=[remove_pending_signal, add_pending_signal],
     )
-

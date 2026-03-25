@@ -17,146 +17,135 @@ Current AI assistants are stateless and reactive. Every conversation starts from
 - **ChatGPT/Claude**: Powerful but stateless per-session; memory features are shallow (key-value facts, not real understanding)
 - **OpenClaw**: Tested — good infrastructure (Telegram, cron jobs) but the agent itself is too basic; waits for instructions, doesn't take initiative
 - **Custom agent frameworks (LangChain, CrewAI)**: Provide primitives but don't encode personal assistant patterns; still reactive by default
-- **Obsidian + Claude Code (current workflow)**: Works well for vault management but lacks persistent memory, proactive behavior, and always-on availability
+- **Obsidian + Claude Code (prior workflow)**: Worked well for vault management but lacked persistent memory, proactive behavior, and always-on availability
 
 **What's needed:**
-An opinionated personal assistant built on Claude Code SDK that uses a delegation-first architecture, maintains persistent memory across conversations, and proactively processes tasks during idle time — all accessible through a simple chat interface.
+An opinionated personal assistant built on Claude Agent SDK that maintains conversation continuity across messages, enriches every interaction with accumulated context (memories, skills, project state), and autonomously processes tasks on schedules — all accessible through a simple chat interface.
 
 ## Core Workflows
 
 ### 1. Contextual Conversation
 
-**Trigger**: User sends a message via Telegram
+**Trigger**: User sends a message via Telegram or the terminal REPL
 **Steps**:
-1. Pre-processing pipeline receives the incoming message
-2. Context providers run in parallel: memory provider retrieves relevant past context, skills provider detects applicable skills
-3. Enriched message (original + injected context) is passed to the coordinator agent
-4. Coordinator handles the request directly or delegates to a specialized sub-agent
-5. Response sent back to the user via Telegram
+1. On a new conversation, the pre-processing pipeline enriches the session with context gathered in parallel: memory provider retrieves relevant past interactions, skills provider detects applicable specialized agents, and projects provider injects current project state and management tools
+2. The coordinator passes the enriched message to the Claude Agent SDK, which maintains conversation continuity across messages within the session
+3. When skills are detected, their specialized agents are available for delegation — the assistant can hand off focused work to domain-specific agents during the conversation
+4. Response is streamed back to the user through the active channel
 
-**Result**: Every conversation benefits from the assistant's accumulated knowledge about the user
+**Result**: Every conversation benefits from the assistant's accumulated knowledge about the user, relevant skills, and project context
 
 ### 2. Memory Extraction
 
-**Trigger**: Conversation boundary detected (topic change on new message, or inactivity timeout as fallback)
+**Trigger**: Conversation boundary detected (topic shift on a new message, or idle timeout)
 **Steps**:
-1. Boundary detection closes the current session in the session registry — either via topic analysis on an incoming message or inactivity timeout when the user goes silent
+1. On each incoming message, boundary detection analyzes whether the user is continuing the current topic or shifting to a new one; if a shift is detected, it also checks whether the new topic matches a recent past conversation that can be resumed
 2. Session closure triggers the post-processing pipeline with the completed conversation
-3. Separate processors run in parallel for each memory type — each forks the original session and asks the agent to extract and manage its memory category
-4. Stores memories as written documents (not embeddings or key-value pairs) in type-organized subdirectories, linked back to the source session
-5. Memories are available for pre-processing retrieval in future conversations
+3. Separate processors run in parallel, each extracting a different type of learning: episodic summaries (date-stamped conversation overviews), facts (knowledge about the user and the world), preferences (user likes, dislikes, and working style), and core context updates (refinements to the assistant's personality and understanding)
+4. Extracted memories are stored as written documents organized by type — not embeddings or key-value pairs — preserving nuance and context
+5. The workspace is version-tracked after each session, creating a history of all changes for rollback and auditing
+6. Memories are available for retrieval in future conversations via the pre-processing pipeline
 
 **Result**: The assistant learns from every interaction without explicit user action
 
-### 3. Proactive Task Processing
+### 3. Project Management
 
-**Trigger**: Session is idle (no active conversation)
+**Trigger**: User asks to work with external codebases, or the agent needs project context
 **Steps**:
-1. Tasks accumulate in a queue during conversations (e.g., "remind user about X later", "process new emails", "summarize today's notes")
-2. When session is idle, queue processor picks up the next task
-3. Task executes without interrupting the user (no mid-conversation notifications)
-4. Results are stored or queued for the next interaction
-5. If a task produces something the user should see, it's delivered at the start of the next conversation
+1. Projects are registered as tracked repositories in the workspace, each with its name, path, and current branch
+2. On startup, all registered projects are synchronized to their latest state automatically
+3. During conversations, the projects context provider surfaces current project state and exposes tools for registering and deregistering projects
+4. The agent can work across multiple codebases during a conversation, with each project's files directly accessible
+5. On session close, changes in each project are automatically committed with descriptive messages and pushed to their remotes
 
-**Result**: The assistant works in the background, surfacing results when appropriate
+**Result**: External codebases are managed, tracked, and version-controlled without manual git operations
 
-### 4. Delegated Task Execution
+### 4. Proactive Task Processing
 
-**Trigger**: Coordinator agent determines a request needs specialized handling
+**Trigger**: Scheduled time arrives, or the user creates a task during conversation
 **Steps**:
-1. Coordinator analyzes the request and selects the appropriate sub-agent
-2. Sub-agent receives only the context relevant to its task (avoids context poisoning)
-3. Sub-agent executes (e.g., vault search, calendar check, email triage)
-4. Result flows back to the coordinator
-5. Coordinator synthesizes and responds to the user
+1. Tasks are defined with cron schedules (recurring) or one-shot datetime targets, and the agent can create and manage them conversationally via tools
+2. **Session tasks** execute during the user's active session when idle — gated by a configurable idle period so they never interrupt active conversation. Results are delivered as proactive messages through the active channel
+3. **Background tasks** execute autonomously in their own sessions, independent of whether the user is chatting. They run iteratively until the work is assessed as complete, and produce notification messages summarizing what was done
+4. Task schedules support timezone-aware cron expressions and survive restarts with catch-up for missed runs
 
-**Result**: Complex requests are handled by focused agents that stay sharp and maintainable
+**Result**: The assistant works autonomously on scheduled and ad-hoc tasks, delivering results as notifications or proactive messages at appropriate times
+
+### 5. Skill-based Specialization
+
+**Trigger**: User's message matches a domain where specialized knowledge or agents are available
+**Steps**:
+1. Skills are packages that bundle domain expertise — each contains a description (used for detection), instructions (injected into context), and optionally specialized agent definitions
+2. During pre-processing, an LLM classifies which skills are relevant to the current message based on their descriptions
+3. Matched skills' instructions and agents are loaded into the session — the assistant gains domain-specific knowledge and can delegate focused work to skill agents
+4. Skill detection is per-session: once a skill is activated, it remains available for the entire conversation
+
+**Result**: The assistant adapts its capabilities to the topic at hand, drawing on packaged expertise and specialized agents as needed
 
 ## Scope
 
-### v1 Requirements
+### v1 — Built
 
 **Agent Core:**
-- Coordinator agent built on Claude Code SDK
-- Telegram bot as the primary communication channel
-- Basic delegation: coordinator can spawn sub-agents for focused tasks
-- Conversation boundary detection via topic analysis (primary) and configurable inactivity timeout (~20 minutes default, fallback)
-- Session tracking: registry of conversation sessions with IDs, timestamps, and conversation file references for post-processing and history
-- Core context files: SOUL.md (personality/tone), USER.md (user information), AGENTS.md (agent instructions) — loaded with higher priority than dynamic memory
-- Installable as a CLI tool via uv for easy setup and updates
-- First-run workspace initialization: creates required directory structure and default core context files
-- Git-managed workspace: all persistent files (memories, core context, skills, configuration) live in a versioned git repository with automatic commits for history and rollback
+- Coordinator built on Claude Agent SDK with per-message processing and conversation continuity via session resumption
+- Telegram bot and terminal REPL as communication channels
+- Conversation boundary detection via LLM-based topic shift analysis with session resumption matching
+- Session tracking with lifecycle management, rolling summaries, and resumption history
+- Core context files: SOUL.md (personality/tone), USER.md (user information), AGENTS.md (agent instructions)
+- First-run workspace initialization with default directory structure and context files
+- Git-managed workspace with automatic commits after each session for version history and rollback
+- TOML-based configuration with validation and auto-generated defaults on first run
+- Bootstrap system with ordered, idempotent initialization hooks per subsystem
+- Structured logging throughout all subsystems
 
-**Pre/Post Processing Pipeline:**
-- Pre-processing: inject relevant memories before the agent sees a message
-- Post-processing: extract and manage memories after a conversation ends — separate processors per memory type, running in parallel via session forking
-- Context providers as pluggable agents (memory provider and skills provider for v1, extensible for more)
+**Pre/Post Processing Pipelines:**
+- Pre-processing: parallel context providers (memory, projects, skills) with error isolation — individual failures don't block the conversation
+- Session post-processing: phased parallel processors (memory extraction, core context updates, project commits, workspace versioning) triggered on session close
+- Per-message post-processing: asynchronous rolling summary generation after each agent response, used for boundary detection
 
 **Skills System:**
-- Skills defined as markdown documents (workflows or knowledge that any agent can load)
-- Skill registry for managing available skills
-- Skills provider detects relevant skills during pre-processing and injects them into agent context
+- Directory-based skill packages with metadata, instructions, and optional agent definitions
+- LLM-based skill detection during pre-processing
+- Skill content and specialized agents loaded into session context when matched
 
 **Memory System:**
-- Store memories as written documents (markdown files)
-- Retrieve relevant memories during pre-processing via semantic search
-- Memory types: episodic (date-stamped, rewritable summaries), facts (named files, updatable), preferences (named files, updatable)
-- Time-based relevance (recent memories weighted higher)
+- Memories stored as markdown files organized by type: episodic, facts, preferences
+- Parallel extraction processors via session forking after conversation close
+- Agent-driven memory search during pre-processing for context retrieval
 
-**Proactive Behavior:**
-- Queue-based idle processing (tasks execute when session is idle)
-- Tasks can be queued during conversations or by external triggers
-- No cron-based interruptions — process only during downtime
+**Projects:**
+- Multi-repository management with automatic synchronization on startup
+- Context injection with project state and tools for registration and deregistration
+- Automatic commit with descriptive messages and push to remotes on session close
 
-**Observability:**
-- Structured logging for debugging agent behavior in production
-- Event tracking for key agent actions (delegations, memory operations, task processing)
-- LLM observability for agent interactions (inputs, outputs, token usage, latency, costs) using local/self-hosted tooling
+**Task System:**
+- Cron-based and one-shot scheduling with timezone support
+- Session tasks: idle-gated, delivered through the active channel
+- Background tasks: autonomous sessions with iterative completion evaluation
+- Tools for the agent to create, update, and manage task definitions conversationally
+- Notification generation from completed background tasks
 
-**Quality Assurance:**
+### v1 — Pending
+
+**Critical:**
+- Auto-close idle sessions so post-processing triggers without requiring a topic shift
+- Summarize agent actions instead of generic tool markers in Telegram responses
+- Telegram push notifications so users know when the agent has responded or a task completed
+- Hot-reload skills so newly authored or modified skills are available without restart
+
+**High:**
+- Run as a persistent background service that starts on boot and restarts on failure
+- Built-in skill authoring guide that teaches the agent how to scaffold new skills
+
+**Medium:**
+- Package as installable CLI tool via uv for easy setup and updates
+- Granular processing status messages replacing the generic "Thinking..." indicator
+- Receive images and audio from Telegram for multimodal processing
+
+**Low / Backlog:**
+- LLM observability for tracking token usage, latency, and costs across all agent interactions
 - Base evaluation framework for testing agent processing pipelines
-- Eval suites for critical pipelines (context processing, memory extraction, core context updates)
-
-### Not Now
-
-Explicitly out of scope for v1:
-
-**Advanced Memory:**
-- Async session evaluation and pattern consolidation (ACE Reflector/Curator cycle)
-- Embedding on questions for retrieval (vs. answers)
-- Contradiction detection and resolution
-- Memory decay and archival
-
-**Context Providers (beyond memory):**
-- Calendar provider (Google Calendar)
-- Tasks provider (Google Tasks)
-- Email provider (Gmail)
-- Notes provider (Obsidian vault)
-- Dynamic/user-created providers
-
-**Constrained Workflows:**
-- Deterministic step-by-step skill execution harness
-- Non-LLM workflow state management
-- Workflow declarations with step dependencies
-
-**Workflow Guardrails:**
-- Planner agent generates execution plan before workflow runs
-- Evaluator agent monitors step outputs and collects friction metadata
-- Feeds into optimization and self-improvement cycles
-
-**Advanced Workspace Management:**
-- Two-tier change model: direct commits for data, branch + PR for behavior changes
-- Conflict resolution for concurrent workspace modifications
-- Skill self-optimization via execution traces, friction data, and git branches
-
-**Interfaces:**
-- Web interface (chat + dashboard)
-- Hardware form factor (speaker with display)
-
-**Advanced Proactivity:**
-- Event-driven triggers from external sources (new emails, calendar events)
-- Pattern detection and insight surfacing
-- Dynamic profile building
+- Semantic similarity search for memory retrieval (embedding-based, replacing keyword search)
 
 ## Technical Context
 
@@ -166,53 +155,95 @@ Explicitly out of scope for v1:
 - Single-user, self-hosted
 
 **Language/Runtime:**
-- Python (Claude Code SDK has a Python SDK)
+- Python (Claude Agent SDK has a Python SDK)
 - Installable as a CLI tool via uv
 
 **User Interaction:**
 - Telegram Bot API as primary interface
+- Terminal REPL for local development and direct interaction
 - Text-based conversation (no voice, no rich UI for v1)
 
 **Agent Framework:**
-- Claude Code SDK for agent orchestration
-- Coordinator + sub-agent pattern
-- Each agent gets scoped context and tools
+- Claude Agent SDK for agent orchestration
+- Per-message SDK client with conversation continuity via session resumption
+- Session forking for post-processing and background task execution
+- Skills system for specialized agent delegation
 
 **Workspace:**
 - A git-managed directory containing all persistent data (memories, core context files, skill definitions, configuration)
 - Changes committed automatically for version history and rollback
-- Markdown files for memories with semantic search for retrieval (embedding model TBD)
-- File-based — SQLite (embedded file-based database) is used where query capabilities are needed, keeping the single-file, no-server-process constraint
+- Markdown files for memories, with agent-driven search for retrieval
+- SQLAlchemy with aiosqlite for session and task tracking; Alembic for migrations
 
 **External Systems:**
 - Telegram Bot API (communication)
-- Anthropic API via Claude Code SDK (agent execution)
+- Anthropic API via Claude Agent SDK (agent execution)
 - Local filesystem (git-managed workspace)
 
 **Configuration:**
 - Environment variables for API keys (Telegram, Anthropic)
-- Config file for tunable parameters (inactivity threshold, memory directory, etc.)
+- TOML config file with Pydantic validation and auto-generated defaults for tunable parameters
 
 ## Success Criteria
 
-v1 is successful when:
-1. Can hold a conversation via Telegram that feels contextually aware (references past interactions)
-2. Memories are extracted automatically after conversations end and surface in future ones
-3. The coordinator delegates at least one task type to a sub-agent (e.g., memory retrieval)
-4. Proactive tasks queue up and execute during idle time without interrupting active conversations
-5. The system runs as a persistent service that survives restarts (reconnects to Telegram, preserves memory)
+### Achieved
+
+1. Contextual conversations via Telegram and REPL that reference past interactions through automatic memory retrieval
+2. Automatic memory extraction (episodic, facts, preferences) after conversations close, surfaced in future sessions
+3. Skill-based specialization with LLM detection and specialized agent delegation
+4. Proactive task scheduling with cron-based and one-shot tasks, session-aware and background execution modes
+5. Multi-project management with automatic synchronization, context injection, and commit/push on session close
+6. Git-versioned workspace with automatic commits after every session
+7. Conversation boundary detection with topic shift analysis and session resumption
+
+### Still Needed for v1
+
+1. Auto-close idle sessions so post-processing triggers reliably without requiring a topic shift
+2. Telegram push notifications so users are alerted to responses and task completions
+3. Hot-reload skills so the agent can author and use new skills in the same session
+4. Readable action summaries in Telegram responses instead of generic tool markers
+5. Persistent background service packaged as an installable CLI tool
 
 ## Future Considerations
 
 Ideas for v2 and beyond (not committing to these):
+
+**Advanced Memory:**
 - ACE Framework cycle: async session evaluation, pattern consolidation, memory curation
-- Context providers for calendar, tasks, email, vault (each as a pluggable agent)
-- Constrained workflow execution with guardrails (planner + evaluator agents, friction-based optimization)
-- Skill self-optimization: background analysis of execution traces proposes improvements via workspace branches
-- Web interface with chat + dashboard
-- Nori agent proxy library for SDK abstraction (swap Claude Code SDK for alternatives per task)
-- Event-driven triggers from external sources
-- Hardware presence (speaker with simple display, like Towano no Yuugure)
+- Embedding-based semantic similarity search for retrieval (vs. keyword/agent-driven search)
+- Contradiction detection and resolution
+- Memory decay and archival
+
+**Context Providers (beyond memory):**
+- Calendar provider (Google Calendar)
+- Tasks provider (Google Tasks)
+- Email provider (Gmail)
+- Notes provider (Obsidian vault)
+- Dynamic/user-created providers via plugin system
+
+**Plugin System:**
+- Directory-based plugins contributing context providers, post-processors, skills, channels, and tools
+- Plugin install, update, and removal lifecycle
+- Skill-provided tools via MCP servers
+
+**Context Lifecycle:**
+- Persisted context entries with invalidation and refresh when underlying data changes
+- Foundational context as a pre-processing provider with file-change invalidation
+- Proactive session handoff before context compaction to preserve critical context
+
+**Channels and Interfaces:**
+- Concurrent secondary channels alongside the primary (e.g., Telegram notifications while using REPL)
+- Web interface with chat and dashboard
+- Hardware presence (speaker with simple display)
+
+**Advanced Proactivity:**
+- Event-driven triggers from external sources (new emails, calendar events)
+- Pattern detection and insight surfacing
+- Dynamic profile building
+
+**Other:**
+- Feature toggles for disabling optional subsystems via configuration
+- Nori agent proxy library for SDK abstraction
 - Game integration concept (interact with assistant within a game world)
 
 ---
