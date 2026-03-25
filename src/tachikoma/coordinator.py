@@ -6,6 +6,7 @@ continuity. Topic shifts simply start a new session without resume.
 """
 
 import asyncio
+import contextlib
 from collections.abc import AsyncIterator, Callable
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -161,6 +162,15 @@ class Coordinator:
 
     async def __aenter__(self) -> "Coordinator":
         _log.info("Coordinator initialized")
+
+        # Start idle close loop if timeout > 0
+        if self._idle_timeout > 0:
+            self._idle_close_task = asyncio.create_task(self._idle_close_loop())
+            _log.debug(
+                "Idle close loop started: timeout={timeout}s",
+                timeout=self._idle_timeout,
+            )
+
         return self
 
     async def __aexit__(
@@ -169,6 +179,14 @@ class Coordinator:
         exc_val: BaseException | None,
         exc_tb: TracebackType | None,
     ) -> None:
+        # Cancel idle close loop first to prevent race with shutdown close
+        if self._idle_close_task is not None:
+            self._idle_close_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await self._idle_close_task
+            self._idle_close_task = None
+            _log.debug("Idle close loop cancelled")
+
         # Await any pending per-message post-processing task
         if self._pending_msg_task is not None:
             try:
@@ -670,3 +688,138 @@ providing context for what the user has been doing in the meantime.
             or self.has_pending_messages
             or (self._pending_msg_task is not None and not self._pending_msg_task.done())
         )
+
+    async def close_idle_session(self) -> None:
+        """Close the active session due to idle timeout.
+
+        Mirrors _handle_transition() close-and-clear pattern but does NOT
+        create a new session. The next user message follows the normal
+        first-message path.
+
+        Per R8: errors are logged but never crash the application.
+        """
+        # Guard: no registry
+        if self._registry is None:
+            return
+
+        try:
+            # Get active session
+            session = await self._registry.get_active_session()
+            if session is None:
+                _log.debug("Idle close skipped: no active session")
+                return
+
+            # Capture snapshot before close
+            session_snapshot = session
+
+            # Close session in registry (idempotent)
+            await self._registry.close_session(session_snapshot.id)
+
+            # Fire async post-processing if session has sdk_session_id
+            if session_snapshot.sdk_session_id is not None and self._pipeline is not None:
+                task = asyncio.create_task(self._pipeline.run(session_snapshot))
+                self._background_tasks.append(task)
+
+                # Prune completed tasks
+                self._background_tasks = [t for t in self._background_tasks if not t.done()]
+
+            # Clear SDK state
+            self._sdk_session_id = None
+            self._agents = None
+
+            # Store previous summary for next session
+            self._previous_summary = session_snapshot.summary
+
+            # Clear MCP servers
+            self._mcp_servers = {}
+
+            _log.info(
+                "Session closed due to idle timeout: session_id={id}",
+                id=session_snapshot.id,
+            )
+
+        except Exception as exc:
+            # Graceful degradation per R8
+            _log.exception(
+                "Idle close failed (will retry next cycle): err={err}",
+                err=str(exc),
+            )
+
+    async def _idle_close_loop(self) -> None:
+        """Periodic check for idle session timeout.
+
+        Runs every 60 seconds. Skips if:
+        - No active session
+        - No _last_message_time (no message exchange yet)
+        - Elapsed time < timeout
+
+        If coordinator is busy, snoozes for min(300, timeout) seconds.
+
+        Per R8: errors are logged but never crash the application.
+        CancelledError propagates for clean shutdown.
+        """
+        while True:
+            try:
+                await asyncio.sleep(60)  # 60-second check interval
+
+                # Guard: no active session
+                if self._registry is None:
+                    continue
+
+                session = await self._registry.get_active_session()
+                if session is None:
+                    continue
+
+                # Guard: no _last_message_time
+                if self._last_message_time is None:
+                    continue
+
+                # Check elapsed time
+                now = datetime.now(UTC)
+                elapsed = (now - self._last_message_time).total_seconds()
+
+                if elapsed < self._idle_timeout:
+                    continue
+
+                # Snooze loop if busy
+                while self._is_busy:
+                    snooze_duration = min(300, self._idle_timeout)
+                    _log.debug(
+                        "Idle close snoozing: duration={dur}",
+                        dur=snooze_duration,
+                    )
+                    await asyncio.sleep(snooze_duration)
+
+                    # Re-check: still have an active session?
+                    session = await self._registry.get_active_session()
+                    if session is None:
+                        break  # No session to close
+
+                    # Re-check: has _last_message_time been reset?
+                    if self._last_message_time is None:
+                        break  # Timer reset
+
+                    now = datetime.now(UTC)
+                    elapsed = (now - self._last_message_time).total_seconds()
+                    if elapsed < self._idle_timeout:
+                        break  # Timer reset by new message
+
+                    # Still busy? Continue snooze loop
+
+                # Proceed with close if conditions still met
+                if session is not None and self._last_message_time is not None:
+                    now = datetime.now(UTC)
+                    elapsed = (now - self._last_message_time).total_seconds()
+                    if elapsed >= self._idle_timeout and not self._is_busy:
+                        await self.close_idle_session()
+
+            except asyncio.CancelledError:
+                # Clean shutdown
+                raise
+
+            except Exception as exc:
+                # Log and continue on next cycle (R8)
+                _log.exception(
+                    "Idle close loop error (continuing): err={err}",
+                    err=str(exc),
+                )
