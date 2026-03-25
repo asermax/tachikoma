@@ -61,9 +61,11 @@ class TestSettingsModel:
 
     def test_custom_session_resume_window(self) -> None:
         """AC (DLT-028): agent.session_resume_window can be customized."""
-        settings = Settings.model_validate({
-            "agent": {"session_resume_window": 3600},
-        })
+        settings = Settings.model_validate(
+            {
+                "agent": {"session_resume_window": 3600},
+            }
+        )
 
         assert settings.agent.session_resume_window == 3600
 
@@ -75,18 +77,22 @@ class TestSettingsModel:
 
     def test_agent_env_with_string_values(self) -> None:
         """AC: agent.env accepts string key-value pairs."""
-        settings = Settings.model_validate({
-            "agent": {"env": {"FOO": "bar", "BAZ": "qux"}},
-        })
+        settings = Settings.model_validate(
+            {
+                "agent": {"env": {"FOO": "bar", "BAZ": "qux"}},
+            }
+        )
 
         assert settings.agent.env == {"FOO": "bar", "BAZ": "qux"}
 
     def test_agent_env_rejects_non_string_values(self) -> None:
         """AC: agent.env rejects non-string values with a clear error."""
         with pytest.raises(ValidationError, match="env"):
-            Settings.model_validate({
-                "agent": {"env": {"FOO": 42}},
-            })
+            Settings.model_validate(
+                {
+                    "agent": {"env": {"FOO": 42}},
+                }
+            )
 
     def test_frozen_prevents_mutation(self) -> None:
         """Settings instances are immutable."""
@@ -97,10 +103,12 @@ class TestSettingsModel:
 
     def test_extra_fields_ignored(self) -> None:
         """AC (R3): Unknown keys are silently ignored."""
-        settings = Settings.model_validate({
-            "workspace": {"path": "~/tachikoma", "unknown_key": "value"},
-            "agent": {"extra_field": True},
-        })
+        settings = Settings.model_validate(
+            {
+                "workspace": {"path": "~/tachikoma", "unknown_key": "value"},
+                "agent": {"extra_field": True},
+            }
+        )
 
         assert settings.workspace.path == Path.home() / "tachikoma"
 
@@ -114,9 +122,11 @@ class TestSettingsModel:
 
     def test_partial_config_uses_defaults_for_missing(self) -> None:
         """AC (R5): Missing sections use defaults."""
-        settings = Settings.model_validate({
-            "workspace": {"path": "~/custom"},
-        })
+        settings = Settings.model_validate(
+            {
+                "workspace": {"path": "~/custom"},
+            }
+        )
 
         assert settings.workspace.path == Path.home() / "custom"
         assert settings.agent.model == "opus"
@@ -151,7 +161,6 @@ class TestSettingsModel:
 
 
 class TestDefaultConfigGeneration:
-
     def test_generates_file_that_parses_to_empty_dict(self, tmp_path: Path) -> None:
         """AC (R4): Generated file has all values commented out."""
         config_path = tmp_path / "config.toml"
@@ -311,8 +320,7 @@ class TestLoadSettings:
         """AC (R3): Unknown keys in config are ignored."""
         config_path = tmp_path / "config.toml"
         config_path.write_text(
-            '[workspace]\npath = "~/tachikoma"\nfoo = "bar"\n\n'
-            '[unknown_section]\nkey = "value"\n'
+            '[workspace]\npath = "~/tachikoma"\nfoo = "bar"\n\n[unknown_section]\nkey = "value"\n'
         )
 
         settings = load_settings(config_path)
@@ -373,9 +381,7 @@ class TestLoadSettings:
     def test_agent_env_from_config(self, tmp_path: Path) -> None:
         """AC: [agent.env] with string values loads correctly."""
         config_path = tmp_path / "config.toml"
-        config_path.write_text(
-            '[agent.env]\nFOO = "bar"\nBAZ = "qux"\n'
-        )
+        config_path.write_text('[agent.env]\nFOO = "bar"\nBAZ = "qux"\n')
 
         settings = load_settings(config_path)
 
@@ -542,12 +548,14 @@ class TestTelegramSettings:
 
     def test_settings_with_valid_telegram_section(self) -> None:
         """AC (R8): Settings validates with a valid telegram section."""
-        settings = Settings.model_validate({
-            "telegram": {
-                "bot_token": "my_token",
-                "authorized_chat_id": 12345,
-            },
-        })
+        settings = Settings.model_validate(
+            {
+                "telegram": {
+                    "bot_token": "my_token",
+                    "authorized_chat_id": 12345,
+                },
+            }
+        )
 
         assert settings.telegram is not None
         assert settings.telegram.bot_token == "my_token"
@@ -556,9 +564,11 @@ class TestTelegramSettings:
     def test_settings_with_missing_telegram_field_raises_error(self, tmp_path: Path) -> None:
         """AC (R8): Partial telegram section raises ValidationError with field name."""
         with pytest.raises(ValidationError) as exc_info:
-            Settings.model_validate({
-                "telegram": {"bot_token": "token"},
-            })
+            Settings.model_validate(
+                {
+                    "telegram": {"bot_token": "token"},
+                }
+            )
 
         errors = exc_info.value.errors()
         assert any("authorized_chat_id" in str(e) for e in errors)
@@ -714,9 +724,11 @@ class TestTaskSettings:
 
     def test_tasks_settings_extra_fields_ignored(self) -> None:
         """AC (DLT-010): Unknown fields in [tasks] are ignored."""
-        settings = Settings.model_validate({
-            "tasks": {"idle_window": 120, "unknown_field": "value"},
-        })
+        settings = Settings.model_validate(
+            {
+                "tasks": {"idle_window": 120, "unknown_field": "value"},
+            }
+        )
 
         assert settings.tasks.idle_window == 120
 

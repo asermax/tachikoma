@@ -89,13 +89,7 @@ class TestSkillsContextProvider:
         skills_dir = tmp_path / "skills" / "test-skill"
         skills_dir.mkdir(parents=True)
         skill_md = skills_dir / "SKILL.md"
-        skill_md.write_text(
-            "---\n"
-            "description: A test skill\n"
-            "---\n"
-            "\n"
-            "Test content"
-        )
+        skill_md.write_text("---\ndescription: A test skill\n---\n\nTest content")
 
         mock_query.return_value = _make_query_result("NO_RELEVANT_SKILLS")
 
@@ -126,13 +120,7 @@ class TestSkillsContextProvider:
         skills_dir = tmp_path / "skills" / "search"
         skills_dir.mkdir(parents=True)
         skill_md = skills_dir / "SKILL.md"
-        skill_md.write_text(
-            "---\n"
-            "description: Search for things\n"
-            "---\n"
-            "\n"
-            "Search content"
-        )
+        skill_md.write_text("---\ndescription: Search for things\n---\n\nSearch content")
 
         mock_query.return_value = _make_query_result("NO_RELEVANT_SKILLS")
 
@@ -156,13 +144,7 @@ class TestSkillsContextProvider:
         skills_dir = tmp_path / "skills" / "test-skill"
         skills_dir.mkdir(parents=True)
         skill_md = skills_dir / "SKILL.md"
-        skill_md.write_text(
-            "---\n"
-            "description: A test\n"
-            "---\n"
-            "\n"
-            "Skill body content"
-        )
+        skill_md.write_text("---\ndescription: A test\n---\n\nSkill body content")
 
         mock_query.return_value = _make_query_result("test-skill")
 
@@ -183,15 +165,7 @@ class TestSkillsContextProvider:
         skills_dir = tmp_path / "skills" / "my-skill"
         skills_dir.mkdir(parents=True)
         skill_md = skills_dir / "SKILL.md"
-        skill_md.write_text(
-            "---\n"
-            "description: Test\n"
-            "---\n"
-            "\n"
-            "# My Skill\n"
-            "\n"
-            "This is the body."
-        )
+        skill_md.write_text("---\ndescription: Test\n---\n\n# My Skill\n\nThis is the body.")
 
         mock_query.return_value = _make_query_result("my-skill")
 
@@ -217,47 +191,23 @@ class TestSkillsContextProvider:
         skills_dir = tmp_path / "skills" / "search"
         skills_dir.mkdir(parents=True)
         skill_md = skills_dir / "SKILL.md"
-        skill_md.write_text(
-            "---\n"
-            "description: Search\n"
-            "---\n"
-            "\n"
-            "Content"
-        )
+        skill_md.write_text("---\ndescription: Search\n---\n\nContent")
 
         agents_dir = skills_dir / "agents"
         agents_dir.mkdir()
         agent_md = agents_dir / "query.md"
-        agent_md.write_text(
-            "---\n"
-            "description: Query agent\n"
-            "---\n"
-            "\n"
-            "Agent prompt"
-        )
+        agent_md.write_text("---\ndescription: Query agent\n---\n\nAgent prompt")
 
         # Create another skill that should NOT have agents returned
         other_dir = tmp_path / "skills" / "other"
         other_dir.mkdir(parents=True)
         other_md = other_dir / "SKILL.md"
-        other_md.write_text(
-            "---\n"
-            "description: Other\n"
-            "---\n"
-            "\n"
-            "Other content"
-        )
+        other_md.write_text("---\ndescription: Other\n---\n\nOther content")
 
         other_agents = other_dir / "agents"
         other_agents.mkdir()
         other_agent = other_agents / "helper.md"
-        other_agent.write_text(
-            "---\n"
-            "description: Helper\n"
-            "---\n"
-            "\n"
-            "Help prompt"
-        )
+        other_agent.write_text("---\ndescription: Helper\n---\n\nHelp prompt")
 
         mock_query.return_value = _make_query_result("search")
 
@@ -278,13 +228,7 @@ class TestSkillsContextProvider:
         skills_dir = tmp_path / "skills" / "test"
         skills_dir.mkdir(parents=True)
         skill_md = skills_dir / "SKILL.md"
-        skill_md.write_text(
-            "---\n"
-            "description: Test\n"
-            "---\n"
-            "\n"
-            "Content"
-        )
+        skill_md.write_text("---\ndescription: Test\n---\n\nContent")
 
         mock_query.return_value = _make_query_result("NO_RELEVANT_SKILLS")
 
@@ -302,13 +246,7 @@ class TestSkillsContextProvider:
         skills_dir = tmp_path / "skills" / "real-skill"
         skills_dir.mkdir(parents=True)
         skill_md = skills_dir / "SKILL.md"
-        skill_md.write_text(
-            "---\n"
-            "description: Real\n"
-            "---\n"
-            "\n"
-            "Content"
-        )
+        skill_md.write_text("---\ndescription: Real\n---\n\nContent")
 
         # Agent returns valid name + fake name
         mock_query.return_value = _make_query_result("real-skill\nfake-skill\nanother-fake")
@@ -330,13 +268,7 @@ class TestSkillsContextProvider:
         skills_dir = tmp_path / "skills" / "test"
         skills_dir.mkdir(parents=True)
         skill_md = skills_dir / "SKILL.md"
-        skill_md.write_text(
-            "---\n"
-            "description: Test\n"
-            "---\n"
-            "\n"
-            "Content"
-        )
+        skill_md.write_text("---\ndescription: Test\n---\n\nContent")
 
         provider = SkillsContextProvider(AgentDefaults(cwd=tmp_path))
         result = await provider.provide("hello")
@@ -352,13 +284,7 @@ class TestSkillsContextProvider:
         skills_dir = tmp_path / "skills" / "test"
         skills_dir.mkdir(parents=True)
         skill_md = skills_dir / "SKILL.md"
-        skill_md.write_text(
-            "---\n"
-            "description: Test\n"
-            "---\n"
-            "\n"
-            "Content"
-        )
+        skill_md.write_text("---\ndescription: Test\n---\n\nContent")
 
         mock_query.return_value = _make_query_result("Error", is_error=True)
 
@@ -377,13 +303,7 @@ class TestSkillsContextProvider:
         skills_dir = tmp_path / "skills" / "valid-skill"
         skills_dir.mkdir(parents=True)
         skill_md = skills_dir / "SKILL.md"
-        skill_md.write_text(
-            "---\n"
-            "description: A valid skill\n"
-            "---\n"
-            "\n"
-            "Valid content"
-        )
+        skill_md.write_text("---\ndescription: A valid skill\n---\n\nValid content")
 
         # Only return the valid skill (unreadable ones are filtered by registry)
         mock_query.return_value = _make_query_result("valid-skill")
@@ -405,43 +325,19 @@ class TestSkillsContextProvider:
         skills_dir1 = tmp_path / "skills" / "skill-a"
         skills_dir1.mkdir(parents=True)
         skill_md1 = skills_dir1 / "SKILL.md"
-        skill_md1.write_text(
-            "---\n"
-            "description: A\n"
-            "---\n"
-            "\n"
-            "A content"
-        )
+        skill_md1.write_text("---\ndescription: A\n---\n\nA content")
         agents_dir1 = skills_dir1 / "agents"
         agents_dir1.mkdir()
-        (agents_dir1 / "agent1.md").write_text(
-            "---\n"
-            "description: Agent 1\n"
-            "---\n"
-            "\n"
-            "Prompt 1"
-        )
+        (agents_dir1 / "agent1.md").write_text("---\ndescription: Agent 1\n---\n\nPrompt 1")
 
         # Create second skill
         skills_dir2 = tmp_path / "skills" / "skill-b"
         skills_dir2.mkdir(parents=True)
         skill_md2 = skills_dir2 / "SKILL.md"
-        skill_md2.write_text(
-            "---\n"
-            "description: B\n"
-            "---\n"
-            "\n"
-            "B content"
-        )
+        skill_md2.write_text("---\ndescription: B\n---\n\nB content")
         agents_dir2 = skills_dir2 / "agents"
         agents_dir2.mkdir()
-        (agents_dir2 / "agent2.md").write_text(
-            "---\n"
-            "description: Agent 2\n"
-            "---\n"
-            "\n"
-            "Prompt 2"
-        )
+        (agents_dir2 / "agent2.md").write_text("---\ndescription: Agent 2\n---\n\nPrompt 2")
 
         mock_query.return_value = _make_query_result("skill-a\nskill-b")
 
@@ -466,23 +362,11 @@ class TestSkillsContextProvider:
         skills_dir = tmp_path / "skills" / "test"
         skills_dir.mkdir(parents=True)
         skill_md = skills_dir / "SKILL.md"
-        skill_md.write_text(
-            "---\n"
-            "description: Test\n"
-            "---\n"
-            "\n"
-            "Content"
-        )
+        skill_md.write_text("---\ndescription: Test\n---\n\nContent")
 
         agents_dir = skills_dir / "agents"
         agents_dir.mkdir()
-        (agents_dir / "agent.md").write_text(
-            "---\n"
-            "description: Agent\n"
-            "---\n"
-            "\n"
-            "Prompt"
-        )
+        (agents_dir / "agent.md").write_text("---\ndescription: Agent\n---\n\nPrompt")
 
         mock_query.return_value = _make_query_result("test")
 

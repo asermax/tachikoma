@@ -423,9 +423,7 @@ class TestNotificationGeneration:
 
             with patch("claude_agent_sdk.query") as mock_query:
                 eval_result = MagicMock()
-                eval_result.content = [
-                    MagicMock(text='{"status": "complete", "feedback": "Done"}')
-                ]
+                eval_result.content = [MagicMock(text='{"status": "complete", "feedback": "Done"}')]
 
                 async def mock_eval_query(*args, **kwargs):
                     yield eval_result
@@ -454,7 +452,8 @@ class TestNotificationGeneration:
 
     @pytest.mark.asyncio
     async def test_fork_failure_falls_back_to_evaluator_feedback(
-        self, repo: TaskRepository,
+        self,
+        repo: TaskRepository,
     ) -> None:
         """AC3: Fork failure → falls back to evaluator feedback."""
         definition = _make_definition(
@@ -742,9 +741,7 @@ class TestNotificationGeneration:
 
             with patch("claude_agent_sdk.query") as mock_query:
                 eval_result = MagicMock()
-                eval_result.content = [
-                    MagicMock(text='{"status": "complete", "feedback": "Done"}')
-                ]
+                eval_result.content = [MagicMock(text='{"status": "complete", "feedback": "Done"}')]
 
                 async def mock_eval_query(*args, **kwargs):
                     yield eval_result

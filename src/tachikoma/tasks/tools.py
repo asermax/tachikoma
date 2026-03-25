@@ -155,18 +155,18 @@ def create_task_tools_server(repository: TaskRepository) -> McpSdkServerConfig:
             and schedule_config.at is not None
             and schedule_config.at <= datetime.now(UTC)
         ):
-                return {
-                    "is_error": True,
-                    "content": [
-                        {
-                            "type": "text",
-                            "text": (
-                                "One-shot schedule datetime must be in the future."
-                                f" Got: {schedule_config.at.isoformat()}"
-                            ),
-                        }
-                    ],
-                }
+            return {
+                "is_error": True,
+                "content": [
+                    {
+                        "type": "text",
+                        "text": (
+                            "One-shot schedule datetime must be in the future."
+                            f" Got: {schedule_config.at.isoformat()}"
+                        ),
+                    }
+                ],
+            }
 
         # Create the definition
         definition = TaskDefinition(

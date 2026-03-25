@@ -35,9 +35,7 @@ def _make_query_result(result: str | None, is_error: bool = False):
 class TestMemoryContextProvider:
     """Tests for MemoryContextProvider."""
 
-    async def test_calls_query_with_correct_options(
-        self, mocker: pytest.MockerFixture
-    ) -> None:
+    async def test_calls_query_with_correct_options(self, mocker: pytest.MockerFixture) -> None:
         """AC: query() called with correct model, effort, max_turns, allowed_tools, cwd."""
         mock_query = mocker.patch("tachikoma.memory.context_provider.query")
 
@@ -91,9 +89,7 @@ class TestMemoryContextProvider:
 
         assert result is None
 
-    async def test_returns_none_when_result_is_error(
-        self, mocker: pytest.MockerFixture
-    ) -> None:
+    async def test_returns_none_when_result_is_error(self, mocker: pytest.MockerFixture) -> None:
         """AC: Returns None when ResultMessage has is_error=True."""
         mock_query = mocker.patch("tachikoma.memory.context_provider.query")
 
@@ -117,9 +113,7 @@ class TestMemoryContextProvider:
 
         assert result is None
 
-    async def test_embeds_user_message_in_prompt(
-        self, mocker: pytest.MockerFixture
-    ) -> None:
+    async def test_embeds_user_message_in_prompt(self, mocker: pytest.MockerFixture) -> None:
         """AC: The prompt passed to query() contains the user's message text."""
         mock_query = mocker.patch("tachikoma.memory.context_provider.query")
 

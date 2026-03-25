@@ -68,11 +68,15 @@ class TestHandleRegisterProject:
     @patch("tachikoma.projects.tools.checkout_branch", new_callable=AsyncMock)
     @patch(
         "tachikoma.projects.tools.resolve_default_branch",
-        new_callable=AsyncMock, return_value="main",
+        new_callable=AsyncMock,
+        return_value="main",
     )
     @patch("tachikoma.projects.tools.add_submodule", new_callable=AsyncMock)
     async def test_success(
-        self, mock_add: AsyncMock, mock_resolve: AsyncMock, mock_checkout: AsyncMock,
+        self,
+        mock_add: AsyncMock,
+        mock_resolve: AsyncMock,
+        mock_checkout: AsyncMock,
         tmp_path: Path,
     ) -> None:
         """Registers project and returns success message."""
@@ -86,7 +90,8 @@ class TestHandleRegisterProject:
 
     @patch(
         "tachikoma.projects.tools.add_submodule",
-        new_callable=AsyncMock, side_effect=RuntimeError("clone failed"),
+        new_callable=AsyncMock,
+        side_effect=RuntimeError("clone failed"),
     )
     async def test_cleans_up_on_failure(self, mock_add: AsyncMock, tmp_path: Path) -> None:
         """Cleans up partial state when registration fails."""
@@ -115,10 +120,13 @@ class TestHandleDeregisterProject:
 
     @patch(
         "tachikoma.projects.tools.has_uncommitted_changes_detail",
-        new_callable=AsyncMock, return_value="M file.txt",
+        new_callable=AsyncMock,
+        return_value="M file.txt",
     )
     async def test_warns_on_uncommitted_changes(
-        self, mock_changes: AsyncMock, tmp_path: Path,
+        self,
+        mock_changes: AsyncMock,
+        tmp_path: Path,
     ) -> None:
         """Returns warning when project has uncommitted changes and force=false."""
         (tmp_path / "projects" / "my-app").mkdir(parents=True)
@@ -131,10 +139,14 @@ class TestHandleDeregisterProject:
     @patch("tachikoma.projects.tools.remove_submodule", new_callable=AsyncMock)
     @patch(
         "tachikoma.projects.tools.has_uncommitted_changes_detail",
-        new_callable=AsyncMock, return_value="M file.txt",
+        new_callable=AsyncMock,
+        return_value="M file.txt",
     )
     async def test_force_removes_with_uncommitted_changes(
-        self, mock_changes: AsyncMock, mock_remove: AsyncMock, tmp_path: Path,
+        self,
+        mock_changes: AsyncMock,
+        mock_remove: AsyncMock,
+        tmp_path: Path,
     ) -> None:
         """Removes project when force=true despite uncommitted changes."""
         (tmp_path / "projects" / "my-app").mkdir(parents=True)
@@ -148,10 +160,14 @@ class TestHandleDeregisterProject:
     @patch("tachikoma.projects.tools.remove_submodule", new_callable=AsyncMock)
     @patch(
         "tachikoma.projects.tools.has_uncommitted_changes_detail",
-        new_callable=AsyncMock, return_value="",
+        new_callable=AsyncMock,
+        return_value="",
     )
     async def test_success(
-        self, mock_changes: AsyncMock, mock_remove: AsyncMock, tmp_path: Path,
+        self,
+        mock_changes: AsyncMock,
+        mock_remove: AsyncMock,
+        tmp_path: Path,
     ) -> None:
         """Removes clean project successfully."""
         (tmp_path / "projects" / "my-app").mkdir(parents=True)

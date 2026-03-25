@@ -23,9 +23,7 @@ class MessagePostProcessor(ABC):
     """
 
     @abstractmethod
-    async def process(
-        self, session: Session, user_message: str, agent_response: str
-    ) -> None:
+    async def process(self, session: Session, user_message: str, agent_response: str) -> None:
         """Process a message exchange.
 
         Args:
@@ -61,9 +59,7 @@ class MessagePostProcessingPipeline:
         """
         self._processors.append(processor)
 
-    async def run(
-        self, session: Session, user_message: str, agent_response: str
-    ) -> None:
+    async def run(self, session: Session, user_message: str, agent_response: str) -> None:
         """Run all registered processors in parallel.
 
         Acquires an internal lock to serialize concurrent invocations.
@@ -78,10 +74,7 @@ class MessagePostProcessingPipeline:
             _log.info("Pipeline started: processors={names}", names=names)
 
             results = await asyncio.gather(
-                *[
-                    p.process(session, user_message, agent_response)
-                    for p in self._processors
-                ],
+                *[p.process(session, user_message, agent_response) for p in self._processors],
                 return_exceptions=True,
             )
 

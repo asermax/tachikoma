@@ -20,7 +20,9 @@ class TestWorkspaceHook:
         return BootstrapContext(settings_manager=settings_manager, prompt=input)
 
     async def test_creates_workspace_and_data_dir(
-        self, ctx: BootstrapContext, settings_manager: SettingsManager,
+        self,
+        ctx: BootstrapContext,
+        settings_manager: SettingsManager,
     ) -> None:
         """AC (R0, R1): No dirs exist, both workspace and .tachikoma/ are created."""
         await workspace_hook(ctx)
@@ -31,7 +33,9 @@ class TestWorkspaceHook:
         assert ws.data_path.is_dir()
 
     async def test_skips_when_workspace_exists(
-        self, ctx: BootstrapContext, settings_manager: SettingsManager,
+        self,
+        ctx: BootstrapContext,
+        settings_manager: SettingsManager,
     ) -> None:
         """AC (R7): Dirs already exist, no error on re-run."""
         ws = settings_manager.settings.workspace
@@ -44,7 +48,9 @@ class TestWorkspaceHook:
         assert ws.data_path.is_dir()
 
     async def test_creates_data_dir_when_workspace_exists(
-        self, ctx: BootstrapContext, settings_manager: SettingsManager,
+        self,
+        ctx: BootstrapContext,
+        settings_manager: SettingsManager,
     ) -> None:
         """AC (R1): Workspace exists but .tachikoma/ doesn't, creates it."""
         ws = settings_manager.settings.workspace
@@ -55,7 +61,9 @@ class TestWorkspaceHook:
         assert ws.data_path.is_dir()
 
     async def test_raises_when_path_is_file(
-        self, ctx: BootstrapContext, settings_manager: SettingsManager,
+        self,
+        ctx: BootstrapContext,
+        settings_manager: SettingsManager,
     ) -> None:
         """AC (R9): Workspace path is a file, raises with clear error."""
         ws = settings_manager.settings.workspace

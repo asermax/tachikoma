@@ -49,7 +49,8 @@ def _user_message(content: str) -> dict[str, Any]:
 
 
 async def _message_source(
-    initial: str, buffer: asyncio.Queue[str],
+    initial: str,
+    buffer: asyncio.Queue[str],
 ) -> AsyncIterator[dict[str, Any]]:
     """Long-lived generator feeding messages from buffer to SDK.
 
@@ -169,9 +170,7 @@ class Coordinator:
             try:
                 await self._pending_msg_task
             except Exception as exc:
-                _log.exception(
-                    "Pending per-message task failed: err={err}", err=str(exc)
-                )
+                _log.exception("Pending per-message task failed: err={err}", err=str(exc))
             finally:
                 self._pending_msg_task = None
 
@@ -203,15 +202,11 @@ class Coordinator:
                         err=str(exc),
                     )
             else:
-                _log.warning(
-                    "Skipping post-processing: session has no SDK session ID"
-                )
+                _log.warning("Skipping post-processing: session has no SDK session ID")
 
         # Await all background session post-processing tasks from topic shifts
         if self._background_tasks:
-            results = await asyncio.gather(
-                *self._background_tasks, return_exceptions=True
-            )
+            results = await asyncio.gather(*self._background_tasks, return_exceptions=True)
             for i, result in enumerate(results):
                 if isinstance(result, Exception):
                     _log.exception(
@@ -251,11 +246,7 @@ the user explicitly refers back to it.
 
 {self._previous_summary}"""
 
-            append_text = (
-                append_text + summary_section
-                if append_text
-                else summary_section[1:]
-            )
+            append_text = append_text + summary_section if append_text else summary_section[1:]
 
             # Clear after first use — only the first message of the new session
             # needs the summary context
@@ -271,11 +262,7 @@ providing context for what the user has been doing in the meantime.
 
 {self._bridging_context}"""
 
-            append_text = (
-                append_text + bridging_section
-                if append_text
-                else bridging_section[1:]
-            )
+            append_text = append_text + bridging_section if append_text else bridging_section[1:]
 
             # Clear after first use — only the first message of the resumed session
             # needs the bridging context
@@ -375,9 +362,7 @@ providing context for what the user has been doing in the meantime.
                     try:
                         now = datetime.now(UTC)
                         window = timedelta(seconds=self._session_resume_window)
-                        recent = await self._registry.get_recent_closed(
-                            before=now, window=window
-                        )
+                        recent = await self._registry.get_recent_closed(before=now, window=window)
                         candidates = [
                             SessionCandidate(id=s.id, summary=s.summary)
                             for s in recent
@@ -397,8 +382,7 @@ providing context for what the user has been doing in the meantime.
                 )
                 if not result.continues:
                     _log.info(
-                        "Topic shift detected, transitioning session"
-                        " (resume_id={resume_id})",
+                        "Topic shift detected, transitioning session (resume_id={resume_id})",
                         resume_id=result.resume_session_id,
                     )
                     resumed = await self._handle_transition(
@@ -466,9 +450,7 @@ providing context for what the user has been doing in the meantime.
                     ):
                         self._sdk_session_id = event.session_id
                         try:
-                            transcript_path = _derive_transcript_path(
-                                event.session_id, self._cwd
-                            )
+                            transcript_path = _derive_transcript_path(event.session_id, self._cwd)
                             await self._registry.update_metadata(
                                 session_id=active.id,
                                 sdk_session_id=event.session_id,
@@ -489,11 +471,7 @@ providing context for what the user has been doing in the meantime.
             self._client = None
 
         # Trigger per-message post-processing after response completes
-        if (
-            self._msg_pipeline is not None
-            and active is not None
-            and self._registry is not None
-        ):
+        if self._msg_pipeline is not None and active is not None and self._registry is not None:
             # Re-fetch session to get latest metadata (may have been updated)
             current_session = await self._registry.get_active_session()
             if current_session is not None:
@@ -527,9 +505,7 @@ providing context for what the user has been doing in the meantime.
             try:
                 await self._registry.close_session(session_snapshot.id)
             except Exception as exc:
-                _log.exception(
-                    "Failed to close session during transition: err={err}", err=str(exc)
-                )
+                _log.exception("Failed to close session during transition: err={err}", err=str(exc))
 
         # Fire async session post-processing if session has sdk_session_id
         if session_snapshot.sdk_session_id is not None and self._pipeline is not None:

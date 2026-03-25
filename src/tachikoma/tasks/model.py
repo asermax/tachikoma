@@ -119,9 +119,7 @@ class TaskDefinitionRecord(Base):
     prompt: Mapped[str] = mapped_column(String, nullable=False)
     notify: Mapped[str | None] = mapped_column(String, nullable=True)
     enabled: Mapped[bool] = mapped_column(default=True)
-    last_fired_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True
-    )
+    last_fired_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
     def to_domain(self) -> TaskDefinition:
@@ -156,12 +154,8 @@ class TaskInstanceRecord(Base):
     status: Mapped[str] = mapped_column(String, nullable=False)
     prompt: Mapped[str] = mapped_column(String, nullable=False)
     scheduled_for: Mapped[datetime] = mapped_column(DateTime(timezone=True))
-    started_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True
-    )
-    completed_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True
-    )
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     result: Mapped[str | None] = mapped_column(String, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 

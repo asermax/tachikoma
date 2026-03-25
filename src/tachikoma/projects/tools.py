@@ -50,9 +50,7 @@ async def handle_register_project(name: str, url: str, workspace_path: Path) -> 
 
     if project_path.exists():
         return {
-            "content": [
-                {"type": "text", "text": f"Error: Project '{name}' already exists"}
-            ],
+            "content": [{"type": "text", "text": f"Error: Project '{name}' already exists"}],
             "is_error": True,
         }
 
@@ -93,15 +91,15 @@ async def handle_register_project(name: str, url: str, workspace_path: Path) -> 
         )
 
         return {
-            "content": [
-                {"type": "text", "text": f"Error registering project: {error_msg}"}
-            ],
+            "content": [{"type": "text", "text": f"Error registering project: {error_msg}"}],
             "is_error": True,
         }
 
 
 async def handle_deregister_project(
-    name: str, force: bool, workspace_path: Path,
+    name: str,
+    force: bool,
+    workspace_path: Path,
 ) -> dict:
     """Deregister a project by removing the git submodule.
 
@@ -123,9 +121,7 @@ async def handle_deregister_project(
 
     if not project_path.exists():
         return {
-            "content": [
-                {"type": "text", "text": f"Error: Project '{name}' not found"}
-            ],
+            "content": [{"type": "text", "text": f"Error: Project '{name}' not found"}],
             "is_error": True,
         }
 
@@ -168,9 +164,7 @@ async def handle_deregister_project(
         )
 
         return {
-            "content": [
-                {"type": "text", "text": f"Error deregistering project: {error_msg}"}
-            ],
+            "content": [{"type": "text", "text": f"Error deregistering project: {error_msg}"}],
             "is_error": True,
         }
 
@@ -192,7 +186,9 @@ def create_projects_server(workspace_path: Path) -> McpSdkServerConfig:
     )
     async def register_project(args: dict) -> dict:
         return await handle_register_project(
-            args.get("name", ""), args.get("url", ""), workspace_path,
+            args.get("name", ""),
+            args.get("url", ""),
+            workspace_path,
         )
 
     @tool(
@@ -202,7 +198,9 @@ def create_projects_server(workspace_path: Path) -> McpSdkServerConfig:
     )
     async def deregister_project(args: dict) -> dict:
         return await handle_deregister_project(
-            args.get("name", ""), args.get("force", False), workspace_path,
+            args.get("name", ""),
+            args.get("force", False),
+            workspace_path,
         )
 
     return create_sdk_mcp_server(
