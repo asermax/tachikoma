@@ -2472,10 +2472,10 @@ class TestIsBusy:
 
 
 class TestCloseIdleSession:
-    """Tests for DLT-036: close_idle_session() method behavior."""
+    """Tests for DLT-036: _close_idle_session() method behavior."""
 
     async def test_closes_session_in_registry(self, mock_sdk) -> None:
-        """AC: close_idle_session calls registry.close_session."""
+        """AC: _close_idle_session calls registry.close_session."""
         active = Session(
             id="s1",
             started_at=datetime.now(UTC),
@@ -2485,12 +2485,12 @@ class TestCloseIdleSession:
         pipeline = _make_mock_pipeline()
 
         coord = Coordinator(registry=registry, pipeline=pipeline)
-        await coord.close_idle_session()
+        await coord._close_idle_session()
 
         registry.close_session.assert_awaited_once_with("s1")
 
     async def test_fires_post_processing(self, mock_sdk) -> None:
-        """AC: close_idle_session fires async post-processing."""
+        """AC: _close_idle_session fires async post-processing."""
         active = Session(
             id="s2",
             started_at=datetime.now(UTC),
@@ -2500,14 +2500,14 @@ class TestCloseIdleSession:
         pipeline = _make_mock_pipeline()
 
         coord = Coordinator(registry=registry, pipeline=pipeline)
-        await coord.close_idle_session()
+        await coord._close_idle_session()
         # Allow background task to start
         await asyncio.sleep(0.01)
 
         pipeline.run.assert_awaited_once()
 
     async def test_clears_sdk_state(self, mock_sdk) -> None:
-        """AC: close_idle_session clears _sdk_session_id, _agents, _mcp_servers."""
+        """AC: _close_idle_session clears _sdk_session_id, _agents, _mcp_servers."""
         active = Session(
             id="s3",
             started_at=datetime.now(UTC),
@@ -2521,14 +2521,14 @@ class TestCloseIdleSession:
         coord._agents = {"test/agent": AgentDefinition(description="test", prompt="Test prompt")}
         coord._mcp_servers = {"test-server": MagicMock()}
 
-        await coord.close_idle_session()
+        await coord._close_idle_session()
 
         assert coord._sdk_session_id is None
         assert coord._agents is None
         assert coord._mcp_servers == {}
 
     async def test_stores_previous_summary(self, mock_sdk) -> None:
-        """AC: close_idle_session stores _previous_summary."""
+        """AC: _close_idle_session stores _previous_summary."""
         active = Session(
             id="s4",
             started_at=datetime.now(UTC),
@@ -2539,7 +2539,7 @@ class TestCloseIdleSession:
         pipeline = _make_mock_pipeline()
 
         coord = Coordinator(registry=registry, pipeline=pipeline)
-        await coord.close_idle_session()
+        await coord._close_idle_session()
 
         assert coord._previous_summary == "This is the session summary"
 
@@ -2554,17 +2554,17 @@ class TestCloseIdleSession:
         pipeline = _make_mock_pipeline()
 
         async with Coordinator(registry=registry, pipeline=pipeline) as coord:
-            await coord.close_idle_session()
+            await coord._close_idle_session()
 
         pipeline.run.assert_not_awaited()
 
     async def test_noop_when_no_active_session(self, mock_sdk) -> None:
-        """AC: No active session means close_idle_session is a no-op."""
+        """AC: No active session means _close_idle_session is a no-op."""
         registry = _make_mock_registry(active_session=None)
 
         async with Coordinator(registry=registry) as coord:
             # Should not raise
-            await coord.close_idle_session()
+            await coord._close_idle_session()
 
         registry.close_session.assert_not_awaited()
 
@@ -2577,14 +2577,14 @@ class TestCloseIdleSession:
 
         coord = Coordinator(registry=registry)
         # Should not raise
-        await coord.close_idle_session()
+        await coord._close_idle_session()
 
 
 class TestIdleCloseLoop:
     """Tests for DLT-036: _idle_close_loop periodic check behavior."""
 
     async def test_closes_after_timeout(self, mock_sdk) -> None:
-        """AC: Elapsed > timeout triggers close_idle_session."""
+        """AC: Elapsed > timeout triggers _close_idle_session."""
         active = Session(
             id="s1",
             started_at=datetime.now(UTC),
@@ -2602,7 +2602,7 @@ class TestIdleCloseLoop:
         coord._last_message_time = datetime.now(UTC) - timedelta(seconds=10)
 
         # Manually trigger close
-        await coord.close_idle_session()
+        await coord._close_idle_session()
 
         registry.close_session.assert_awaited_once_with("s1")
 
@@ -2613,8 +2613,8 @@ class TestIdleCloseLoop:
         coord = Coordinator(registry=registry, session_idle_timeout=1)
         coord._last_message_time = datetime.now(UTC) - timedelta(seconds=10)
 
-        # close_idle_session should be a no-op
-        await coord.close_idle_session()
+        # _close_idle_session should be a no-op
+        await coord._close_idle_session()
 
         registry.close_session.assert_not_awaited()
 
@@ -2627,8 +2627,8 @@ class TestIdleCloseLoop:
         # _last_message_time is None by default
         assert coord._last_message_time is None
 
-        # close_idle_session should handle this gracefully
-        await coord.close_idle_session()
+        # _close_idle_session should handle this gracefully
+        await coord._close_idle_session()
 
     async def test_snoozes_when_busy(self, mock_sdk) -> None:
         """AC: Busy coordinator snoozes instead of closing."""
@@ -2678,7 +2678,7 @@ class TestIdleCloseLoop:
 
         coord = Coordinator(registry=registry, session_idle_timeout=1)
         # First close attempt fails but doesn't crash
-        await coord.close_idle_session()
+        await coord._close_idle_session()
 
         # Coordinator should still be functional
         assert coord._idle_timeout == 1
@@ -2704,7 +2704,7 @@ class TestIdleCloseLoop:
 
         # Elapsed < timeout, so should NOT close automatically
         # But if we call close directly, it should work
-        await coord.close_idle_session()
+        await coord._close_idle_session()
 
         # Now it should have closed
         registry.close_session.assert_awaited_once()
@@ -2745,9 +2745,9 @@ class TestIdleCloseShutdown:
 
         async with Coordinator(registry=registry, pipeline=pipeline) as coord:
             # Manually close via idle close
-            await coord.close_idle_session()
+            await coord._close_idle_session()
 
-        # close_session should only be called once (by close_idle_session)
+        # close_session should only be called once (by _close_idle_session)
         assert close_call_count == 1
 
     async def test_idle_close_does_not_fire_during_message_exchange(self, mock_sdk) -> None:
