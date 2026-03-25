@@ -47,9 +47,10 @@ class ResponseRenderer:
     an inline status line within the message.
     """
 
-    def __init__(self, bot: Bot, chat_id: int) -> None:
+    def __init__(self, bot: Bot, chat_id: int, push_notifications: bool = False) -> None:
         self._bot = bot
         self._chat_id = chat_id
+        self._push_notifications = push_notifications
         self._current_message_id: int | None = None
         self._buffer: str = ""
         self._tool_line: str | None = None
@@ -82,6 +83,7 @@ class ResponseRenderer:
                 self._chat_id,
                 f"_{message}_",
                 parse_mode="Markdown",
+                disable_notification=self._push_notifications,
             )
             self._current_message_id = msg.message_id
             self._message_count += 1
@@ -120,12 +122,24 @@ class ResponseRenderer:
         """Handle an Error event by sending a separate error message."""
         error_text = f"⚠️ Error: {error.message}"
 
+        # Send silently if push notifications are enabled AND content was already streamed
+        # (the copy+delete will provide the push notification)
+        silent = self._push_notifications and self._current_message_id is not None
+
         try:
-            await self._bot.send_message(
-                self._chat_id,
-                error_text,
-                parse_mode=None,
-            )
+            if silent:
+                await self._bot.send_message(
+                    self._chat_id,
+                    error_text,
+                    parse_mode=None,
+                    disable_notification=True,
+                )
+            else:
+                await self._bot.send_message(
+                    self._chat_id,
+                    error_text,
+                    parse_mode=None,
+                )
         except TelegramAPIError:
             _log.exception("Failed to send error message")
 
@@ -136,6 +150,45 @@ class ResponseRenderer:
         """Send the final state of the current message, bypassing throttle."""
         self._tool_line = None
         await self._flush(force=True)
+
+    async def notify(self) -> None:
+        """Copy+delete the last message to trigger a push notification.
+
+        No-op when push notifications are disabled or no message was sent.
+        Safe ordering: copy first, skip delete on failure.
+        """
+        # Guard: feature disabled or no message sent
+        if not self._push_notifications:
+            return
+
+        if self._current_message_id is None:
+            return
+
+        # Try copy_message — on failure, preserve original
+        try:
+            await self._bot.copy_message(
+                chat_id=self._chat_id,
+                from_chat_id=self._chat_id,
+                message_id=self._current_message_id,
+            )
+        except TelegramAPIError:
+            _log.warning(
+                "Failed to copy message for push notification: message_id={id}",
+                id=self._current_message_id,
+            )
+            return  # Skip delete — original is preserved
+
+        # Try delete_message — on failure, accept duplicate
+        try:
+            await self._bot.delete_message(
+                chat_id=self._chat_id,
+                message_id=self._current_message_id,
+            )
+        except TelegramAPIError:
+            _log.warning(
+                "Failed to delete original message after copy: message_id={id} (duplicate visible)",
+                id=self._current_message_id,
+            )
 
     async def _flush(self, force: bool = False) -> None:
         """Send/edit the message with current buffer and tool line.
@@ -176,6 +229,7 @@ class ResponseRenderer:
                     text,
                     parse_mode=None,
                     entities=[e.to_dict() for e in entities],  # type: ignore[arg-type]
+                    disable_notification=self._push_notifications,
                 )
                 self._current_message_id = msg.message_id
                 self._message_count += 1
@@ -438,7 +492,9 @@ class TelegramChannel:
         """
         chat_id = self._settings.authorized_chat_id
         self._is_processing = True
-        self._active_renderer = ResponseRenderer(self._bot, chat_id)
+        self._active_renderer = ResponseRenderer(
+            self._bot, chat_id, push_notifications=self._settings.push_notifications
+        )
 
         try:
             async with ChatActionSender(bot=self._bot, chat_id=chat_id, action="typing"):
@@ -454,6 +510,7 @@ class TelegramChannel:
                             await self._active_renderer.handle_error(event)
                         elif isinstance(event, Result):
                             await self._active_renderer.finalize()
+                            await self._active_renderer.notify()
                             self._active_renderer.reset()
 
             if on_complete is not None:
@@ -461,12 +518,31 @@ class TelegramChannel:
 
         except Exception as e:
             _log.exception("Error during message processing")
+
+            # Check if content was sent silently - if so, trigger push for partial
+            had_content = (
+                self._active_renderer is not None
+                and self._active_renderer._current_message_id is not None
+            )
+
+            if had_content:
+                with contextlib.suppress(TelegramAPIError):
+                    await self._active_renderer.notify()
+
             with contextlib.suppress(TelegramAPIError):
                 await self._bot.send_message(
                     chat_id,
                     f"⚠️ Error: {e!s}",
                     parse_mode=None,
+                    disable_notification=True,
                 )
+            else:
+                with contextlib.suppress(TelegramAPIError):
+                    await self._bot.send_message(
+                        chat_id,
+                        f"⚠️ Error: {e!s}",
+                        parse_mode=None,
+                    )
 
         finally:
             self._is_processing = False
