@@ -147,13 +147,6 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 **Complexity**: Medium
 **Description**: Accept image and audio messages from the Telegram channel and forward them to the agent for processing. Currently the Telegram handler only accepts text messages and silently ignores all other content types. This delta adds support for photos, voice messages, and audio files, forwarding them to the agent as multimodal input for processing.
 
-### DLT-036: Auto-close idle sessions
-**Status**: ✗ Defined
-**Depends on**: None
-**Priority**: 1 (Critical)
-**Complexity**: Easy
-**Description**: Automatically close a session after a configurable period of inactivity so that post-processing (memory extraction, context updates, git commit) triggers without requiring the user to explicitly end the conversation or wait for a topic shift. The idle timeout is measured from the last message exchange and is configurable via the application settings. This complements boundary-detection-based session closing by handling the case where a conversation simply trails off.
-
 ### DLT-037: Ensure Telegram push notifications for streamed responses
 **Status**: ✗ Defined
 **Depends on**: None

@@ -69,6 +69,28 @@ class TestSettingsModel:
 
         assert settings.agent.session_resume_window == 3600
 
+    def test_default_session_idle_timeout(self) -> None:
+        """AC (DLT-036): agent.session_idle_timeout defaults to 900 (15 min)."""
+        settings = Settings()
+
+        assert settings.agent.session_idle_timeout == 900
+
+    def test_session_idle_timeout_zero_accepted(self) -> None:
+        """AC (DLT-036): agent.session_idle_timeout = 0 disables idle close."""
+        settings = Settings.model_validate({
+            "agent": {"session_idle_timeout": 0},
+        })
+
+        assert settings.agent.session_idle_timeout == 0
+
+    def test_session_idle_timeout_from_toml(self) -> None:
+        """AC (DLT-036): agent.session_idle_timeout loads from TOML."""
+        settings = Settings.model_validate({
+            "agent": {"session_idle_timeout": 600},
+        })
+
+        assert settings.agent.session_idle_timeout == 600
+
     def test_default_agent_env_is_empty_dict(self) -> None:
         """AC: agent.env defaults to empty dict."""
         settings = Settings()
@@ -205,6 +227,18 @@ class TestDefaultConfigGeneration:
         # Should be formatted as int, not quoted string
         assert "session_resume_window = 86400" in content
         assert 'session_resume_window = "86400"' not in content
+
+    def test_generated_file_contains_session_idle_timeout(self, tmp_path: Path) -> None:
+        """AC (DLT-036): Generated file contains session_idle_timeout with int format."""
+        config_path = tmp_path / "config.toml"
+        _generate_default_config(config_path)
+
+        content = config_path.read_text()
+
+        assert "session_idle_timeout" in content
+        # Should be formatted as int, not quoted string
+        assert "session_idle_timeout = 900" in content
+        assert 'session_idle_timeout = "900"' not in content
 
     def test_creates_parent_directories(self, tmp_path: Path) -> None:
         """AC (R4): Missing directory is created before writing."""
