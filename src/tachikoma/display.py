@@ -56,11 +56,10 @@ _TOOL_AGGREGATE: dict[str, Callable[[int], str]] = {
 def _format_bash_summary(tool_input: dict[str, Any]) -> str:
     """Format Bash tool summary with preference for description over command."""
     # Prefer description field (first char lowercased for sentence flow)
-    if "description" in tool_input:
+    if tool_input.get("description"):
         desc = tool_input["description"]
-        if desc:
-            # Lowercase first character, preserve rest (proper nouns, paths)
-            return desc[0].lower() + desc[1:] if len(desc) > 1 else desc.lower()
+        # Lowercase first character, preserve rest (proper nouns, paths)
+        return desc[0].lower() + desc[1:] if len(desc) > 1 else desc.lower()
 
     # Fall back to truncated command
     if "command" in tool_input:

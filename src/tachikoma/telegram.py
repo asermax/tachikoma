@@ -26,7 +26,7 @@ from telegramify_markdown import convert
 from tachikoma.bootstrap import BootstrapContext, BootstrapError
 from tachikoma.config import TelegramSettings
 from tachikoma.coordinator import Coordinator
-from tachikoma.display import TOOL_DISPLAY
+from tachikoma.display import TOOL_DISPLAY, summarize_tool_activity
 from tachikoma.events import Error, Result, Status, TextChunk, ToolActivity
 from tachikoma.tasks.events import SessionTaskReady, TaskNotification
 
@@ -53,8 +53,7 @@ class ResponseRenderer:
         self._current_message_id: int | None = None
         self._buffer: str = ""
         self._tool_line: str | None = None
-        self._had_tools: bool = False
-        self._tools_marker_inserted: bool = False
+        self._tool_activities: list[ToolActivity] = []
         self._last_edit_time: float = 0.0
         self._message_count: int = 0
 
@@ -66,8 +65,7 @@ class ResponseRenderer:
         self._current_message_id = None
         self._buffer = ""
         self._tool_line = None
-        self._had_tools = False
-        self._tools_marker_inserted = False
+        self._tool_activities = []
         self._last_edit_time = 0.0
         # Note: _message_count is NOT reset - it tracks total messages
         # for the entire response cycle including buffered messages
@@ -91,13 +89,14 @@ class ResponseRenderer:
     async def handle_text(self, chunk: str) -> None:
         """Handle a TextChunk event by appending to buffer and scheduling edit."""
         # If we had tools and this is the first text after them,
-        # insert the "Ran tools" marker
-        if self._had_tools and not self._tools_marker_inserted:
+        # insert the summary marker
+        if self._tool_activities:
             if self._buffer and not self._buffer.endswith("\n"):
                 self._buffer += "\n"
 
-            self._buffer += "_🔧 Ran tools_\n"
-            self._tools_marker_inserted = True
+            summary = summarize_tool_activity(self._tool_activities)
+            self._buffer += f"_🔧 {summary}_\n"
+            self._tool_activities = []  # Clear — each transition gets independent summary
             self._tool_line = None  # Clear tool line - marker replaces it
 
         self._buffer += chunk
@@ -105,11 +104,13 @@ class ResponseRenderer:
 
     async def handle_tool(self, activity: ToolActivity) -> None:
         """Handle a ToolActivity event by setting the tool line."""
+        # Append activity for summary generation at tool→text transition
+        self._tool_activities.append(activity)
+
+        # Update live tool line display
         display_fn = TOOL_DISPLAY.get(activity.tool_name)
         label = display_fn(activity.tool_input) if display_fn else f"{activity.tool_name}..."
         self._tool_line = f"_{label}_"
-        self._had_tools = True
-        self._tools_marker_inserted = False
         await self._flush(force=False)
 
     async def handle_error(self, error: Error) -> None:
@@ -131,6 +132,7 @@ class ResponseRenderer:
     async def finalize(self) -> None:
         """Send the final state of the current message, bypassing throttle."""
         self._tool_line = None
+        self._tool_activities = []  # Clear for shutdown safety
         await self._flush(force=True)
 
     async def _flush(self, force: bool = False) -> None:
