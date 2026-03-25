@@ -44,8 +44,6 @@ def merge_env(config_env: dict[str, str]) -> dict[str, str]:
 
     if collisions:
         keys = ", ".join(sorted(collisions))
-        raise ValueError(
-            f"[agent.env] contains reserved keys: {keys}"
-        )
+        raise ValueError(f"[agent.env] contains reserved keys: {keys}")
 
     return {**HARDCODED_ENV, **config_env}

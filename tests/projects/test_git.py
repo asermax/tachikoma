@@ -55,9 +55,7 @@ class AsyncSubprocessMock:
 class TestListSubmodules:
     """Tests for list_submodules function."""
 
-    async def test_returns_empty_list_when_no_submodules(
-        self, workspace: Path
-    ) -> None:
+    async def test_returns_empty_list_when_no_submodules(self, workspace: Path) -> None:
         """Returns empty list when git submodule status returns nothing."""
         with patch(
             "asyncio.create_subprocess_exec",
@@ -115,13 +113,14 @@ class TestInitSubmodule:
 
     async def test_raises_on_nonzero_exit(self, workspace: Path) -> None:
         """Raises RuntimeError when git fails."""
-        with patch(
-            "asyncio.create_subprocess_exec",
-            new_callable=AsyncMock,
-            return_value=AsyncSubprocessMock(
-                returncode=1, stderr=b"submodule not found"
+        with (
+            patch(
+                "asyncio.create_subprocess_exec",
+                new_callable=AsyncMock,
+                return_value=AsyncSubprocessMock(returncode=1, stderr=b"submodule not found"),
             ),
-        ), pytest.raises(RuntimeError, match="git submodule update --init .* failed"):
+            pytest.raises(RuntimeError, match="git submodule update --init .* failed"),
+        ):
             await init_submodule(workspace, "projects/my-app")
 
 
@@ -134,23 +133,17 @@ class TestResolveDefaultBranch:
         with patch(
             "asyncio.create_subprocess_exec",
             new_callable=AsyncMock,
-            return_value=AsyncSubprocessMock(
-                returncode=0, stdout=b"refs/remotes/origin/main\n"
-            ),
+            return_value=AsyncSubprocessMock(returncode=0, stdout=b"refs/remotes/origin/main\n"),
         ):
             result = await resolve_default_branch(submodule_path)
             assert result == "main"
 
-    async def test_resolves_master_from_symbolic_ref(
-        self, submodule_path: Path
-    ) -> None:
+    async def test_resolves_master_from_symbolic_ref(self, submodule_path: Path) -> None:
         """Resolves master branch from git symbolic-ref output."""
         with patch(
             "asyncio.create_subprocess_exec",
             new_callable=AsyncMock,
-            return_value=AsyncSubprocessMock(
-                returncode=0, stdout=b"refs/remotes/origin/master\n"
-            ),
+            return_value=AsyncSubprocessMock(returncode=0, stdout=b"refs/remotes/origin/master\n"),
         ):
             result = await resolve_default_branch(submodule_path)
             assert result == "master"
@@ -160,9 +153,7 @@ class TestResolveDefaultBranch:
         # First call (symbolic-ref) fails, second call (remote show) succeeds
         calls = [
             AsyncSubprocessMock(returncode=1),
-            AsyncSubprocessMock(
-                returncode=0, stdout=b"HEAD branch: develop\nother output\n"
-            ),
+            AsyncSubprocessMock(returncode=0, stdout=b"HEAD branch: develop\nother output\n"),
         ]
         call_count = [0]
 
@@ -175,9 +166,7 @@ class TestResolveDefaultBranch:
             result = await resolve_default_branch(submodule_path)
             assert result == "develop"
 
-    async def test_returns_main_as_final_fallback(
-        self, submodule_path: Path
-    ) -> None:
+    async def test_returns_main_as_final_fallback(self, submodule_path: Path) -> None:
         """Returns 'main' when both methods fail."""
         with patch(
             "asyncio.create_subprocess_exec",
@@ -203,11 +192,14 @@ class TestCheckoutBranch:
 
     async def test_raises_on_nonzero_exit(self, submodule_path: Path) -> None:
         """Raises RuntimeError when git fails."""
-        with patch(
-            "asyncio.create_subprocess_exec",
-            new_callable=AsyncMock,
-            return_value=AsyncSubprocessMock(returncode=1, stderr=b"branch not found"),
-        ), pytest.raises(RuntimeError, match="git checkout .* failed"):
+        with (
+            patch(
+                "asyncio.create_subprocess_exec",
+                new_callable=AsyncMock,
+                return_value=AsyncSubprocessMock(returncode=1, stderr=b"branch not found"),
+            ),
+            pytest.raises(RuntimeError, match="git checkout .* failed"),
+        ):
             await checkout_branch(submodule_path, "nonexistent")
 
 
@@ -226,11 +218,14 @@ class TestFetch:
 
     async def test_raises_on_nonzero_exit(self, submodule_path: Path) -> None:
         """Raises RuntimeError when git fails."""
-        with patch(
-            "asyncio.create_subprocess_exec",
-            new_callable=AsyncMock,
-            return_value=AsyncSubprocessMock(returncode=1, stderr=b"network error"),
-        ), pytest.raises(RuntimeError, match="git fetch failed"):
+        with (
+            patch(
+                "asyncio.create_subprocess_exec",
+                new_callable=AsyncMock,
+                return_value=AsyncSubprocessMock(returncode=1, stderr=b"network error"),
+            ),
+            pytest.raises(RuntimeError, match="git fetch failed"),
+        ):
             await fetch(submodule_path)
 
 
@@ -249,11 +244,14 @@ class TestPull:
 
     async def test_raises_on_nonzero_exit(self, submodule_path: Path) -> None:
         """Raises RuntimeError when git fails."""
-        with patch(
-            "asyncio.create_subprocess_exec",
-            new_callable=AsyncMock,
-            return_value=AsyncSubprocessMock(returncode=1, stderr=b"merge conflict"),
-        ), pytest.raises(RuntimeError, match="git pull failed"):
+        with (
+            patch(
+                "asyncio.create_subprocess_exec",
+                new_callable=AsyncMock,
+                return_value=AsyncSubprocessMock(returncode=1, stderr=b"merge conflict"),
+            ),
+            pytest.raises(RuntimeError, match="git pull failed"),
+        ):
             await pull(submodule_path)
 
 
@@ -297,13 +295,14 @@ class TestPush:
 
     async def test_raises_on_nonzero_exit(self, submodule_path: Path) -> None:
         """Raises RuntimeError when git fails."""
-        with patch(
-            "asyncio.create_subprocess_exec",
-            new_callable=AsyncMock,
-            return_value=AsyncSubprocessMock(
-                returncode=1, stderr=b"non-fast-forward"
+        with (
+            patch(
+                "asyncio.create_subprocess_exec",
+                new_callable=AsyncMock,
+                return_value=AsyncSubprocessMock(returncode=1, stderr=b"non-fast-forward"),
             ),
-        ), pytest.raises(RuntimeError, match="git push failed"):
+            pytest.raises(RuntimeError, match="git push failed"),
+        ):
             await push(submodule_path)
 
 
@@ -322,11 +321,14 @@ class TestAddSubmodule:
 
     async def test_raises_on_nonzero_exit(self, workspace: Path) -> None:
         """Raises RuntimeError when git fails."""
-        with patch(
-            "asyncio.create_subprocess_exec",
-            new_callable=AsyncMock,
-            return_value=AsyncSubprocessMock(returncode=1, stderr=b"already exists"),
-        ), pytest.raises(RuntimeError, match="git submodule add .* failed"):
+        with (
+            patch(
+                "asyncio.create_subprocess_exec",
+                new_callable=AsyncMock,
+                return_value=AsyncSubprocessMock(returncode=1, stderr=b"already exists"),
+            ),
+            pytest.raises(RuntimeError, match="git submodule add .* failed"),
+        ):
             await add_submodule(workspace, "my-app", "git@github.com:user/repo.git")
 
 
@@ -355,11 +357,14 @@ class TestRemoveSubmodule:
 
     async def test_raises_on_deinit_failure(self, workspace: Path) -> None:
         """Raises RuntimeError when git submodule deinit fails."""
-        with patch(
-            "asyncio.create_subprocess_exec",
-            new_callable=AsyncMock,
-            return_value=AsyncSubprocessMock(returncode=1, stderr=b"not initialized"),
-        ), pytest.raises(RuntimeError, match="git submodule deinit .* failed"):
+        with (
+            patch(
+                "asyncio.create_subprocess_exec",
+                new_callable=AsyncMock,
+                return_value=AsyncSubprocessMock(returncode=1, stderr=b"not initialized"),
+            ),
+            pytest.raises(RuntimeError, match="git submodule deinit .* failed"),
+        ):
             await remove_submodule(workspace, "my-app")
 
 
@@ -377,9 +382,7 @@ class TestCurrentBranch:
             result = await current_branch(submodule_path)
             assert result == "main"
 
-    async def test_returns_none_on_detached_head(
-        self, submodule_path: Path
-    ) -> None:
+    async def test_returns_none_on_detached_head(self, submodule_path: Path) -> None:
         """Returns None when in detached HEAD state."""
         with patch(
             "asyncio.create_subprocess_exec",
@@ -389,9 +392,7 @@ class TestCurrentBranch:
             result = await current_branch(submodule_path)
             assert result is None
 
-    async def test_returns_none_on_empty_output(
-        self, submodule_path: Path
-    ) -> None:
+    async def test_returns_none_on_empty_output(self, submodule_path: Path) -> None:
         """Returns None when output is empty."""
         with patch(
             "asyncio.create_subprocess_exec",
@@ -441,17 +442,13 @@ class TestHasUncommittedChangesDetail:
             result = await has_uncommitted_changes_detail(submodule_path)
             assert result is None
 
-    async def test_returns_status_output_when_dirty(
-        self, submodule_path: Path
-    ) -> None:
+    async def test_returns_status_output_when_dirty(self, submodule_path: Path) -> None:
         """Returns status output when there are uncommitted changes."""
         status_output = "M file.txt\n?? new_file.py\n"
         with patch(
             "asyncio.create_subprocess_exec",
             new_callable=AsyncMock,
-            return_value=AsyncSubprocessMock(
-                returncode=0, stdout=status_output.encode()
-            ),
+            return_value=AsyncSubprocessMock(returncode=0, stdout=status_output.encode()),
         ):
             result = await has_uncommitted_changes_detail(submodule_path)
             assert result == status_output.strip()

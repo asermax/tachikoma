@@ -106,11 +106,7 @@ class ResponseRenderer:
     async def handle_tool(self, activity: ToolActivity) -> None:
         """Handle a ToolActivity event by setting the tool line."""
         display_fn = TOOL_DISPLAY.get(activity.tool_name)
-        label = (
-            display_fn(activity.tool_input)
-            if display_fn
-            else f"{activity.tool_name}..."
-        )
+        label = display_fn(activity.tool_input) if display_fn else f"{activity.tool_name}..."
         self._tool_line = f"_{label}_"
         self._had_tools = True
         self._tools_marker_inserted = False
@@ -587,4 +583,3 @@ async def telegram_hook(ctx: BootstrapContext) -> None:
         finally:
             # Always close the bot session
             await bot.session.close()
-

@@ -122,9 +122,7 @@ async def background_task_runner(
                 )
 
             # Prune completed tasks
-            completed = [
-                inst_id for inst_id, task in running_tasks.items() if task.done()
-            ]
+            completed = [inst_id for inst_id, task in running_tasks.items() if task.done()]
             for inst_id in completed:
                 task = running_tasks.pop(inst_id)
                 # Check for exceptions
@@ -521,7 +519,9 @@ class BackgroundTaskExecutor:
             # Notify on success if definition.notify is set
             should_notify = True
             notification_message = await self._generate_notification(
-                sdk_session_id, definition.notify, fallback=message,
+                sdk_session_id,
+                definition.notify,
+                fallback=message,
             )
 
         if not should_notify:

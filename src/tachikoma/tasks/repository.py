@@ -62,27 +62,21 @@ class TaskRepository:
             return record.to_domain()
 
         except Exception as exc:
-            raise TaskRepositoryError(
-                f"Failed to create task definition {definition.id}"
-            ) from exc
+            raise TaskRepositoryError(f"Failed to create task definition {definition.id}") from exc
 
     async def get_definition(self, definition_id: str) -> TaskDefinition | None:
         """Return the task definition with the given ID, or None if not found."""
         try:
             async with self._session_factory() as db:
                 result = await db.execute(
-                    select(TaskDefinitionRecord).where(
-                        TaskDefinitionRecord.id == definition_id
-                    )
+                    select(TaskDefinitionRecord).where(TaskDefinitionRecord.id == definition_id)
                 )
                 record = result.scalar_one_or_none()
 
             return record.to_domain() if record is not None else None
 
         except Exception as exc:
-            raise TaskRepositoryError(
-                f"Failed to get task definition {definition_id}"
-            ) from exc
+            raise TaskRepositoryError(f"Failed to get task definition {definition_id}") from exc
 
     async def list_definitions(self) -> list[TaskDefinition]:
         """Return all task definitions."""
@@ -137,9 +131,7 @@ class TaskRepository:
         try:
             async with self._session_factory() as db:
                 result = await db.execute(
-                    select(TaskDefinitionRecord).where(
-                        TaskDefinitionRecord.id == definition_id
-                    )
+                    select(TaskDefinitionRecord).where(TaskDefinitionRecord.id == definition_id)
                 )
                 record = result.scalar_one_or_none()
 
@@ -155,18 +147,14 @@ class TaskRepository:
                 await db.commit()
 
         except Exception as exc:
-            raise TaskRepositoryError(
-                f"Failed to update task definition {definition_id}"
-            ) from exc
+            raise TaskRepositoryError(f"Failed to update task definition {definition_id}") from exc
 
     async def delete_definition(self, definition_id: str) -> bool:
         """Delete a task definition by ID. Returns True if deleted."""
         try:
             async with self._session_factory() as db:
                 result = await db.execute(
-                    select(TaskDefinitionRecord).where(
-                        TaskDefinitionRecord.id == definition_id
-                    )
+                    select(TaskDefinitionRecord).where(TaskDefinitionRecord.id == definition_id)
                 )
                 record = result.scalar_one_or_none()
 
@@ -179,9 +167,7 @@ class TaskRepository:
             return True
 
         except Exception as exc:
-            raise TaskRepositoryError(
-                f"Failed to delete task definition {definition_id}"
-            ) from exc
+            raise TaskRepositoryError(f"Failed to delete task definition {definition_id}") from exc
 
     # ------------------------------------------------------------------
     # Instance CRUD operations
@@ -210,18 +196,14 @@ class TaskRepository:
             return record.to_domain()
 
         except Exception as exc:
-            raise TaskRepositoryError(
-                f"Failed to create task instance {instance.id}"
-            ) from exc
+            raise TaskRepositoryError(f"Failed to create task instance {instance.id}") from exc
 
     async def get_instance(self, instance_id: str) -> TaskInstance | None:
         """Return the task instance with the given ID, or None if not found."""
         try:
             async with self._session_factory() as db:
                 result = await db.execute(
-                    select(TaskInstanceRecord).where(
-                        TaskInstanceRecord.id == instance_id
-                    )
+                    select(TaskInstanceRecord).where(TaskInstanceRecord.id == instance_id)
                 )
                 record = result.scalar_one_or_none()
 
@@ -244,13 +226,9 @@ class TaskRepository:
             return [r.to_domain() for r in records]
 
         except Exception as exc:
-            raise TaskRepositoryError(
-                f"Failed to get pending {task_type} instances"
-            ) from exc
+            raise TaskRepositoryError(f"Failed to get pending {task_type} instances") from exc
 
-    async def get_active_instance_for_definition(
-        self, definition_id: str
-    ) -> TaskInstance | None:
+    async def get_active_instance_for_definition(self, definition_id: str) -> TaskInstance | None:
         """Return pending or running instance for a definition, if any exists.
 
         Used for duplicate prevention — only one active instance per definition.
@@ -281,9 +259,7 @@ class TaskRepository:
         try:
             async with self._session_factory() as db:
                 result = await db.execute(
-                    select(TaskInstanceRecord).where(
-                        TaskInstanceRecord.id == instance_id
-                    )
+                    select(TaskInstanceRecord).where(TaskInstanceRecord.id == instance_id)
                 )
                 record = result.scalar_one_or_none()
 
@@ -296,9 +272,7 @@ class TaskRepository:
                 await db.commit()
 
         except Exception as exc:
-            raise TaskRepositoryError(
-                f"Failed to update task instance {instance_id}"
-            ) from exc
+            raise TaskRepositoryError(f"Failed to update task instance {instance_id}") from exc
 
     async def delete_instance(self, instance_id: str) -> bool:
         """Delete a task instance by ID. Returns True if deleted.
@@ -308,9 +282,7 @@ class TaskRepository:
         try:
             async with self._session_factory() as db:
                 result = await db.execute(
-                    select(TaskInstanceRecord).where(
-                        TaskInstanceRecord.id == instance_id
-                    )
+                    select(TaskInstanceRecord).where(TaskInstanceRecord.id == instance_id)
                 )
                 record = result.scalar_one_or_none()
 
@@ -323,9 +295,7 @@ class TaskRepository:
             return True
 
         except Exception as exc:
-            raise TaskRepositoryError(
-                f"Failed to delete task instance {instance_id}"
-            ) from exc
+            raise TaskRepositoryError(f"Failed to delete task instance {instance_id}") from exc
 
     async def mark_running_as_failed(self, reason: str) -> int:
         """Mark all running instances as failed with the given reason.
@@ -339,9 +309,7 @@ class TaskRepository:
             count = 0
             async with self._session_factory() as db:
                 result = await db.execute(
-                    select(TaskInstanceRecord).where(
-                        TaskInstanceRecord.status == "running"
-                    )
+                    select(TaskInstanceRecord).where(TaskInstanceRecord.status == "running")
                 )
                 records = result.scalars().all()
 

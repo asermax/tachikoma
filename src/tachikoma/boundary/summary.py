@@ -35,9 +35,7 @@ class SummaryProcessor(MessagePostProcessor):
         self._registry = registry
         self._agent_defaults = agent_defaults
 
-    async def process(
-        self, session: Session, user_message: str, agent_response: str
-    ) -> None:
+    async def process(self, session: Session, user_message: str, agent_response: str) -> None:
         """Generate or update the rolling conversation summary.
 
         Args:

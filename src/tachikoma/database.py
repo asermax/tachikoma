@@ -98,25 +98,16 @@ class Database:
                 text("SELECT * FROM pragma_table_info('sessions') WHERE name='summary'")
             )
             if result.fetchone() is None:
-                await conn.execute(
-                    text("ALTER TABLE sessions ADD COLUMN summary TEXT")
-                )
+                await conn.execute(text("ALTER TABLE sessions ADD COLUMN summary TEXT"))
                 _log.info("Schema migration: added 'summary' column to sessions table")
 
             # Check if last_resumed_at column exists on sessions table (added in DLT-028)
             result = await conn.execute(
-                text(
-                    "SELECT * FROM pragma_table_info('sessions')"
-                    " WHERE name='last_resumed_at'"
-                )
+                text("SELECT * FROM pragma_table_info('sessions') WHERE name='last_resumed_at'")
             )
             if result.fetchone() is None:
-                await conn.execute(
-                    text("ALTER TABLE sessions ADD COLUMN last_resumed_at DATETIME")
-                )
-                _log.info(
-                    "Schema migration: added 'last_resumed_at' column to sessions table"
-                )
+                await conn.execute(text("ALTER TABLE sessions ADD COLUMN last_resumed_at DATETIME"))
+                _log.info("Schema migration: added 'last_resumed_at' column to sessions table")
 
             # Check if session_resumptions table exists (added in DLT-028)
             result = await conn.execute(

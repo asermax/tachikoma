@@ -128,9 +128,7 @@ async def instance_generator(
                         continue
 
                     # Duplicate prevention: check for existing pending/running instance
-                    active = await repository.get_active_instance_for_definition(
-                        definition.id
-                    )
+                    active = await repository.get_active_instance_for_definition(definition.id)
                     if active is not None:
                         _log.debug(
                             "Skipping {name} - already has active instance {inst_id}",
@@ -163,7 +161,9 @@ async def instance_generator(
 
                     if schedule.type == "once":
                         await repository.update_definition(
-                            definition.id, last_fired_at=now_utc, enabled=False,
+                            definition.id,
+                            last_fired_at=now_utc,
+                            enabled=False,
                         )
                         _log.info(
                             "Auto-disabled one-shot definition {name}",
@@ -171,7 +171,8 @@ async def instance_generator(
                         )
                     else:
                         await repository.update_definition(
-                            definition.id, last_fired_at=now_utc,
+                            definition.id,
+                            last_fired_at=now_utc,
                         )
 
                 except Exception as exc:

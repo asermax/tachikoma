@@ -429,7 +429,10 @@ class TestTelegramChannelStdinShutdown:
     @patch("tachikoma.telegram.termios")
     @patch("tachikoma.telegram.sys")
     async def test_q_keypress_stops_polling(
-        self, mock_sys: MagicMock, mock_termios: MagicMock, mock_tty: MagicMock,
+        self,
+        mock_sys: MagicMock,
+        mock_termios: MagicMock,
+        mock_tty: MagicMock,
     ) -> None:
         """Pressing 'q' triggers stop_polling()."""
         channel = self._make_channel()
@@ -467,7 +470,10 @@ class TestTelegramChannelStdinShutdown:
     @patch("tachikoma.telegram.termios")
     @patch("tachikoma.telegram.sys")
     async def test_q_uppercase_stops_polling(
-        self, mock_sys: MagicMock, mock_termios: MagicMock, mock_tty: MagicMock,
+        self,
+        mock_sys: MagicMock,
+        mock_termios: MagicMock,
+        mock_tty: MagicMock,
     ) -> None:
         """Pressing 'Q' (uppercase) also triggers stop_polling()."""
         channel = self._make_channel()
@@ -503,7 +509,10 @@ class TestTelegramChannelStdinShutdown:
     @patch("tachikoma.telegram.termios")
     @patch("tachikoma.telegram.sys")
     async def test_non_q_keypress_does_not_stop(
-        self, mock_sys: MagicMock, mock_termios: MagicMock, mock_tty: MagicMock,
+        self,
+        mock_sys: MagicMock,
+        mock_termios: MagicMock,
+        mock_tty: MagicMock,
     ) -> None:
         """Pressing a non-q key does not trigger shutdown."""
         channel = self._make_channel()
@@ -539,7 +548,10 @@ class TestTelegramChannelStdinShutdown:
     @patch("tachikoma.telegram.termios")
     @patch("tachikoma.telegram.sys")
     async def test_stdin_not_tty_skips_reader(
-        self, mock_sys: MagicMock, mock_termios: MagicMock, mock_tty: MagicMock,
+        self,
+        mock_sys: MagicMock,
+        mock_termios: MagicMock,
+        mock_tty: MagicMock,
     ) -> None:
         """Non-TTY stdin skips reader and terminal setup."""
         channel = self._make_channel()
@@ -562,7 +574,10 @@ class TestTelegramChannelStdinShutdown:
     @patch("tachikoma.telegram.termios")
     @patch("tachikoma.telegram.sys")
     async def test_terminal_restored_on_exit(
-        self, mock_sys: MagicMock, mock_termios: MagicMock, mock_tty: MagicMock,
+        self,
+        mock_sys: MagicMock,
+        mock_termios: MagicMock,
+        mock_tty: MagicMock,
     ) -> None:
         """Terminal settings are restored in the finally block."""
         channel = self._make_channel()
@@ -592,7 +607,10 @@ class TestTelegramChannelStdinShutdown:
     @patch("tachikoma.telegram.termios")
     @patch("tachikoma.telegram.sys")
     async def test_eof_on_stdin_removes_reader(
-        self, mock_sys: MagicMock, mock_termios: MagicMock, mock_tty: MagicMock,
+        self,
+        mock_sys: MagicMock,
+        mock_termios: MagicMock,
+        mock_tty: MagicMock,
     ) -> None:
         """EOF on stdin removes the reader to prevent busy-loop spin."""
         channel = self._make_channel()

@@ -58,6 +58,7 @@ class TestSummaryProcessor:
         mock_registry.update_summary = AsyncMock()
 
         expected_summary = "User discussed Python testing frameworks."
+
         async def fake_query(*args, **kwargs):
             yield AssistantMessage(
                 content=[TextBlock(text=expected_summary)],
@@ -71,9 +72,7 @@ class TestSummaryProcessor:
 
         await processor.process(session, "Tell me about pytest", "Pytest is...")
 
-        mock_registry.update_summary.assert_awaited_once_with(
-            session.id, expected_summary
-        )
+        mock_registry.update_summary.assert_awaited_once_with(session.id, expected_summary)
 
     async def test_handles_none_previous_summary(self, mocker: pytest.MockerFixture) -> None:
         """AC: First exchange (None summary) is handled correctly."""
@@ -151,6 +150,7 @@ class TestSummaryProcessor:
 
     async def test_propagates_query_errors(self, mocker: pytest.MockerFixture) -> None:
         """AC: SDK errors propagate to pipeline for error isolation."""
+
         async def failing_query(*args, **kwargs):
             raise RuntimeError("SDK error")
             yield  # make it a generator
