@@ -529,13 +529,13 @@ class TelegramChannel:
                 with contextlib.suppress(TelegramAPIError):
                     await self._active_renderer.notify()
 
-            with contextlib.suppress(TelegramAPIError):
-                await self._bot.send_message(
-                    chat_id,
-                    f"⚠️ Error: {e!s}",
-                    parse_mode=None,
-                    disable_notification=True,
-                )
+                with contextlib.suppress(TelegramAPIError):
+                    await self._bot.send_message(
+                        chat_id,
+                        f"⚠️ Error: {e!s}",
+                        parse_mode=None,
+                        disable_notification=True,
+                    )
             else:
                 with contextlib.suppress(TelegramAPIError):
                     await self._bot.send_message(
