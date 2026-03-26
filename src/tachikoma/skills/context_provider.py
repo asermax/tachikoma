@@ -67,7 +67,6 @@ class SkillsContextProvider(ContextProvider):
         self._registry = registry
 
     async def provide(self, message: str) -> ContextResult | None:
-        # S5: Check dirty flag and re-scan if needed (transparent to callers)
         self._registry.refresh()
 
         # R10: No-op when no skills exist in registry

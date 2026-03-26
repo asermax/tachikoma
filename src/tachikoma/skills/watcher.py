@@ -48,23 +48,17 @@ async def watch_skills(
     _log.info("Skills watcher started: path={path}", path=str(skills_path))
 
     try:
-        # awatch with debounce=5000ms coalesces burst changes (R9)
-        # rust_timeout=500ms ensures responsive cancellation during shutdown
         async for changes in awatch(
             skills_path,
             debounce=5000,
             rust_timeout=500,
-            # DefaultFilter (default) filters noise from hidden files, __pycache__, etc.
         ):
             _log.debug(
                 "Skills change detected: count={count}",
                 count=len(changes),
             )
 
-            # Mark registry for refresh on next provide() call
             registry.mark_dirty()
-
-            # Dispatch event for other consumers (R7)
             await bus.dispatch(SkillsChanged())
 
             _log.info(
@@ -78,11 +72,8 @@ async def watch_skills(
         raise
 
     except Exception as exc:
-        # Top-level exception handler prevents silent task death (S2)
-        # The watcher is a best-effort enhancement — log and exit gracefully
+        # Best-effort: registry keeps last known state, skills work but won't hot-reload
         _log.error(
             "Skills watcher encountered an error, stopping: err={err}",
             err=str(exc),
         )
-        # Registry retains its last known state — skills continue to work
-        # but won't hot-reload until application restart

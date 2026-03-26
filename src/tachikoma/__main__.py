@@ -197,7 +197,6 @@ async def main(
                 )
             )
 
-            # DLT-038: Watch skills directory for hot-reload
             scheduler_tasks.append(
                 asyncio.create_task(
                     watch_skills(
