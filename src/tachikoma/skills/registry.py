@@ -1,8 +1,14 @@
 """Skill registry for discovering and loading skills and their agents.
 
-The SkillRegistry scans the workspace/skills/ directory at initialization,
+The SkillRegistry scans multiple skill source directories at initialization,
 loading SKILL.md metadata and agent definitions from each skill's agents/
 subdirectory. All discovered agents are made available through get_agents().
+
+Sources are scanned in order with last-wins precedence: if a skill name appears
+in multiple sources, the later source completely replaces the earlier one
+(metadata, body, and agents). When marked dirty by a filesystem watcher, the
+registry re-scans all sources on the next refresh, using swap-on-success to
+preserve the previous state on failure.
 """
 
 from dataclasses import dataclass
@@ -41,7 +47,7 @@ class Skill:
 class SkillRegistry:
     """Discovers and loads skills and their agents at startup.
 
-    Skills are directory-based packages in workspace/skills/ containing:
+    Skills are directory-based packages in any of the source directories containing:
     - SKILL.md: Metadata file with YAML frontmatter (description, version)
     - agents/: Optional subdirectory with agent definition files (.md)
 
@@ -54,15 +60,21 @@ class SkillRegistry:
 
     Error handling is graceful: invalid skills/agents are logged as warnings
     and skipped, allowing the system to continue with valid entries.
+
+    Multiple sources are scanned in order with last-wins precedence: if a skill
+    name appears in multiple sources, the later source completely replaces the
+    earlier one (all metadata, body, and agents). When marked dirty by a
+    filesystem watcher, the registry re-scans all sources on the next refresh.
     """
 
-    def __init__(self, workspace_path: Path) -> None:
+    def __init__(self, skill_sources: list[Path]) -> None:
         self._agents: dict[str, AgentDefinition] = {}
         self._skills: dict[str, Skill] = {}
         self._dirty: bool = False
-        self._skills_path: Path = workspace_path / "skills"
+        self._skill_sources = skill_sources
 
-        self._discover(self._skills_path)
+        for source in skill_sources:
+            self._discover(source)
 
     def get_agents(self) -> dict[str, AgentDefinition]:
         """Return all discovered agents indexed by namespace.
@@ -123,7 +135,9 @@ class SkillRegistry:
         self._skills = {}
 
         try:
-            self._discover(self._skills_path)
+            for source in self._skill_sources:
+                self._discover(source)
+
             # Success — clear dirty flag
             self._dirty = False
         except Exception as exc:
@@ -215,6 +229,14 @@ class SkillRegistry:
             path=skill_dir,
             version=version_str,
         )
+
+        if name in self._skills:
+            prefix = f"{name}/"
+            for ns in [k for k in self._agents if k.startswith(prefix)]:
+                del self._agents[ns]
+
+            _log.debug("Replacing skill from earlier source: name={name}", name=name)
+
         self._skills[name] = skill
 
         _log.debug(

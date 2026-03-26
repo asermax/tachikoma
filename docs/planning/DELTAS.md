@@ -126,16 +126,9 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 **Complexity**: Medium
 **Description**: Replace the single hardcoded "Thinking..." status message with granular, component-driven status updates during pre-processing and post-processing. Each pipeline component (context providers, post-processors, boundary detection) reports what it is currently doing via a status callback, and the coordinator forwards these as Status events to the active channel. This gives users real-time visibility into what the assistant is doing behind the scenes (e.g., "Searching memories...", "Detecting topic shift...", "Extracting memories...") instead of a generic indicator.
 
-### DLT-032: Guide the assistant through skill authoring
-**Status**: ✗ Defined
-**Depends on**: None
-**Priority**: 2 (High)
-**Complexity**: Easy
-**Description**: Developers extending the system need the assistant to understand how to scaffold new skills correctly. Provide a built-in skill that activates when a user asks to create, define, or set up a new skill, injecting the full context the assistant needs — directory conventions, available capabilities, detection tuning guidance, and prompt-writing best practices — so it can produce well-structured skills without external documentation.
-
 ### DLT-033: Validate skill detection quality during authoring
 **Status**: ✗ Defined
-**Depends on**: DLT-032, DLT-015, DLT-054
+**Depends on**: DLT-015, DLT-054
 **Priority**: 4 (Low)
 **Complexity**: Medium
 **Description**: During skill authoring, the assistant needs to verify that a new skill's description triggers correctly on relevant messages. Provide a validation tool that runs the skill's description against synthetic messages via the evaluation framework to measure whether it triggers on relevant messages and avoids false matches, reporting precision/recall scores and actionable feedback. Results include suggestions so the assistant can iteratively refine the skill's description until it passes quality thresholds, closing the authoring feedback loop without manual testing. The tool is exposed on the skill authoring guide skill via the skill-provided MCP tools capability. This is distinct from the offline skill detection eval suite, which evolves the detection engine itself — this tool evolves individual skill descriptions to work well with the existing detection logic.
@@ -282,7 +275,7 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 
 ### DLT-057: Validate skill structure and metadata
 **Status**: ✗ Defined
-**Depends on**: DLT-032, DLT-054
+**Depends on**: DLT-054
 **Priority**: 3 (Medium)
 **Complexity**: Easy
 **Description**: Skill authoring requires that new skills conform to the system's directory conventions and metadata contracts, but violations are only caught at runtime when the registry silently skips invalid entries. Provide a validation tool that checks a skill's structural correctness: SKILL.md exists with a valid description, agent definition files in agents/ have required frontmatter fields (description) and valid optional fields (model literals, tools as string lists), and the directory layout follows expected patterns. Results include actionable diagnostics listing each violation so the assistant can fix issues before finalizing a new skill. The tool is exposed on the skill authoring guide skill via the skill-provided MCP tools capability.

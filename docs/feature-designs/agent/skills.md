@@ -33,54 +33,56 @@ The coordinator needs to make specialized sub-agents available to the SDK's orch
 
 ## Design Overview
 
-Six-component architecture: a bootstrap hook creates the directory structure and shared registry, the skill registry discovers and loads all skills and agents at startup (with runtime refresh support), a filesystem watcher monitors the skills directory for changes and marks the registry dirty, a skills context provider classifies relevance per-session (refreshing the registry first), the coordinator extracts detected agents from pipeline results, and the system prompt preamble provides static skill awareness independent of per-session detection.
+Seven-component architecture: a bootstrap hook creates the directory structure and shared registry, the skill registry discovers and loads all skills and agents at startup from multiple sources (with runtime refresh support), a filesystem watcher monitors the skills directory for changes and marks the registry dirty, a skills context provider (receiving the registry via injection) classifies relevance per-session (refreshing the registry first), the coordinator extracts detected agents from pipeline results, and the system prompt preamble provides awareness-level skill context independent of per-session detection.
 
 ```
-┌──────────────────────────────────────────────────────────┐
-│              Coordinator Layer                            │
-│  ┌────────────────────────────────────────────────┐      │
-│  │  Coordinator                                   │      │
-│  │  - Extracts detected agents from pipeline      │      │
-│  │  - Stores agents per-session                   │      │
-│  │  - Passes agents to ClaudeAgentOptions         │      │
-│  └────┬───────────────────────────────────────────┘      │
-├───────┼──────────────────────────────────────────────────┤
-│       │                                                  │
-│       ▼                                                  │
-│  ┌────────────────────────────────────────────────┐      │
-│  │  SkillsContextProvider (PreProcessing)         │      │
-│  │  - Refreshes registry before classification    │      │
-│  │  - Classifies relevance via LLM               │      │
-│  │  - Injects <skills> XML context block          │      │
-│  │  - Returns detected agents on ContextResult    │      │
-│  └────┬───────────────────────────────────────────┘      │
-├───────┼──────────────────────────────────────────────────┤
-│       │                                                  │
-│       ▼                                                  │
-│  ┌────────────────────┐  ┌─────────────────────────────┐ │
-│  │ Skill Registry     │  │ Watcher Task                │ │
-│  │ (bootstrap extras) │  │ (asyncio.Task)              │ │
-│  │                    │  │                             │ │
-│  │ - Discovers skills │  │ - awatch(skills/)           │ │
-│  │ - Loads agents     │  │ - Marks registry dirty      │ │
-│  │ - Refreshes on     │  │ - Dispatches SkillsChanged  │ │
-│  │   dirty flag       │  │ - 5s debounce               │ │
-│  └────┬───────────────┘  └─────────────────────────────┘ │
-├───────┼──────────────────────────────────────────────────┤
-│       │                                                  │
-│       ▼                                                  │
-│  ┌────────────────────────────────────────────────┐      │
-│  │  Skills Directory Structure                    │      │
-│  │  workspace/skills/                             │      │
-│  │  ├── skill-name/                               │      │
-│  │  │   ├── SKILL.md (metadata + body)            │      │
-│  │  │   └── agents/                               │      │
-│  │  │       ├── agent-1.md                        │      │
-│  │  │       └── agent-2.md                        │      │
-│  │  └── another-skill/                            │      │
-│  │      └── agents/                               │      │
-│  └────────────────────────────────────────────────┘      │
-└──────────────────────────────────────────────────────────┘
+┌────────────────────────────────────────────────────────────┐
+│              Coordinator Layer                              │
+│  ┌──────────────────────────────────────────────────┐      │
+│  │  Coordinator                                     │      │
+│  │  - Extracts detected agents from pipeline        │      │
+│  │  - Stores agents per-session                     │      │
+│  │  - Passes agents to ClaudeAgentOptions           │      │
+│  └────┬─────────────────────────────────────────────┘      │
+├───────┼────────────────────────────────────────────────────┤
+│       ▼                                                    │
+│  ┌──────────────────────────────────────────────────┐      │
+│  │  SkillsContextProvider (PreProcessing)           │      │
+│  │  - Refreshes registry before classification      │      │
+│  │  - Classifies relevance via LLM                  │      │
+│  │  - Injects <skills> XML context block            │      │
+│  │  - Returns detected agents on ContextResult      │      │
+│  │  - Receives SkillRegistry via injection          │      │
+│  └────┬─────────────────────────────────────────────┘      │
+├───────┼────────────────────────────────────────────────────┤
+│       ▼                                                    │
+│  ┌──────────────────────┐  ┌───────────────────────────┐   │
+│  │ Skill Registry       │  │ Watcher Task              │   │
+│  │ (multi-source,       │  │ (asyncio.Task)            │   │
+│  │  bootstrap extras)   │  │                           │   │
+│  │                      │  │ - awatch(skills/)         │   │
+│  │ - Discovers skills   │  │ - Marks registry dirty    │   │
+│  │   from all sources   │  │ - Dispatches SkillsChanged│   │
+│  │ - Loads agents       │  │ - 5s debounce             │   │
+│  │ - Last-wins on       │  │                           │   │
+│  │   collision          │  │                           │   │
+│  │ - Refreshes on       │  │                           │   │
+│  │   dirty flag         │  │                           │   │
+│  └────┬─────────────────┘  └───────────────────────────┘   │
+├───────┼────────────────────────────────────────────────────┤
+│       ▼                                                    │
+│  ┌──────────────────────────────────────────────────┐      │
+│  │  Skill Sources                                   │      │
+│  │  Built-in: src/tachikoma/skills/builtin/         │      │
+│  │  ├── skill-authoring-guide/                      │      │
+│  │  │   ├── SKILL.md                                │      │
+│  │  │   └── references/agents.md                    │      │
+│  │  Workspace: workspace/skills/                    │      │
+│  │  ├── custom-skill/                               │      │
+│  │  │   ├── SKILL.md                                │      │
+│  │  │   └── agents/*.md                             │      │
+│  └──────────────────────────────────────────────────┘      │
+└────────────────────────────────────────────────────────────┘
 ```
 
 ## Components
@@ -90,37 +92,50 @@ Six-component architecture: a bootstrap hook creates the directory structure and
 | Layer/Component | Responsibility | Key Decisions |
 |-----------------|----------------|---------------|
 | `src/tachikoma/skills/__init__.py` | Re-exports `SkillRegistry`, `Skill`, `SkillsChanged`, `SkillsContextProvider`, `skills_hook`, `watch_skills` | Package module for the skills subsystem |
-| `src/tachikoma/skills/registry.py` | `SkillRegistry` class: discovers skills, loads agents, builds agents dict, stores skill body and path; refreshes on dirty flag via swap-on-success; `Skill` dataclass for metadata (name from folder, description, version, body, path) | Uses `python-frontmatter` for parsing; constructs `AgentDefinition` directly; `mark_dirty()` for external callers, `refresh()` for dirty-check-and-rescan |
-| `src/tachikoma/skills/context_provider.py` | `SkillsContextProvider(ContextProvider)`: refreshes registry before classification, classifies relevant skills via standalone `query()` with Opus low effort (DES-007), reads skill body from registry's pre-loaded `Skill.body`, assembles `<skills>` XML block, returns detected agents via `ContextResult.agents` | Receives registry and `AgentDefaults` via constructor injection (shared from bootstrap extras); no tools for classification agent (pure reasoning); fully consumes query() generator (DES-005); `get_agents_for_skill()` on registry for agent filtering |
-| `src/tachikoma/skills/hooks.py` | `skills_hook` bootstrap callback: creates `workspace/skills/` directory and shared `SkillRegistry`, stored in `ctx.extras["skill_registry"]` | Follows DES-003 pattern (subsystem-owned hook); directory creation + registry creation |
+| `src/tachikoma/skills/registry.py` | `SkillRegistry` class: discovers skills from multiple sources, loads agents, builds agents dict, stores skill body and path; refreshes all sources on dirty flag via swap-on-success; `Skill` dataclass for metadata (name from folder, description, version, body, path) | Uses `python-frontmatter` for parsing; constructs `AgentDefinition` directly; multi-source with last-wins precedence; `mark_dirty()` for external callers, `refresh()` for dirty-check-and-rescan |
+| `src/tachikoma/skills/context_provider.py` | `SkillsContextProvider(ContextProvider)`: receives `SkillRegistry` via constructor injection, refreshes registry before classification, classifies relevant skills via standalone `query()` with Opus low effort (DES-007), reads skill body from registry's pre-loaded `Skill.body`, assembles `<skills>` XML block, returns detected agents via `ContextResult.agents` | Receives registry and `AgentDefaults` via constructor injection (shared from bootstrap extras); no tools for classification agent (pure reasoning); fully consumes query() generator (DES-005); `get_agents_for_skill()` on registry for agent filtering |
+| `src/tachikoma/skills/hooks.py` | `skills_hook` bootstrap callback: creates `workspace/skills/` directory, resolves built-in skills path, creates `SkillRegistry` with both sources, stores in `ctx.extras["skill_registry"]` | Follows DES-003 pattern; built-in path via `Path(__file__).parent / "builtin"`; graceful fallback if built-in missing |
 | `src/tachikoma/skills/watcher.py` | `watch_skills()` async function: monitors skills directory, marks registry dirty, dispatches `SkillsChanged` events; top-level exception handler prevents silent task death | Uses `watchfiles.awatch()` with 5s debounce and 500ms rust_timeout; relies on watchfiles' default filtering behavior (hidden files, `__pycache__` excluded) |
 | `src/tachikoma/skills/events.py` | `SkillsChanged(BaseEvent[None])`: typed event for skill change notification | Follows bubus event pattern (ADR-009); no payload — signals "something changed" |
-| `src/tachikoma/context/loading.py` (`SYSTEM_PREAMBLE`) | Static skills documentation in the system prompt preamble: location, structure, detection, management, and disambiguation from Claude Code's native skills | Part of the `SYSTEM_PREAMBLE` constant; loaded once at startup; independent of per-session detection; follows ADR-008 append pattern |
+| `src/tachikoma/context/loading.py` (`SYSTEM_PREAMBLE`) | Awareness-level skills documentation in the system prompt preamble: skills exist in `skills/` directory, auto-detected per session, can create/manage, distinct from Claude Code's native skills and slash commands. Structural details (SKILL.md format, agents/, YAML fields) are covered by the built-in authoring guide skill | Part of the `SYSTEM_PREAMBLE` constant; loaded once at startup; independent of per-session detection; follows ADR-008 append pattern |
 
 ### Cross-Layer Contracts
 
-**SkillsContextProvider → Pipeline → Coordinator contract:**
+**Bootstrap → Registry → Provider → Pipeline → Coordinator contract:**
 
-The provider refreshes the registry, classifies relevance, assembles skill content, and returns detected agents on `ContextResult`. The coordinator extracts agents from pipeline results and stores them per-session.
+The skills hook creates the registry during bootstrap and exposes it via extras. The provider receives the registry via injection, refreshes it, classifies relevance, assembles skill content, and returns detected agents on `ContextResult`. The coordinator extracts agents from pipeline results and stores them per-session.
 
 ```
-SkillsContextProvider(agent_defaults, registry)
+skills_hook(ctx)
     │
-    ├── receives SkillRegistry via constructor (from bootstrap extras)
-    ├── on provide(message):
-    │   ├── calls registry.refresh() (dirty check → re-scan if needed)
-    │   ├── loads skill names + descriptions from registry.skills
-    │   ├── classifies via query() [Opus low effort]
-    │   ├── reads skill.body from registry (pre-loaded or refreshed)
-    │   ├── filters agents via registry.get_agents_for_skill()
-    │   └── returns ContextResult(tag="skills", content=XML, agents=filtered_dict)
+    ├── workspace_skills_path = workspace_path / "skills"
+    ├── Creates workspace_skills_path directory (idempotent)
+    ├── Resolves builtin_path = Path(__file__).parent / "builtin"
+    │   ├─ Exists → include in sources
+    │   └─ Missing → log warning, skip
+    ├── Creates SkillRegistry([builtin_path, workspace_skills_path])
+    └── ctx.extras["skill_registry"] = registry
+
+__main__.py (after bootstrap.run())
     │
-    └── Pipeline collects results → Coordinator extracts agents
-            │
-            ▼
-    Coordinator._agents = merged agents from results
-            │
-            └── ClaudeAgentOptions(agents=self._agents)
+    ├── skill_registry = bootstrap.extras["skill_registry"]
+    └── SkillsContextProvider(agent_defaults, skill_registry)
+
+SkillsContextProvider.provide(message)
+    │
+    ├── Calls registry.refresh() (dirty check → re-scan all sources if needed)
+    ├── Loads skill names + descriptions from registry.skills
+    ├── Classifies via query() [Opus low effort, DES-007]
+    ├── Reads skill.body from registry (pre-loaded or refreshed)
+    ├── Filters agents via registry.get_agents_for_skill()
+    └── Returns ContextResult(tag="skills", content=XML, agents=filtered_dict)
+        │
+        └── Pipeline collects results → Coordinator extracts agents
+                │
+                ▼
+        Coordinator._agents = merged agents from results
+                │
+                └── ClaudeAgentOptions(agents=self._agents)
 ```
 
 **Watcher → Registry → EventBus contract:**
@@ -136,7 +151,10 @@ watch_skills(skills_path, registry, bus)
 ```
 
 **Integration Points:**
-- SkillRegistry ↔ filesystem: reads `SKILL.md` (with body) and agent markdown files from `workspace/skills/`
+- skills_hook ↔ Bootstrap: registered as standard hook (DES-003); creates `SkillRegistry`, writes `"skill_registry"` to extras
+- __main__.py ↔ extras: reads `"skill_registry"` after bootstrap; passes to provider constructor
+- SkillsContextProvider ↔ SkillRegistry: injected dependency; provider reads `skills` property and calls `get_agents_for_skill()`
+- SkillRegistry ↔ filesystem: scans each source path (built-in + workspace) for skill directories; reads `SKILL.md` and agent markdown files
 - SkillsContextProvider ↔ Pipeline: registers via `pipeline.register(provider)`; `provide(message)` called in parallel with memory provider
 - SkillsContextProvider ↔ SkillRegistry: shared — registry received via constructor from bootstrap extras; `refresh()` called before `skills` property access
 - SkillsContextProvider ↔ SDK: standalone `query()` call for classification (no tools, low effort, DES-007)
@@ -144,8 +162,8 @@ watch_skills(skills_path, registry, bus)
 - Watcher ↔ Registry: `mark_dirty()` — write-only, no return value
 - Watcher ↔ EventBus: `await bus.dispatch(SkillsChanged())` — awaited dispatch, no return value used
 - `__main__.py` ↔ Watcher: task creation/cancellation via `asyncio.create_task` / `task.cancel()`
-- Skills hook ↔ Bootstrap: registered as a standard bootstrap hook (DES-003); creates registry and stores in `ctx.extras`
-- SYSTEM_PREAMBLE ↔ Agent: the preamble includes a static Skills section so the agent has foundational skill awareness even when no skills are detected for the session; the `<skills>` XML block (injected by provider) is explicitly referenced as conditional
+- Skills hook ↔ Bootstrap: registered as a standard bootstrap hook (DES-003); creates registry with multi-source and stores in `ctx.extras`
+- SYSTEM_PREAMBLE ↔ Agent: the preamble includes an awareness-level Skills section (skills exist, auto-detected, can create/manage); structural details covered by built-in authoring guide skill
 
 ## Modeling
 
@@ -178,19 +196,20 @@ Skill (dataclass)
 └── path: Path (absolute path to skill directory)
 
 SkillRegistry
+├── __init__(skill_sources: list[Path])  # scans each source; last-wins on name collision
 ├── _agents: dict[str, AgentDefinition]
 ├── _skills: dict[str, Skill]
 ├── _dirty: bool                         (set by watcher, cleared by refresh)
-├── _skills_path: Path                   (stored for reuse during refresh)
+├── _skill_sources: list[Path]           (stored for reuse during refresh)
 ├── mark_dirty() → None                 (external API for watcher)
-├── refresh() → None                    (check dirty, re-discover if needed)
+├── refresh() → None                    (check dirty, re-discover all sources if needed)
 ├── get_agents() → dict[str, AgentDefinition]
 ├── get_agents_for_skill(skill_name: str) → dict[str, AgentDefinition]
 └── skills (property) → dict[str, Skill]
 
 SkillsContextProvider(ContextProvider)
-├── _registry: SkillRegistry     (received via constructor from bootstrap extras)
 ├── _agent_defaults: AgentDefaults
+├── _registry: SkillRegistry     (injected via constructor from bootstrap extras)
 └── provide(message: str) → ContextResult | None
     └── calls registry.refresh() at start
 
@@ -203,16 +222,17 @@ SkillsChanged(BaseEvent[None])
 ### Agent Discovery Process
 
 ```
-1. SkillRegistry receives workspace_path
-2. Resolves workspace_path / "skills"
-   ├─ Directory doesn't exist → return empty agents dict (valid state)
-   └─ Directory exists → proceed
-3. For each subdirectory in skills/:
+1. SkillRegistry receives skill_sources: list[Path]
+2. For each source path in skill_sources:
+   ├─ Directory doesn't exist → skip source (debug log, valid state)
+   └─ Directory exists → scan for skill subdirectories
+3. For each subdirectory in source:
    a. Check for SKILL.md
       ├─ Not found → log warning, skip directory
       └─ Found → parse YAML frontmatter
    b. Derive name from folder, validate description (required)
       ├─ Invalid → log warning, skip skill
+      ├─ Name collision with earlier source → remove earlier skill's agents, replace
       └─ Valid → store Skill metadata, proceed to agents
    c. Check for agents/ subdirectory
       ├─ Not found → valid skill with no agents, continue
@@ -222,15 +242,21 @@ SkillsChanged(BaseEvent[None])
       ├─ Validate (description required)
       ├─ Create AgentDefinition with namespace "skill-name/agent-name"
       └─ Add to agents dictionary
-4. Return complete agents dictionary
+4. Return complete skills and agents dictionaries
 ```
 
 ### Startup Integration
 
 ```
-1. Bootstrap runs skills hook
-   ├── Creates workspace/skills/ if missing (idempotent)
-   └── Creates SkillRegistry(workspace_path) → ctx.extras["skill_registry"]
+1. Bootstrap runs skills hook:
+   a. Creates workspace/skills/ directory (idempotent)
+   b. Resolves built-in path (Path(__file__).parent / "builtin")
+      ├─ Exists → include in sources
+      └─ Missing → log warning, omit
+   c. Creates SkillRegistry([builtin_path, workspace_skills_path])
+      → Registry scans built-in first, then workspace (last-wins precedence)
+      → Loads all SKILL.md files (including body and path) and agents/
+   d. Stores registry in ctx.extras["skill_registry"]
 2. __main__.py retrieves skill_registry from bootstrap.extras["skill_registry"]
 3. __main__.py creates SkillsContextProvider(agent_defaults, skill_registry)
    → Provider receives registry (does not create its own)
@@ -239,7 +265,7 @@ SkillsChanged(BaseEvent[None])
    asyncio.create_task(watch_skills(skills_path, skill_registry, bus), name="skills_watcher")
 6. Coordinator created without agents parameter
 7. Detection happens per-session via pre-processing pipeline:
-   → Provider calls registry.refresh() first (dirty check)
+   → Provider calls registry.refresh() first (dirty check → re-scan all sources)
    → Provider classifies relevance via LLM
    → Coordinator extracts detected agents from pipeline results
    → SDK sees only relevant agents for the session
@@ -330,18 +356,19 @@ SkillsChanged(BaseEvent[None])
 - Pro: Topic shifts trigger re-detection for the new context
 - Con: Adds LLM call per new session for classification (mitigated by Opus low effort)
 
-### Shared Registry via Bootstrap Extras
+### Registry Created by Bootstrap Hook with Provider Injection
 
-**Choice**: `SkillRegistry` is created in the bootstrap hook and stored in `ctx.extras["skill_registry"]`, shared between the provider and the filesystem watcher.
-**Why**: The registry is consumed by two components (provider and watcher). Follows the established pattern for shared resources — `database` and `session_registry` are both created during bootstrap and shared via extras. This reverses the previous "provider owns its registry" approach, which was appropriate when the provider was the sole consumer; the bootstrap extras pattern has since been standardized by other subsystems.
+**Choice**: The skills bootstrap hook creates the `SkillRegistry` with multi-source support and exposes it via `ctx.extras["skill_registry"]`, shared between the provider and the filesystem watcher. The provider receives it via constructor injection.
+**Why**: The hook needs to resolve multiple source paths (built-in + workspace) — an infrastructure concern that belongs in bootstrap. The provider is a consumer that shouldn't know about source paths. The registry is consumed by two components (provider and watcher), matching the established extras pattern used by database, session_registry, and task_repository.
 **Alternatives Considered**:
-- Provider owns registry internally (previous approach): Worked when provider was sole consumer; doesn't support watcher access without coupling
-- Registry created in `__main__.py`: Works but doesn't follow bootstrap pattern for subsystem initialization
+- Provider creates registry internally: Would require the provider to know about built-in paths, mixing infrastructure and consumption concerns; doesn't support watcher access without coupling
+- Module-level helper in registry.py: Keeps resolution near the registry but doesn't match the project's bootstrap extras pattern
 
 **Consequences**:
-- Pro: Consistent with existing shared-resource pattern (database, session_registry)
-- Pro: Clean separation — bootstrap creates, `__main__.py` wires
-- Con: Provider no longer self-contained (requires constructor injection)
+- Pro: Consistent with existing bootstrap → extras → consumer pattern
+- Pro: Provider becomes simpler — just uses the registry
+- Pro: Registry is available to other consumers (watcher for hot-reload)
+- Con: skills_hook gains more responsibility (directory creation + registry creation)
 
 ### Filesystem Watching with watchfiles
 
@@ -360,7 +387,7 @@ SkillsChanged(BaseEvent[None])
 
 ### Dirty Flag with Swap-on-Success Refresh
 
-**Choice**: Boolean dirty flag set by watcher, checked by provider. Refresh uses swap-on-success: save old references, re-discover into fresh dicts, restore on failure.
+**Choice**: Boolean dirty flag set by watcher, checked by provider. Refresh uses swap-on-success: save old references, re-discover all sources into fresh dicts, restore on failure.
 **Why**: Minimizes coupling — watcher only sets a flag, provider controls when to re-scan. Swap-on-success ensures valid state even if `_discover()` fails.
 
 **Consequences**:

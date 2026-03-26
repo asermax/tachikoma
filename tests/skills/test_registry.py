@@ -65,7 +65,7 @@ class TestSkillDiscovery:
         skills_dir = tmp_path / "workspace" / "skills"
         skills_dir.mkdir(parents=True)
 
-        registry = SkillRegistry(tmp_path / "workspace")
+        registry = SkillRegistry([skills_dir])
 
         assert registry.get_agents() == {}
         assert registry.skills == {}
@@ -75,7 +75,8 @@ class TestSkillDiscovery:
         workspace = tmp_path / "workspace"
         workspace.mkdir()
 
-        registry = SkillRegistry(workspace)
+        # Pass non-existent path — registry should handle gracefully
+        registry = SkillRegistry([workspace / "skills"])
 
         assert registry.get_agents() == {}
         assert registry.skills == {}
@@ -89,7 +90,7 @@ class TestSkillDiscovery:
         # Create a regular file (should be ignored)
         (skills_dir / "readme.txt").write_text("Not a skill")
 
-        registry = SkillRegistry(workspace)
+        registry = SkillRegistry([skills_dir])
 
         assert registry.get_agents() == {}
         assert registry.skills == {}
@@ -102,7 +103,7 @@ class TestSkillDiscovery:
 
         create_skill(skills_dir, "test-skill", "A test skill")
 
-        registry = SkillRegistry(workspace)
+        registry = SkillRegistry([skills_dir])
 
         assert "test-skill" in registry.skills
         assert registry.skills["test-skill"].description == "A test skill"
@@ -120,7 +121,7 @@ class TestSkillValidation:
         # Create directory without SKILL.md
         (skills_dir / "incomplete-skill").mkdir()
 
-        registry = SkillRegistry(workspace)
+        registry = SkillRegistry([skills_dir])
 
         assert registry.skills == {}
 
@@ -137,7 +138,7 @@ description: "A description"
 ---
 """)
 
-        registry = SkillRegistry(workspace)
+        registry = SkillRegistry([skills_dir])
 
         assert "test-skill" in registry.skills
         assert registry.skills["test-skill"].name == "test-skill"
@@ -155,7 +156,7 @@ description: ""
 ---
 """)
 
-        registry = SkillRegistry(workspace)
+        registry = SkillRegistry([skills_dir])
 
         assert registry.skills == {}
 
@@ -173,7 +174,7 @@ description: "A description"
 ---
 """)
 
-        registry = SkillRegistry(workspace)
+        registry = SkillRegistry([skills_dir])
 
         assert "folder-name" in registry.skills
         assert registry.skills["folder-name"].name == "folder-name"
@@ -192,7 +193,7 @@ description: "A description"
 ---
 """)
 
-        registry = SkillRegistry(workspace)
+        registry = SkillRegistry([skills_dir])
 
         assert "my-skill" in registry.skills
         assert registry.skills["my-skill"].name == "my-skill"
@@ -205,7 +206,7 @@ description: "A description"
 
         create_skill(skills_dir, "valid-skill", "A valid skill", version="1.0.0")
 
-        registry = SkillRegistry(workspace)
+        registry = SkillRegistry([skills_dir])
 
         assert "valid-skill" in registry.skills
         skill = registry.skills["valid-skill"]
@@ -225,7 +226,7 @@ class TestAgentDiscovery:
 
         create_skill(skills_dir, "no-agents-skill", "A skill without agents")
 
-        registry = SkillRegistry(workspace)
+        registry = SkillRegistry([skills_dir])
 
         assert registry.get_agents() == {}
 
@@ -238,7 +239,7 @@ class TestAgentDiscovery:
         skill_dir = create_skill(skills_dir, "empty-agents", "A skill")
         (skill_dir / "agents").mkdir()
 
-        registry = SkillRegistry(workspace)
+        registry = SkillRegistry([skills_dir])
 
         assert registry.get_agents() == {}
 
@@ -256,7 +257,7 @@ class TestAgentDiscovery:
         (agents_dir / "readme.txt").write_text("Not an agent")
         (agents_dir / "config.json").write_text("{}")
 
-        registry = SkillRegistry(workspace)
+        registry = SkillRegistry([skills_dir])
 
         assert registry.get_agents() == {}
 
@@ -269,7 +270,7 @@ class TestAgentDiscovery:
         skill_dir = create_skill(skills_dir, "test-skill", "A skill")
         create_agent(skill_dir, "extractor", "Extracts data")
 
-        registry = SkillRegistry(workspace)
+        registry = SkillRegistry([skills_dir])
 
         assert "test-skill/extractor" in registry.get_agents()
 
@@ -292,7 +293,7 @@ description: ""
 ---
 """)
 
-        registry = SkillRegistry(workspace)
+        registry = SkillRegistry([skills_dir])
 
         assert registry.get_agents() == {}
 
@@ -305,7 +306,7 @@ description: ""
         skill_dir = create_skill(skills_dir, "test-skill", "A skill")
         create_agent(skill_dir, "empty-body", "No prompt body", body="")
 
-        registry = SkillRegistry(workspace)
+        registry = SkillRegistry([skills_dir])
 
         agents = registry.get_agents()
         assert "test-skill/empty-body" in agents
@@ -325,7 +326,7 @@ description: ""
             tools=["Read", "Glob", "Grep"],
         )
 
-        registry = SkillRegistry(workspace)
+        registry = SkillRegistry([skills_dir])
 
         agents = registry.get_agents()
         assert "test-skill/tooled-agent" in agents
@@ -340,7 +341,7 @@ description: ""
         skill_dir = create_skill(skills_dir, "test-skill", "A skill")
         create_agent(skill_dir, "sonnet-agent", "Uses sonnet", model="sonnet")
 
-        registry = SkillRegistry(workspace)
+        registry = SkillRegistry([skills_dir])
 
         agents = registry.get_agents()
         assert "test-skill/sonnet-agent" in agents
@@ -355,7 +356,7 @@ description: ""
         skill_dir = create_skill(skills_dir, "test-skill", "A skill")
         create_agent(skill_dir, "minimal-agent", "Minimal agent")
 
-        registry = SkillRegistry(workspace)
+        registry = SkillRegistry([skills_dir])
 
         agents = registry.get_agents()
         assert "test-skill/minimal-agent" in agents
@@ -376,7 +377,7 @@ description: ""
         skill_dir = create_skill(skills_dir, "test-skill", "A skill")
         create_agent(skill_dir, "custom-model", "Custom model", model="custom-model-name")
 
-        registry = SkillRegistry(workspace)
+        registry = SkillRegistry([skills_dir])
 
         agents = registry.get_agents()
         assert "test-skill/custom-model" in agents
@@ -396,7 +397,7 @@ class TestAgentNamespacing:
         skill_dir = create_skill(skills_dir, "my-skill", "A skill")
         create_agent(skill_dir, "my-agent", "An agent")
 
-        registry = SkillRegistry(workspace)
+        registry = SkillRegistry([skills_dir])
 
         assert "my-skill/my-agent" in registry.get_agents()
 
@@ -412,7 +413,7 @@ class TestAgentNamespacing:
         skill_dir2 = create_skill(skills_dir, "skill-two", "Second skill")
         create_agent(skill_dir2, "common-name", "Agent from skill two")
 
-        registry = SkillRegistry(workspace)
+        registry = SkillRegistry([skills_dir])
 
         agents = registry.get_agents()
         assert "skill-one/common-name" in agents
@@ -438,7 +439,7 @@ description: "Missing quote
 ---
 """)
 
-        registry = SkillRegistry(workspace)
+        registry = SkillRegistry([skills_dir])
 
         assert "bad-yaml-skill" not in registry.skills
 
@@ -457,7 +458,7 @@ description: {bad yaml
 ---
 """)
 
-        registry = SkillRegistry(workspace)
+        registry = SkillRegistry([skills_dir])
 
         assert "test-skill/bad-agent" not in registry.get_agents()
 
@@ -476,7 +477,7 @@ description: {bad yaml
         # Another valid skill
         create_skill(skills_dir, "another-valid", "Another valid skill")
 
-        registry = SkillRegistry(workspace)
+        registry = SkillRegistry([skills_dir])
 
         assert "valid-skill" in registry.skills
         assert "another-valid" in registry.skills
@@ -495,7 +496,7 @@ class TestSkillMetadata:
         create_skill(skills_dir, "skill-one", "First skill", version="1.0.0")
         create_skill(skills_dir, "skill-two", "Second skill")
 
-        registry = SkillRegistry(workspace)
+        registry = SkillRegistry([skills_dir])
 
         assert "skill-one" in registry.skills
         assert "skill-two" in registry.skills
@@ -503,16 +504,125 @@ class TestSkillMetadata:
         assert registry.skills["skill-two"].version is None
 
 
+class TestMultiSourceDiscovery:
+    """Tests for multi-source registry discovery and collision handling."""
+
+    def test_discovers_skills_from_multiple_sources(self, tmp_path: Path) -> None:
+        """AC: Skills from both sources are discovered."""
+        source1 = tmp_path / "builtin"
+        source2 = tmp_path / "workspace"
+        source1.mkdir()
+        source2.mkdir()
+
+        create_skill(source1, "builtin-skill", "A built-in skill")
+        create_skill(source2, "workspace-skill", "A workspace skill")
+
+        registry = SkillRegistry([source1, source2])
+
+        assert "builtin-skill" in registry.skills
+        assert "workspace-skill" in registry.skills
+        assert registry.skills["builtin-skill"].description == "A built-in skill"
+        assert registry.skills["workspace-skill"].description == "A workspace skill"
+
+    def test_last_wins_on_name_collision(self, tmp_path: Path) -> None:
+        """AC: Same skill name in two sources — second source wins completely."""
+        source1 = tmp_path / "builtin"
+        source2 = tmp_path / "workspace"
+        source1.mkdir()
+        source2.mkdir()
+
+        create_skill(source1, "shared-skill", "Built-in version", version="1.0.0")
+        create_skill(source2, "shared-skill", "Workspace version", version="2.0.0")
+
+        registry = SkillRegistry([source1, source2])
+
+        assert "shared-skill" in registry.skills
+        skill = registry.skills["shared-skill"]
+        assert skill.description == "Workspace version"
+        assert skill.version == "2.0.0"
+        assert skill.path == source2 / "shared-skill"
+
+    def test_collision_clears_earlier_agents(self, tmp_path: Path) -> None:
+        """AC: On name collision, first source's agents are removed (no orphans)."""
+        source1 = tmp_path / "builtin"
+        source2 = tmp_path / "workspace"
+        source1.mkdir()
+        source2.mkdir()
+
+        # Source 1: skill with agent
+        skill1_dir = create_skill(source1, "shared", "Built-in version")
+        create_agent(skill1_dir, "builtin-agent", "Built-in agent")
+
+        # Source 2: same skill with different agent
+        skill2_dir = create_skill(source2, "shared", "Workspace version")
+        create_agent(skill2_dir, "workspace-agent", "Workspace agent")
+
+        registry = SkillRegistry([source1, source2])
+
+        agents = registry.get_agents()
+        # Source 1's agent should be gone
+        assert "shared/builtin-agent" not in agents
+        # Source 2's agent should be present
+        assert "shared/workspace-agent" in agents
+
+    def test_empty_source_in_list_gracefully_skipped(self, tmp_path: Path) -> None:
+        """AC: Empty/missing source in list is skipped, other sources work."""
+        source1 = tmp_path / "builtin"
+        source2 = tmp_path / "nonexistent"  # doesn't exist
+        source3 = tmp_path / "workspace"
+
+        source1.mkdir()
+        source3.mkdir()
+
+        create_skill(source1, "builtin-skill", "Built-in")
+        create_skill(source3, "workspace-skill", "Workspace")
+
+        registry = SkillRegistry([source1, source2, source3])
+
+        assert "builtin-skill" in registry.skills
+        assert "workspace-skill" in registry.skills
+
+    def test_single_source_list_works(self, tmp_path: Path) -> None:
+        """AC: Single-source list works identically to before (regression)."""
+        skills_dir = tmp_path / "skills"
+        skills_dir.mkdir()
+
+        create_skill(skills_dir, "test-skill", "A test skill")
+
+        registry = SkillRegistry([skills_dir])
+
+        assert "test-skill" in registry.skills
+        assert registry.skills["test-skill"].description == "A test skill"
+
+    def test_collision_with_agents_in_second_source_only(self, tmp_path: Path) -> None:
+        """AC: Collision where only second source has agents works correctly."""
+        source1 = tmp_path / "builtin"
+        source2 = tmp_path / "workspace"
+        source1.mkdir()
+        source2.mkdir()
+
+        # Source 1: skill without agents
+        create_skill(source1, "shared", "Built-in version")
+
+        # Source 2: same skill with agent
+        skill2_dir = create_skill(source2, "shared", "Workspace version")
+        create_agent(skill2_dir, "my-agent", "Workspace agent")
+
+        registry = SkillRegistry([source1, source2])
+
+        agents = registry.get_agents()
+        assert "shared/my-agent" in agents
+
+
 class TestRegistryRefresh:
     """Tests for hot-reload refresh functionality (DLT-038)."""
 
     def test_mark_dirty_sets_flag(self, tmp_path: Path) -> None:
         """AC: mark_dirty() sets _dirty to True."""
-        workspace = tmp_path / "workspace"
-        skills_dir = workspace / "skills"
+        skills_dir = tmp_path / "skills"
         skills_dir.mkdir(parents=True)
 
-        registry = SkillRegistry(workspace)
+        registry = SkillRegistry([skills_dir])
         assert registry._dirty is False
 
         registry.mark_dirty()
@@ -521,11 +631,10 @@ class TestRegistryRefresh:
 
     def test_refresh_no_op_when_not_dirty(self, tmp_path: Path, mocker) -> None:
         """AC: refresh() is no-op when _dirty is False (no filesystem access)."""
-        workspace = tmp_path / "workspace"
-        skills_dir = workspace / "skills"
+        skills_dir = tmp_path / "skills"
         skills_dir.mkdir(parents=True)
 
-        registry = SkillRegistry(workspace)
+        registry = SkillRegistry([skills_dir])
         # Spy on _discover to verify it's not called
         spy_discover = mocker.spy(registry, "_discover")
 
@@ -539,14 +648,13 @@ class TestRegistryRefresh:
 
     def test_refresh_rediscover_when_dirty(self, tmp_path: Path) -> None:
         """AC: refresh() re-discovers skills from disk when dirty."""
-        workspace = tmp_path / "workspace"
-        skills_dir = workspace / "skills"
+        skills_dir = tmp_path / "skills"
         skills_dir.mkdir(parents=True)
 
         # Create initial skill
         create_skill(skills_dir, "initial-skill", "Initial")
 
-        registry = SkillRegistry(workspace)
+        registry = SkillRegistry([skills_dir])
         assert "initial-skill" in registry.skills
 
         # Add new skill after construction
@@ -562,11 +670,10 @@ class TestRegistryRefresh:
 
     def test_refresh_picks_up_new_skills(self, tmp_path: Path) -> None:
         """AC: New skills added to disk appear after mark_dirty() + refresh()."""
-        workspace = tmp_path / "workspace"
-        skills_dir = workspace / "skills"
+        skills_dir = tmp_path / "skills"
         skills_dir.mkdir(parents=True)
 
-        registry = SkillRegistry(workspace)
+        registry = SkillRegistry([skills_dir])
         assert registry.skills == {}
 
         # Add skill after construction
@@ -579,14 +686,13 @@ class TestRegistryRefresh:
 
     def test_refresh_removes_deleted_skills(self, tmp_path: Path) -> None:
         """AC: Deleted skills removed after mark_dirty() + refresh()."""
-        workspace = tmp_path / "workspace"
-        skills_dir = workspace / "skills"
+        skills_dir = tmp_path / "skills"
         skills_dir.mkdir(parents=True)
 
         # Create initial skill
         skill_dir = create_skill(skills_dir, "to-delete", "Will be deleted")
 
-        registry = SkillRegistry(workspace)
+        registry = SkillRegistry([skills_dir])
         assert "to-delete" in registry.skills
 
         # Delete the skill directory
@@ -599,14 +705,13 @@ class TestRegistryRefresh:
 
     def test_swap_on_success_restores_on_failure(self, tmp_path: Path, mocker) -> None:
         """AC: When _discover() raises, old dict references are restored."""
-        workspace = tmp_path / "workspace"
-        skills_dir = workspace / "skills"
+        skills_dir = tmp_path / "skills"
         skills_dir.mkdir(parents=True)
 
         # Create initial skill
         create_skill(skills_dir, "existing-skill", "Existing")
 
-        registry = SkillRegistry(workspace)
+        registry = SkillRegistry([skills_dir])
         old_agents = registry._agents
         old_skills = registry._skills
 
@@ -627,11 +732,10 @@ class TestRegistryRefresh:
 
     def test_dirty_remains_true_after_failed_refresh(self, tmp_path: Path, mocker) -> None:
         """AC: After failed refresh, _dirty remains True for retry."""
-        workspace = tmp_path / "workspace"
-        skills_dir = workspace / "skills"
+        skills_dir = tmp_path / "skills"
         skills_dir.mkdir(parents=True)
 
-        registry = SkillRegistry(workspace)
+        registry = SkillRegistry([skills_dir])
 
         # Make _discover raise an exception
         mocker.patch.object(
@@ -648,11 +752,10 @@ class TestRegistryRefresh:
 
     def test_refresh_clears_dirty_flag_on_success(self, tmp_path: Path) -> None:
         """AC: Successful refresh clears _dirty flag."""
-        workspace = tmp_path / "workspace"
-        skills_dir = workspace / "skills"
+        skills_dir = tmp_path / "skills"
         skills_dir.mkdir(parents=True)
 
-        registry = SkillRegistry(workspace)
+        registry = SkillRegistry([skills_dir])
         registry.mark_dirty()
         assert registry._dirty is True
 
@@ -662,14 +765,13 @@ class TestRegistryRefresh:
 
     def test_refresh_handles_missing_skills_directory(self, tmp_path: Path) -> None:
         """AC: refresh() gracefully handles missing skills directory."""
-        workspace = tmp_path / "workspace"
-        skills_dir = workspace / "skills"
+        skills_dir = tmp_path / "skills"
         skills_dir.mkdir(parents=True)
 
         # Create initial skill
         create_skill(skills_dir, "skill-one", "One")
 
-        registry = SkillRegistry(workspace)
+        registry = SkillRegistry([skills_dir])
         assert "skill-one" in registry.skills
 
         # Delete the entire skills directory

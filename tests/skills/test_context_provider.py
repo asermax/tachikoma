@@ -1,6 +1,7 @@
 """Tests for skills context provider.
 
 Tests for DLT-021: Skill detection and context injection.
+Tests for DLT-032: Registry injection via constructor.
 Updated for DLT-038: Registry injected via constructor.
 """
 
@@ -69,7 +70,7 @@ class TestSkillsContextProvider:
     ) -> SkillsContextProvider:
         """Create a provider with an injected registry."""
         defaults = agent_defaults or AgentDefaults(cwd=tmp_path)
-        registry = SkillRegistry(tmp_path)
+        registry = SkillRegistry([tmp_path / "skills"])
         return SkillsContextProvider(defaults, registry)
 
     async def test_empty_registry_returns_none_without_query(
