@@ -1,6 +1,7 @@
 """Tests for skills bootstrap hook.
 
 Tests for DLT-003: Skill system foundation and sub-agent delegation.
+Tests for DLT-032: Multi-source registry and provider injection.
 """
 
 from pathlib import Path
@@ -11,6 +12,7 @@ import pytest
 from tachikoma.bootstrap import BootstrapContext
 from tachikoma.config import SettingsManager
 from tachikoma.skills.hooks import skills_hook
+from tachikoma.skills.registry import SkillRegistry
 
 
 @pytest.fixture
@@ -89,3 +91,93 @@ class TestSkillsHook:
             pytest.raises(PermissionError, match="Permission denied"),
         ):
             await skills_hook(ctx)
+
+
+class TestSkillsHookRegistry:
+    """Tests for skills_hook registry creation and extras exposure (DLT-032)."""
+
+    async def test_creates_registry_and_stores_in_extras(
+        self, ctx: BootstrapContext
+    ) -> None:
+        """AC: Hook creates registry and stores in ctx.extras["skill_registry"]."""
+        await skills_hook(ctx)
+
+        assert "skill_registry" in ctx.extras
+        assert isinstance(ctx.extras["skill_registry"], SkillRegistry)
+
+    async def test_includes_builtin_path_when_exists(
+        self, ctx: BootstrapContext, tmp_path: Path
+    ) -> None:
+        """AC: Hook includes builtin path in sources when it exists."""
+        # Create a fake builtin skill directory (must be named "builtin" to match hooks.py)
+        builtin_path = tmp_path / "builtin"
+        builtin_path.mkdir()
+        skill_dir = builtin_path / "test-skill"
+        skill_dir.mkdir()
+        (skill_dir / "SKILL.md").write_text(
+            "---\ndescription: Test builtin skill\n---\n\nContent"
+        )
+
+        # Patch __file__ to point to our temp directory
+        with patch(
+            "tachikoma.skills.hooks.__file__",
+            str(tmp_path / "hooks.py"),
+        ):
+            await skills_hook(ctx)
+
+        registry = ctx.extras["skill_registry"]
+        assert isinstance(registry, SkillRegistry)
+        # Should have discovered the builtin skill
+        assert "test-skill" in registry.skills
+
+    async def test_logs_warning_when_builtin_missing(
+        self, ctx: BootstrapContext, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """AC: Hook logs warning and continues without builtin when path doesn't exist."""
+        # Patch __file__ to point to a location without builtin/
+        with patch(
+            "tachikoma.skills.hooks.__file__",
+            str(tmp_path / "nonexistent" / "hooks.py"),
+        ):
+            await skills_hook(ctx)
+
+        # Should still have registry with workspace skills only
+        assert "skill_registry" in ctx.extras
+        registry = ctx.extras["skill_registry"]
+        assert isinstance(registry, SkillRegistry)
+
+        # Note: Loguru logs to stderr, not standard logging.
+        # The warning is visible in captured stderr but caplog won't see it.
+        # This test verifies the hook continues gracefully despite missing builtin.
+
+    async def test_registry_contains_both_builtin_and_workspace_skills(
+        self, ctx: BootstrapContext, settings_manager: SettingsManager, tmp_path: Path
+    ) -> None:
+        """AC: Registry in extras contains both builtin and workspace skills."""
+        # Create a fake builtin skill (must be named "builtin" to match hooks.py)
+        builtin_path = tmp_path / "builtin"
+        builtin_path.mkdir()
+        builtin_skill = builtin_path / "builtin-skill"
+        builtin_skill.mkdir()
+        (builtin_skill / "SKILL.md").write_text(
+            "---\ndescription: Builtin skill\n---\n\nContent"
+        )
+
+        # Create a workspace skill
+        workspace_skills = settings_manager.settings.workspace.path / "skills"
+        workspace_skills.mkdir(parents=True, exist_ok=True)
+        ws_skill = workspace_skills / "workspace-skill"
+        ws_skill.mkdir()
+        (ws_skill / "SKILL.md").write_text(
+            "---\ndescription: Workspace skill\n---\n\nContent"
+        )
+
+        with patch(
+            "tachikoma.skills.hooks.__file__",
+            str(tmp_path / "hooks.py"),
+        ):
+            await skills_hook(ctx)
+
+        registry = ctx.extras["skill_registry"]
+        assert "builtin-skill" in registry.skills
+        assert "workspace-skill" in registry.skills

@@ -1,6 +1,7 @@
 """Tests for skills context provider.
 
 Tests for DLT-021: Skill detection and context injection.
+Tests for DLT-032: Registry injection via constructor.
 """
 
 from pathlib import Path
@@ -14,6 +15,7 @@ from tachikoma.skills.context_provider import (
     SKILL_CLASSIFICATION_PROMPT,
     SkillsContextProvider,
 )
+from tachikoma.skills.registry import SkillRegistry
 
 
 def _make_query_result(result: str | None, is_error: bool = False):
@@ -72,7 +74,8 @@ class TestSkillsContextProvider:
         skills_dir = tmp_path / "skills"
         skills_dir.mkdir()
 
-        provider = SkillsContextProvider(AgentDefaults(cwd=tmp_path))
+        registry = SkillRegistry([skills_dir])
+        provider = SkillsContextProvider(AgentDefaults(cwd=tmp_path), registry=registry)
 
         result = await provider.provide("hello")
 
@@ -99,7 +102,10 @@ class TestSkillsContextProvider:
 
         mock_query.return_value = _make_query_result("NO_RELEVANT_SKILLS")
 
-        provider = SkillsContextProvider(AgentDefaults(cwd=tmp_path, cli_path="/custom/cli"))
+        registry = SkillRegistry([tmp_path / "skills"])
+        provider = SkillsContextProvider(
+            AgentDefaults(cwd=tmp_path, cli_path="/custom/cli"), registry=registry
+        )
         result = await provider.provide("hello")
 
         mock_query.assert_called_once()
@@ -136,7 +142,8 @@ class TestSkillsContextProvider:
 
         mock_query.return_value = _make_query_result("NO_RELEVANT_SKILLS")
 
-        provider = SkillsContextProvider(AgentDefaults(cwd=tmp_path))
+        registry = SkillRegistry([tmp_path / "skills"])
+        provider = SkillsContextProvider(AgentDefaults(cwd=tmp_path), registry=registry)
         await provider.provide("Find my documents")
 
         call_kwargs = mock_query.call_args[1]
@@ -166,7 +173,8 @@ class TestSkillsContextProvider:
 
         mock_query.return_value = _make_query_result("test-skill")
 
-        provider = SkillsContextProvider(AgentDefaults(cwd=tmp_path))
+        registry = SkillRegistry([tmp_path / "skills"])
+        provider = SkillsContextProvider(AgentDefaults(cwd=tmp_path), registry=registry)
         result = await provider.provide("hello")
 
         assert result is not None
@@ -195,7 +203,8 @@ class TestSkillsContextProvider:
 
         mock_query.return_value = _make_query_result("my-skill")
 
-        provider = SkillsContextProvider(AgentDefaults(cwd=tmp_path))
+        registry = SkillRegistry([tmp_path / "skills"])
+        provider = SkillsContextProvider(AgentDefaults(cwd=tmp_path), registry=registry)
         result = await provider.provide("hello")
 
         assert result is not None
@@ -261,7 +270,8 @@ class TestSkillsContextProvider:
 
         mock_query.return_value = _make_query_result("search")
 
-        provider = SkillsContextProvider(AgentDefaults(cwd=tmp_path))
+        registry = SkillRegistry([tmp_path / "skills"])
+        provider = SkillsContextProvider(AgentDefaults(cwd=tmp_path), registry=registry)
         result = await provider.provide("search for something")
 
         assert result is not None
@@ -288,7 +298,8 @@ class TestSkillsContextProvider:
 
         mock_query.return_value = _make_query_result("NO_RELEVANT_SKILLS")
 
-        provider = SkillsContextProvider(AgentDefaults(cwd=tmp_path))
+        registry = SkillRegistry([tmp_path / "skills"])
+        provider = SkillsContextProvider(AgentDefaults(cwd=tmp_path), registry=registry)
         result = await provider.provide("hello")
 
         assert result is None
@@ -313,7 +324,8 @@ class TestSkillsContextProvider:
         # Agent returns valid name + fake name
         mock_query.return_value = _make_query_result("real-skill\nfake-skill\nanother-fake")
 
-        provider = SkillsContextProvider(AgentDefaults(cwd=tmp_path))
+        registry = SkillRegistry([tmp_path / "skills"])
+        provider = SkillsContextProvider(AgentDefaults(cwd=tmp_path), registry=registry)
         result = await provider.provide("hello")
 
         assert result is not None
@@ -338,7 +350,8 @@ class TestSkillsContextProvider:
             "Content"
         )
 
-        provider = SkillsContextProvider(AgentDefaults(cwd=tmp_path))
+        registry = SkillRegistry([tmp_path / "skills"])
+        provider = SkillsContextProvider(AgentDefaults(cwd=tmp_path), registry=registry)
         result = await provider.provide("hello")
 
         assert result is None
@@ -362,7 +375,8 @@ class TestSkillsContextProvider:
 
         mock_query.return_value = _make_query_result("Error", is_error=True)
 
-        provider = SkillsContextProvider(AgentDefaults(cwd=tmp_path))
+        registry = SkillRegistry([tmp_path / "skills"])
+        provider = SkillsContextProvider(AgentDefaults(cwd=tmp_path), registry=registry)
         result = await provider.provide("hello")
 
         assert result is None
@@ -388,7 +402,8 @@ class TestSkillsContextProvider:
         # Only return the valid skill (unreadable ones are filtered by registry)
         mock_query.return_value = _make_query_result("valid-skill")
 
-        provider = SkillsContextProvider(AgentDefaults(cwd=tmp_path))
+        registry = SkillRegistry([tmp_path / "skills"])
+        provider = SkillsContextProvider(AgentDefaults(cwd=tmp_path), registry=registry)
         result = await provider.provide("hello")
 
         assert result is not None
@@ -445,7 +460,8 @@ class TestSkillsContextProvider:
 
         mock_query.return_value = _make_query_result("skill-a\nskill-b")
 
-        provider = SkillsContextProvider(AgentDefaults(cwd=tmp_path))
+        registry = SkillRegistry([tmp_path / "skills"])
+        provider = SkillsContextProvider(AgentDefaults(cwd=tmp_path), registry=registry)
         result = await provider.provide("hello")
 
         assert result is not None
@@ -486,7 +502,8 @@ class TestSkillsContextProvider:
 
         mock_query.return_value = _make_query_result("test")
 
-        provider = SkillsContextProvider(AgentDefaults(cwd=tmp_path))
+        registry = SkillRegistry([tmp_path / "skills"])
+        provider = SkillsContextProvider(AgentDefaults(cwd=tmp_path), registry=registry)
 
         # Get registry agents before the call
         registry_agents_before = provider._registry.get_agents().copy()
