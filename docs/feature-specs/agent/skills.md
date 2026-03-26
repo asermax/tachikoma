@@ -59,9 +59,9 @@ Agent definitions are individual markdown files with YAML frontmatter containing
 The base system prompt preamble includes a static Skills section that gives the agent foundational awareness of the skill system, independent of per-session detection.
 
 **Acceptance Criteria**:
-- Given the system prompt is assembled, then the preamble Skills section describes the `skills/` directory structure including `SKILL.md` and `agents/` subdirectory
+- Given the system prompt is assembled, then the preamble Skills section states that skills are specialized sub-agent packages in the `skills/` directory, without detailing internal structure (SKILL.md format, agents/ subdirectory, YAML fields — these are covered by the built-in authoring guide skill)
 - Given the preamble Skills section, then it explains per-session detection and contextual injection of relevant skills
-- Given the preamble Skills section, then it states the agent can create and manage skills by reading and writing files
+- Given the preamble Skills section, then it states the agent can create and manage skills by reading and writing files in the `skills/` directory
 - Given the preamble Skills section, then it explicitly distinguishes from Claude Code's native skills and slash commands
 
 ### Skill Registry (R1, R2, R3, R17, R18, R19, R20)
