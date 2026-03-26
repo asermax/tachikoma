@@ -19,7 +19,7 @@ A Telegram bot that receives text messages from a single authorized user, forwar
 | R0 | Telegram bot that receives user messages and sends coordinator responses back through Telegram |
 | R1 | Bot initialization: connect to Telegram API, validate bot token at startup, handle unreachable API |
 | R2 | Message receiving: accept incoming text messages and forward them to the coordinator; message buffering for mid-stream messages |
-| R3 | Response rendering: stream agent response via progressive message edits with correct markdown formatting, splitting at paragraph boundaries before hitting the Telegram message size limit; respect Telegram API rate limits on edits |
+| R3 | Response rendering: stream agent response via progressive message edits with correct markdown formatting, splitting at paragraph boundaries before hitting the Telegram message size limit; respect Telegram API rate limits on edits; when push notifications are enabled, send all streaming messages silently and replace the final message via copy+delete to trigger exactly one push notification per response |
 | R4 | Tool activity display: show tool activity as an inline status line within the current response message; each new tool replaces the previous tool line; when text resumes, each tool→text transition inserts a dynamic summary of the tools that ran (e.g., "🔧 Read 3 files and searched for 'config'") and text continues below it |
 | R5 | User authorization: only process messages from the configured authorized user; silently ignore all others |
 | R6 | Connection resilience: detect polling disconnects and reconnect automatically with backoff |
@@ -65,6 +65,19 @@ The bot progressively edits a single Telegram message as text chunks arrive, thr
 - Given a network error during a message edit, when the edit fails, then the bot skips that edit and continues with the next chunk (no crash, no retry loop)
 - Given a TelegramRetryAfter error on edit, when received, then the bot waits the specified duration before the next edit attempt
 - Given the coordinator yields a Status event (e.g., "Thinking..."), when received before the response stream, then a transient italic status message is sent; this message is replaced when the first TextChunk or ToolActivity arrives
+
+**Push notifications (when enabled)**:
+- Given push notifications are enabled (default), when messages are created during streaming (initial, splits, status), then all are sent silently (no push notification for incomplete content)
+- Given the agent streams a response, when the Result event arrives, then the last message is copied (triggering a push notification) and the original is deleted
+- Given a response was split into multiple messages, when the Result event arrives, then only the last message is copy+deleted; earlier splits remain unchanged
+- Given the copy succeeds but delete fails, then the user sees a duplicate message (acceptable degradation) and the failure is logged
+- Given the copy fails, then delete is NOT called, the original is preserved, and the failure is logged
+- Given an error is the only response (no text streamed), then the error message triggers a normal push notification; no copy+delete is performed
+- Given the agent streams text followed by an error event, then the error message is sent silently because the copy+delete of the text message provides the push notification
+- Given an unexpected exception occurs after text was partially streamed, then the last streamed message is copy+deleted (triggering push) and the exception error is sent silently
+- Given an unexpected exception occurs before any text was streamed, then the exception error triggers a normal push notification
+- Given a Result event arrives with no preceding text, tools, or errors (empty response), then no copy+delete is performed
+- Given push notifications are disabled in config, when a response completes, then no copy+delete is performed and messages use default notification behavior
 
 ### Tool Activity Display (R4)
 
@@ -199,17 +212,27 @@ The Telegram channel subscribes to task events via the event bus. Session tasks 
   - final message(s)
   - tool activity summary
     if tools were used
+      |
+      v
+  Push Notification
+  -----------------
+  - copy last message
+    (triggers push)
+  - delete original
+  - (skip if disabled,
+    no message sent,
+    or copy fails)
 ```
 
 ### Flow Description
 
 **Entry point**: User sends a message to the Telegram bot from any Telegram client.
 
-**Happy path**: The bot receives the message, confirms the sender is authorized, checks it's a non-empty text message, sends a typing indicator, and forwards the text to the coordinator. As the agent processes and responds, the bot progressively edits a single message showing the accumulating text (throttled for rate limits). Tool activity appears as an inline status line within the same message — appended below any text already streamed. Each new tool replaces the previous tool line. When text resumes, the tool line is replaced with a dynamic summary (e.g., "_🔧 Read 3 files and searched for 'config'_") and new text continues below it. If the response exceeds the message size limit, it splits at the last paragraph boundary and continues in a new message. The final response is delivered as one or more formatted messages.
+**Happy path**: The bot receives the message, confirms the sender is authorized, checks it's a non-empty text message, sends a typing indicator, and forwards the text to the coordinator. As the agent processes and responds, the bot progressively edits a single message showing the accumulating text (throttled for rate limits). Tool activity appears as an inline status line within the same message — appended below any text already streamed. Each new tool replaces the previous tool line. When text resumes, the tool line is replaced with a dynamic summary (e.g., "_🔧 Read 3 files and searched for 'config'_") and new text continues below it. If the response exceeds the message size limit, it splits at the last paragraph boundary and continues in a new message. The final response is delivered as one or more formatted messages. All messages during streaming are sent silently (no push notifications). After the response is finalized, the last message is replaced with a fresh copy to trigger a push notification. The copied message appears after any steering messages the user sent during processing, preserving correct chronological order. Push notifications are enabled by default (`push_notifications = true`).
 
 **Buffering path**: If the user sends another message while a response is streaming, the channel calls `coordinator.enqueue()` to buffer the message. The message source generator feeds it into the same session, or remaining buffered messages are processed as new full-pipeline sessions after the current one completes. Each buffered message gets its own response message(s) in the chat.
 
-**Decision points**: Authorization check (authorized → process, unauthorized → drop). Message type check (text → process, non-text → drop). Empty check (empty → drop). Message length check (under limit → continue editing, approaching limit → split at paragraph boundary). Error type (recoverable → show error, continue; non-recoverable → show error, log).
+**Decision points**: Authorization check (authorized → process, unauthorized → drop). Message type check (text → process, non-text → drop). Empty check (empty → drop). Message length check (under limit → continue editing, approaching limit → split at paragraph boundary). Error type (recoverable → show error, continue; non-recoverable → show error, log). Push notification check (enabled and message was sent → copy+delete, disabled or no message → no-op, copy fails → preserve original).
 
 **Exit points**: Response complete (Result event received), recoverable error (error shown, conversation continues), non-recoverable error (error shown, failure logged), unauthorized (silently dropped), non-text or empty (silently dropped).
 

@@ -110,6 +110,10 @@ class TelegramSettings(BaseModel):
     authorized_chat_id: int = Field(
         description="Authorized Telegram chat ID (only this user can interact with the bot)",
     )
+    push_notifications: bool = Field(
+        default=True,
+        description="Enable post-response push notifications via copy+delete",
+    )
 
 
 class TaskSettings(BaseModel):
@@ -309,6 +313,7 @@ def _generate_default_config(config_path: Path = CONFIG_PATH) -> None:
 
     for name, field_info in TelegramSettings.model_fields.items():
         desc = field_info.description or ""
+        default = field_info.default
 
         doc.add(tomlkit.comment(f"{desc}"))
 
@@ -316,6 +321,8 @@ def _generate_default_config(config_path: Path = CONFIG_PATH) -> None:
             doc.add(tomlkit.comment('bot_token = ""'))
         elif name == "authorized_chat_id":
             doc.add(tomlkit.comment("authorized_chat_id = 0"))
+        elif isinstance(default, bool):
+            doc.add(tomlkit.comment(f"{name} = {str(default).lower()}"))
 
     doc.add(tomlkit.nl())
 
