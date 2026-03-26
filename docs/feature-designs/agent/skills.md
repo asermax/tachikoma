@@ -49,7 +49,7 @@ Five-component architecture: a bootstrap hook creates the directory structure, t
 │  │  - Classifies relevance via LLM            │       │
 │  │  - Injects <skills> XML context block      │       │
 │  │  - Returns detected agents on ContextResult│       │
-│  │  - Owns its own SkillRegistry              │       │
+│  │  - Receives SkillRegistry via injection   │       │
 │  └────┬───────────────────────────────────────┘       │
 ├───────┼──────────────────────────────────────────────┤
 │       │                                               │

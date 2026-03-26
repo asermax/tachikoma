@@ -17,13 +17,13 @@ The skill system provides a structured way to organize, detect, and delegate spe
 | ID | Requirement |
 |----|-------------|
 | R0 | Skill directory structure (SKILL.md + agents/ subdirectory) |
-| R1 | Skill registry discovery at startup |
+| R1 | Skill registry discovery at startup from multiple sources (built-in and workspace) |
 | R2 | Agent definition loading from markdown files with YAML metadata |
 | R3 | Agent namespacing to prevent collisions |
 | R4 | Relevant agents loaded per-session based on detection results and passed to SDK for delegation |
 | R5 | Session-lifetime agent persistence |
 | R6 | Tool scoping via agent definition metadata |
-| R7 | Bootstrap hook for idempotent skills directory creation |
+| R7 | Bootstrap hook creates skills directory and registry, exposes via extras |
 | R8 | Graceful error handling for invalid skills/agents |
 | R9 | Skill detection via LLM: classify relevance using skill names, descriptions, and user message |
 | R10 | Inject matched skill content (body without frontmatter) and directory path as `<skills>` XML context block |
@@ -32,6 +32,11 @@ The skill system provides a structured way to organize, detect, and delegate spe
 | R13 | When no skills exist in the registry, provider is a no-op (no context, no agents, no LLM call) |
 | R14 | Graceful error handling for detection — failures never block the message; message proceeds with no skills/agents |
 | R15 | Base system prompt preamble includes a static Skills section so the agent has foundational awareness of the skill system independent of per-session detection |
+| R16 | Built-in skills ship with the package in src/tachikoma/skills/builtin/ |
+| R17 | Multi-source registry: built-in scanned first, workspace second; workspace skills replace built-in on name collision |
+| R18 | Registry created by skills_hook and exposed via ctx.extras["skill_registry"] |
+| R19 | SkillsContextProvider receives registry via constructor injection (not owned internally) |
+| R20 | Missing built-in directory logs warning and continues with workspace skills only |
 
 ## Behaviors
 
@@ -59,15 +64,21 @@ The base system prompt preamble includes a static Skills section that gives the 
 - Given the preamble Skills section, then it states the agent can create and manage skills by reading and writing files
 - Given the preamble Skills section, then it explicitly distinguishes from Claude Code's native skills and slash commands
 
-### Skill Registry (R1, R2, R3)
+### Skill Registry (R1, R2, R3, R17, R18, R19, R20)
 
-The skill registry discovers all skills and agents at startup, building an indexed dictionary.
+The skill registry discovers all skills and agents at startup from multiple sources, building an indexed dictionary. The registry is created by the skills bootstrap hook and exposed via `ctx.extras["skill_registry"]`. The SkillsContextProvider receives it via constructor injection.
+
+**Sources**: Built-in skills (shipped with the package in `src/tachikoma/skills/builtin/`) are scanned first, followed by workspace skills. Workspace skills completely replace built-in skills with the same name (last-wins precedence).
 
 **Acceptance Criteria**:
-- Given the registry initializes, when it scans the skills/ directory, then all valid skills are discovered
+- Given the registry initializes, when it scans both built-in and workspace directories, then all valid skills are discovered
 - Given a skill with valid SKILL.md, when loaded, then all agents in its agents/ subdirectory are discovered
 - Given agents from multiple skills, when indexed, then they are namespaced by skill (e.g., "skill-name/agent-name")
 - Given an invalid skill, when the registry encounters it, then a warning is logged and loading continues
+- Given the skills_hook runs, when it completes, then the registry is available in `ctx.extras["skill_registry"]`
+- Given a workspace skill has the same name as a built-in skill, when loaded, then the workspace version completely replaces the built-in (metadata, body, and agents)
+- Given the built-in directory doesn't exist, when the hook runs, then a warning is logged and the system continues with workspace skills only
+- Given SkillsContextProvider is created, when it needs the registry, then it receives it via constructor injection (not owned internally)
 
 ### Coordinator Integration (R4, R11)
 
@@ -88,11 +99,14 @@ Agent definitions can specify which tools the agent is allowed to use.
 
 ### Bootstrap (R7)
 
-A bootstrap hook creates the skills directory if missing.
+A bootstrap hook creates the skills directory if missing and creates the SkillRegistry with both built-in and workspace sources.
 
 **Acceptance Criteria**:
 - Given the bootstrap runs, when the skills hook executes, then the skills/ directory is created if it doesn't exist
 - Given the skills directory already exists, when the hook runs again, then no action is taken (idempotent)
+- Given the hook runs, when it completes, then `ctx.extras["skill_registry"]` contains a fully initialized SkillRegistry
+- Given the built-in directory exists, when the hook runs, then it's included in the registry's sources
+- Given the built-in directory doesn't exist, when the hook runs, then a warning is logged and the registry only contains workspace skills
 
 ### Error Handling (R8)
 
