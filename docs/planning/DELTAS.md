@@ -168,13 +168,6 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 **Complexity**: Easy
 **Description**: The Telegram channel streams responses by creating a single message and progressively editing it. Telegram only delivers push notifications for new messages, not edits — so if the user sends a message and closes the app before the response starts, they never receive a push notification that the agent replied. This delta ensures users receive a Telegram push notification for every agent response, even when the response is delivered via progressive message editing. The specific mechanism (e.g., sending a brief new message after streaming completes, or restructuring how the first message is created) should be evaluated during speccing.
 
-### DLT-038: Hot-reload skills at runtime
-**Status**: ✓ Implementation
-**Depends on**: None
-**Priority**: 1 (Critical)
-**Complexity**: Easy
-**Description**: Reload the skill registry when skills are added or modified at runtime, without requiring an application restart. Currently the skill registry loads once during bootstrap and never refreshes. Since the agent can create and modify skill files during execution, newly authored or updated skills are invisible until the next restart. This delta adds a mechanism to detect skill changes and re-index skills so they become available immediately.
-
 ### DLT-039: Extract shared base for pipeline execution
 **Status**: ✗ Defined
 **Depends on**: None

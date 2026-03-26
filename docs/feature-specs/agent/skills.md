@@ -4,26 +4,27 @@
 
 ## Overview
 
-The skill system provides a structured way to organize, detect, and delegate specialized sub-agents. Skills are directory-based packages containing YAML-formatted agent definitions. A skill registry discovers all skills at startup. On each new session, a skills context provider classifies which skills are relevant to the user's message, injects their content as context, and loads only the matched skills' agents into the SDK for delegation. Detection persists for the session — subsequent messages use the same detected skills without re-running classification.
+The skill system provides a structured way to organize, detect, and delegate specialized sub-agents. Skills are directory-based packages containing YAML-formatted agent definitions. A skill registry discovers all skills at startup, with on-demand refresh when marked dirty by a filesystem watcher. On each new session, a skills context provider classifies which skills are relevant to the user's message, injects their content as context, and loads only the matched skills' agents into the SDK for delegation. Detection persists for the session — subsequent messages use the same detected skills without re-running classification.
 
 ## User Stories
 
 - As the system, I need a way to organize sub-agents into reusable skill packages so that specialized work can be delegated to focused agents
 - As a skill developer, I want a clear directory structure and format so that I can define agents without coupling to the core system
 - As the assistant, I want only relevant skills detected and loaded per session so that I have specialized knowledge and agents when needed without wasting context on irrelevant skills
+- As the assistant, I want skills I create or modify during execution to become available without a restart so that skill authoring is a seamless experience
 
 ## Requirements
 
 | ID | Requirement |
 |----|-------------|
 | R0 | Skill directory structure (SKILL.md + agents/ subdirectory) |
-| R1 | Skill registry discovery at startup |
+| R1 | Skill registry discovery at startup, with on-demand refresh when marked dirty |
 | R2 | Agent definition loading from markdown files with YAML metadata |
 | R3 | Agent namespacing to prevent collisions |
 | R4 | Relevant agents loaded per-session based on detection results and passed to SDK for delegation |
 | R5 | Session-lifetime agent persistence |
 | R6 | Tool scoping via agent definition metadata |
-| R7 | Bootstrap hook for idempotent skills directory creation |
+| R7 | Bootstrap hook for idempotent skills directory creation and shared registry initialization |
 | R8 | Graceful error handling for invalid skills/agents |
 | R9 | Skill detection via LLM: classify relevance using skill names, descriptions, and user message |
 | R10 | Inject matched skill content (body without frontmatter) and directory path as `<skills>` XML context block |
@@ -32,6 +33,10 @@ The skill system provides a structured way to organize, detect, and delegate spe
 | R13 | When no skills exist in the registry, provider is a no-op (no context, no agents, no LLM call) |
 | R14 | Graceful error handling for detection — failures never block the message; message proceeds with no skills/agents |
 | R15 | Base system prompt preamble includes a static Skills section so the agent has foundational awareness of the skill system independent of per-session detection |
+| R16 | Filesystem watcher monitors the skills directory and marks the registry for refresh when changes occur |
+| R17 | Burst changes during skill authoring coalesced into a single refresh via debounce |
+| R18 | SkillsChanged event emitted via event bus when skill changes are detected |
+| R19 | Watcher lifecycle managed through bootstrap (start) and graceful shutdown |
 
 ## Behaviors
 
@@ -61,13 +66,16 @@ The base system prompt preamble includes a static Skills section that gives the 
 
 ### Skill Registry (R1, R2, R3)
 
-The skill registry discovers all skills and agents at startup, building an indexed dictionary.
+The skill registry discovers all skills and agents at startup, building an indexed dictionary. When marked dirty by the filesystem watcher, it re-scans the skills directory on the next refresh, using swap-on-success to preserve the previous state on failure.
 
 **Acceptance Criteria**:
 - Given the registry initializes, when it scans the skills/ directory, then all valid skills are discovered
 - Given a skill with valid SKILL.md, when loaded, then all agents in its agents/ subdirectory are discovered
 - Given agents from multiple skills, when indexed, then they are namespaced by skill (e.g., "skill-name/agent-name")
 - Given an invalid skill, when the registry encounters it, then a warning is logged and loading continues
+- Given skills have changed on disk and the registry is marked dirty, when the provider triggers a refresh, then the registry re-discovers skills reflecting additions, modifications, and deletions
+- Given no changes have occurred since the last refresh, when the provider triggers a refresh, then the registry skips the re-scan
+- Given the re-scan itself fails (e.g., permission error), then the registry retains its previous valid state, logs the error, and remains marked dirty for retry on the next refresh
 
 ### Coordinator Integration (R4, R11)
 
@@ -88,11 +96,12 @@ Agent definitions can specify which tools the agent is allowed to use.
 
 ### Bootstrap (R7)
 
-A bootstrap hook creates the skills directory if missing.
+A bootstrap hook creates the skills directory if missing and initializes the shared skill registry.
 
 **Acceptance Criteria**:
 - Given the bootstrap runs, when the skills hook executes, then the skills/ directory is created if it doesn't exist
 - Given the skills directory already exists, when the hook runs again, then no action is taken (idempotent)
+- Given the bootstrap runs, when the skills hook executes, then a shared SkillRegistry is created and stored in bootstrap extras for use by the provider and watcher
 
 ### Error Handling (R8)
 
@@ -102,6 +111,18 @@ Invalid skills and agents are gracefully skipped with diagnostic logging.
 - Given a skill is malformed, when the registry loads it, then a warning is logged and other skills load normally
 - Given an agent definition is invalid, when loaded, then a warning is logged and the agent is skipped
 - Given the registry encounters an error, then the coordinator continues with whatever agents were successfully loaded
+
+### Filesystem Watching (R16, R17, R18, R19)
+
+A filesystem watcher monitors `workspace/skills/` for changes and marks the registry for refresh. Changes are coalesced via debounce to prevent redundant refreshes during skill authoring. Mid-session stability is preserved by the existing session detection behavior (R11) — refresh only affects the next session's classification.
+
+**Acceptance Criteria**:
+- Given the application starts, when the watcher task begins, then it monitors the skills directory for file additions, modifications, and deletions
+- Given a burst of file changes occurs within a short window (e.g., skill authoring creating directory + SKILL.md + agent files), then a single registry mark and event are produced after the burst settles
+- Given a skill change is detected, when the debounce window expires, then a SkillsChanged event is dispatched on the event bus
+- Given the application shuts down, then the watcher task is cancelled gracefully without errors
+- Given the skills directory does not exist at watcher start, then the watcher logs a warning and does not start
+- Given the watcher encounters an unexpected error (e.g., OS watch limit exhausted), then it logs the error and stops gracefully, leaving the registry with its last known state
 
 ### Skill Detection (R9, R12, R13)
 
