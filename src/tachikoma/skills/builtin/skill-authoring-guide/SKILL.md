@@ -1,12 +1,7 @@
 ---
 description: |
-  Activates when the user wants to create, define, set up, build, or scaffold a new skill; encode a workflow or save a process for reuse; define automation for the assistant. Also triggers on requests to author a skill, write a skill, help me make a skill
- guide me through skill authoring
- create-skill
- how to create a skill
- make a skill
- build a skill
- new skill
+  Activates when the user wants to create, define, set up, build, or scaffold a new skill; encode a workflow or save a process for reuse; define automation for the assistant. Also triggers on requests to author a skill, write a skill, help me make a skill,
+  guide me through skill authoring, create-skill, how to create a skill, make a skill, build a skill, new skill
 ---
 
 # Skill Authoring Guide
@@ -54,7 +49,7 @@ when it use it, and how to use it.
 
 ### Body Content
 
-The body is the markdown document that gets injected into the assistant's context when the skill is detected. Write it to be if-then style: explain the what, how to accomplish it, and any constraints or tips.
+The body is the markdown document that gets injected into the assistant's context when the skill is detected. Explain what the skill does, when to use it, how to use it, and any constraints or tips.
 
 ## Available Capabilities
 
