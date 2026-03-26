@@ -223,19 +223,26 @@ see disabled tasks.
 The following sections contain your current foundational context, wrapped in XML tags."""
 
 
-def load_context(workspace_path: Path) -> str:
-    """Read context files and assemble into a system prompt string.
+def load_foundational_context(workspace_path: Path) -> list[tuple[str, str]]:
+    """Read foundational context files and return as (owner, content) tuples.
 
-    Synchronous — files are small. Always returns at least the system preamble.
+    This function reads SOUL.md, USER.md, and AGENTS.md from the workspace's
+    context/ directory and returns their contents as tuples suitable for
+    persistence as SessionContextEntry instances.
+
+    Synchronous — files are small. Returns an empty list if no files are found.
 
     Args:
         workspace_path: Path to the workspace root directory.
 
     Returns:
-        Assembled system prompt string with preamble and XML-wrapped sections.
+        List of (owner, content) tuples in canonical order (soul, user, agents).
+        Content is raw text — XML wrapping happens in build_system_prompt().
+
+    See: DLT-041 design (S2) - foundational context as persisted entries.
     """
     context_path = workspace_path / CONTEXT_DIR_NAME
-    sections: list[str] = []
+    entries: list[tuple[str, str]] = []
 
     for filename, tag, _ in CONTEXT_FILES:
         file_path = context_path / filename
@@ -264,12 +271,32 @@ def load_context(workspace_path: Path) -> str:
         if content.strip() == "":
             continue
 
-        # Wrap content in XML tags
-        sections.append(f"<{tag}>\n{content}\n</{tag}>")
+        # Return raw content — XML wrapping happens in build_system_prompt()
+        entries.append((tag, content))
 
-    if not sections:
+    return entries
+
+
+def load_context(workspace_path: Path) -> str:
+    """Read context files and assemble into a system prompt string.
+
+    DEPRECATED: Use load_foundational_context() + build_system_prompt() instead.
+
+    Synchronous — files are small. Always returns at least the system preamble.
+
+    Args:
+        workspace_path: Path to the workspace root directory.
+
+    Returns:
+        Assembled system prompt string with preamble and XML-wrapped sections.
+    """
+    entries = load_foundational_context(workspace_path)
+
+    if not entries:
         return SYSTEM_PREAMBLE
 
+    # XML-wrap each entry (same logic as build_system_prompt)
+    sections = [f"<{owner}>\n{content}\n</{owner}>" for owner, content in entries]
     return SYSTEM_PREAMBLE + "\n\n" + "\n\n".join(sections)
 
 
@@ -277,11 +304,14 @@ async def context_hook(ctx: BootstrapContext) -> None:
     """Bootstrap hook: create context directory and default files if missing.
 
     Creates the context/ directory under the workspace root and writes default
-    template files for any that don't exist. Then loads the context and stores
-    the assembled prompt in ctx.extras["system_prompt"].
+    template files for any that don't exist. Then loads the foundational context
+    and stores it in ctx.extras["foundational_context"] as a list of (owner, content)
+    tuples for later persistence.
 
     Args:
         ctx: Bootstrap context with settings_manager and extras bag.
+
+    See: DLT-041 design (S2) - foundational context stored as entries, not assembled string.
     """
     workspace_path = ctx.settings_manager.settings.workspace.path
     context_path = workspace_path / CONTEXT_DIR_NAME
@@ -297,5 +327,5 @@ async def context_hook(ctx: BootstrapContext) -> None:
             file_path.write_text(default_content)
             _log.debug("Created default context file: file={file}", file=filename)
 
-    # Load context and store in extras (always returns a string — preamble at minimum)
-    ctx.extras["system_prompt"] = load_context(workspace_path)
+    # Load foundational context as (owner, content) tuples for persistence
+    ctx.extras["foundational_context"] = load_foundational_context(workspace_path)
