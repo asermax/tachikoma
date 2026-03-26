@@ -189,16 +189,9 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 **Complexity**: Easy
 **Description**: The prompt-driven processor pattern and the fork-and-consume helper are currently embedded in the post-processing module, but they represent general-purpose primitives used by any session-forking processor. Move them into standalone reusable modules so future processors can adopt them without depending on the post-processing pipeline.
 
-### DLT-041: Persist session context to database
-**Status**: ✓ Implementation
-**Depends on**: None
-**Priority**: 1 (Critical)
-**Complexity**: Medium
-**Description**: Session context is currently held only in memory, making it unavailable for inspection, debugging, or future tooling that needs to know what the agent was told. This delta introduces a `SessionContextEntry` model associated with `Session` to persist all context injected into a session — foundational files (SOUL.md, USER.md, AGENTS.md as one entry), pre-processing results (memories, projects, skills — one entry each), and session transition context (previous summary, bridging context). Persisted entries become the canonical source for system prompt assembly: the coordinator rebuilds the system prompt from database entries on every SDK client creation, replacing both the current in-memory prompt construction and message-text context injection (`assemble_context()`). A generalized assembly function makes this usable by both normal client creation and forked sessions (opt-in). Entries are queryable by session ID for inspection, debugging, and future tooling such as context invalidation and refresh (DLT-042/043).
-
 ### DLT-042: Add invalidation and refresh support to persisted context entries
 **Status**: ✗ Defined
-**Depends on**: DLT-041
+**Depends on**: None
 **Priority**: 2 (High)
 **Complexity**: Easy
 **Description**: Persisted context entries can go stale when underlying data changes, but the coordinator has no mechanism to detect or respond to this. This delta adds an invalidation flag to the persisted context entry model and a pre-message check in the coordinator: before processing each message, any flagged entries are regenerated from their source and updated in the store. Completion criteria: the flag can be set externally and the coordinator regenerates the entry on the next message without requiring a restart.
