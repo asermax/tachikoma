@@ -61,6 +61,23 @@ class SessionResumption:
     previous_ended_at: datetime
 
 
+@dataclass(frozen=True)
+class SessionContextEntry:
+    """Domain representation of a context entry injected into a session.
+
+    Each entry captures a piece of context that was provided to the agent
+    during a session. Entries are persisted to enable context reconstruction
+    across per-message SDK client recreations.
+
+    The autoincrement id determines assembly order (insertion order).
+    """
+
+    id: int
+    session_id: str
+    owner: str
+    content: str
+
+
 # ---------------------------------------------------------------------------
 # SQLAlchemy ORM — internal to the persistence layer
 # ---------------------------------------------------------------------------
@@ -85,9 +102,7 @@ class SessionRecord(Base):
     ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
     last_resumed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
 
-    __table_args__ = (
-        Index("ix_sessions_started_at", "started_at"),
-    )
+    __table_args__ = (Index("ix_sessions_started_at", "started_at"),)
 
     def to_domain(self) -> Session:
         """Convert ORM record to domain dataclass.
@@ -120,9 +135,7 @@ class SessionResumptionRecord(Base):
     resumed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     previous_ended_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
-    __table_args__ = (
-        Index("ix_session_resumptions_session_id", "session_id"),
-    )
+    __table_args__ = (Index("ix_session_resumptions_session_id", "session_id"),)
 
     def to_domain(self) -> SessionResumption:
         """Convert ORM record to domain dataclass."""
@@ -133,3 +146,32 @@ class SessionResumptionRecord(Base):
         )
 
 
+
+class SessionContextEntryRecord(Base):
+    """SQLAlchemy ORM model for the session_context_entries table.
+
+    Internal to the persistence layer; callers never see this type.
+    Use to_domain() to convert to the SessionContextEntry dataclass.
+
+    The autoincrement id determines assembly order (insertion order).
+    """
+
+    __tablename__ = "session_context_entries"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    session_id: Mapped[str] = mapped_column(ForeignKey("sessions.id"))
+    owner: Mapped[str] = mapped_column()
+    content: Mapped[str] = mapped_column()
+
+    __table_args__ = (
+        Index("ix_session_context_entries_session_id", "session_id"),
+    )
+
+    def to_domain(self) -> SessionContextEntry:
+        """Convert ORM record to domain dataclass."""
+        return SessionContextEntry(
+            id=self.id,
+            session_id=self.session_id,
+            owner=self.owner,
+            content=self.content,
+        )

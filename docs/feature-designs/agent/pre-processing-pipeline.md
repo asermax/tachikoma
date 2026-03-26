@@ -22,14 +22,14 @@ Before the coordinator processes a user message, context providers need to run i
 - Pipeline is stateless — no serialization lock needed (unlike post-processing, which serializes concurrent invocations)
 
 **Interactions:**
-- Coordinator (`core-architecture`): calls `pipeline.run(message)` on first message of new session, then `assemble_context()` to enrich the message
+- Coordinator (`core-architecture`): calls `pipeline.run(message)` on first message of new session; persists successful results as context entries to the database (owner=result.tag, content=result.content) for system prompt assembly. The `assemble_context()` function is used by the background task executor (`tasks/executor.py`) which does not use database persistence.
 - Memory context provider (`memory-context-retrieval`): registers as the first provider (see [memory context retrieval design](../memory/memory-context-retrieval.md))
 - Projects context provider (`project-management`): registers alongside other providers, returns both text context and MCP server configurations (see [project-management design](project-management.md))
 - Skills context provider (`skills`): registers alongside other providers, classifies and injects relevant skills (see [skills design](skills.md))
 
 ## Design Overview
 
-A `PreProcessingPipeline` manages registered `ContextProvider` instances. Providers are run in parallel via `asyncio.gather`. A standalone `assemble_context()` function wraps results in XML tags and prepends them to the message.
+A `PreProcessingPipeline` manages registered `ContextProvider` instances. Providers are run in parallel via `asyncio.gather`. The coordinator persists successful results as session context entries to the database and assembles them into the system prompt via `build_system_prompt()`. A standalone `assemble_context()` function wraps results in XML tags and prepends them to a message, used by the background task executor which does not use database persistence.
 
 ```
 ┌──────────────────────────────────────────────────────────────────┐
@@ -69,13 +69,14 @@ sequenceDiagram
     Pipeline->>Providers: provide(message) [in parallel]
     Providers-->>Pipeline: ContextResult or None (or exception)
     Pipeline-->>Coordinator: list[ContextResult]
-    Note over Coordinator: assemble_context(results, message) → enriched message
+    Note over Coordinator: persist results as context entries to DB; build_system_prompt() for system prompt assembly
 ```
 
 **Integration Points:**
 - Coordinator ↔ Pipeline: `pipeline.run(message)` returns `list[ContextResult]`; called in `send_message()` before `client.query()`
 - Pipeline ↔ Providers: `register(provider)` at setup; `provide(message)` called in parallel during `run()`
-- Coordinator ↔ assemble_context: pure function call to format enriched message
+- Coordinator ↔ DB: persists successful results as context entries (owner=result.tag, content=result.content); loads entries and calls `build_system_prompt()` before `_build_options()`
+- Task executor ↔ assemble_context: pure function call to format enriched message (non-DB path)
 
 **Error contract:**
 - Individual provider failures caught by `asyncio.gather(return_exceptions=True)` and logged per DES-002
@@ -238,5 +239,5 @@ erDiagram
 
 ## Notes
 
-- The pipeline supports both text context (via `assemble_context()`) and structured data (via the `mcp_servers` and `agents` fields on `ContextResult`). The pipeline itself only handles text assembly — the coordinator is responsible for extracting structured data from result objects directly. The `ContextResult.mcp_servers` field enables context providers to carry tool capabilities alongside text context. The coordinator extracts and merges both `mcp_servers` and `agents` from all results per-session, stores them, and passes them to `ClaudeAgentOptions` in `_build_options()`.
+- The pipeline supports both text context and structured data (via the `mcp_servers` and `agents` fields on `ContextResult`). The coordinator persists text context as session context entries to the database and assembles them into the system prompt via `build_system_prompt()`. The `assemble_context()` function is retained for the background task executor path, which does not use database persistence. The coordinator extracts and merges both `mcp_servers` and `agents` from all results per-session, stores them, and passes them to `ClaudeAgentOptions` in `_build_options()`.
 - Unlike post-processing, the pre-processing pipeline has no concurrency control. This is deliberate — the pipeline is stateless, and concurrent first-messages are prevented by the session registry.

@@ -26,7 +26,7 @@ from telegramify_markdown import convert
 from tachikoma.bootstrap import BootstrapContext, BootstrapError
 from tachikoma.config import TelegramSettings
 from tachikoma.coordinator import Coordinator
-from tachikoma.display import TOOL_DISPLAY
+from tachikoma.display import TOOL_DISPLAY, summarize_tool_activity
 from tachikoma.events import Error, Result, Status, TextChunk, ToolActivity
 from tachikoma.tasks.events import SessionTaskReady, TaskNotification
 
@@ -47,14 +47,14 @@ class ResponseRenderer:
     an inline status line within the message.
     """
 
-    def __init__(self, bot: Bot, chat_id: int) -> None:
+    def __init__(self, bot: Bot, chat_id: int, push_notifications: bool = False) -> None:
         self._bot = bot
         self._chat_id = chat_id
+        self._push_notifications = push_notifications
         self._current_message_id: int | None = None
         self._buffer: str = ""
         self._tool_line: str | None = None
-        self._had_tools: bool = False
-        self._tools_marker_inserted: bool = False
+        self._tool_activities: list[ToolActivity] = []
         self._last_edit_time: float = 0.0
         self._message_count: int = 0
 
@@ -66,11 +66,14 @@ class ResponseRenderer:
         self._current_message_id = None
         self._buffer = ""
         self._tool_line = None
-        self._had_tools = False
-        self._tools_marker_inserted = False
+        self._tool_activities = []
         self._last_edit_time = 0.0
         # Note: _message_count is NOT reset - it tracks total messages
         # for the entire response cycle including buffered messages
+
+    def has_sent_content(self) -> bool:
+        """Whether any message has been sent in the current response."""
+        return self._current_message_id is not None
 
     async def handle_status(self, message: str) -> None:
         """Handle a Status event by sending a transient status message.
@@ -82,6 +85,7 @@ class ResponseRenderer:
                 self._chat_id,
                 f"_{message}_",
                 parse_mode="Markdown",
+                disable_notification=self._push_notifications,
             )
             self._current_message_id = msg.message_id
             self._message_count += 1
@@ -91,13 +95,14 @@ class ResponseRenderer:
     async def handle_text(self, chunk: str) -> None:
         """Handle a TextChunk event by appending to buffer and scheduling edit."""
         # If we had tools and this is the first text after them,
-        # insert the "Ran tools" marker
-        if self._had_tools and not self._tools_marker_inserted:
+        # insert the summary marker
+        if self._tool_activities:
             if self._buffer and not self._buffer.endswith("\n"):
                 self._buffer += "\n"
 
-            self._buffer += "_🔧 Ran tools_\n"
-            self._tools_marker_inserted = True
+            summary = summarize_tool_activity(self._tool_activities)
+            self._buffer += f"_🔧 {summary}_\n"
+            self._tool_activities = []  # Clear — each transition gets independent summary
             self._tool_line = None  # Clear tool line - marker replaces it
 
         self._buffer += chunk
@@ -105,26 +110,29 @@ class ResponseRenderer:
 
     async def handle_tool(self, activity: ToolActivity) -> None:
         """Handle a ToolActivity event by setting the tool line."""
+        # Append activity for summary generation at tool→text transition
+        self._tool_activities.append(activity)
+
+        # Update live tool line display
         display_fn = TOOL_DISPLAY.get(activity.tool_name)
-        label = (
-            display_fn(activity.tool_input)
-            if display_fn
-            else f"{activity.tool_name}..."
-        )
+        label = display_fn(activity.tool_input) if display_fn else f"{activity.tool_name}..."
         self._tool_line = f"_{label}_"
-        self._had_tools = True
-        self._tools_marker_inserted = False
         await self._flush(force=False)
 
     async def handle_error(self, error: Error) -> None:
         """Handle an Error event by sending a separate error message."""
         error_text = f"⚠️ Error: {error.message}"
 
+        # Send silently if push notifications are enabled AND content was already streamed
+        # (the copy+delete will provide the push notification)
+        silent = self._push_notifications and self._current_message_id is not None
+
         try:
             await self._bot.send_message(
                 self._chat_id,
                 error_text,
                 parse_mode=None,
+                disable_notification=silent,
             )
         except TelegramAPIError:
             _log.exception("Failed to send error message")
@@ -134,8 +142,48 @@ class ResponseRenderer:
 
     async def finalize(self) -> None:
         """Send the final state of the current message, bypassing throttle."""
+        if self._tool_activities:
+            summary = summarize_tool_activity(self._tool_activities)
+            self._buffer += f"_🔧 {summary}_\n"
+            self._tool_activities = []
+
         self._tool_line = None
         await self._flush(force=True)
+
+    async def notify(self) -> None:
+        """Copy+delete the last message to trigger a push notification.
+
+        No-op when push notifications are disabled or no message was sent.
+        Safe ordering: copy first, skip delete on failure.
+        """
+        if not self._push_notifications or self._current_message_id is None:
+            return
+
+        # Try copy_message — on failure, preserve original
+        try:
+            await self._bot.copy_message(
+                chat_id=self._chat_id,
+                from_chat_id=self._chat_id,
+                message_id=self._current_message_id,
+            )
+        except TelegramAPIError:
+            _log.warning(
+                "Failed to copy message for push notification: message_id={id}",
+                id=self._current_message_id,
+            )
+            return  # Skip delete — original is preserved
+
+        # Try delete_message — on failure, accept duplicate
+        try:
+            await self._bot.delete_message(
+                chat_id=self._chat_id,
+                message_id=self._current_message_id,
+            )
+        except TelegramAPIError:
+            _log.warning(
+                "Failed to delete original message after copy: message_id={id} (duplicate visible)",
+                id=self._current_message_id,
+            )
 
     async def _flush(self, force: bool = False) -> None:
         """Send/edit the message with current buffer and tool line.
@@ -176,6 +224,7 @@ class ResponseRenderer:
                     text,
                     parse_mode=None,
                     entities=[e.to_dict() for e in entities],  # type: ignore[arg-type]
+                    disable_notification=self._push_notifications,
                 )
                 self._current_message_id = msg.message_id
                 self._message_count += 1
@@ -438,7 +487,9 @@ class TelegramChannel:
         """
         chat_id = self._settings.authorized_chat_id
         self._is_processing = True
-        self._active_renderer = ResponseRenderer(self._bot, chat_id)
+        self._active_renderer = ResponseRenderer(
+            self._bot, chat_id, push_notifications=self._settings.push_notifications
+        )
 
         try:
             async with ChatActionSender(bot=self._bot, chat_id=chat_id, action="typing"):
@@ -454,6 +505,7 @@ class TelegramChannel:
                             await self._active_renderer.handle_error(event)
                         elif isinstance(event, Result):
                             await self._active_renderer.finalize()
+                            await self._active_renderer.notify()
                             self._active_renderer.reset()
 
             if on_complete is not None:
@@ -461,11 +513,22 @@ class TelegramChannel:
 
         except Exception as e:
             _log.exception("Error during message processing")
+
+            had_content = (
+                self._active_renderer is not None
+                and self._active_renderer.has_sent_content()
+            )
+
+            if had_content:
+                with contextlib.suppress(TelegramAPIError):
+                    await self._active_renderer.notify()
+
             with contextlib.suppress(TelegramAPIError):
                 await self._bot.send_message(
                     chat_id,
                     f"⚠️ Error: {e!s}",
                     parse_mode=None,
+                    disable_notification=had_content,
                 )
 
         finally:
@@ -587,4 +650,3 @@ async def telegram_hook(ctx: BootstrapContext) -> None:
         finally:
             # Always close the bot session
             await bot.session.close()
-

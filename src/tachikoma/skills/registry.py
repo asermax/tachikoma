@@ -6,7 +6,9 @@ subdirectory. All discovered agents are made available through get_agents().
 
 Sources are scanned in order with last-wins precedence: if a skill name appears
 in multiple sources, the later source completely replaces the earlier one
-(metadata, body, and agents).
+(metadata, body, and agents). When marked dirty by a filesystem watcher, the
+registry re-scans all sources on the next refresh, using swap-on-success to
+preserve the previous state on failure.
 """
 
 from dataclasses import dataclass
@@ -61,12 +63,15 @@ class SkillRegistry:
 
     Multiple sources are scanned in order with last-wins precedence: if a skill
     name appears in multiple sources, the later source completely replaces the
-    earlier one (all metadata, body, and agents).
+    earlier one (all metadata, body, and agents). When marked dirty by a
+    filesystem watcher, the registry re-scans all sources on the next refresh.
     """
 
     def __init__(self, skill_sources: list[Path]) -> None:
         self._agents: dict[str, AgentDefinition] = {}
         self._skills: dict[str, Skill] = {}
+        self._dirty: bool = False
+        self._skill_sources = skill_sources
 
         for source in skill_sources:
             self._discover(source)
@@ -91,11 +96,7 @@ class SkillRegistry:
         """
         prefix = f"{skill_name}/"
 
-        return {
-            ns: agent
-            for ns, agent in self._agents.items()
-            if ns.startswith(prefix)
-        }
+        return {ns: agent for ns, agent in self._agents.items() if ns.startswith(prefix)}
 
     @property
     def skills(self) -> dict[str, Skill]:
@@ -105,6 +106,49 @@ class SkillRegistry:
             Dictionary mapping skill name to Skill metadata.
         """
         return self._skills
+
+    def mark_dirty(self) -> None:
+        """Mark the registry as needing refresh.
+
+        Called by the filesystem watcher when skill files change.
+        The next refresh() call will re-discover skills from disk.
+        """
+        self._dirty = True
+
+    def refresh(self) -> None:
+        """Re-scan skills directory if dirty, using swap-on-success.
+
+        If the registry is not dirty, this is a no-op.
+        If dirty, saves old dict references, builds fresh dicts via _discover(),
+        and swaps them on success. On failure, restores old references and leaves
+        _dirty=True so the next refresh() will retry.
+        """
+        if not self._dirty:
+            return
+
+        # Save old references for potential restore
+        old_agents = self._agents
+        old_skills = self._skills
+
+        # Assign fresh dicts for _discover() to populate
+        self._agents = {}
+        self._skills = {}
+
+        try:
+            for source in self._skill_sources:
+                self._discover(source)
+
+            # Success — clear dirty flag
+            self._dirty = False
+        except Exception as exc:
+            # Failure — restore old references, leave dirty for retry
+            _log.error(
+                "Failed to refresh skills registry: err={err}",
+                err=str(exc),
+            )
+            self._agents = old_agents
+            self._skills = old_skills
+            # _dirty remains True for next retry
 
     def _discover(self, skills_path: Path) -> None:
         """Scan skills directory and load all valid skills and agents."""

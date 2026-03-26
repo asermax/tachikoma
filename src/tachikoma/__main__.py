@@ -33,7 +33,7 @@ from tachikoma.pre_processing import PreProcessingPipeline
 from tachikoma.projects import ProjectsContextProvider, ProjectsProcessor, projects_hook
 from tachikoma.repl import Repl
 from tachikoma.sessions import session_recovery_hook
-from tachikoma.skills import SkillRegistry, SkillsContextProvider, skills_hook
+from tachikoma.skills import SkillRegistry, SkillsContextProvider, skills_hook, watch_skills
 from tachikoma.tasks import (
     TaskRepository,
     background_task_runner,
@@ -109,8 +109,8 @@ async def main(
         ch=settings.channel,
     )
 
-    # Get the system prompt from the context hook (if available)
-    system_prompt = bootstrap.extras.get("system_prompt")
+    # Get the foundational context from the context hook (if available)
+    foundational_context = bootstrap.extras.get("foundational_context")
 
     # Build AgentDefaults: merge hardcoded env with config env (collision = error)
     try:
@@ -139,7 +139,7 @@ async def main(
     pre_pipeline = PreProcessingPipeline()
     pre_pipeline.register(MemoryContextProvider(agent_defaults))
     pre_pipeline.register(ProjectsContextProvider(workspace_path=settings.workspace.path))
-    pre_pipeline.register(SkillsContextProvider(agent_defaults, registry=skill_registry))
+    pre_pipeline.register(SkillsContextProvider(agent_defaults, skill_registry))
 
     # Create and configure the per-message post-processing pipeline
     msg_pipeline = MessagePostProcessingPipeline()
@@ -157,13 +157,14 @@ async def main(
             model=settings.agent.model,
             agent_defaults=agent_defaults,
             registry=registry,
-            system_prompt=system_prompt,
+            foundational_context=foundational_context,
             pipeline=pipeline,
             pre_pipeline=pre_pipeline,
             msg_pipeline=msg_pipeline,
             permission_mode="bypassPermissions",
             on_status=lambda msg: console.print(msg, style="dim italic grey50"),
             session_resume_window=settings.agent.session_resume_window,
+            session_idle_timeout=settings.agent.session_idle_timeout,
             mcp_servers={"task-tools": task_tools},
         ) as coordinator:
             scheduler_tasks.append(
@@ -194,6 +195,17 @@ async def main(
                         agent_defaults,
                     ),
                     name="background_task_runner",
+                )
+            )
+
+            scheduler_tasks.append(
+                asyncio.create_task(
+                    watch_skills(
+                        settings.workspace.path / "skills",
+                        skill_registry,
+                        bus,
+                    ),
+                    name="skills_watcher",
                 )
             )
 

@@ -57,8 +57,13 @@ class TestDatabaseInitialization:
             columns = {row[1] for row in await cursor.fetchall()}
 
         expected = {
-            "id", "sdk_session_id", "transcript_path", "summary",
-            "started_at", "ended_at", "last_resumed_at",
+            "id",
+            "sdk_session_id",
+            "transcript_path",
+            "summary",
+            "started_at",
+            "ended_at",
+            "last_resumed_at",
         }
         assert expected.issubset(columns)
 
@@ -78,12 +83,27 @@ class TestDatabaseInitialization:
             inst_columns = {row[1] for row in await cursor.fetchall()}
 
         expected_defs = {
-            "id", "name", "schedule", "task_type", "prompt",
-            "notify", "enabled", "last_fired_at", "created_at",
+            "id",
+            "name",
+            "schedule",
+            "task_type",
+            "prompt",
+            "notify",
+            "enabled",
+            "last_fired_at",
+            "created_at",
         }
         expected_insts = {
-            "id", "definition_id", "task_type", "status", "prompt",
-            "scheduled_for", "started_at", "completed_at", "result", "created_at",
+            "id",
+            "definition_id",
+            "task_type",
+            "status",
+            "prompt",
+            "scheduled_for",
+            "started_at",
+            "completed_at",
+            "result",
+            "created_at",
         }
 
         assert expected_defs.issubset(def_columns)
@@ -98,9 +118,7 @@ class TestDatabaseInitialization:
         await database.close()
 
         async with aiosqlite.connect(db_path) as db:
-            cursor = await db.execute(
-                "SELECT name FROM sqlite_master WHERE type='index'"
-            )
+            cursor = await db.execute("SELECT name FROM sqlite_master WHERE type='index'")
             indexes = {row[0] for row in await cursor.fetchall()}
 
         assert "ix_sessions_started_at" in indexes
@@ -140,9 +158,7 @@ class TestDatabaseClose:
 class TestDatabaseHook:
     """Tests for the database_hook bootstrap hook."""
 
-    async def test_stores_database_in_extras(
-        self, settings_manager: SettingsManager
-    ) -> None:
+    async def test_stores_database_in_extras(self, settings_manager: SettingsManager) -> None:
         """AC: hook stores database in ctx.extras['database']."""
         ws = settings_manager.settings.workspace
         ws.path.mkdir(parents=True, exist_ok=True)
@@ -157,9 +173,7 @@ class TestDatabaseHook:
         # Cleanup
         await ctx.extras["database"].close()
 
-    async def test_creates_database_file(
-        self, settings_manager: SettingsManager
-    ) -> None:
+    async def test_creates_database_file(self, settings_manager: SettingsManager) -> None:
         """AC: hook creates the tachikoma.db file in the data directory."""
         ws = settings_manager.settings.workspace
         ws.path.mkdir(parents=True, exist_ok=True)

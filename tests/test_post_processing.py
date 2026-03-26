@@ -410,6 +410,7 @@ class TestForkAndConsume:
 
     async def test_propagates_query_error(self, mocker: pytest.MockerFixture) -> None:
         """AC: Exceptions from query() propagate."""
+
         async def failing_query(*args, **kwargs):
             raise RuntimeError("SDK error")
             yield  # make it a generator
@@ -428,9 +429,7 @@ class TestForkAndConsume:
         with pytest.raises(RuntimeError, match="no sdk_session_id"):
             await fork_and_consume(session, "prompt", AgentDefaults(cwd=Path("/workspace")))
 
-    async def test_mcp_servers_passed_to_query_options(
-        self, mocker: pytest.MockerFixture
-    ) -> None:
+    async def test_mcp_servers_passed_to_query_options(self, mocker: pytest.MockerFixture) -> None:
         """AC: mcp_servers parameter is passed through to ClaudeAgentOptions."""
         mock_query = mocker.patch("tachikoma.post_processing.query")
 
@@ -451,9 +450,7 @@ class TestForkAndConsume:
         options = call_kwargs[1]["options"]
         assert options.mcp_servers == mcp_servers
 
-    async def test_mcp_servers_default_none_not_passed(
-        self, mocker: pytest.MockerFixture
-    ) -> None:
+    async def test_mcp_servers_default_none_not_passed(self, mocker: pytest.MockerFixture) -> None:
         """AC: When mcp_servers is None (default), options use SDK default (empty dict)."""
         mock_query = mocker.patch("tachikoma.post_processing.query")
 
@@ -470,6 +467,60 @@ class TestForkAndConsume:
         call_kwargs = mock_query.call_args
         options = call_kwargs[1]["options"]
         assert options.mcp_servers == {}
+
+    async def test_system_prompt_append_sets_system_prompt_preset(
+        self, mocker: pytest.MockerFixture
+    ) -> None:
+        """AC: system_prompt_append param sets SystemPromptPreset on options (DLT-041)."""
+        mock_query = mocker.patch("tachikoma.post_processing.query")
+
+        async def fake_query(*args, **kwargs):
+            yield MagicMock()
+
+        mock_query.return_value = fake_query()
+
+        session = _make_session(sdk_session_id="sdk-test-123")
+        context = "# Previous Conversation\nUser was discussing Python."
+
+        await fork_and_consume(
+            session,
+            "Test prompt",
+            AgentDefaults(cwd=Path("/workspace")),
+            system_prompt_append=context,
+        )
+
+        mock_query.assert_called_once()
+        call_kwargs = mock_query.call_args
+        options = call_kwargs[1]["options"]
+        assert options.system_prompt is not None
+        assert options.system_prompt["type"] == "preset"
+        assert options.system_prompt["preset"] == "claude_code"
+        assert options.system_prompt["append"] == context
+
+    async def test_system_prompt_append_none_no_system_prompt(
+        self, mocker: pytest.MockerFixture
+    ) -> None:
+        """AC: system_prompt_append=None (default) leaves system_prompt unset (DLT-041)."""
+        mock_query = mocker.patch("tachikoma.post_processing.query")
+
+        async def fake_query(*args, **kwargs):
+            yield MagicMock()
+
+        mock_query.return_value = fake_query()
+
+        session = _make_session(sdk_session_id="sdk-test-123")
+
+        await fork_and_consume(
+            session,
+            "Test prompt",
+            AgentDefaults(cwd=Path("/workspace")),
+            system_prompt_append=None,  # Explicitly None
+        )
+
+        mock_query.assert_called_once()
+        call_kwargs = mock_query.call_args
+        options = call_kwargs[1]["options"]
+        assert options.system_prompt is None
 
 
 class TestForkAndCapture:
@@ -491,7 +542,9 @@ class TestForkAndCapture:
 
         session = _make_session(sdk_session_id="sdk-test-123")
         result = await fork_and_capture(
-            session, "Generate notification", AgentDefaults(cwd=Path("/workspace")),
+            session,
+            "Generate notification",
+            AgentDefaults(cwd=Path("/workspace")),
         )
 
         assert result == "Hello world"
@@ -507,7 +560,9 @@ class TestForkAndCapture:
 
         session = _make_session(sdk_session_id="sdk-test-123")
         result = await fork_and_capture(
-            session, "prompt", AgentDefaults(cwd=Path("/workspace")),
+            session,
+            "prompt",
+            AgentDefaults(cwd=Path("/workspace")),
         )
 
         assert result == ""
@@ -540,7 +595,9 @@ class TestForkAndCapture:
 
         session = _make_session(sdk_session_id="sdk-test-123")
         await fork_and_capture(
-            session, "Test prompt", AgentDefaults(cwd=Path("/workspace")),
+            session,
+            "Test prompt",
+            AgentDefaults(cwd=Path("/workspace")),
         )
 
         mock_query.assert_called_once()
@@ -562,6 +619,7 @@ class TestForkAndCapture:
 
     async def test_propagates_query_error(self, mocker: pytest.MockerFixture) -> None:
         """AC: Exceptions from query() propagate."""
+
         async def failing_query(*args, **kwargs):
             raise RuntimeError("SDK error")
             yield  # make it a generator
@@ -572,6 +630,64 @@ class TestForkAndCapture:
 
         with pytest.raises(RuntimeError, match="SDK error"):
             await fork_and_capture(session, "prompt", AgentDefaults(cwd=Path("/workspace")))
+
+    async def test_system_prompt_append_sets_system_prompt_preset(
+        self, mocker: pytest.MockerFixture
+    ) -> None:
+        """AC: system_prompt_append param sets SystemPromptPreset on options (DLT-041)."""
+        mock_query = mocker.patch("tachikoma.post_processing.query")
+
+        async def fake_query(*args, **kwargs):
+            msg = MagicMock()
+            msg.content = [MagicMock(text="captured text")]
+            yield msg
+
+        mock_query.return_value = fake_query()
+
+        session = _make_session(sdk_session_id="sdk-test-123")
+        context = "# Previous Conversation\nUser was discussing Python."
+
+        await fork_and_capture(
+            session,
+            "Test prompt",
+            AgentDefaults(cwd=Path("/workspace")),
+            system_prompt_append=context,
+        )
+
+        mock_query.assert_called_once()
+        call_kwargs = mock_query.call_args
+        options = call_kwargs[1]["options"]
+        assert options.system_prompt is not None
+        assert options.system_prompt["type"] == "preset"
+        assert options.system_prompt["preset"] == "claude_code"
+        assert options.system_prompt["append"] == context
+
+    async def test_system_prompt_append_none_no_system_prompt(
+        self, mocker: pytest.MockerFixture
+    ) -> None:
+        """AC: system_prompt_append=None (default) leaves system_prompt unset (DLT-041)."""
+        mock_query = mocker.patch("tachikoma.post_processing.query")
+
+        async def fake_query(*args, **kwargs):
+            msg = MagicMock()
+            msg.content = [MagicMock(text="captured text")]
+            yield msg
+
+        mock_query.return_value = fake_query()
+
+        session = _make_session(sdk_session_id="sdk-test-123")
+
+        await fork_and_capture(
+            session,
+            "Test prompt",
+            AgentDefaults(cwd=Path("/workspace")),
+            system_prompt_append=None,  # Explicitly None
+        )
+
+        mock_query.assert_called_once()
+        call_kwargs = mock_query.call_args
+        options = call_kwargs[1]["options"]
+        assert options.system_prompt is None
 
 
 class TestPromptDrivenProcessor:
@@ -612,7 +728,9 @@ class TestPromptDrivenProcessor:
         await processor.process(session)
 
         mock_fork.assert_awaited_once_with(
-            session, "Simple extraction prompt", defaults,
+            session,
+            "Simple extraction prompt",
+            defaults,
         )
 
     async def test_subclass_can_override_process(self, mocker: pytest.MockerFixture) -> None:
@@ -648,9 +766,7 @@ class TestPromptDrivenProcessor:
         assert processor.post_called
         mock_fork.assert_awaited_once_with(session, "Custom prompt", defaults)
 
-    async def test_propagates_fork_and_consume_error(
-        self, mocker: pytest.MockerFixture
-    ) -> None:
+    async def test_propagates_fork_and_consume_error(self, mocker: pytest.MockerFixture) -> None:
         """AC: Exceptions from fork_and_consume propagate."""
         mocker.patch(
             "tachikoma.post_processing.fork_and_consume",
@@ -663,4 +779,3 @@ class TestPromptDrivenProcessor:
 
         with pytest.raises(RuntimeError, match="SDK error"):
             await processor.process(session)
-

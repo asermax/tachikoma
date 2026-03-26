@@ -11,7 +11,7 @@ from pathlib import Path
 
 from loguru import logger
 
-from tachikoma.sessions.model import Session, SessionResumption
+from tachikoma.sessions.model import Session, SessionContextEntry, SessionResumption
 from tachikoma.sessions.repository import SessionRepository
 
 _log = logger.bind(component="sessions")
@@ -174,6 +174,7 @@ class SessionRegistry:
 
         # Construct the reopened session from known data (avoids a second DB fetch)
         from dataclasses import replace  # noqa: PLC0415
+
         reopened = replace(session, ended_at=None, last_resumed_at=now)
         self._active_session = reopened
 
@@ -185,9 +186,7 @@ class SessionRegistry:
 
         return reopened
 
-    async def get_recent_closed(
-        self, before: datetime, window: timedelta
-    ) -> list[Session]:
+    async def get_recent_closed(self, before: datetime, window: timedelta) -> list[Session]:
         """Return recently closed sessions within the time window.
 
         Delegates to repository. Used by coordinator to find resumption candidates.
@@ -198,9 +197,7 @@ class SessionRegistry:
         """
         return await self._repository.get_recent_closed(before, window)
 
-    async def record_resumption(
-        self, session_id: str, previous_ended_at: datetime
-    ) -> None:
+    async def record_resumption(self, session_id: str, previous_ended_at: datetime) -> None:
         """Record a session resumption event.
 
         Creates a SessionResumption record. Failures are logged but not raised
@@ -242,6 +239,59 @@ class SessionRegistry:
             end: End of the time range.
         """
         return await self._repository.get_by_time_range(start, end)
+
+    # ------------------------------------------------------------------
+    # Context entries
+    # ------------------------------------------------------------------
+
+    async def save_context_entries(
+        self, session_id: str, entries: list[tuple[str, str]]
+    ) -> None:
+        """Save context entries for a session.
+
+        Best-effort persistence: failures are logged but not raised.
+        This ensures context persistence failures don't interrupt conversations.
+
+        Args:
+            session_id: The session to save entries for.
+            entries: List of (owner, content) tuples to persist.
+        """
+        if not entries:
+            return
+
+        try:
+            await self._repository.save_context_entries(session_id, entries)
+            _log.debug(
+                "Context entries saved: session_id={id} count={count}",
+                id=session_id,
+                count=len(entries),
+            )
+        except Exception as exc:
+            # Best-effort: log but don't raise per R7
+            _log.warning(
+                "Failed to save context entries (best-effort): session_id={id} err={err}",
+                id=session_id,
+                err=str(exc),
+            )
+
+    async def load_context_entries(
+        self, session_id: str
+    ) -> list[SessionContextEntry]:
+        """Load all context entries for a session.
+
+        Delegates to repository. Returns entries ordered by insertion order (id asc).
+
+        Args:
+            session_id: The session to load entries for.
+
+        Returns:
+            List of SessionContextEntry instances, or empty list if none exist.
+
+        Raises:
+            SessionRepositoryError: If the load operation fails.
+        """
+        return await self._repository.load_context_entries(session_id)
+
 
     async def recover_interrupted(self) -> None:
         """Close any sessions left open from a previous ungraceful shutdown.

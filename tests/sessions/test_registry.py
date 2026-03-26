@@ -11,7 +11,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from tachikoma.sessions.model import Session
+from tachikoma.sessions.model import Session, SessionContextEntry
 from tachikoma.sessions.registry import SessionRegistry
 
 
@@ -74,6 +74,7 @@ class TestSessionRegistryCreate:
         self, registry: SessionRegistry, mock_repo
     ) -> None:
         """AC: created session has started_at set."""
+
         async def echo(s):
             return s
 
@@ -171,9 +172,7 @@ class TestSessionRegistryUpdateMetadata:
         self, registry: SessionRegistry, mock_repo
     ) -> None:
         """AC: update_metadata calls repository update with correct fields."""
-        await registry.update_metadata(
-            "s1", sdk_session_id="sdk-abc", transcript_path="/p/t.jsonl"
-        )
+        await registry.update_metadata("s1", sdk_session_id="sdk-abc", transcript_path="/p/t.jsonl")
 
         mock_repo.update.assert_awaited_once_with(
             "s1",
@@ -191,9 +190,7 @@ class TestSessionRegistryUpdateMetadata:
         mock_repo.get_by_id.return_value = updated
 
         await registry.create_session()
-        await registry.update_metadata(
-            "s1", sdk_session_id="sdk-abc", transcript_path="/p/t.jsonl"
-        )
+        await registry.update_metadata("s1", sdk_session_id="sdk-abc", transcript_path="/p/t.jsonl")
 
         active = await registry.get_active_session()
         assert active is updated
@@ -353,3 +350,68 @@ class TestSessionRegistryRecoverInterrupted:
         await registry.recover_interrupted()
 
         assert mock_repo.update.await_count == 3
+
+
+class TestSessionRegistryContextEntries:
+    """Tests for context entry pass-through methods (DLT-041)."""
+
+    async def test_save_context_entries_delegates_to_repository(
+        self, registry: SessionRegistry, mock_repo
+    ) -> None:
+        """AC: save_context_entries delegates to repository."""
+        mock_repo.save_context_entries = AsyncMock(return_value=None)
+
+        # Method returns None (best-effort save)
+        result = await registry.save_context_entries(
+            "s1",
+            [("memories", "User prefers dark mode")],
+        )
+
+        assert result is None
+        mock_repo.save_context_entries.assert_awaited_once_with(
+            "s1",
+            [("memories", "User prefers dark mode")],
+        )
+
+    async def test_save_context_entries_logs_on_failure_but_doesnt_raise(
+        self, registry: SessionRegistry, mock_repo
+    ) -> None:
+        """AC: save failures are logged but not raised (graceful degradation per R7)."""
+        mock_repo.save_context_entries = AsyncMock(
+            side_effect=Exception("DB error")
+        )
+
+        # Should not raise - best-effort save
+        await registry.save_context_entries("s1", [("memories", "test")])
+
+        mock_repo.save_context_entries.assert_awaited_once()
+
+    async def test_load_context_entries_delegates_to_repository(
+        self, registry: SessionRegistry, mock_repo
+    ) -> None:
+        """AC: load_context_entries delegates to repository and returns entries."""
+        expected_entries = [
+            SessionContextEntry(
+                id=1, session_id="s1", owner="foundational", content="first"
+            ),
+            SessionContextEntry(
+                id=2, session_id="s1", owner="memories", content="second"
+            ),
+        ]
+        mock_repo.load_context_entries = AsyncMock(return_value=expected_entries)
+
+        entries = await registry.load_context_entries("s1")
+
+        assert entries == expected_entries
+        mock_repo.load_context_entries.assert_awaited_once_with("s1")
+
+    async def test_load_context_entries_raises_on_failure(
+        self, registry: SessionRegistry, mock_repo
+    ) -> None:
+        """AC: load failures propagate to caller (caller handles graceful degradation)."""
+        mock_repo.load_context_entries = AsyncMock(
+            side_effect=Exception("DB error")
+        )
+
+        with pytest.raises(Exception, match="DB error"):
+            await registry.load_context_entries("s1")

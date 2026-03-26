@@ -55,22 +55,26 @@ class SkillsContextProvider(ContextProvider):
     Uses an Opus agent with low effort to classify which skills are
     relevant to the current user message. Returns a ContextResult
     with the "skills" tag containing skill content and their agents.
+
+    The registry is injected via constructor (shared from bootstrap extras)
+    and is refreshed before each provide() call to pick up runtime changes.
     """
 
     def __init__(
-        self, agent_defaults: AgentDefaults, *, registry: SkillRegistry
+        self, agent_defaults: AgentDefaults, registry: SkillRegistry
     ) -> None:
         self._agent_defaults = agent_defaults
         self._registry = registry
 
     async def provide(self, message: str) -> ContextResult | None:
+        self._registry.refresh()
+
         # R10: No-op when no skills exist in registry
         if not self._registry.skills:
             return None
 
         skills_list = "\n".join(
-            f"- **{name}**: {skill.description}"
-            for name, skill in self._registry.skills.items()
+            f"- **{name}**: {skill.description}" for name, skill in self._registry.skills.items()
         )
         prompt = SKILL_CLASSIFICATION_PROMPT.format(
             skills=skills_list,
@@ -112,14 +116,12 @@ class SkillsContextProvider(ContextProvider):
                             _log.debug("No relevant skills found for message")
                         else:
                             raw_names = [
-                                name.strip() for name in result_text.split("\n")
-                                if name.strip()
+                                name.strip() for name in result_text.split("\n") if name.strip()
                             ]
 
                             # R2: discard unrecognized names
                             valid_names = [
-                                name for name in raw_names
-                                if name in self._registry.skills
+                                name for name in raw_names if name in self._registry.skills
                             ]
 
                             if not valid_names:
@@ -147,8 +149,7 @@ class SkillsContextProvider(ContextProvider):
             skill = self._registry.skills[skill_name]
 
             skill_block = (
-                f'<skill name="{skill_name}" directory="{skill.path}">\n'
-                f'{skill.body}\n</skill>'
+                f'<skill name="{skill_name}" directory="{skill.path}">\n{skill.body}\n</skill>'
             )
             skill_blocks.append(skill_block)
             filtered_agents.update(self._registry.get_agents_for_skill(skill_name))

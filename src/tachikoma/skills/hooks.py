@@ -1,7 +1,8 @@
 """Bootstrap hook for skills directory initialization and registry creation.
 
 Creates the skills/ directory on first run (idempotent) and creates the
-SkillRegistry with both built-in and workspace skill sources.
+SkillRegistry with both built-in and workspace skill sources, shared
+between the provider and watcher.
 """
 
 from pathlib import Path
@@ -15,11 +16,12 @@ _log = logger.bind(component="skills")
 
 
 async def skills_hook(ctx: BootstrapContext) -> None:
-    """Bootstrap hook: create skills directory and registry.
+    """Bootstrap hook: create skills directory and shared registry.
 
     Creates workspace/skills/ directory within the workspace path (idempotent),
     resolves the built-in skills path, creates the SkillRegistry with both
-    sources, and stores it in ctx.extras for downstream consumers.
+    sources, and stores it in ctx.extras for downstream consumers (provider
+    and filesystem watcher).
 
     Built-in skills are scanned first, workspace skills second — workspace
     skills completely replace built-in skills with the same name (last-wins).
@@ -47,7 +49,7 @@ async def skills_hook(ctx: BootstrapContext) -> None:
 
     skill_sources.append(skills_path)
 
-    # Create registry and expose via extras
+    # Create shared registry and expose via extras
     registry = SkillRegistry(skill_sources)
     ctx.extras["skill_registry"] = registry
 

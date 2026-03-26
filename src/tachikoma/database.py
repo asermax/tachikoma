@@ -98,25 +98,16 @@ class Database:
                 text("SELECT * FROM pragma_table_info('sessions') WHERE name='summary'")
             )
             if result.fetchone() is None:
-                await conn.execute(
-                    text("ALTER TABLE sessions ADD COLUMN summary TEXT")
-                )
+                await conn.execute(text("ALTER TABLE sessions ADD COLUMN summary TEXT"))
                 _log.info("Schema migration: added 'summary' column to sessions table")
 
             # Check if last_resumed_at column exists on sessions table (added in DLT-028)
             result = await conn.execute(
-                text(
-                    "SELECT * FROM pragma_table_info('sessions')"
-                    " WHERE name='last_resumed_at'"
-                )
+                text("SELECT * FROM pragma_table_info('sessions') WHERE name='last_resumed_at'")
             )
             if result.fetchone() is None:
-                await conn.execute(
-                    text("ALTER TABLE sessions ADD COLUMN last_resumed_at DATETIME")
-                )
-                _log.info(
-                    "Schema migration: added 'last_resumed_at' column to sessions table"
-                )
+                await conn.execute(text("ALTER TABLE sessions ADD COLUMN last_resumed_at DATETIME"))
+                _log.info("Schema migration: added 'last_resumed_at' column to sessions table")
 
             # Check if session_resumptions table exists (added in DLT-028)
             result = await conn.execute(
@@ -143,6 +134,32 @@ class Database:
                     )
                 )
                 _log.info("Schema migration: created 'session_resumptions' table")
+
+            # Check if session_context_entries table exists
+            result = await conn.execute(
+                text(
+                    "SELECT name FROM sqlite_master"
+                    " WHERE type='table' AND name='session_context_entries'"
+                )
+            )
+            if result.fetchone() is None:
+                await conn.execute(
+                    text("""
+                        CREATE TABLE session_context_entries (
+                            id INTEGER PRIMARY KEY AUTOINCREMENT,
+                            session_id TEXT NOT NULL REFERENCES sessions(id),
+                            owner TEXT NOT NULL,
+                            content TEXT NOT NULL
+                        )
+                    """)
+                )
+                await conn.execute(
+                    text(
+                        "CREATE INDEX ix_session_context_entries_session_id"
+                        " ON session_context_entries(session_id)"
+                    )
+                )
+                _log.info("Schema migration: created 'session_context_entries' table")
 
         _log.debug("Schema migrations completed: db_path={path}", path=self._db_path)
 

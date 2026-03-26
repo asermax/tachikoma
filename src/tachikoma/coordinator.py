@@ -3,9 +3,13 @@
 Channels call send_message() and consume the resulting AsyncIterator[AgentEvent].
 Each message exchange creates a fresh SDK client, using `resume` for conversation
 continuity. Topic shifts simply start a new session without resume.
+
+Context is persisted to the database and assembled from entries rather than
+held in memory.
 """
 
 import asyncio
+import contextlib
 from collections.abc import AsyncIterator, Callable
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -25,13 +29,13 @@ from loguru import logger
 from tachikoma.adapter import adapt
 from tachikoma.agent_defaults import AgentDefaults
 from tachikoma.boundary import BoundaryResult, SessionCandidate, detect_boundary
+from tachikoma.context.assembly import build_system_prompt
 from tachikoma.events import AgentEvent, Error, Result, Status, TextChunk
 from tachikoma.message_post_processing import MessagePostProcessingPipeline
 from tachikoma.post_processing import PostProcessingPipeline
 from tachikoma.pre_processing import (
     McpServerConfig,
     PreProcessingPipeline,
-    assemble_context,
 )
 from tachikoma.sessions.model import Session
 from tachikoma.sessions.registry import SessionRegistry
@@ -49,7 +53,8 @@ def _user_message(content: str) -> dict[str, Any]:
 
 
 async def _message_source(
-    initial: str, buffer: asyncio.Queue[str],
+    initial: str,
+    buffer: asyncio.Queue[str],
 ) -> AsyncIterator[dict[str, Any]]:
     """Long-lived generator feeding messages from buffer to SDK.
 
@@ -105,7 +110,7 @@ class Coordinator:
         model: str | None = None,
         agent_defaults: AgentDefaults | None = None,
         registry: SessionRegistry | None = None,
-        system_prompt: str | None = None,
+        foundational_context: list[tuple[str, str]] | None = None,
         pipeline: PostProcessingPipeline | None = None,
         pre_pipeline: PreProcessingPipeline | None = None,
         msg_pipeline: MessagePostProcessingPipeline | None = None,
@@ -113,6 +118,7 @@ class Coordinator:
         on_status: Callable[[str], None] | None = None,
         agents: dict[str, AgentDefinition] | None = None,
         session_resume_window: int = 86400,
+        session_idle_timeout: int = 900,
         mcp_servers: dict[str, McpSdkServerConfig] | None = None,
     ) -> None:
         # Store individual options for building ClaudeAgentOptions per message
@@ -120,7 +126,7 @@ class Coordinator:
         self._model = model
         self._agent_defaults = agent_defaults or AgentDefaults(cwd=Path.cwd())
         self._cwd = self._agent_defaults.cwd
-        self._base_system_prompt = system_prompt
+        self._foundational_context = foundational_context
         self._permission_mode = permission_mode
         self._agents = agents
         self._base_mcp_servers: dict[str, McpSdkServerConfig] = mcp_servers or {}
@@ -128,13 +134,15 @@ class Coordinator:
         # Session resumption configuration
         self._session_resume_window = session_resume_window
 
+        # Idle session auto-close configuration
+        self._idle_timeout = session_idle_timeout
+        self._idle_close_task: asyncio.Task[None] | None = None
+
         # Last message time tracking for idle gating
         self._last_message_time: datetime | None = None
 
         # SDK session tracking for resume
         self._sdk_session_id: str | None = None
-        self._previous_summary: str | None = None
-        self._bridging_context: str | None = None
 
         # MCP servers extracted from pre-processing pipeline (session-scoped)
         self._mcp_servers: dict[str, McpServerConfig] = {}
@@ -156,6 +164,15 @@ class Coordinator:
 
     async def __aenter__(self) -> "Coordinator":
         _log.info("Coordinator initialized")
+
+        # Start idle close loop if timeout > 0
+        if self._idle_timeout > 0:
+            self._idle_close_task = asyncio.create_task(self._idle_close_loop())
+            _log.debug(
+                "Idle close loop started: timeout={timeout}s",
+                timeout=self._idle_timeout,
+            )
+
         return self
 
     async def __aexit__(
@@ -164,14 +181,20 @@ class Coordinator:
         exc_val: BaseException | None,
         exc_tb: TracebackType | None,
     ) -> None:
+        # Cancel idle close loop first to prevent race with shutdown close
+        if self._idle_close_task is not None:
+            self._idle_close_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await self._idle_close_task
+            self._idle_close_task = None
+            _log.debug("Idle close loop cancelled")
+
         # Await any pending per-message post-processing task
         if self._pending_msg_task is not None:
             try:
                 await self._pending_msg_task
             except Exception as exc:
-                _log.exception(
-                    "Pending per-message task failed: err={err}", err=str(exc)
-                )
+                _log.exception("Pending per-message task failed: err={err}", err=str(exc))
             finally:
                 self._pending_msg_task = None
 
@@ -203,15 +226,11 @@ class Coordinator:
                         err=str(exc),
                     )
             else:
-                _log.warning(
-                    "Skipping post-processing: session has no SDK session ID"
-                )
+                _log.warning("Skipping post-processing: session has no SDK session ID")
 
         # Await all background session post-processing tasks from topic shifts
         if self._background_tasks:
-            results = await asyncio.gather(
-                *self._background_tasks, return_exceptions=True
-            )
+            results = await asyncio.gather(*self._background_tasks, return_exceptions=True)
             for i, result in enumerate(results):
                 if isinstance(result, Exception):
                     _log.exception(
@@ -230,63 +249,27 @@ class Coordinator:
         """
         return self._last_message_time
 
-    def _build_options(self, *, resume: str | None = None) -> ClaudeAgentOptions:
+    def _build_options(
+        self, *, resume: str | None = None, system_prompt_append: str | None = None
+    ) -> ClaudeAgentOptions:
         """Build ClaudeAgentOptions for a single message exchange.
 
-        On topic shift, the previous conversation summary is appended to the
-        system prompt for the first message of the new session only.
+        The system_prompt_append parameter contains the assembled context from
+        persisted entries (foundational + pre-processing + transition context).
 
-        On session resumption, bridging context is appended to provide context
-        about conversations that occurred between the original session and now.
+        Args:
+            resume: SDK session ID to resume, or None for fresh session.
+            system_prompt_append: Assembled system prompt content from DB entries.
+
+        Returns:
+            ClaudeAgentOptions configured for this message exchange.
         """
-        append_text = self._base_system_prompt or ""
-
-        if self._previous_summary is not None:
-            summary_section = f"""
-
-# Previous Conversation
-The user was previously discussing the following topic. This is provided
-for brief context only — do not continue the previous conversation unless
-the user explicitly refers back to it.
-
-{self._previous_summary}"""
-
-            append_text = (
-                append_text + summary_section
-                if append_text
-                else summary_section[1:]
-            )
-
-            # Clear after first use — only the first message of the new session
-            # needs the summary context
-            self._previous_summary = None
-
-        if self._bridging_context is not None:
-            bridging_section = f"""
-
-# Resumed Conversation
-You are resuming a previous conversation that the user had earlier. The
-following summaries describe conversations that occurred between then and now,
-providing context for what the user has been doing in the meantime.
-
-{self._bridging_context}"""
-
-            append_text = (
-                append_text + bridging_section
-                if append_text
-                else bridging_section[1:]
-            )
-
-            # Clear after first use — only the first message of the resumed session
-            # needs the bridging context
-            self._bridging_context = None
-
         sdk_system_prompt = None
-        if append_text:
+        if system_prompt_append:
             sdk_system_prompt = SystemPromptPreset(
                 type="preset",
                 preset="claude_code",
-                append=append_text,
+                append=system_prompt_append,
             )
 
         all_mcp_servers = {**self._base_mcp_servers, **self._mcp_servers}
@@ -375,9 +358,7 @@ providing context for what the user has been doing in the meantime.
                     try:
                         now = datetime.now(UTC)
                         window = timedelta(seconds=self._session_resume_window)
-                        recent = await self._registry.get_recent_closed(
-                            before=now, window=window
-                        )
+                        recent = await self._registry.get_recent_closed(before=now, window=window)
                         candidates = [
                             SessionCandidate(id=s.id, summary=s.summary)
                             for s in recent
@@ -397,8 +378,7 @@ providing context for what the user has been doing in the meantime.
                 )
                 if not result.continues:
                     _log.info(
-                        "Topic shift detected, transitioning session"
-                        " (resume_id={resume_id})",
+                        "Topic shift detected, transitioning session (resume_id={resume_id})",
                         resume_id=result.resume_session_id,
                     )
                     resumed = await self._handle_transition(
@@ -414,20 +394,33 @@ providing context for what the user has been doing in the meantime.
                     err=str(exc),
                 )
 
+        # Save foundational context for new sessions (initial or post-transition)
+        if (
+            is_new_session
+            and self._foundational_context is not None
+            and self._registry is not None
+            and active is not None
+        ):
+            await self._registry.save_context_entries(active.id, self._foundational_context)
+
         # Run pre-processing pipeline on first message of new session
         if is_new_session and self._pre_pipeline is not None:
             try:
                 results = await self._pre_pipeline.run(text)
                 if results:
-                    # Merge mcp_servers from all results
+                    # Merge mcp_servers from all results (session-scoped, not persisted)
                     merged: dict[str, McpServerConfig] = {}
                     for r in results:
                         if r.mcp_servers:
                             merged.update(r.mcp_servers)
                     self._mcp_servers = merged
-                    text = assemble_context(results, text)
 
-                    # Extract agents from pipeline results (DLT-021)
+                    # Save provider entries to DB for system prompt assembly
+                    if self._registry is not None and active is not None:
+                        entries = [(r.tag, r.content) for r in results if r.content]
+                        if entries:
+                            await self._registry.save_context_entries(active.id, entries)
+
                     combined_agents: dict[str, AgentDefinition] = {}
                     for r in results:
                         if r.agents is not None:
@@ -439,8 +432,21 @@ providing context for what the user has been doing in the meantime.
         # Determine whether to resume the existing SDK session
         resume_id = self._sdk_session_id if not is_new_session else None
 
+        # Build system prompt from persisted entries
+        system_prompt_append = build_system_prompt([])
+        if self._registry is not None and active is not None:
+            try:
+                entries = await self._registry.load_context_entries(active.id)
+                system_prompt_append = build_system_prompt(entries)
+            except Exception as exc:
+                _log.exception(
+                    "Context load failed, using preamble only: session_id={id} err={err}",
+                    id=active.id,
+                    err=str(exc),
+                )
+
         # Build options and create a fresh client for this exchange
-        options = self._build_options(resume=resume_id)
+        options = self._build_options(resume=resume_id, system_prompt_append=system_prompt_append)
         response_chunks: list[str] = []
 
         client = ClaudeSDKClient(options)
@@ -466,9 +472,7 @@ providing context for what the user has been doing in the meantime.
                     ):
                         self._sdk_session_id = event.session_id
                         try:
-                            transcript_path = _derive_transcript_path(
-                                event.session_id, self._cwd
-                            )
+                            transcript_path = _derive_transcript_path(event.session_id, self._cwd)
                             await self._registry.update_metadata(
                                 session_id=active.id,
                                 sdk_session_id=event.session_id,
@@ -489,11 +493,7 @@ providing context for what the user has been doing in the meantime.
             self._client = None
 
         # Trigger per-message post-processing after response completes
-        if (
-            self._msg_pipeline is not None
-            and active is not None
-            and self._registry is not None
-        ):
+        if self._msg_pipeline is not None and active is not None and self._registry is not None:
             # Re-fetch session to get latest metadata (may have been updated)
             current_session = await self._registry.get_active_session()
             if current_session is not None:
@@ -507,6 +507,27 @@ providing context for what the user has been doing in the meantime.
 
         _log.debug("Response complete")
 
+    async def _close_and_fire_postprocessing(self, session: Session) -> None:
+        """Close a session in the registry and fire async post-processing."""
+        if self._registry is not None:
+            try:
+                await self._registry.close_session(session.id)
+            except Exception as exc:
+                _log.exception(
+                    "Failed to close session: err={err}", err=str(exc)
+                )
+
+        if session.sdk_session_id is not None and self._pipeline is not None:
+            task = asyncio.create_task(self._pipeline.run(session))
+            self._background_tasks.append(task)
+            self._background_tasks = [t for t in self._background_tasks if not t.done()]
+
+    def _clear_session_state(self) -> None:
+        """Reset coordinator state after a session close."""
+        self._sdk_session_id = None
+        self._agents = None
+        self._mcp_servers = {}
+
     async def _handle_transition(
         self, previous_session: Session, *, resume_session_id: str | None = None
     ) -> bool:
@@ -516,44 +537,28 @@ providing context for what the user has been doing in the meantime.
         - Resumes a previous session if resume_session_id is provided and valid
         - Creates a fresh session if no resume or resume fails
 
+        Transition context (previous-summary or bridging-context) is persisted
+        to the database for the new/resumed session.
+
         Returns:
             True if a previous session was resumed, False if a fresh session was created.
         """
-        session_snapshot = previous_session
-
         # Capture close timestamp before registry close — needed for bridging context window
         closed_at = datetime.now(UTC)
-        if self._registry is not None:
-            try:
-                await self._registry.close_session(session_snapshot.id)
-            except Exception as exc:
-                _log.exception(
-                    "Failed to close session during transition: err={err}", err=str(exc)
-                )
-
-        # Fire async session post-processing if session has sdk_session_id
-        if session_snapshot.sdk_session_id is not None and self._pipeline is not None:
-            task = asyncio.create_task(self._pipeline.run(session_snapshot))
-            self._background_tasks.append(task)
-
-            # Prune completed tasks to avoid unbounded growth
-            self._background_tasks = [t for t in self._background_tasks if not t.done()]
+        await self._close_and_fire_postprocessing(previous_session)
 
         if resume_session_id is not None and self._registry is not None:
             try:
                 reopened = await self._registry.reopen_session(resume_session_id)
                 if reopened is not None:
-                    # Resume successful — set SDK session ID and assemble bridging context
                     self._sdk_session_id = reopened.sdk_session_id
 
-                    # Record the resumption event (best-effort)
                     await self._registry.record_resumption(
                         session_id=reopened.id,
                         previous_ended_at=closed_at,
                     )
 
-                    # Assemble bridging context from intermediate sessions
-                    await self._assemble_bridging_context(reopened, closed_at)
+                    await self._persist_bridging_context(reopened, closed_at)
 
                     _log.info(
                         "Session resumed: session_id={id} sdk_session_id={sdk}",
@@ -568,39 +573,56 @@ providing context for what the user has been doing in the meantime.
                     err=str(exc),
                 )
 
-        # Fresh-session path: clear SDK session so next message starts fresh
-        # Save the summary for injection into the new session's system prompt
-        self._sdk_session_id = None
-        self._agents = None
-        self._previous_summary = session_snapshot.summary
-        self._mcp_servers = {}
+        self._clear_session_state()
 
-        # Create new session in registry
+        new_session = None
         if self._registry is not None:
             try:
-                await self._registry.create_session()
+                new_session = await self._registry.create_session()
             except Exception as exc:
                 _log.exception(
                     "Failed to create new session during transition: err={err}",
                     err=str(exc),
                 )
 
+        # Persist previous-summary context for new session
+        if (
+            new_session is not None
+            and previous_session.summary is not None
+            and self._registry is not None
+        ):
+            try:
+                summary_text = f"""# Previous Conversation
+The user was previously discussing the following topic. This is provided
+for brief context only — do not continue the previous conversation unless
+the user explicitly refers back to it.
+
+{previous_session.summary}"""
+                await self._registry.save_context_entries(
+                    new_session.id,
+                    [("previous-summary", summary_text)],
+                )
+            except Exception as exc:
+                _log.exception(
+                    "Failed to persist previous-summary context: err={err}",
+                    err=str(exc),
+                )
+
         return False
 
-    async def _assemble_bridging_context(
+    async def _persist_bridging_context(
         self, resumed_session: Session, closed_at: datetime
     ) -> None:
-        """Assemble bridging context from intermediate sessions.
+        """Assemble and persist bridging context for resumed session.
 
         Finds sessions that occurred between when the resumed session ended
-        and now, concatenates their summaries to provide context.
+        and now, concatenates their summaries, and persists as a context entry.
 
         Args:
             resumed_session: The session being resumed.
             closed_at: When the previous session was closed (before resume).
         """
         if self._registry is None:
-            self._bridging_context = None
             return
 
         try:
@@ -615,20 +637,27 @@ providing context for what the user has been doing in the meantime.
 
             if summaries:
                 # Concatenate chronologically (earliest first - get_by_time_range returns DESC)
-                self._bridging_context = "\n\n".join(reversed(summaries))
+                joined = "\n\n".join(reversed(summaries))
+                bridging_text = f"""# Resumed Conversation
+You are resuming a previous conversation that the user had earlier. The
+following summaries describe conversations that occurred between then and now,
+providing context for what the user has been doing in the meantime.
+
+{joined}"""
+                await self._registry.save_context_entries(
+                    resumed_session.id,
+                    [("bridging-context", bridging_text)],
+                )
                 _log.debug(
-                    "Bridging context assembled: session_count={n}",
+                    "Bridging context persisted: session_count={n}",
                     n=len(summaries),
                 )
-            else:
-                self._bridging_context = None
 
         except Exception as exc:
             _log.exception(
-                "Failed to assemble bridging context: err={err}",
+                "Failed to persist bridging context: err={err}",
                 err=str(exc),
             )
-            self._bridging_context = None
 
     async def interrupt(self) -> None:
         """Interrupt the current agent response."""
@@ -650,3 +679,108 @@ providing context for what the user has been doing in the meantime.
     def has_pending_messages(self) -> bool:
         """Whether the message buffer has items waiting to be processed."""
         return not self._message_buffer.empty()
+
+    @property
+    def _is_busy(self) -> bool:
+        """Whether the coordinator is actively processing.
+
+        Used by idle close to avoid interrupting:
+        - Message exchange in progress (_client is not None)
+        - Messages queued but not yet picked up (has_pending_messages)
+        - Per-message post-processing in flight (_pending_msg_task)
+        """
+        return (
+            self._client is not None
+            or self.has_pending_messages
+            or (self._pending_msg_task is not None and not self._pending_msg_task.done())
+        )
+
+    async def _close_idle_session(self) -> None:
+        """Close the active session due to idle timeout.
+
+        Uses the shared close-and-clear helpers but does NOT create a new
+        session. The next user message follows the normal first-message path.
+        """
+        if self._registry is None:
+            return
+
+        try:
+            session = await self._registry.get_active_session()
+            if session is None:
+                _log.debug("Idle close skipped: no active session")
+                return
+
+            await self._close_and_fire_postprocessing(session)
+            self._clear_session_state()
+
+            _log.info(
+                "Session closed due to idle timeout: session_id={id}",
+                id=session.id,
+            )
+
+        except Exception as exc:
+            _log.exception(
+                "Idle close failed (will retry next cycle): err={err}",
+                err=str(exc),
+            )
+
+    async def _idle_close_loop(self) -> None:
+        """Periodic check for idle session timeout.
+
+        Runs every 60 seconds. If the coordinator is busy when the timeout
+        fires, snoozes for min(300, timeout) seconds and retries.
+        Errors are logged but never crash the application.
+        CancelledError propagates for clean shutdown.
+        """
+        while True:
+            try:
+                await asyncio.sleep(60)
+
+                if self._registry is None:
+                    continue
+
+                session = await self._registry.get_active_session()
+                if session is None:
+                    continue
+
+                if self._last_message_time is None:
+                    continue
+
+                elapsed = (datetime.now(UTC) - self._last_message_time).total_seconds()
+
+                if elapsed < self._idle_timeout:
+                    continue
+
+                while self._is_busy:
+                    snooze_duration = min(300, self._idle_timeout)
+                    _log.debug(
+                        "Idle close snoozing: duration={dur}",
+                        dur=snooze_duration,
+                    )
+                    await asyncio.sleep(snooze_duration)
+
+                    session = await self._registry.get_active_session()
+                    if session is None:
+                        break
+
+                    if self._last_message_time is None:
+                        break
+
+                    elapsed = (datetime.now(UTC) - self._last_message_time).total_seconds()
+                    if elapsed < self._idle_timeout:
+                        break
+
+                # Proceed with close if conditions still met
+                if session is not None and self._last_message_time is not None:
+                    elapsed = (datetime.now(UTC) - self._last_message_time).total_seconds()
+                    if elapsed >= self._idle_timeout and not self._is_busy:
+                        await self._close_idle_session()
+
+            except asyncio.CancelledError:
+                raise
+
+            except Exception as exc:
+                _log.exception(
+                    "Idle close loop error (continuing): err={err}",
+                    err=str(exc),
+                )
