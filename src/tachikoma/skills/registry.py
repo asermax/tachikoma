@@ -1,8 +1,12 @@
 """Skill registry for discovering and loading skills and their agents.
 
-The SkillRegistry scans the workspace/skills/ directory at initialization,
+The SkillRegistry scans multiple skill source directories at initialization,
 loading SKILL.md metadata and agent definitions from each skill's agents/
 subdirectory. All discovered agents are made available through get_agents().
+
+Sources are scanned in order with last-wins precedence: if a skill name appears
+in multiple sources, the later source completely replaces the earlier one
+(metadata, body, and agents).
 """
 
 from dataclasses import dataclass
@@ -41,7 +45,7 @@ class Skill:
 class SkillRegistry:
     """Discovers and loads skills and their agents at startup.
 
-    Skills are directory-based packages in workspace/skills/ containing:
+    Skills are directory-based packages in any of the source directories containing:
     - SKILL.md: Metadata file with YAML frontmatter (description, version)
     - agents/: Optional subdirectory with agent definition files (.md)
 
@@ -54,14 +58,18 @@ class SkillRegistry:
 
     Error handling is graceful: invalid skills/agents are logged as warnings
     and skipped, allowing the system to continue with valid entries.
+
+    Multiple sources are scanned in order with last-wins precedence: if a skill
+    name appears in multiple sources, the later source completely replaces the
+    earlier one (all metadata, body, and agents).
     """
 
-    def __init__(self, workspace_path: Path) -> None:
+    def __init__(self, skill_sources: list[Path]) -> None:
         self._agents: dict[str, AgentDefinition] = {}
         self._skills: dict[str, Skill] = {}
 
-        skills_path = workspace_path / "skills"
-        self._discover(skills_path)
+        for source in skill_sources:
+            self._discover(source)
 
     def get_agents(self) -> dict[str, AgentDefinition]:
         """Return all discovered agents indexed by namespace.
@@ -177,6 +185,17 @@ class SkillRegistry:
             path=skill_dir,
             version=version_str,
         )
+
+        # If skill name already exists (collision from earlier source),
+        # remove the earlier skill's agents for complete replacement
+        if name in self._skills:
+            prefix = f"{name}/"
+            self._agents = {
+                ns: agent for ns, agent in self._agents.items()
+                if not ns.startswith(prefix)
+            }
+            _log.debug("Replacing skill from earlier source: name={name}", name=name)
+
         self._skills[name] = skill
 
         _log.debug(
