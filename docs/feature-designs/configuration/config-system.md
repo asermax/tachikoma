@@ -97,7 +97,8 @@ Settings (root, frozen)
 │   └── timezone: str | None = None            (IANA timezone, None = system timezone)
 └── telegram: TelegramSettings | None = None
     ├── bot_token: str
-    └── authorized_chat_id: int
+    ├── authorized_chat_id: int
+    └── push_notifications: bool = True   (enables post-response push via copy+delete)
 ```
 
 All models use `ConfigDict(frozen=True, extra="ignore")`. Frozen prevents accidental mutation. Extra="ignore" provides forward compatibility — unknown TOML keys are silently ignored.

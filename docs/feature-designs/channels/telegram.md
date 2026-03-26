@@ -89,7 +89,7 @@ The key components:
 |------------|-----------|
 | `TextChunk` | Accumulated in buffer, formatted via telegramify-markdown, sent as progressive message edits |
 | `ToolActivity` | Inline status line appended to current message (e.g., "_Reading src/main.py..._"); replaced by next tool |
-| `Result` | Final edit with complete formatted text; renderer reset for next turn |
+| `Result` | Final edit with complete formatted text; copy+delete for push notification (if enabled); renderer reset for next turn |
 | `Status` | Transient italic message sent via `handle_status()` method; replaced when the first TextChunk or ToolActivity arrives |
 | `Error` | Separate error message sent to chat; conversation continues if recoverable |
 
@@ -127,8 +127,13 @@ sequenceDiagram
         else Result
             Channel->>Renderer: finalize()
             Renderer->>TG: final edit
+            Channel->>Renderer: notify()
+            Renderer->>TG: copy_message (push notification)
+            Renderer->>TG: delete_message (original)
         end
     end
+
+    Note over Channel,Renderer: On unexpected exception after content was sent:<br/>Channel calls renderer.notify() before sending error message
 
     Note over User,TG: If user sends another message during streaming:
     TG->>Channel: aiogram dispatches handler
@@ -170,6 +175,7 @@ Settings (root, frozen)
 ResponseRenderer
 ├── _bot: Bot
 ├── _chat_id: int
+├── _push_notifications: bool = False    (set from TelegramSettings at construction; False default for test safety)
 ├── _current_message_id: int | None      (Telegram message being edited)
 ├── _buffer: str                          (accumulated markdown text)
 ├── _tool_line: str | None                (current tool status line)
@@ -207,9 +213,11 @@ Coordinator (existing)
    a. TextChunk → append to buffer, schedule throttled edit
    b. ToolActivity → set tool line, schedule throttled edit
    c. Error → send error message to chat
-   d. Result → finalize (send final edit, reset renderer state)
+   d. Result → finalize (final edit), notify (copy+delete for push notification), reset renderer
 7. Typing indicator stops when ChatActionSender context exits
 ```
+
+When `push_notifications` is enabled, all `send_message` calls during streaming pass `disable_notification=True`. After `finalize()`, `notify()` copies the last message (triggering push) and deletes the original. If copy fails, the original is preserved. For split responses, only the last message is copy+deleted.
 
 ### Throttled edit cycle
 
@@ -439,6 +447,24 @@ The `Result` event serves as a turn boundary signal. The channel finalizes the c
 **Given**: The coordinator yields an `Error` event with `recoverable=True`
 **When**: The renderer receives it
 **Then**: An error message is sent to the user in the chat. The conversation remains usable.
+
+### Scenario: Push notification after streamed response
+
+**Given**: Push notifications enabled (default), agent streams a text response
+**When**: The Result event arrives
+**Then**: `finalize()` sends the final edit, `notify()` copies the message via `copy_message` (triggering push notification) and deletes the original via `delete_message`. All messages during streaming were sent silently. If copy fails, the original is preserved (no push, logged at warning). If delete fails, duplicate is acceptable (logged at warning).
+
+### Scenario: Push notification for split response
+
+**Given**: Push notifications enabled, response splits across multiple messages
+**When**: The Result event arrives
+**Then**: Only the last message (`_current_message_id`) is copy+deleted. Earlier split messages remain in place. The user receives one push notification.
+
+### Scenario: Unexpected exception after partial content
+
+**Given**: Push notifications enabled, text was partially streamed (silently)
+**When**: An unexpected exception occurs during processing
+**Then**: `notify()` is called on the renderer to trigger push notification for the partial text. The exception error message is sent silently (since push was already triggered). The user receives the push notification and sees the error message.
 
 ## Notes
 
