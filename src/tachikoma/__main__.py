@@ -109,7 +109,6 @@ async def main(
     )
 
     # Get the foundational context from the context hook (if available)
-    # DLT-041: Changed from system_prompt to foundational_context for DB-driven assembly
     foundational_context = bootstrap.extras.get("foundational_context")
 
     # Build AgentDefaults: merge hardcoded env with config env (collision = error)

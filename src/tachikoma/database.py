@@ -144,7 +144,7 @@ class Database:
                 )
                 _log.info("Schema migration: created 'session_resumptions' table")
 
-            # Check if session_context_entries table exists (added in DLT-041)
+            # Check if session_context_entries table exists
             result = await conn.execute(
                 text(
                     "SELECT name FROM sqlite_master"

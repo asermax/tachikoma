@@ -238,8 +238,6 @@ def load_foundational_context(workspace_path: Path) -> list[tuple[str, str]]:
     Returns:
         List of (owner, content) tuples in canonical order (soul, user, agents).
         Content is raw text — XML wrapping happens in build_system_prompt().
-
-    See: DLT-041 design (S2) - foundational context as persisted entries.
     """
     context_path = workspace_path / CONTEXT_DIR_NAME
     entries: list[tuple[str, str]] = []
@@ -310,8 +308,6 @@ async def context_hook(ctx: BootstrapContext) -> None:
 
     Args:
         ctx: Bootstrap context with settings_manager and extras bag.
-
-    See: DLT-041 design (S2) - foundational context stored as entries, not assembled string.
     """
     workspace_path = ctx.settings_manager.settings.workspace.path
     context_path = workspace_path / CONTEXT_DIR_NAME

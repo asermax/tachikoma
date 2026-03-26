@@ -1,7 +1,5 @@
 """Context assembly utilities for building system prompts from persisted entries.
 
-DLT-041: Persist session context to database.
-
 The assembly function builds the system prompt append string from:
 1. SYSTEM_PREAMBLE (hardcoded, always prepended)
 2. Persisted SessionContextEntry instances (wrapped in XML tags by owner)
@@ -26,8 +24,6 @@ def build_system_prompt(entries: list[SessionContextEntry]) -> str:
 
     Returns:
         The complete system prompt append string.
-
-    See: DLT-041 design (S3) - pure function, XML wrapping, SYSTEM_PREAMBLE prepending.
     """
     if not entries:
         return SYSTEM_PREAMBLE
