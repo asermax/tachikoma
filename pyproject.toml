@@ -18,6 +18,7 @@ dependencies = [
     "python-frontmatter",
     "bubus>=1.6.0",
     "cronsim>=2.6",
+    "watchfiles>=0.20",
 ]
 
 [dependency-groups]

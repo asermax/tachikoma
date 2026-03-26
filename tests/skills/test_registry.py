@@ -3,6 +3,7 @@
 Tests for DLT-003: Skill system foundation and sub-agent delegation.
 """
 
+import shutil
 from pathlib import Path
 
 from tachikoma.skills.registry import SkillRegistry
@@ -500,3 +501,184 @@ class TestSkillMetadata:
         assert "skill-two" in registry.skills
         assert registry.skills["skill-one"].version == "1.0.0"
         assert registry.skills["skill-two"].version is None
+
+
+class TestRegistryRefresh:
+    """Tests for hot-reload refresh functionality (DLT-038)."""
+
+    def test_mark_dirty_sets_flag(self, tmp_path: Path) -> None:
+        """AC: mark_dirty() sets _dirty to True."""
+        workspace = tmp_path / "workspace"
+        skills_dir = workspace / "skills"
+        skills_dir.mkdir(parents=True)
+
+        registry = SkillRegistry(workspace)
+        assert registry._dirty is False
+
+        registry.mark_dirty()
+
+        assert registry._dirty is True
+
+    def test_refresh_no_op_when_not_dirty(self, tmp_path: Path, mocker) -> None:
+        """AC: refresh() is no-op when _dirty is False (no filesystem access)."""
+        workspace = tmp_path / "workspace"
+        skills_dir = workspace / "skills"
+        skills_dir.mkdir(parents=True)
+
+        registry = SkillRegistry(workspace)
+        # Spy on _discover to verify it's not called
+        spy_discover = mocker.spy(registry, "_discover")
+
+        # _dirty is False by default
+        assert registry._dirty is False
+
+        registry.refresh()
+
+        # _discover should not be called
+        spy_discover.assert_not_called()
+
+    def test_refresh_rediscover_when_dirty(self, tmp_path: Path) -> None:
+        """AC: refresh() re-discovers skills from disk when dirty."""
+        workspace = tmp_path / "workspace"
+        skills_dir = workspace / "skills"
+        skills_dir.mkdir(parents=True)
+
+        # Create initial skill
+        create_skill(skills_dir, "initial-skill", "Initial")
+
+        registry = SkillRegistry(workspace)
+        assert "initial-skill" in registry.skills
+
+        # Add new skill after construction
+        create_skill(skills_dir, "new-skill", "New")
+
+        # Mark dirty and refresh
+        registry.mark_dirty()
+        registry.refresh()
+
+        # New skill should now be present
+        assert "new-skill" in registry.skills
+        assert "initial-skill" in registry.skills
+
+    def test_refresh_picks_up_new_skills(self, tmp_path: Path) -> None:
+        """AC: New skills added to disk appear after mark_dirty() + refresh()."""
+        workspace = tmp_path / "workspace"
+        skills_dir = workspace / "skills"
+        skills_dir.mkdir(parents=True)
+
+        registry = SkillRegistry(workspace)
+        assert registry.skills == {}
+
+        # Add skill after construction
+        create_skill(skills_dir, "added-later", "Added after construction")
+
+        registry.mark_dirty()
+        registry.refresh()
+
+        assert "added-later" in registry.skills
+
+    def test_refresh_removes_deleted_skills(self, tmp_path: Path) -> None:
+        """AC: Deleted skills removed after mark_dirty() + refresh()."""
+        workspace = tmp_path / "workspace"
+        skills_dir = workspace / "skills"
+        skills_dir.mkdir(parents=True)
+
+        # Create initial skill
+        skill_dir = create_skill(skills_dir, "to-delete", "Will be deleted")
+
+        registry = SkillRegistry(workspace)
+        assert "to-delete" in registry.skills
+
+        # Delete the skill directory
+        shutil.rmtree(skill_dir)
+
+        registry.mark_dirty()
+        registry.refresh()
+
+        assert "to-delete" not in registry.skills
+
+    def test_swap_on_success_restores_on_failure(self, tmp_path: Path, mocker) -> None:
+        """AC: When _discover() raises, old dict references are restored."""
+        workspace = tmp_path / "workspace"
+        skills_dir = workspace / "skills"
+        skills_dir.mkdir(parents=True)
+
+        # Create initial skill
+        create_skill(skills_dir, "existing-skill", "Existing")
+
+        registry = SkillRegistry(workspace)
+        old_agents = registry._agents
+        old_skills = registry._skills
+
+        # Make _discover raise an exception
+        mocker.patch.object(
+            registry,
+            "_discover",
+            side_effect=PermissionError("Permission denied"),
+        )
+
+        registry.mark_dirty()
+        registry.refresh()
+
+        # Old references should be restored
+        assert registry._agents is old_agents
+        assert registry._skills is old_skills
+        assert "existing-skill" in registry.skills
+
+    def test_dirty_remains_true_after_failed_refresh(self, tmp_path: Path, mocker) -> None:
+        """AC: After failed refresh, _dirty remains True for retry."""
+        workspace = tmp_path / "workspace"
+        skills_dir = workspace / "skills"
+        skills_dir.mkdir(parents=True)
+
+        registry = SkillRegistry(workspace)
+
+        # Make _discover raise an exception
+        mocker.patch.object(
+            registry,
+            "_discover",
+            side_effect=PermissionError("Permission denied"),
+        )
+
+        registry.mark_dirty()
+        registry.refresh()
+
+        # _dirty should still be True
+        assert registry._dirty is True
+
+    def test_refresh_clears_dirty_flag_on_success(self, tmp_path: Path) -> None:
+        """AC: Successful refresh clears _dirty flag."""
+        workspace = tmp_path / "workspace"
+        skills_dir = workspace / "skills"
+        skills_dir.mkdir(parents=True)
+
+        registry = SkillRegistry(workspace)
+        registry.mark_dirty()
+        assert registry._dirty is True
+
+        registry.refresh()
+
+        assert registry._dirty is False
+
+    def test_refresh_handles_missing_skills_directory(self, tmp_path: Path) -> None:
+        """AC: refresh() gracefully handles missing skills directory."""
+        workspace = tmp_path / "workspace"
+        skills_dir = workspace / "skills"
+        skills_dir.mkdir(parents=True)
+
+        # Create initial skill
+        create_skill(skills_dir, "skill-one", "One")
+
+        registry = SkillRegistry(workspace)
+        assert "skill-one" in registry.skills
+
+        # Delete the entire skills directory
+        shutil.rmtree(skills_dir)
+
+        registry.mark_dirty()
+        registry.refresh()
+
+        # Should have empty dicts (gracefully emptied)
+        assert registry.skills == {}
+        assert registry.get_agents() == {}
+        assert registry._dirty is False  # Successful refresh (empty is success)
