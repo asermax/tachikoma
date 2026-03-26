@@ -114,9 +114,7 @@ async def detect_boundary(
     )
 
     # Build user prompt with optional candidates section
-    user_prompt = BOUNDARY_DETECTION_USER_PROMPT.format(
-        summary=summary, message=message
-    )
+    user_prompt = BOUNDARY_DETECTION_USER_PROMPT.format(summary=summary, message=message)
 
     if candidates:
         candidates_text = CANDIDATES_SECTION_TEMPLATE.format(
@@ -139,9 +137,7 @@ async def detect_boundary(
                     err=sdk_message.result,
                 )
             elif sdk_message.structured_output is not None:
-                continues = bool(
-                    sdk_message.structured_output.get("continues_conversation", True)
-                )
+                continues = bool(sdk_message.structured_output.get("continues_conversation", True))
                 resume_id = sdk_message.structured_output.get("resume_session_id")
 
                 if not isinstance(resume_id, str) or resume_id == "":

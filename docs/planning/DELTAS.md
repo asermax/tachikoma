@@ -140,13 +140,6 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 **Complexity**: Medium
 **Description**: During skill authoring, the assistant needs to verify that a new skill's description triggers correctly on relevant messages. Provide a validation tool that runs the skill's description against synthetic messages via the evaluation framework to measure whether it triggers on relevant messages and avoids false matches, reporting precision/recall scores and actionable feedback. Results include suggestions so the assistant can iteratively refine the skill's description until it passes quality thresholds, closing the authoring feedback loop without manual testing. The tool is exposed on the skill authoring guide skill via the skill-provided MCP tools capability. This is distinct from the offline skill detection eval suite, which evolves the detection engine itself — this tool evolves individual skill descriptions to work well with the existing detection logic.
 
-### DLT-034: Summarize agent actions instead of generic tool markers
-**Status**: ✗ Defined
-**Depends on**: None
-**Priority**: 1 (Critical)
-**Complexity**: Medium
-**Description**: Replace the generic "Ran tools" marker in Telegram responses with a concise summary of what the agent actually did (e.g., "Read 3 files and searched for logging config" instead of "🔧 Ran tools"). The summary is generated from the sequence of ToolActivity events captured during the response, condensed into a human-readable action description that helps users understand what happened without reading tool-by-tool output.
-
 ### DLT-035: Receive images and audio from Telegram
 **Status**: ✗ Defined
 **Depends on**: None
@@ -155,25 +148,18 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 **Description**: Accept image and audio messages from the Telegram channel and forward them to the agent for processing. Currently the Telegram handler only accepts text messages and silently ignores all other content types. This delta adds support for photos, voice messages, and audio files, forwarding them to the agent as multimodal input for processing.
 
 ### DLT-036: Auto-close idle sessions
-**Status**: ✗ Defined
+**Status**: ✓ Reconciled
 **Depends on**: None
 **Priority**: 1 (Critical)
 **Complexity**: Easy
 **Description**: Automatically close a session after a configurable period of inactivity so that post-processing (memory extraction, context updates, git commit) triggers without requiring the user to explicitly end the conversation or wait for a topic shift. The idle timeout is measured from the last message exchange and is configurable via the application settings. This complements boundary-detection-based session closing by handling the case where a conversation simply trails off.
 
 ### DLT-037: Ensure Telegram push notifications for streamed responses
-**Status**: ✗ Defined
+**Status**: ✓ Reconciled
 **Depends on**: None
 **Priority**: 1 (Critical)
 **Complexity**: Easy
 **Description**: The Telegram channel streams responses by creating a single message and progressively editing it. Telegram only delivers push notifications for new messages, not edits — so if the user sends a message and closes the app before the response starts, they never receive a push notification that the agent replied. This delta ensures users receive a Telegram push notification for every agent response, even when the response is delivered via progressive message editing. The specific mechanism (e.g., sending a brief new message after streaming completes, or restructuring how the first message is created) should be evaluated during speccing.
-
-### DLT-038: Hot-reload skills at runtime
-**Status**: ✗ Defined
-**Depends on**: None
-**Priority**: 1 (Critical)
-**Complexity**: Easy
-**Description**: Reload the skill registry when skills are added or modified at runtime, without requiring an application restart. Currently the skill registry loads once during bootstrap and never refreshes. Since the agent can create and modify skill files during execution, newly authored or updated skills are invisible until the next restart. This delta adds a mechanism to detect skill changes and re-index skills so they become available immediately.
 
 ### DLT-039: Extract shared base for pipeline execution
 **Status**: ✗ Defined
@@ -314,3 +300,17 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 **Priority**: 5 (Backlog)
 **Complexity**: Medium
 **Description**: Some users may not need all of Tachikoma's capabilities active — whether to simplify behavior, reduce resource usage, or tailor the assistant to a specific workflow. This delta adds per-feature enabled/disabled toggles to the application configuration, covering memory, session boundary detection, and projects. When a subsystem is disabled, all of its behavior is cleanly removed: it does not initialize at startup, does not contribute context or post-processing, and does not influence conversation flow. Disabling boundary detection means the manual session close command becomes the only way to trigger session post-processing mid-conversation. Toggles live in a `[features]` configuration section with boolean flags that default to enabled, preserving current behavior for users who do not customize.
+
+### DLT-060: Check for agent updates and notify user
+**Status**: ✗ Defined
+**Depends on**: DLT-024
+**Priority**: 4 (Low)
+**Complexity**: Medium
+**Description**: Users running the agent need to stay current with bug fixes and features without manually checking for releases. This delta periodically checks for newer versions, notifies the user through their active channel when an update is available, and captures their choice (confirm, defer, or skip). Configuration includes how often checks occur. The apply action is handled by a separate delta.
+
+### DLT-061: Apply agent update
+**Status**: ✗ Defined
+**Depends on**: DLT-060
+**Priority**: 4 (Low)
+**Complexity**: Medium
+**Description**: Apply a confirmed agent update using uv's upgrade mechanism. This delta executes when the user has confirmed an update via the notification from the update check delta, performing the actual update and optionally restarting the agent to run the new version.

@@ -9,6 +9,7 @@ held in memory.
 """
 
 import asyncio
+import contextlib
 from collections.abc import AsyncIterator, Callable
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -52,7 +53,8 @@ def _user_message(content: str) -> dict[str, Any]:
 
 
 async def _message_source(
-    initial: str, buffer: asyncio.Queue[str],
+    initial: str,
+    buffer: asyncio.Queue[str],
 ) -> AsyncIterator[dict[str, Any]]:
     """Long-lived generator feeding messages from buffer to SDK.
 
@@ -116,6 +118,7 @@ class Coordinator:
         on_status: Callable[[str], None] | None = None,
         agents: dict[str, AgentDefinition] | None = None,
         session_resume_window: int = 86400,
+        session_idle_timeout: int = 900,
         mcp_servers: dict[str, McpSdkServerConfig] | None = None,
     ) -> None:
         # Store individual options for building ClaudeAgentOptions per message
@@ -130,6 +133,10 @@ class Coordinator:
 
         # Session resumption configuration
         self._session_resume_window = session_resume_window
+
+        # Idle session auto-close configuration
+        self._idle_timeout = session_idle_timeout
+        self._idle_close_task: asyncio.Task[None] | None = None
 
         # Last message time tracking for idle gating
         self._last_message_time: datetime | None = None
@@ -157,6 +164,15 @@ class Coordinator:
 
     async def __aenter__(self) -> "Coordinator":
         _log.info("Coordinator initialized")
+
+        # Start idle close loop if timeout > 0
+        if self._idle_timeout > 0:
+            self._idle_close_task = asyncio.create_task(self._idle_close_loop())
+            _log.debug(
+                "Idle close loop started: timeout={timeout}s",
+                timeout=self._idle_timeout,
+            )
+
         return self
 
     async def __aexit__(
@@ -165,14 +181,20 @@ class Coordinator:
         exc_val: BaseException | None,
         exc_tb: TracebackType | None,
     ) -> None:
+        # Cancel idle close loop first to prevent race with shutdown close
+        if self._idle_close_task is not None:
+            self._idle_close_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await self._idle_close_task
+            self._idle_close_task = None
+            _log.debug("Idle close loop cancelled")
+
         # Await any pending per-message post-processing task
         if self._pending_msg_task is not None:
             try:
                 await self._pending_msg_task
             except Exception as exc:
-                _log.exception(
-                    "Pending per-message task failed: err={err}", err=str(exc)
-                )
+                _log.exception("Pending per-message task failed: err={err}", err=str(exc))
             finally:
                 self._pending_msg_task = None
 
@@ -204,15 +226,11 @@ class Coordinator:
                         err=str(exc),
                     )
             else:
-                _log.warning(
-                    "Skipping post-processing: session has no SDK session ID"
-                )
+                _log.warning("Skipping post-processing: session has no SDK session ID")
 
         # Await all background session post-processing tasks from topic shifts
         if self._background_tasks:
-            results = await asyncio.gather(
-                *self._background_tasks, return_exceptions=True
-            )
+            results = await asyncio.gather(*self._background_tasks, return_exceptions=True)
             for i, result in enumerate(results):
                 if isinstance(result, Exception):
                     _log.exception(
@@ -340,9 +358,7 @@ class Coordinator:
                     try:
                         now = datetime.now(UTC)
                         window = timedelta(seconds=self._session_resume_window)
-                        recent = await self._registry.get_recent_closed(
-                            before=now, window=window
-                        )
+                        recent = await self._registry.get_recent_closed(before=now, window=window)
                         candidates = [
                             SessionCandidate(id=s.id, summary=s.summary)
                             for s in recent
@@ -362,8 +378,7 @@ class Coordinator:
                 )
                 if not result.continues:
                     _log.info(
-                        "Topic shift detected, transitioning session"
-                        " (resume_id={resume_id})",
+                        "Topic shift detected, transitioning session (resume_id={resume_id})",
                         resume_id=result.resume_session_id,
                     )
                     resumed = await self._handle_transition(
@@ -457,9 +472,7 @@ class Coordinator:
                     ):
                         self._sdk_session_id = event.session_id
                         try:
-                            transcript_path = _derive_transcript_path(
-                                event.session_id, self._cwd
-                            )
+                            transcript_path = _derive_transcript_path(event.session_id, self._cwd)
                             await self._registry.update_metadata(
                                 session_id=active.id,
                                 sdk_session_id=event.session_id,
@@ -480,11 +493,7 @@ class Coordinator:
             self._client = None
 
         # Trigger per-message post-processing after response completes
-        if (
-            self._msg_pipeline is not None
-            and active is not None
-            and self._registry is not None
-        ):
+        if self._msg_pipeline is not None and active is not None and self._registry is not None:
             # Re-fetch session to get latest metadata (may have been updated)
             current_session = await self._registry.get_active_session()
             if current_session is not None:
@@ -497,6 +506,28 @@ class Coordinator:
         self._last_message_time = datetime.now(UTC)
 
         _log.debug("Response complete")
+
+    async def _close_and_fire_postprocessing(self, session: Session) -> None:
+        """Close a session in the registry and fire async post-processing."""
+        if self._registry is not None:
+            try:
+                await self._registry.close_session(session.id)
+            except Exception as exc:
+                _log.exception(
+                    "Failed to close session: err={err}", err=str(exc)
+                )
+
+        if session.sdk_session_id is not None and self._pipeline is not None:
+            task = asyncio.create_task(self._pipeline.run(session))
+            self._background_tasks.append(task)
+            self._background_tasks = [t for t in self._background_tasks if not t.done()]
+
+    def _clear_session_state(self, session: Session) -> None:
+        """Reset coordinator state after a session close."""
+        self._sdk_session_id = None
+        self._agents = None
+        self._previous_summary = session.summary
+        self._mcp_servers = {}
 
     async def _handle_transition(
         self, previous_session: Session, *, resume_session_id: str | None = None
@@ -513,34 +544,16 @@ class Coordinator:
         Returns:
             True if a previous session was resumed, False if a fresh session was created.
         """
-        session_snapshot = previous_session
-
         # Capture close timestamp before registry close — needed for bridging context window
         closed_at = datetime.now(UTC)
-        if self._registry is not None:
-            try:
-                await self._registry.close_session(session_snapshot.id)
-            except Exception as exc:
-                _log.exception(
-                    "Failed to close session during transition: err={err}", err=str(exc)
-                )
-
-        # Fire async session post-processing if session has sdk_session_id
-        if session_snapshot.sdk_session_id is not None and self._pipeline is not None:
-            task = asyncio.create_task(self._pipeline.run(session_snapshot))
-            self._background_tasks.append(task)
-
-            # Prune completed tasks to avoid unbounded growth
-            self._background_tasks = [t for t in self._background_tasks if not t.done()]
+        await self._close_and_fire_postprocessing(previous_session)
 
         if resume_session_id is not None and self._registry is not None:
             try:
                 reopened = await self._registry.reopen_session(resume_session_id)
                 if reopened is not None:
-                    # Resume successful — set SDK session ID
                     self._sdk_session_id = reopened.sdk_session_id
 
-                    # Record the resumption event (best-effort)
                     await self._registry.record_resumption(
                         session_id=reopened.id,
                         previous_ended_at=closed_at,
@@ -561,12 +574,8 @@ class Coordinator:
                     err=str(exc),
                 )
 
-        # Fresh-session path: clear SDK session so next message starts fresh
-        self._sdk_session_id = None
-        self._agents = None
-        self._mcp_servers = {}
+        self._clear_session_state(previous_session)
 
-        # Create new session in registry
         new_session = None
         if self._registry is not None:
             try:
@@ -671,3 +680,108 @@ providing context for what the user has been doing in the meantime.
     def has_pending_messages(self) -> bool:
         """Whether the message buffer has items waiting to be processed."""
         return not self._message_buffer.empty()
+
+    @property
+    def _is_busy(self) -> bool:
+        """Whether the coordinator is actively processing.
+
+        Used by idle close to avoid interrupting:
+        - Message exchange in progress (_client is not None)
+        - Messages queued but not yet picked up (has_pending_messages)
+        - Per-message post-processing in flight (_pending_msg_task)
+        """
+        return (
+            self._client is not None
+            or self.has_pending_messages
+            or (self._pending_msg_task is not None and not self._pending_msg_task.done())
+        )
+
+    async def _close_idle_session(self) -> None:
+        """Close the active session due to idle timeout.
+
+        Uses the shared close-and-clear helpers but does NOT create a new
+        session. The next user message follows the normal first-message path.
+        """
+        if self._registry is None:
+            return
+
+        try:
+            session = await self._registry.get_active_session()
+            if session is None:
+                _log.debug("Idle close skipped: no active session")
+                return
+
+            await self._close_and_fire_postprocessing(session)
+            self._clear_session_state(session)
+
+            _log.info(
+                "Session closed due to idle timeout: session_id={id}",
+                id=session.id,
+            )
+
+        except Exception as exc:
+            _log.exception(
+                "Idle close failed (will retry next cycle): err={err}",
+                err=str(exc),
+            )
+
+    async def _idle_close_loop(self) -> None:
+        """Periodic check for idle session timeout.
+
+        Runs every 60 seconds. If the coordinator is busy when the timeout
+        fires, snoozes for min(300, timeout) seconds and retries.
+        Errors are logged but never crash the application.
+        CancelledError propagates for clean shutdown.
+        """
+        while True:
+            try:
+                await asyncio.sleep(60)
+
+                if self._registry is None:
+                    continue
+
+                session = await self._registry.get_active_session()
+                if session is None:
+                    continue
+
+                if self._last_message_time is None:
+                    continue
+
+                elapsed = (datetime.now(UTC) - self._last_message_time).total_seconds()
+
+                if elapsed < self._idle_timeout:
+                    continue
+
+                while self._is_busy:
+                    snooze_duration = min(300, self._idle_timeout)
+                    _log.debug(
+                        "Idle close snoozing: duration={dur}",
+                        dur=snooze_duration,
+                    )
+                    await asyncio.sleep(snooze_duration)
+
+                    session = await self._registry.get_active_session()
+                    if session is None:
+                        break
+
+                    if self._last_message_time is None:
+                        break
+
+                    elapsed = (datetime.now(UTC) - self._last_message_time).total_seconds()
+                    if elapsed < self._idle_timeout:
+                        break
+
+                # Proceed with close if conditions still met
+                if session is not None and self._last_message_time is not None:
+                    elapsed = (datetime.now(UTC) - self._last_message_time).total_seconds()
+                    if elapsed >= self._idle_timeout and not self._is_busy:
+                        await self._close_idle_session()
+
+            except asyncio.CancelledError:
+                raise
+
+            except Exception as exc:
+                _log.exception(
+                    "Idle close loop error (continuing): err={err}",
+                    err=str(exc),
+                )

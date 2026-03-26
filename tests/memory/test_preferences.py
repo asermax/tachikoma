@@ -62,9 +62,7 @@ class TestPreferencesProcessor:
         """AC: Prompt mentions descriptive, topic-based naming."""
         assert "descriptive" in PREFERENCES_PROMPT.lower() or "topic" in PREFERENCES_PROMPT.lower()
 
-    async def test_propagates_fork_and_consume_error(
-        self, mocker: pytest.MockerFixture
-    ) -> None:
+    async def test_propagates_fork_and_consume_error(self, mocker: pytest.MockerFixture) -> None:
         """AC: Exceptions from fork_and_consume propagate."""
         _mock_fork = mocker.patch(
             "tachikoma.post_processing.fork_and_consume",

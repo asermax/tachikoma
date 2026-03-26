@@ -33,7 +33,7 @@ from tachikoma.pre_processing import PreProcessingPipeline
 from tachikoma.projects import ProjectsContextProvider, ProjectsProcessor, projects_hook
 from tachikoma.repl import Repl
 from tachikoma.sessions import session_recovery_hook
-from tachikoma.skills import SkillsContextProvider, skills_hook
+from tachikoma.skills import SkillRegistry, SkillsContextProvider, skills_hook, watch_skills
 from tachikoma.tasks import (
     TaskRepository,
     background_task_runner,
@@ -97,6 +97,7 @@ async def main(
     database: Database = bootstrap.extras["database"]
     registry = bootstrap.extras["session_registry"]
     task_repository: TaskRepository = bootstrap.extras["task_repository"]
+    skill_registry: SkillRegistry = bootstrap.extras["skill_registry"]
     bus = EventBus()
 
     # Skills provider will be registered in pre-processing pipeline
@@ -138,7 +139,7 @@ async def main(
     pre_pipeline = PreProcessingPipeline()
     pre_pipeline.register(MemoryContextProvider(agent_defaults))
     pre_pipeline.register(ProjectsContextProvider(workspace_path=settings.workspace.path))
-    pre_pipeline.register(SkillsContextProvider(agent_defaults))
+    pre_pipeline.register(SkillsContextProvider(agent_defaults, skill_registry))
 
     # Create and configure the per-message post-processing pipeline
     msg_pipeline = MessagePostProcessingPipeline()
@@ -163,6 +164,7 @@ async def main(
             permission_mode="bypassPermissions",
             on_status=lambda msg: console.print(msg, style="dim italic grey50"),
             session_resume_window=settings.agent.session_resume_window,
+            session_idle_timeout=settings.agent.session_idle_timeout,
             mcp_servers={"task-tools": task_tools},
         ) as coordinator:
             scheduler_tasks.append(
@@ -193,6 +195,17 @@ async def main(
                         agent_defaults,
                     ),
                     name="background_task_runner",
+                )
+            )
+
+            scheduler_tasks.append(
+                asyncio.create_task(
+                    watch_skills(
+                        settings.workspace.path / "skills",
+                        skill_registry,
+                        bus,
+                    ),
+                    name="skills_watcher",
                 )
             )
 

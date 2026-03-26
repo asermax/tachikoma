@@ -236,16 +236,14 @@ class TestRemovePendingSignal:
     async def test_multiple_index_removal(self, tmp_path: Path) -> None:
         """AC: Remove multiple signals in one call (R3.2)."""
         # Create file with 5 signals
-        content = PENDING_SIGNALS_HEADER + "\n".join([
-            f"- **2026-03-{10+i*5:02d}**: Signal {i+1}"
-            for i in range(5)
-        ]) + "\n"
+        content = (
+            PENDING_SIGNALS_HEADER
+            + "\n".join([f"- **2026-03-{10 + i * 5:02d}**: Signal {i + 1}" for i in range(5)])
+            + "\n"
+        )
         (tmp_path / PENDING_SIGNALS_FILENAME).write_text(content)
 
-        snapshot = [
-            (f"2026-03-{10+i*5:02d}", f"Signal {i+1}")
-            for i in range(5)
-        ]
+        snapshot = [(f"2026-03-{10 + i * 5:02d}", f"Signal {i + 1}") for i in range(5)]
 
         # Remove S1, S3, S5
         result = await handle_remove_pending_signal(
@@ -367,8 +365,7 @@ class TestRemovePendingSignal:
     async def test_all_signals_removed_deletes_file(self, tmp_path: Path) -> None:
         """AC: All signals removed → file deleted."""
         content = (
-            PENDING_SIGNALS_HEADER
-            + "- **2026-03-10**: Signal 1\n- **2026-03-15**: Signal 2\n"
+            PENDING_SIGNALS_HEADER + "- **2026-03-10**: Signal 1\n- **2026-03-15**: Signal 2\n"
         )
         (tmp_path / PENDING_SIGNALS_FILENAME).write_text(content)
 

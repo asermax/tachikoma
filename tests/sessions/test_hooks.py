@@ -52,9 +52,7 @@ class TestSessionRecoveryHook:
         assert "session_registry" in ctx.extras
         assert isinstance(ctx.extras["session_registry"], SessionRegistry)
 
-    async def test_recovers_interrupted_sessions(
-        self, ctx: BootstrapContext
-    ) -> None:
+    async def test_recovers_interrupted_sessions(self, ctx: BootstrapContext) -> None:
         """AC: hook closes sessions left open from a previous run."""
         database: Database = ctx.extras["database"]
 

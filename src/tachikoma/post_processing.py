@@ -165,7 +165,8 @@ class PostProcessingPipeline:
                 names = [p.__class__.__name__ for p in processors]
                 _log.info(
                     "Phase started: phase={phase} processors={names}",
-                    phase=phase, names=names,
+                    phase=phase,
+                    names=names,
                 )
 
                 results = await asyncio.gather(
@@ -220,9 +221,7 @@ async def fork_and_consume(
         Propagates: SDK errors from the query() call.
     """
     if session.sdk_session_id is None:
-        raise RuntimeError(
-            f"Cannot fork session {session.id}: no sdk_session_id available"
-        )
+        raise RuntimeError(f"Cannot fork session {session.id}: no sdk_session_id available")
 
     _log.debug("Forking session: sdk_session_id={sid}", sid=session.sdk_session_id[:8])
 
@@ -280,9 +279,7 @@ async def fork_and_capture(
         Propagates: SDK errors from the query() call.
     """
     if session.sdk_session_id is None:
-        raise RuntimeError(
-            f"Cannot fork session {session.id}: no sdk_session_id available"
-        )
+        raise RuntimeError(f"Cannot fork session {session.id}: no sdk_session_id available")
 
     _log.debug("Forking session for capture: sdk_session_id={sid}", sid=session.sdk_session_id[:8])
 

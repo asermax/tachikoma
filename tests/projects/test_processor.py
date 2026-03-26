@@ -88,9 +88,7 @@ class TestProjectsProcessor:
         ):
             await processor.process(mock_session)
 
-    async def test_pushes_after_commit(
-        self, workspace_path: Path, mock_session: MagicMock
-    ) -> None:
+    async def test_pushes_after_commit(self, workspace_path: Path, mock_session: MagicMock) -> None:
         """AC: Pushes to remote after successful commit."""
         processor = ProjectsProcessor(AgentDefaults(cwd=workspace_path))
 

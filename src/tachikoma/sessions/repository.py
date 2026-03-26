@@ -113,8 +113,7 @@ class SessionRepository:
                     select(SessionRecord)
                     .where(
                         SessionRecord.started_at < end,
-                        (SessionRecord.ended_at.is_(None))
-                        | (SessionRecord.ended_at > start),
+                        (SessionRecord.ended_at.is_(None)) | (SessionRecord.ended_at > start),
                     )
                     .order_by(SessionRecord.started_at.desc())
                 )
@@ -139,9 +138,7 @@ class SessionRepository:
         except Exception as exc:
             raise SessionRepositoryError("Failed to get open sessions") from exc
 
-    async def get_recent_closed(
-        self, before: datetime, window: timedelta
-    ) -> list[Session]:
+    async def get_recent_closed(self, before: datetime, window: timedelta) -> list[Session]:
         """Return recently closed sessions within the time window.
 
         Only returns sessions with:
@@ -197,9 +194,7 @@ class SessionRepository:
                 f"Failed to create resumption for session {resumption.session_id}"
             ) from exc
 
-    async def get_resumptions_for_session(
-        self, session_id: str
-    ) -> list[SessionResumption]:
+    async def get_resumptions_for_session(self, session_id: str) -> list[SessionResumption]:
         """Return all resumption events for a session, ordered by resumed_at ascending."""
         try:
             async with self._session_factory() as db:

@@ -102,9 +102,7 @@ class SessionRecord(Base):
     ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
     last_resumed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
 
-    __table_args__ = (
-        Index("ix_sessions_started_at", "started_at"),
-    )
+    __table_args__ = (Index("ix_sessions_started_at", "started_at"),)
 
     def to_domain(self) -> Session:
         """Convert ORM record to domain dataclass.
@@ -137,9 +135,7 @@ class SessionResumptionRecord(Base):
     resumed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     previous_ended_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
-    __table_args__ = (
-        Index("ix_session_resumptions_session_id", "session_id"),
-    )
+    __table_args__ = (Index("ix_session_resumptions_session_id", "session_id"),)
 
     def to_domain(self) -> SessionResumption:
         """Convert ORM record to domain dataclass."""
@@ -148,6 +144,7 @@ class SessionResumptionRecord(Base):
             resumed_at=ensure_utc(self.resumed_at),  # type: ignore[arg-type]
             previous_ended_at=ensure_utc(self.previous_ended_at),  # type: ignore[arg-type]
         )
+
 
 
 class SessionContextEntryRecord(Base):
@@ -178,4 +175,3 @@ class SessionContextEntryRecord(Base):
             owner=self.owner,
             content=self.content,
         )
-

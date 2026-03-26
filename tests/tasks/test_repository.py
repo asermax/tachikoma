@@ -129,9 +129,7 @@ class TestRepositoryDefinitionCRUD:
         retrieved = await repo.get_definition("def-1")
         assert retrieved is None
 
-    async def test_delete_nonexistent_returns_false(
-        self, repo: TaskRepository
-    ) -> None:
+    async def test_delete_nonexistent_returns_false(self, repo: TaskRepository) -> None:
         """AC: deleting nonexistent ID returns False."""
         result = await repo.delete_definition("ghost")
 
@@ -186,9 +184,7 @@ class TestRepositoryInstanceCRUD:
         assert "running-1" not in ids
         assert "pending-bg-1" not in ids
 
-    async def test_get_active_instance_for_definition(
-        self, repo: TaskRepository
-    ) -> None:
+    async def test_get_active_instance_for_definition(self, repo: TaskRepository) -> None:
         """AC: get_active_instance_for_definition returns pending or running."""
         await repo.create_instance(
             _make_instance("pending-1", definition_id="def-1", status="pending")
@@ -199,9 +195,7 @@ class TestRepositoryInstanceCRUD:
         assert active is not None
         assert active.id == "pending-1"
 
-    async def test_get_active_instance_excludes_completed(
-        self, repo: TaskRepository
-    ) -> None:
+    async def test_get_active_instance_excludes_completed(self, repo: TaskRepository) -> None:
         """AC: completed instances are not returned as active."""
         await repo.create_instance(
             _make_instance("completed-1", definition_id="def-1", status="completed")
@@ -246,9 +240,7 @@ class TestRepositoryInstanceCRUD:
         retrieved = await repo.get_instance("inst-1")
         assert retrieved is None
 
-    async def test_delete_nonexistent_instance_returns_false(
-        self, repo: TaskRepository
-    ) -> None:
+    async def test_delete_nonexistent_instance_returns_false(self, repo: TaskRepository) -> None:
         """AC: deleting nonexistent instance ID returns False."""
         result = await repo.delete_instance("ghost")
 

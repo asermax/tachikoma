@@ -114,7 +114,7 @@ sequenceDiagram
 ```
 
 **Integration Points:**
-- Coordinator → SessionRegistry: `get_active_session()` + `create_session()` on first message, `update_metadata()` on Result events, `close_session()` on shutdown and topic shift, `get_recent_closed()` for resumption candidates, `reopen_session()` for session resumption, `record_resumption()` for best-effort tracking, `get_by_time_range()` for bridging context assembly, `save_context_entries(session_id, entries)` for persisting context (always takes a list of (owner, content) tuples), `load_context_entries(session_id)` for loading entries for system prompt assembly
+- Coordinator → SessionRegistry: `get_active_session()` + `create_session()` on first message, `update_metadata()` on Result events, `close_session()` on shutdown, topic shift, and idle timeout, `get_recent_closed()` for resumption candidates, `reopen_session()` for session resumption, `record_resumption()` for best-effort tracking, `get_by_time_range()` for bridging context assembly, `save_context_entries(session_id, entries)` for persisting context (always takes a list of (owner, content) tuples), `load_context_entries(session_id)` for loading entries for system prompt assembly
 - SummaryProcessor → SessionRegistry: `update_summary()` after each per-message pipeline run (see [boundary detection design](boundary-detection.md))
 - SessionRegistry → SessionRepository: all persistence delegated
 - SessionRepository → shared Database (AsyncEngine → aiosqlite → tachikoma.db)
@@ -122,10 +122,11 @@ sequenceDiagram
 
 **Session close mechanism:**
 
-Sessions close via two runtime mechanisms and one startup mechanism:
+Sessions close via three runtime mechanisms and one startup mechanism:
 1. **Boundary detection** (primary, mid-conversation): When a topic shift is detected, the coordinator closes the current session and opens a new one. Post-processing runs as a background task.
-2. **Coordinator disconnect** (shutdown safety net): On clean shutdown, the coordinator's `__aexit__` calls `registry.close_session()`, then triggers the post-processing pipeline with the closed session if it has a valid `sdk_session_id`.
-3. **Crash recovery** (startup): On next launch, the bootstrap recovery hook closes interrupted sessions.
+2. **Idle timeout** (secondary, trails-off conversations): A periodic check (every 60s) closes the active session after a configurable period of inactivity (`session_idle_timeout`, default 900s). If the coordinator is busy (message exchange active, messages queued, or per-message post-processing in flight), the close is snoozed and retried. Unlike boundary detection, idle close does NOT create a new session — the next user message follows the normal first-message path.
+3. **Coordinator disconnect** (shutdown safety net): On clean shutdown, the coordinator's `__aexit__` cancels the idle close loop first (preventing a race condition), then calls `registry.close_session()` and triggers post-processing.
+4. **Crash recovery** (startup): On next launch, the bootstrap recovery hook closes interrupted sessions.
 
 **Error contract:**
 
@@ -267,6 +268,18 @@ The `transcript_path` is derived from the SDK session ID using the known Claude 
 3. Coordinator calls registry.close_session(id) — errors logged, not propagated
 4. Registry calls repository.update(id, ended_at=utcnow())
 5. Idempotent: already-closed sessions are no-ops
+```
+
+### Session close (idle timeout)
+
+```
+1. Coordinator's idle close loop detects inactivity exceeding session_idle_timeout
+2. Loop verifies coordinator is not busy (no active exchange, no queued messages, no pending post-processing)
+3. Coordinator calls registry.get_active_session()
+4. Coordinator calls registry.close_session(id) — errors logged, not propagated
+5. If session has sdk_session_id: fires async post-processing as background task
+6. Coordinator clears SDK state and stores previous summary
+7. No new session created — next user message follows first-message path
 ```
 
 ### Crash recovery (bootstrap)
@@ -441,12 +454,19 @@ The `transcript_path` is derived from the SDK session ID using the known Claude 
 **Then**: `registry.update_metadata()` sets `sdk_session_id` and derives `transcript_path`.
 **Rationale**: The SDK assigns its own session ID internally; the registry captures it on the first Result event for cross-referencing with SDK transcripts.
 
+### Scenario: Idle timeout closes session
+
+**Given**: An active session with no message exchange for longer than `session_idle_timeout`
+**When**: The idle close loop detects the timeout and the coordinator is not busy
+**Then**: `registry.close_session()` sets `ended_at`. If the session has a valid `sdk_session_id`, async post-processing is triggered. SDK state is cleared and the summary is stored. No new session is created — the next user message follows the first-message path.
+**Rationale**: Conversations that trail off (user stops messaging without changing topics) get their post-processing triggered automatically without requiring a topic shift or restart.
+
 ### Scenario: Clean shutdown closes active session
 
 **Given**: An active session exists
 **When**: The coordinator exits its async context
-**Then**: `registry.close_session()` sets `ended_at`. Errors are logged but not propagated.
-**Rationale**: Clean session close enables time-range queries and signals readiness for post-processing.
+**Then**: The idle close loop is cancelled first (if running), then `registry.close_session()` sets `ended_at`. If idle close already closed the session, no active session is found and the close is skipped. Errors are logged but not propagated.
+**Rationale**: Clean session close enables time-range queries and signals readiness for post-processing. Cancelling the idle loop first prevents a race between idle close and shutdown close.
 
 ### Scenario: Close on already-closed session (idempotent)
 
