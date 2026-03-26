@@ -28,7 +28,7 @@ from tachikoma.coordinator import Coordinator, _derive_transcript_path
 from tachikoma.events import Error, Result, TextChunk, ToolActivity
 from tachikoma.pre_processing import ContextResult
 from tachikoma.sessions.errors import SessionRepositoryError
-from tachikoma.sessions.model import Session
+from tachikoma.sessions.model import Session, SessionContextEntry
 
 
 async def _mock_messages(*messages):
@@ -320,6 +320,8 @@ def _make_mock_registry(active_session=None):
     registry.update_metadata = AsyncMock()
     registry.get_recent_closed = AsyncMock(return_value=[])
     registry.reopen_session = AsyncMock(return_value=None)
+    registry.save_context_entries = AsyncMock(return_value=None)
+    registry.load_context_entries = AsyncMock(return_value=[])
     return registry
 
 
@@ -459,52 +461,106 @@ class TestTranscriptPathDerivation:
 
 
 class TestCoordinatorSystemPrompt:
-    """Tests for DLT-005: system prompt integration in the coordinator."""
+    """Tests for DLT-005/DLT-041: system prompt integration via foundational context."""
 
-    async def test_system_prompt_provided_sets_sdk_system_prompt(
+    async def test_foundational_context_persisted_to_db(
         self, mock_sdk,
     ) -> None:
-        """AC: Given system_prompt is provided -> system_prompt is a SystemPromptPreset."""
+        """AC: Given foundational_context is provided -> saved to DB for new session."""
+        client, _ = mock_sdk
+        client.receive_response.return_value = _mock_messages(
+            make_assistant([TextBlock(text="hi")]),
+            make_result(),
+        )
+
+        registry = _make_mock_registry(active_session=None)
+        foundational = [("soul", "Soul content"), ("user", "User content")]
+
+        async with Coordinator(
+            registry=registry, foundational_context=foundational
+        ) as coord:
+            _ = await _send(coord, "hello")
+
+        # Foundational context should be saved to DB
+        registry.save_context_entries.assert_awaited()
+        # Verify the foundational entries were saved
+        call_args = registry.save_context_entries.call_args_list[0]
+        entries = call_args[0][1]
+        # Entries should include our foundational content
+        owners = [owner for owner, _content in entries]
+        assert "soul" in owners
+        assert "user" in owners
+
+    async def test_foundational_context_assembled_into_system_prompt(
+        self, mock_sdk,
+    ) -> None:
+        """AC: Foundational context is assembled into SDK system prompt via DB."""
         client, mock_cls = mock_sdk
         client.receive_response.return_value = _mock_messages(
             make_assistant([TextBlock(text="hi")]),
             make_result(),
         )
 
-        async with Coordinator(system_prompt="Custom prompt") as coord:
+        registry = _make_mock_registry(active_session=None)
+        # Mock load_context_entries to return our foundational context
+        registry.load_context_entries = AsyncMock(
+            return_value=[
+                SessionContextEntry(
+                    id=1,
+                    session_id="s1",
+                    owner="soul",
+                    content="Soul content",
+                ),
+            ]
+        )
+        foundational = [("soul", "Soul content")]
+
+        async with Coordinator(
+            registry=registry, foundational_context=foundational
+        ) as coord:
             _ = await _send(coord, "hello")
 
         options = mock_cls.call_args[0][0]
         assert options.system_prompt is not None
         assert options.system_prompt["type"] == "preset"
         assert options.system_prompt["preset"] == "claude_code"
-        assert options.system_prompt["append"] == "Custom prompt"
+        assert "Soul content" in options.system_prompt["append"]
 
-    async def test_system_prompt_none_leaves_unset(
+    async def test_no_foundational_context_uses_preamble_only(
         self, mock_sdk,
     ) -> None:
-        """AC: Given system_prompt is None -> ClaudeAgentOptions.system_prompt is None."""
+        """AC: No foundational_context -> system prompt uses preamble only."""
         client, mock_cls = mock_sdk
         client.receive_response.return_value = _mock_messages(
             make_assistant([TextBlock(text="hi")]),
             make_result(),
         )
 
-        async with Coordinator() as coord:
+        registry = _make_mock_registry(active_session=None)
+        registry.load_context_entries = AsyncMock(return_value=[])
+
+        async with Coordinator(registry=registry) as coord:
             _ = await _send(coord, "hello")
 
         options = mock_cls.call_args[0][0]
-        assert options.system_prompt is None
+        # Preamble is always included when there's no context
+        assert options.system_prompt is not None
+        assert "Tachikoma" in options.system_prompt["append"]
 
-    async def test_system_prompt_does_not_break_send_message(self, mock_sdk) -> None:
-        """AC: Given system_prompt is provided -> existing coordinator behavior still works."""
+    async def test_foundational_context_does_not_break_send_message(self, mock_sdk) -> None:
+        """AC: foundational_context provided -> existing coordinator behavior still works."""
         client, _ = mock_sdk
         client.receive_response.return_value = _mock_messages(
             make_assistant([TextBlock(text="Hello!")]),
             make_result(),
         )
 
-        async with Coordinator(system_prompt="Custom prompt") as coord:
+        registry = _make_mock_registry(active_session=None)
+        foundational = [("soul", "Soul content")]
+
+        async with Coordinator(
+            registry=registry, foundational_context=foundational
+        ) as coord:
             events = await _send(coord, "hi")
 
         text_events = [e for e in events if isinstance(e, TextChunk)]
@@ -972,7 +1028,7 @@ class TestCoordinatorPreProcessing:
     async def test_runs_pre_pipeline_on_first_message_of_new_session(
         self, mock_sdk,
     ) -> None:
-        """AC: First message of new session triggers pre_pipeline.run()."""
+        """AC: First message of new session triggers pre_pipeline.run() and saves to DB."""
         client, _ = mock_sdk
         client.receive_response.return_value = _mock_messages(
             make_assistant([TextBlock(text="Hello!")]),
@@ -990,12 +1046,16 @@ class TestCoordinatorPreProcessing:
 
         pre_pipeline.run.assert_awaited_once_with("hello")
 
-        # Verify the enriched message was passed to connect() via the generator
-        client.connect.assert_awaited_once()
-        generator = client.connect.call_args[0][0]
-        first_msg = await generator.__anext__()
-        assert "<memories>" in first_msg["message"]["content"]
-        assert "hello" in first_msg["message"]["content"]
+        # Verify pre-processing results were saved to DB
+        found_memories = False
+        for call in registry.save_context_entries.call_args_list:
+            entries = call[0][1]
+            for owner, content in entries:
+                if owner == "memories":
+                    found_memories = True
+                    assert "Some memories" in content
+                    break
+        assert found_memories
 
     async def test_skips_pre_pipeline_on_subsequent_message(
         self, mock_sdk,
@@ -1623,7 +1683,7 @@ class TestSessionTransition:
     async def test_stores_previous_summary_on_topic_shift(
         self, mock_sdk, mocker,
     ) -> None:
-        """AC: Topic shift stores previous session's summary in _previous_summary."""
+        """AC: Topic shift persists previous session's summary via save_context_entries."""
         client, _ = mock_sdk
         client.receive_response.return_value = _mock_messages(
             make_assistant([TextBlock(text="new topic")]),
@@ -1647,12 +1707,18 @@ class TestSessionTransition:
             registry=registry,
             agent_defaults=AgentDefaults(cwd=Path("/workspace")),
         ) as coord:
-            # _previous_summary is consumed during _build_options in send_message,
-            # but we can verify the transition set it by checking the options used
             _ = await _send(coord, "new topic")
 
-            # After _build_options consumed it, it should be None again
-            assert coord._previous_summary is None
+            # After transition, previous summary should be persisted via save_context_entries
+            registry.save_context_entries.assert_awaited_once()
+            call_args = registry.save_context_entries.call_args
+            # Check entries contain the previous-summary entry
+            entries = call_args[0][1]
+            assert len(entries) == 1
+            owner, content = entries[0]
+            assert owner == "previous-summary"
+            assert "# Previous Conversation" in content
+            assert "User was discussing Python" in content
 
     async def test_creates_new_session_after_transition(
         self, mock_sdk, mocker,
@@ -1846,10 +1912,10 @@ class TestBuildOptions:
         options = mock_cls.call_args[0][0]
         assert options.resume is None
 
-    async def test_previous_summary_injected_into_system_prompt(
+    async def test_previous_summary_persisted_to_db_on_topic_shift(
         self, mock_sdk, mocker,
     ) -> None:
-        """AC: Previous conversation summary is injected into system prompt after topic shift."""
+        """AC: Previous conversation summary is persisted to DB after topic shift."""
         client, mock_cls = mock_sdk
         client.receive_response.return_value = _mock_messages(
             make_assistant([TextBlock(text="new topic")]),
@@ -1872,21 +1938,24 @@ class TestBuildOptions:
         async with Coordinator(
             registry=registry,
             agent_defaults=AgentDefaults(cwd=Path("/workspace")),
-            system_prompt="Base prompt",
         ) as coord:
             _ = await _send(coord, "new topic")
 
-        # The options used for the message should have the summary in the system prompt
-        options = mock_cls.call_args[0][0]
-        assert options.system_prompt is not None
-        append_text = options.system_prompt["append"]
-        assert "Python testing frameworks" in append_text
-        assert "Base prompt" in append_text
+        # Previous summary should be persisted via save_context_entries
+        found_previous_summary = False
+        for call in registry.save_context_entries.call_args_list:
+            entries = call[0][1]
+            for owner, content in entries:
+                if owner == "previous-summary":
+                    found_previous_summary = True
+                    assert "Python testing frameworks" in content
+                    break
+        assert found_previous_summary
 
-    async def test_previous_summary_with_none_base_prompt(
+    async def test_previous_summary_assembled_from_db(
         self, mock_sdk, mocker,
     ) -> None:
-        """AC: When base system prompt is None, only summary section is used."""
+        """AC: Previous summary is assembled into system prompt from DB entries."""
         client, mock_cls = mock_sdk
         client.receive_response.return_value = _mock_messages(
             make_assistant([TextBlock(text="new topic")]),
@@ -1898,8 +1967,28 @@ class TestBuildOptions:
             summary="Summary text",
             sdk_session_id="sdk-old",
         )
+        new_session = Session(
+            id="s2",
+            started_at=datetime.now(UTC),
+        )
         registry = _make_mock_registry(active_session=active)
-        registry.get_active_session.side_effect = [active, None, None]
+        registry.create_session = AsyncMock(return_value=new_session)
+        # First call: active session for boundary detection
+        # Second call: new_session after create_session in _handle_transition
+        # Third call: new_session for message post-processing
+        # Fourth call: new_session for __aexit__ cleanup
+        registry.get_active_session.side_effect = [active, new_session, new_session, new_session]
+        # Mock load_context_entries to return the previous-summary entry for new session
+        registry.load_context_entries = AsyncMock(
+            return_value=[
+                SessionContextEntry(
+                    id=1,
+                    session_id="s2",
+                    owner="previous-summary",
+                    content="# Previous Conversation\nSummary text",
+                ),
+            ]
+        )
 
         mocker.patch(
             "tachikoma.coordinator.detect_boundary",
@@ -1909,20 +1998,19 @@ class TestBuildOptions:
         async with Coordinator(
             registry=registry,
             agent_defaults=AgentDefaults(cwd=Path("/workspace")),
-            system_prompt=None,  # No base prompt
         ) as coord:
             _ = await _send(coord, "new topic")
 
-        # Should still have a system prompt with the summary
+        # The options used for the message should have the summary in the system prompt
         options = mock_cls.call_args[0][0]
         assert options.system_prompt is not None
         append_text = options.system_prompt["append"]
         assert "Summary text" in append_text
 
-    async def test_previous_summary_cleared_after_first_use(
+    async def test_previous_summary_not_repeated_on_second_message(
         self, mock_sdk, mocker,
     ) -> None:
-        """AC: Previous summary is cleared after the first message of the new session."""
+        """AC: Previous summary is not repeated after first message (DB only has it once)."""
         client, mock_cls = mock_sdk
         client.receive_response.side_effect = [
             _mock_messages(
@@ -1942,9 +2030,25 @@ class TestBuildOptions:
         )
         new_session = Session(id="s2", started_at=datetime.now(UTC))
         registry = _make_mock_registry(active_session=active)
+        registry.create_session = AsyncMock(return_value=new_session)
+        # First msg: active -> new_session (after create_session) -> new_session
+        # Second msg: new_session -> new_session -> new_session
         registry.get_active_session.side_effect = [
-            active, None, new_session, new_session, new_session,
+            active, new_session, new_session,  # First message
+            new_session, new_session, new_session,  # Second message
         ]
+        # First call returns previous-summary, second call returns empty (consumed)
+        registry.load_context_entries = AsyncMock(
+            side_effect=[
+                [SessionContextEntry(
+                    id=1,
+                    session_id="s2",
+                    owner="previous-summary",
+                    content="Previous summary",
+                )],
+                [],  # Second message: no previous-summary entry
+            ]
+        )
 
         mocker.patch(
             "tachikoma.coordinator.detect_boundary",
@@ -1954,18 +2058,17 @@ class TestBuildOptions:
         async with Coordinator(
             registry=registry,
             agent_defaults=AgentDefaults(cwd=Path("/workspace")),
-            system_prompt="Base prompt",
         ) as coord:
             _ = await _send(coord, "new topic")
             _ = await _send(coord, "follow-up")
 
-        # First message after shift: summary injected
+        # First message after shift: summary in system prompt
         first_options = mock_cls.call_args_list[0][0][0]
         assert "Previous summary" in first_options.system_prompt["append"]
 
-        # Second message: summary already consumed, not injected again
+        # Second message: no previous-summary in DB, so just preamble
         second_options = mock_cls.call_args_list[1][0][0]
-        assert second_options.system_prompt["append"] == "Base prompt"
+        assert "Previous summary" not in second_options.system_prompt["append"]
 
 
 class TestPerMessagePostProcessing:
