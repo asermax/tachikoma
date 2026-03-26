@@ -33,7 +33,7 @@ from tachikoma.pre_processing import PreProcessingPipeline
 from tachikoma.projects import ProjectsContextProvider, ProjectsProcessor, projects_hook
 from tachikoma.repl import Repl
 from tachikoma.sessions import session_recovery_hook
-from tachikoma.skills import SkillsContextProvider, skills_hook
+from tachikoma.skills import SkillRegistry, SkillsContextProvider, skills_hook
 from tachikoma.tasks import (
     TaskRepository,
     background_task_runner,
@@ -97,6 +97,7 @@ async def main(
     database: Database = bootstrap.extras["database"]
     registry = bootstrap.extras["session_registry"]
     task_repository: TaskRepository = bootstrap.extras["task_repository"]
+    skill_registry: SkillRegistry = bootstrap.extras["skill_registry"]
     bus = EventBus()
 
     # Skills provider will be registered in pre-processing pipeline
@@ -138,7 +139,7 @@ async def main(
     pre_pipeline = PreProcessingPipeline()
     pre_pipeline.register(MemoryContextProvider(agent_defaults))
     pre_pipeline.register(ProjectsContextProvider(workspace_path=settings.workspace.path))
-    pre_pipeline.register(SkillsContextProvider(agent_defaults))
+    pre_pipeline.register(SkillsContextProvider(agent_defaults, registry=skill_registry))
 
     # Create and configure the per-message post-processing pipeline
     msg_pipeline = MessagePostProcessingPipeline()
