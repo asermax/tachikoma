@@ -1,6 +1,7 @@
 """Tests for skills bootstrap hook.
 
 Tests for DLT-003: Skill system foundation and sub-agent delegation.
+Updated for DLT-038: Hot-reload skills at runtime (registry in extras).
 """
 
 from pathlib import Path
@@ -11,6 +12,7 @@ import pytest
 from tachikoma.bootstrap import BootstrapContext
 from tachikoma.config import SettingsManager
 from tachikoma.skills.hooks import skills_hook
+from tachikoma.skills.registry import SkillRegistry
 
 
 @pytest.fixture
@@ -89,3 +91,60 @@ class TestSkillsHook:
             pytest.raises(PermissionError, match="Permission denied"),
         ):
             await skills_hook(ctx)
+
+
+class TestSkillsHookRegistry:
+    """Tests for registry creation in bootstrap hook (DLT-038)."""
+
+    async def test_creates_registry_in_extras(
+        self, ctx: BootstrapContext, settings_manager: SettingsManager
+    ) -> None:
+        """AC: After skills_hook(ctx), ctx.extras["skill_registry"] is a SkillRegistry."""
+        await skills_hook(ctx)
+
+        assert "skill_registry" in ctx.extras
+        assert isinstance(ctx.extras["skill_registry"], SkillRegistry)
+
+    async def test_registry_discovers_existing_skills(
+        self, ctx: BootstrapContext, settings_manager: SettingsManager
+    ) -> None:
+        """AC: Registry discovers skills that exist in the directory at hook time."""
+        workspace_path = settings_manager.settings.workspace.path
+
+        # Create a skill before running the hook
+        skills_dir = workspace_path / "skills"
+        skills_dir.mkdir(parents=True, exist_ok=True)
+        skill_dir = skills_dir / "test-skill"
+        skill_dir.mkdir()
+        (skill_dir / "SKILL.md").write_text(
+            "---\n"
+            "description: A test skill\n"
+            "---\n"
+            "\n"
+            "Test content"
+        )
+
+        await skills_hook(ctx)
+
+        registry = ctx.extras["skill_registry"]
+        assert isinstance(registry, SkillRegistry)
+        assert "test-skill" in registry.skills
+
+    async def test_hook_creates_registry_on_every_run(
+        self, ctx: BootstrapContext, settings_manager: SettingsManager
+    ) -> None:
+        """AC: Registry creation happens on every launch (not just first run)."""
+        # First run
+        await skills_hook(ctx)
+        first_registry = ctx.extras["skill_registry"]
+
+        # Clear extras to simulate a new run
+        ctx.extras.clear()
+
+        # Second run
+        await skills_hook(ctx)
+        second_registry = ctx.extras["skill_registry"]
+
+        # Should have created a new registry instance
+        assert isinstance(second_registry, SkillRegistry)
+        assert first_registry is not second_registry  # Different instances
