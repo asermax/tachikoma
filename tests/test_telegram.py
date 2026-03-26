@@ -403,6 +403,153 @@ class TestResponseRendererRateLimitHandling:
         assert bot.edit_message_text.call_count >= 1
 
 
+class TestResponseRendererSilentSending:
+    """Tests for silent message sending (disable_notification=True)."""
+
+    async def test_status_sends_silently_when_enabled(self) -> None:
+        """Status messages sent silently when push_notifications=True."""
+        bot = MagicMock()
+        bot.send_message = AsyncMock(return_value=MockMessage())
+        renderer = ResponseRenderer(bot, chat_id=123, push_notifications=True)
+
+        await renderer.handle_status("Thinking...")
+
+        bot.send_message.assert_called_once()
+        call_kwargs = bot.send_message.call_args.kwargs
+        assert call_kwargs.get("disable_notification") is True
+
+    async def test_text_sends_silently_when_enabled(self) -> None:
+        """Text messages sent silently when push_notifications=True."""
+        bot = MagicMock()
+        bot.send_message = AsyncMock(return_value=MockMessage())
+        renderer = ResponseRenderer(bot, chat_id=123, push_notifications=True)
+
+        await renderer.handle_text("Response text")
+
+        bot.send_message.assert_called_once()
+        call_kwargs = bot.send_message.call_args.kwargs
+        assert call_kwargs.get("disable_notification") is True
+
+    async def test_silent_disabled_by_default(self) -> None:
+        """Silent sending disabled by default (push_notifications=False)."""
+        bot = MagicMock()
+        bot.send_message = AsyncMock(return_value=MockMessage())
+        renderer = ResponseRenderer(bot, chat_id=123, push_notifications=False)
+
+        await renderer.handle_text("Response text")
+
+        bot.send_message.assert_called_once()
+        call_kwargs = bot.send_message.call_args.kwargs
+        assert call_kwargs.get("disable_notification") is False
+
+    async def test_error_silent_when_content_streamed(self) -> None:
+        """Error sent silently when content already streamed and push enabled."""
+        bot = MagicMock()
+        bot.send_message = AsyncMock(return_value=MockMessage(message_id=1))
+        renderer = ResponseRenderer(bot, chat_id=123, push_notifications=True)
+
+        # Stream content first (creates current_message_id)
+        await renderer.handle_text("Some content")
+
+        bot.send_message.reset_mock()
+
+        # Error should be silent
+        error = Error(message="Something went wrong", recoverable=True)
+        await renderer.handle_error(error)
+
+        call_kwargs = bot.send_message.call_args.kwargs
+        assert call_kwargs.get("disable_notification") is True
+
+    async def test_error_not_silent_when_no_content(self) -> None:
+        """Error NOT silent when no content streamed yet."""
+        bot = MagicMock()
+        bot.send_message = AsyncMock(return_value=MockMessage())
+        renderer = ResponseRenderer(bot, chat_id=123, push_notifications=True)
+
+        # No content streamed - error should NOT be silent
+        error = Error(message="Early failure", recoverable=True)
+        await renderer.handle_error(error)
+
+        call_kwargs = bot.send_message.call_args.kwargs
+        assert call_kwargs.get("disable_notification") is None
+
+
+class TestResponseRendererNotify:
+    """Tests for the notify() copy+delete push notification trigger."""
+
+    async def test_notify_noop_when_disabled(self) -> None:
+        """notify() is no-op when push_notifications=False."""
+        bot = MagicMock()
+        bot.copy_message = AsyncMock()
+        renderer = ResponseRenderer(bot, chat_id=123, push_notifications=False)
+        renderer._current_message_id = 1
+
+        await renderer.notify()
+
+        bot.copy_message.assert_not_called()
+
+    async def test_notify_noop_when_no_message(self) -> None:
+        """notify() is no-op when no message was sent."""
+        bot = MagicMock()
+        bot.copy_message = AsyncMock()
+        renderer = ResponseRenderer(bot, chat_id=123, push_notifications=True)
+
+        await renderer.notify()
+
+        bot.copy_message.assert_not_called()
+
+    async def test_notify_copies_and_deletes(self) -> None:
+        """notify() copies message then deletes original."""
+        bot = MagicMock()
+        bot.copy_message = AsyncMock()
+        bot.delete_message = AsyncMock()
+        renderer = ResponseRenderer(bot, chat_id=123, push_notifications=True)
+        renderer._current_message_id = 42
+
+        await renderer.notify()
+
+        bot.copy_message.assert_called_once_with(
+            chat_id=123,
+            from_chat_id=123,
+            message_id=42,
+        )
+        bot.delete_message.assert_called_once_with(
+            chat_id=123,
+            message_id=42,
+        )
+
+    async def test_notify_skips_delete_on_copy_failure(self) -> None:
+        """notify() skips delete if copy fails (preserves original)."""
+        bot = MagicMock()
+        bot.copy_message = AsyncMock(
+            side_effect=TelegramAPIError(method="copy_message", message="Failed")  # type: ignore[arg-type]
+        )
+        bot.delete_message = AsyncMock()
+        renderer = ResponseRenderer(bot, chat_id=123, push_notifications=True)
+        renderer._current_message_id = 42
+
+        await renderer.notify()
+
+        bot.copy_message.assert_called_once()
+        bot.delete_message.assert_not_called()
+
+    async def test_notify_accepts_duplicate_on_delete_failure(self) -> None:
+        """notify() accepts duplicate message if delete fails."""
+        bot = MagicMock()
+        bot.copy_message = AsyncMock()
+        bot.delete_message = AsyncMock(
+            side_effect=TelegramAPIError(method="delete_message", message="Failed")  # type: ignore[arg-type]
+        )
+        renderer = ResponseRenderer(bot, chat_id=123, push_notifications=True)
+        renderer._current_message_id = 42
+
+        # Should not raise
+        await renderer.notify()
+
+        bot.copy_message.assert_called_once()
+        bot.delete_message.assert_called_once()
+
+
 class TestTelegramChannelStdinShutdown:
     """Tests for 'q' keypress graceful shutdown in TelegramChannel.run()."""
 
@@ -628,3 +775,41 @@ class TestTelegramChannelStdinShutdown:
 
             # Should remove reader to prevent spin
             loop.remove_reader.assert_called_with(0)
+
+
+class TestProcessThroughCoordinatorNotify:
+    """Tests for notify() integration in _process_through_coordinator."""
+
+    async def test_notify_called_after_result_when_push_enabled(self) -> None:
+        """notify() called after Result event when push_notifications=True."""
+        bot = MagicMock()
+        bot.send_message = AsyncMock(return_value=MockMessage(message_id=1))
+        bot.edit_message_text = AsyncMock()
+        bot.copy_message = AsyncMock()
+        bot.delete_message = AsyncMock()
+
+        renderer = ResponseRenderer(bot, chat_id=123, push_notifications=True)
+
+        # Simulate text chunk then finalize + notify
+        await renderer.handle_text("Hello")
+        await renderer.finalize()
+        await renderer.notify()
+
+        # copy_message called means notify() worked
+        bot.copy_message.assert_called_once()
+
+    async def test_notify_not_called_when_push_disabled(self) -> None:
+        """notify() NOT called when push_notifications=False."""
+        bot = MagicMock()
+        bot.send_message = AsyncMock(return_value=MockMessage(message_id=1))
+        bot.edit_message_text = AsyncMock()
+        bot.copy_message = AsyncMock()
+        bot.delete_message = AsyncMock()
+
+        renderer = ResponseRenderer(bot, chat_id=123, push_notifications=False)
+
+        await renderer.handle_text("Hello")
+        await renderer.finalize()
+        await renderer.notify()
+
+        bot.copy_message.assert_not_called()
