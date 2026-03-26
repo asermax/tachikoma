@@ -1,6 +1,7 @@
 """Unit tests for Session domain model.
 
 Tests for DLT-027: Track conversation sessions.
+Tests for DLT-041: Persist session context to database.
 """
 
 from dataclasses import FrozenInstanceError
@@ -8,7 +9,7 @@ from datetime import UTC, datetime
 
 import pytest
 
-from tachikoma.sessions.model import Session
+from tachikoma.sessions.model import Session, SessionContextEntry
 
 
 def _utcnow() -> datetime:
@@ -104,3 +105,54 @@ class TestSessionSummary:
         )
 
         assert session.summary == "User discussed Python testing frameworks."
+
+
+class TestSessionContextEntry:
+    """Tests for SessionContextEntry dataclass (DLT-041)."""
+
+    def test_is_frozen(self) -> None:
+        """SessionContextEntry is a frozen dataclass — field assignment raises."""
+        entry = SessionContextEntry(
+            id=1,
+            session_id="session-abc",
+            owner="memories",
+            content="User likes Python",
+        )
+
+        with pytest.raises(FrozenInstanceError):
+            entry.content = "modified"  # type: ignore[misc]
+
+    def test_fields_set_correctly(self) -> None:
+        """All fields round-trip correctly."""
+        entry = SessionContextEntry(
+            id=42,
+            session_id="test-session-id",
+            owner="foundational",
+            content="<soul>\nYou are helpful\n</soul>",
+        )
+
+        assert entry.id == 42
+        assert entry.session_id == "test-session-id"
+        assert entry.owner == "foundational"
+        assert entry.content == "<soul>\nYou are helpful\n</soul>"
+
+    def test_required_fields_have_no_defaults(self) -> None:
+        """All fields are required — no defaults."""
+        with pytest.raises(TypeError):
+            SessionContextEntry()  # type: ignore[call-arg]
+
+        with pytest.raises(TypeError):
+            SessionContextEntry(id=1, session_id="abc", owner="test")  # type: ignore[call-arg]
+
+    def test_entry_captures_context_at_injection_time(self) -> None:
+        """AC: Entry content matches what was injected (content integrity)."""
+        original_content = "<memories>\nUser prefers dark mode\n</memories>"
+        entry = SessionContextEntry(
+            id=1,
+            session_id="session-123",
+            owner="memories",
+            content=original_content,
+        )
+
+        # Content is preserved exactly
+        assert entry.content == original_content
