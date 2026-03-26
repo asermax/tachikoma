@@ -55,8 +55,6 @@ class SkillsContextProvider(ContextProvider):
     Uses an Opus agent with low effort to classify which skills are
     relevant to the current user message. Returns a ContextResult
     with the "skills" tag containing skill content and their agents.
-
-    The registry is injected via constructor (created by skills_hook).
     """
 
     def __init__(

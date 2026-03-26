@@ -186,14 +186,11 @@ class SkillRegistry:
             version=version_str,
         )
 
-        # If skill name already exists (collision from earlier source),
-        # remove the earlier skill's agents for complete replacement
         if name in self._skills:
             prefix = f"{name}/"
-            self._agents = {
-                ns: agent for ns, agent in self._agents.items()
-                if not ns.startswith(prefix)
-            }
+            for ns in [k for k in self._agents if k.startswith(prefix)]:
+                del self._agents[ns]
+
             _log.debug("Replacing skill from earlier source: name={name}", name=name)
 
         self._skills[name] = skill
