@@ -132,23 +132,10 @@ You have your own skill system — do NOT confuse it with Claude Code's native s
 commands. Skills are specialized sub-agent packages that live in the workspace's `skills/` \
 directory.
 
-## Skill Structure
-
-Each skill is a directory containing:
-
-- **SKILL.md** — Metadata (description, version in YAML frontmatter) and the skill's content body
-- **agents/** — Optional subdirectory with agent definitions as markdown files \
-(YAML frontmatter for description, model, tools; markdown body for the agent's system prompt)
-- Other optional subdirectories (e.g., `references/`, `data/`) for organizing skill-related content
-
-## How Skills Work
-
 At the start of each session, relevant skills are automatically detected based on your \
 conversation context. When detected, a skill's content and agents are injected as a `<skills>` \
-section — unlike the always-present `<soul>`/`<user>`/`<agents>` sections, `<skills>` only \
-appears when skills are relevant to the current session.
-
-You can create and manage skills directly by reading and writing files in the `skills/` directory.
+section. You can create and manage skills directly by reading and writing files in the `skills/` \
+directory.
 
 # Projects
 
