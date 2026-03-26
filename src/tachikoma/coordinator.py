@@ -4,8 +4,8 @@ Channels call send_message() and consume the resulting AsyncIterator[AgentEvent]
 Each message exchange creates a fresh SDK client, using `resume` for conversation
 continuity. Topic shifts simply start a new session without resume.
 
-Context is persisted to the database (DLT-041) and assembled from entries
-rather than held in memory.
+Context is persisted to the database and assembled from entries rather than
+held in memory.
 """
 
 import asyncio
@@ -315,13 +315,6 @@ class Coordinator:
                     active = await self._registry.create_session()
                     is_new_session = True
 
-                    # Save foundational context for new sessions (DLT-041)
-                    if self._foundational_context is not None:
-                        await self._registry.save_context_entries(
-                            active.id,
-                            self._foundational_context,
-                        )
-
             except Exception as exc:
                 # Session tracking failures are logged but never crash the conversation
                 _log.exception("Failed to create session: err={err}", err=str(exc))
@@ -386,6 +379,15 @@ class Coordinator:
                     err=str(exc),
                 )
 
+        # Save foundational context for new sessions (initial or post-transition)
+        if (
+            is_new_session
+            and self._foundational_context is not None
+            and self._registry is not None
+            and active is not None
+        ):
+            await self._registry.save_context_entries(active.id, self._foundational_context)
+
         # Run pre-processing pipeline on first message of new session
         if is_new_session and self._pre_pipeline is not None:
             try:
@@ -398,13 +400,12 @@ class Coordinator:
                             merged.update(r.mcp_servers)
                     self._mcp_servers = merged
 
-                    # Save provider entries to DB for system prompt assembly (DLT-041)
+                    # Save provider entries to DB for system prompt assembly
                     if self._registry is not None and active is not None:
                         entries = [(r.tag, r.content) for r in results if r.content]
                         if entries:
                             await self._registry.save_context_entries(active.id, entries)
 
-                    # Extract agents from pipeline results (DLT-021)
                     combined_agents: dict[str, AgentDefinition] = {}
                     for r in results:
                         if r.agents is not None:
@@ -416,8 +417,8 @@ class Coordinator:
         # Determine whether to resume the existing SDK session
         resume_id = self._sdk_session_id if not is_new_session else None
 
-        # Build system prompt from persisted entries (DLT-041)
-        system_prompt_append = build_system_prompt([])  # fallback to preamble only
+        # Build system prompt from persisted entries
+        system_prompt_append = build_system_prompt([])
         if self._registry is not None and active is not None:
             try:
                 entries = await self._registry.load_context_entries(active.id)
@@ -507,7 +508,7 @@ class Coordinator:
         - Creates a fresh session if no resume or resume fails
 
         Transition context (previous-summary or bridging-context) is persisted
-        to the database for the new/resumed session (DLT-041).
+        to the database for the new/resumed session.
 
         Returns:
             True if a previous session was resumed, False if a fresh session was created.
@@ -545,7 +546,6 @@ class Coordinator:
                         previous_ended_at=closed_at,
                     )
 
-                    # Assemble and persist bridging context for resumed session (DLT-041)
                     await self._persist_bridging_context(reopened, closed_at)
 
                     _log.info(
@@ -577,7 +577,7 @@ class Coordinator:
                     err=str(exc),
                 )
 
-        # Persist previous-summary context for new session (DLT-041)
+        # Persist previous-summary context for new session
         if (
             new_session is not None
             and session_snapshot.summary is not None
@@ -629,12 +629,13 @@ the user explicitly refers back to it.
 
             if summaries:
                 # Concatenate chronologically (earliest first - get_by_time_range returns DESC)
+                joined = "\n\n".join(reversed(summaries))
                 bridging_text = f"""# Resumed Conversation
 You are resuming a previous conversation that the user had earlier. The
 following summaries describe conversations that occurred between then and now,
 providing context for what the user has been doing in the meantime.
 
-{chr(10).join(reversed(summaries))}"""
+{joined}"""
                 await self._registry.save_context_entries(
                     resumed_session.id,
                     [("bridging-context", bridging_text)],
