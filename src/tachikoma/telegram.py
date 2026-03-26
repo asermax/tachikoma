@@ -73,6 +73,10 @@ class ResponseRenderer:
         # Note: _message_count is NOT reset - it tracks total messages
         # for the entire response cycle including buffered messages
 
+    def has_sent_content(self) -> bool:
+        """Whether any message has been sent in the current response."""
+        return self._current_message_id is not None
+
     async def handle_status(self, message: str) -> None:
         """Handle a Status event by sending a transient status message.
 
@@ -127,19 +131,12 @@ class ResponseRenderer:
         silent = self._push_notifications and self._current_message_id is not None
 
         try:
-            if silent:
-                await self._bot.send_message(
-                    self._chat_id,
-                    error_text,
-                    parse_mode=None,
-                    disable_notification=True,
-                )
-            else:
-                await self._bot.send_message(
-                    self._chat_id,
-                    error_text,
-                    parse_mode=None,
-                )
+            await self._bot.send_message(
+                self._chat_id,
+                error_text,
+                parse_mode=None,
+                disable_notification=silent,
+            )
         except TelegramAPIError:
             _log.exception("Failed to send error message")
 
@@ -157,11 +154,7 @@ class ResponseRenderer:
         No-op when push notifications are disabled or no message was sent.
         Safe ordering: copy first, skip delete on failure.
         """
-        # Guard: feature disabled or no message sent
-        if not self._push_notifications:
-            return
-
-        if self._current_message_id is None:
+        if not self._push_notifications or self._current_message_id is None:
             return
 
         # Try copy_message — on failure, preserve original
@@ -519,30 +512,22 @@ class TelegramChannel:
         except Exception as e:
             _log.exception("Error during message processing")
 
-            # Check if content was sent silently - if so, trigger push for partial
             had_content = (
                 self._active_renderer is not None
-                and self._active_renderer._current_message_id is not None
+                and self._active_renderer.has_sent_content()
             )
 
             if had_content:
                 with contextlib.suppress(TelegramAPIError):
                     await self._active_renderer.notify()
 
-                with contextlib.suppress(TelegramAPIError):
-                    await self._bot.send_message(
-                        chat_id,
-                        f"⚠️ Error: {e!s}",
-                        parse_mode=None,
-                        disable_notification=True,
-                    )
-            else:
-                with contextlib.suppress(TelegramAPIError):
-                    await self._bot.send_message(
-                        chat_id,
-                        f"⚠️ Error: {e!s}",
-                        parse_mode=None,
-                    )
+            with contextlib.suppress(TelegramAPIError):
+                await self._bot.send_message(
+                    chat_id,
+                    f"⚠️ Error: {e!s}",
+                    parse_mode=None,
+                    disable_notification=had_content,
+                )
 
         finally:
             self._is_processing = False

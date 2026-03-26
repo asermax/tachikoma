@@ -471,7 +471,7 @@ class TestResponseRendererSilentSending:
         await renderer.handle_error(error)
 
         call_kwargs = bot.send_message.call_args.kwargs
-        assert call_kwargs.get("disable_notification") is None
+        assert call_kwargs.get("disable_notification") is False
 
 
 class TestResponseRendererNotify:
