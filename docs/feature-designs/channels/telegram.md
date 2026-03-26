@@ -159,10 +159,12 @@ Settings (root, frozen)
 ├── workspace: WorkspaceSettings
 ├── agent: AgentSettings
 ├── logging: LoggingSettings
+├── tasks: TaskSettings
 ├── channel: Literal["repl", "telegram"] = "repl"  (new, top-level)
 └── telegram: TelegramSettings | None = None  (new, optional)
     ├── bot_token: str
-    └── authorized_chat_id: int
+    ├── authorized_chat_id: int
+    └── push_notifications: bool = True
 ```
 
 `channel` is a top-level setting defaulting to `"repl"`. The CLI `--channel` flag overrides it via `SettingsManager.update_root()` at runtime (no file persistence).
