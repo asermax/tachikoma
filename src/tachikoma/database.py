@@ -144,6 +144,32 @@ class Database:
                 )
                 _log.info("Schema migration: created 'session_resumptions' table")
 
+            # Check if session_context_entries table exists (added in DLT-041)
+            result = await conn.execute(
+                text(
+                    "SELECT name FROM sqlite_master"
+                    " WHERE type='table' AND name='session_context_entries'"
+                )
+            )
+            if result.fetchone() is None:
+                await conn.execute(
+                    text("""
+                        CREATE TABLE session_context_entries (
+                            id INTEGER PRIMARY KEY AUTOINCREMENT,
+                            session_id TEXT NOT NULL REFERENCES sessions(id),
+                            owner TEXT NOT NULL,
+                            content TEXT NOT NULL
+                        )
+                    """)
+                )
+                await conn.execute(
+                    text(
+                        "CREATE INDEX ix_session_context_entries_session_id"
+                        " ON session_context_entries(session_id)"
+                    )
+                )
+                _log.info("Schema migration: created 'session_context_entries' table")
+
         _log.debug("Schema migrations completed: db_path={path}", path=self._db_path)
 
     async def close(self) -> None:
