@@ -41,6 +41,7 @@ class TestBootstrap:
         self, settings_manager: SettingsManager
     ) -> None:
         """AC (R6): Hook failure raises BootstrapError naming the hook."""
+
         async def failing_hook(ctx):
             raise ValueError("something broke")
 
@@ -52,6 +53,7 @@ class TestBootstrap:
 
     async def test_error_chains_original_exception(self, settings_manager: SettingsManager) -> None:
         """AC (R6): BootstrapError.__cause__ is the original exception."""
+
         async def failing_hook(ctx):
             raise ValueError("original")
 
@@ -114,6 +116,7 @@ class TestBootstrap:
         self, settings_manager: SettingsManager
     ) -> None:
         """AC: Hooks can store objects in ctx.extras for the caller to retrieve."""
+
         async def storing_hook(ctx):
             ctx.extras["my_object"] = {"key": "value"}
 

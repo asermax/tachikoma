@@ -62,9 +62,7 @@ class TestProjectsHook:
         # Existing content preserved
         assert (projects_dir / "existing_file.txt").exists()
 
-    async def test_no_op_when_no_submodules(
-        self, mock_context: MagicMock, tmp_path: Path
-    ) -> None:
+    async def test_no_op_when_no_submodules(self, mock_context: MagicMock, tmp_path: Path) -> None:
         """Completes without error when no submodules exist."""
         mock_context.settings_manager.settings.workspace.path = tmp_path
 
@@ -110,9 +108,7 @@ class TestProjectsHook:
         for path in submodule_paths:
             assert call_order.index(f"{path}_start") < call_order.index(f"{path}_end")
 
-    async def test_retries_once_on_failure(
-        self, mock_context: MagicMock, tmp_path: Path
-    ) -> None:
+    async def test_retries_once_on_failure(self, mock_context: MagicMock, tmp_path: Path) -> None:
         """Retries sync once on failure, then continues."""
         mock_context.settings_manager.settings.workspace.path = tmp_path
         (tmp_path / "projects").mkdir(parents=True, exist_ok=True)
@@ -184,6 +180,7 @@ class TestProjectsHook:
         def track_call(name: str) -> AsyncMock:
             async def _track(*args: object, **kwargs: object) -> None:
                 calls.append(name)
+
             return _track
 
         with (

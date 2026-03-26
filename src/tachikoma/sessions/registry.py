@@ -174,6 +174,7 @@ class SessionRegistry:
 
         # Construct the reopened session from known data (avoids a second DB fetch)
         from dataclasses import replace  # noqa: PLC0415
+
         reopened = replace(session, ended_at=None, last_resumed_at=now)
         self._active_session = reopened
 
@@ -185,9 +186,7 @@ class SessionRegistry:
 
         return reopened
 
-    async def get_recent_closed(
-        self, before: datetime, window: timedelta
-    ) -> list[Session]:
+    async def get_recent_closed(self, before: datetime, window: timedelta) -> list[Session]:
         """Return recently closed sessions within the time window.
 
         Delegates to repository. Used by coordinator to find resumption candidates.
@@ -198,9 +197,7 @@ class SessionRegistry:
         """
         return await self._repository.get_recent_closed(before, window)
 
-    async def record_resumption(
-        self, session_id: str, previous_ended_at: datetime
-    ) -> None:
+    async def record_resumption(self, session_id: str, previous_ended_at: datetime) -> None:
         """Record a session resumption event.
 
         Creates a SessionResumption record. Failures are logged but not raised

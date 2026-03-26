@@ -67,6 +67,7 @@ class TestDetectBoundary:
         self, mocker: pytest.MockerFixture
     ) -> None:
         """AC: Continuation returns BoundaryResult with continues=True."""
+
         async def fake_query(*args, **kwargs):
             yield ResultMessage(
                 subtype="success",
@@ -96,6 +97,7 @@ class TestDetectBoundary:
         self, mocker: pytest.MockerFixture
     ) -> None:
         """AC: Topic shift returns BoundaryResult with continues=False."""
+
         async def fake_query(*args, **kwargs):
             yield ResultMessage(
                 subtype="success",
@@ -125,6 +127,7 @@ class TestDetectBoundary:
         self, mocker: pytest.MockerFixture
     ) -> None:
         """AC: Topic shift with matching candidate returns resume_session_id."""
+
         async def fake_query(*args, **kwargs):
             yield ResultMessage(
                 subtype="success",
@@ -158,10 +161,9 @@ class TestDetectBoundary:
         assert result.continues is False
         assert result.resume_session_id == "session-123"
 
-    async def test_returns_none_resume_id_when_no_match(
-        self, mocker: pytest.MockerFixture
-    ) -> None:
+    async def test_returns_none_resume_id_when_no_match(self, mocker: pytest.MockerFixture) -> None:
         """AC: Topic shift without match returns resume_session_id=None."""
+
         async def fake_query(*args, **kwargs):
             yield ResultMessage(
                 subtype="success",
@@ -195,10 +197,9 @@ class TestDetectBoundary:
         assert result.continues is False
         assert result.resume_session_id is None
 
-    async def test_with_empty_candidates_list(
-        self, mocker: pytest.MockerFixture
-    ) -> None:
+    async def test_with_empty_candidates_list(self, mocker: pytest.MockerFixture) -> None:
         """AC: Empty candidates list works correctly."""
+
         async def fake_query(*args, **kwargs):
             yield ResultMessage(
                 subtype="success",
@@ -293,6 +294,7 @@ class TestDetectBoundary:
 
     async def test_propagates_query_errors(self, mocker: pytest.MockerFixture) -> None:
         """AC: SDK errors propagate (coordinator handles fail-open)."""
+
         async def failing_query(*args, **kwargs):
             raise RuntimeError("SDK error")
             yield  # make it a generator
@@ -310,6 +312,7 @@ class TestDetectBoundary:
         self, mocker: pytest.MockerFixture
     ) -> None:
         """AC: Returns BoundaryResult(continues=True) when structured_output is None."""
+
         async def fake_query(*args, **kwargs):
             yield ResultMessage(
                 subtype="success",
@@ -338,6 +341,7 @@ class TestDetectBoundary:
         self, mocker: pytest.MockerFixture
     ) -> None:
         """AC: Returns BoundaryResult(continues=True) when no ResultMessage received."""
+
         async def fake_query(*args, **kwargs):
             # Yield nothing - no messages
             return
@@ -487,6 +491,7 @@ class TestDetectBoundary:
         self, mocker: pytest.MockerFixture
     ) -> None:
         """AC: Empty string resume_session_id is converted to None."""
+
         async def fake_query(*args, **kwargs):
             yield ResultMessage(
                 subtype="success",

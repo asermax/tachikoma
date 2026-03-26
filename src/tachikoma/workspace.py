@@ -23,9 +23,7 @@ async def workspace_hook(ctx: BootstrapContext) -> None:
     try:
         workspace_path.mkdir(parents=True, exist_ok=True)
     except FileExistsError:
-        raise RuntimeError(
-            f"Workspace path exists but is not a directory: {workspace_path}"
-        )
+        raise RuntimeError(f"Workspace path exists but is not a directory: {workspace_path}")
     except PermissionError as exc:
         raise RuntimeError(
             f"Cannot create workspace directory: Permission denied: {workspace_path}"

@@ -51,38 +51,46 @@ class TestRendering:
         assert "Write..." in stdout_buf.getvalue()
 
     def test_renders_grep_tool_with_pattern(self, renderer, stdout_buf) -> None:
-        renderer.render(ToolActivity(
-            tool_name="Grep",
-            tool_input={"pattern": "TODO"},
-            result="",
-        ))
+        renderer.render(
+            ToolActivity(
+                tool_name="Grep",
+                tool_input={"pattern": "TODO"},
+                result="",
+            )
+        )
 
         assert "Searching for 'TODO'..." in stdout_buf.getvalue()
 
     def test_renders_glob_tool_with_pattern(self, renderer, stdout_buf) -> None:
-        renderer.render(ToolActivity(
-            tool_name="Glob",
-            tool_input={"pattern": "**/*.py"},
-            result="",
-        ))
+        renderer.render(
+            ToolActivity(
+                tool_name="Glob",
+                tool_input={"pattern": "**/*.py"},
+                result="",
+            )
+        )
 
         assert "Globbing **/*.py..." in stdout_buf.getvalue()
 
     def test_renders_bash_tool_with_command(self, renderer, stdout_buf) -> None:
-        renderer.render(ToolActivity(
-            tool_name="Bash",
-            tool_input={"command": "ls -la"},
-            result="",
-        ))
+        renderer.render(
+            ToolActivity(
+                tool_name="Bash",
+                tool_input={"command": "ls -la"},
+                result="",
+            )
+        )
 
         assert "Running: ls -la" in stdout_buf.getvalue()
 
     def test_renders_tool_search_with_query(self, renderer, stdout_buf) -> None:
-        renderer.render(ToolActivity(
-            tool_name="ToolSearch",
-            tool_input={"query": "select:Read"},
-            result="",
-        ))
+        renderer.render(
+            ToolActivity(
+                tool_name="ToolSearch",
+                tool_input={"query": "select:Read"},
+                result="",
+            )
+        )
 
         assert "Searching tools: select:Read" in stdout_buf.getvalue()
 
@@ -190,7 +198,9 @@ class TestReplControlFlow:
         await repl.run()
 
     async def test_interrupts_and_exits_on_ctrl_c_during_stream(
-        self, tmp_path: Path, mocker,
+        self,
+        tmp_path: Path,
+        mocker,
     ) -> None:
         coordinator = MagicMock()
         coordinator.interrupt = AsyncMock()

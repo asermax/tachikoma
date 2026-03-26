@@ -74,6 +74,7 @@ class TestSessionRegistryCreate:
         self, registry: SessionRegistry, mock_repo
     ) -> None:
         """AC: created session has started_at set."""
+
         async def echo(s):
             return s
 
@@ -171,9 +172,7 @@ class TestSessionRegistryUpdateMetadata:
         self, registry: SessionRegistry, mock_repo
     ) -> None:
         """AC: update_metadata calls repository update with correct fields."""
-        await registry.update_metadata(
-            "s1", sdk_session_id="sdk-abc", transcript_path="/p/t.jsonl"
-        )
+        await registry.update_metadata("s1", sdk_session_id="sdk-abc", transcript_path="/p/t.jsonl")
 
         mock_repo.update.assert_awaited_once_with(
             "s1",
@@ -191,9 +190,7 @@ class TestSessionRegistryUpdateMetadata:
         mock_repo.get_by_id.return_value = updated
 
         await registry.create_session()
-        await registry.update_metadata(
-            "s1", sdk_session_id="sdk-abc", transcript_path="/p/t.jsonl"
-        )
+        await registry.update_metadata("s1", sdk_session_id="sdk-abc", transcript_path="/p/t.jsonl")
 
         active = await registry.get_active_session()
         assert active is updated

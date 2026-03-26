@@ -81,19 +81,19 @@ The key components:
 | `src/tachikoma/telegram.py` | `TelegramChannel` class + `ResponseRenderer` class + `telegram_hook` function. Subscribes to `SessionTaskReady` and `TaskNotification` events via `bus.on()` at construction. Shared `_process_through_coordinator()` method handles both user messages and session task delivery. `_handle_notification()` sends notifications directly as Telegram messages with severity emoji prefix | High cohesion between channel control flow and response rendering; event bus subscriptions at construction |
 | `src/tachikoma/coordinator.py` | Existing + `enqueue()` method, `_message_buffer` queue, `has_pending_messages` property, and `_message_source()` async generator passed to `client.connect()` | Message buffer replaces steer/pending-steers pattern |
 | `src/tachikoma/config.py` | `TelegramSettings` model added to `Settings` | Extends existing config; optional section (`None` when not configured) |
-| `src/tachikoma/display.py` | `TOOL_DISPLAY` map for tool-specific formatting | Shared between REPL and Telegram channels |
+| `src/tachikoma/display.py` | `TOOL_DISPLAY` map for live tool status formatting; `TOOL_SUMMARY` map and `summarize_tool_activity()` for post-hoc tool activity summaries | Shared between REPL and Telegram channels |
 
 ### Event Rendering
 
 | Event Type | Rendering |
 |------------|-----------|
 | `TextChunk` | Accumulated in buffer, formatted via telegramify-markdown, sent as progressive message edits |
-| `ToolActivity` | Inline status line appended to current message (e.g., "_Reading src/main.py..._"); replaced by next tool |
+| `ToolActivity` | Inline status line appended to current message (e.g., "_Reading src/main.py..._"); replaced by next tool; activities collected for summary generation at tool→text transitions |
 | `Result` | Final edit with complete formatted text; copy+delete for push notification (if enabled); renderer reset for next turn |
 | `Status` | Transient italic message sent via `handle_status()` method; replaced when the first TextChunk or ToolActivity arrives |
 | `Error` | Separate error message sent to chat; conversation continues if recoverable |
 
-**Tool display format:** Uses shared `TOOL_DISPLAY` map from `display.py`. Known tools show contextual details; unknown tools show the tool name.
+**Tool display format:** Uses shared `TOOL_DISPLAY` map from `display.py` for live status lines. Known tools show contextual details; unknown tools show the tool name. At tool→text transitions, `summarize_tool_activity()` generates a post-hoc summary from the collected activities using `TOOL_SUMMARY` (e.g., "Read 3 files and searched for 'config'").
 
 ### Cross-Layer Contracts
 
@@ -179,8 +179,7 @@ ResponseRenderer
 ├── _current_message_id: int | None      (Telegram message being edited)
 ├── _buffer: str                          (accumulated markdown text)
 ├── _tool_line: str | None                (current tool status line)
-├── _had_tools: bool                      (whether tools ran, for "🔧 Ran tools" marker)
-├── _tools_marker_inserted: bool          (whether marker was inserted for current tool batch; reset per ToolActivity)
+├── _tool_activities: list[ToolActivity]  (collected activities for summary; cleared at each tool-to-text transition and on finalize)
 ├── _last_edit_time: float                (monotonic timestamp of last edit)
 └── _message_count: int                   (tracks messages sent in current response)
 ```
@@ -210,8 +209,8 @@ Coordinator (existing)
 4. ChatActionSender starts typing indicator
 5. Handler calls coordinator.send_message(text)
 6. For each AgentEvent:
-   a. TextChunk → append to buffer, schedule throttled edit
-   b. ToolActivity → set tool line, schedule throttled edit
+   a. TextChunk → if tool activities pending, generate and insert summary marker; append to buffer, schedule throttled edit
+   b. ToolActivity → collect in _tool_activities, set tool line, schedule throttled edit
    c. Error → send error message to chat
    d. Result → finalize (final edit), notify (copy+delete for push notification), reset renderer
 7. Typing indicator stops when ChatActionSender context exits
@@ -474,7 +473,7 @@ The `Result` event serves as a turn boundary signal. The channel finalizes the c
 - The `ResponseRenderer` in `telegram.py` follows the same pattern as `Renderer` in `repl.py` — both consume `AgentEvent`s and render them to their respective outputs
 - `telegram_hook` follows DES-003 (subsystem bootstrap hooks): defined in the telegram module, registered in __main__.py, self-skips when `settings.channel != "telegram"`
 - `_message_buffer` is an `asyncio.Queue` — safe under asyncio's cooperative concurrency and supports sync `put_nowait()` via `enqueue()`
-- The shared `TOOL_DISPLAY` map in `display.py` provides consistent tool formatting across REPL and Telegram channels
+- `display.py` provides `TOOL_DISPLAY` (live status lines) and `TOOL_SUMMARY`/`summarize_tool_activity()` (post-hoc summaries) shared across REPL and Telegram channels
 - Polling backoff uses aiogram's `BackoffConfig` dataclass: `BackoffConfig(min_delay=1, max_delay=60, factor=2, jitter=0.1)` — not a plain dict
 - The `ResponseRenderer` exposes a `handle_status()` method for rendering `Status` events as transient italic messages in Telegram. The status message is replaced when the first content event arrives.
 - The `q` keypress shutdown uses `tty.setcbreak()` + `loop.add_reader()` to monitor stdin character-by-character without blocking. Guarded by `sys.stdin.isatty()` to skip in non-TTY environments. EOF on stdin removes the reader to prevent busy-loop spin.

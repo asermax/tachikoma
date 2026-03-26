@@ -83,11 +83,7 @@ class SkillRegistry:
         """
         prefix = f"{skill_name}/"
 
-        return {
-            ns: agent
-            for ns, agent in self._agents.items()
-            if ns.startswith(prefix)
-        }
+        return {ns: agent for ns, agent in self._agents.items() if ns.startswith(prefix)}
 
     @property
     def skills(self) -> dict[str, Skill]:

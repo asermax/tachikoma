@@ -163,6 +163,7 @@ async def main(
             permission_mode="bypassPermissions",
             on_status=lambda msg: console.print(msg, style="dim italic grey50"),
             session_resume_window=settings.agent.session_resume_window,
+            session_idle_timeout=settings.agent.session_idle_timeout,
             mcp_servers={"task-tools": task_tools},
         ) as coordinator:
             scheduler_tasks.append(

@@ -168,12 +168,11 @@ class TestSessionTaskScheduler:
 
         # Mock last_message_time to be old (idle)
         last_msg_time = datetime.now(UTC) - timedelta(minutes=10)
+
         def get_last_msg_time():
             return last_msg_time
 
-        task = asyncio.create_task(
-            session_task_scheduler(repo, settings, bus, get_last_msg_time)
-        )
+        task = asyncio.create_task(session_task_scheduler(repo, settings, bus, get_last_msg_time))
         await asyncio.sleep(0.1)
         task.cancel()
         with contextlib.suppress(asyncio.CancelledError):
@@ -200,12 +199,11 @@ class TestSessionTaskScheduler:
 
         # Mock last_message_time to be recent (user active)
         last_msg_time = datetime.now(UTC) - timedelta(seconds=30)
+
         def get_last_msg_time():
             return last_msg_time
 
-        task = asyncio.create_task(
-            session_task_scheduler(repo, settings, bus, get_last_msg_time)
-        )
+        task = asyncio.create_task(session_task_scheduler(repo, settings, bus, get_last_msg_time))
         await asyncio.sleep(0.1)
         task.cancel()
         with contextlib.suppress(asyncio.CancelledError):
@@ -225,12 +223,11 @@ class TestSessionTaskScheduler:
         settings = TaskSettings(idle_window=0, check_interval=300)
         bus = EventBus()
         bus.dispatch = AsyncMock()
+
         def get_last_msg_time():
             return None
 
-        task = asyncio.create_task(
-            session_task_scheduler(repo, settings, bus, get_last_msg_time)
-        )
+        task = asyncio.create_task(session_task_scheduler(repo, settings, bus, get_last_msg_time))
         await asyncio.sleep(0.1)
         task.cancel()
         with contextlib.suppress(asyncio.CancelledError):
@@ -262,9 +259,7 @@ class TestSessionTaskScheduler:
         def get_last_msg_time():
             return datetime.now(UTC) - timedelta(hours=1)
 
-        task = asyncio.create_task(
-            session_task_scheduler(repo, settings, bus, get_last_msg_time)
-        )
+        task = asyncio.create_task(session_task_scheduler(repo, settings, bus, get_last_msg_time))
         await asyncio.sleep(0.1)
         task.cancel()
         with contextlib.suppress(asyncio.CancelledError):

@@ -20,7 +20,7 @@ A Telegram bot that receives text messages from a single authorized user, forwar
 | R1 | Bot initialization: connect to Telegram API, validate bot token at startup, handle unreachable API |
 | R2 | Message receiving: accept incoming text messages and forward them to the coordinator; message buffering for mid-stream messages |
 | R3 | Response rendering: stream agent response via progressive message edits with correct markdown formatting, splitting at paragraph boundaries before hitting the Telegram message size limit; respect Telegram API rate limits on edits; when push notifications are enabled, send all streaming messages silently and replace the final message via copy+delete to trigger exactly one push notification per response |
-| R4 | Tool activity display: show tool activity as an inline status line within the current response message; each new tool replaces the previous tool line; when text resumes, each tool→text transition inserts a "🔧 Ran tools" marker and text continues below it |
+| R4 | Tool activity display: show tool activity as an inline status line within the current response message; each new tool replaces the previous tool line; when text resumes, each tool→text transition inserts a dynamic summary of the tools that ran (e.g., "🔧 Read 3 files and searched for 'config'") and text continues below it |
 | R5 | User authorization: only process messages from the configured authorized user; silently ignore all others |
 | R6 | Connection resilience: detect polling disconnects and reconnect automatically with backoff |
 | R7 | Graceful shutdown: clean exit on SIGTERM/SIGINT or `q` keypress (when running in a TTY); in-flight responses are sent as-is (partial text delivered) before stopping |
@@ -81,16 +81,17 @@ The bot progressively edits a single Telegram message as text chunks arrive, thr
 
 ### Tool Activity Display (R4)
 
-Tool activity appears as an inline status line within the current response message. Each new tool replaces the previous line. When text resumes after tools, a "Ran tools" marker is inserted at each tool→text boundary.
+Tool activity appears as an inline status line within the current response message. Each new tool replaces the previous line. When text resumes after tools, a dynamic summary describing what tools did is inserted at each tool→text boundary.
 
 **Acceptance Criteria**:
 - Given the agent completes a tool while text is streaming, when the ToolActivity event arrives, then a tool status line (e.g., "_Reading src/main.py..._") is appended to the current response message via edit
 - Given another tool completes, when the new ToolActivity event arrives, then the previous tool line in the message is replaced with the new tool's status line
 - Given tools complete before any text has streamed, when the first ToolActivity arrives, then the response message is created with just the tool status line
-- Given tool execution finishes and text streaming resumes, when the first TextChunk arrives after tools, then the tool line becomes "_🔧 Ran tools_" and new text continues below it in the same message
-- Given a response contains multiple tool→text transitions (e.g., tools run, text streams, tools run again, text streams again), when each transition from ToolActivity to TextChunk occurs, then each transition independently inserts its own "🔧 Ran tools" marker
+- Given tool execution finishes and text streaming resumes, when the first TextChunk arrives after tools, then the tool line is replaced with a dynamic summary of the tools that ran (e.g., "_🔧 Read 3 files and searched for 'config'_") and new text continues below it in the same message
+- Given a response contains multiple tool→text transitions (e.g., tools run, text streams, tools run again, text streams again), when each transition from ToolActivity to TextChunk occurs, then each transition independently generates its own tool activity summary
+- Given tools run but no text follows (response ends with tools), when the response is finalized, then the tool activity summary is rendered in the final message
 - Given tool activity occurs near the message size boundary, when there's insufficient room, then the current message is sent and the tool line starts the next message
-- Given an unknown tool, when a ToolActivity event arrives, then the tool name is shown as a fallback
+- Given an unknown tool, when a ToolActivity event arrives, then the tool name is shown as a fallback in both the live status line and the summary
 
 ### User Authorization (R5)
 
@@ -209,7 +210,7 @@ The Telegram channel subscribes to task events via the event bus. Session tasks 
   Response Complete
   -----------------
   - final message(s)
-  - "🔧 Ran tools" inline
+  - tool activity summary
     if tools were used
       |
       v
@@ -227,7 +228,7 @@ The Telegram channel subscribes to task events via the event bus. Session tasks 
 
 **Entry point**: User sends a message to the Telegram bot from any Telegram client.
 
-**Happy path**: The bot receives the message, confirms the sender is authorized, checks it's a non-empty text message, sends a typing indicator, and forwards the text to the coordinator. As the agent processes and responds, the bot progressively edits a single message showing the accumulating text (throttled for rate limits). Tool activity appears as an inline status line within the same message — appended below any text already streamed. Each new tool replaces the previous tool line. When text resumes, the tool line becomes "_🔧 Ran tools_" and new text continues below it. If the response exceeds the message size limit, it splits at the last paragraph boundary and continues in a new message. The final response is delivered as one or more formatted messages. All messages during streaming are sent silently (no push notifications). After the response is finalized, the last message is replaced with a fresh copy to trigger a push notification. The copied message appears after any steering messages the user sent during processing, preserving correct chronological order. Push notifications are enabled by default (`push_notifications = true`).
+**Happy path**: The bot receives the message, confirms the sender is authorized, checks it's a non-empty text message, sends a typing indicator, and forwards the text to the coordinator. As the agent processes and responds, the bot progressively edits a single message showing the accumulating text (throttled for rate limits). Tool activity appears as an inline status line within the same message — appended below any text already streamed. Each new tool replaces the previous tool line. When text resumes, the tool line is replaced with a dynamic summary (e.g., "_🔧 Read 3 files and searched for 'config'_") and new text continues below it. If the response exceeds the message size limit, it splits at the last paragraph boundary and continues in a new message. The final response is delivered as one or more formatted messages. All messages during streaming are sent silently (no push notifications). After the response is finalized, the last message is replaced with a fresh copy to trigger a push notification. The copied message appears after any steering messages the user sent during processing, preserving correct chronological order. Push notifications are enabled by default (`push_notifications = true`).
 
 **Buffering path**: If the user sends another message while a response is streaming, the channel calls `coordinator.enqueue()` to buffer the message. The message source generator feeds it into the same session, or remaining buffered messages are processed as new full-pipeline sessions after the current one completes. Each buffered message gets its own response message(s) in the chat.
 

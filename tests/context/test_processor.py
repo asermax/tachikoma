@@ -110,9 +110,7 @@ class TestCoreContextProcessor:
         self, mocker: pytest.MockerFixture, tmp_path: Path
     ) -> None:
         """AC: process() calls clean_pending_signals with correct data_dir."""
-        mock_clean = mocker.patch(
-            "tachikoma.context.processor.clean_pending_signals"
-        )
+        mock_clean = mocker.patch("tachikoma.context.processor.clean_pending_signals")
         mocker.patch(
             "tachikoma.context.processor.fork_and_consume",
             new_callable=AsyncMock,
