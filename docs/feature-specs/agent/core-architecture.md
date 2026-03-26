@@ -25,7 +25,7 @@ The core agent loop: receive a user message, pass it to the Claude agent via the
 | R6 | Post-processing pipeline: on session close, run registered processors in sequential phases to analyze the completed conversation and perform finalization tasks (see [pipeline spec](post-processing-pipeline.md)) |
 | R7 | Agent has unrestricted tool access without user confirmation prompts |
 | R8 | Tachikoma is the sole memory system — no competing memory mechanisms from the underlying SDK |
-| R9 | Foundational context (personality, user knowledge, operational guidelines) passed to the coordinator at startup and layered onto the SDK's default system prompt |
+| R9 | Foundational context (personality, user knowledge, operational guidelines) loaded at startup as individual context file entries and persisted to the session database when the first message of a new session is processed; assembled into the system prompt from persisted entries on every SDK client creation |
 | R10 | Conversation boundary detection: before processing a message, check whether it continues the current conversation or starts a new one; on topic shift, transition sessions before processing (see [boundary detection](boundary-detection.md)) |
 | R11 | Per-message post-processing: after each agent response, trigger a per-message pipeline for ongoing conversation analysis (see [boundary detection](boundary-detection.md)) |
 | R12 | Pre-processing pipeline: on new session, run registered context providers to enrich the first message before the agent processes it (see [pipeline spec](pre-processing-pipeline.md)) |
@@ -125,12 +125,13 @@ Claude Code's built-in auto-memory feature is disabled so that Tachikoma's own m
 
 ### Foundational Context (R9)
 
-Personality, user knowledge, and operational guidelines are loaded at startup and appended to the SDK's default system prompt via `SystemPromptPreset`.
+Personality, user knowledge, and operational guidelines are loaded at startup as individual context entries (one per file: soul, user, agents) and persisted to the database when the first message of a new session is processed. The system prompt is assembled from persisted entries before every SDK client creation.
 
 **Acceptance Criteria**:
-- Given the coordinator is created, when a `system_prompt` parameter is provided, then it is wrapped in `SystemPromptPreset` and passed to `ClaudeAgentOptions`
-- Given foundational context files exist, when the coordinator is created, then the assembled context (SOUL.md + USER.md + AGENTS.md) is passed to the coordinator
-- Given the coordinator is created, then the agent operates with the SDK's default behaviors (tool use, safety, agentic loop) plus the appended context
+- Given the coordinator is created with foundational context entries (one per context file), when the first message of a new session is processed, then each entry is saved to the database as a context entry (best-effort — failures are logged, not propagated)
+- Given foundational context files exist, when the bootstrap hook loads context, then each file is identified by its owner tag (soul, user, agents) and its content, ready for persistence
+- Given foundational context entries are persisted, when the system prompt is assembled, then each entry appears wrapped in XML tags by owner
+- Given all foundational context files are missing or empty, when a session starts, then no foundational entries are created
 - Given context files are updated by post-processing after a session close, when the next session starts, then the coordinator loads the updated files — context changes take effect on the next session (see [core-context-updates](core-context-updates.md))
 
 ### Pre-Processing Pipeline Trigger (R12)
@@ -139,13 +140,24 @@ On the first message of a new session, the coordinator triggers a registered pre
 
 **Acceptance Criteria**:
 - Given one or more context providers are registered and a new session starts, when the first message arrives, then the pipeline runs all providers in parallel before the coordinator passes the message to the agent
-- Given the pipeline completes with results, when the coordinator processes the message, then the assembled context XML blocks are prepended to the user message text passed to `client.query()`
+- Given the pipeline completes with results, when the coordinator processes the message, then each successful result is persisted as a context entry (owner=result.tag, content=result.content) and appears in the assembled system prompt — not prepended to the message text
 - Given a subsequent message arrives in the same session, when the coordinator processes it, then pre-processing is skipped — the agent already has context from the first enriched message in its conversation history
 - Given no pre-processing pipeline is registered, when a new session starts, then the message is sent to the agent unmodified
 - Given the pre-processing pipeline fails, when the coordinator handles the error, then the failure is logged and the original unmodified message is sent to the agent
 - Given session creation fails, when the coordinator would run pre-processing, then pre-processing is skipped
 - Given all providers fail or return no results, when the coordinator processes the message, then the original message is sent to the agent unmodified
 - Given context providers return `mcp_servers` in their results, when the coordinator processes pipeline results, then it extracts and merges all `mcp_servers` and stores them per-session for inclusion in `ClaudeAgentOptions`
+
+### Context Assembly (R9, R12)
+
+The system prompt is assembled from persisted database entries on every SDK client creation, making the database the canonical source of context.
+
+**Acceptance Criteria**:
+- Given a session with persisted entries, when an SDK client is created, then the system prompt append is assembled from: the base system preamble (hardcoded identity, role, and memory guidance) + persisted entries (each wrapped in XML tags by owner, in the order they were persisted)
+- Given the coordinator creates a client for subsequent messages in a session, then context is loaded from the database on each client creation — not from in-memory state
+- Given context loading fails during prompt assembly, then the error is logged and the system prompt falls back to the base system preamble only (no dynamic context entries)
+- Given a fork helper is called with a system prompt append parameter, then the assembly function builds the system prompt append from the parent session's entries, set on the fork's options
+- Given a fork helper is called without a system prompt append parameter (default), then behavior is unchanged — no system prompt context injected
 
 ### Sub-Agent Delegation (R13)
 
@@ -172,11 +184,11 @@ Before processing a message, the coordinator checks whether it continues the cur
 
 **Acceptance Criteria**:
 - Given an active session with a conversation summary, when a new message arrives, then the coordinator fetches recent closed session candidates and runs boundary detection (with candidates) before processing the message
-- Given a topic shift is detected with no matching session, when the transition completes, then the current session is closed, MCP servers are cleared, a new session is created with the SDK context reset, and the message is processed in the fresh session (MCP servers are re-extracted from pre-processing results)
-- Given a topic shift is detected with a matching session, when the transition completes, then the current session is closed, the matched session is reopened, bridging context is assembled from intermediate sessions, and the message is processed in the resumed session context
-- Given a session is resumed, when the coordinator processes the next message, then pre-processing is skipped (the resumed SDK session has full prior context) and the bridging context is injected into the system prompt for the first message only
-- Given intermediate sessions exist between the matched session's last close and now, when bridging context is assembled, then their summaries are concatenated chronologically and injected into the system prompt
-- Given no intermediate sessions exist, when bridging context is assembled, then no bridging context is appended
+- Given a topic shift is detected with no matching session, when the transition completes, then the current session is closed, MCP servers are cleared, a new session is created with the SDK context reset, and the previous summary is persisted as a context entry for the new session. The message is processed in the fresh session (MCP servers are re-extracted from pre-processing results)
+- Given a topic shift is detected with a matching session, when the transition completes, then the current session is closed, the matched session is reopened, bridging context from intermediate sessions is persisted as a context entry for the resumed session, and the message is processed in the resumed session context
+- Given a session is resumed, when the coordinator processes the next message, then pre-processing is skipped (the resumed SDK session has full prior context) and the bridging context appears in the system prompt (persisted for the session's lifetime, not just the first message)
+- Given intermediate sessions exist between the matched session's last close and now, when bridging context is assembled, then their summaries are concatenated chronologically and persisted as a context entry
+- Given no intermediate sessions exist, when bridging context is assembled, then no bridging context entry is created
 - Given the resume path fails (session not found, already open, reopen error), when the coordinator handles the failure, then it falls back to the fresh-session path with a warning log
 - Given candidate fetching fails, when the error is caught, then boundary detection proceeds without candidates (fail-open)
 - Given no active session, no summary, or no workspace directory exists, when a message arrives, then boundary detection is skipped

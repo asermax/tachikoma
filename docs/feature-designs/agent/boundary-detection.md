@@ -180,7 +180,7 @@ erDiagram
       - Prune completed tasks from list (avoid unbounded growth)
    c. No resume_session_id → fresh-session path:
       - Clear SDK session ID (self._sdk_session_id = None)
-      - Store previous summary (self._previous_summary = session.summary)
+      - Persist previous summary as context entry to DB (owner="previous-summary", content=session.summary)
       - Create new session in registry (try/except, log errors)
    d. Return False (fresh session)
 6. is_new_session = True, resume_id = None
@@ -199,7 +199,7 @@ erDiagram
    c. resume_session_id present → resume path:
       - Reopen matched session via registry.reopen_session()
       - If reopen succeeds: set _sdk_session_id to matched session's sdk_session_id,
-        record resumption (best-effort), assemble bridging context, return True
+        record resumption (best-effort), persist bridging context to DB via _persist_bridging_context(), return True
       - If reopen fails: fall through to fresh-session path, return False
 6. is_new_session = False (resumed), resume_id = self._sdk_session_id
 7. Pre-processing skipped (resumed SDK session has full prior context)
@@ -211,47 +211,30 @@ erDiagram
 ### System prompt composition on topic shift
 
 ```
-1. _build_options() reads base system prompt from coordinator's stored reference
-   (the original system_prompt string passed at construction)
-2. If _previous_summary is set, append previous conversation summary:
-
-   {base_system_prompt}
-
-   # Previous Conversation
-   The user was previously discussing the following topic. This is provided
-   for brief context only — do not continue the previous conversation unless
-   the user explicitly refers back to it.
-
-   {previous_summary}
-
-3. Clear _previous_summary after use (only the first message of the new
-   session needs the summary context)
-4. Wrap in SystemPromptPreset(type="preset", preset="claude_code", append=...)
+1. During _handle_transition(), previous summary is persisted as a context
+   entry to DB (owner="previous-summary", content=session.summary) on the
+   new session — it is stored for the session's lifetime, not just the first message
+2. Before _build_options(), coordinator loads all context entries from DB and
+   calls build_system_prompt(entries) → system_prompt_append
+3. build_system_prompt() assembles SYSTEM_PREAMBLE + all entries wrapped in XML tags,
+   including <previous-summary>...</previous-summary>
+4. _build_options(system_prompt_append=...) wraps in SystemPromptPreset(type="preset",
+   preset="claude_code", append=system_prompt_append)
 5. Return ClaudeAgentOptions with the composed system prompt
 ```
 
 ### System prompt composition on session resumption
 
 ```
-1. _build_options() reads base system prompt
-2. If _bridging_context is set, append bridging context section:
-
-   {base_system_prompt}
-
-   # Resumed Conversation
-   You are resuming a previous conversation with the user. The full prior
-   conversation context is available through the SDK session history.
-
-   Since your last exchange, the following conversations occurred:
-
-   {bridging_context}
-
-   Use this context to understand what happened between sessions, but focus
-   on the user's current message.
-
-3. Clear _bridging_context after use (one-time injection, same pattern
-   as _previous_summary)
-4. Wrap in SystemPromptPreset(type="preset", preset="claude_code", append=...)
+1. During _handle_transition() resume path, bridging context is persisted
+   as a context entry to DB (owner="bridging-context", content=concatenated
+   summaries of intermediate sessions) via _persist_bridging_context()
+2. Before _build_options(), coordinator loads all context entries from DB and
+   calls build_system_prompt(entries) → system_prompt_append
+3. build_system_prompt() assembles SYSTEM_PREAMBLE + all entries wrapped in XML tags,
+   including <bridging-context>...</bridging-context>
+4. _build_options(system_prompt_append=...) wraps in SystemPromptPreset(type="preset",
+   preset="claude_code", append=system_prompt_append)
 5. Return ClaudeAgentOptions with the composed system prompt
 ```
 
@@ -427,6 +410,6 @@ erDiagram
 - Both Opus low effort calls (detection and summarization) use standalone `query()` — they never touch the coordinator's per-message `ClaudeSDKClient`. This satisfies R12 (independence from active session).
 - Both `detect_boundary` and `SummaryProcessor` fully consume their `query()` generators (no early `return` or `break` inside `async for`). This follows DES-005 — preventing orphaned SDK resources from busy-looping the event loop.
 - The `MessagePostProcessingPipeline` follows the same patterns as `PostProcessingPipeline` (parallel execution, error isolation via `asyncio.gather(return_exceptions=True)`, serialized execution) but with a different processor interface and no phased execution.
-- The coordinator stores the base `system_prompt` string (not the `SystemPromptPreset`) so it can recompose the system prompt on topic shifts by appending the previous conversation summary via `_build_options()`.
+- Transition context (previous-summary, bridging-context) is persisted as DB context entries tied to the session. The coordinator no longer holds `_previous_summary` or `_bridging_context` in memory — the database is the canonical source. `build_system_prompt()` (in `context/assembly.py`) assembles the system prompt from all persisted entries including transition context.
 - On a second (or subsequent) topic shift, only the *immediately previous* conversation's summary is injected — not a chain of all prior summaries. This is intentional: the summary serves as brief context to help the agent understand what just came before, not a complete history. Older conversations are preserved in memory extraction, not in the system prompt.
 - The `fork_and_consume()` helper in `post_processing.py` is not used by the boundary detection or summary subsystem — those use direct `query()` calls without session forking.

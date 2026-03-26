@@ -14,6 +14,7 @@ from claude_agent_sdk.types import (
     McpSdkServerConfig,
     McpSSEServerConfig,
     McpStdioServerConfig,
+    SystemPromptPreset,
 )
 from loguru import logger
 
@@ -196,6 +197,7 @@ async def fork_and_consume(
         McpStdioServerConfig | McpSSEServerConfig | McpHttpServerConfig | McpSdkServerConfig,
     ]
     | None = None,
+    system_prompt_append: str | None = None,
 ) -> None:
     """Fork the SDK session and consume the agent's response.
 
@@ -210,6 +212,9 @@ async def fork_and_consume(
         mcp_servers: Optional MCP servers to provide to the forked agent.
             Can include in-process SDK MCP servers (from create_sdk_mcp_server())
             or external server configs.
+        system_prompt_append: Optional text to append to the system prompt.
+            When provided, the forked agent receives this context in addition
+            to the default Claude Code system prompt.
 
     Raises:
         RuntimeError: If session has no sdk_session_id.
@@ -232,6 +237,13 @@ async def fork_and_consume(
     if mcp_servers is not None:
         options.mcp_servers = mcp_servers
 
+    if system_prompt_append is not None:
+        options.system_prompt = SystemPromptPreset(
+            type="preset",
+            preset="claude_code",
+            append=system_prompt_append,
+        )
+
     # Fully consume the async iterator to ensure the forked session ends cleanly
     async for _ in query(prompt=prompt, options=options):
         pass
@@ -243,6 +255,7 @@ async def fork_and_capture(
     session: Session,
     prompt: str,
     agent_defaults: AgentDefaults,
+    system_prompt_append: str | None = None,
 ) -> str:
     """Fork the SDK session and capture the agent's text response.
 
@@ -254,6 +267,9 @@ async def fork_and_capture(
         session: The session to fork (must have sdk_session_id).
         prompt: The prompt to send to the forked agent.
         agent_defaults: Common SDK options (cwd, cli_path, env).
+        system_prompt_append: Optional text to append to the system prompt.
+            When provided, the forked agent receives this context in addition
+            to the default Claude Code system prompt.
 
     Returns:
         Concatenated text from all content blocks in the response.
@@ -276,12 +292,20 @@ async def fork_and_capture(
         permission_mode="bypassPermissions",
     )
 
+    if system_prompt_append is not None:
+        options.system_prompt = SystemPromptPreset(
+            type="preset",
+            preset="claude_code",
+            append=system_prompt_append,
+        )
+
     # Fully consume the async iterator per DES-005, capturing text content
     chunks: list[str] = []
 
     async for message in query(prompt=prompt, options=options):
-        if hasattr(message, "content"):
-            for block in message.content:
+        content = getattr(message, "content", None)
+        if content is not None:
+            for block in content:
                 if hasattr(block, "text"):
                     chunks.append(block.text)
 

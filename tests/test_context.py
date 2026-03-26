@@ -1,6 +1,7 @@
 """Core context module tests.
 
 Tests for DLT-005: Load foundational context for personality and user knowledge.
+Tests for DLT-041: Persist session context to database.
 """
 
 from pathlib import Path
@@ -18,7 +19,103 @@ from tachikoma.context import (
     SYSTEM_PREAMBLE,
     context_hook,
     load_context,
+    load_foundational_context,
 )
+
+
+class TestLoadFoundationalContext:
+    """Tests for the load_foundational_context function (DLT-041)."""
+
+    def test_all_files_present_returns_tuples(self, tmp_path: Path) -> None:
+        """AC: All files with content → list of (owner, content) tuples."""
+        context_dir = tmp_path / CONTEXT_DIR_NAME
+        context_dir.mkdir()
+
+        (context_dir / "SOUL.md").write_text("Test soul content")
+        (context_dir / "USER.md").write_text("Test user content")
+        (context_dir / "AGENTS.md").write_text("Test agents content")
+
+        result = load_foundational_context(tmp_path)
+
+        assert len(result) == 3
+        assert result[0][0] == "soul"
+        assert result[1][0] == "user"
+        assert result[2][0] == "agents"
+
+    def test_content_is_raw_not_xml_wrapped(self, tmp_path: Path) -> None:
+        """AC: Content in tuples is raw text.
+
+        XML wrapping happens in build_system_prompt(), not during load.
+        """
+        context_dir = tmp_path / CONTEXT_DIR_NAME
+        context_dir.mkdir()
+
+        (context_dir / "SOUL.md").write_text("Test content")
+
+        result = load_foundational_context(tmp_path)
+
+        assert len(result) == 1
+        owner, content = result[0]
+        assert owner == "soul"
+        assert content == "Test content"
+
+    def test_ordering_is_soul_user_agents(self, tmp_path: Path) -> None:
+        """AC: Ordering is SOUL first, USER second, AGENTS last."""
+        context_dir = tmp_path / CONTEXT_DIR_NAME
+        context_dir.mkdir()
+
+        (context_dir / "SOUL.md").write_text("A")
+        (context_dir / "USER.md").write_text("B")
+        (context_dir / "AGENTS.md").write_text("C")
+
+        result = load_foundational_context(tmp_path)
+
+        assert result[0][0] == "soul"
+        assert result[1][0] == "user"
+        assert result[2][0] == "agents"
+
+    def test_missing_file_warns_and_excludes(self, tmp_path: Path, caplog) -> None:
+        """AC: Missing file → warns, excludes from result."""
+        context_dir = tmp_path / CONTEXT_DIR_NAME
+        context_dir.mkdir()
+
+        (context_dir / "SOUL.md").write_text("Soul content")
+        (context_dir / "AGENTS.md").write_text("Agents content")
+        # USER.md is missing
+
+        with caplog.at_level("WARNING"):
+            result = load_foundational_context(tmp_path)
+
+        assert len(result) == 2
+        owners = [e[0] for e in result]
+        assert "soul" in owners
+        assert "agents" in owners
+        assert "user" not in owners
+
+    def test_empty_file_skipped_silently(self, tmp_path: Path, caplog) -> None:
+        """AC: Empty file → skipped silently (no warning)."""
+        context_dir = tmp_path / CONTEXT_DIR_NAME
+        context_dir.mkdir()
+
+        (context_dir / "SOUL.md").write_text("Soul content")
+        (context_dir / "USER.md").write_text("")  # Empty
+        (context_dir / "AGENTS.md").write_text("Agents content")
+
+        with caplog.at_level("WARNING"):
+            result = load_foundational_context(tmp_path)
+
+        assert len(result) == 2
+        assert not any(record.level == "WARNING" for record in caplog.records)
+
+    def test_all_files_missing_returns_empty_list(self, tmp_path: Path) -> None:
+        """AC: All files missing → returns empty list."""
+        context_dir = tmp_path / CONTEXT_DIR_NAME
+        context_dir.mkdir()
+        # No files created
+
+        result = load_foundational_context(tmp_path)
+
+        assert result == []
 
 
 class TestLoadContext:
@@ -239,10 +336,10 @@ class TestContextHook:
         assert (context_path / "AGENTS.md").read_text() == "Existing agents"
         assert (context_path / "USER.md").read_text() == DEFAULT_USER_CONTENT
 
-    async def test_always_stores_system_prompt(
+    async def test_always_stores_foundational_context(
         self, ctx: BootstrapContext, settings_manager: SettingsManager
     ) -> None:
-        """AC: Hook always stores system_prompt in ctx.extras (preamble at minimum)."""
+        """AC: Hook always stores foundational_context in ctx.extras."""
         ws = settings_manager.settings.workspace
         context_path = ws.path / CONTEXT_DIR_NAME
         context_path.mkdir(parents=True)
@@ -251,13 +348,13 @@ class TestContextHook:
 
         await context_hook(ctx)
 
-        assert "system_prompt" in ctx.extras
-        assert ctx.extras["system_prompt"] is not None
+        assert "foundational_context" in ctx.extras
+        assert ctx.extras["foundational_context"] is not None
 
-    async def test_stores_system_prompt_even_when_all_files_empty(
+    async def test_stores_foundational_context_even_when_all_files_empty(
         self, ctx: BootstrapContext, settings_manager: SettingsManager
     ) -> None:
-        """AC: Hook stores system_prompt even when all files empty (preamble always present)."""
+        """AC: Hook stores foundational_context even when all files empty (empty list)."""
         ws = settings_manager.settings.workspace
         context_path = ws.path / CONTEXT_DIR_NAME
         context_path.mkdir(parents=True)
@@ -268,8 +365,33 @@ class TestContextHook:
 
         await context_hook(ctx)
 
-        assert "system_prompt" in ctx.extras
-        assert SYSTEM_PREAMBLE in ctx.extras["system_prompt"]
+        assert "foundational_context" in ctx.extras
+        assert ctx.extras["foundational_context"] == []
+
+    async def test_foundational_context_contains_raw_entries(
+        self, ctx: BootstrapContext, settings_manager: SettingsManager
+    ) -> None:
+        """AC: foundational_context entries are raw (owner, content) tuples.
+
+        XML wrapping happens in build_system_prompt(), not during load.
+        """
+        ws = settings_manager.settings.workspace
+        context_path = ws.path / CONTEXT_DIR_NAME
+        context_path.mkdir(parents=True)
+
+        (context_path / "SOUL.md").write_text("Soul content")
+        (context_path / "USER.md").write_text("User content")
+        (context_path / "AGENTS.md").write_text("Agents content")
+
+        await context_hook(ctx)
+
+        entries = ctx.extras["foundational_context"]
+        assert len(entries) == 3
+
+        # Check first entry (soul) - raw content, not XML-wrapped
+        owner, content = entries[0]
+        assert owner == "soul"
+        assert content == "Soul content"
 
     async def test_dir_creation_failure_propagates(self, ctx: BootstrapContext, mocker) -> None:
         """AC: Dir creation failure → exception propagates (not caught)."""

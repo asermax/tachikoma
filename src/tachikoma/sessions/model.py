@@ -61,6 +61,23 @@ class SessionResumption:
     previous_ended_at: datetime
 
 
+@dataclass(frozen=True)
+class SessionContextEntry:
+    """Domain representation of a context entry injected into a session.
+
+    Each entry captures a piece of context that was provided to the agent
+    during a session. Entries are persisted to enable context reconstruction
+    across per-message SDK client recreations.
+
+    The autoincrement id determines assembly order (insertion order).
+    """
+
+    id: int
+    session_id: str
+    owner: str
+    content: str
+
+
 # ---------------------------------------------------------------------------
 # SQLAlchemy ORM — internal to the persistence layer
 # ---------------------------------------------------------------------------
@@ -126,4 +143,35 @@ class SessionResumptionRecord(Base):
             session_id=self.session_id,
             resumed_at=ensure_utc(self.resumed_at),  # type: ignore[arg-type]
             previous_ended_at=ensure_utc(self.previous_ended_at),  # type: ignore[arg-type]
+        )
+
+
+
+class SessionContextEntryRecord(Base):
+    """SQLAlchemy ORM model for the session_context_entries table.
+
+    Internal to the persistence layer; callers never see this type.
+    Use to_domain() to convert to the SessionContextEntry dataclass.
+
+    The autoincrement id determines assembly order (insertion order).
+    """
+
+    __tablename__ = "session_context_entries"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    session_id: Mapped[str] = mapped_column(ForeignKey("sessions.id"))
+    owner: Mapped[str] = mapped_column()
+    content: Mapped[str] = mapped_column()
+
+    __table_args__ = (
+        Index("ix_session_context_entries_session_id", "session_id"),
+    )
+
+    def to_domain(self) -> SessionContextEntry:
+        """Convert ORM record to domain dataclass."""
+        return SessionContextEntry(
+            id=self.id,
+            session_id=self.session_id,
+            owner=self.owner,
+            content=self.content,
         )

@@ -3,6 +3,9 @@
 Channels call send_message() and consume the resulting AsyncIterator[AgentEvent].
 Each message exchange creates a fresh SDK client, using `resume` for conversation
 continuity. Topic shifts simply start a new session without resume.
+
+Context is persisted to the database and assembled from entries rather than
+held in memory.
 """
 
 import asyncio
@@ -26,13 +29,13 @@ from loguru import logger
 from tachikoma.adapter import adapt
 from tachikoma.agent_defaults import AgentDefaults
 from tachikoma.boundary import BoundaryResult, SessionCandidate, detect_boundary
+from tachikoma.context.assembly import build_system_prompt
 from tachikoma.events import AgentEvent, Error, Result, Status, TextChunk
 from tachikoma.message_post_processing import MessagePostProcessingPipeline
 from tachikoma.post_processing import PostProcessingPipeline
 from tachikoma.pre_processing import (
     McpServerConfig,
     PreProcessingPipeline,
-    assemble_context,
 )
 from tachikoma.sessions.model import Session
 from tachikoma.sessions.registry import SessionRegistry
@@ -107,7 +110,7 @@ class Coordinator:
         model: str | None = None,
         agent_defaults: AgentDefaults | None = None,
         registry: SessionRegistry | None = None,
-        system_prompt: str | None = None,
+        foundational_context: list[tuple[str, str]] | None = None,
         pipeline: PostProcessingPipeline | None = None,
         pre_pipeline: PreProcessingPipeline | None = None,
         msg_pipeline: MessagePostProcessingPipeline | None = None,
@@ -123,7 +126,7 @@ class Coordinator:
         self._model = model
         self._agent_defaults = agent_defaults or AgentDefaults(cwd=Path.cwd())
         self._cwd = self._agent_defaults.cwd
-        self._base_system_prompt = system_prompt
+        self._foundational_context = foundational_context
         self._permission_mode = permission_mode
         self._agents = agents
         self._base_mcp_servers: dict[str, McpSdkServerConfig] = mcp_servers or {}
@@ -140,8 +143,6 @@ class Coordinator:
 
         # SDK session tracking for resume
         self._sdk_session_id: str | None = None
-        self._previous_summary: str | None = None
-        self._bridging_context: str | None = None
 
         # MCP servers extracted from pre-processing pipeline (session-scoped)
         self._mcp_servers: dict[str, McpServerConfig] = {}
@@ -248,55 +249,27 @@ class Coordinator:
         """
         return self._last_message_time
 
-    def _build_options(self, *, resume: str | None = None) -> ClaudeAgentOptions:
+    def _build_options(
+        self, *, resume: str | None = None, system_prompt_append: str | None = None
+    ) -> ClaudeAgentOptions:
         """Build ClaudeAgentOptions for a single message exchange.
 
-        On topic shift, the previous conversation summary is appended to the
-        system prompt for the first message of the new session only.
+        The system_prompt_append parameter contains the assembled context from
+        persisted entries (foundational + pre-processing + transition context).
 
-        On session resumption, bridging context is appended to provide context
-        about conversations that occurred between the original session and now.
+        Args:
+            resume: SDK session ID to resume, or None for fresh session.
+            system_prompt_append: Assembled system prompt content from DB entries.
+
+        Returns:
+            ClaudeAgentOptions configured for this message exchange.
         """
-        append_text = self._base_system_prompt or ""
-
-        if self._previous_summary is not None:
-            summary_section = f"""
-
-# Previous Conversation
-The user was previously discussing the following topic. This is provided
-for brief context only — do not continue the previous conversation unless
-the user explicitly refers back to it.
-
-{self._previous_summary}"""
-
-            append_text = append_text + summary_section if append_text else summary_section[1:]
-
-            # Clear after first use — only the first message of the new session
-            # needs the summary context
-            self._previous_summary = None
-
-        if self._bridging_context is not None:
-            bridging_section = f"""
-
-# Resumed Conversation
-You are resuming a previous conversation that the user had earlier. The
-following summaries describe conversations that occurred between then and now,
-providing context for what the user has been doing in the meantime.
-
-{self._bridging_context}"""
-
-            append_text = append_text + bridging_section if append_text else bridging_section[1:]
-
-            # Clear after first use — only the first message of the resumed session
-            # needs the bridging context
-            self._bridging_context = None
-
         sdk_system_prompt = None
-        if append_text:
+        if system_prompt_append:
             sdk_system_prompt = SystemPromptPreset(
                 type="preset",
                 preset="claude_code",
-                append=append_text,
+                append=system_prompt_append,
             )
 
         all_mcp_servers = {**self._base_mcp_servers, **self._mcp_servers}
@@ -421,20 +394,33 @@ providing context for what the user has been doing in the meantime.
                     err=str(exc),
                 )
 
+        # Save foundational context for new sessions (initial or post-transition)
+        if (
+            is_new_session
+            and self._foundational_context is not None
+            and self._registry is not None
+            and active is not None
+        ):
+            await self._registry.save_context_entries(active.id, self._foundational_context)
+
         # Run pre-processing pipeline on first message of new session
         if is_new_session and self._pre_pipeline is not None:
             try:
                 results = await self._pre_pipeline.run(text)
                 if results:
-                    # Merge mcp_servers from all results
+                    # Merge mcp_servers from all results (session-scoped, not persisted)
                     merged: dict[str, McpServerConfig] = {}
                     for r in results:
                         if r.mcp_servers:
                             merged.update(r.mcp_servers)
                     self._mcp_servers = merged
-                    text = assemble_context(results, text)
 
-                    # Extract agents from pipeline results (DLT-021)
+                    # Save provider entries to DB for system prompt assembly
+                    if self._registry is not None and active is not None:
+                        entries = [(r.tag, r.content) for r in results if r.content]
+                        if entries:
+                            await self._registry.save_context_entries(active.id, entries)
+
                     combined_agents: dict[str, AgentDefinition] = {}
                     for r in results:
                         if r.agents is not None:
@@ -446,8 +432,21 @@ providing context for what the user has been doing in the meantime.
         # Determine whether to resume the existing SDK session
         resume_id = self._sdk_session_id if not is_new_session else None
 
+        # Build system prompt from persisted entries
+        system_prompt_append = build_system_prompt([])
+        if self._registry is not None and active is not None:
+            try:
+                entries = await self._registry.load_context_entries(active.id)
+                system_prompt_append = build_system_prompt(entries)
+            except Exception as exc:
+                _log.exception(
+                    "Context load failed, using preamble only: session_id={id} err={err}",
+                    id=active.id,
+                    err=str(exc),
+                )
+
         # Build options and create a fresh client for this exchange
-        options = self._build_options(resume=resume_id)
+        options = self._build_options(resume=resume_id, system_prompt_append=system_prompt_append)
         response_chunks: list[str] = []
 
         client = ClaudeSDKClient(options)
@@ -523,11 +522,10 @@ providing context for what the user has been doing in the meantime.
             self._background_tasks.append(task)
             self._background_tasks = [t for t in self._background_tasks if not t.done()]
 
-    def _clear_session_state(self, session: Session) -> None:
+    def _clear_session_state(self) -> None:
         """Reset coordinator state after a session close."""
         self._sdk_session_id = None
         self._agents = None
-        self._previous_summary = session.summary
         self._mcp_servers = {}
 
     async def _handle_transition(
@@ -538,6 +536,9 @@ providing context for what the user has been doing in the meantime.
         Closes the current session, fires async post-processing, then either:
         - Resumes a previous session if resume_session_id is provided and valid
         - Creates a fresh session if no resume or resume fails
+
+        Transition context (previous-summary or bridging-context) is persisted
+        to the database for the new/resumed session.
 
         Returns:
             True if a previous session was resumed, False if a fresh session was created.
@@ -557,7 +558,7 @@ providing context for what the user has been doing in the meantime.
                         previous_ended_at=closed_at,
                     )
 
-                    await self._assemble_bridging_context(reopened, closed_at)
+                    await self._persist_bridging_context(reopened, closed_at)
 
                     _log.info(
                         "Session resumed: session_id={id} sdk_session_id={sdk}",
@@ -572,33 +573,56 @@ providing context for what the user has been doing in the meantime.
                     err=str(exc),
                 )
 
-        self._clear_session_state(previous_session)
+        self._clear_session_state()
 
+        new_session = None
         if self._registry is not None:
             try:
-                await self._registry.create_session()
+                new_session = await self._registry.create_session()
             except Exception as exc:
                 _log.exception(
                     "Failed to create new session during transition: err={err}",
                     err=str(exc),
                 )
 
+        # Persist previous-summary context for new session
+        if (
+            new_session is not None
+            and previous_session.summary is not None
+            and self._registry is not None
+        ):
+            try:
+                summary_text = f"""# Previous Conversation
+The user was previously discussing the following topic. This is provided
+for brief context only — do not continue the previous conversation unless
+the user explicitly refers back to it.
+
+{previous_session.summary}"""
+                await self._registry.save_context_entries(
+                    new_session.id,
+                    [("previous-summary", summary_text)],
+                )
+            except Exception as exc:
+                _log.exception(
+                    "Failed to persist previous-summary context: err={err}",
+                    err=str(exc),
+                )
+
         return False
 
-    async def _assemble_bridging_context(
+    async def _persist_bridging_context(
         self, resumed_session: Session, closed_at: datetime
     ) -> None:
-        """Assemble bridging context from intermediate sessions.
+        """Assemble and persist bridging context for resumed session.
 
         Finds sessions that occurred between when the resumed session ended
-        and now, concatenates their summaries to provide context.
+        and now, concatenates their summaries, and persists as a context entry.
 
         Args:
             resumed_session: The session being resumed.
             closed_at: When the previous session was closed (before resume).
         """
         if self._registry is None:
-            self._bridging_context = None
             return
 
         try:
@@ -613,20 +637,27 @@ providing context for what the user has been doing in the meantime.
 
             if summaries:
                 # Concatenate chronologically (earliest first - get_by_time_range returns DESC)
-                self._bridging_context = "\n\n".join(reversed(summaries))
+                joined = "\n\n".join(reversed(summaries))
+                bridging_text = f"""# Resumed Conversation
+You are resuming a previous conversation that the user had earlier. The
+following summaries describe conversations that occurred between then and now,
+providing context for what the user has been doing in the meantime.
+
+{joined}"""
+                await self._registry.save_context_entries(
+                    resumed_session.id,
+                    [("bridging-context", bridging_text)],
+                )
                 _log.debug(
-                    "Bridging context assembled: session_count={n}",
+                    "Bridging context persisted: session_count={n}",
                     n=len(summaries),
                 )
-            else:
-                self._bridging_context = None
 
         except Exception as exc:
             _log.exception(
-                "Failed to assemble bridging context: err={err}",
+                "Failed to persist bridging context: err={err}",
                 err=str(exc),
             )
-            self._bridging_context = None
 
     async def interrupt(self) -> None:
         """Interrupt the current agent response."""
@@ -680,7 +711,7 @@ providing context for what the user has been doing in the meantime.
                 return
 
             await self._close_and_fire_postprocessing(session)
-            self._clear_session_state(session)
+            self._clear_session_state()
 
             _log.info(
                 "Session closed due to idle timeout: session_id={id}",

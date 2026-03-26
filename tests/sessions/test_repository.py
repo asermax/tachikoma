@@ -239,3 +239,131 @@ class TestRepositoryGetByTimeRange:
 
         assert results[0].id == "later"
         assert results[1].id == "earlier"
+
+
+class TestRepositoryContextEntries:
+    """Tests for context entry persistence (DLT-041)."""
+
+    async def test_save_context_entries_returns_entries_with_ids(
+        self, repo: SessionRepository
+    ) -> None:
+        """AC: save_context_entries returns entries with autoincrement ids."""
+        session = _make_session("ctx-test-1")
+        await repo.create(session)
+
+        entries = await repo.save_context_entries(
+            "ctx-test-1",
+            [
+                ("foundational", "<soul>Content</soul>"),
+                ("memories", "<memories>User likes Python</memories>"),
+            ],
+        )
+
+        assert len(entries) == 2
+        assert all(e.id > 0 for e in entries)
+        assert entries[0].session_id == "ctx-test-1"
+        assert entries[0].owner == "foundational"
+        assert entries[1].owner == "memories"
+
+    async def test_save_context_entries_empty_list_returns_empty(
+        self, repo: SessionRepository
+    ) -> None:
+        """AC: saving an empty list returns empty list (no-op)."""
+        session = _make_session("ctx-test-2")
+        await repo.create(session)
+
+        entries = await repo.save_context_entries("ctx-test-2", [])
+
+        assert entries == []
+
+    async def test_load_context_entries_returns_saved_entries(
+        self, repo: SessionRepository
+    ) -> None:
+        """AC: load_context_entries returns entries in insertion order."""
+        session = _make_session("ctx-test-3")
+        await repo.create(session)
+
+        await repo.save_context_entries(
+            "ctx-test-3",
+            [
+                ("foundational", "First entry"),
+                ("memories", "Second entry"),
+                ("skills", "Third entry"),
+            ],
+        )
+
+        loaded = await repo.load_context_entries("ctx-test-3")
+
+        assert len(loaded) == 3
+        # Order preserved by autoincrement id
+        assert loaded[0].owner == "foundational"
+        assert loaded[1].owner == "memories"
+        assert loaded[2].owner == "skills"
+
+    async def test_load_context_entries_empty_for_nonexistent_session(
+        self, repo: SessionRepository
+    ) -> None:
+        """AC: loading entries for nonexistent session returns empty list."""
+        loaded = await repo.load_context_entries("nonexistent-session")
+
+        assert loaded == []
+
+    async def test_load_context_entries_empty_when_no_entries_saved(
+        self, repo: SessionRepository
+    ) -> None:
+        """AC: loading entries for session with no entries returns empty list."""
+        session = _make_session("ctx-test-4")
+        await repo.create(session)
+
+        loaded = await repo.load_context_entries("ctx-test-4")
+
+        assert loaded == []
+
+    async def test_entries_isolated_by_session(
+        self, repo: SessionRepository
+    ) -> None:
+        """AC: entries from one session don't leak to another."""
+        s1 = _make_session("session-1")
+        s2 = _make_session("session-2")
+        await repo.create(s1)
+        await repo.create(s2)
+
+        await repo.save_context_entries(
+            "session-1",
+            [("owner-a", "Content for session 1")],
+        )
+        await repo.save_context_entries(
+            "session-2",
+            [("owner-b", "Content for session 2")],
+        )
+
+        loaded1 = await repo.load_context_entries("session-1")
+        loaded2 = await repo.load_context_entries("session-2")
+
+        assert len(loaded1) == 1
+        assert loaded1[0].owner == "owner-a"
+        assert len(loaded2) == 1
+        assert loaded2[0].owner == "owner-b"
+
+    async def test_entry_content_preserved_exactly(
+        self, repo: SessionRepository
+    ) -> None:
+        """AC: stored content matches the text at injection time (content integrity)."""
+        session = _make_session("ctx-test-5")
+        await repo.create(session)
+
+        original_content = """<memories>
+User prefers:
+- Dark mode
+- Vim keybindings
+- Python over JavaScript
+</memories>"""
+
+        await repo.save_context_entries(
+            "ctx-test-5",
+            [("memories", original_content)],
+        )
+
+        loaded = await repo.load_context_entries("ctx-test-5")
+
+        assert loaded[0].content == original_content

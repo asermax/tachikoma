@@ -31,6 +31,9 @@ A persistent registry of conversation sessions that tracks when conversations st
 | R12 | Track each resumption with a dedicated SessionResumption record capturing session ID, resumption timestamp, and previous close timestamp |
 | R13 | Query recently closed sessions within a configurable time window for resumption candidate matching |
 | R14 | Track `last_resumed_at` timestamp on sessions for downstream processor awareness |
+| R15 | Persist context entries injected into a session as queryable records tied to the session — one entry per context source (each foundational context file as a separate entry, each pre-processing provider as one entry, each session transition artifact as one entry) |
+| R16 | Context entries are queryable by session ID |
+| R17 | Context persistence failures must not interrupt active conversations (graceful degradation, consistent with session tracking pattern) |
 
 ## Behaviors
 
@@ -125,6 +128,18 @@ The registry provides a query for recently closed sessions within a configurable
 - Given a time window and reference timestamp, when `get_recent_closed()` is called, then only sessions closed within that window with non-null SDK session IDs and non-null summaries are returned
 - Given sessions closed outside the time window, when queried, then they are excluded
 - Given only interrupted sessions (no `sdk_session_id`) exist within the window, when queried, then they are excluded
+
+### Context Entry Persistence (R15, R16, R17)
+
+Each session can have associated context entries that capture what context was injected into the agent's system prompt during that session. Entries are persisted at lifecycle points and loaded for system prompt assembly.
+
+**Acceptance Criteria**:
+- Given a session context entry, then it has: session ID (FK), owner identifier (string), and content (text)
+- Given a session with context entries, when queried by session ID, then all entries for that session are returned in the order they were persisted
+- Given a session ID with no context entries, then an empty list is returned
+- Given a context entry fails to save, then the error is logged and the conversation continues
+- Given a new session created after a topic shift, then entries may include owners such as: soul, user, agents, previous-summary, memories, projects, skills
+- Given a resumed session with bridging context, then a bridging-context entry is added alongside the session's original entries
 
 ### Graceful Degradation (R9)
 

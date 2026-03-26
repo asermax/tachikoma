@@ -4,7 +4,7 @@
 
 ## Overview
 
-A reusable, pluggable pipeline that runs registered context providers in parallel when invoked. Each provider returns a named, XML-tagged context block. The pipeline assembles all successful results and prepends them to the message. The pipeline is domain-agnostic — it knows nothing about what providers do. It is stateless and has no serialization lock (unlike the post-processing pipeline, which serializes concurrent invocations).
+A reusable, pluggable pipeline that runs registered context providers in parallel when invoked. Each provider returns a named, XML-tagged context block. The coordinator persists successful results as session context entries and assembles them into the system prompt from the database. A standalone `assemble_context()` function assembles results into XML-tagged blocks prepended to a message, used by the background task executor which does not use database persistence. The pipeline is domain-agnostic — it knows nothing about what providers do. It is stateless and has no serialization lock (unlike the post-processing pipeline, which serializes concurrent invocations).
 
 ## User Stories
 
@@ -18,7 +18,7 @@ A reusable, pluggable pipeline that runs registered context providers in paralle
 | R0 | Reusable pipeline that runs registered context providers in parallel and collects their results |
 | R1 | Context provider interface (ABC) that is domain-agnostic — the pipeline knows nothing about what providers do |
 | R2 | Error isolation — individual provider failures are logged but don't prevent the message from being processed or other providers from completing |
-| R3 | Each provider returns a named, XML-tagged context block; the pipeline assembles all results and prepends them to the message text |
+| R3 | Each provider returns a named, XML-tagged context block; the pipeline collects results for the caller to handle (the coordinator persists them as session context entries for system prompt assembly; the task executor prepends them to the message text via `assemble_context()`) |
 | R4 | Context injection uses XML tags consistent with the existing `<soul>`, `<user>`, `<agents>` convention, generalized for easy addition of new context sources |
 | R5 | Pipeline extensible — adding a new context provider requires only implementing the ABC and registering it; no changes to pipeline or coordinator code |
 | R6 | Context providers can return tool capabilities (MCP servers) alongside text context, enabling the pipeline to pass capability requirements to the coordinator for session configuration |
@@ -49,13 +49,14 @@ The pipeline runs all registered providers in parallel. Failures in one provider
 
 ### Context Assembly (R3, R4)
 
-Successful results are assembled into XML-tagged blocks and prepended to the original message.
+Successful results are persisted as session context entries by the coordinator and assembled into the system prompt from the database. The `assemble_context()` function assembles results into XML-tagged blocks prepended to a message, used by the background task executor which does not use database persistence.
 
 **Acceptance Criteria**:
-- Given providers return context results, when the pipeline assembles them, then each result is wrapped in XML tags using the provider's declared tag name (e.g., `<memories>...</memories>`)
-- Given the XML tag convention, when context is injected, then it is consistent with the existing foundational context tags (`<soul>`, `<user>`, `<agents>`)
+- Given providers return context results, when the coordinator processes them, then each result is persisted as a context entry with the result's tag as owner and content as the text content
+- Given the XML tag convention, when context appears in the system prompt, then it is consistent with the existing foundational context tags (`<soul>`, `<user>`, `<agents>`)
 - Given a context result tag name, when it is validated, then it must conform to valid XML tag name format (starts with letter/underscore, contains only alphanumeric, hyphens, underscores)
-- Given no providers return results (all returned None or all failed), when the pipeline assembles context, then the original message is returned unmodified
+- Given no providers return results (all returned None or all failed), when the coordinator processes results, then no entries are persisted and the system prompt contains only foundational entries
+- Given the background task executor runs pre-processing, then it uses `assemble_context()` to prepend results to the task prompt (not database persistence)
 
 ### Capability Injection (R6)
 

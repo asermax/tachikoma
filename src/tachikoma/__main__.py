@@ -109,8 +109,8 @@ async def main(
         ch=settings.channel,
     )
 
-    # Get the system prompt from the context hook (if available)
-    system_prompt = bootstrap.extras.get("system_prompt")
+    # Get the foundational context from the context hook (if available)
+    foundational_context = bootstrap.extras.get("foundational_context")
 
     # Build AgentDefaults: merge hardcoded env with config env (collision = error)
     try:
@@ -157,7 +157,7 @@ async def main(
             model=settings.agent.model,
             agent_defaults=agent_defaults,
             registry=registry,
-            system_prompt=system_prompt,
+            foundational_context=foundational_context,
             pipeline=pipeline,
             pre_pipeline=pre_pipeline,
             msg_pipeline=msg_pipeline,

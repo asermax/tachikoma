@@ -64,18 +64,20 @@ Four components implement session tracking:
 
 The **SessionRegistry** is the facade that the coordinator calls. It owns the business logic (creation serialization, status derivation, crash recovery) and delegates persistence to the **SessionRepository**. The repository uses SQLAlchemy 2.0's async ORM with `aiosqlite` for the SQLite backend.
 
+The session domain also includes **SessionContextEntry** — a persisted record of each context entry injected into a session's system prompt. Entries are saved at lifecycle points (session creation, pre-processing, boundary detection) and loaded by the coordinator for system prompt assembly. Context entry persistence follows the same layered pattern: `SessionRepository` provides CRUD, `SessionRegistry` exposes a facade.
+
 ## Components
 
 ### Implementation Structure
 
 | Layer/Component | Responsibility | Key Decisions |
 |-----------------|----------------|---------------|
-| `src/tachikoma/sessions/model.py` | SQLAlchemy ORM models (`SessionRecord`, `SessionResumptionRecord`) + frozen dataclasses (`Session`, `SessionResumption`) + `DeclarativeBase` | Separate ORM models from domain dataclasses; callers never see SQLAlchemy types |
-| `src/tachikoma/sessions/repository.py` | `SessionRepository`: CRUD operations, time-range queries, `get_recent_closed()` for resumption candidates, `create_resumption()`/`get_resumptions_for_session()` for resumption tracking | Receives shared `async_sessionmaker` from `Database`; all SQL is behind async methods |
-| `src/tachikoma/sessions/registry.py` | `SessionRegistry`: business logic facade, creation lock, crash recovery, status derivation, `update_summary()` for persisting rolling summaries, `reopen_session()` for session resumption (uses `dataclasses.replace()` to construct reopened session — avoids redundant DB fetch), `get_recent_closed()` for candidate queries, `record_resumption()` for best-effort tracking | Receives repository via constructor; owns the `asyncio.Lock` |
+| `src/tachikoma/sessions/model.py` | SQLAlchemy ORM models (`SessionRecord`, `SessionResumptionRecord`, `SessionContextEntryRecord`) + frozen dataclasses (`Session`, `SessionResumption`, `SessionContextEntry`) + `DeclarativeBase` | Separate ORM models from domain dataclasses; callers never see SQLAlchemy types |
+| `src/tachikoma/sessions/repository.py` | `SessionRepository`: CRUD operations, time-range queries, `get_recent_closed()` for resumption candidates, `create_resumption()`/`get_resumptions_for_session()` for resumption tracking, `save_context_entries()`/`load_context_entries()` for context entry persistence | Receives shared `async_sessionmaker` from `Database`; all SQL is behind async methods; `save_context_entries` takes list of `(owner, content)` tuples, bulk saves via `session.add_all()`; `load_context_entries` ordered by PK ascending |
+| `src/tachikoma/sessions/registry.py` | `SessionRegistry`: business logic facade, creation lock, crash recovery, status derivation, `update_summary()` for persisting rolling summaries, `reopen_session()` for session resumption (uses `dataclasses.replace()` to construct reopened session — avoids redundant DB fetch), `get_recent_closed()` for candidate queries, `record_resumption()` for best-effort tracking, `save_context_entries()` (best-effort — logs on failure per R9/R17, does not raise), `load_context_entries()` (raises on failure — caller handles graceful degradation) | Receives repository via constructor; owns the `asyncio.Lock` |
 | `src/tachikoma/sessions/errors.py` | `SessionRepositoryError`: wraps SQLAlchemy exceptions for clean error contract | Callers catch one domain exception, not SQLAlchemy internals |
 | `src/tachikoma/sessions/hooks.py` | `session_recovery_hook`: retrieves shared `Database` from extras, creates repository + registry, runs recovery, stores on context extras | Registered as bootstrap hook; runs after `database_hook` |
-| `src/tachikoma/sessions/__init__.py` | Re-exports public API: `Session`, `SessionResumption`, `SessionRegistry`, `SessionRepository`, `SessionRepositoryError` | Clean public API for the sessions package |
+| `src/tachikoma/sessions/__init__.py` | Re-exports public API: `Session`, `SessionContextEntry`, `SessionResumption`, `SessionRegistry`, `SessionRepository`, `SessionRepositoryError` | Clean public API for the sessions package |
 
 ### Cross-Layer Contracts
 
@@ -112,7 +114,7 @@ sequenceDiagram
 ```
 
 **Integration Points:**
-- Coordinator → SessionRegistry: `get_active_session()` + `create_session()` on first message, `update_metadata()` on Result events, `close_session()` on shutdown, topic shift, and idle timeout, `get_recent_closed()` for resumption candidates, `reopen_session()` for session resumption, `record_resumption()` for best-effort tracking, `get_by_time_range()` for bridging context assembly
+- Coordinator → SessionRegistry: `get_active_session()` + `create_session()` on first message, `update_metadata()` on Result events, `close_session()` on shutdown, topic shift, and idle timeout, `get_recent_closed()` for resumption candidates, `reopen_session()` for session resumption, `record_resumption()` for best-effort tracking, `get_by_time_range()` for bridging context assembly, `save_context_entries(session_id, entries)` for persisting context (always takes a list of (owner, content) tuples), `load_context_entries(session_id)` for loading entries for system prompt assembly
 - SummaryProcessor → SessionRegistry: `update_summary()` after each per-message pipeline run (see [boundary detection design](boundary-detection.md))
 - SessionRegistry → SessionRepository: all persistence delegated
 - SessionRepository → shared Database (AsyncEngine → aiosqlite → tachikoma.db)
@@ -142,6 +144,7 @@ Repository methods raise `SessionRepositoryError` on persistence failures (wrapp
 ```mermaid
 erDiagram
     Session ||--o{ SessionResumption : "tracked by"
+    Session ||--o{ SessionContextEntry : "has context"
     Session {
         string id PK "UUID4 hex string"
         string sdk_session_id "nullable - set on Result event"
@@ -156,6 +159,12 @@ erDiagram
         string session_id FK "references sessions.id"
         datetime resumed_at "UTC - when resumption occurred"
         datetime previous_ended_at "UTC - close timestamp before resumption"
+    }
+    SessionContextEntry {
+        int id PK "autoincrement - insertion order"
+        string session_id FK "references sessions.id"
+        string owner "context source identifier"
+        string content "text content at injection time"
     }
 ```
 
@@ -179,6 +188,12 @@ SessionResumption (frozen dataclass)
 ├── session_id: str                   (FK → sessions.id)
 ├── resumed_at: datetime              (UTC, when resumption occurred)
 └── previous_ended_at: datetime       (UTC, close timestamp before this resumption)
+
+SessionContextEntry (frozen dataclass)
+├── id: int                           (autoincrement PK, determines assembly order)
+├── session_id: str                   (FK → sessions.id)
+├── owner: str                        (context source identifier: soul, user, agents, memories, etc.)
+└── content: str                      (text content at time of injection)
 ```
 
 `SessionStatus` is a `Literal["open", "closed", "interrupted"]` type.
@@ -204,9 +219,17 @@ SessionResumptionRecord (DeclarativeBase)
 ├── resumed_at: Mapped[datetime]      (DateTime(timezone=True))
 ├── previous_ended_at: Mapped[datetime] (DateTime(timezone=True))
 └── index on session_id
+
+SessionContextEntryRecord (DeclarativeBase)
+├── __tablename__ = "session_context_entries"
+├── id: Mapped[int]                   (primary_key=True, autoincrement)
+├── session_id: Mapped[str]           (ForeignKey("sessions.id"))
+├── owner: Mapped[str]
+├── content: Mapped[str]
+└── index on session_id               (for load-by-session queries)
 ```
 
-The ORM models are internal to the persistence layer. A `to_domain()` method on each record converts to the frozen dataclass. The registry and all callers work exclusively with domain instances.
+The ORM models are internal to the persistence layer. A `to_domain()` method on each record converts to the frozen dataclass. The registry and all callers work exclusively with domain instances. The `session_context_entries` table is created via a pragma-check migration in `Database._run_migrations()`, consistent with the `session_resumptions` migration pattern.
 
 ## Data Flow
 
@@ -321,6 +344,30 @@ The `transcript_path` is derived from the SDK session ID using the known Claude 
 3. Registry calls repository.create_resumption(resumption)
 4. Repository persists SessionResumptionRecord, commits
 5. On failure: error logged, not raised (best-effort per R7)
+```
+
+### Context entry persistence
+
+```
+1. Coordinator saves entries at lifecycle points via registry.save_context_entries(session_id, entries)
+   - Foundational: after session creation (soul, user, agents — one entry per file)
+   - Pre-processing: after pipeline completes (one entry per successful provider)
+   - Transition: in _handle_transition (previous-summary or bridging-context)
+2. Registry delegates to repository.save_context_entries(session_id, entries)
+3. Repository creates SessionContextEntryRecord for each (owner, content) tuple
+4. Bulk save via session.add_all(), commit
+5. On failure: registry's save_context_entries logs warning but doesn't raise (best-effort)
+```
+
+### Context entry loading
+
+```
+1. Coordinator calls registry.load_context_entries(session_id) before each client creation
+2. Registry delegates to repository.load_context_entries(session_id)
+3. Repository SELECT ... WHERE session_id = ? ORDER BY id ASC
+4. Returns list[SessionContextEntry] via to_domain()
+5. On failure: SessionRepositoryError propagates to caller
+   (coordinator handles graceful degradation by falling back to base preamble only)
 ```
 
 ### Query by time range

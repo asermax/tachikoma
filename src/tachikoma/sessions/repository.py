@@ -13,6 +13,8 @@ from sqlalchemy.ext.asyncio import async_sessionmaker
 from tachikoma.sessions.errors import SessionRepositoryError
 from tachikoma.sessions.model import (
     Session,
+    SessionContextEntry,
+    SessionContextEntryRecord,
     SessionRecord,
     SessionResumption,
     SessionResumptionRecord,
@@ -210,3 +212,83 @@ class SessionRepository:
             raise SessionRepositoryError(
                 f"Failed to get resumptions for session {session_id}"
             ) from exc
+
+    # ------------------------------------------------------------------
+    # Context entries
+    # ------------------------------------------------------------------
+
+    async def save_context_entries(
+        self, session_id: str, entries: list[tuple[str, str]]
+    ) -> list[SessionContextEntry]:
+        """Persist context entries for a session.
+
+        Bulk-saves all entries in a single transaction. The autoincrement id
+        determines assembly order (insertion order).
+
+        Args:
+            session_id: The session to associate entries with.
+            entries: List of (owner, content) tuples.
+
+        Returns:
+            List of persisted SessionContextEntry instances with their ids.
+
+        Raises:
+            SessionRepositoryError: If the save operation fails.
+        """
+        if not entries:
+            return []
+
+        try:
+            records = [
+                SessionContextEntryRecord(
+                    session_id=session_id,
+                    owner=owner,
+                    content=content,
+                )
+                for owner, content in entries
+            ]
+
+            async with self._session_factory() as db:
+                db.add_all(records)
+                await db.commit()
+
+            return [r.to_domain() for r in records]
+
+        except Exception as exc:
+            raise SessionRepositoryError(
+                f"Failed to save context entries for session {session_id}"
+            ) from exc
+
+    async def load_context_entries(
+        self, session_id: str
+    ) -> list[SessionContextEntry]:
+        """Load all context entries for a session.
+
+        Entries are returned ordered by id ascending (insertion order).
+
+        Args:
+            session_id: The session to load entries for.
+
+        Returns:
+            List of SessionContextEntry instances, or empty list if none exist.
+
+        Raises:
+            SessionRepositoryError: If the load operation fails.
+        """
+        try:
+            async with self._session_factory() as db:
+                stmt = (
+                    select(SessionContextEntryRecord)
+                    .where(SessionContextEntryRecord.session_id == session_id)
+                    .order_by(SessionContextEntryRecord.id.asc())
+                )
+                result = await db.execute(stmt)
+                records = result.scalars().all()
+
+            return [r.to_domain() for r in records]
+
+        except Exception as exc:
+            raise SessionRepositoryError(
+                f"Failed to load context entries for session {session_id}"
+            ) from exc
+
