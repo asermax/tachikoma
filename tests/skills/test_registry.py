@@ -417,12 +417,8 @@ class TestAgentNamespacing:
         agents = registry.get_agents()
         assert "skill-one/common-name" in agents
         assert "skill-two/common-name" in agents
-        assert (
-            agents["skill-one/common-name"].description == "Agent from skill one"
-        )
-        assert (
-            agents["skill-two/common-name"].description == "Agent from skill two"
-        )
+        assert agents["skill-one/common-name"].description == "Agent from skill one"
+        assert agents["skill-two/common-name"].description == "Agent from skill two"
 
 
 class TestErrorHandling:

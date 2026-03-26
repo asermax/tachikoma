@@ -44,9 +44,7 @@ class TestTasksHook:
         assert "task_repository" in ctx.extras
         assert isinstance(ctx.extras["task_repository"], TaskRepository)
 
-    async def test_crash_recovery_marks_running_as_failed(
-        self, ctx: BootstrapContext
-    ) -> None:
+    async def test_crash_recovery_marks_running_as_failed(self, ctx: BootstrapContext) -> None:
         """AC: hook marks any running instances as failed on startup."""
         database: Database = ctx.extras["database"]
 
@@ -75,9 +73,7 @@ class TestTasksHook:
         assert recovered.status == "failed"
         assert "system restart" in (recovered.result or "")
 
-    async def test_idempotent_when_no_running_instances(
-        self, ctx: BootstrapContext
-    ) -> None:
+    async def test_idempotent_when_no_running_instances(self, ctx: BootstrapContext) -> None:
         """AC: hook with no running instances completes without error."""
         await tasks_hook(ctx)
 
@@ -85,9 +81,7 @@ class TestTasksHook:
         pending = await repo.get_pending_instances("session")
         assert len(pending) == 0
 
-    async def test_only_marks_running_not_pending(
-        self, ctx: BootstrapContext
-    ) -> None:
+    async def test_only_marks_running_not_pending(self, ctx: BootstrapContext) -> None:
         """AC: hook only marks 'running' instances, not 'pending' ones."""
         database: Database = ctx.extras["database"]
 

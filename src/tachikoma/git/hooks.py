@@ -47,9 +47,7 @@ async def git_hook(ctx: BootstrapContext) -> None:
     await _run_git_command(workspace_path, ["config", "user.email", _COMMITTER_EMAIL])
 
     # Create initial empty commit
-    await _run_git_command(
-        workspace_path, ["commit", "--allow-empty", "-m", "Initial commit"]
-    )
+    await _run_git_command(workspace_path, ["commit", "--allow-empty", "-m", "Initial commit"])
 
     _log.info("Git repo initialized successfully")
 

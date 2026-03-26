@@ -54,10 +54,13 @@ When the coordinator receives a Result event from the SDK, it populates the sess
 
 ### Session Closing (R3)
 
-Sessions close when a boundary detection topic shift is detected or on clean shutdown.
+Sessions close when a boundary detection topic shift is detected, after a configurable idle timeout, or on clean shutdown.
 
 **Acceptance Criteria**:
 - Given an active session, when a conversation end signal is received, then the session's `ended_at` is set to the current timestamp
+- Given an active session with no message exchange for longer than the configured idle timeout, when the coordinator is not busy, then the session is closed and async post-processing is triggered
+- Given a session closed due to idle timeout, then its summary is stored for injection into the next session's system prompt
+- Given a session was closed due to idle timeout, when the user sends a new message, then a new session is created via the normal first-message path
 - Given a session is already closed, when a close signal is received again, then the operation is idempotent (no error, no change)
 - Given no active session exists, when a close signal is received, then the operation is a no-op
 

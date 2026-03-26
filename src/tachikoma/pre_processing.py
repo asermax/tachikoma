@@ -60,9 +60,7 @@ class ContextResult:
         if not self.tag or not self.tag.strip():
             raise ValueError("ContextResult.tag must be non-empty")
         if not _XML_TAG_PATTERN.match(self.tag):
-            raise ValueError(
-                f"ContextResult.tag must be a valid XML tag name: {self.tag!r}"
-            )
+            raise ValueError(f"ContextResult.tag must be a valid XML tag name: {self.tag!r}")
 
 
 class ContextProvider(ABC):

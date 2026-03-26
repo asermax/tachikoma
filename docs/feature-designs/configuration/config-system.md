@@ -84,6 +84,7 @@ Settings (root, frozen)
 │   ├── allowed_tools: list[str] = ["Read", "Glob", "Grep"]
 │   ├── cli_path: str | None = None (SDK bundled binary)
 │   ├── session_resume_window: int = 86400 (seconds; lookup window for session resumption matching)
+│   ├── session_idle_timeout: int = 900 (seconds of inactivity before auto-closing session; 0 = disabled)
 │   └── env: dict[str, str] = {} (extra env vars for SDK sessions; validated: all values must be strings)
 ├── logging: LoggingSettings
 │   ├── level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = "INFO"
@@ -97,7 +98,8 @@ Settings (root, frozen)
 │   └── timezone: str | None = None            (IANA timezone, None = system timezone)
 └── telegram: TelegramSettings | None = None
     ├── bot_token: str
-    └── authorized_chat_id: int
+    ├── authorized_chat_id: int
+    └── push_notifications: bool = True   (enables post-response push via copy+delete)
 ```
 
 All models use `ConfigDict(frozen=True, extra="ignore")`. Frozen prevents accidental mutation. Extra="ignore" provides forward compatibility — unknown TOML keys are silently ignored.

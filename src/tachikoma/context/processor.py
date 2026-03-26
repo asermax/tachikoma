@@ -264,9 +264,7 @@ class CoreContextProcessor(PromptDrivenProcessor):
             elif mtime_before is not None and mtime_after is None:
                 _log.info("Context file deleted: file={file}", file=filename)
             elif (
-                mtime_before is not None
-                and mtime_after is not None
-                and mtime_after != mtime_before
+                mtime_before is not None and mtime_after is not None and mtime_after != mtime_before
             ):
                 _log.info("Context file updated: file={file}", file=filename)
 
