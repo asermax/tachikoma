@@ -522,11 +522,10 @@ class Coordinator:
             self._background_tasks.append(task)
             self._background_tasks = [t for t in self._background_tasks if not t.done()]
 
-    def _clear_session_state(self, session: Session) -> None:
+    def _clear_session_state(self) -> None:
         """Reset coordinator state after a session close."""
         self._sdk_session_id = None
         self._agents = None
-        self._previous_summary = session.summary
         self._mcp_servers = {}
 
     async def _handle_transition(
@@ -574,7 +573,7 @@ class Coordinator:
                     err=str(exc),
                 )
 
-        self._clear_session_state(previous_session)
+        self._clear_session_state()
 
         new_session = None
         if self._registry is not None:
@@ -589,7 +588,7 @@ class Coordinator:
         # Persist previous-summary context for new session
         if (
             new_session is not None
-            and session_snapshot.summary is not None
+            and previous_session.summary is not None
             and self._registry is not None
         ):
             try:
@@ -598,7 +597,7 @@ The user was previously discussing the following topic. This is provided
 for brief context only — do not continue the previous conversation unless
 the user explicitly refers back to it.
 
-{session_snapshot.summary}"""
+{previous_session.summary}"""
                 await self._registry.save_context_entries(
                     new_session.id,
                     [("previous-summary", summary_text)],
@@ -712,7 +711,7 @@ providing context for what the user has been doing in the meantime.
                 return
 
             await self._close_and_fire_postprocessing(session)
-            self._clear_session_state(session)
+            self._clear_session_state()
 
             _log.info(
                 "Session closed due to idle timeout: session_id={id}",

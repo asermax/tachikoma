@@ -2674,22 +2674,6 @@ class TestCloseIdleSession:
         assert coord._agents is None
         assert coord._mcp_servers == {}
 
-    async def test_stores_previous_summary(self, mock_sdk) -> None:
-        """AC: _close_idle_session stores _previous_summary."""
-        active = Session(
-            id="s4",
-            started_at=datetime.now(UTC),
-            sdk_session_id="sdk-4",
-            summary="This is the session summary",
-        )
-        registry = _make_mock_registry(active_session=active)
-        pipeline = _make_mock_pipeline()
-
-        coord = Coordinator(registry=registry, pipeline=pipeline)
-        await coord._close_idle_session()
-
-        assert coord._previous_summary == "This is the session summary"
-
     async def test_skips_post_processing_without_sdk_session(self, mock_sdk) -> None:
         """AC: Session without sdk_session_id skips post-processing."""
         active = Session(
