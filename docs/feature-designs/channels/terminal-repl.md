@@ -38,11 +38,11 @@ The REPL uses `prompt_toolkit` for async input with persistent file history. The
 | Event Type | Rendering |
 |------------|-----------|
 | `TextChunk` | Rendered as `Markdown` via `rich` Console with syntax-highlighted code blocks |
-| `ToolActivity` | Styled status line (dim, italic) with tool-specific details |
+| `ToolActivity` | Styled status line (dim, italic) with wrench icon prefix and tool-specific details |
 | `Result` | Blank line separator |
 | `Error` | Styled error message on stderr Console; returns `False` if non-recoverable |
 
-**Tool display format:** Known tools show contextual details (e.g., "Reading src/main.py...", "Searching for 'authenticate'...", "Globbing \*\*/\*.py..."). Unknown tools show the tool name.
+**Tool display format:** All tools are prefixed with a wrench icon (🔧). Known tools show contextual present-progressive details (e.g., "🔧 Reading src/main.py", "🔧 Searching for 'authenticate'", "🔧 Globbing \*\*/\*.py"). Unknown tools show the tool name with ellipsis (e.g., "🔧 CustomTool...").
 
 ## Key Decisions
 
@@ -107,7 +107,7 @@ The REPL uses `prompt_toolkit` for async input with persistent file history. The
 
 **Given**: The agent is processing a message
 **When**: A `ToolActivity` event arrives
-**Then**: A gray italic status line shows tool-specific details (e.g., "Reading src/main.py...", "Searching for 'authenticate'..."). The agent's text response continues streaming after.
+**Then**: A gray italic status line shows a wrench icon and tool-specific details (e.g., "🔧 Reading src/main.py", "🔧 Searching for 'authenticate'"). The agent's text response continues streaming after.
 
 ## Notes
 

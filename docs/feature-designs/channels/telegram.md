@@ -81,19 +81,19 @@ The key components:
 | `src/tachikoma/telegram.py` | `TelegramChannel` class + `ResponseRenderer` class + `telegram_hook` function. Subscribes to `SessionTaskReady` and `TaskNotification` events via `bus.on()` at construction. Shared `_process_through_coordinator()` method handles both user messages and session task delivery. `_handle_notification()` sends notifications directly as Telegram messages with severity emoji prefix | High cohesion between channel control flow and response rendering; event bus subscriptions at construction |
 | `src/tachikoma/coordinator.py` | Existing + `enqueue()` method, `_message_buffer` queue, `has_pending_messages` property, and `_message_source()` async generator passed to `client.connect()` | Message buffer replaces steer/pending-steers pattern |
 | `src/tachikoma/config.py` | `TelegramSettings` model added to `Settings` | Extends existing config; optional section (`None` when not configured) |
-| `src/tachikoma/display.py` | `TOOL_DISPLAY` map for live tool status formatting; `TOOL_SUMMARY` map and `summarize_tool_activity()` for post-hoc tool activity summaries | Shared between REPL and Telegram channels |
+| `src/tachikoma/display.py` | `TOOL_DISPLAY` map for live tool status formatting (present-progressive); `TOOL_SUMMARY` map and `summarize_tool_activity()` for post-hoc tool activity summaries (present-progressive matching active style) | Shared between REPL and Telegram channels |
 
 ### Event Rendering
 
 | Event Type | Rendering |
 |------------|-----------|
 | `TextChunk` | Accumulated in buffer, formatted via telegramify-markdown, sent as progressive message edits |
-| `ToolActivity` | Inline status line appended to current message (e.g., "_Reading src/main.py..._"); replaced by next tool; activities collected for summary generation at tool→text transitions |
+| `ToolActivity` | Inline status line appended to current message as blockquote with wrench icon (e.g., "> 🔧 Reading src/main.py"); replaced by next tool; activities collected for summary generation at tool→text transitions |
 | `Result` | Final edit with complete formatted text; copy+delete for push notification (if enabled); renderer reset for next turn |
 | `Status` | Transient italic message sent via `handle_status()` method; replaced when the first TextChunk or ToolActivity arrives |
 | `Error` | Separate error message sent to chat; conversation continues if recoverable |
 
-**Tool display format:** Uses shared `TOOL_DISPLAY` map from `display.py` for live status lines. Known tools show contextual details; unknown tools show the tool name. At tool→text transitions, `summarize_tool_activity()` generates a post-hoc summary from the collected activities using `TOOL_SUMMARY` (e.g., "Read 3 files and searched for 'config'").
+**Tool display format:** Uses shared `TOOL_DISPLAY` map from `display.py` for live status lines — present-progressive format with wrench icon in blockquote (e.g., "> 🔧 Reading src/main.py"). Known tools show contextual present-progressive details; unknown tools fall back to tool name with ellipsis. Both are rendered with wrench icon in blockquote format. At tool→text transitions, `summarize_tool_activity()` generates a post-hoc summary from the collected activities using `TOOL_SUMMARY` — present-progressive format matching active display (e.g., "> 🔧 Reading 3 files and searching for 'config'").
 
 ### Cross-Layer Contracts
 
