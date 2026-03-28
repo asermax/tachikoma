@@ -10,46 +10,55 @@ from typing import Any
 
 from tachikoma.events import ToolActivity
 
-# Live status line formatting (present-progressive, ellipsis)
+# Live status line formatting (present-progressive)
 TOOL_DISPLAY: dict[str, Callable[[dict[str, Any]], str]] = {
-    "Read": lambda inp: f"Reading {inp.get('file_path', '...')}...",
-    "Grep": lambda inp: f"Searching for '{inp.get('pattern', '...')}'...",
-    "Glob": lambda inp: f"Globbing {inp.get('pattern', '...')}...",
+    "Read": lambda inp: f"Reading {inp.get('file_path', '...')}",
+    "Grep": lambda inp: f"Searching for '{inp.get('pattern', '...')}'",
+    "Glob": lambda inp: f"Globbing {inp.get('pattern', '...')}",
     "Bash": lambda inp: f"Running: {inp.get('command', '...')}",
+    "Edit": lambda inp: f"Editing {inp.get('file_path', '...')}",
+    "Write": lambda inp: f"Writing {inp.get('file_path', '...')}",
+    "Agent": lambda inp: f"Agent: {inp['description']}" if "description" in inp else "Agent...",
     "ToolSearch": lambda inp: f"Searching tools: {inp.get('query', '...')}",
 }
 
 
-# Per-tool summary formatters — each returns a lowercase verb-phrase fragment
+# Per-tool summary formatters — present-progressive with basenames for brevity
 # Falls back to generic placeholder when tool_input is missing expected keys
 TOOL_SUMMARY: dict[str, Callable[[dict[str, Any]], str]] = {
     "Read": lambda inp: (
-        f"read {basename(inp['file_path'])}" if "file_path" in inp else "read a file"
+        f"reading {basename(inp['file_path'])}" if "file_path" in inp else "reading a file"
     ),
     "Grep": lambda inp: (
-        f"searched for '{inp['pattern']}'" if "pattern" in inp else "searched for a pattern"
+        f"searching for '{inp['pattern']}'" if "pattern" in inp else "searching for a pattern"
     ),
-    "Glob": lambda inp: f"globbed '{inp['pattern']}'" if "pattern" in inp else "globbed a pattern",
+    "Glob": lambda inp: (
+        f"globbing '{inp['pattern']}'" if "pattern" in inp else "globbing a pattern"
+    ),
     "Bash": lambda inp: _format_bash_summary(inp),
     "Edit": lambda inp: (
-        f"edited {basename(inp['file_path'])}" if "file_path" in inp else "edited a file"
+        f"editing {basename(inp['file_path'])}" if "file_path" in inp else "editing a file"
     ),
     "Write": lambda inp: (
-        f"wrote {basename(inp['file_path'])}" if "file_path" in inp else "wrote a file"
+        f"writing {basename(inp['file_path'])}" if "file_path" in inp else "writing a file"
     ),
-    "ToolSearch": lambda _: "searched tools",
+    "Agent": lambda inp: (
+        f"agent: {inp['description']}" if "description" in inp else "dispatched an agent"
+    ),
+    "ToolSearch": lambda _: "searching tools",
 }
 
 
 # Aggregated phrasing for tools with count > 2
 _TOOL_AGGREGATE: dict[str, Callable[[int], str]] = {
-    "Read": lambda c: f"read {c} files",
-    "Grep": lambda c: f"ran {c} searches",
-    "Glob": lambda c: f"ran {c} glob searches",
-    "Bash": lambda c: f"ran {c} commands",
-    "Edit": lambda c: f"edited {c} files",
-    "Write": lambda c: f"wrote {c} files",
-    "ToolSearch": lambda c: f"ran {c} tool searches",
+    "Read": lambda c: f"reading {c} files",
+    "Grep": lambda c: f"running {c} searches",
+    "Glob": lambda c: f"running {c} glob searches",
+    "Bash": lambda c: f"running {c} commands",
+    "Edit": lambda c: f"editing {c} files",
+    "Write": lambda c: f"writing {c} files",
+    "Agent": lambda c: f"dispatching {c} agents",
+    "ToolSearch": lambda c: f"running {c} tool searches",
 }
 
 
@@ -65,11 +74,11 @@ def _format_bash_summary(tool_input: dict[str, Any]) -> str:
     if "command" in tool_input:
         cmd = tool_input["command"]
         if len(cmd) > 40:
-            return f"{cmd[:40]}..."
-        return cmd
+            return f"running: {cmd[:40]}..."
+        return f"running: {cmd}"
 
     # Final fallback
-    return "ran a command"
+    return "running a command"
 
 
 def summarize_tool_activity(activities: list[ToolActivity]) -> str:

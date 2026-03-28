@@ -101,7 +101,7 @@ class ResponseRenderer:
                 self._buffer += "\n"
 
             summary = summarize_tool_activity(self._tool_activities)
-            self._buffer += f"_🔧 {summary}_\n"
+            self._buffer += f"> 🔧 {summary}\n"
             self._tool_activities = []  # Clear — each transition gets independent summary
             self._tool_line = None  # Clear tool line - marker replaces it
 
@@ -116,7 +116,7 @@ class ResponseRenderer:
         # Update live tool line display
         display_fn = TOOL_DISPLAY.get(activity.tool_name)
         label = display_fn(activity.tool_input) if display_fn else f"{activity.tool_name}..."
-        self._tool_line = f"_{label}_"
+        self._tool_line = f"> 🔧 {label}"
         await self._flush(force=False)
 
     async def handle_error(self, error: Error) -> None:
@@ -144,7 +144,7 @@ class ResponseRenderer:
         """Send the final state of the current message, bypassing throttle."""
         if self._tool_activities:
             summary = summarize_tool_activity(self._tool_activities)
-            self._buffer += f"_🔧 {summary}_\n"
+            self._buffer += f"> 🔧 {summary}\n"
             self._tool_activities = []
 
         self._tool_line = None

@@ -45,7 +45,7 @@ class Renderer:
         elif isinstance(event, ToolActivity):
             display_fn = TOOL_DISPLAY.get(event.tool_name)
             label = display_fn(event.tool_input) if display_fn else f"{event.tool_name}..."
-            self._console.print(label, style="dim italic grey50", highlight=False)
+            self._console.print(f"🔧 {label}", style="dim italic grey50", highlight=False)
 
         elif isinstance(event, Result):
             self._console.print()

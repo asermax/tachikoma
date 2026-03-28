@@ -21,32 +21,32 @@ class TestSummarizeSingleTool:
     def test_read_with_file_path(self) -> None:
         """AC: Read with file_path shows basename."""
         activity = ToolActivity(tool_name="Read", tool_input={"file_path": "/src/main.py"})
-        assert summarize_tool_activity([activity]) == "Read main.py"
+        assert summarize_tool_activity([activity]) == "Reading main.py"
 
     def test_read_without_file_path(self) -> None:
         """AC: Read without file_path (malformed) falls back gracefully."""
         activity = ToolActivity(tool_name="Read", tool_input={})
-        assert summarize_tool_activity([activity]) == "Read a file"
+        assert summarize_tool_activity([activity]) == "Reading a file"
 
     def test_grep_with_pattern(self) -> None:
         """AC: Grep with pattern shows the search pattern."""
         activity = ToolActivity(tool_name="Grep", tool_input={"pattern": "logging config"})
-        assert summarize_tool_activity([activity]) == "Searched for 'logging config'"
+        assert summarize_tool_activity([activity]) == "Searching for 'logging config'"
 
     def test_grep_without_pattern(self) -> None:
         """AC: Grep without pattern (malformed) falls back gracefully."""
         activity = ToolActivity(tool_name="Grep", tool_input={})
-        assert summarize_tool_activity([activity]) == "Searched for a pattern"
+        assert summarize_tool_activity([activity]) == "Searching for a pattern"
 
     def test_glob_with_pattern(self) -> None:
         """AC: Glob with pattern shows the glob pattern."""
         activity = ToolActivity(tool_name="Glob", tool_input={"pattern": "**/*.py"})
-        assert summarize_tool_activity([activity]) == "Globbed '**/*.py'"
+        assert summarize_tool_activity([activity]) == "Globbing '**/*.py'"
 
     def test_glob_without_pattern(self) -> None:
         """AC: Glob without pattern (malformed) falls back gracefully."""
         activity = ToolActivity(tool_name="Glob", tool_input={})
-        assert summarize_tool_activity([activity]) == "Globbed a pattern"
+        assert summarize_tool_activity([activity]) == "Globbing a pattern"
 
     def test_bash_with_description(self) -> None:
         """AC: Bash with description shows lowercased-first-char description."""
@@ -61,47 +61,47 @@ class TestSummarizeSingleTool:
         assert summarize_tool_activity([activity]) == "Install Docker deps"
 
     def test_bash_with_command_only(self) -> None:
-        """AC: Bash with command only shows truncated command (capitalized)."""
+        """AC: Bash with command only shows 'running: command'."""
         activity = ToolActivity(tool_name="Bash", tool_input={"command": "pytest tests/"})
-        assert summarize_tool_activity([activity]) == "Pytest tests/"
+        assert summarize_tool_activity([activity]) == "Running: pytest tests/"
 
     def test_bash_with_long_command(self) -> None:
-        """AC: Bash with long command shows 40 chars + '...'."""
+        """AC: Bash with long command shows 'running: ' + 40 chars + '...'."""
         long_cmd = "python -m pytest tests/test_very_long_module_name.py -v --tb=short"
         activity = ToolActivity(tool_name="Bash", tool_input={"command": long_cmd})
         result = summarize_tool_activity([activity])
+        assert result.startswith("Running: ")
         assert result.endswith("...")
-        assert len(result) == 43  # 40 chars of command + "..."
 
     def test_bash_with_neither(self) -> None:
         """AC: Bash with neither description nor command falls back gracefully."""
         activity = ToolActivity(tool_name="Bash", tool_input={})
-        assert summarize_tool_activity([activity]) == "Ran a command"
+        assert summarize_tool_activity([activity]) == "Running a command"
 
     def test_edit_with_file_path(self) -> None:
         """AC: Edit with file_path shows basename."""
         activity = ToolActivity(tool_name="Edit", tool_input={"file_path": "/src/config.py"})
-        assert summarize_tool_activity([activity]) == "Edited config.py"
+        assert summarize_tool_activity([activity]) == "Editing config.py"
 
     def test_edit_without_file_path(self) -> None:
         """AC: Edit without file_path (malformed) falls back gracefully."""
         activity = ToolActivity(tool_name="Edit", tool_input={})
-        assert summarize_tool_activity([activity]) == "Edited a file"
+        assert summarize_tool_activity([activity]) == "Editing a file"
 
     def test_write_with_file_path(self) -> None:
         """AC: Write with file_path shows basename."""
         activity = ToolActivity(tool_name="Write", tool_input={"file_path": "/src/output.txt"})
-        assert summarize_tool_activity([activity]) == "Wrote output.txt"
+        assert summarize_tool_activity([activity]) == "Writing output.txt"
 
     def test_write_without_file_path(self) -> None:
         """AC: Write without file_path (malformed) falls back gracefully."""
         activity = ToolActivity(tool_name="Write", tool_input={})
-        assert summarize_tool_activity([activity]) == "Wrote a file"
+        assert summarize_tool_activity([activity]) == "Writing a file"
 
     def test_tool_search(self) -> None:
-        """AC: ToolSearch shows 'searched tools'."""
+        """AC: ToolSearch shows 'searching tools'."""
         activity = ToolActivity(tool_name="ToolSearch", tool_input={"query": "git"})
-        assert summarize_tool_activity([activity]) == "Searched tools"
+        assert summarize_tool_activity([activity]) == "Searching tools"
 
     def test_unknown_tool(self) -> None:
         """AC: Unknown tool falls back to 'used {tool_name}'."""
@@ -118,7 +118,7 @@ class TestSummarizeMultipleTools:
             ToolActivity(tool_name="Read", tool_input={"file_path": "/src/a.py"}),
             ToolActivity(tool_name="Read", tool_input={"file_path": "/src/b.py"}),
         ]
-        assert summarize_tool_activity(activities) == "Read a.py and read b.py"
+        assert summarize_tool_activity(activities) == "Reading a.py and reading b.py"
 
     def test_three_reads_aggregated(self) -> None:
         """AC: 3 Reads aggregated by count."""
@@ -127,7 +127,7 @@ class TestSummarizeMultipleTools:
             ToolActivity(tool_name="Read", tool_input={"file_path": "/src/b.py"}),
             ToolActivity(tool_name="Read", tool_input={"file_path": "/src/c.py"}),
         ]
-        assert summarize_tool_activity(activities) == "Read 3 files"
+        assert summarize_tool_activity(activities) == "Reading 3 files"
 
     def test_two_groups_joined_with_and(self) -> None:
         """AC: 2 groups (aggregated + individual) joined with 'and'."""
@@ -137,7 +137,10 @@ class TestSummarizeMultipleTools:
             ToolActivity(tool_name="Read", tool_input={"file_path": "/src/c.py"}),
             ToolActivity(tool_name="Grep", tool_input={"pattern": "pattern"}),
         ]
-        assert summarize_tool_activity(activities) == "Read 3 files and searched for 'pattern'"
+        assert (
+            summarize_tool_activity(activities)
+            == "Reading 3 files and searching for 'pattern'"
+        )
 
     def test_three_plus_groups_with_oxford_comma(self) -> None:
         """AC: 3+ groups joined with commas and Oxford comma."""
@@ -148,7 +151,7 @@ class TestSummarizeMultipleTools:
         ]
         assert (
             summarize_tool_activity(activities)
-            == "Read a.py, searched for 'pattern', and run tests"
+            == "Reading a.py, searching for 'pattern', and run tests"
         )
 
     def test_preserves_first_seen_order(self) -> None:
@@ -161,7 +164,7 @@ class TestSummarizeMultipleTools:
         # Bash comes first in first-seen order, so all Bash phrases come before Read
         result = summarize_tool_activity(activities)
         # Bash group (2 items) listed as "first, second", then Read
-        assert result == "First, second, and read a.py"
+        assert result == "First, second, and reading a.py"
 
     def test_more_than_five_groups_capped(self) -> None:
         """AC: >5 groups capped with 'and more'."""
@@ -177,14 +180,7 @@ class TestSummarizeMultipleTools:
         result = summarize_tool_activity(activities)
         # Should have first 5 + "and more"
         assert "and more" in result
-        assert "searched tools" not in result.lower()  # 7th tool not included
-
-    def test_single_tool_capitalized(self) -> None:
-        """AC: Single tool has first word capitalized."""
-        activity = ToolActivity(tool_name="Read", tool_input={"file_path": "/src/main.py"})
-        result = summarize_tool_activity([activity])
-        assert result[0].isupper()
-
+        assert "searching tools" not in result.lower()  # 7th tool not included
 
 class TestSummarizeBashDescription:
     """Tests for Bash description formatting."""
@@ -207,3 +203,13 @@ class TestSummarizeBashDescription:
             tool_input={"description": "Run tests", "command": "pytest -v"},
         )
         assert summarize_tool_activity([activity]) == "Run tests"
+
+
+class TestSummarizeCapitalization:
+    """Tests for capitalization of the final summary string."""
+
+    def test_single_tool_capitalized(self) -> None:
+        """AC: Single tool has first word capitalized."""
+        activity = ToolActivity(tool_name="Read", tool_input={"file_path": "/src/main.py"})
+        result = summarize_tool_activity([activity])
+        assert result[0].isupper()

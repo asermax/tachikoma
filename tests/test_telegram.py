@@ -218,7 +218,7 @@ class TestResponseRendererToolHandling:
         await renderer.handle_text("Response text")
 
         assert "🔧" in renderer._buffer
-        assert "Read file.py" in renderer._buffer  # Summary includes tool details
+        assert "Reading file.py" in renderer._buffer  # Summary includes tool details
         assert "Response text" in renderer._buffer
 
     async def test_multiple_tool_text_cycles_insert_multiple_markers(self) -> None:

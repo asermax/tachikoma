@@ -43,12 +43,17 @@ class TestRendering:
         event = ToolActivity(tool_name="Read", tool_input={"file_path": "main.py"})
         renderer.render(event)
 
-        assert "Reading main.py..." in stdout_buf.getvalue()
+        assert "🔧 Reading main.py" in stdout_buf.getvalue()
 
-    def test_renders_generic_tool_activity(self, renderer, stdout_buf) -> None:
+    def test_renders_known_tool_with_missing_input(self, renderer, stdout_buf) -> None:
         renderer.render(ToolActivity(tool_name="Write", tool_input={}))
 
-        assert "Write..." in stdout_buf.getvalue()
+        assert "🔧 Writing ..." in stdout_buf.getvalue()
+
+    def test_renders_unknown_tool_with_fallback(self, renderer, stdout_buf) -> None:
+        renderer.render(ToolActivity(tool_name="CustomMCP", tool_input={}))
+
+        assert "🔧 CustomMCP..." in stdout_buf.getvalue()
 
     def test_renders_grep_tool_with_pattern(self, renderer, stdout_buf) -> None:
         renderer.render(
@@ -59,7 +64,7 @@ class TestRendering:
             )
         )
 
-        assert "Searching for 'TODO'..." in stdout_buf.getvalue()
+        assert "🔧 Searching for 'TODO'" in stdout_buf.getvalue()
 
     def test_renders_glob_tool_with_pattern(self, renderer, stdout_buf) -> None:
         renderer.render(
@@ -70,7 +75,7 @@ class TestRendering:
             )
         )
 
-        assert "Globbing **/*.py..." in stdout_buf.getvalue()
+        assert "🔧 Globbing **/*.py" in stdout_buf.getvalue()
 
     def test_renders_bash_tool_with_command(self, renderer, stdout_buf) -> None:
         renderer.render(
@@ -100,7 +105,7 @@ class TestRendering:
 
         out = stdout_buf.getvalue()
         assert "thinking" in out
-        assert "Reading f.py..." in out
+        assert "🔧 Reading f.py" in out
 
     def test_renders_result_as_blank_line(self, renderer, stdout_buf) -> None:
         renderer.render(Result())
