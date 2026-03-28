@@ -140,20 +140,6 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 **Complexity**: Medium
 **Description**: Accept image and audio messages from the Telegram channel and forward them to the agent for processing. Currently the Telegram handler only accepts text messages and silently ignores all other content types. This delta adds support for photos, voice messages, and audio files, forwarding them to the agent as multimodal input for processing.
 
-### DLT-036: Auto-close idle sessions
-**Status**: ✓ Reconciled
-**Depends on**: None
-**Priority**: 1 (Critical)
-**Complexity**: Easy
-**Description**: Automatically close a session after a configurable period of inactivity so that post-processing (memory extraction, context updates, git commit) triggers without requiring the user to explicitly end the conversation or wait for a topic shift. The idle timeout is measured from the last message exchange and is configurable via the application settings. This complements boundary-detection-based session closing by handling the case where a conversation simply trails off.
-
-### DLT-037: Ensure Telegram push notifications for streamed responses
-**Status**: ✓ Reconciled
-**Depends on**: None
-**Priority**: 1 (Critical)
-**Complexity**: Easy
-**Description**: The Telegram channel streams responses by creating a single message and progressively editing it. Telegram only delivers push notifications for new messages, not edits — so if the user sends a message and closes the app before the response starts, they never receive a push notification that the agent replied. This delta ensures users receive a Telegram push notification for every agent response, even when the response is delivered via progressive message editing. The specific mechanism (e.g., sending a brief new message after streaming completes, or restructuring how the first message is created) should be evaluated during speccing.
-
 ### DLT-039: Extract shared base for pipeline execution
 **Status**: ✗ Defined
 **Depends on**: None
@@ -161,12 +147,12 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 **Complexity**: Medium
 **Description**: The three pipelines (pre-processing, post-processing, and per-message post-processing) each independently implement the same parallel-with-isolation execution and error-gathering pattern, creating a maintenance risk when the pattern needs to change. Extract that shared orchestration logic into a common base so each pipeline becomes a thin specialization rather than a separate implementation with duplicated logic.
 
-### DLT-040: Extract prompt-driven processor and fork-and-consume primitives
+### DLT-040: Unify sub-agent execution into shared abstraction
 **Status**: ✗ Defined
 **Depends on**: None
-**Priority**: 4 (Low)
-**Complexity**: Easy
-**Description**: The prompt-driven processor pattern and the fork-and-consume helper are currently embedded in the post-processing module, but they represent general-purpose primitives used by any session-forking processor. Move them into standalone reusable modules so future processors can adopt them without depending on the post-processing pipeline.
+**Priority**: 1 (Critical)
+**Complexity**: Medium
+**Description**: The prompt-driven processor pattern, fork-and-consume helper, and ad-hoc SDK call construction are repeated across multiple sub-agent sites (post-processors, boundary detection, memory search, skills classification, task execution) with similar boilerplate for building options, calling the SDK, and consuming results. Extract a common agent execution abstraction — a class with shared methods for running sub-agents — that encapsulates these patterns, and refactor existing call sites to use it. This replaces scattered SDK option assembly and result consumption with a uniform interface, reducing duplication and making it easier to apply cross-cutting changes (like sandboxing or observability) to all sub-agents.
 
 ### DLT-042: Add invalidation and refresh support to persisted context entries
 **Status**: ✗ Defined
@@ -307,3 +293,10 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 **Priority**: 4 (Low)
 **Complexity**: Medium
 **Description**: Apply a confirmed agent update using uv's upgrade mechanism. This delta executes when the user has confirmed an update via the notification from the update check delta, performing the actual update and optionally restarting the agent to run the new version.
+
+### DLT-062: Restrict agent file writes to workspace directory
+**Status**: ✗ Defined
+**Depends on**: None
+**Priority**: 2 (High)
+**Complexity**: Medium
+**Description**: Currently all agents run with `bypassPermissions` and no path restrictions, meaning they can modify any file the process has OS-level access to. Confine file writes, edits, and shell commands to the workspace path while preserving read access for broader system context. All SDK agent instances must be subject to the sandbox boundary, regardless of how they are created. The specific sandboxing mechanism (SDK-level configuration, permission mode restrictions, or another approach) should be evaluated during speccing.
