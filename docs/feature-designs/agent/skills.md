@@ -95,7 +95,7 @@ Seven-component architecture: a bootstrap hook creates the directory structure a
 | `src/tachikoma/skills/registry.py` | `SkillRegistry` class: discovers skills from multiple sources, loads agents, builds agents dict, stores skill body and path; refreshes all sources on dirty flag via swap-on-success; `Skill` dataclass for metadata (name from folder, description, version, body, path) | Uses `python-frontmatter` for parsing; constructs `AgentDefinition` directly; multi-source with last-wins precedence; `mark_dirty()` for external callers, `refresh()` for dirty-check-and-rescan |
 | `src/tachikoma/skills/context_provider.py` | `SkillsContextProvider(ContextProvider)`: receives `SkillRegistry` via constructor injection, refreshes registry before classification, classifies relevant skills via standalone `query()` with Opus low effort (DES-007), reads skill body from registry's pre-loaded `Skill.body`, assembles `<skills>` XML block, returns detected agents via `ContextResult.agents` | Receives registry and `AgentDefaults` via constructor injection (shared from bootstrap extras); no tools for classification agent (pure reasoning); fully consumes query() generator (DES-005); `get_agents_for_skill()` on registry for agent filtering |
 | `src/tachikoma/skills/hooks.py` | `skills_hook` bootstrap callback: creates `workspace/skills/` directory, resolves built-in skills path, creates `SkillRegistry` with both sources, stores in `ctx.extras["skill_registry"]` | Follows DES-003 pattern; built-in path via `Path(__file__).parent / "builtin"`; graceful fallback if built-in missing |
-| `src/tachikoma/skills/watcher.py` | `watch_skills()` async function: monitors skills directory, marks registry dirty, dispatches `SkillsChanged` events; top-level exception handler prevents silent task death | Uses `watchfiles.awatch()` with 5s debounce and 500ms rust_timeout; relies on watchfiles' default filtering behavior (hidden files, `__pycache__` excluded) |
+| `src/tachikoma/skills/watcher.py` | `watch_skills()` async function: monitors skills directory, marks registry dirty, dispatches `SkillsChanged` events; top-level exception handler prevents silent task death | Uses `watchfiles.awatch()` with 5s debounce and 2s rust_timeout; relies on watchfiles' default filtering behavior (hidden files, `__pycache__` excluded) |
 | `src/tachikoma/skills/events.py` | `SkillsChanged(BaseEvent[None])`: typed event for skill change notification | Follows bubus event pattern (ADR-009); no payload — signals "something changed" |
 | `src/tachikoma/context/loading.py` (`SYSTEM_PREAMBLE`) | Awareness-level skills documentation in the system prompt preamble: skills exist in `skills/` directory, auto-detected per session, can create/manage, distinct from Claude Code's native skills and slash commands. Structural details (SKILL.md format, agents/, YAML fields) are covered by the built-in authoring guide skill | Part of the `SYSTEM_PREAMBLE` constant; loaded once at startup; independent of per-session detection; follows ADR-008 append pattern |
 
@@ -383,7 +383,7 @@ SkillsChanged(BaseEvent[None])
 - Pro: Native debounce eliminates custom coalescing logic
 - Pro: `awatch()` integrates naturally with asyncio task pattern
 - Con: Adds a new dependency (`watchfiles`)
-- Con: Cancellation latency bounded by `rust_timeout` (mitigated: 500ms)
+- Con: Cancellation latency bounded by `rust_timeout` (mitigated: 2s)
 
 ### Dirty Flag with Swap-on-Success Refresh
 

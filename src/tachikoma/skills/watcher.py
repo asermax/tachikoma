@@ -51,7 +51,7 @@ async def watch_skills(
         async for changes in awatch(
             skills_path,
             debounce=5000,
-            rust_timeout=500,
+            rust_timeout=2000,
         ):
             _log.debug(
                 "Skills change detected: count={count}",

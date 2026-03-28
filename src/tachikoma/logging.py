@@ -112,6 +112,7 @@ def configure_logging(level: str, data_path: Path, console: bool = False) -> Non
         "aiogram",
         "markdown_it",
         "claude_agent_sdk",
+        "watchfiles",
     ):
         logging.getLogger(noisy_logger).setLevel(logging.WARNING)
 
