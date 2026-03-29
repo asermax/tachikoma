@@ -377,9 +377,7 @@ class TestSessionRegistryContextEntries:
         self, registry: SessionRegistry, mock_repo
     ) -> None:
         """AC: save failures are logged but not raised (graceful degradation per R7)."""
-        mock_repo.save_context_entries = AsyncMock(
-            side_effect=Exception("DB error")
-        )
+        mock_repo.save_context_entries = AsyncMock(side_effect=Exception("DB error"))
 
         # Should not raise - best-effort save
         await registry.save_context_entries("s1", [("memories", "test")])
@@ -391,12 +389,8 @@ class TestSessionRegistryContextEntries:
     ) -> None:
         """AC: load_context_entries delegates to repository and returns entries."""
         expected_entries = [
-            SessionContextEntry(
-                id=1, session_id="s1", owner="foundational", content="first"
-            ),
-            SessionContextEntry(
-                id=2, session_id="s1", owner="memories", content="second"
-            ),
+            SessionContextEntry(id=1, session_id="s1", owner="foundational", content="first"),
+            SessionContextEntry(id=2, session_id="s1", owner="memories", content="second"),
         ]
         mock_repo.load_context_entries = AsyncMock(return_value=expected_entries)
 
@@ -409,9 +403,7 @@ class TestSessionRegistryContextEntries:
         self, registry: SessionRegistry, mock_repo
     ) -> None:
         """AC: load failures propagate to caller (caller handles graceful degradation)."""
-        mock_repo.load_context_entries = AsyncMock(
-            side_effect=Exception("DB error")
-        )
+        mock_repo.load_context_entries = AsyncMock(side_effect=Exception("DB error"))
 
         with pytest.raises(Exception, match="DB error"):
             await registry.load_context_entries("s1")

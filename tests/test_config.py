@@ -83,17 +83,21 @@ class TestSettingsModel:
 
     def test_session_idle_timeout_zero_accepted(self) -> None:
         """AC (DLT-036): agent.session_idle_timeout = 0 disables idle close."""
-        settings = Settings.model_validate({
-            "agent": {"session_idle_timeout": 0},
-        })
+        settings = Settings.model_validate(
+            {
+                "agent": {"session_idle_timeout": 0},
+            }
+        )
 
         assert settings.agent.session_idle_timeout == 0
 
     def test_session_idle_timeout_from_toml(self) -> None:
         """AC (DLT-036): agent.session_idle_timeout loads from TOML."""
-        settings = Settings.model_validate({
-            "agent": {"session_idle_timeout": 600},
-        })
+        settings = Settings.model_validate(
+            {
+                "agent": {"session_idle_timeout": 600},
+            }
+        )
 
         assert settings.agent.session_idle_timeout == 600
 

@@ -87,7 +87,11 @@ class TestBackgroundTaskRunner:
         with patch.object(BackgroundTaskExecutor, "execute", mock_execute):
             task = asyncio.create_task(
                 background_task_runner(
-                    repo, settings, bus, AgentDefaults(cwd=Path("/tmp")), _mock_skill_registry(),
+                    repo,
+                    settings,
+                    bus,
+                    AgentDefaults(cwd=Path("/tmp")),
+                    _mock_skill_registry(),
                 )
             )
             await asyncio.sleep(0.2)
@@ -127,7 +131,11 @@ class TestBackgroundTaskRunner:
         with patch.object(BackgroundTaskExecutor, "execute", mock_execute):
             task = asyncio.create_task(
                 background_task_runner(
-                    repo, settings, bus, AgentDefaults(cwd=Path("/tmp")), _mock_skill_registry(),
+                    repo,
+                    settings,
+                    bus,
+                    AgentDefaults(cwd=Path("/tmp")),
+                    _mock_skill_registry(),
                 )
             )
             await asyncio.sleep(0.5)
@@ -151,7 +159,11 @@ class TestBackgroundTaskRunner:
         with patch.object(BackgroundTaskExecutor, "execute", mock_execute):
             task = asyncio.create_task(
                 background_task_runner(
-                    repo, settings, bus, AgentDefaults(cwd=Path("/tmp")), _mock_skill_registry(),
+                    repo,
+                    settings,
+                    bus,
+                    AgentDefaults(cwd=Path("/tmp")),
+                    _mock_skill_registry(),
                 )
             )
             await asyncio.sleep(0.2)
@@ -205,7 +217,8 @@ class TestBackgroundTaskExecutor:
             # Mock query and receive_response
             mock_client.query = AsyncMock()
             mock_client.receive_response = _make_sdk_response(
-                text="Task done", session_id="sdk-session-123",
+                text="Task done",
+                session_id="sdk-session-123",
             )
 
             # Mock evaluator to return complete
@@ -215,7 +228,9 @@ class TestBackgroundTaskExecutor:
                 # Mock pre-processing to return original prompt
                 with (
                     patch.object(
-                        executor, "_run_preprocessing", return_value=_mock_preproc_result(),
+                        executor,
+                        "_run_preprocessing",
+                        return_value=_mock_preproc_result(),
                     ),
                     patch.object(executor, "_run_postprocessing", return_value=None),
                 ):
@@ -324,7 +339,9 @@ class TestBackgroundTaskExecutor:
 
                 with (
                     patch.object(
-                        executor, "_run_preprocessing", return_value=_mock_preproc_result(),
+                        executor,
+                        "_run_preprocessing",
+                        return_value=_mock_preproc_result(),
                     ),
                     patch.object(executor, "_run_postprocessing", return_value=None),
                 ):
@@ -371,8 +388,10 @@ class TestBackgroundTaskExecutor:
                 )
 
                 with patch.object(
-                        executor, "_run_preprocessing", return_value=_mock_preproc_result(),
-                    ):
+                    executor,
+                    "_run_preprocessing",
+                    return_value=_mock_preproc_result(),
+                ):
                     await executor.execute(instance)
 
         # Verify instance is failed due to max iterations
@@ -436,7 +455,9 @@ class TestNotificationGeneration:
 
                 with (
                     patch.object(
-                        executor, "_run_preprocessing", return_value=_mock_preproc_result(),
+                        executor,
+                        "_run_preprocessing",
+                        return_value=_mock_preproc_result(),
                     ),
                     patch.object(executor, "_run_postprocessing", return_value=None),
                     patch(
@@ -512,7 +533,9 @@ class TestNotificationGeneration:
 
                 with (
                     patch.object(
-                        executor, "_run_preprocessing", return_value=_mock_preproc_result(),
+                        executor,
+                        "_run_preprocessing",
+                        return_value=_mock_preproc_result(),
                     ),
                     patch.object(executor, "_run_postprocessing", return_value=None),
                     patch(
@@ -582,7 +605,9 @@ class TestNotificationGeneration:
 
                 with (
                     patch.object(
-                        executor, "_run_preprocessing", return_value=_mock_preproc_result(),
+                        executor,
+                        "_run_preprocessing",
+                        return_value=_mock_preproc_result(),
                     ),
                     patch.object(executor, "_run_postprocessing", return_value=None),
                     patch(
@@ -651,7 +676,9 @@ class TestNotificationGeneration:
 
                 with (
                     patch.object(
-                        executor, "_run_preprocessing", return_value=_mock_preproc_result(),
+                        executor,
+                        "_run_preprocessing",
+                        return_value=_mock_preproc_result(),
                     ),
                     patch(
                         "tachikoma.tasks.executor.fork_and_capture",
@@ -711,7 +738,9 @@ class TestNotificationGeneration:
 
                 with (
                     patch.object(
-                        executor, "_run_preprocessing", return_value=_mock_preproc_result(),
+                        executor,
+                        "_run_preprocessing",
+                        return_value=_mock_preproc_result(),
                     ),
                     patch.object(executor, "_run_postprocessing", return_value=None),
                     patch(

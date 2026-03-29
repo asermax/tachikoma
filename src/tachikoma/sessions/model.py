@@ -146,7 +146,6 @@ class SessionResumptionRecord(Base):
         )
 
 
-
 class SessionContextEntryRecord(Base):
     """SQLAlchemy ORM model for the session_context_entries table.
 
@@ -163,9 +162,7 @@ class SessionContextEntryRecord(Base):
     owner: Mapped[str] = mapped_column()
     content: Mapped[str] = mapped_column()
 
-    __table_args__ = (
-        Index("ix_session_context_entries_session_id", "session_id"),
-    )
+    __table_args__ = (Index("ix_session_context_entries_session_id", "session_id"),)
 
     def to_domain(self) -> SessionContextEntry:
         """Convert ORM record to domain dataclass."""

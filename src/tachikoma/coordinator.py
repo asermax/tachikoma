@@ -527,9 +527,7 @@ class Coordinator:
             try:
                 await self._registry.close_session(session.id)
             except Exception as exc:
-                _log.exception(
-                    "Failed to close session: err={err}", err=str(exc)
-                )
+                _log.exception("Failed to close session: err={err}", err=str(exc))
 
         if session.sdk_session_id is not None and self._pipeline is not None:
             task = asyncio.create_task(self._pipeline.run(session))

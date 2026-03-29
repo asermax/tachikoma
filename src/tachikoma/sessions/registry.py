@@ -243,9 +243,7 @@ class SessionRegistry:
     # Context entries
     # ------------------------------------------------------------------
 
-    async def save_context_entries(
-        self, session_id: str, entries: list[tuple[str, str]]
-    ) -> None:
+    async def save_context_entries(self, session_id: str, entries: list[tuple[str, str]]) -> None:
         """Save context entries for a session.
 
         Best-effort persistence: failures are logged but not raised.
@@ -273,9 +271,7 @@ class SessionRegistry:
                 err=str(exc),
             )
 
-    async def load_context_entries(
-        self, session_id: str
-    ) -> list[SessionContextEntry]:
+    async def load_context_entries(self, session_id: str) -> list[SessionContextEntry]:
         """Load all context entries for a session.
 
         Delegates to repository. Returns entries ordered by insertion order (id asc).
@@ -290,7 +286,6 @@ class SessionRegistry:
             SessionRepositoryError: If the load operation fails.
         """
         return await self._repository.load_context_entries(session_id)
-
 
     async def recover_interrupted(self) -> None:
         """Close any sessions left open from a previous ungraceful shutdown.

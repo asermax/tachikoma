@@ -319,9 +319,7 @@ class TestRepositoryContextEntries:
 
         assert loaded == []
 
-    async def test_entries_isolated_by_session(
-        self, repo: SessionRepository
-    ) -> None:
+    async def test_entries_isolated_by_session(self, repo: SessionRepository) -> None:
         """AC: entries from one session don't leak to another."""
         s1 = _make_session("session-1")
         s2 = _make_session("session-2")
@@ -345,9 +343,7 @@ class TestRepositoryContextEntries:
         assert len(loaded2) == 1
         assert loaded2[0].owner == "owner-b"
 
-    async def test_entry_content_preserved_exactly(
-        self, repo: SessionRepository
-    ) -> None:
+    async def test_entry_content_preserved_exactly(self, repo: SessionRepository) -> None:
         """AC: stored content matches the text at injection time (content integrity)."""
         session = _make_session("ctx-test-5")
         await repo.create(session)

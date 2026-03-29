@@ -97,9 +97,7 @@ class TestSkillsHook:
 class TestSkillsHookRegistry:
     """Tests for skills_hook registry creation and extras exposure (DLT-032, DLT-038)."""
 
-    async def test_creates_registry_and_stores_in_extras(
-        self, ctx: BootstrapContext
-    ) -> None:
+    async def test_creates_registry_and_stores_in_extras(self, ctx: BootstrapContext) -> None:
         """AC: Hook creates registry and stores in ctx.extras["skill_registry"]."""
         await skills_hook(ctx)
 
@@ -115,9 +113,7 @@ class TestSkillsHookRegistry:
         builtin_path.mkdir()
         skill_dir = builtin_path / "test-skill"
         skill_dir.mkdir()
-        (skill_dir / "SKILL.md").write_text(
-            "---\ndescription: Test builtin skill\n---\n\nContent"
-        )
+        (skill_dir / "SKILL.md").write_text("---\ndescription: Test builtin skill\n---\n\nContent")
 
         # Patch __file__ to point to our temp directory
         with patch(
@@ -160,18 +156,14 @@ class TestSkillsHookRegistry:
         builtin_path.mkdir()
         builtin_skill = builtin_path / "builtin-skill"
         builtin_skill.mkdir()
-        (builtin_skill / "SKILL.md").write_text(
-            "---\ndescription: Builtin skill\n---\n\nContent"
-        )
+        (builtin_skill / "SKILL.md").write_text("---\ndescription: Builtin skill\n---\n\nContent")
 
         # Create a workspace skill
         workspace_skills = settings_manager.settings.workspace.path / "skills"
         workspace_skills.mkdir(parents=True, exist_ok=True)
         ws_skill = workspace_skills / "workspace-skill"
         ws_skill.mkdir()
-        (ws_skill / "SKILL.md").write_text(
-            "---\ndescription: Workspace skill\n---\n\nContent"
-        )
+        (ws_skill / "SKILL.md").write_text("---\ndescription: Workspace skill\n---\n\nContent")
 
         with patch(
             "tachikoma.skills.hooks.__file__",
@@ -194,13 +186,7 @@ class TestSkillsHookRegistry:
         skills_dir.mkdir(parents=True, exist_ok=True)
         skill_dir = skills_dir / "test-skill"
         skill_dir.mkdir()
-        (skill_dir / "SKILL.md").write_text(
-            "---\n"
-            "description: A test skill\n"
-            "---\n"
-            "\n"
-            "Test content"
-        )
+        (skill_dir / "SKILL.md").write_text("---\ndescription: A test skill\n---\n\nTest content")
 
         await skills_hook(ctx)
 

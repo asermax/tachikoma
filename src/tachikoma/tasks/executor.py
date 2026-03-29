@@ -49,6 +49,7 @@ class _PreprocessingResult:
     mcp_servers: dict[str, McpServerConfig] = field(default_factory=dict)
     agents: "dict[str, AgentDefinition] | None" = None
 
+
 _log = logger.bind(component="task_executor")
 
 # How often the background task runner checks for pending instances

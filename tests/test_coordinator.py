@@ -479,7 +479,8 @@ class TestCoordinatorSystemPrompt:
     """Tests for DLT-005/DLT-041: system prompt integration via foundational context."""
 
     async def test_foundational_context_persisted_to_db(
-        self, mock_sdk,
+        self,
+        mock_sdk,
     ) -> None:
         """AC: Given foundational_context is provided -> saved to DB for new session."""
         client, _ = mock_sdk
@@ -491,9 +492,7 @@ class TestCoordinatorSystemPrompt:
         registry = _make_mock_registry(active_session=None)
         foundational = [("soul", "Soul content"), ("user", "User content")]
 
-        async with Coordinator(
-            registry=registry, foundational_context=foundational
-        ) as coord:
+        async with Coordinator(registry=registry, foundational_context=foundational) as coord:
             _ = await _send(coord, "hello")
 
         # Foundational context should be saved to DB
@@ -507,7 +506,8 @@ class TestCoordinatorSystemPrompt:
         assert "user" in owners
 
     async def test_foundational_context_assembled_into_system_prompt(
-        self, mock_sdk,
+        self,
+        mock_sdk,
     ) -> None:
         """AC: Foundational context is assembled into SDK system prompt via DB."""
         client, mock_cls = mock_sdk
@@ -530,9 +530,7 @@ class TestCoordinatorSystemPrompt:
         )
         foundational = [("soul", "Soul content")]
 
-        async with Coordinator(
-            registry=registry, foundational_context=foundational
-        ) as coord:
+        async with Coordinator(registry=registry, foundational_context=foundational) as coord:
             _ = await _send(coord, "hello")
 
         options = mock_cls.call_args[0][0]
@@ -542,7 +540,8 @@ class TestCoordinatorSystemPrompt:
         assert "Soul content" in options.system_prompt["append"]
 
     async def test_no_foundational_context_uses_preamble_only(
-        self, mock_sdk,
+        self,
+        mock_sdk,
     ) -> None:
         """AC: No foundational_context -> system prompt uses preamble only."""
         client, mock_cls = mock_sdk
@@ -573,9 +572,7 @@ class TestCoordinatorSystemPrompt:
         registry = _make_mock_registry(active_session=None)
         foundational = [("soul", "Soul content")]
 
-        async with Coordinator(
-            registry=registry, foundational_context=foundational
-        ) as coord:
+        async with Coordinator(registry=registry, foundational_context=foundational) as coord:
             events = await _send(coord, "hi")
 
         text_events = [e for e in events if isinstance(e, TextChunk)]
@@ -1956,7 +1953,9 @@ class TestBuildOptions:
         assert options.resume is None
 
     async def test_previous_summary_persisted_to_db_on_topic_shift(
-        self, mock_sdk, mocker,
+        self,
+        mock_sdk,
+        mocker,
     ) -> None:
         """AC: Previous conversation summary is persisted to DB after topic shift."""
         client, mock_cls = mock_sdk
@@ -1996,7 +1995,9 @@ class TestBuildOptions:
         assert found_previous_summary
 
     async def test_previous_summary_assembled_from_db(
-        self, mock_sdk, mocker,
+        self,
+        mock_sdk,
+        mocker,
     ) -> None:
         """AC: Previous summary is assembled into system prompt from DB entries."""
         client, mock_cls = mock_sdk
@@ -2051,7 +2052,9 @@ class TestBuildOptions:
         assert "Summary text" in append_text
 
     async def test_previous_summary_not_repeated_on_second_message(
-        self, mock_sdk, mocker,
+        self,
+        mock_sdk,
+        mocker,
     ) -> None:
         """AC: Previous summary is not repeated after first message (DB only has it once)."""
         client, mock_cls = mock_sdk
@@ -2077,18 +2080,24 @@ class TestBuildOptions:
         # First msg: active -> new_session (after create_session) -> new_session
         # Second msg: new_session -> new_session -> new_session
         registry.get_active_session.side_effect = [
-            active, new_session, new_session,  # First message
-            new_session, new_session, new_session,  # Second message
+            active,
+            new_session,
+            new_session,  # First message
+            new_session,
+            new_session,
+            new_session,  # Second message
         ]
         # First call returns previous-summary, second call returns empty (consumed)
         registry.load_context_entries = AsyncMock(
             side_effect=[
-                [SessionContextEntry(
-                    id=1,
-                    session_id="s2",
-                    owner="previous-summary",
-                    content="Previous summary",
-                )],
+                [
+                    SessionContextEntry(
+                        id=1,
+                        session_id="s2",
+                        owner="previous-summary",
+                        content="Previous summary",
+                    )
+                ],
                 [],  # Second message: no previous-summary entry
             ]
         )
@@ -2859,9 +2868,7 @@ class TestCloseIdleSession:
     async def test_graceful_on_registry_error(self, mock_sdk) -> None:
         """AC: Registry errors are logged, no crash."""
         registry = MagicMock()
-        registry.get_active_session = AsyncMock(
-            side_effect=RuntimeError("DB connection lost")
-        )
+        registry.get_active_session = AsyncMock(side_effect=RuntimeError("DB connection lost"))
 
         coord = Coordinator(registry=registry)
         # Should not raise
