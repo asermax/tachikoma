@@ -23,7 +23,7 @@ class _FakeProcessor(MessagePostProcessor):
 def _make_mock_processor() -> _FakeProcessor:
     """Create a processor with mockable process method."""
     processor = _FakeProcessor()
-    processor.process = AsyncMock()  # type: ignore[method-assign]
+    processor.process = AsyncMock()
     return processor
 
 

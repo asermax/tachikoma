@@ -35,7 +35,7 @@ def _make_mock_processor() -> _FakeProcessor:
     """Create a processor with mockable process method."""
     processor = _FakeProcessor()
     # Override the process method with an AsyncMock
-    processor.process = AsyncMock()  # type: ignore[method-assign]
+    processor.process = AsyncMock()
     return processor
 
 

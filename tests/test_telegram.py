@@ -523,7 +523,7 @@ class TestResponseRendererNotify:
         """notify() skips delete if copy fails (preserves original)."""
         bot = MagicMock()
         bot.copy_message = AsyncMock(
-            side_effect=TelegramAPIError(method="copy_message", message="Failed")  # type: ignore[arg-type]
+            side_effect=TelegramAPIError(method="copy_message", message="Failed")
         )
         bot.delete_message = AsyncMock()
         renderer = ResponseRenderer(bot, chat_id=123, push_notifications=True)
@@ -539,7 +539,7 @@ class TestResponseRendererNotify:
         bot = MagicMock()
         bot.copy_message = AsyncMock()
         bot.delete_message = AsyncMock(
-            side_effect=TelegramAPIError(method="delete_message", message="Failed")  # type: ignore[arg-type]
+            side_effect=TelegramAPIError(method="delete_message", message="Failed")
         )
         renderer = ResponseRenderer(bot, chat_id=123, push_notifications=True)
         renderer._current_message_id = 42
