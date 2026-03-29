@@ -33,7 +33,7 @@ def _make_definition(
         id=definition_id,
         name=name,
         schedule=schedule or ScheduleConfig(type="cron", expression="0 9 * * *"),
-        task_type=task_type,  # type: ignore[arg-type]
+        task_type=task_type,
         prompt=prompt,
         enabled=enabled,
         notify=notify,
@@ -57,8 +57,8 @@ def _make_instance(
     return TaskInstance(
         id=instance_id,
         definition_id=definition_id,
-        task_type=task_type,  # type: ignore[arg-type]
-        status=status,  # type: ignore[arg-type]
+        task_type=task_type,
+        status=status,
         prompt=prompt,
         scheduled_for=scheduled_for or _utcnow(),
         started_at=started_at,

@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from bubus import EventBus
+from claude_agent_sdk.types import AssistantMessage, ResultMessage, TextBlock
 
 from tachikoma.agent_defaults import AgentDefaults
 from tachikoma.config import TaskSettings
@@ -27,6 +28,36 @@ def _mock_skill_registry() -> MagicMock:
 
 def _mock_preproc_result(prompt: str = "Test task") -> _PreprocessingResult:
     return _PreprocessingResult(prompt=prompt)
+
+
+def _make_sdk_response(
+    text: str = "Task done",
+    session_id: str | None = "sdk-session-123",
+):
+    """Create a mock SDK response async generator function for receive_response."""
+
+    async def _stream():
+        yield AssistantMessage(content=[TextBlock(text=text)], model="test")
+        if session_id is not None:
+            yield ResultMessage(
+                subtype="success",
+                duration_ms=0,
+                duration_api_ms=0,
+                is_error=False,
+                num_turns=1,
+                session_id=session_id,
+            )
+
+    return _stream
+
+
+def _make_eval_response(text: str = '{"status": "complete", "feedback": "Done"}'):
+    """Create a mock evaluator response async generator."""
+
+    async def _stream():
+        yield AssistantMessage(content=[TextBlock(text=text)], model="test")
+
+    return _stream()
 
 
 class TestBackgroundTaskRunner:
@@ -173,26 +204,13 @@ class TestBackgroundTaskExecutor:
 
             # Mock query and receive_response
             mock_client.query = AsyncMock()
-
-            # First response with session_id
-            mock_result = MagicMock()
-            mock_result.session_id = "sdk-session-123"
-            mock_result.content = [MagicMock(text="Task done")]
-
-            async def mock_receive():
-                yield mock_result
-
-            mock_client.receive_response = mock_receive
+            mock_client.receive_response = _make_sdk_response(
+                text="Task done", session_id="sdk-session-123",
+            )
 
             # Mock evaluator to return complete
             with patch("claude_agent_sdk.query") as mock_query:
-                eval_result = MagicMock()
-                eval_result.content = [MagicMock(text='{"status": "complete", "feedback": "Done"}')]
-
-                async def mock_eval_query(*args, **kwargs):
-                    yield eval_result
-
-                mock_query.return_value = mock_eval_query()
+                mock_query.return_value = _make_eval_response()
 
                 # Mock pre-processing to return original prompt
                 with (
@@ -299,24 +317,10 @@ class TestBackgroundTaskExecutor:
             mock_client_class.return_value = mock_client
 
             mock_client.query = AsyncMock()
-
-            mock_result = MagicMock()
-            mock_result.session_id = "sdk-session-123"
-            mock_result.content = [MagicMock(text="Done")]
-
-            async def mock_receive():
-                yield mock_result
-
-            mock_client.receive_response = mock_receive
+            mock_client.receive_response = _make_sdk_response(text="Done")
 
             with patch("claude_agent_sdk.query") as mock_query:
-                eval_result = MagicMock()
-                eval_result.content = [MagicMock(text='{"status": "complete", "feedback": "Done"}')]
-
-                async def mock_eval_query(*args, **kwargs):
-                    yield eval_result
-
-                mock_query.return_value = mock_eval_query()
+                mock_query.return_value = _make_eval_response()
 
                 with (
                     patch.object(
@@ -359,27 +363,12 @@ class TestBackgroundTaskExecutor:
             mock_client_class.return_value = mock_client
 
             mock_client.query = AsyncMock()
-
-            mock_result = MagicMock()
-            mock_result.session_id = "sdk-session-123"
-            mock_result.content = [MagicMock(text="Working...")]
-
-            async def mock_receive():
-                yield mock_result
-
-            mock_client.receive_response = mock_receive
+            mock_client.receive_response = _make_sdk_response(text="Working...")
 
             with patch("claude_agent_sdk.query") as mock_query:
-                eval_result = MagicMock()
-                # Evaluator always says continue
-                eval_result.content = [
-                    MagicMock(text='{"status": "continue", "feedback": "Keep going"}')
-                ]
-
-                async def mock_eval_query(*args, **kwargs):
-                    yield eval_result
-
-                mock_query.return_value = mock_eval_query()
+                mock_query.return_value = _make_eval_response(
+                    '{"status": "continue", "feedback": "Keep going"}',
+                )
 
                 with patch.object(
                         executor, "_run_preprocessing", return_value=_mock_preproc_result(),
@@ -440,24 +429,10 @@ class TestNotificationGeneration:
             mock_client_class.return_value = mock_client
 
             mock_client.query = AsyncMock()
-
-            mock_result = MagicMock()
-            mock_result.session_id = "sdk-session-123"
-            mock_result.content = [MagicMock(text="Task done")]
-
-            async def mock_receive():
-                yield mock_result
-
-            mock_client.receive_response = mock_receive
+            mock_client.receive_response = _make_sdk_response(text="Task done")
 
             with patch("claude_agent_sdk.query") as mock_query:
-                eval_result = MagicMock()
-                eval_result.content = [MagicMock(text='{"status": "complete", "feedback": "Done"}')]
-
-                async def mock_eval_query(*args, **kwargs):
-                    yield eval_result
-
-                mock_query.return_value = mock_eval_query()
+                mock_query.return_value = _make_eval_response()
 
                 with (
                     patch.object(
@@ -528,26 +503,12 @@ class TestNotificationGeneration:
             mock_client_class.return_value = mock_client
 
             mock_client.query = AsyncMock()
-
-            mock_result = MagicMock()
-            mock_result.session_id = "sdk-session-123"
-            mock_result.content = [MagicMock(text="Done")]
-
-            async def mock_receive():
-                yield mock_result
-
-            mock_client.receive_response = mock_receive
+            mock_client.receive_response = _make_sdk_response(text="Done")
 
             with patch("claude_agent_sdk.query") as mock_query:
-                eval_result = MagicMock()
-                eval_result.content = [
-                    MagicMock(text='{"status": "complete", "feedback": "Evaluator says done"}')
-                ]
-
-                async def mock_eval_query(*args, **kwargs):
-                    yield eval_result
-
-                mock_query.return_value = mock_eval_query()
+                mock_query.return_value = _make_eval_response(
+                    '{"status": "complete", "feedback": "Evaluator says done"}',
+                )
 
                 with (
                     patch.object(
@@ -612,25 +573,12 @@ class TestNotificationGeneration:
             mock_client.query = AsyncMock()
 
             # Response with NO session_id
-            mock_result = MagicMock()
-            mock_result.session_id = None
-            mock_result.content = [MagicMock(text="Done")]
-
-            async def mock_receive():
-                yield mock_result
-
-            mock_client.receive_response = mock_receive
+            mock_client.receive_response = _make_sdk_response(text="Done", session_id=None)
 
             with patch("claude_agent_sdk.query") as mock_query:
-                eval_result = MagicMock()
-                eval_result.content = [
-                    MagicMock(text='{"status": "complete", "feedback": "Evaluator feedback"}')
-                ]
-
-                async def mock_eval_query(*args, **kwargs):
-                    yield eval_result
-
-                mock_query.return_value = mock_eval_query()
+                mock_query.return_value = _make_eval_response(
+                    '{"status": "complete", "feedback": "Evaluator feedback"}',
+                )
 
                 with (
                     patch.object(
@@ -694,26 +642,12 @@ class TestNotificationGeneration:
             mock_client_class.return_value = mock_client
 
             mock_client.query = AsyncMock()
-
-            mock_result = MagicMock()
-            mock_result.session_id = "sdk-session-123"
-            mock_result.content = [MagicMock(text="Stuck in loop")]
-
-            async def mock_receive():
-                yield mock_result
-
-            mock_client.receive_response = mock_receive
+            mock_client.receive_response = _make_sdk_response(text="Stuck in loop")
 
             with patch("claude_agent_sdk.query") as mock_query:
-                eval_result = MagicMock()
-                eval_result.content = [
-                    MagicMock(text='{"status": "stuck", "feedback": "Agent is looping"}')
-                ]
-
-                async def mock_eval_query(*args, **kwargs):
-                    yield eval_result
-
-                mock_query.return_value = mock_eval_query()
+                mock_query.return_value = _make_eval_response(
+                    '{"status": "stuck", "feedback": "Agent is looping"}',
+                )
 
                 with (
                     patch.object(
@@ -770,24 +704,10 @@ class TestNotificationGeneration:
             mock_client_class.return_value = mock_client
 
             mock_client.query = AsyncMock()
-
-            mock_result = MagicMock()
-            mock_result.session_id = "sdk-session-123"
-            mock_result.content = [MagicMock(text="Done")]
-
-            async def mock_receive():
-                yield mock_result
-
-            mock_client.receive_response = mock_receive
+            mock_client.receive_response = _make_sdk_response(text="Done")
 
             with patch("claude_agent_sdk.query") as mock_query:
-                eval_result = MagicMock()
-                eval_result.content = [MagicMock(text='{"status": "complete", "feedback": "Done"}')]
-
-                async def mock_eval_query(*args, **kwargs):
-                    yield eval_result
-
-                mock_query.return_value = mock_eval_query()
+                mock_query.return_value = _make_eval_response()
 
                 with (
                     patch.object(
