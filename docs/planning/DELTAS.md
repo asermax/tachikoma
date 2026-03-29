@@ -300,3 +300,10 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 **Priority**: 2 (High)
 **Complexity**: Medium
 **Description**: Currently all agents run with `bypassPermissions` and no path restrictions, meaning they can modify any file the process has OS-level access to. Confine file writes, edits, and shell commands to the workspace path while preserving read access for broader system context. All SDK agent instances must be subject to the sandbox boundary, regardless of how they are created. The specific sandboxing mechanism (SDK-level configuration, permission mode restrictions, or another approach) should be evaluated during speccing.
+
+### DLT-063: Send files and media to users
+**Status**: ✗ Defined
+**Depends on**: None
+**Priority**: 2 (High)
+**Complexity**: Medium
+**Description**: When the agent creates or references files during a conversation — images, documents, audio, or other media — users currently have no way to receive them directly; all output flows as streamed text. This delta enables the agent to deliver files to users as part of the conversation, with each channel rendering them in the most appropriate way for its medium. The specific mechanism for detecting which files to surface and the supported media types should be evaluated during speccing.
