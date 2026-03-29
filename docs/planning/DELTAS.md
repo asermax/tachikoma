@@ -113,11 +113,11 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 **Description**: Build an eval suite for the skills context provider using the evaluation framework (DLT-015). Tests whether the right skills are being detected and injected for given input messages. Test cases should cover: detecting relevant skills when they exist, not injecting irrelevant skills that waste context, handling messages where no skills apply, prioritizing when multiple skills match, and correctly loading skill content into agent context. Measures precision (no irrelevant skills injected) and recall (applicable skills not missed) of the skill detection process.
 
 ### DLT-024: Package and install agent as a uv tool
-**Status**: ⧗ Spec
+**Status**: ✓ Spec
 **Depends on**: None
 **Priority**: 3 (Medium)
-**Complexity**: Easy
-**Description**: Package the agent as an installable CLI tool using uv, enabling easy installation and updates via `uv tool install`. This delta covers project packaging configuration (pyproject.toml entry points, dependencies), a CLI entry point that starts the agent, and documentation for installation. The CLI entry point is the main way users launch the agent — it wires up the agent architecture, loads configuration, and starts the main loop. Using uv tool provides isolated dependency management and simple update path (`uv tool upgrade`).
+**Complexity**: Medium
+**Description**: Package the agent as an installable CLI tool using uv, enabling easy installation and updates via `uv tool install tachikoma` from PyPI. This delta covers project packaging configuration (pyproject.toml entry points, build system, metadata), CLI restructuring to support subcommands (`tachikoma run` with `--channel` flag, bare `tachikoma` defaults to `run`), a GitHub Actions CD pipeline with automatic semantic versioning (python-semantic-release with conventional commits, CHANGELOG.md generation), PyPI publishing via trusted publisher (OIDC), and installation documentation. The CLI entry point is the main way users launch the agent — it wires up the agent architecture, loads configuration, and starts the main loop.
 
 ### DLT-031: Granular processing status messages
 **Status**: ✗ Defined
