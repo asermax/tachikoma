@@ -321,3 +321,10 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 **Priority**: 3 (Medium)
 **Complexity**: Hard
 **Description**: Users can have multiple independent conversations with the assistant running simultaneously. When a new message arrives while the assistant is busy and represents a distinct topic, it spawns as a separate concurrent session with its own context and history. This enables users to follow up on something urgent without waiting for a long-running task to complete.
+
+### DLT-066: Recover interrupted post-processing on restart
+**Status**: ✗ Defined
+**Depends on**: None
+**Priority**: 2 (High)
+**Complexity**: Medium
+**Description**: When the process stops during session post-processing — whether from a crash, signal, or unhandled error — the work done by completed processors is preserved but remaining processors never run, leaving memory extraction, context updates, or git commits incomplete. This delta adds checkpoint tracking to the post-processing pipeline: each processor's completion is recorded as it finishes, and on startup the recovery hook detects sessions with incomplete post-processing and resumes from the last checkpoint, running only the processors that haven't completed yet. This prevents both data loss (skipped processors) and duplication (re-running completed ones).
