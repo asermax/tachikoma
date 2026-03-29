@@ -88,12 +88,12 @@ The key components:
 | Event Type | Rendering |
 |------------|-----------|
 | `TextChunk` | Accumulated in buffer, formatted via telegramify-markdown, sent as progressive message edits |
-| `ToolActivity` | Inline status line appended to current message as blockquote with wrench icon (e.g., "> 🔧 Reading src/main.py"); replaced by next tool; activities collected for summary generation at tool→text transitions |
+| `ToolActivity` | Italicized inline status line appended to current message with wrench icon (e.g., "*🔧 Reading src/main.py*"), separated from surrounding text by blank lines; replaced by next tool; activities collected for summary generation at tool→text transitions |
 | `Result` | Final edit with complete formatted text; copy+delete for push notification (if enabled); renderer reset for next turn |
 | `Status` | Transient italic message sent via `handle_status()` method; replaced when the first TextChunk or ToolActivity arrives |
 | `Error` | Separate error message sent to chat; conversation continues if recoverable |
 
-**Tool display format:** Uses shared `TOOL_DISPLAY` map from `display.py` for live status lines — present-progressive format with wrench icon in blockquote (e.g., "> 🔧 Reading src/main.py"). Known tools show contextual present-progressive details; unknown tools fall back to tool name with ellipsis — MCP tool names (starting with `mcp__`) are first formatted into human-readable labels via `format_tool_name()` (e.g., `mcp__projects__list_projects` becomes "List Projects"). Both are rendered with wrench icon in blockquote format. At tool→text transitions, `summarize_tool_activity()` generates a post-hoc summary from the collected activities using `TOOL_SUMMARY` — present-progressive format matching active display (e.g., "> 🔧 Reading 3 files and searching for 'config'").
+**Tool display format:** Uses shared `TOOL_DISPLAY` map from `display.py` for live status lines — present-progressive format with wrench icon in markdown italics (e.g., "*🔧 Reading src/main.py*"), separated from surrounding text by blank lines. Known tools show contextual present-progressive details; unknown tools fall back to tool name with ellipsis — MCP tool names (starting with `mcp__`) are first formatted into human-readable labels via `format_tool_name()` (e.g., `mcp__projects__list_projects` becomes "List Projects"). Both are rendered with wrench icon in italics format. At tool→text transitions, `summarize_tool_activity()` generates a post-hoc summary from the collected activities using `TOOL_SUMMARY` — present-progressive format matching active display (e.g., "*🔧 Reading 3 files and searching for 'config'*"), with blank lines before and after to visually separate tool activity from response text.
 
 ### Cross-Layer Contracts
 
