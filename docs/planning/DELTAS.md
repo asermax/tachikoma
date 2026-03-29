@@ -363,3 +363,87 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 **Priority**: 1 (Critical)
 **Complexity**: Easy
 **Description**: Apply the error classification and surfacing mechanism to the task execution subsystem. Currently, task pre-processing fallbacks, evaluator failures, and notification delivery issues are handled with ad-hoc logging and silent degradation. Classify and surface failures during task pre-processing, evaluation loops, post-processing, and notification generation consistently with the rest of the system.
+
+### DLT-072: Fix task management MCP tools
+**Status**: ✗ Defined
+**Depends on**: None
+**Priority**: 1 (Critical)
+**Complexity**: Medium
+**Description**: The task management MCP tools have multiple issues that force the agent to fall back to raw SQLite queries. `list_tasks` does not expose task IDs, making it impossible to discover which ID to pass to `update_task` or `delete_task`. `update_task` rejects valid inputs with an unhelpful generic validation error that does not indicate which field failed or what schema is expected. One-shot datetime schedules are interpreted as UTC without respecting the configured timezone, causing tasks created with local time to silently land in the past and fail with a confusing "must be in the future" error. There is no tool to query task execution history (`task_instances` table), so the agent cannot answer whether a task ran or why it failed. Tool descriptions lack parameter type documentation, timezone behavior, and cross-references between tools, leading to trial-and-error usage. Fix all of these: expose IDs in list output, fix update validation, add timezone-aware scheduling using the configured timezone, add a task instance history tool, and enrich tool descriptions with types, examples, and usage guidance.
+
+### DLT-073: Block Claude Code built-in cron tools in default config
+**Status**: ✗ Defined
+**Depends on**: None
+**Priority**: 2 (High)
+**Complexity**: Easy
+**Description**: Claude Code ships with built-in `CronCreate`, `CronDelete`, and `CronList` tools that create session-only in-memory cron jobs. These shadow Tachikoma's persistent task system — the agent defaults to the built-in tools since they appear first in the tool list, and any reminders created through them silently vanish on exit because they are never persisted to the database or picked up by Tachikoma's scheduler. A manual workaround exists (adding these tools to the deny list in `.claude/settings.local.json`), but this is not baked into the default project configuration. Incorporate the deny list into the project template or default configuration so every workspace starts with these tools blocked.
+
+### DLT-074: Rename skills subsystem to avoid Claude Code naming collision
+**Status**: ✗ Defined
+**Depends on**: None
+**Priority**: 2 (High)
+**Complexity**: Medium
+**Description**: Claude Code uses "skills" internally for its plugin-provided slash-command capabilities, and Tachikoma also uses "skills" for its own sub-agent packages. When both systems share the same term, the agent conflates them — attempting to invoke a Tachikoma skill via the Claude Code Skill tool, or ignoring a Claude Code skill because it assumes it belongs to Tachikoma's registry. This leads to incorrect tool routing and missed capabilities. Rename Tachikoma's skill subsystem to a distinct term (e.g., "modules", "packages", or "capabilities") across the codebase, configuration, and internal references, and add internal disambiguation logic so the agent reliably distinguishes between the two systems without relying on external guidance files.
+
+### DLT-075: Re-evaluate skill context per message
+**Status**: ✗ Defined
+**Depends on**: None
+**Priority**: 3 (Medium)
+**Complexity**: Medium
+**Description**: The skills context provider currently runs only on the first message of a new session — its output is persisted and reused for all subsequent messages in that session. When a conversation shifts topic mid-session (e.g., the user starts discussing routines after talking about a reading list), newly relevant skills are never loaded because the classification was based on the first message alone. Re-evaluate skill relevance on each message so follow-up messages can trigger loading of additional skills that match the evolving conversation context.
+
+### DLT-076: Re-evaluate memory context per message
+**Status**: ✗ Defined
+**Depends on**: None
+**Priority**: 3 (Medium)
+**Complexity**: Medium
+**Description**: The memory context provider currently runs only on the first message of a new session — its output is persisted and reused for all subsequent messages in that session. When the conversation topic evolves, the initially retrieved memories may no longer be the most relevant, and memories that would be highly relevant to follow-up messages are never injected. Re-evaluate memory relevance on each message so the agent always has the most pertinent memories for the current point in the conversation.
+
+### DLT-077: Route settings requests to correct config system
+**Status**: ✗ Defined
+**Depends on**: None
+**Priority**: 3 (Medium)
+**Complexity**: Easy
+**Description**: Claude Code has its own configuration system (global, project, and local settings files) that is separate from Tachikoma's TOML-based config. The agent sometimes confuses the two when asked to "update settings," modifying Claude Code settings when the user meant Tachikoma settings or vice versa. Add internal disambiguation logic — through system prompt injection, configuration metadata, or routing rules in the coordinator — that routes settings requests to the correct config system based on what is being configured (e.g., task scheduling routes to Tachikoma MCP tools, permissions and hooks route to Claude Code settings).
+
+### DLT-078: Session routing rollback on context mismatch
+**Status**: ✗ Defined
+**Depends on**: None
+**Priority**: 3 (Medium)
+**Complexity**: Medium
+**Description**: When a message gets routed to a resumed session via boundary detection, there is no mechanism to undo the routing if the session context does not actually match the user's intent. The conversation gets forced down the wrong path with no recovery. Add a verification step that forks the candidate session and evaluates whether the incoming message makes sense within its context before committing to the routing, catching mismatches early instead of requiring the user to manually correct the course.
+
+### DLT-079: Escape markdown-sensitive characters in Telegram output
+**Status**: ✗ Defined
+**Depends on**: None
+**Priority**: 3 (Medium)
+**Complexity**: Easy
+**Description**: When the Telegram channel displays search commands or tool output containing glob or regex patterns with asterisks, the asterisks are interpreted as markdown formatting (italic/bold) instead of being rendered literally. For example, `* Searching for 'git.*push'` renders with broken formatting instead of displaying as plain text. Escape markdown-sensitive characters in displayed patterns and tool output so they render correctly in Telegram messages.
+
+### DLT-080: Self-healing skill system via post-conversation analysis
+**Status**: ✗ Defined
+**Depends on**: None
+**Priority**: 3 (Medium)
+**Complexity**: Hard
+**Description**: Skills currently only improve when the user explicitly notices a gap and requests changes. Add a post-conversation processor that analyzes skill usage during the completed session — which skills were invoked, which failed or were misapplied, what workarounds the agent resorted to — and surfaces concrete edit suggestions to the user for improving skill definitions. For example: detecting that a workflow required manually chaining references that should be linked, that a CLI flag used in practice is missing from a skill's guidance, or that documented instructions diverged from actual usage patterns. Suggestions are presented for user review and approval, not applied automatically.
+
+### DLT-081: Workflow state machine for skills
+**Status**: ✗ Defined
+**Depends on**: None
+**Priority**: 3 (Medium)
+**Complexity**: Hard
+**Description**: Skills that define multi-step workflows (e.g., a morning routine skill that sequences reading a plan, having a conversation, marking activities, and updating a calendar) currently rely entirely on the LLM to remember which steps are done and what comes next. Without explicit state, the agent skips steps, repeats completed ones, or loses its place after context compaction. Introduce a workflow construct that lets skills declare ordered steps with completion conditions, tracks progression across messages, and injects step-specific reminders or continuations into the agent's context — enabling the agent to reliably execute multi-step workflows like deploying a service (build → test → push → verify) or processing a reading list (fetch → summarize → file → notify).
+
+### DLT-082: CLI for querying internal state
+**Status**: ✗ Defined
+**Depends on**: None
+**Priority**: 4 (Low)
+**Complexity**: Medium
+**Description**: Operators managing a Tachikoma deployment (especially on a remote server) currently have no way to inspect internal state without starting a full agent conversation or running raw SQLite queries against the database. Add CLI subcommands to the Tachikoma entry point for querying internal state: list and inspect task definitions and execution history, view session history and summaries, check which context entries are loaded, and review skill registry status. These commands read directly from the database and print formatted output, enabling quick operational checks and debugging without requiring an active agent session.
+
+### DLT-083: External command processor for remote management
+**Status**: ✗ Defined
+**Depends on**: None
+**Priority**: 4 (Low)
+**Complexity**: Hard
+**Description**: When Tachikoma runs on a remote server, the user needs to manage it from their local machine without SSH-ing in and running CLI commands directly. Add a lightweight command listener that runs as a separate process alongside the main Tachikoma process, accepting management commands (pause/resume tasks, close sessions, reload config, query status) over a network interface. A companion client on the local machine connects to this listener, enabling remote administration without interrupting active conversations. The IPC mechanism and security model (authentication, encryption) should be evaluated during speccing.
