@@ -62,6 +62,21 @@ _TOOL_AGGREGATE: dict[str, Callable[[int], str]] = {
 }
 
 
+def format_tool_name(name: str) -> str:
+    """Format a raw tool name into a human-readable label.
+
+    MCP tool names follow the pattern ``mcp__<server>__<tool_name>``.
+    This function extracts the last segment, replaces underscores with
+    spaces, and title-cases the result.  Non-MCP names pass through
+    unchanged.
+    """
+    if not name.startswith("mcp__"):
+        return name
+
+    last_segment = name.rsplit("__", maxsplit=1)[-1]
+    return last_segment.replace("_", " ").title()
+
+
 def _format_bash_summary(tool_input: dict[str, Any]) -> str:
     """Format Bash tool summary with preference for description over command."""
     # Prefer description field (first char lowercased for sentence flow)
@@ -115,7 +130,7 @@ def summarize_tool_activity(activities: list[ToolActivity]) -> str:
             if tool_name in _TOOL_AGGREGATE:
                 phrases.append(_TOOL_AGGREGATE[tool_name](count))
             else:
-                phrases.append(f"used {tool_name} {count} times")
+                phrases.append(f"used {format_tool_name(tool_name)} {count} times")
         else:
             # List individually (count is 1 or 2)
             for activity in group_activities:
@@ -123,7 +138,7 @@ def summarize_tool_activity(activities: list[ToolActivity]) -> str:
                     phrases.append(TOOL_SUMMARY[tool_name](activity.tool_input))
                 else:
                     # Unknown tool fallback
-                    phrases.append(f"used {tool_name}")
+                    phrases.append(f"used {format_tool_name(tool_name)}")
 
     # Cap at 5 phrases + "and more"
     if len(phrases) > 5:

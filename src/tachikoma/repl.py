@@ -13,7 +13,7 @@ from rich.console import Console
 from rich.markdown import Markdown
 
 from tachikoma.coordinator import Coordinator
-from tachikoma.display import TOOL_DISPLAY
+from tachikoma.display import TOOL_DISPLAY, format_tool_name
 from tachikoma.events import AgentEvent, Error, Result, Status, TextChunk, ToolActivity
 from tachikoma.tasks.events import SessionTaskReady, TaskNotification
 
@@ -44,7 +44,8 @@ class Renderer:
 
         elif isinstance(event, ToolActivity):
             display_fn = TOOL_DISPLAY.get(event.tool_name)
-            label = display_fn(event.tool_input) if display_fn else f"{event.tool_name}..."
+            name = format_tool_name(event.tool_name)
+            label = display_fn(event.tool_input) if display_fn else f"{name}..."
             self._console.print(f"🔧 {label}", style="dim italic grey50", highlight=False)
 
         elif isinstance(event, Result):

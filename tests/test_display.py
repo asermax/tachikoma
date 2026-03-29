@@ -3,7 +3,7 @@
 Tests for DLT-034: Summarize agent actions instead of generic tool markers.
 """
 
-from tachikoma.display import summarize_tool_activity
+from tachikoma.display import format_tool_name, summarize_tool_activity
 from tachikoma.events import ToolActivity
 
 
@@ -213,3 +213,51 @@ class TestSummarizeCapitalization:
         activity = ToolActivity(tool_name="Read", tool_input={"file_path": "/src/main.py"})
         result = summarize_tool_activity([activity])
         assert result[0].isupper()
+
+
+class TestFormatToolName:
+    """Tests for format_tool_name: MCP tool name formatting."""
+
+    def test_mcp_tool_name_transformed(self) -> None:
+        """AC1: MCP tool name is split, last segment extracted, and title-cased."""
+        assert format_tool_name("mcp__projects__list_projects") == "List Projects"
+
+    def test_mcp_tool_with_single_word(self) -> None:
+        """MCP tool with single-word last segment is title-cased."""
+        assert format_tool_name("mcp__memory__search") == "Search"
+
+    def test_mcp_tool_with_many_segments(self) -> None:
+        """MCP tool with multiple __ segments takes the last one."""
+        assert format_tool_name("mcp__context7__query_docs") == "Query Docs"
+
+    def test_non_mcp_tool_unchanged(self) -> None:
+        """AC2: Non-MCP tool names pass through unchanged."""
+        assert format_tool_name("CustomMCP") == "CustomMCP"
+
+    def test_known_tool_unchanged(self) -> None:
+        """Known tool names like 'Read' pass through unchanged."""
+        assert format_tool_name("Read") == "Read"
+
+    def test_empty_string_unchanged(self) -> None:
+        """Empty string passes through unchanged."""
+        assert format_tool_name("") == ""
+
+
+class TestSummarizeMcpTool:
+    """Tests for MCP tool names in summarize_tool_activity."""
+
+    def test_single_mcp_tool_formatted(self) -> None:
+        """AC4: Single MCP tool shows formatted name in summary."""
+        activity = ToolActivity(
+            tool_name="mcp__projects__list_projects", tool_input={},
+        )
+        assert summarize_tool_activity([activity]) == "Used List Projects"
+
+    def test_multiple_mcp_tools_aggregated(self) -> None:
+        """AC3: 3+ MCP tool uses show formatted name in aggregated summary."""
+        activities = [
+            ToolActivity(tool_name="mcp__projects__list_projects", tool_input={}),
+            ToolActivity(tool_name="mcp__projects__list_projects", tool_input={}),
+            ToolActivity(tool_name="mcp__projects__list_projects", tool_input={}),
+        ]
+        assert summarize_tool_activity(activities) == "Used List Projects 3 times"

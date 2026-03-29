@@ -26,7 +26,7 @@ from telegramify_markdown import convert
 from tachikoma.bootstrap import BootstrapContext, BootstrapError
 from tachikoma.config import TelegramSettings
 from tachikoma.coordinator import Coordinator
-from tachikoma.display import TOOL_DISPLAY, summarize_tool_activity
+from tachikoma.display import TOOL_DISPLAY, format_tool_name, summarize_tool_activity
 from tachikoma.events import Error, Result, Status, TextChunk, ToolActivity
 from tachikoma.tasks.events import SessionTaskReady, TaskNotification
 
@@ -115,7 +115,8 @@ class ResponseRenderer:
 
         # Update live tool line display
         display_fn = TOOL_DISPLAY.get(activity.tool_name)
-        label = display_fn(activity.tool_input) if display_fn else f"{activity.tool_name}..."
+        name = format_tool_name(activity.tool_name)
+        label = display_fn(activity.tool_input) if display_fn else f"{name}..."
         self._tool_line = f"> 🔧 {label}"
         await self._flush(force=False)
 
