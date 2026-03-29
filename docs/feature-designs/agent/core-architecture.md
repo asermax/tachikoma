@@ -152,7 +152,7 @@ Note: `send_message()` is an async generator. The per-message pipeline launch ha
 - Channel ↔ Coordinator: async iterator protocol
 - Coordinator ↔ SessionRegistry (optional): `create_session()` on first message, `update_metadata()` on Result events, `close_session()` on shutdown and on topic shift (see [sessions design](sessions.md))
 - Coordinator ↔ PreProcessingPipeline (optional): `pipeline.run(message)` in `send_message()`, on first message of new session (including after topic shift transition), before `client.query()` (see [pipeline design](pre-processing-pipeline.md))
-- Coordinator ↔ PostProcessingPipeline (optional): `pipeline.run(session)` in `__aexit__` (after session close) and as background task during topic shift transitions. Note: `on_status` callback is NOT called for transition-triggered post-processing — only on shutdown (see [pipeline design](post-processing-pipeline.md))
+- Coordinator ↔ PostProcessingPipeline (optional): `pipeline.run(session)` in `__aexit__` (after session close) and as background task during topic shift transitions. Note: `on_status` callback is called on shutdown — both for direct post-processing (active session) and before awaiting background tasks from prior transitions/idle close (see [pipeline design](post-processing-pipeline.md))
 - Coordinator ↔ `detect_boundary` (from `boundary` package): pure function call before processing, accepts optional `candidates: list[SessionCandidate]`, returns `BoundaryResult(continues, resume_session_id)`, errors caught and defaulted to `BoundaryResult(continues=True)` (continuation). Skipped when no session, no summary, or no cwd (see [boundary detection design](boundary-detection.md))
 - Coordinator ↔ `MessagePostProcessingPipeline` (optional): `run(session, text, response_text)` as background `asyncio.Task` after each response, reference stored as `_pending_msg_task` (see [boundary detection design](boundary-detection.md))
 - Coordinator ↔ MCP servers (optional): `mcp_servers` parameter passed to `ClaudeAgentOptions.mcp_servers` in `_build_options()` — used by task subsystem for task CRUD tools
@@ -331,18 +331,19 @@ The `Result` event serves as a turn boundary. Channels can detect it to reset th
 
 ```
 1. Channel signals exit (user action or non-recoverable error)
-2. Coordinator __aexit__ awaits any pending per-message task (logs errors, doesn't propagate)
-3. Captures active session (if any), then closes it via registry (errors logged, not propagated)
-4. If captured session has a valid SDK session ID and a pipeline is registered, coordinator calls on_status callback then triggers post-processing pipeline (errors in both callback and pipeline logged, not propagated)
-5. Awaits all background session post-processing tasks from previous topic shifts via asyncio.gather(return_exceptions=True), logs errors
-6. No SDK disconnect step — per-message clients are already disposed after each exchange
-7. finally block:
+2. Coordinator __aexit__ cancels idle close loop (prevents race with shutdown close)
+3. Awaits any pending per-message task (logs errors, doesn't propagate)
+4. Captures active session (if any), then closes it via registry (errors logged, not propagated)
+5. If captured session has a valid SDK session ID and a pipeline is registered, coordinator calls on_status callback then triggers post-processing pipeline (errors in both callback and pipeline logged, not propagated)
+6. If background session post-processing tasks exist (from prior topic shifts or idle close), coordinator logs task count, calls on_status callback, then awaits all tasks via asyncio.gather(return_exceptions=True), logs errors
+7. No SDK disconnect step — per-message clients are already disposed after each exchange
+8. finally block:
    a. Cancel task async loops (instance generator, session task scheduler, background task runner)
    b. Await cancelled tasks (background runner cancels running executions, which mark instances as failed)
    c. Call bus.stop() to shut down the event bus
    d. Dispose task repository engine
    e. Dispose session repository engine
-8. asyncio.run() completes
+9. asyncio.run() completes
 ```
 
 ## Key Decisions
