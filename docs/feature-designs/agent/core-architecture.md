@@ -215,6 +215,7 @@ Coordinator
 ├── _agents: dict[str, AgentDefinition] | None  (session-scoped: populated from pipeline results, cleared on transition)
 ├── _foundational_context: list[tuple[str, str]] | None  (per-file entries from bootstrap: [(owner, content), ...])
 ├── _session_resume_window: int           (lookup window in seconds for resume candidates)
+├── _disallowed_tools: list[str]          (tools unconditionally blocked via ClaudeAgentOptions.disallowed_tools)
 ├── _base_mcp_servers: dict[str, McpSdkServerConfig]  (constructor-provided, static: e.g., task-tools)
 ├── _mcp_servers: dict[str, McpServerConfig]  (from pre-processing, session-scoped, merged with _base_mcp_servers in _build_options)
 ├── _client: ClaudeSDKClient | None       (set only during send_message, None between messages)
@@ -315,7 +316,7 @@ The `Result` event serves as a turn boundary. Channels can detect it to reset th
 11. Creates PreProcessingPipeline, registers MemoryContextProvider(agent_defaults), ProjectsContextProvider(workspace_path=workspace_path), and SkillsContextProvider(agent_defaults, registry=skill_registry)
 12. Creates MessagePostProcessingPipeline, registers SummaryProcessor with registry and agent_defaults
 12a. Creates task MCP tools server via `create_task_tools_server(task_repository)`
-13. Creates Coordinator with allowed_tools, model, agent_defaults, session_registry, foundational_context, pipeline, pre_pipeline, msg_pipeline, session_resume_window=settings.agent.session_resume_window, permission_mode="bypassPermissions", on_status callback (for channel display), mcp_servers={"task-tools": task_tools_server}
+13. Creates Coordinator with allowed_tools, disallowed_tools, model, agent_defaults, session_registry, foundational_context, pipeline, pre_pipeline, msg_pipeline, session_resume_window=settings.agent.session_resume_window, permission_mode="bypassPermissions", on_status callback (for channel display), mcp_servers={"task-tools": task_tools_server}
 14. Enters coordinator async context (no SDK client connection — clients are created per-message)
 15. If any SDK error occurs during the first message → catch, log + print to stderr, exit
 15a. Starts task async loops as `asyncio.Task`s: instance_generator, session_task_scheduler, background_task_runner — all receiving bus, coordinator, task_repository, and task settings
@@ -376,12 +377,25 @@ The `Result` event serves as a turn boundary. Channels can detect it to reset th
 
 ### Restricted tool set via allowed_tools
 
-**Choice**: Use `allowed_tools=["Read", "Glob", "Grep"]` to constrain which tools the agent can use
-**Why**: The `allowed_tools` list limits tool visibility — the agent can only use tools in this list. Combined with `permission_mode="bypassPermissions"`, the agent uses these tools without any prompts and cannot access tools outside this list. The tool list is configured via the configuration system (`agent.allowed_tools`) with these values as defaults.
+**Choice**: Use `allowed_tools=["Read", "Glob", "Grep"]` to declare which tools are auto-approved
+**Why**: The `allowed_tools` list is a permission auto-approve list — under `permission_mode="bypassPermissions"`, all tools are already approved, so `allowed_tools` serves as a declarative record of the intended tool set. Note: the SDK has a known bug where an empty list `[]` is treated as falsy and never sent to the CLI (see DES-007), so a non-empty list is required to have effect. The tool list is configured via the configuration system (`agent.allowed_tools`) with these values as defaults.
 
 **Consequences**:
-- Pro: Agent's tool access is scoped to a controlled set
+- Pro: Declarative record of the intended tool set
 - Pro: Tool list is configurable without code changes
+
+### Tool blocking via disallowed_tools
+
+**Choice**: Use `disallowed_tools=["AskUserQuestion"]` to unconditionally block specific tools
+**Why**: `disallowed_tools` blocks tools regardless of `permission_mode` — it is evaluated before `allowed_tools` and `bypassPermissions` in the SDK's tool evaluation chain. The default blocks `AskUserQuestion` because Tachikoma is an autonomous assistant that should not prompt users interactively. Configurable via `agent.disallowed_tools`.
+**Alternatives Considered**:
+- Permission rules or hooks: More complex, require per-call evaluation logic
+- System prompt instruction: Unreliable, prompt-level control
+
+**Consequences**:
+- Pro: Unconditional blocking regardless of permission mode
+- Pro: Configurable without code changes
+- Pro: Uses the SDK's built-in mechanism (no custom logic)
 
 ### SDK cwd for workspace directory (not os.chdir)
 

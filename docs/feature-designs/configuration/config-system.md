@@ -82,6 +82,7 @@ Settings (root, frozen)
 ├── agent: AgentSettings
 │   ├── model: str | None = None (SDK default)
 │   ├── allowed_tools: list[str] = ["Read", "Glob", "Grep"]
+│   ├── disallowed_tools: list[str] = ["AskUserQuestion"]
 │   ├── cli_path: str | None = None (SDK bundled binary)
 │   ├── session_resume_window: int = 86400 (seconds; lookup window for session resumption matching)
 │   ├── session_idle_timeout: int = 900 (seconds of inactivity before auto-closing session; 0 = disabled)
