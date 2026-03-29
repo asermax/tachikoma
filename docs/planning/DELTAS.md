@@ -335,3 +335,31 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 **Priority**: 3 (Medium)
 **Complexity**: Medium
 **Description**: Enable the agent to present interactive inline buttons in Telegram conversations, allowing users to respond to structured prompts by tapping a button instead of typing. How buttons are triggered, rendered, and how user interactions are routed back to the agent should be evaluated during speccing.
+
+### DLT-068: Structured error handling for message generation
+**Status**: ✗ Defined
+**Depends on**: None
+**Priority**: 1 (Critical)
+**Complexity**: Medium
+**Description**: Currently, errors during session management, boundary detection, context loading, and metadata updates within the coordinator's message generation flow are silently logged, while only SDK stream errors surface to the user. Introduce error classification (severity levels, recoverability) and a surfacing mechanism that replaces silent logging and raw exception text with categorized messages indicating what went wrong and whether the conversation can continue normally. The classification scheme and surfacing approach established here become the standard adopted by subsequent error handling deltas.
+
+### DLT-069: Structured error handling for pre-processing pipeline
+**Status**: ✗ Defined
+**Depends on**: DLT-068
+**Priority**: 1 (Critical)
+**Complexity**: Easy
+**Description**: Apply the error classification and surfacing mechanism to the pre-processing pipeline. Currently, context provider failures (memory search, skills detection, projects loading) are silently logged and skipped — the agent proceeds with degraded context and neither the user nor the coordinator knows what was lost. Surface provider failures as classified error notices so users are informed when context is incomplete, enabling them to judge response quality or retry.
+
+### DLT-070: Structured error handling for post-processing pipeline
+**Status**: ✗ Defined
+**Depends on**: DLT-068
+**Priority**: 1 (Critical)
+**Complexity**: Easy
+**Description**: Apply the error classification and surfacing mechanism to both the session-level and per-message post-processing pipelines. Currently, processor failures during memory extraction, facts capture, preferences detection, context updates, and summary generation are silently logged — users never know whether their conversations were properly processed and persisted. Surface processor failures as classified error notices so users are informed when post-processing is incomplete, making extraction gaps visible rather than silently losing conversation learnings.
+
+### DLT-071: Structured error handling for task execution
+**Status**: ✗ Defined
+**Depends on**: DLT-068
+**Priority**: 1 (Critical)
+**Complexity**: Easy
+**Description**: Apply the error classification and surfacing mechanism to the task execution subsystem. Currently, task pre-processing fallbacks, evaluator failures, and notification delivery issues are handled with ad-hoc logging and silent degradation. Classify and surface failures during task pre-processing, evaluation loops, post-processing, and notification generation consistently with the rest of the system.
