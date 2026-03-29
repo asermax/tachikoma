@@ -154,6 +154,7 @@ async def main(
     try:
         async with Coordinator(
             allowed_tools=settings.agent.allowed_tools,
+            disallowed_tools=settings.agent.disallowed_tools,
             model=settings.agent.model,
             agent_defaults=agent_defaults,
             registry=registry,

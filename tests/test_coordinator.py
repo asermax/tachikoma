@@ -201,6 +201,19 @@ class TestCoordinatorSendMessage:
         options = mock_cls.call_args[0][0]
         assert options.allowed_tools == ["Read", "Glob"]
 
+    async def test_passes_disallowed_tools_to_sdk(self, mock_sdk) -> None:
+        client, mock_cls = mock_sdk
+        client.receive_response.return_value = _mock_messages(
+            make_assistant([TextBlock(text="hi")]),
+            make_result(),
+        )
+
+        async with Coordinator(disallowed_tools=["AskUserQuestion"]) as coord:
+            _ = await _send(coord, "hello")
+
+        options = mock_cls.call_args[0][0]
+        assert options.disallowed_tools == ["AskUserQuestion"]
+
     async def test_forwards_cwd_to_sdk_options(self, mock_sdk) -> None:
         """AC (R8, DLT-023): Coordinator passes cwd to ClaudeAgentOptions."""
         client, mock_cls = mock_sdk

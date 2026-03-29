@@ -107,6 +107,7 @@ class Coordinator:
     def __init__(
         self,
         allowed_tools: list[str] | None = None,
+        disallowed_tools: list[str] | None = None,
         model: str | None = None,
         agent_defaults: AgentDefaults | None = None,
         registry: SessionRegistry | None = None,
@@ -123,6 +124,7 @@ class Coordinator:
     ) -> None:
         # Store individual options for building ClaudeAgentOptions per message
         self._allowed_tools = allowed_tools or []
+        self._disallowed_tools = disallowed_tools or []
         self._model = model
         self._agent_defaults = agent_defaults or AgentDefaults(cwd=Path.cwd())
         self._cwd = self._agent_defaults.cwd
@@ -276,6 +278,7 @@ class Coordinator:
 
         options = ClaudeAgentOptions(
             allowed_tools=self._allowed_tools,
+            disallowed_tools=self._disallowed_tools,
             model=self._model,
             cwd=self._agent_defaults.cwd,
             cli_path=self._agent_defaults.cli_path,

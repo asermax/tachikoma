@@ -53,6 +53,12 @@ class TestSettingsModel:
 
         assert settings.agent.allowed_tools == ["Read", "Glob", "Grep"]
 
+    def test_default_agent_disallowed_tools(self) -> None:
+        """AC (AC1): agent.disallowed_tools defaults to AskUserQuestion."""
+        settings = Settings()
+
+        assert settings.agent.disallowed_tools == ["AskUserQuestion"]
+
     def test_default_session_resume_window(self) -> None:
         """AC (DLT-028): agent.session_resume_window defaults to 86400 (1 day)."""
         settings = Settings()
@@ -215,6 +221,16 @@ class TestDefaultConfigGeneration:
         assert "logging" in content.lower()
         assert "level" in content
         assert "console" in content
+
+    def test_generated_file_contains_disallowed_tools(self, tmp_path: Path) -> None:
+        """AC (AC3): Generated file contains disallowed_tools with default value."""
+        config_path = tmp_path / "config.toml"
+        _generate_default_config(config_path)
+
+        content = config_path.read_text()
+
+        assert "disallowed_tools" in content
+        assert '"AskUserQuestion"' in content
 
     def test_generated_file_contains_session_resume_window(self, tmp_path: Path) -> None:
         """AC (DLT-028): Generated file contains session_resume_window with int format."""

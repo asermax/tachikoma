@@ -52,6 +52,10 @@ class AgentSettings(BaseModel):
         default=["Read", "Glob", "Grep"],
         description="Tools the agent is allowed to use",
     )
+    disallowed_tools: list[str] = Field(
+        default=["AskUserQuestion"],
+        description="Tools the agent is blocked from using",
+    )
     cli_path: str | None = Field(
         default=None,
         description="Path to claude binary (None = SDK bundled binary)",
