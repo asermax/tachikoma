@@ -11,10 +11,22 @@ from bubus import EventBus
 from tachikoma.agent_defaults import AgentDefaults
 from tachikoma.config import TaskSettings
 from tachikoma.tasks.events import TaskNotification
-from tachikoma.tasks.executor import BackgroundTaskExecutor, background_task_runner
+from tachikoma.tasks.executor import (
+    BackgroundTaskExecutor,
+    _PreprocessingResult,
+    background_task_runner,
+)
 from tachikoma.tasks.repository import TaskRepository
 
 from .conftest import _make_definition, _make_instance
+
+
+def _mock_skill_registry() -> MagicMock:
+    return MagicMock()
+
+
+def _mock_preproc_result(prompt: str = "Test task") -> _PreprocessingResult:
+    return _PreprocessingResult(prompt=prompt)
 
 
 class TestBackgroundTaskRunner:
@@ -43,7 +55,9 @@ class TestBackgroundTaskRunner:
 
         with patch.object(BackgroundTaskExecutor, "execute", mock_execute):
             task = asyncio.create_task(
-                background_task_runner(repo, settings, bus, AgentDefaults(cwd=Path("/tmp")))
+                background_task_runner(
+                    repo, settings, bus, AgentDefaults(cwd=Path("/tmp")), _mock_skill_registry(),
+                )
             )
             await asyncio.sleep(0.2)
             task.cancel()
@@ -81,7 +95,9 @@ class TestBackgroundTaskRunner:
 
         with patch.object(BackgroundTaskExecutor, "execute", mock_execute):
             task = asyncio.create_task(
-                background_task_runner(repo, settings, bus, AgentDefaults(cwd=Path("/tmp")))
+                background_task_runner(
+                    repo, settings, bus, AgentDefaults(cwd=Path("/tmp")), _mock_skill_registry(),
+                )
             )
             await asyncio.sleep(0.5)
             task.cancel()
@@ -103,7 +119,9 @@ class TestBackgroundTaskRunner:
 
         with patch.object(BackgroundTaskExecutor, "execute", mock_execute):
             task = asyncio.create_task(
-                background_task_runner(repo, settings, bus, AgentDefaults(cwd=Path("/tmp")))
+                background_task_runner(
+                    repo, settings, bus, AgentDefaults(cwd=Path("/tmp")), _mock_skill_registry(),
+                )
             )
             await asyncio.sleep(0.2)
             task.cancel()
@@ -143,6 +161,7 @@ class TestBackgroundTaskExecutor:
             settings=settings,
             bus=bus,
             agent_defaults=AgentDefaults(cwd=Path("/tmp")),
+            skill_registry=_mock_skill_registry(),
         )
 
         # Mock SDK client and evaluator
@@ -177,7 +196,9 @@ class TestBackgroundTaskExecutor:
 
                 # Mock pre-processing to return original prompt
                 with (
-                    patch.object(executor, "_run_preprocessing", return_value="Test task"),
+                    patch.object(
+                        executor, "_run_preprocessing", return_value=_mock_preproc_result(),
+                    ),
                     patch.object(executor, "_run_postprocessing", return_value=None),
                 ):
                     await executor.execute(instance)
@@ -213,6 +234,7 @@ class TestBackgroundTaskExecutor:
             settings=settings,
             bus=bus,
             agent_defaults=AgentDefaults(cwd=Path("/tmp")),
+            skill_registry=_mock_skill_registry(),
         )
 
         # Mock SDK client to raise exception
@@ -266,6 +288,7 @@ class TestBackgroundTaskExecutor:
             settings=settings,
             bus=bus,
             agent_defaults=AgentDefaults(cwd=Path("/tmp")),
+            skill_registry=_mock_skill_registry(),
         )
 
         # Mock SDK client and evaluator
@@ -296,7 +319,9 @@ class TestBackgroundTaskExecutor:
                 mock_query.return_value = mock_eval_query()
 
                 with (
-                    patch.object(executor, "_run_preprocessing", return_value="Test task"),
+                    patch.object(
+                        executor, "_run_preprocessing", return_value=_mock_preproc_result(),
+                    ),
                     patch.object(executor, "_run_postprocessing", return_value=None),
                 ):
                     await executor.execute(instance)
@@ -324,6 +349,7 @@ class TestBackgroundTaskExecutor:
             settings=settings,
             bus=bus,
             agent_defaults=AgentDefaults(cwd=Path("/tmp")),
+            skill_registry=_mock_skill_registry(),
         )
 
         with patch("tachikoma.tasks.executor.ClaudeSDKClient") as mock_client_class:
@@ -355,7 +381,9 @@ class TestBackgroundTaskExecutor:
 
                 mock_query.return_value = mock_eval_query()
 
-                with patch.object(executor, "_run_preprocessing", return_value="Test task"):
+                with patch.object(
+                        executor, "_run_preprocessing", return_value=_mock_preproc_result(),
+                    ):
                     await executor.execute(instance)
 
         # Verify instance is failed due to max iterations
@@ -402,6 +430,7 @@ class TestNotificationGeneration:
             settings=settings,
             bus=bus,
             agent_defaults=AgentDefaults(cwd=Path("/tmp")),
+            skill_registry=_mock_skill_registry(),
         )
 
         with patch("tachikoma.tasks.executor.ClaudeSDKClient") as mock_client_class:
@@ -431,7 +460,9 @@ class TestNotificationGeneration:
                 mock_query.return_value = mock_eval_query()
 
                 with (
-                    patch.object(executor, "_run_preprocessing", return_value="Test task"),
+                    patch.object(
+                        executor, "_run_preprocessing", return_value=_mock_preproc_result(),
+                    ),
                     patch.object(executor, "_run_postprocessing", return_value=None),
                     patch(
                         "tachikoma.tasks.executor.fork_and_capture",
@@ -487,6 +518,7 @@ class TestNotificationGeneration:
             settings=settings,
             bus=bus,
             agent_defaults=AgentDefaults(cwd=Path("/tmp")),
+            skill_registry=_mock_skill_registry(),
         )
 
         with patch("tachikoma.tasks.executor.ClaudeSDKClient") as mock_client_class:
@@ -518,7 +550,9 @@ class TestNotificationGeneration:
                 mock_query.return_value = mock_eval_query()
 
                 with (
-                    patch.object(executor, "_run_preprocessing", return_value="Test task"),
+                    patch.object(
+                        executor, "_run_preprocessing", return_value=_mock_preproc_result(),
+                    ),
                     patch.object(executor, "_run_postprocessing", return_value=None),
                     patch(
                         "tachikoma.tasks.executor.fork_and_capture",
@@ -566,6 +600,7 @@ class TestNotificationGeneration:
             settings=settings,
             bus=bus,
             agent_defaults=AgentDefaults(cwd=Path("/tmp")),
+            skill_registry=_mock_skill_registry(),
         )
 
         with patch("tachikoma.tasks.executor.ClaudeSDKClient") as mock_client_class:
@@ -598,7 +633,9 @@ class TestNotificationGeneration:
                 mock_query.return_value = mock_eval_query()
 
                 with (
-                    patch.object(executor, "_run_preprocessing", return_value="Test task"),
+                    patch.object(
+                        executor, "_run_preprocessing", return_value=_mock_preproc_result(),
+                    ),
                     patch.object(executor, "_run_postprocessing", return_value=None),
                     patch(
                         "tachikoma.tasks.executor.fork_and_capture",
@@ -647,6 +684,7 @@ class TestNotificationGeneration:
             settings=settings,
             bus=bus,
             agent_defaults=AgentDefaults(cwd=Path("/tmp")),
+            skill_registry=_mock_skill_registry(),
         )
 
         with patch("tachikoma.tasks.executor.ClaudeSDKClient") as mock_client_class:
@@ -678,7 +716,9 @@ class TestNotificationGeneration:
                 mock_query.return_value = mock_eval_query()
 
                 with (
-                    patch.object(executor, "_run_preprocessing", return_value="Test task"),
+                    patch.object(
+                        executor, "_run_preprocessing", return_value=_mock_preproc_result(),
+                    ),
                     patch(
                         "tachikoma.tasks.executor.fork_and_capture",
                     ) as mock_fork,
@@ -720,6 +760,7 @@ class TestNotificationGeneration:
             settings=settings,
             bus=bus,
             agent_defaults=AgentDefaults(cwd=Path("/tmp")),
+            skill_registry=_mock_skill_registry(),
         )
 
         with patch("tachikoma.tasks.executor.ClaudeSDKClient") as mock_client_class:
@@ -749,7 +790,9 @@ class TestNotificationGeneration:
                 mock_query.return_value = mock_eval_query()
 
                 with (
-                    patch.object(executor, "_run_preprocessing", return_value="Test task"),
+                    patch.object(
+                        executor, "_run_preprocessing", return_value=_mock_preproc_result(),
+                    ),
                     patch.object(executor, "_run_postprocessing", return_value=None),
                     patch(
                         "tachikoma.tasks.executor.fork_and_capture",

@@ -194,6 +194,7 @@ async def main(
                         settings.tasks,
                         bus,
                         agent_defaults,
+                        skill_registry,
                     ),
                     name="background_task_runner",
                 )

@@ -7,8 +7,9 @@ This module contains:
 
 import asyncio
 import json
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 from bubus import EventBus
 from claude_agent_sdk import ClaudeAgentOptions, ClaudeSDKClient
@@ -18,10 +19,28 @@ from loguru import logger
 from tachikoma.agent_defaults import AgentDefaults
 from tachikoma.config import TaskSettings
 from tachikoma.post_processing import PostProcessingPipeline, fork_and_capture
-from tachikoma.pre_processing import PreProcessingPipeline, assemble_context
+from tachikoma.pre_processing import McpServerConfig, PreProcessingPipeline, assemble_context
 from tachikoma.tasks.events import TaskNotification
 from tachikoma.tasks.model import TaskDefinition, TaskInstance
 from tachikoma.tasks.repository import TaskRepository
+
+if TYPE_CHECKING:
+    from claude_agent_sdk.types import AgentDefinition
+
+    from tachikoma.skills.registry import SkillRegistry
+
+
+@dataclass
+class _PreprocessingResult:
+    """Result from background task pre-processing.
+
+    Holds the enriched prompt text plus structured data (MCP servers,
+    agent definitions) extracted from context providers.
+    """
+
+    prompt: str
+    mcp_servers: dict[str, McpServerConfig] = field(default_factory=dict)
+    agents: "dict[str, AgentDefinition] | None" = None
 
 _log = logger.bind(component="task_executor")
 
@@ -64,6 +83,7 @@ async def background_task_runner(
     settings: TaskSettings,
     bus: EventBus,
     agent_defaults: AgentDefaults,
+    skill_registry: "SkillRegistry",
 ) -> None:
     """Async loop that picks up and executes pending background tasks.
 
@@ -75,6 +95,7 @@ async def background_task_runner(
         settings: TaskSettings with max_concurrent_background and other config
         bus: EventBus for dispatching TaskNotification events
         agent_defaults: Common SDK options (cwd, cli_path, env)
+        skill_registry: Shared skill registry for SkillsContextProvider
     """
     semaphore = asyncio.Semaphore(settings.max_concurrent_background)
     running_tasks: dict[str, asyncio.Task[None]] = {}
@@ -110,6 +131,7 @@ async def background_task_runner(
                             settings=settings,
                             bus=bus,
                             agent_defaults=agent_defaults,
+                            skill_registry=skill_registry,
                         )
                         await executor.execute(inst)
 
@@ -173,12 +195,14 @@ class BackgroundTaskExecutor:
         settings: TaskSettings,
         bus: EventBus,
         agent_defaults: AgentDefaults,
+        skill_registry: "SkillRegistry",
     ) -> None:
         self._repository = repository
         self._settings = settings
         self._bus = bus
         self._agent_defaults = agent_defaults
         self._cwd = agent_defaults.cwd
+        self._skill_registry = skill_registry
 
     async def execute(self, instance: TaskInstance) -> None:
         """Execute a background task instance.
@@ -206,8 +230,8 @@ class BackgroundTaskExecutor:
             if instance.definition_id:
                 definition = await self._repository.get_definition(instance.definition_id)
 
-            # Run pre-processing pipeline (memory context injection)
-            enriched_prompt = await self._run_preprocessing(instance.prompt)
+            # Run pre-processing pipeline (memory, projects, skills context)
+            preprocessing_result = await self._run_preprocessing(instance.prompt)
 
             # Build SDK options with adapted system prompt
             options = ClaudeAgentOptions(
@@ -220,6 +244,8 @@ class BackgroundTaskExecutor:
                     append=BACKGROUND_TASK_SYSTEM_PROMPT,
                 ),
                 permission_mode="bypassPermissions",
+                mcp_servers=preprocessing_result.mcp_servers,
+                agents=preprocessing_result.agents,
             )
 
             # Execute with evaluator loop
@@ -230,7 +256,7 @@ class BackgroundTaskExecutor:
 
             async with ClaudeSDKClient(options) as client:
                 # Initial query
-                await client.query(enriched_prompt)
+                await client.query(preprocessing_result.prompt)
 
                 while iteration < max_iterations:
                     iteration += 1
@@ -330,25 +356,52 @@ class BackgroundTaskExecutor:
                 severity="error",
             )
 
-    async def _run_preprocessing(self, prompt: str) -> str:
-        """Run pre-processing pipeline for memory context injection.
+    async def _run_preprocessing(self, prompt: str) -> _PreprocessingResult:
+        """Run pre-processing pipeline for context injection.
+
+        Registers all three context providers (memory, projects, skills) and
+        extracts MCP servers and agents from results alongside the enriched
+        prompt text.
 
         Args:
             prompt: The original task prompt
 
         Returns:
-            Enriched prompt with memory context, or original if no enrichment
+            PreprocessingResult with enriched prompt, MCP servers, and agents.
         """
         try:
-            # Import here to avoid circular dependency
+            # Lazy imports to avoid circular dependencies
             from tachikoma.memory.context_provider import MemoryContextProvider  # noqa: PLC0415
+            from tachikoma.projects.context_provider import ProjectsContextProvider  # noqa: PLC0415
+            from tachikoma.skills.context_provider import SkillsContextProvider  # noqa: PLC0415
 
             pipeline = PreProcessingPipeline()
             pipeline.register(MemoryContextProvider(self._agent_defaults))
+            pipeline.register(ProjectsContextProvider(workspace_path=self._cwd))
+            pipeline.register(SkillsContextProvider(self._agent_defaults, self._skill_registry))
 
             results = await pipeline.run(prompt)
-            if results:
-                return assemble_context(results, prompt)
+
+            if not results:
+                return _PreprocessingResult(prompt=prompt)
+
+            # Merge MCP servers and agents from all results (coordinator pattern)
+            merged_servers: dict[str, McpServerConfig] = {}
+            merged_agents: dict[str, AgentDefinition] = {}
+
+            for r in results:
+                if r.mcp_servers:
+                    merged_servers.update(r.mcp_servers)
+                if r.agents:
+                    merged_agents.update(r.agents)
+
+            enriched_prompt = assemble_context(results, prompt)
+
+            return _PreprocessingResult(
+                prompt=enriched_prompt,
+                mcp_servers=merged_servers,
+                agents=merged_agents if merged_agents else None,
+            )
 
         except Exception as exc:
             _log.warning(
@@ -356,7 +409,7 @@ class BackgroundTaskExecutor:
                 err=str(exc),
             )
 
-        return prompt
+        return _PreprocessingResult(prompt=prompt)
 
     async def _run_evaluator(
         self,
@@ -429,6 +482,8 @@ class BackgroundTaskExecutor:
             # Import processors here to avoid circular dependencies
             from tachikoma.git.processor import GitProcessor  # noqa: PLC0415
             from tachikoma.memory.episodic import EpisodicProcessor  # noqa: PLC0415
+            from tachikoma.post_processing import PRE_FINALIZE_PHASE  # noqa: PLC0415
+            from tachikoma.projects.processor import ProjectsProcessor  # noqa: PLC0415
             from tachikoma.sessions.model import Session  # noqa: PLC0415
 
             # Build a minimal Session for the pipeline
@@ -445,6 +500,10 @@ class BackgroundTaskExecutor:
             pipeline.register(
                 EpisodicProcessor(self._agent_defaults),
                 phase="main",
+            )
+            pipeline.register(
+                ProjectsProcessor(self._agent_defaults),
+                phase=PRE_FINALIZE_PHASE,
             )
             pipeline.register(
                 GitProcessor(self._agent_defaults),
