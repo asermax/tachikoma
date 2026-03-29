@@ -2,7 +2,7 @@
 
 **Scope**: Python
 **Date**: 2026-03-21
-**Last Updated**: 2026-03-21
+**Last Updated**: 2026-03-29
 
 ## Pattern
 
@@ -30,6 +30,11 @@ This pattern standardizes the factory boundary:
 from pathlib import Path
 
 from claude_agent_sdk import McpSdkServerConfig, create_sdk_mcp_server, tool
+from pydantic import BaseModel
+
+
+class MyToolArgs(BaseModel):
+    item_id: str
 
 
 async def handle_my_tool(item_id: str, data_dir: Path) -> dict:
@@ -41,9 +46,10 @@ async def handle_my_tool(item_id: str, data_dir: Path) -> dict:
 def create_my_server(data_dir: Path, snapshot: list) -> McpSdkServerConfig:
     """Factory: takes config, returns server config."""
 
-    @tool("my_tool", "Description for the agent", {"item_id": str})
+    @tool("my_tool", "Description for the agent", MyToolArgs.model_json_schema())
     async def my_tool(args: dict) -> dict:
-        return await handle_my_tool(args["item_id"], data_dir)
+        parsed = MyToolArgs.model_validate(args)
+        return await handle_my_tool(parsed.item_id, data_dir)
 
     return create_sdk_mcp_server(
         name="my-server",
@@ -52,7 +58,7 @@ def create_my_server(data_dir: Path, snapshot: list) -> McpSdkServerConfig:
     )
 ```
 
-**Why**: Factory owns tool registration; handler owns logic; processor just calls `create_my_server(...)` and passes the result to `fork_and_consume(mcp_servers=...)`. Handler is directly testable.
+**Why**: Factory owns tool registration; handler owns logic; processor just calls `create_my_server(...)` and passes the result to `fork_and_consume(mcp_servers=...)`. Handler is directly testable. Pydantic models provide type coercion (e.g., string `"true"` → Python `True` for booleans), required-field validation, and generate rich JSON schemas with defaults and optionality for the agent.
 
 ### Don't Do This
 
@@ -61,18 +67,17 @@ def create_my_server(data_dir: Path) -> McpSdkServerConfig:
 
     @tool("my_tool", "Description", {"item_id": str})
     async def my_tool(args: dict) -> dict:
-        # All logic inline in the closure
-        item_id = args["item_id"]
-        file_path = data_dir / f"{item_id}.md"
-        content = file_path.read_text()
+        item_id = args.get("item_id", "")
+        # Manual extraction and validation
+        if not item_id:
+            return {"is_error": True, "content": [...]}
         # ... 30 lines of business logic ...
-        file_path.write_text(updated)
         return {"content": [{"type": "text", "text": "Done"}]}
 
     return create_sdk_mcp_server(name="my-server", version="1.0.0", tools=[my_tool])
 ```
 
-**Why**: Business logic is trapped inside the `@tool` closure. Testing requires creating the full MCP server and invoking the tool through the SDK, adding unnecessary complexity and coupling.
+**Why**: Manual `args.get()` with defaults is error-prone — booleans arrive as strings from JSON, required fields need manual checking, and the simple dict schema loses type information (defaults, optionality). Use Pydantic models for arg extraction and the `model_json_schema()` for the `input_schema`.
 
 ### Don't Do This
 
