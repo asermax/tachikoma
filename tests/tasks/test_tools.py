@@ -2,9 +2,16 @@
 
 from datetime import UTC, datetime
 
+import pytest
+from pydantic import ValidationError
+
 from tachikoma.tasks.model import ScheduleConfig
 from tachikoma.tasks.repository import TaskRepository
 from tachikoma.tasks.tools import (
+    CreateTaskArgs,
+    DeleteTaskArgs,
+    ListTasksArgs,
+    UpdateTaskArgs,
     _format_schedule,
     _parse_schedule,
     create_task_tools_server,
@@ -96,6 +103,85 @@ class TestFormatSchedule:
 
         assert "once:" in result
         assert "invalid" in result
+
+
+class TestToolArgModels:
+    """Tests for Pydantic arg models — especially bool coercion from strings."""
+
+    def test_list_tasks_archived_string_true(self) -> None:
+        parsed = ListTasksArgs.model_validate({"archived": "true"})
+        assert parsed.archived is True
+
+    def test_list_tasks_archived_string_false(self) -> None:
+        parsed = ListTasksArgs.model_validate({"archived": "false"})
+        assert parsed.archived is False
+
+    def test_list_tasks_archived_default(self) -> None:
+        parsed = ListTasksArgs.model_validate({})
+        assert parsed.archived is False
+
+    def test_list_tasks_archived_bool_passthrough(self) -> None:
+        parsed = ListTasksArgs.model_validate({"archived": True})
+        assert parsed.archived is True
+
+    def test_create_task_enabled_string_true(self) -> None:
+        parsed = CreateTaskArgs.model_validate(
+            {
+                "name": "test",
+                "schedule": "0 9 * * *",
+                "type": "session",
+                "prompt": "do something",
+                "enabled": "true",
+            }
+        )
+        assert parsed.enabled is True
+
+    def test_create_task_enabled_string_false(self) -> None:
+        parsed = CreateTaskArgs.model_validate(
+            {
+                "name": "test",
+                "schedule": "0 9 * * *",
+                "type": "session",
+                "prompt": "do something",
+                "enabled": "false",
+            }
+        )
+        assert parsed.enabled is False
+
+    def test_create_task_enabled_default(self) -> None:
+        parsed = CreateTaskArgs.model_validate(
+            {
+                "name": "test",
+                "schedule": "0 9 * * *",
+                "type": "session",
+                "prompt": "do something",
+            }
+        )
+        assert parsed.enabled is True
+
+    def test_create_task_missing_required_raises(self) -> None:
+        with pytest.raises(ValidationError):
+            CreateTaskArgs.model_validate({"name": "test"})
+
+    def test_update_task_enabled_string_true(self) -> None:
+        parsed = UpdateTaskArgs.model_validate({"task_id": "abc", "enabled": "true"})
+        assert parsed.enabled is True
+
+    def test_update_task_enabled_string_false(self) -> None:
+        parsed = UpdateTaskArgs.model_validate({"task_id": "abc", "enabled": "false"})
+        assert parsed.enabled is False
+
+    def test_update_task_enabled_none_default(self) -> None:
+        parsed = UpdateTaskArgs.model_validate({"task_id": "abc"})
+        assert parsed.enabled is None
+
+    def test_update_task_bool_passthrough(self) -> None:
+        parsed = UpdateTaskArgs.model_validate({"task_id": "abc", "enabled": True})
+        assert parsed.enabled is True
+
+    def test_delete_task_missing_required_raises(self) -> None:
+        with pytest.raises(ValidationError):
+            DeleteTaskArgs.model_validate({})
 
 
 class TestCreateTaskToolsServer:

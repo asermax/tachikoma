@@ -15,8 +15,18 @@ from pathlib import Path
 
 from claude_agent_sdk import McpSdkServerConfig, create_sdk_mcp_server, tool
 from loguru import logger
+from pydantic import BaseModel
 
 _log = logger.bind(component="pending_signals")
+
+
+class RemovePendingSignalArgs(BaseModel):
+    indices: list[int]
+
+
+class AddPendingSignalArgs(BaseModel):
+    signal: str
+
 
 # File constants
 PENDING_SIGNALS_FILENAME = "pending-signals.md"
@@ -297,24 +307,13 @@ def create_pending_signals_server(
         "Use this when promoting a recurring signal to a context file update "
         "or when cleaning up stale/irrelevant signals. "
         "Indices refer to the S1..Sn numbers shown in your prompt.",
-        {
-            "type": "object",
-            "properties": {
-                "indices": {
-                    "type": "array",
-                    "items": {"type": "integer"},
-                    "description": (
-                        "1-based indices of signals to remove (e.g., [1, 3] for S1 and S3)"
-                    ),
-                },
-            },
-            "required": ["indices"],
-        },
+        RemovePendingSignalArgs.model_json_schema(),
     )
     async def remove_pending_signal(args: dict) -> dict:
         """Remove signals by their 1-based indices from the pre-fork snapshot."""
+        parsed = RemovePendingSignalArgs.model_validate(args)
         return await handle_remove_pending_signal(
-            indices=args.get("indices", []),
+            indices=parsed.indices,
             snapshot=snapshot,
             data_dir=data_dir,
         )
@@ -324,12 +323,13 @@ def create_pending_signals_server(
         "Stage a new ambiguous signal for future recurrence detection. "
         "Adds the signal with today's date to the pending signals file. "
         "Use this for one-off observations that might become patterns if they recur.",
-        {"signal": str},  # Input schema
+        AddPendingSignalArgs.model_json_schema(),
     )
     async def add_pending_signal(args: dict) -> dict:
         """Append a new signal entry with today's date."""
+        parsed = AddPendingSignalArgs.model_validate(args)
         return await handle_add_pending_signal(
-            signal=args.get("signal", ""),
+            signal=parsed.signal,
             data_dir=data_dir,
         )
 
