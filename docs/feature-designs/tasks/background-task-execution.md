@@ -16,7 +16,7 @@ Background tasks need to run in isolated sessions with multi-turn conversation s
 **Constraints:**
 - Background tasks must not interfere with the main conversation session
 - The evaluator needs multi-turn conversation continuity via `resume`
-- Post-processing must be selective (episodic + git only)
+- Post-processing must be selective (episodic + project submodule commit + git only)
 - Concurrency must be bounded to avoid resource exhaustion
 - Uses the SDK's `query()` and `receive_response()` per DES-005
 
@@ -52,7 +52,7 @@ Two components work together: the `BackgroundTaskRunner` (async loop picking up 
 
 | Layer/Component | Responsibility | Key Decisions |
 |-----------------|----------------|---------------|
-| `src/tachikoma/tasks/executor.py` | `background_task_runner()` — async loop picking up pending background instances; `BackgroundTaskExecutor` — manages single task's SDK session lifecycle with evaluator loop; dispatches `TaskNotification` events | Coordinator-like SDK client management; `asyncio.Semaphore` for concurrency; separate `PostProcessingPipeline` with `EpisodicProcessor` (main phase) + `GitProcessor` (finalize phase) |
+| `src/tachikoma/tasks/executor.py` | `background_task_runner()` — async loop picking up pending background instances; `BackgroundTaskExecutor` — manages single task's SDK session lifecycle with evaluator loop; dispatches `TaskNotification` events | Coordinator-like SDK client management; `asyncio.Semaphore` for concurrency; full `PreProcessingPipeline` (memory, projects, skills); separate `PostProcessingPipeline` with `EpisodicProcessor` (main phase) + `ProjectsProcessor` (pre_finalize phase) + `GitProcessor` (finalize phase) |
 | `src/tachikoma/tasks/events.py` | `TaskNotification(BaseEvent)` — typed event carrying `message: str`, `source_task_id: str | None`, and `severity: str` ("info" or "error") | Pydantic `BaseEvent` subclass for typed dispatch |
 
 ### Cross-Layer Contracts
@@ -96,7 +96,7 @@ sequenceDiagram
 
     rect rgba(0, 200, 100, 0.1)
         Note over Exec: Post-processing (adapted pipeline)
-        Note over Exec: EpisodicProcessor (main) + GitProcessor (finalize)
+        Note over Exec: EpisodicProcessor (main) + ProjectsProcessor (pre_finalize) + GitProcessor (finalize)
     end
 ```
 
@@ -105,7 +105,8 @@ sequenceDiagram
 - Executor ↔ SDK: per-task `ClaudeSDKClient` with `resume` for multi-turn
 - Executor ↔ Evaluator: lightweight model assessment after each agent response
 - Executor ↔ Event bus: dispatches `TaskNotification` on completion/failure
-- Executor ↔ Pipeline: separate `PostProcessingPipeline` instance with selective processors
+- Executor ↔ Pre-processing pipeline: full `PreProcessingPipeline` with memory, projects, skills providers; extracts MCP servers and agents into SDK options
+- Executor ↔ Post-processing pipeline: separate `PostProcessingPipeline` instance with selective processors
 - Executor ↔ `fork_and_capture` (`post_processing.py`): forks task session for notification generation
 
 **Error contract:**
@@ -123,8 +124,9 @@ sequenceDiagram
 3. For each instance (gated by asyncio.Semaphore, max_concurrent=3):
    a. Mark instance as running
    b. Create BackgroundTaskExecutor with:
+      - Full pre-processing pipeline (memory, projects, skills context providers)
       - Adapted system prompt (task context + instructions)
-      - Adapted pipeline (EpisodicProcessor in main phase + GitProcessor in finalize phase)
+      - Adapted post-processing pipeline (EpisodicProcessor in main phase + ProjectsProcessor in pre_finalize phase + GitProcessor in finalize phase)
       - Task instance prompt
    c. Executor creates ClaudeSDKClient, calls query(prompt)
    d. Evaluator loop (max_iterations):
@@ -166,13 +168,14 @@ Channels subscribe to `TaskNotification` events via `bus.on(TaskNotification, ha
 
 ### Adapted pipeline via separate instance
 
-**Choice**: Background tasks create a separate `PostProcessingPipeline` instance with only `EpisodicProcessor` (main phase) and `GitProcessor` (finalize phase).
-**Why**: Background tasks should capture episodic memories and commit changes, but should not extract facts/preferences or update core context — those are user-conversation concerns.
+**Choice**: Background tasks run the full pre-processing pipeline (same context providers as the main conversation: memory, projects, skills) and create a separate `PostProcessingPipeline` instance with `EpisodicProcessor` (main phase), `ProjectsProcessor` (pre_finalize phase), and `GitProcessor` (finalize phase). Pre-processing results include MCP servers and agent definitions, which are passed to the SDK client options via a `_PreprocessingResult` dataclass.
+**Why**: Background tasks need the same context awareness as the main conversation (project awareness, skill-based context, memory search) and should commit project submodule changes. They should not extract facts/preferences or update core context — those are user-conversation concerns.
 
 **Consequences**:
-- Pro: Clean separation of pipeline concerns
+- Pro: Background tasks have full project/skill awareness and can use project management tools
 - Pro: Reuses existing pipeline infrastructure and processor implementations
 - Con: Pipeline registration duplicated between `__main__.py` (full) and executor (adapted)
+- Con: `SkillRegistry` must be threaded from bootstrap through `background_task_runner` to `BackgroundTaskExecutor`
 
 ### Lightweight evaluator model
 

@@ -16,7 +16,7 @@ Background tasks execute in isolated parallel sessions without interrupting the 
 | ID | Requirement |
 |----|-------------|
 | R0 | Execute pending background task instances in fresh isolated SDK sessions |
-| R1 | Adapted post-processing pipeline: episodic memory extraction and git commit only (no facts, preferences, or core context extraction) |
+| R1 | Adapted pipeline: full pre-processing (memory, projects, skills) and selective post-processing — episodic memory extraction, project submodule commit/push, and git commit (no facts, preferences, or core context extraction) |
 | R2 | Evaluator loop that assesses each agent response for completion using a lightweight model |
 | R3 | Max iterations limit (configurable, default 10) — forces completion assessment and marks task as failed if not done |
 | R4 | Notification via transient session task instances on completion (when `notify` is set) or failure |
@@ -27,12 +27,12 @@ Background tasks execute in isolated parallel sessions without interrupting the 
 
 ### Isolated Execution (R0, R1)
 
-Background tasks run in fresh SDK sessions separate from the main conversation, with an adapted pipeline that only extracts episodic memories and commits to git.
+Background tasks run in fresh SDK sessions separate from the main conversation, with full pre-processing (same context providers as the main conversation) and selective post-processing.
 
 **Acceptance Criteria**:
 - Given a pending background task instance, when the runner picks it up, then a fresh SDK session is created (not forked from the main session) with an adapted base prompt explaining the background task context
-- Given a background task session starts, then the pre-processing pipeline runs (memory/context injection active)
-- Given a background task session completes, then the adapted post-processing pipeline runs with phased execution: episodic extraction (main phase) followed by git commit (finalize phase) — no facts, preferences, or core context extraction
+- Given a background task session starts, then the pre-processing pipeline runs with all context providers (memory, projects, skills) — MCP servers and agent definitions from providers are passed to the SDK client options
+- Given a background task session completes, then the adapted post-processing pipeline runs with phased execution: episodic extraction (main phase), project submodule commit/push (pre_finalize phase), and git commit (finalize phase) — no facts, preferences, or core context extraction
 
 ### Evaluator Loop (R2, R3, R6)
 
