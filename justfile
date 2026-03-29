@@ -3,7 +3,7 @@ default: run
 
 # Run the agent
 run *args:
-    PYTHONPATH=src uv run python -m tachikoma {{args}}
+    uv run tachikoma {{args}}
 
 # Run tests
 test *args:
