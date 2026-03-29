@@ -37,7 +37,7 @@ class ScheduleConfig:
 
     def to_json(self) -> str:
         """Serialize to JSON string for storage."""
-        data = {"type": self.type}
+        data: dict[str, str] = {"type": self.type}
         if self.expression is not None:
             data["expression"] = self.expression
         if self.at is not None:
@@ -133,7 +133,7 @@ class TaskDefinitionRecord(Base):
             notify=self.notify,
             enabled=self.enabled,
             last_fired_at=ensure_utc(self.last_fired_at),
-            created_at=ensure_utc(self.created_at),  # type: ignore[arg-type]
+            created_at=ensure_utc(self.created_at),
         )
 
 
@@ -176,5 +176,5 @@ class TaskInstanceRecord(Base):
             started_at=ensure_utc(self.started_at),
             completed_at=ensure_utc(self.completed_at),
             result=self.result,
-            created_at=ensure_utc(self.created_at),  # type: ignore[arg-type]
+            created_at=ensure_utc(self.created_at),
         )

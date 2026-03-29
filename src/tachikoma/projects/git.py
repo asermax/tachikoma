@@ -57,7 +57,7 @@ async def _run_git_capture(*args: str, cwd: Path) -> tuple[int, str]:
     )
 
     stdout, _ = await proc.communicate()
-    return proc.returncode, stdout.decode().strip()
+    return proc.returncode or 0, stdout.decode().strip()
 
 
 async def list_submodules(workspace: Path) -> list[str]:

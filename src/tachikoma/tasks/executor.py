@@ -13,13 +13,20 @@ from typing import TYPE_CHECKING, Any, Literal
 
 from bubus import EventBus
 from claude_agent_sdk import ClaudeAgentOptions, ClaudeSDKClient
-from claude_agent_sdk.types import SystemPromptPreset
+from claude_agent_sdk.types import AssistantMessage, ResultMessage, SystemPromptPreset, TextBlock
 from loguru import logger
 
 from tachikoma.agent_defaults import AgentDefaults
 from tachikoma.config import TaskSettings
-from tachikoma.post_processing import PostProcessingPipeline, fork_and_capture
+from tachikoma.git.processor import GitProcessor
+from tachikoma.memory.context_provider import MemoryContextProvider
+from tachikoma.memory.episodic import EpisodicProcessor
+from tachikoma.post_processing import PRE_FINALIZE_PHASE, PostProcessingPipeline, fork_and_capture
 from tachikoma.pre_processing import McpServerConfig, PreProcessingPipeline, assemble_context
+from tachikoma.projects.context_provider import ProjectsContextProvider
+from tachikoma.projects.processor import ProjectsProcessor
+from tachikoma.sessions.model import Session
+from tachikoma.skills.context_provider import SkillsContextProvider
 from tachikoma.tasks.events import TaskNotification
 from tachikoma.tasks.model import TaskDefinition, TaskInstance
 from tachikoma.tasks.repository import TaskRepository
@@ -265,13 +272,13 @@ class BackgroundTaskExecutor:
                     response_chunks: list[str] = []
                     async for sdk_message in client.receive_response():
                         # Extract session ID from result message
-                        if hasattr(sdk_message, "session_id") and sdk_message.session_id:
+                        if isinstance(sdk_message, ResultMessage) and sdk_message.session_id:
                             sdk_session_id = sdk_message.session_id
 
                         # Collect text content
-                        if hasattr(sdk_message, "content"):
+                        if isinstance(sdk_message, AssistantMessage):
                             for block in sdk_message.content:
-                                if hasattr(block, "text"):
+                                if isinstance(block, TextBlock):
                                     response_chunks.append(block.text)
 
                     response_text = "".join(response_chunks)
@@ -370,11 +377,6 @@ class BackgroundTaskExecutor:
             PreprocessingResult with enriched prompt, MCP servers, and agents.
         """
         try:
-            # Lazy imports to avoid circular dependencies
-            from tachikoma.memory.context_provider import MemoryContextProvider  # noqa: PLC0415
-            from tachikoma.projects.context_provider import ProjectsContextProvider  # noqa: PLC0415
-            from tachikoma.skills.context_provider import SkillsContextProvider  # noqa: PLC0415
-
             pipeline = PreProcessingPipeline()
             pipeline.register(MemoryContextProvider(self._agent_defaults))
             pipeline.register(ProjectsContextProvider(workspace_path=self._cwd))
@@ -425,7 +427,7 @@ class BackgroundTaskExecutor:
         Returns:
             Parsed evaluator result with status and feedback
         """
-        from claude_agent_sdk import ClaudeAgentOptions, query  # noqa: PLC0415
+        from claude_agent_sdk import query  # noqa: PLC0415  – lazy for test mockability
 
         eval_prompt = EVALUATOR_PROMPT_TEMPLATE.format(
             task_prompt=task_prompt,
@@ -443,9 +445,9 @@ class BackgroundTaskExecutor:
         try:
             # DES-005: Fully consume the generator
             async for message in query(prompt=eval_prompt, options=options):
-                if hasattr(message, "content"):
+                if isinstance(message, AssistantMessage):
                     for block in message.content:
-                        if hasattr(block, "text"):
+                        if isinstance(block, TextBlock):
                             response_text += block.text
         except Exception as exc:
             _log.warning("Evaluator query failed: {err}", err=str(exc))
@@ -479,13 +481,6 @@ class BackgroundTaskExecutor:
             return
 
         try:
-            # Import processors here to avoid circular dependencies
-            from tachikoma.git.processor import GitProcessor  # noqa: PLC0415
-            from tachikoma.memory.episodic import EpisodicProcessor  # noqa: PLC0415
-            from tachikoma.post_processing import PRE_FINALIZE_PHASE  # noqa: PLC0415
-            from tachikoma.projects.processor import ProjectsProcessor  # noqa: PLC0415
-            from tachikoma.sessions.model import Session  # noqa: PLC0415
-
             # Build a minimal Session for the pipeline
             session = Session(
                 id="background-task",  # Synthetic ID for background tasks
@@ -625,8 +620,6 @@ class BackgroundTaskExecutor:
             return fallback
 
         try:
-            from tachikoma.sessions.model import Session  # noqa: PLC0415
-
             session = Session(
                 id="notification-gen",
                 sdk_session_id=sdk_session_id,

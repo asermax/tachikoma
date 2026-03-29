@@ -8,6 +8,7 @@ receive the shared session_factory.
 from pathlib import Path
 
 from loguru import logger
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase
 
@@ -91,7 +92,6 @@ class Database:
             await conn.run_sync(Base.metadata.create_all)
 
             # Check for and add missing columns on existing databases
-            from sqlalchemy import text  # noqa: PLC0415
 
             # Check if summary column exists on sessions table (added in DLT-027)
             result = await conn.execute(
