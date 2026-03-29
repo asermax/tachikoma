@@ -55,27 +55,31 @@ class SessionRegistry:
             _log.info("Session created: session_id={id}", id=session.id)
             return session
 
-    async def close_session(self, session_id: str) -> None:
+    async def close_session(self, session_id: str) -> bool:
         """Close the session with the given ID by setting ended_at.
 
         Idempotent: if the session is already closed or doesn't exist, no-op.
+
+        Returns:
+            True if the session was actually transitioned from open to closed.
+            False if no transition occurred (no-op, already closed, wrong ID).
         """
         if self._active_session is None:
-            return
-
-        if self._active_session.ended_at is not None:
-            # Already closed — idempotent
-            return
+            return False
 
         if self._active_session.id != session_id:
-            # Close signal for a different session — ignore
-            return
+            return False
+
+        if self._active_session.ended_at is not None:
+            self._active_session = None
+            return False
 
         ended_at = datetime.now(UTC)
         await self._repository.update(session_id, ended_at=ended_at)
         self._active_session = None
 
         _log.info("Session closed: session_id={id}", id=session_id)
+        return True
 
     async def update_metadata(
         self,

@@ -331,7 +331,7 @@ def _make_mock_registry(active_session=None):
     registry.create_session = AsyncMock(
         return_value=Session(id="new-session", started_at=datetime.now(UTC)),
     )
-    registry.close_session = AsyncMock()
+    registry.close_session = AsyncMock(return_value=True)
     registry.update_metadata = AsyncMock()
     registry.get_recent_closed = AsyncMock(return_value=[])
     registry.reopen_session = AsyncMock(return_value=None)
@@ -747,8 +747,9 @@ class TestCoordinatorPostProcessing:
         # Track call order
         call_order = []
 
-        async def track_close(session_id: str) -> None:
+        async def track_close(session_id: str) -> bool:
             call_order.append("close")
+            return True
 
         async def track_run(session: Session) -> None:
             call_order.append("pipeline")
@@ -3030,11 +3031,12 @@ class TestIdleCloseShutdown:
         # Make registry return None after close_session is called
         close_call_count = 0
 
-        async def mock_close(*args):
+        async def mock_close(*args) -> bool:
             nonlocal close_call_count
             close_call_count += 1
             # After close, make get_active_session return None
             registry.get_active_session.return_value = None
+            return True
 
         registry.close_session.side_effect = mock_close
 

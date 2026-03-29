@@ -139,30 +139,32 @@ class TestSessionRegistryClose:
         mock_repo.create.return_value = session
         await registry.create_session()
 
-        await registry.close_session("s1")
+        result = await registry.close_session("s1")
         active = await registry.get_active_session()
 
+        assert result is True
         assert active is None
 
     async def test_close_with_no_active_session_is_noop(
         self, registry: SessionRegistry, mock_repo
     ) -> None:
         """AC: close_session with no active session completes without error."""
-        await registry.close_session("nonexistent")
+        result = await registry.close_session("nonexistent")
 
+        assert result is False
         mock_repo.update.assert_not_awaited()
 
     async def test_close_already_closed_session_is_idempotent(self, mock_repo) -> None:
-        """AC: closing an already-closed session is a no-op."""
-        # Manually set active session to an already-closed one
+        """AC: closing an already-closed session clears _active_session but does not update DB."""
         closed_session = _make_session("s1", ended_at=_utcnow())
         registry = SessionRegistry(mock_repo)
         registry._active_session = closed_session
 
-        await registry.close_session("s1")
+        result = await registry.close_session("s1")
 
-        # Should not call update since it's already closed
+        assert result is False
         mock_repo.update.assert_not_awaited()
+        assert await registry.get_active_session() is None
 
 
 class TestSessionRegistryUpdateMetadata:

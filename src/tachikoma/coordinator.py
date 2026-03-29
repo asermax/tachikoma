@@ -522,14 +522,22 @@ class Coordinator:
         _log.debug("Response complete")
 
     async def _close_and_fire_postprocessing(self, session: Session) -> None:
-        """Close a session in the registry and fire async post-processing."""
+        """Close a session in the registry and fire async post-processing.
+
+        Post-processing only fires when the session was actually transitioned
+        from open to closed. No-ops (already closed, wrong ID, exception) skip
+        post-processing to prevent the idle close loop from re-firing on stale
+        sessions.
+        """
+        actually_closed = False
+
         if self._registry is not None:
             try:
-                await self._registry.close_session(session.id)
+                actually_closed = await self._registry.close_session(session.id)
             except Exception as exc:
                 _log.exception("Failed to close session: err={err}", err=str(exc))
 
-        if session.sdk_session_id is not None and self._pipeline is not None:
+        if actually_closed and session.sdk_session_id is not None and self._pipeline is not None:
             task = asyncio.create_task(self._pipeline.run(session))
             self._background_tasks.append(task)
             self._background_tasks = [t for t in self._background_tasks if not t.done()]
