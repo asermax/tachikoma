@@ -2370,6 +2370,150 @@ class TestCoordinatorShutdownWithBoundaryDetection:
         ) as coord:
             _ = await _send(coord, "new topic")
 
+    async def test_background_shutdown_calls_on_status(
+        self,
+        mock_sdk,
+        mocker,
+    ) -> None:
+        """AC1: on_status is called before gathering background tasks on shutdown."""
+        client, _ = mock_sdk
+        client.receive_response.return_value = _mock_messages(
+            make_assistant([TextBlock(text="new topic")]),
+            make_result(),
+        )
+
+        active = Session(
+            id="s1",
+            started_at=datetime.now(UTC),
+            summary="Summary",
+            sdk_session_id="sdk-old",
+        )
+        registry = _make_mock_registry(active_session=active)
+        registry.get_active_session.side_effect = [active, None, None]
+
+        task_completed = asyncio.Event()
+
+        async def slow_pipeline(session):
+            await asyncio.sleep(0.05)
+            task_completed.set()
+
+        pipeline = MagicMock()
+        pipeline.run = AsyncMock(side_effect=slow_pipeline)
+
+        on_status = MagicMock()
+
+        mocker.patch(
+            "tachikoma.coordinator.detect_boundary",
+            return_value=BoundaryResult(continues=False),
+        )
+
+        async with Coordinator(
+            registry=registry,
+            agent_defaults=AgentDefaults(cwd=Path("/workspace")),
+            pipeline=pipeline,
+            on_status=on_status,
+        ) as coord:
+            _ = await _send(coord, "new topic")
+
+        on_status.assert_called_with("Processing memories...")
+        assert task_completed.is_set()
+
+    async def test_background_shutdown_logs_task_count(
+        self,
+        mock_sdk,
+        mocker,
+    ) -> None:
+        """AC2: Info-level log emitted with task count before gathering.
+
+        Loguru writes to stderr (not stdlib logging), so caplog cannot capture
+        the message. This test verifies the log call via mock. The message is
+        also visible in pytest's captured stderr output.
+        """
+        client, _ = mock_sdk
+        client.receive_response.return_value = _mock_messages(
+            make_assistant([TextBlock(text="new topic")]),
+            make_result(),
+        )
+
+        active = Session(
+            id="s1",
+            started_at=datetime.now(UTC),
+            summary="Summary",
+            sdk_session_id="sdk-old",
+        )
+        registry = _make_mock_registry(active_session=active)
+        registry.get_active_session.side_effect = [active, None, None]
+
+        pipeline = _make_mock_pipeline()
+
+        mocker.patch(
+            "tachikoma.coordinator.detect_boundary",
+            return_value=BoundaryResult(continues=False),
+        )
+
+        mock_log = mocker.patch("tachikoma.coordinator._log")
+
+        async with Coordinator(
+            registry=registry,
+            agent_defaults=AgentDefaults(cwd=Path("/workspace")),
+            pipeline=pipeline,
+        ) as coord:
+            _ = await _send(coord, "new topic")
+
+        mock_log.info.assert_any_call(
+            "Awaiting background post-processing tasks: count={count}",
+            count=1,
+        )
+
+    async def test_background_shutdown_catches_status_exception(
+        self,
+        mock_sdk,
+        mocker,
+    ) -> None:
+        """AC4: on_status exception is caught; background tasks still awaited."""
+        client, _ = mock_sdk
+        client.receive_response.return_value = _mock_messages(
+            make_assistant([TextBlock(text="new topic")]),
+            make_result(),
+        )
+
+        active = Session(
+            id="s1",
+            started_at=datetime.now(UTC),
+            summary="Summary",
+            sdk_session_id="sdk-old",
+        )
+        registry = _make_mock_registry(active_session=active)
+        registry.get_active_session.side_effect = [active, None, None]
+
+        task_completed = asyncio.Event()
+
+        async def slow_pipeline(session):
+            await asyncio.sleep(0.05)
+            task_completed.set()
+
+        pipeline = MagicMock()
+        pipeline.run = AsyncMock(side_effect=slow_pipeline)
+
+        on_status = MagicMock(side_effect=RuntimeError("status broke"))
+
+        mocker.patch(
+            "tachikoma.coordinator.detect_boundary",
+            return_value=BoundaryResult(continues=False),
+        )
+
+        # Should not raise despite on_status failure
+        async with Coordinator(
+            registry=registry,
+            agent_defaults=AgentDefaults(cwd=Path("/workspace")),
+            pipeline=pipeline,
+            on_status=on_status,
+        ) as coord:
+            _ = await _send(coord, "new topic")
+
+        # Background task should still have been awaited
+        assert task_completed.is_set()
+
 
 class TestCoordinatorPipelineAgents:
     """Tests for DLT-021: agent extraction from pre-processing pipeline results."""

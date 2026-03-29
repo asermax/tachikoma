@@ -232,6 +232,17 @@ class Coordinator:
 
         # Await all background session post-processing tasks from topic shifts
         if self._background_tasks:
+            _log.info(
+                "Awaiting background post-processing tasks: count={count}",
+                count=len(self._background_tasks),
+            )
+
+            if self._on_status is not None:
+                try:
+                    self._on_status("Processing memories...")
+                except Exception as exc:
+                    _log.exception("Status callback failed: err={err}", err=str(exc))
+
             results = await asyncio.gather(*self._background_tasks, return_exceptions=True)
             for i, result in enumerate(results):
                 if isinstance(result, Exception):
