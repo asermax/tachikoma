@@ -5,6 +5,7 @@ Tests for DLT-002: Send and receive messages via Telegram.
 
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
 from aiogram.exceptions import TelegramAPIError, TelegramRetryAfter
 
 from tachikoma.events import Error, ToolActivity
@@ -273,16 +274,16 @@ class TestResponseRendererToolHandling:
 
 
 class TestResponseRendererMessageSplitting:
-    """Tests for message splitting at 4096-char boundary."""
+    """Tests for message splitting via post-conversion UTF-16 check."""
 
-    async def test_splits_at_paragraph_boundary(self) -> None:
-        """Buffer exceeding limit splits at paragraph boundary (\\n\\n)."""
+    async def test_splits_long_text_into_multiple_messages(self) -> None:
+        """Text exceeding 4096 UTF-16 code units after convert() is split."""
         bot = MagicMock()
         bot.send_message = AsyncMock(return_value=MockMessage(message_id=1))
         bot.edit_message_text = AsyncMock()
         renderer = ResponseRenderer(bot, chat_id=123)
 
-        # Create text with paragraph boundary near the limit
+        # Create text that exceeds 4096 chars (plain ASCII is 1:1 UTF-16)
         long_text = "A" * 3000 + "\n\n" + "B" * 2000
         renderer._buffer = long_text
 
@@ -291,37 +292,47 @@ class TestResponseRendererMessageSplitting:
         # Should have sent multiple messages
         assert bot.send_message.call_count >= 2
 
-    async def test_falls_back_to_newline(self) -> None:
-        """Falls back to newline when no paragraph boundary found."""
+    async def test_splits_when_convert_expands_text(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Text under raw limit but over 4096 UTF-16 after convert() gets split."""
         bot = MagicMock()
         bot.send_message = AsyncMock(return_value=MockMessage(message_id=1))
         bot.edit_message_text = AsyncMock()
         renderer = ResponseRenderer(bot, chat_id=123)
 
-        # Create text with only single newlines
-        long_text = "A" * 3000 + "\n" + "B" * 2000
-        renderer._buffer = long_text
+        # Short raw markdown that will "expand" after convert()
+        renderer._buffer = "short text"
+
+        # Mock convert to return text exceeding 4096 UTF-16 code units
+        expanded_text = "X" * 5000
+        monkeypatch.setattr(
+            "tachikoma.telegram.convert",
+            lambda _: (expanded_text, []),
+        )
+        monkeypatch.setattr(
+            "tachikoma.telegram.utf16_len",
+            lambda t: len(t),
+        )
+        monkeypatch.setattr(
+            "tachikoma.telegram.split_entities",
+            lambda text, entities, limit: [(text[:limit], []), (text[limit:], [])],
+        )
 
         await renderer.finalize()
 
-        # Should have sent multiple messages
-        assert bot.send_message.call_count >= 2
+        # First chunk edits nothing (no current message), so both are send_message
+        assert bot.send_message.call_count == 2
 
-    async def test_hard_splits_at_limit(self) -> None:
-        """Hard-splits at 4096 when no newlines found."""
+    async def test_no_split_when_under_limit(self) -> None:
+        """Text under 4096 UTF-16 code units is sent as a single message."""
         bot = MagicMock()
         bot.send_message = AsyncMock(return_value=MockMessage(message_id=1))
-        bot.edit_message_text = AsyncMock()
         renderer = ResponseRenderer(bot, chat_id=123)
 
-        # Create text with no newlines
-        long_text = "A" * 5000
-        renderer._buffer = long_text
+        renderer._buffer = "Short text that fits easily"
 
         await renderer.finalize()
 
-        # Should have sent multiple messages
-        assert bot.send_message.call_count >= 2
+        assert bot.send_message.call_count == 1
 
 
 class TestResponseRendererErrorHandling:
