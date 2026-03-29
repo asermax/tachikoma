@@ -64,7 +64,7 @@ Sessions close when a boundary detection topic shift is detected, after a config
 - Given an active session with no message exchange for longer than the configured idle timeout, when the coordinator is not busy, then the session is closed and async post-processing is triggered
 - Given a session closed due to idle timeout, then its summary is stored for injection into the next session's system prompt
 - Given a session was closed due to idle timeout, when the user sends a new message, then a new session is created via the normal first-message path
-- Given a session is already closed, when a close signal is received again, then the operation is idempotent (no error, no change)
+- Given a session is already closed, when a close signal is received again, then the active session reference is cleared and the operation completes without error or database change
 - Given no active session exists, when a close signal is received, then the operation is a no-op
 
 ### Querying (R4, R5)

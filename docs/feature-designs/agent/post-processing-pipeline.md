@@ -90,7 +90,7 @@ sequenceDiagram
 ```
 
 **Integration Points:**
-- Coordinator ↔ Pipeline: `pipeline.run(session)` in `__aexit__`, after session close
+- Coordinator ↔ Pipeline: `pipeline.run(session)` in `__aexit__` and idle close, only when `close_session()` returns True (actual transition)
 - Pipeline ↔ Processors: `register(processor, phase="main"|"pre_finalize"|"finalize")`, `process(session)` called in parallel within each phase
 - `fork_and_consume`: calls `query(prompt, options=ClaudeAgentOptions(resume=session.sdk_session_id, fork_session=True, ...))` — available to processors needing session context
 

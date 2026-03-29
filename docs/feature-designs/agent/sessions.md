@@ -74,7 +74,7 @@ The session domain also includes **SessionContextEntry** — a persisted record 
 |-----------------|----------------|---------------|
 | `src/tachikoma/sessions/model.py` | SQLAlchemy ORM models (`SessionRecord`, `SessionResumptionRecord`, `SessionContextEntryRecord`) + frozen dataclasses (`Session`, `SessionResumption`, `SessionContextEntry`) + `DeclarativeBase` | Separate ORM models from domain dataclasses; callers never see SQLAlchemy types |
 | `src/tachikoma/sessions/repository.py` | `SessionRepository`: CRUD operations, time-range queries, `get_recent_closed()` for resumption candidates, `create_resumption()`/`get_resumptions_for_session()` for resumption tracking, `save_context_entries()`/`load_context_entries()` for context entry persistence | Receives shared `async_sessionmaker` from `Database`; all SQL is behind async methods; `save_context_entries` takes list of `(owner, content)` tuples, bulk saves via `session.add_all()`; `load_context_entries` ordered by PK ascending |
-| `src/tachikoma/sessions/registry.py` | `SessionRegistry`: business logic facade, creation lock, crash recovery, status derivation, `update_summary()` for persisting rolling summaries, `reopen_session()` for session resumption (uses `dataclasses.replace()` to construct reopened session — avoids redundant DB fetch), `get_recent_closed()` for candidate queries, `record_resumption()` for best-effort tracking, `save_context_entries()` (best-effort — logs on failure per R9/R17, does not raise), `load_context_entries()` (raises on failure — caller handles graceful degradation) | Receives repository via constructor; owns the `asyncio.Lock` |
+| `src/tachikoma/sessions/registry.py` | `SessionRegistry`: business logic facade, creation lock, crash recovery, status derivation, `close_session()` returns `bool` (True if actually transitioned from open to closed — enables callers to distinguish real closes from no-ops), `update_summary()` for persisting rolling summaries, `reopen_session()` for session resumption (uses `dataclasses.replace()` to construct reopened session — avoids redundant DB fetch), `get_recent_closed()` for candidate queries, `record_resumption()` for best-effort tracking, `save_context_entries()` (best-effort — logs on failure per R9/R17, does not raise), `load_context_entries()` (raises on failure — caller handles graceful degradation) | Receives repository via constructor; owns the `asyncio.Lock` |
 | `src/tachikoma/sessions/errors.py` | `SessionRepositoryError`: wraps SQLAlchemy exceptions for clean error contract | Callers catch one domain exception, not SQLAlchemy internals |
 | `src/tachikoma/sessions/hooks.py` | `session_recovery_hook`: retrieves shared `Database` from extras, creates repository + registry, runs recovery, stores on context extras | Registered as bootstrap hook; runs after `database_hook` |
 | `src/tachikoma/sessions/__init__.py` | Re-exports public API: `Session`, `SessionContextEntry`, `SessionResumption`, `SessionRegistry`, `SessionRepository`, `SessionRepositoryError` | Clean public API for the sessions package |
@@ -276,11 +276,13 @@ The `transcript_path` is derived from the SDK session ID using the known Claude 
 1. Coordinator's idle close loop detects inactivity exceeding session_idle_timeout
 2. Loop verifies coordinator is not busy (no active exchange, no queued messages, no pending post-processing)
 3. Coordinator calls registry.get_active_session()
-4. Coordinator calls registry.close_session(id) — errors logged, not propagated
-5. If session has sdk_session_id: fires async post-processing as background task
+4. Coordinator calls registry.close_session(id) — returns bool; errors logged, not propagated
+5. If close_session returned True AND session has sdk_session_id: fires async post-processing as background task
 6. Coordinator clears SDK state and stores previous summary
 7. No new session created — next user message follows first-message path
 ```
+
+Note: The boolean return from `close_session()` prevents the idle loop from re-firing post-processing on stale sessions. If the session was already closed (idempotent path), `close_session` returns False and clears the active session reference, so `get_active_session()` returns None on the next loop iteration.
 
 ### Crash recovery (bootstrap)
 
@@ -470,10 +472,10 @@ The `transcript_path` is derived from the SDK session ID using the known Claude 
 
 ### Scenario: Close on already-closed session (idempotent)
 
-**Given**: A session with `ended_at` already set
+**Given**: A session with `ended_at` already set and `_active_session` still referencing it
 **When**: A close signal is received again
-**Then**: The operation completes without error or change.
-**Rationale**: Multiple close sources may fire redundantly; idempotency prevents errors.
+**Then**: `_active_session` is cleared (so `get_active_session()` returns None), no database update occurs, and `close_session` returns False.
+**Rationale**: Multiple close sources may fire redundantly; idempotency prevents errors. Clearing `_active_session` on the idempotent path prevents the idle close loop from repeatedly firing post-processing on stale sessions — without this, a race between `close_session` and `update_summary` (which re-fetches the session from DB) can leave `_active_session` pointing to a closed session, causing infinite post-processing.
 
 ### Scenario: Crash recovery on startup
 
