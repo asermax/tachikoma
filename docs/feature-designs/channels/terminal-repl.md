@@ -42,7 +42,7 @@ The REPL uses `prompt_toolkit` for async input with persistent file history. The
 | `Result` | Blank line separator |
 | `Error` | Styled error message on stderr Console; returns `False` if non-recoverable |
 
-**Tool display format:** All tools are prefixed with a wrench icon (🔧). Known tools show contextual present-progressive details (e.g., "🔧 Reading src/main.py", "🔧 Searching for 'authenticate'", "🔧 Globbing \*\*/\*.py"). Unknown tools show the tool name with ellipsis (e.g., "🔧 CustomTool...").
+**Tool display format:** All tools are prefixed with a wrench icon (🔧). Known tools show contextual present-progressive details (e.g., "🔧 Reading src/main.py", "🔧 Searching for 'authenticate'", "🔧 Globbing \*\*/\*.py"). Unknown tools show the tool name with ellipsis (e.g., "🔧 CustomTool..."); MCP tool names (starting with `mcp__`) are first formatted into human-readable labels via `format_tool_name()` (e.g., `mcp__projects__list_projects` becomes "🔧 List Projects...").
 
 ## Key Decisions
 

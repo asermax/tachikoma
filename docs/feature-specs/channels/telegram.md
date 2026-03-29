@@ -91,7 +91,7 @@ Tool activity appears as an inline status line within the current response messa
 - Given a response contains multiple tool→text transitions (e.g., tools run, text streams, tools run again, text streams again), when each transition from ToolActivity to TextChunk occurs, then each transition independently generates its own tool activity summary
 - Given tools run but no text follows (response ends with tools), when the response is finalized, then the tool activity summary is rendered in the final message
 - Given tool activity occurs near the message size boundary, when there's insufficient room, then the current message is sent and the tool line starts the next message
-- Given an unknown tool, when a ToolActivity event arrives, then the tool name is shown as a fallback in both the live status line and the summary
+- Given an unknown tool, when a ToolActivity event arrives, then the tool name is shown as a fallback in both the live status line and the summary; MCP tool names (starting with `mcp__`) are formatted into human-readable labels (e.g., `mcp__projects__list_projects` shows as "List Projects")
 
 ### User Authorization (R5)
 

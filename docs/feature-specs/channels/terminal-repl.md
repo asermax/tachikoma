@@ -34,7 +34,7 @@ The REPL renders domain events to the terminal as they arrive: text chunks are r
 - Given the agent responds with text, when text events arrive, then text is rendered with markdown formatting (headings, emphasis, syntax-highlighted code blocks, lists)
 - Given the agent responds with plain text (no markdown), when rendered, then it displays normally without artifacts
 - Given the agent uses a tool, when a tool activity event arrives, then a gray italic status line shows a wrench icon, tool name, and key parameters (e.g., "🔧 Reading src/main.py")
-- Given the agent uses an unknown tool, when a tool activity event arrives, then the tool name is shown as a fallback
+- Given the agent uses an unknown tool, when a tool activity event arrives, then the tool name is shown as a fallback; MCP tool names (starting with `mcp__`) are formatted into human-readable labels (e.g., `mcp__projects__list_projects` shows as "List Projects")
 - Given the agent completes its response, when a result event arrives, then a newline is printed and the REPL shows a new prompt
 - Given an error occurs, when an error event arrives, then the error message prints to stderr
 - Given the coordinator yields a Status event (e.g., "Thinking..."), when received, then the status message is displayed as dim italic text

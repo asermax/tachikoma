@@ -81,7 +81,7 @@ The key components:
 | `src/tachikoma/telegram.py` | `TelegramChannel` class + `ResponseRenderer` class + `telegram_hook` function. Subscribes to `SessionTaskReady` and `TaskNotification` events via `bus.on()` at construction. Shared `_process_through_coordinator()` method handles both user messages and session task delivery. `_handle_notification()` sends notifications directly as Telegram messages with severity emoji prefix | High cohesion between channel control flow and response rendering; event bus subscriptions at construction |
 | `src/tachikoma/coordinator.py` | Existing + `enqueue()` method, `_message_buffer` queue, `has_pending_messages` property, and `_message_source()` async generator passed to `client.connect()` | Message buffer replaces steer/pending-steers pattern |
 | `src/tachikoma/config.py` | `TelegramSettings` model added to `Settings` | Extends existing config; optional section (`None` when not configured) |
-| `src/tachikoma/display.py` | `TOOL_DISPLAY` map for live tool status formatting (present-progressive); `TOOL_SUMMARY` map and `summarize_tool_activity()` for post-hoc tool activity summaries (present-progressive matching active style) | Shared between REPL and Telegram channels |
+| `src/tachikoma/display.py` | `TOOL_DISPLAY` map for live tool status formatting (present-progressive); `TOOL_SUMMARY` map and `summarize_tool_activity()` for post-hoc tool activity summaries (present-progressive matching active style); `format_tool_name()` for formatting MCP tool names into human-readable labels in fallback paths | Shared between REPL and Telegram channels |
 
 ### Event Rendering
 
@@ -93,7 +93,7 @@ The key components:
 | `Status` | Transient italic message sent via `handle_status()` method; replaced when the first TextChunk or ToolActivity arrives |
 | `Error` | Separate error message sent to chat; conversation continues if recoverable |
 
-**Tool display format:** Uses shared `TOOL_DISPLAY` map from `display.py` for live status lines — present-progressive format with wrench icon in blockquote (e.g., "> 🔧 Reading src/main.py"). Known tools show contextual present-progressive details; unknown tools fall back to tool name with ellipsis. Both are rendered with wrench icon in blockquote format. At tool→text transitions, `summarize_tool_activity()` generates a post-hoc summary from the collected activities using `TOOL_SUMMARY` — present-progressive format matching active display (e.g., "> 🔧 Reading 3 files and searching for 'config'").
+**Tool display format:** Uses shared `TOOL_DISPLAY` map from `display.py` for live status lines — present-progressive format with wrench icon in blockquote (e.g., "> 🔧 Reading src/main.py"). Known tools show contextual present-progressive details; unknown tools fall back to tool name with ellipsis — MCP tool names (starting with `mcp__`) are first formatted into human-readable labels via `format_tool_name()` (e.g., `mcp__projects__list_projects` becomes "List Projects"). Both are rendered with wrench icon in blockquote format. At tool→text transitions, `summarize_tool_activity()` generates a post-hoc summary from the collected activities using `TOOL_SUMMARY` — present-progressive format matching active display (e.g., "> 🔧 Reading 3 files and searching for 'config'").
 
 ### Cross-Layer Contracts
 
