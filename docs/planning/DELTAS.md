@@ -113,7 +113,7 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 **Description**: Build an eval suite for the skills context provider using the evaluation framework (DLT-015). Tests whether the right skills are being detected and injected for given input messages. Test cases should cover: detecting relevant skills when they exist, not injecting irrelevant skills that waste context, handling messages where no skills apply, prioritizing when multiple skills match, and correctly loading skill content into agent context. Measures precision (no irrelevant skills injected) and recall (applicable skills not missed) of the skill detection process.
 
 ### DLT-024: Package and install agent as a uv tool
-**Status**: ⧗ Plan
+**Status**: ✓ Plan
 **Depends on**: None
 **Priority**: 3 (Medium)
 **Complexity**: Medium
