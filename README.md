@@ -17,9 +17,46 @@ Unlike traditional AI assistants that are stateless and reactive, Tachikoma main
 
 - Python 3.12+
 - [uv](https://docs.astral.sh/uv/)
-- [just](https://github.com/casey/just) (optional, for task running)
 
-## Setup
+## Installation
+
+```bash
+uv tool install tachikoma
+```
+
+### Prerequisites
+
+- [uv](https://docs.astral.sh/uv/getting-started/installation/) installed
+- Python 3.12 or later
+- An [Anthropic API key](https://console.anthropic.com/)
+
+### First Run
+
+```bash
+# Set your API key
+export ANTHROPIC_API_KEY="your-key-here"
+
+# Run the agent (starts with REPL channel by default)
+tachikoma
+
+# Or explicitly use the run subcommand
+tachikoma run
+
+# Use Telegram channel instead
+tachikoma run --channel telegram
+```
+
+On first run, Tachikoma auto-generates its configuration file at `~/.config/tachikoma/config.toml`.
+
+### Upgrading
+
+```bash
+uv tool upgrade tachikoma
+```
+
+## Development
+
+[just](https://github.com/casey/just) is used as a task runner for common development commands.
 
 ```bash
 # Clone the repository
@@ -27,22 +64,11 @@ git clone https://github.com/asermax/tachikoma.git
 cd tachikoma
 
 # Install dependencies
-uv sync
-```
+just install
 
-## Usage
-
-```bash
 # Run the agent
 just run
 
-# Or directly
-PYTHONPATH=src uv run python -m tachikoma
-```
-
-## Development
-
-```bash
 # Run tests
 just test
 
@@ -59,21 +85,10 @@ just typecheck
 just check
 ```
 
-## Project Structure
-
-```
-src/tachikoma/
-├── coordinator.py   # Core coordinator agent
-├── adapter.py       # Agent adapter layer
-├── events.py        # Event system
-├── repl.py          # Interactive REPL interface
-└── __main__.py      # Entry point
-```
-
 ## Status
 
 Early development (v0.1.0). See [VISION.md](docs/planning/VISION.md) for the full project vision and [DELTAS.md](docs/planning/DELTAS.md) for the feature inventory.
 
 ## License
 
-Private — not yet licensed for distribution.
+[MIT](LICENSE)
