@@ -486,9 +486,9 @@ class TestNotificationGeneration:
         call_args = mock_fork.call_args
         assert call_args[0][1] == "Summarize what you accomplished"
 
-        # Verify notification uses generated text
+        # Verify notification uses coordinator-routed prompt with fork output
         assert len(dispatched_events) == 1
-        assert dispatched_events[0].message == "Task completed: updated 3 files"
+        assert "Task completed: updated 3 files" in dispatched_events[0].prompt
         assert dispatched_events[0].severity == "info"
 
     @pytest.mark.asyncio
@@ -560,9 +560,9 @@ class TestNotificationGeneration:
                 ):
                     await executor.execute(instance)
 
-        # Verify fallback to evaluator feedback
+        # Verify fallback: prompt includes evaluator feedback since fork failed
         assert len(dispatched_events) == 1
-        assert dispatched_events[0].message == "Evaluator says done"
+        assert "Evaluator says done" in dispatched_events[0].prompt
         assert dispatched_events[0].severity == "info"
 
     @pytest.mark.asyncio
@@ -635,9 +635,9 @@ class TestNotificationGeneration:
         # Fork should NOT have been called
         mock_fork.assert_not_awaited()
 
-        # Fallback to evaluator feedback
+        # Fallback to evaluator feedback in prompt
         assert len(dispatched_events) == 1
-        assert dispatched_events[0].message == "Evaluator feedback"
+        assert "Evaluator feedback" in dispatched_events[0].prompt
 
     @pytest.mark.asyncio
     async def test_error_with_notify_set_bypasses_fork(self, repo: TaskRepository) -> None:
@@ -706,10 +706,10 @@ class TestNotificationGeneration:
         # Fork should NOT have been called for error notifications
         mock_fork.assert_not_awaited()
 
-        # Error notification with raw message, not the notify prompt
+        # Error notification with error prompt, not the notify prompt
         assert len(dispatched_events) == 1
         assert dispatched_events[0].severity == "error"
-        assert "Agent is looping" in dispatched_events[0].message
+        assert "Agent is looping" in dispatched_events[0].prompt
 
     @pytest.mark.asyncio
     async def test_transient_instance_no_fork(self, repo: TaskRepository) -> None:

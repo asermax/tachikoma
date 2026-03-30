@@ -77,7 +77,7 @@ class Repl:
         self._coordinator = coordinator
         self._renderer = Renderer()
         self._bus = bus
-        self._task_queue: asyncio.Queue[SessionTaskReady] = asyncio.Queue()
+        self._task_queue: asyncio.Queue[SessionTaskReady | TaskNotification] = asyncio.Queue()
 
         kb = KeyBindings()
 
@@ -140,9 +140,9 @@ class Repl:
                 break
 
     async def _process_queued_tasks(self) -> None:
-        """Process any queued session tasks without blocking.
+        """Process any queued session tasks and notifications without blocking.
 
-        Drains the queue of all pending tasks and processes them.
+        Drains the queue of all pending items and processes them.
         """
         while not self._task_queue.empty():
             try:
@@ -150,7 +150,28 @@ class Repl:
             except asyncio.QueueEmpty:
                 break
 
-            await self._execute_session_task(event)
+            if isinstance(event, SessionTaskReady):
+                await self._execute_session_task(event)
+            elif isinstance(event, TaskNotification):
+                await self._execute_notification(event)
+
+    async def _execute_through_coordinator(self, prompt: str) -> bool:
+        """Send a prompt through the coordinator and render the response.
+
+        Returns False if the REPL should exit.
+        """
+        try:
+            self._coordinator.enqueue(prompt)
+            async for ev in self._coordinator.send_message():
+                if not self._renderer.render(ev):
+                    return False
+        except Exception as e:
+            _log.exception("Error processing message through coordinator")
+            self._renderer._err_console.print(
+                f"Error: {e}",
+                style="bold red",
+            )
+        return True
 
     async def _execute_session_task(self, event: SessionTaskReady) -> None:
         """Execute a session task by sending it through the coordinator."""
@@ -165,22 +186,11 @@ class Repl:
             "\n[dim italic]📋 Scheduled task:[/dim italic]",
         )
 
-        try:
-            self._coordinator.enqueue(instance.prompt)
-            async for ev in self._coordinator.send_message():
-                if not self._renderer.render(ev):
-                    return
+        if not await self._execute_through_coordinator(instance.prompt):
+            return
 
-            # Mark task as completed via callback
-            if event.on_complete is not None:
-                await event.on_complete()
-
-        except Exception as e:
-            _log.exception("Error during session task processing")
-            self._renderer._err_console.print(
-                f"Error processing task: {e}",
-                style="bold red",
-            )
+        if event.on_complete is not None:
+            await event.on_complete()
 
     async def _handle_session_task(self, event: SessionTaskReady) -> None:
         """Handle a SessionTaskReady event from the task scheduler.
@@ -193,17 +203,25 @@ class Repl:
     async def _handle_notification(self, event: TaskNotification) -> None:
         """Handle a TaskNotification event from the background task executor.
 
-        Notifications are printed directly to the console.
+        Queues the notification for processing in the main REPL loop,
+        following the same pattern as session tasks.
         """
-        severity_style = "dim italic blue" if event.severity == "info" else "bold yellow"
-        severity_label = "ℹ️" if event.severity == "info" else "⚠️"
+        _log.debug(
+            "Queueing notification: source={source}",
+            source=event.source_task_id,
+        )
+        await self._task_queue.put(event)
 
+    async def _execute_notification(self, event: TaskNotification) -> None:
+        """Execute a notification by sending it through the coordinator."""
         _log.info(
-            "Task notification: severity={severity}, source={source}",
+            "Processing task notification: severity={severity}, source={source}",
             severity=event.severity,
             source=event.source_task_id,
         )
 
         self._renderer._console.print(
-            f"\n{severity_label} [{severity_style}]{event.message}[/{severity_style}]",
+            "\n[dim italic]📋 Task notification:[/dim italic]",
         )
+
+        await self._execute_through_coordinator(event.prompt)

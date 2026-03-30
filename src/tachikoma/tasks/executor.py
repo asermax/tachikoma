@@ -53,6 +53,21 @@ class _PreprocessingResult:
 
 _log = logger.bind(component="task_executor")
 
+# Prompt templates for coordinator-routed notifications
+NOTIFICATION_PROMPT = (
+    "A background task has completed. Deliver this notification to the user, "
+    "keeping your message concise.\n\n"
+    "Task: {task_summary}\n"
+    "{notification_text}"
+)
+
+NOTIFICATION_ERROR_PROMPT = (
+    "A background task has failed. Inform the user about the failure, "
+    "keeping your message concise.\n\n"
+    "Task: {task_summary}\n"
+    "Error: {error_message}"
+)
+
 # How often the background task runner checks for pending instances
 RUNNER_CHECK_INTERVAL_SECONDS = 30
 
@@ -552,15 +567,17 @@ class BackgroundTaskExecutor:
         message: str,
         severity: Literal["info", "error"],
     ) -> None:
-        """Dispatch TaskNotification event.
+        """Dispatch TaskNotification event with coordinator-routed prompt.
 
         Only dispatches if:
         - Task completed successfully and definition has non-null notify field, OR
         - Task failed (always notify on failure)
 
         For success notifications with ``definition.notify`` set, forks the
-        task's SDK session with the notify prompt to generate a context-aware
-        notification message. Falls back to the evaluator feedback on failure.
+        task's SDK session with the notify prompt to generate context-aware
+        notification text. The generated text is then wrapped in a coordinator-
+        routed prompt template. Error notifications use a direct error template
+        (no fork).
 
         Args:
             instance: The task instance
@@ -571,25 +588,38 @@ class BackgroundTaskExecutor:
         """
         # Check if we should notify
         should_notify = False
-        notification_message = message
+        notification_prompt: str = ""
 
         if severity == "error":
-            # Always notify on failure
+            # Always notify on failure — use error template directly
             should_notify = True
+            task_summary = instance.prompt[:200] if instance.prompt else "unknown"
+            notification_prompt = NOTIFICATION_ERROR_PROMPT.format(
+                task_summary=task_summary,
+                error_message=message,
+            )
         elif definition is not None and definition.notify:
             # Notify on success if definition.notify is set
             should_notify = True
-            notification_message = await self._generate_notification(
+
+            # Fork task session to generate context-aware notification text
+            task_summary = instance.prompt[:200] if instance.prompt else "unknown"
+            notification_text = await self._generate_notification(
                 sdk_session_id,
                 definition.notify,
                 fallback=message,
+            )
+
+            notification_prompt = NOTIFICATION_PROMPT.format(
+                task_summary=task_summary,
+                notification_text=notification_text,
             )
 
         if not should_notify:
             return
 
         event = TaskNotification(
-            message=notification_message,
+            prompt=notification_prompt,
             source_task_id=instance.id,
             severity=severity,
         )

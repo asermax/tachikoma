@@ -549,25 +549,22 @@ class TelegramChannel:
     async def _handle_notification(self, event: TaskNotification) -> None:
         """Handle a TaskNotification event from the background task executor.
 
-        Notifications are delivered directly to the user via Telegram message.
+        Routes the notification prompt through the coordinator pipeline,
+        following the same delivery pattern as session tasks.
         """
-        severity_emoji = "ℹ️" if event.severity == "info" else "⚠️"
-        message = f"{severity_emoji} {event.message}"
-
         _log.info(
-            "Sending task notification: severity={severity}, source={source}",
+            "Routing task notification: severity={severity}, source={source}",
             severity=event.severity,
             source=event.source_task_id,
         )
 
-        try:
-            await self._bot.send_message(
-                self._settings.authorized_chat_id,
-                message,
-                parse_mode=None,
-            )
-        except TelegramAPIError:
-            _log.exception("Failed to send task notification")
+        self._coordinator.enqueue(event.prompt)
+
+        if self._is_processing:
+            _log.debug("Buffered task notification mid-stream")
+            return
+
+        await self._process_through_coordinator()
 
 
 async def telegram_hook(ctx: BootstrapContext) -> None:

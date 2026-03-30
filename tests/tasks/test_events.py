@@ -56,41 +56,41 @@ class TestTaskNotification:
     def test_construction_info(self) -> None:
         """AC: TaskNotification event is created with info severity."""
         event = TaskNotification(
-            message="Task completed successfully",
+            prompt="A background task has completed. Deliver this to the user.",
             source_task_id="task-123",
             severity="info",
         )
 
-        assert event.message == "Task completed successfully"
+        assert event.prompt == "A background task has completed. Deliver this to the user."
         assert event.source_task_id == "task-123"
         assert event.severity == "info"
 
     def test_construction_error(self) -> None:
         """AC: TaskNotification event is created with error severity."""
         event = TaskNotification(
-            message="Task failed: timeout",
+            prompt="A background task has failed. Inform the user.",
             source_task_id="task-456",
             severity="error",
         )
 
-        assert event.message == "Task failed: timeout"
+        assert event.prompt == "A background task has failed. Inform the user."
         assert event.source_task_id == "task-456"
         assert event.severity == "error"
 
     def test_defaults(self) -> None:
         """AC: TaskNotification has sensible defaults."""
-        event = TaskNotification(message="Notification")
+        event = TaskNotification(prompt="Notification")
 
-        assert event.message == "Notification"
+        assert event.prompt == "Notification"
         assert event.source_task_id is None
         assert event.severity == "info"  # default
 
     def test_severity_literal(self) -> None:
         """AC: severity must be 'info' or 'error'."""
         # Valid values
-        TaskNotification(message="test", severity="info")
-        TaskNotification(message="test", severity="error")
+        TaskNotification(prompt="test", severity="info")
+        TaskNotification(prompt="test", severity="error")
 
         # Invalid value should raise
         with pytest.raises(Exception):  # Pydantic ValidationError
-            TaskNotification(message="test", severity="warning")
+            TaskNotification(prompt="test", severity="warning")
