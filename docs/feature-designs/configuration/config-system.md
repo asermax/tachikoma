@@ -164,7 +164,7 @@ flowchart TD
 ### CLI override flow (runtime-only)
 
 ```
-1. CLI parses flag (e.g., --channel telegram)
+1. CLI run subcommand parses flag (e.g., tachikoma run --channel telegram)
 2. Module calls settings_manager.update_root("channel", "telegram")
 3. SettingsManager validates key against Settings.model_fields (root level)
 4. Updates the in-memory tomlkit document (root-level key)
@@ -254,7 +254,7 @@ flowchart TD
 ### update_root() and reload() for CLI overrides
 
 **Choice**: Add `update_root(key, value)` and `reload()` methods to SettingsManager for runtime-only CLI overrides
-**Why**: CLI flags like `--channel telegram` need to override config values without modifying the TOML file. The existing `update()` only supports section-level keys. `update_root()` handles root-level fields (like `channel`), and `reload()` reapplies the frozen Settings from the in-memory TOML without file I/O.
+**Why**: CLI flags like `tachikoma run --channel telegram` need to override config values without modifying the TOML file. The `--channel` flag is scoped to the `run` subcommand; bare `tachikoma` invocation uses defaults. The existing `update()` only supports section-level keys. `update_root()` handles root-level fields (like `channel`), and `reload()` reapplies the frozen Settings from the in-memory TOML without file I/O.
 **Alternatives Considered**:
 - Mutate Settings directly: Pydantic frozen models can't be mutated
 - Separate CLI config object: Duplicates logic, two sources of truth

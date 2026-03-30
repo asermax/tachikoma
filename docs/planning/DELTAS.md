@@ -65,7 +65,7 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 
 ### DLT-011: Run as a persistent background service
 **Status**: ✗ Defined
-**Depends on**: DLT-024
+**Depends on**: None
 **Priority**: 2 (High)
 **Complexity**: Easy
 **Description**: Run the assistant as a persistent background process that starts automatically on system boot and restarts on failure. This delta covers service lifecycle and process management only — it ensures the application is always running and recovers from crashes. Specific reconnection logic (Telegram) and state persistence (memory files) are handled by their respective deltas. Implementation should use standard Linux service management (e.g., systemd) appropriate for a single-user, self-hosted deployment.
@@ -111,13 +111,6 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 **Priority**: 5 (Backlog)
 **Complexity**: Easy
 **Description**: Build an eval suite for the skills context provider using the evaluation framework (DLT-015). Tests whether the right skills are being detected and injected for given input messages. Test cases should cover: detecting relevant skills when they exist, not injecting irrelevant skills that waste context, handling messages where no skills apply, prioritizing when multiple skills match, and correctly loading skill content into agent context. Measures precision (no irrelevant skills injected) and recall (applicable skills not missed) of the skill detection process.
-
-### DLT-024: Package and install agent as a uv tool
-**Status**: ✓ Implementation
-**Depends on**: None
-**Priority**: 3 (Medium)
-**Complexity**: Medium
-**Description**: Package the agent as an installable CLI tool using uv, enabling easy installation and updates via `uv tool install tachikoma` from PyPI. This delta covers project packaging configuration (pyproject.toml entry points, build system, metadata), CLI restructuring to support subcommands (`tachikoma run` with `--channel` flag, bare `tachikoma` defaults to `run`), a GitHub Actions CD pipeline with automatic semantic versioning (python-semantic-release with conventional commits, CHANGELOG.md generation), PyPI publishing via trusted publisher (OIDC), and installation documentation. The CLI entry point is the main way users launch the agent — it wires up the agent architecture, loads configuration, and starts the main loop.
 
 ### DLT-031: Granular processing status messages
 **Status**: ✗ Defined
@@ -282,7 +275,7 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 
 ### DLT-060: Check for agent updates and notify user
 **Status**: ✗ Defined
-**Depends on**: DLT-024
+**Depends on**: None
 **Priority**: 4 (Low)
 **Complexity**: Medium
 **Description**: Users running the agent need to stay current with bug fixes and features without manually checking for releases. This delta periodically checks for newer versions, notifies the user through their active channel when an update is available, and captures their choice (confirm, defer, or skip). Configuration includes how often checks occur. The apply action is handled by a separate delta.

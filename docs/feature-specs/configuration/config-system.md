@@ -103,6 +103,6 @@ The `[tasks]` section configures task scheduler parameters. Unlike `[telegram]`,
 CLI flags can override configuration values at runtime without modifying the config file. Overrides apply via `SettingsManager.update_root()` followed by `reload()`.
 
 **Acceptance Criteria**:
-- Given a `--channel telegram` flag, when the application starts, then `settings.channel` is "telegram" for that session regardless of TOML config
+- Given `tachikoma run --channel telegram`, when the application starts, then `settings.channel` is "telegram" for that session regardless of TOML config
 - Given a CLI override, when the application is running, then the override value is used but the config file is not modified
 - Given a CLI override is applied, when `settings_manager.reload()` is called, then the frozen Settings snapshot reflects the merged result
