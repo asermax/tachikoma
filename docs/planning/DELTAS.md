@@ -447,3 +447,10 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 **Priority**: 4 (Low)
 **Complexity**: Hard
 **Description**: When Tachikoma runs on a remote server, the user needs to manage it from their local machine without SSH-ing in and running CLI commands directly. Add a lightweight command listener that runs as a separate process alongside the main Tachikoma process, accepting management commands (pause/resume tasks, close sessions, reload config, query status) over a network interface. A companion client on the local machine connects to this listener, enabling remote administration without interrupting active conversations. The IPC mechanism and security model (authentication, encryption) should be evaluated during speccing.
+
+### DLT-084: Resume matching conversation on return after restart
+**Status**: ✗ Defined
+**Depends on**: None
+**Priority**: 2 (High)
+**Complexity**: Easy
+**Description**: When a user sends a message after a restart, the system always starts a new conversation even if the message relates to a recently discussed topic. This delta enables the system to check the incoming message against recent closed session summaries and resume the matching conversation instead of starting fresh, providing seamless topic continuation across process restarts.
