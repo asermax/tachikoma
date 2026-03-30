@@ -31,6 +31,7 @@ class Session:
     summary: str | None = None
     ended_at: datetime | None = None
     last_resumed_at: datetime | None = None
+    processed_at: datetime | None = None
 
     @property
     def status(self) -> SessionStatus:
@@ -101,6 +102,7 @@ class SessionRecord(Base):
     started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
     last_resumed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
+    processed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
 
     __table_args__ = (Index("ix_sessions_started_at", "started_at"),)
 
@@ -118,6 +120,7 @@ class SessionRecord(Base):
             started_at=ensure_utc(self.started_at),  # type: ignore[arg-type]
             ended_at=ensure_utc(self.ended_at),
             last_resumed_at=ensure_utc(self.last_resumed_at),
+            processed_at=ensure_utc(self.processed_at),
         )
 
 

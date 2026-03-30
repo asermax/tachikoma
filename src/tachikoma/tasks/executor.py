@@ -26,6 +26,7 @@ from tachikoma.pre_processing import McpServerConfig, PreProcessingPipeline, ass
 from tachikoma.projects.context_provider import ProjectsContextProvider
 from tachikoma.projects.processor import ProjectsProcessor
 from tachikoma.sessions.model import Session
+from tachikoma.sessions.registry import SessionRegistry
 from tachikoma.skills.context_provider import SkillsContextProvider
 from tachikoma.tasks.events import TaskNotification
 from tachikoma.tasks.model import TaskDefinition, TaskInstance
@@ -92,6 +93,7 @@ async def background_task_runner(
     bus: EventBus,
     agent_defaults: AgentDefaults,
     skill_registry: "SkillRegistry",
+    session_registry: SessionRegistry,
 ) -> None:
     """Async loop that picks up and executes pending background tasks.
 
@@ -104,6 +106,7 @@ async def background_task_runner(
         bus: EventBus for dispatching TaskNotification events
         agent_defaults: Common SDK options (cwd, cli_path, env)
         skill_registry: Shared skill registry for SkillsContextProvider
+        session_registry: SessionRegistry for post-processing pipeline
     """
     semaphore = asyncio.Semaphore(settings.max_concurrent_background)
     running_tasks: dict[str, asyncio.Task[None]] = {}
@@ -140,6 +143,7 @@ async def background_task_runner(
                             bus=bus,
                             agent_defaults=agent_defaults,
                             skill_registry=skill_registry,
+                            session_registry=session_registry,
                         )
                         await executor.execute(inst)
 
@@ -204,6 +208,7 @@ class BackgroundTaskExecutor:
         bus: EventBus,
         agent_defaults: AgentDefaults,
         skill_registry: "SkillRegistry",
+        session_registry: SessionRegistry,
     ) -> None:
         self._repository = repository
         self._settings = settings
@@ -211,6 +216,7 @@ class BackgroundTaskExecutor:
         self._agent_defaults = agent_defaults
         self._cwd = agent_defaults.cwd
         self._skill_registry = skill_registry
+        self._session_registry = session_registry
 
     async def execute(self, instance: TaskInstance) -> None:
         """Execute a background task instance.
@@ -492,7 +498,7 @@ class BackgroundTaskExecutor:
                 transcript_path=None,
             )
 
-            pipeline = PostProcessingPipeline()
+            pipeline = PostProcessingPipeline(self._session_registry)
             pipeline.register(
                 EpisodicProcessor(self._agent_defaults),
                 phase="main",

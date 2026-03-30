@@ -52,6 +52,7 @@ class SessionRepository:
                 started_at=session.started_at,
                 ended_at=session.ended_at,
                 last_resumed_at=session.last_resumed_at,
+                processed_at=session.processed_at,
             )
 
             async with self._session_factory() as db:

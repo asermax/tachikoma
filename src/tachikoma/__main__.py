@@ -127,7 +127,7 @@ async def main(
     )
 
     # Create and configure the session post-processing pipeline
-    pipeline = PostProcessingPipeline()
+    pipeline = PostProcessingPipeline(registry)
     pipeline.register(EpisodicProcessor(agent_defaults))
     pipeline.register(FactsProcessor(agent_defaults))
     pipeline.register(PreferencesProcessor(agent_defaults))
@@ -195,6 +195,7 @@ async def main(
                         bus,
                         agent_defaults,
                         skill_registry,
+                        registry,
                     ),
                     name="background_task_runner",
                 )

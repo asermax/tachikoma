@@ -26,6 +26,12 @@ def _mock_skill_registry() -> MagicMock:
     return MagicMock()
 
 
+def _mock_session_registry() -> MagicMock:
+    registry = MagicMock()
+    registry.mark_processed = AsyncMock()
+    return registry
+
+
 def _mock_preproc_result(prompt: str = "Test task") -> _PreprocessingResult:
     return _PreprocessingResult(prompt=prompt)
 
@@ -92,6 +98,7 @@ class TestBackgroundTaskRunner:
                     bus,
                     AgentDefaults(cwd=Path("/tmp")),
                     _mock_skill_registry(),
+                    _mock_session_registry(),
                 )
             )
             await asyncio.sleep(0.2)
@@ -136,6 +143,7 @@ class TestBackgroundTaskRunner:
                     bus,
                     AgentDefaults(cwd=Path("/tmp")),
                     _mock_skill_registry(),
+                    _mock_session_registry(),
                 )
             )
             await asyncio.sleep(0.5)
@@ -164,6 +172,7 @@ class TestBackgroundTaskRunner:
                     bus,
                     AgentDefaults(cwd=Path("/tmp")),
                     _mock_skill_registry(),
+                    _mock_session_registry(),
                 )
             )
             await asyncio.sleep(0.2)
@@ -205,6 +214,7 @@ class TestBackgroundTaskExecutor:
             bus=bus,
             agent_defaults=AgentDefaults(cwd=Path("/tmp")),
             skill_registry=_mock_skill_registry(),
+            session_registry=_mock_session_registry(),
         )
 
         # Mock SDK client and evaluator
@@ -268,6 +278,7 @@ class TestBackgroundTaskExecutor:
             bus=bus,
             agent_defaults=AgentDefaults(cwd=Path("/tmp")),
             skill_registry=_mock_skill_registry(),
+            session_registry=_mock_session_registry(),
         )
 
         # Mock SDK client to raise exception
@@ -322,6 +333,7 @@ class TestBackgroundTaskExecutor:
             bus=bus,
             agent_defaults=AgentDefaults(cwd=Path("/tmp")),
             skill_registry=_mock_skill_registry(),
+            session_registry=_mock_session_registry(),
         )
 
         # Mock SDK client and evaluator
@@ -371,6 +383,7 @@ class TestBackgroundTaskExecutor:
             bus=bus,
             agent_defaults=AgentDefaults(cwd=Path("/tmp")),
             skill_registry=_mock_skill_registry(),
+            session_registry=_mock_session_registry(),
         )
 
         with patch("tachikoma.tasks.executor.ClaudeSDKClient") as mock_client_class:
@@ -439,6 +452,7 @@ class TestNotificationGeneration:
             bus=bus,
             agent_defaults=AgentDefaults(cwd=Path("/tmp")),
             skill_registry=_mock_skill_registry(),
+            session_registry=_mock_session_registry(),
         )
 
         with patch("tachikoma.tasks.executor.ClaudeSDKClient") as mock_client_class:
@@ -515,6 +529,7 @@ class TestNotificationGeneration:
             bus=bus,
             agent_defaults=AgentDefaults(cwd=Path("/tmp")),
             skill_registry=_mock_skill_registry(),
+            session_registry=_mock_session_registry(),
         )
 
         with patch("tachikoma.tasks.executor.ClaudeSDKClient") as mock_client_class:
@@ -585,6 +600,7 @@ class TestNotificationGeneration:
             bus=bus,
             agent_defaults=AgentDefaults(cwd=Path("/tmp")),
             skill_registry=_mock_skill_registry(),
+            session_registry=_mock_session_registry(),
         )
 
         with patch("tachikoma.tasks.executor.ClaudeSDKClient") as mock_client_class:
@@ -658,6 +674,7 @@ class TestNotificationGeneration:
             bus=bus,
             agent_defaults=AgentDefaults(cwd=Path("/tmp")),
             skill_registry=_mock_skill_registry(),
+            session_registry=_mock_session_registry(),
         )
 
         with patch("tachikoma.tasks.executor.ClaudeSDKClient") as mock_client_class:
@@ -722,6 +739,7 @@ class TestNotificationGeneration:
             bus=bus,
             agent_defaults=AgentDefaults(cwd=Path("/tmp")),
             skill_registry=_mock_skill_registry(),
+            session_registry=_mock_session_registry(),
         )
 
         with patch("tachikoma.tasks.executor.ClaudeSDKClient") as mock_client_class:

@@ -7,6 +7,7 @@ other post-conversation handlers.
 
 import asyncio
 from abc import ABC, abstractmethod
+from datetime import datetime
 
 from claude_agent_sdk import ClaudeAgentOptions, query
 from claude_agent_sdk.types import (
@@ -20,6 +21,7 @@ from loguru import logger
 
 from tachikoma.agent_defaults import AgentDefaults
 from tachikoma.sessions.model import Session
+from tachikoma.sessions.registry import SessionRegistry
 
 _log = logger.bind(component="post_processing")
 
@@ -108,9 +110,15 @@ def augment_prompt_for_resumption(prompt: str, session: Session) -> str:
 class PostProcessingPipeline:
     """Runs registered PostProcessor instances in parallel with error isolation.
 
+    Manages processing state: a transient ``is_processing`` flag prevents
+    concurrent re-entry, and ``mark_processed`` is called on the session
+    registry after all phases complete.  The ``needs_processing`` method
+    encapsulates the "should we run?" check used by both the idle loop
+    and shutdown.
+
     Usage::
 
-        pipeline = PostProcessingPipeline()
+        pipeline = PostProcessingPipeline(registry)
         pipeline.register(EpisodicProcessor(cwd))
         pipeline.register(FactsProcessor(cwd))
         await pipeline.run(session)
@@ -122,10 +130,35 @@ class PostProcessingPipeline:
     # Phase execution order
     _phase_order = [MAIN_PHASE, PRE_FINALIZE_PHASE, FINALIZE_PHASE]
 
-    def __init__(self) -> None:
+    def __init__(self, registry: SessionRegistry) -> None:
         # Pre-populate phases so register() can append without KeyError
         self._phases: dict[str, list[PostProcessor]] = {p: [] for p in _VALID_PHASES}
         self._lock = asyncio.Lock()
+        self._registry = registry
+        self._is_processing = False
+
+    @property
+    def is_processing(self) -> bool:
+        """Whether the pipeline is currently executing."""
+        return self._is_processing
+
+    def needs_processing(
+        self, session: Session, last_message_time: datetime | None
+    ) -> bool:
+        """Whether the session has unprocessed content.
+
+        Returns False if the pipeline is already running or if
+        ``session.processed_at`` is at or after ``last_message_time``
+        (meaning all content has already been processed).
+        """
+        if self._is_processing:
+            return False
+
+        return not (
+            session.processed_at is not None
+            and last_message_time is not None
+            and session.processed_at >= last_message_time
+        )
 
     def register(self, processor: PostProcessor, phase: str = MAIN_PHASE) -> None:
         """Register a processor to run on pipeline execution.
@@ -147,45 +180,61 @@ class PostProcessingPipeline:
     async def run(self, session: Session) -> None:
         """Run all registered processors in sequential phases.
 
-        Phases run in order (main → pre_finalize → finalize). Within each phase,
-        processors run in parallel. Acquires an internal lock to serialize
-        concurrent invocations.
+        Sets ``is_processing`` before acquiring the lock (for immediate
+        caller visibility), runs phases in order (main → pre_finalize →
+        finalize) with processors parallel within each phase, then marks
+        the session as processed via the registry.
 
         Individual processor failures are logged per DES-002 but don't
         propagate or prevent subsequent phases from running.
         """
-        async with self._lock:
-            _log.info("Pipeline started: session={sid}", sid=session.id[:8])
+        self._is_processing = True
 
-            for phase in self._phase_order:
-                processors = self._phases[phase]
-                if not processors:
-                    continue
+        try:
+            async with self._lock:
+                _log.info("Pipeline started: session={sid}", sid=session.id[:8])
 
-                names = [p.__class__.__name__ for p in processors]
-                _log.info(
-                    "Phase started: phase={phase} processors={names}",
-                    phase=phase,
-                    names=names,
-                )
+                for phase in self._phase_order:
+                    processors = self._phases[phase]
+                    if not processors:
+                        continue
 
-                results = await asyncio.gather(
-                    *[p.process(session) for p in processors],
-                    return_exceptions=True,
-                )
+                    names = [p.__class__.__name__ for p in processors]
+                    _log.info(
+                        "Phase started: phase={phase} processors={names}",
+                        phase=phase,
+                        names=names,
+                    )
 
-                for processor, result in zip(processors, results, strict=True):
-                    if isinstance(result, BaseException):
-                        _log.exception(
-                            "Processor failed: processor={name} phase={phase} err={err}",
-                            name=processor.__class__.__name__,
-                            phase=phase,
-                            err=str(result),
-                        )
+                    results = await asyncio.gather(
+                        *[p.process(session) for p in processors],
+                        return_exceptions=True,
+                    )
 
-                _log.info("Phase completed: phase={phase}", phase=phase)
+                    for processor, result in zip(processors, results, strict=True):
+                        if isinstance(result, BaseException):
+                            _log.exception(
+                                "Processor failed: processor={name} phase={phase} err={err}",
+                                name=processor.__class__.__name__,
+                                phase=phase,
+                                err=str(result),
+                            )
 
-            _log.info("Pipeline completed: session={sid}", sid=session.id[:8])
+                    _log.info("Phase completed: phase={phase}", phase=phase)
+
+                _log.info("Pipeline completed: session={sid}", sid=session.id[:8])
+
+                try:
+                    await self._registry.mark_processed(session.id)
+                except Exception as exc:
+                    _log.exception(
+                        "Failed to mark session as processed: session={sid} err={err}",
+                        sid=session.id[:8],
+                        err=str(exc),
+                    )
+
+        finally:
+            self._is_processing = False
 
 
 async def fork_and_consume(

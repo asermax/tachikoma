@@ -126,6 +126,22 @@ class SessionRegistry:
             len=len(summary),
         )
 
+    async def mark_processed(self, session_id: str) -> None:
+        """Mark a session as post-processed by setting processed_at.
+
+        Updates the in-memory active session reference if it matches.
+
+        Args:
+            session_id: The ID of the session to mark as processed.
+        """
+        now = datetime.now(UTC)
+        await self._repository.update(session_id, processed_at=now)
+
+        if self._active_session is not None and self._active_session.id == session_id:
+            self._active_session = replace(self._active_session, processed_at=now)
+
+        _log.debug("Session marked as processed: session_id={id}", id=session_id)
+
     async def get_active_session(self) -> Session | None:
         """Return the currently active session, or None if no session is open."""
         return self._active_session
