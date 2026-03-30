@@ -475,3 +475,10 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 **Priority**: 1 (Critical)
 **Complexity**: Easy
 **Description**: Claude Code ships with a built-in `Skill` tool that provides access to plugin-provided slash-command capabilities. This shadows Tachikoma's own skill subsystem — the agent conflates the two systems, attempting to invoke Tachikoma skills via the Claude Code Skill tool or ignoring Claude Code skills assuming they belong to Tachikoma's registry. This delta disables the Skill tool through the default project configuration's deny list, alongside the cron tools already blocked by DLT-073, preventing the agent from accessing Claude Code's skill system entirely. This is the immediate mitigation while the full renaming solution (DLT-074) is deferred.
+
+### DLT-088: Scheduled memory store maintenance
+**Status**: ✗ Defined
+**Depends on**: None
+**Priority**: 4 (Low)
+**Complexity**: Medium
+**Description**: A scheduled background task that periodically reviews and cleans up the memory store. The task runs on a cron schedule using the background task execution system, evaluating stored memories against maintenance criteria — such as staleness, redundancy, relevance decay, or excessive granularity in episodic entries — and consolidating, archiving, or removing entries that no longer provide value. The specific criteria and cleanup strategies should be investigated during speccing by analyzing real memory data for common patterns worth addressing.
