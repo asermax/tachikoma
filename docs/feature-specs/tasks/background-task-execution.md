@@ -46,16 +46,16 @@ After each agent response, a lightweight model assesses whether the task is comp
 
 ### Notification (R4)
 
-On completion (with `notify` set) or failure, a `TaskNotification` event is dispatched on the bus. Channels deliver notifications directly to the user.
+On completion (with `notify` set) or failure, a `TaskNotification` event is dispatched on the bus. Channels receive the event and enqueue the notification prompt into the coordinator for delivery through the standard message processing pipeline.
 
-For success notifications, the `notify` field is an instruction for generating the notification message — the task session is forked with this instruction as a prompt, and the agent generates a context-aware notification from the conversation history. Error notifications use raw error messages directly.
+For success notifications, the `notify` field is an instruction for generating context-aware notification text — the task session is forked with this instruction as a prompt, and the agent generates notification text from the conversation history. The generated text is then wrapped in a coordinator-routed prompt template (e.g., "A background task has completed. Deliver this notification to the user, keeping your message concise.") before dispatch. Error notifications use a direct error prompt template (no fork).
 
 **Acceptance Criteria**:
-- Given the evaluator determines the task is complete and the definition has a non-null `notify` field, then the task session is forked with `notify` as a prompt and the generated text is dispatched as a `TaskNotification` event with severity "info"
+- Given the evaluator determines the task is complete and the definition has a non-null `notify` field, then the task session is forked with `notify` as a prompt, the generated text is wrapped in a coordinator-routed prompt template, and a `TaskNotification` event carrying the prompt is dispatched with severity "info"
 - Given the evaluator determines the task is complete and `notify` is null, then no notification is generated
-- Given a background task fails (stuck, error, or max iterations), then a `TaskNotification` event is dispatched with severity "error" using the raw error message
-- Given notification generation fails (fork error, no session ID, or no text produced), then the evaluator's completion feedback is used as a fallback notification message
-- Given a `TaskNotification` event is received by a channel, then the notification message is sent directly to the user with appropriate severity formatting
+- Given a background task fails (stuck, error, or max iterations), then a `TaskNotification` event is dispatched with severity "error" carrying an error prompt template (no fork)
+- Given notification generation fails (fork error, no session ID, or no text produced), then the evaluator's completion feedback is used in the prompt template as a fallback
+- Given a `TaskNotification` event is received by a channel, then the notification prompt is enqueued into the coordinator for pipeline-routed delivery (same path as session tasks)
 
 ### Concurrency (R5)
 

@@ -42,4 +42,4 @@ The `EventBus` is created in `__main__.py` (not in a bootstrap hook) — this ke
 
 **Current event types:**
 - `SessionTaskReady(BaseEvent)`: carries task instance + completion callback — dispatched by session task scheduler, consumed by channels
-- `TaskNotification(BaseEvent)`: carries message + severity — dispatched by background executor, consumed by channels
+- `TaskNotification(BaseEvent)`: carries prompt + severity — dispatched by background executor, consumed by channels which enqueue the prompt into the coordinator for pipeline-routed delivery

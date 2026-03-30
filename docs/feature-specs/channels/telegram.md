@@ -164,7 +164,7 @@ The Telegram channel subscribes to task events via the event bus. Session tasks 
 **Acceptance Criteria**:
 - Given a `SessionTaskReady` event is received while idle, then the task prompt is sent through the coordinator via the shared `_process_through_coordinator()` method and the response is rendered normally
 - Given a `SessionTaskReady` event is received while a response is active, then the task prompt is buffered via `coordinator.enqueue()` and processed after the current response completes
-- Given a `TaskNotification` event is received, then the notification message is sent directly to the user in the Telegram chat with appropriate severity formatting (ℹ️ for info, ⚠️ for error)
+- Given a `TaskNotification` event is received, then the notification prompt is enqueued into the coordinator for pipeline-routed delivery (same path as session tasks) (ℹ️ for info, ⚠️ for error)
 
 ## User Flow
 
