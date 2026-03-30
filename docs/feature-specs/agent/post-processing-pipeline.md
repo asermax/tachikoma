@@ -25,6 +25,8 @@ A parallel concept — the `MessagePostProcessingPipeline` — follows a similar
 | R5 | Phase validation at registration — invalid phases rejected immediately |
 | R6 | Convenience base class for prompt-driven processors that standardizes the fork pattern (DES-004) |
 | R7 | Resumption-aware processing: processors receive session `last_resumed_at` and augment fork prompts to avoid re-extracting already-processed content |
+| R8 | Pipeline tracks processing state: a transient `is_processing` flag prevents concurrent re-entry, and `mark_processed` is called on the session registry after all phases complete |
+| R9 | Pipeline exposes `needs_processing(session, last_message_time)` to determine whether processing is needed (returns False when already processing or already processed since last message) |
 
 ## Behaviors
 
@@ -81,3 +83,16 @@ When a resumed session eventually closes, processors augment their fork prompts 
 - Given a session with `last_resumed_at` set, when `PromptDrivenProcessor.process()` runs, then the fork prompt is augmented with a resumption boundary instruction via the shared `augment_prompt_for_resumption()` helper
 - Given a session with `last_resumed_at` as None, when `PromptDrivenProcessor.process()` runs, then the fork prompt is used unchanged
 - Given a subclass that overrides `process()`, when it calls `fork_and_consume()`, then it should also apply resumption augmentation via the shared `augment_prompt_for_resumption()` helper to maintain consistency
+
+### Processing State Tracking (R8, R9)
+
+The pipeline tracks whether it is currently executing and marks the session as processed after completion. A `needs_processing` method encapsulates the "should we run?" check.
+
+**Acceptance Criteria**:
+- Given the pipeline starts running, when `is_processing` is checked, then it returns True
+- Given the pipeline finishes all phases, then `mark_processed` is called on the session registry
+- Given the pipeline run fails unexpectedly (not individual processor failures), then `mark_processed` is not called
+- Given `is_processing` is True, when `needs_processing` is checked, then it returns False
+- Given `session.processed_at >= last_message_time`, when `needs_processing` is checked, then it returns False
+- Given `session.processed_at < last_message_time`, when `needs_processing` is checked, then it returns True
+- Given the pipeline finishes, when `is_processing` is checked, then it returns False (cleared in finally)
