@@ -454,3 +454,10 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 **Priority**: 2 (High)
 **Complexity**: Easy
 **Description**: When a user sends a message after a restart, the system always starts a new conversation even if the message relates to a recently discussed topic. This delta enables the system to check the incoming message against recent closed session summaries and resume the matching conversation instead of starting fresh, providing seamless topic continuation across process restarts.
+
+### DLT-085: Tracked schema migration system
+**Status**: ✗ Defined
+**Depends on**: None
+**Priority**: 3 (Medium)
+**Complexity**: Medium
+**Description**: Replace the current pragma-based migration checks with a tracked migration system that records applied migrations in a dedicated database table. On startup, the system queries already-applied migrations and only executes new ones in order, skipping already-completed migrations entirely. This eliminates redundant schema inspection on every startup and provides a clean, extensible mechanism for adding future schema changes without accumulating pragma checks.
