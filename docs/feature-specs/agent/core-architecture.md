@@ -17,7 +17,7 @@ The core agent loop: receive a user message, pass it to the Claude agent via the
 | ID | Requirement |
 |----|-------------|
 | R0 | Core agent loop: send a user message, receive a streamed response as domain events |
-| R1 | Project structure: pyproject.toml with dependencies, src package layout, entry point |
+| R1 | Project structure: pyproject.toml with uv_build build system, `[project.scripts]` entry point, src package layout; subcommand-based CLI where bare `tachikoma` defaults to the `run` subcommand |
 | R2 | Programmatic entry point (coordinator) that channels call to send messages and get streamed responses |
 | R3 | Session lifecycle: create a per-message SDK client for each exchange, preserving conversation context across messages via resume-based session continuity. Optionally tracks sessions persistently via a session registry (see [sessions](sessions.md)) |
 | R4 | Error handling: distinguish between transient failures that allow continued use and fatal failures that require stopping |

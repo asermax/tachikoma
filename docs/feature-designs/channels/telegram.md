@@ -34,7 +34,7 @@ The Telegram channel follows the same pattern as the REPL: a `TelegramChannel` c
 ┌──────────────────────────────────────────────────────────────┐
 │                      Entry Point                              │
 │  ┌────────────────────────────────────────────────────────┐   │
-│  │  cyclopts App (--channel flag)                         │   │
+│  │  cyclopts App: run subcommand (--channel flag)          │   │
 │  │  → SettingsManager (TOML + CLI overrides)              │   │
 │  │  → Bootstrap (hooks incl. telegram validation)         │   │
 │  │  → Channel dispatch (Repl or TelegramChannel)          │   │
@@ -77,7 +77,7 @@ The key components:
 
 | Layer/Component | Responsibility | Key Decisions |
 |-----------------|----------------|---------------|
-| `src/tachikoma/__main__.py` | Cyclopts `App` entry point: parses `--channel`, creates `SettingsManager`, applies CLI overrides, runs bootstrap, dispatches to channel | Replaces bare `asyncio.run(main())` with cyclopts; integrates with SettingsManager + Bootstrap |
+| `src/tachikoma/__main__.py` | Cyclopts `App` entry point: `run()` subcommand with `--channel` flag (also the default for bare invocation); creates `SettingsManager`, applies CLI overrides, runs bootstrap, dispatches to channel | Replaces bare `asyncio.run(main())` with cyclopts; `cli()` wrapper as `[project.scripts]` entry point; integrates with SettingsManager + Bootstrap |
 | `src/tachikoma/telegram.py` | `TelegramChannel` class + `ResponseRenderer` class + `telegram_hook` function. Subscribes to `SessionTaskReady` and `TaskNotification` events via `bus.on()` at construction. Shared `_process_through_coordinator()` method handles both user messages and session task delivery. `_handle_notification()` sends notifications directly as Telegram messages with severity emoji prefix | High cohesion between channel control flow and response rendering; event bus subscriptions at construction |
 | `src/tachikoma/coordinator.py` | Existing + `enqueue()` method, `_message_buffer` queue, `has_pending_messages` property, and `_message_source()` async generator passed to `client.connect()` | Message buffer replaces steer/pending-steers pattern |
 | `src/tachikoma/config.py` | `TelegramSettings` model added to `Settings` | Extends existing config; optional section (`None` when not configured) |
@@ -276,7 +276,7 @@ The `Result` event serves as a turn boundary signal. The channel finalizes the c
 ### Startup flow (with bootstrap integration)
 
 ```
-1. cyclopts App parses CLI args (--channel flag)
+1. Entry point invoked (console script via [project.scripts] or python -m), cyclopts dispatches to run() subcommand (with --channel flag) or default_command() (bare invocation, delegates to run())
 2. Create SettingsManager(config_path)
 3. Apply CLI overrides at runtime (no save):
    └─ --channel value → update_root("channel", value) + reload()
@@ -358,7 +358,7 @@ The `Result` event serves as a turn boundary signal. The channel finalizes the c
 ### Cyclopts with SettingsManager integration
 
 **Choice**: Use cyclopts for CLI parsing, applying flag values as runtime-only overrides to SettingsManager (no persist)
-**Why**: CLI flags and TOML config are the same parameters. A `channel` field on Settings (defaulting to `"repl"`) lets users configure their default channel in TOML; the `--channel` CLI flag overrides it via `update_root()` + `reload()` without `.save()`.
+**Why**: CLI flags and TOML config are the same parameters. A `channel` field on Settings (defaulting to `"repl"`) lets users configure their default channel in TOML; the `--channel` CLI flag (on the `run` subcommand) overrides it via `update_root()` + `reload()` without `.save()`. Bare `tachikoma` invocation delegates to `run()` via `@app.default default_command()`.
 **Sources**: cyclopts docs, DLT-023 design (SettingsManager API)
 
 **Consequences**:

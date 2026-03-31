@@ -25,7 +25,7 @@ A Telegram bot that receives text messages from a single authorized user, forwar
 | R6 | Connection resilience: detect polling disconnects and reconnect automatically with backoff |
 | R7 | Graceful shutdown: clean exit on SIGTERM/SIGINT or `q` keypress (when running in a TTY); in-flight responses are sent as-is (partial text delivered) before stopping |
 | R8 | Telegram configuration: bot token and authorized chat ID stored in TOML config `[telegram]` section |
-| R9 | CLI entry point with `--channel` flag to select between REPL (default) and Telegram; CLI flags override TOML config values at runtime |
+| R9 | CLI entry point: `tachikoma run --channel` flag selects between REPL (default) and Telegram; bare `tachikoma` defaults to `run`; CLI flags override TOML config values at runtime |
 | R10 | Message validation: silently ignore empty messages and non-text content (photos, stickers, voice, etc.) |
 | R11 | Error display: surface coordinator errors (recoverable and non-recoverable) as messages in the Telegram chat |
 | R12 | Event bus integration: subscribe to task events for proactive session task delivery and direct notification display |
@@ -37,9 +37,9 @@ A Telegram bot that receives text messages from a single authorized user, forwar
 The bot connects to the Telegram API at startup, validates the bot token, and begins polling for updates. If validation fails or the API is unreachable, startup aborts with a clear error.
 
 **Acceptance Criteria**:
-- Given a valid bot token in config, when the application starts with `--channel telegram`, then the bot connects to the Telegram API and begins polling for updates
-- Given an invalid bot token, when the application starts with `--channel telegram`, then it exits with a clear error message before entering the main loop
-- Given no `[telegram]` section in config, when the application starts with `--channel telegram`, then it prompts for token and chat ID if running interactively, or exits with a clear error if non-interactive
+- Given a valid bot token in config, when the application starts with `tachikoma run --channel telegram`, then the bot connects to the Telegram API and begins polling for updates
+- Given an invalid bot token, when the application starts with `tachikoma run --channel telegram`, then it exits with a clear error message before entering the main loop
+- Given no `[telegram]` section in config, when the application starts with `tachikoma run --channel telegram`, then it prompts for token and chat ID if running interactively, or exits with a clear error if non-interactive
 - Given a valid bot token but the Telegram API is unreachable at startup, when the connection fails, then the bot retries with backoff and exits with a clear error after exhausting retries
 
 ### Message Receiving (R2)
@@ -132,14 +132,14 @@ Bot token and authorized chat ID are stored in the TOML config file. The section
 
 ### CLI Channel Selection (R9)
 
-The CLI entry point supports channel selection via flag. CLI flags override TOML config values at runtime only (no file persistence).
+The CLI entry point supports channel selection via `tachikoma run --channel`. Bare `tachikoma` invocation defaults to `tachikoma run` with default settings. CLI flags override TOML config values at runtime only (no file persistence).
 
 **Acceptance Criteria**:
-- Given no `--channel` flag, when the application starts, then the REPL channel starts (backward-compatible default)
-- Given `--channel telegram`, when the application starts, then the Telegram channel starts
-- Given `--channel repl`, when the application starts, then the REPL channel starts
+- Given `tachikoma` with no subcommand, when the application starts, then it defaults to `tachikoma run` and the REPL channel starts
+- Given `tachikoma run --channel telegram`, when the application starts, then the Telegram channel starts
+- Given `tachikoma run --channel repl`, when the application starts, then the REPL channel starts
 - Given CLI flags that override TOML config values, when the application starts, then CLI flags take precedence for that session only (no file write)
-- Given the CLI is invoked with `--help`, then available options and their descriptions are shown via cyclopts auto-generated help
+- Given the CLI is invoked with `tachikoma --help`, then available subcommands are listed (including `run`); `tachikoma run --help` shows run-specific flags including `--channel`
 
 ### Message Validation (R10)
 

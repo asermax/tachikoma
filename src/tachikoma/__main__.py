@@ -1,4 +1,8 @@
-"""Entry point for Tachikoma agent (python -m tachikoma)."""
+"""CLI entry point for Tachikoma agent.
+
+Supports both ``python -m tachikoma`` and the ``tachikoma`` console script
+installed via ``uv tool install``. Bare invocation defaults to ``tachikoma run``.
+"""
 
 import asyncio
 import sys
@@ -50,8 +54,13 @@ _log = logger.bind(component="main")
 app = App()
 
 
-@app.default
-async def main(
+def cli():
+    """Entry point for [project.scripts]."""
+    app()
+
+
+@app.command
+async def run(
     channel: Literal["repl", "telegram"] | None = None,
 ) -> None:
     """Run the Tachikoma agent.
@@ -262,4 +271,11 @@ async def main(
             await database.close()
 
 
-app()
+@app.default
+async def default_command() -> None:
+    """Default command — delegates to run."""
+    await run()
+
+
+if __name__ == "__main__":
+    cli()
