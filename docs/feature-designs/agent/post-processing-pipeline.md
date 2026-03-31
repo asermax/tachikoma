@@ -90,7 +90,8 @@ sequenceDiagram
 ```
 
 **Integration Points:**
-- Coordinator ↔ Pipeline: `pipeline.run(session)` in `__aexit__`, after session close
+- Coordinator ↔ Pipeline: `pipeline.run(session)` in `__aexit__` (shutdown), idle post-processing, and topic shifts. Callers check `pipeline.needs_processing(session, last_message_time)` before calling `run()` to skip when already processing or already processed.
+- Pipeline → SessionRegistry: `mark_processed(session.id)` after all phases complete (sets `processed_at` on the session)
 - Pipeline ↔ Processors: `register(processor, phase="main"|"pre_finalize"|"finalize")`, `process(session)` called in parallel within each phase
 - `fork_and_consume`: calls `query(prompt, options=ClaudeAgentOptions(resume=session.sdk_session_id, fork_session=True, ...))` — available to processors needing session context
 
@@ -114,11 +115,15 @@ sequenceDiagram
 
 ```
 PostProcessingPipeline
+├── _registry: SessionRegistry               (required — for mark_processed after completion)
 ├── _phases: dict[str, list[PostProcessor]]  (processors grouped by phase)
 ├── _phase_order: list[str]                  (["main", "pre_finalize", "finalize"])
 ├── _lock: asyncio.Lock                      (serializes concurrent runs)
+├── _is_processing: bool                     (transient flag, True during run())
+├── is_processing: property                  (exposes _is_processing)
+├── needs_processing(session, last_message_time) → bool  (False if processing or processed_at >= last_message_time)
 ├── register(processor, phase="main") → None (validates phase, appends)
-└── run(session: Session) → None             (phases sequential, processors parallel)
+└── run(session: Session) → None             (sets is_processing, phases sequential, processors parallel, mark_processed on completion)
 
 PostProcessor (ABC)
 └── process(session: Session) → None     (abstract)
@@ -247,6 +252,8 @@ erDiagram
 
 ## Notes
 
-- The pipeline's `asyncio.Lock` serialization is forward-looking — currently at most one concurrent invocation per shutdown.
+- The pipeline's `asyncio.Lock` serialization prevents overlapping runs. The `is_processing` flag provides a non-blocking check for callers who want to skip rather than wait.
+- `is_processing` is set before the lock (for immediate caller visibility) and cleared in a `finally` block.
+- `mark_processed` is called inside the lock block — if an unexpected error exits the lock early, the session is not incorrectly marked as processed.
 - `fork_and_consume` fully consumes the async iterator, ensuring the forked session ends cleanly.
-- The background task executor (`tasks/executor.py`) creates a separate `PostProcessingPipeline` instance with only `EpisodicProcessor` (main phase) and `GitProcessor` (finalize phase) — this is a distinct pipeline from the main conversation pipeline assembled in `__main__.py`. See [background task execution design](../tasks/background-task-execution.md).
+- The background task executor (`tasks/executor.py`) creates a separate `PostProcessingPipeline` instance with only `EpisodicProcessor` (main phase) and `GitProcessor` (finalize phase) — this is a distinct pipeline from the main conversation pipeline assembled in `__main__.py`. For synthetic sessions (background tasks), `mark_processed` is a no-op (session ID not in the database). See [background task execution design](../tasks/background-task-execution.md).

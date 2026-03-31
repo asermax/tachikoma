@@ -175,4 +175,4 @@ class TestWatchSkills:
 
         # Verify awatch was called with correct parameters
         assert call_kwargs.get("debounce") == 5000
-        assert call_kwargs.get("rust_timeout") == 500
+        assert call_kwargs.get("rust_timeout") == 2000

@@ -136,9 +136,9 @@ class Coordinator:
         # Session resumption configuration
         self._session_resume_window = session_resume_window
 
-        # Idle session auto-close configuration
+        # Idle post-processing configuration
         self._idle_timeout = session_idle_timeout
-        self._idle_close_task: asyncio.Task[None] | None = None
+        self._idle_pp_task: asyncio.Task[None] | None = None
 
         # Last message time tracking for idle gating
         self._last_message_time: datetime | None = None
@@ -167,11 +167,11 @@ class Coordinator:
     async def __aenter__(self) -> "Coordinator":
         _log.info("Coordinator initialized")
 
-        # Start idle close loop if timeout > 0
+        # Start idle post-processing loop if timeout > 0
         if self._idle_timeout > 0:
-            self._idle_close_task = asyncio.create_task(self._idle_close_loop())
+            self._idle_pp_task = asyncio.create_task(self._idle_post_processing_loop())
             _log.debug(
-                "Idle close loop started: timeout={timeout}s",
+                "Idle post-processing loop started: timeout={timeout}s",
                 timeout=self._idle_timeout,
             )
 
@@ -183,13 +183,13 @@ class Coordinator:
         exc_val: BaseException | None,
         exc_tb: TracebackType | None,
     ) -> None:
-        # Cancel idle close loop first to prevent race with shutdown close
-        if self._idle_close_task is not None:
-            self._idle_close_task.cancel()
+        # Cancel idle post-processing loop first to prevent race with shutdown
+        if self._idle_pp_task is not None:
+            self._idle_pp_task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
-                await self._idle_close_task
-            self._idle_close_task = None
-            _log.debug("Idle close loop cancelled")
+                await self._idle_pp_task
+            self._idle_pp_task = None
+            _log.debug("Idle post-processing loop cancelled")
 
         # Await any pending per-message post-processing task
         if self._pending_msg_task is not None:
@@ -211,27 +211,20 @@ class Coordinator:
                 except Exception as exc:
                     _log.exception("Failed to close session on shutdown: err={err}", err=str(exc))
 
-        # Run post-processing pipeline after session close
-        if active is not None and self._pipeline is not None:
-            if active.sdk_session_id is not None:
-                if self._on_status is not None:
-                    try:
-                        self._on_status("Processing memories...")
-                    except Exception as exc:
-                        _log.exception("Status callback failed: err={err}", err=str(exc))
-
-                try:
-                    await self._pipeline.run(active)
-                except Exception as exc:
-                    _log.exception(
-                        "Post-processing pipeline failed: err={err}",
-                        err=str(exc),
-                    )
-            else:
-                _log.warning("Skipping post-processing: session has no SDK session ID")
-
-        # Await all background session post-processing tasks from topic shifts
+        # Await background post-processing tasks first (idle PP, topic-shift PP)
+        # so that is_processing is cleared before checking the active session.
         if self._background_tasks:
+            _log.info(
+                "Awaiting background post-processing tasks: count={count}",
+                count=len(self._background_tasks),
+            )
+
+            if self._on_status is not None:
+                try:
+                    self._on_status("Processing memories...")
+                except Exception as exc:
+                    _log.exception("Status callback failed: err={err}", err=str(exc))
+
             results = await asyncio.gather(*self._background_tasks, return_exceptions=True)
             for i, result in enumerate(results):
                 if isinstance(result, Exception):
@@ -241,6 +234,27 @@ class Coordinator:
                         err=str(result),
                     )
             self._background_tasks = []
+
+        # Run post-processing for the active session (skip if idle already handled it)
+        if (
+            active is not None
+            and self._pipeline is not None
+            and active.sdk_session_id is not None
+            and self._pipeline.needs_processing(active, self._last_message_time)
+        ):
+            if self._on_status is not None:
+                try:
+                    self._on_status("Processing memories...")
+                except Exception as exc:
+                    _log.exception("Status callback failed: err={err}", err=str(exc))
+
+            try:
+                await self._pipeline.run(active)
+            except Exception as exc:
+                _log.exception(
+                    "Post-processing pipeline failed: err={err}",
+                    err=str(exc),
+                )
 
     @property
     def last_message_time(self) -> datetime | None:
@@ -511,16 +525,22 @@ class Coordinator:
         _log.debug("Response complete")
 
     async def _close_and_fire_postprocessing(self, session: Session) -> None:
-        """Close a session in the registry and fire async post-processing."""
+        """Close a session in the registry and fire async post-processing.
+
+        Post-processing only fires when the session was actually transitioned
+        from open to closed. No-ops (already closed, wrong ID, exception) skip
+        post-processing to prevent the idle close loop from re-firing on stale
+        sessions.
+        """
+        actually_closed = False
+
         if self._registry is not None:
             try:
-                await self._registry.close_session(session.id)
+                actually_closed = await self._registry.close_session(session.id)
             except Exception as exc:
-                _log.exception(
-                    "Failed to close session: err={err}", err=str(exc)
-                )
+                _log.exception("Failed to close session: err={err}", err=str(exc))
 
-        if session.sdk_session_id is not None and self._pipeline is not None:
+        if actually_closed and session.sdk_session_id is not None and self._pipeline is not None:
             task = asyncio.create_task(self._pipeline.run(session))
             self._background_tasks.append(task)
             self._background_tasks = [t for t in self._background_tasks if not t.done()]
@@ -698,42 +718,56 @@ providing context for what the user has been doing in the meantime.
             or (self._pending_msg_task is not None and not self._pending_msg_task.done())
         )
 
-    async def _close_idle_session(self) -> None:
-        """Close the active session due to idle timeout.
+    async def _idle_post_process(self) -> None:
+        """Run post-processing on the active session without closing it.
 
-        Uses the shared close-and-clear helpers but does NOT create a new
-        session. The next user message follows the normal first-message path.
+        Fires the post-processing pipeline as a background task while keeping
+        the session open. The next user message goes through boundary detection
+        normally.
         """
-        if self._registry is None:
+        if self._registry is None or self._pipeline is None:
             return
 
         try:
             session = await self._registry.get_active_session()
             if session is None:
-                _log.debug("Idle close skipped: no active session")
+                _log.debug("Idle post-processing skipped: no active session")
                 return
 
-            await self._close_and_fire_postprocessing(session)
-            self._clear_session_state()
+            if session.sdk_session_id is None:
+                _log.debug("Idle post-processing skipped: no SDK session ID")
+                return
+
+            if not self._pipeline.needs_processing(session, self._last_message_time):
+                _log.debug("Idle post-processing skipped: already processed")
+                return
+
+            task = asyncio.create_task(self._pipeline.run(session))
+            self._background_tasks.append(task)
+            self._background_tasks = [t for t in self._background_tasks if not t.done()]
 
             _log.info(
-                "Session closed due to idle timeout: session_id={id}",
+                "Idle post-processing fired: session_id={id}",
                 id=session.id,
             )
 
         except Exception as exc:
             _log.exception(
-                "Idle close failed (will retry next cycle): err={err}",
+                "Idle post-processing failed (will retry next cycle): err={err}",
                 err=str(exc),
             )
 
-    async def _idle_close_loop(self) -> None:
-        """Periodic check for idle session timeout.
+    async def _idle_post_processing_loop(self) -> None:
+        """Periodic check for idle session post-processing.
 
-        Runs every 60 seconds. If the coordinator is busy when the timeout
-        fires, snoozes for min(300, timeout) seconds and retries.
-        Errors are logged but never crash the application.
-        CancelledError propagates for clean shutdown.
+        Runs every 60 seconds. When the idle timeout is exceeded, fires
+        post-processing on the open session without closing it. Skips if
+        the pipeline reports no processing is needed.
+
+        If the coordinator is busy when the timeout fires, snoozes for
+        min(300, timeout) seconds and retries. Errors are logged but
+        never crash the application. CancelledError propagates for clean
+        shutdown.
         """
         while True:
             try:
@@ -754,10 +788,15 @@ providing context for what the user has been doing in the meantime.
                 if elapsed < self._idle_timeout:
                     continue
 
+                if self._pipeline is not None and not self._pipeline.needs_processing(
+                    session, self._last_message_time
+                ):
+                    continue
+
                 while self._is_busy:
                     snooze_duration = min(300, self._idle_timeout)
                     _log.debug(
-                        "Idle close snoozing: duration={dur}",
+                        "Idle post-processing snoozing: duration={dur}",
                         dur=snooze_duration,
                     )
                     await asyncio.sleep(snooze_duration)
@@ -773,17 +812,17 @@ providing context for what the user has been doing in the meantime.
                     if elapsed < self._idle_timeout:
                         break
 
-                # Proceed with close if conditions still met
+                # Proceed with post-processing if conditions still met
                 if session is not None and self._last_message_time is not None:
                     elapsed = (datetime.now(UTC) - self._last_message_time).total_seconds()
                     if elapsed >= self._idle_timeout and not self._is_busy:
-                        await self._close_idle_session()
+                        await self._idle_post_process()
 
             except asyncio.CancelledError:
                 raise
 
             except Exception as exc:
                 _log.exception(
-                    "Idle close loop error (continuing): err={err}",
+                    "Idle post-processing loop error (continuing): err={err}",
                     err=str(exc),
                 )

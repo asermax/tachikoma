@@ -74,7 +74,7 @@ The session domain also includes **SessionContextEntry** — a persisted record 
 |-----------------|----------------|---------------|
 | `src/tachikoma/sessions/model.py` | SQLAlchemy ORM models (`SessionRecord`, `SessionResumptionRecord`, `SessionContextEntryRecord`) + frozen dataclasses (`Session`, `SessionResumption`, `SessionContextEntry`) + `DeclarativeBase` | Separate ORM models from domain dataclasses; callers never see SQLAlchemy types |
 | `src/tachikoma/sessions/repository.py` | `SessionRepository`: CRUD operations, time-range queries, `get_recent_closed()` for resumption candidates, `create_resumption()`/`get_resumptions_for_session()` for resumption tracking, `save_context_entries()`/`load_context_entries()` for context entry persistence | Receives shared `async_sessionmaker` from `Database`; all SQL is behind async methods; `save_context_entries` takes list of `(owner, content)` tuples, bulk saves via `session.add_all()`; `load_context_entries` ordered by PK ascending |
-| `src/tachikoma/sessions/registry.py` | `SessionRegistry`: business logic facade, creation lock, crash recovery, status derivation, `update_summary()` for persisting rolling summaries, `reopen_session()` for session resumption (uses `dataclasses.replace()` to construct reopened session — avoids redundant DB fetch), `get_recent_closed()` for candidate queries, `record_resumption()` for best-effort tracking, `save_context_entries()` (best-effort — logs on failure per R9/R17, does not raise), `load_context_entries()` (raises on failure — caller handles graceful degradation) | Receives repository via constructor; owns the `asyncio.Lock` |
+| `src/tachikoma/sessions/registry.py` | `SessionRegistry`: business logic facade, creation lock, crash recovery, status derivation, `close_session()` returns `bool` (True if actually transitioned from open to closed — enables callers to distinguish real closes from no-ops), `update_summary()` for persisting rolling summaries, `reopen_session()` for session resumption (uses `dataclasses.replace()` to construct reopened session — avoids redundant DB fetch), `get_recent_closed()` for candidate queries, `record_resumption()` for best-effort tracking, `save_context_entries()` (best-effort — logs on failure per R9/R17, does not raise), `load_context_entries()` (raises on failure — caller handles graceful degradation) | Receives repository via constructor; owns the `asyncio.Lock` |
 | `src/tachikoma/sessions/errors.py` | `SessionRepositoryError`: wraps SQLAlchemy exceptions for clean error contract | Callers catch one domain exception, not SQLAlchemy internals |
 | `src/tachikoma/sessions/hooks.py` | `session_recovery_hook`: retrieves shared `Database` from extras, creates repository + registry, runs recovery, stores on context extras | Registered as bootstrap hook; runs after `database_hook` |
 | `src/tachikoma/sessions/__init__.py` | Re-exports public API: `Session`, `SessionContextEntry`, `SessionResumption`, `SessionRegistry`, `SessionRepository`, `SessionRepositoryError` | Clean public API for the sessions package |
@@ -114,7 +114,8 @@ sequenceDiagram
 ```
 
 **Integration Points:**
-- Coordinator → SessionRegistry: `get_active_session()` + `create_session()` on first message, `update_metadata()` on Result events, `close_session()` on shutdown, topic shift, and idle timeout, `get_recent_closed()` for resumption candidates, `reopen_session()` for session resumption, `record_resumption()` for best-effort tracking, `get_by_time_range()` for bridging context assembly, `save_context_entries(session_id, entries)` for persisting context (always takes a list of (owner, content) tuples), `load_context_entries(session_id)` for loading entries for system prompt assembly
+- Coordinator → SessionRegistry: `get_active_session()` + `create_session()` on first message, `update_metadata()` on Result events, `close_session()` on shutdown and topic shift, `get_recent_closed()` for resumption candidates, `reopen_session()` for session resumption, `record_resumption()` for best-effort tracking, `get_by_time_range()` for bridging context assembly, `save_context_entries(session_id, entries)` for persisting context (always takes a list of (owner, content) tuples), `load_context_entries(session_id)` for loading entries for system prompt assembly
+- PostProcessingPipeline → SessionRegistry: `mark_processed()` after pipeline completion (sets `processed_at`)
 - SummaryProcessor → SessionRegistry: `update_summary()` after each per-message pipeline run (see [boundary detection design](boundary-detection.md))
 - SessionRegistry → SessionRepository: all persistence delegated
 - SessionRepository → shared Database (AsyncEngine → aiosqlite → tachikoma.db)
@@ -122,10 +123,10 @@ sequenceDiagram
 
 **Session close mechanism:**
 
-Sessions close via three runtime mechanisms and one startup mechanism:
+Sessions close via two runtime mechanisms and one startup mechanism. Idle timeout triggers post-processing without closing:
 1. **Boundary detection** (primary, mid-conversation): When a topic shift is detected, the coordinator closes the current session and opens a new one. Post-processing runs as a background task.
-2. **Idle timeout** (secondary, trails-off conversations): A periodic check (every 60s) closes the active session after a configurable period of inactivity (`session_idle_timeout`, default 900s). If the coordinator is busy (message exchange active, messages queued, or per-message post-processing in flight), the close is snoozed and retried. Unlike boundary detection, idle close does NOT create a new session — the next user message follows the normal first-message path.
-3. **Coordinator disconnect** (shutdown safety net): On clean shutdown, the coordinator's `__aexit__` cancels the idle close loop first (preventing a race condition), then calls `registry.close_session()` and triggers post-processing.
+2. **Idle timeout** (post-processing only, trails-off conversations): A periodic check (every 60s) fires the post-processing pipeline on the active session after a configurable period of inactivity (`session_idle_timeout`, default 900s), without closing the session. The session stays open so the next message goes through boundary detection, which either continues the session or routes to a new/resumed one. If the coordinator is busy, the check is snoozed and retried. The pipeline's `needs_processing(session, last_message_time)` method prevents re-triggering when `is_processing` is True or `processed_at >= last_message_time`.
+3. **Coordinator disconnect** (shutdown safety net): On clean shutdown, the coordinator's `__aexit__` cancels the idle post-processing loop first (preventing a race condition), then calls `registry.close_session()`, awaits all background post-processing tasks (so `is_processing` is cleared), and then triggers post-processing for the active session only if `pipeline.needs_processing()` returns True (skips if idle already handled it).
 4. **Crash recovery** (startup): On next launch, the bootstrap recovery hook closes interrupted sessions.
 
 **Error contract:**
@@ -153,6 +154,7 @@ erDiagram
         datetime started_at "UTC - set on creation"
         datetime ended_at "nullable UTC - set on close"
         datetime last_resumed_at "nullable UTC - set on reopen"
+        datetime processed_at "nullable UTC - set on post-processing completion"
     }
     SessionResumption {
         int id PK "autoincrement"
@@ -179,6 +181,7 @@ Session (frozen dataclass)
 ├── started_at: datetime              (UTC, set at creation time)
 ├── ended_at: datetime | None         (UTC, set when session closes; cleared on reopen)
 ├── last_resumed_at: datetime | None  (UTC, set when session is reopened for resumption)
+├── processed_at: datetime | None     (UTC, set when post-processing completes on this session)
 └── status: SessionStatus (property)  (derived, not persisted)
     ├── "open"        — ended_at is None
     ├── "closed"      — ended_at is set AND sdk_session_id is set
@@ -210,6 +213,7 @@ SessionRecord (DeclarativeBase)
 ├── started_at: Mapped[datetime]      (DateTime(timezone=True))
 ├── ended_at: Mapped[datetime | None] (DateTime(timezone=True))
 ├── last_resumed_at: Mapped[datetime | None] (DateTime(timezone=True))
+├── processed_at: Mapped[datetime | None]   (DateTime(timezone=True))
 └── index on started_at               (for time-range queries)
 
 SessionResumptionRecord (DeclarativeBase)
@@ -268,19 +272,25 @@ The `transcript_path` is derived from the SDK session ID using the known Claude 
 3. Coordinator calls registry.close_session(id) — errors logged, not propagated
 4. Registry calls repository.update(id, ended_at=utcnow())
 5. Idempotent: already-closed sessions are no-ops
+6. Await all background post-processing tasks (idle PP, topic-shift PP) — clears is_processing
+7. Check pipeline.needs_processing(active, last_message_time) — skip if already processed
+8. If needed, run pipeline.run(active) synchronously
 ```
 
-### Session close (idle timeout)
+### Idle post-processing (idle timeout)
 
 ```
-1. Coordinator's idle close loop detects inactivity exceeding session_idle_timeout
-2. Loop verifies coordinator is not busy (no active exchange, no queued messages, no pending post-processing)
-3. Coordinator calls registry.get_active_session()
-4. Coordinator calls registry.close_session(id) — errors logged, not propagated
-5. If session has sdk_session_id: fires async post-processing as background task
-6. Coordinator clears SDK state and stores previous summary
-7. No new session created — next user message follows first-message path
+1. Coordinator's idle post-processing loop detects inactivity exceeding session_idle_timeout
+2. Loop checks pipeline.needs_processing(session, last_message_time) — skips if already processed or processing
+3. Loop verifies coordinator is not busy (no active exchange, no queued messages, no pending post-processing)
+4. Coordinator calls registry.get_active_session()
+5. If session has sdk_session_id and pipeline.needs_processing: fires async post-processing as background task
+6. Session stays open — SDK state preserved, no session close or creation
+7. Next user message goes through boundary detection (session has summary)
+8. Pipeline sets processed_at on completion via registry.mark_processed()
 ```
+
+Note: The `needs_processing()` check prevents re-triggering: once `processed_at` is set (by `mark_processed` at pipeline completion), the check `processed_at >= last_message_time` returns False, causing the loop to skip. When a new message arrives, `last_message_time` advances past `processed_at`, allowing idle post-processing to fire again for the new content.
 
 ### Crash recovery (bootstrap)
 
@@ -454,26 +464,33 @@ The `transcript_path` is derived from the SDK session ID using the known Claude 
 **Then**: `registry.update_metadata()` sets `sdk_session_id` and derives `transcript_path`.
 **Rationale**: The SDK assigns its own session ID internally; the registry captures it on the first Result event for cross-referencing with SDK transcripts.
 
-### Scenario: Idle timeout closes session
+### Scenario: Idle timeout triggers post-processing
 
 **Given**: An active session with no message exchange for longer than `session_idle_timeout`
-**When**: The idle close loop detects the timeout and the coordinator is not busy
-**Then**: `registry.close_session()` sets `ended_at`. If the session has a valid `sdk_session_id`, async post-processing is triggered. SDK state is cleared and the summary is stored. No new session is created — the next user message follows the first-message path.
-**Rationale**: Conversations that trail off (user stops messaging without changing topics) get their post-processing triggered automatically without requiring a topic shift or restart.
+**When**: The idle post-processing loop detects the timeout and the coordinator is not busy
+**Then**: The post-processing pipeline runs as a background task. The session stays open (`ended_at` remains None), SDK state is preserved. `processed_at` is set on completion. The next user message goes through boundary detection — if the follow-up is a different topic, boundary detection handles the transition; if same topic, the session continues.
+**Rationale**: Conversations that trail off get their post-processing triggered automatically (memories extracted, changes pushed) without losing session continuity. Most follow-up messages relate to the same topic, so keeping the session open avoids unnecessary creation and preserves conversation context.
+
+### Scenario: Idle post-processing skipped when already processed
+
+**Given**: An active session where `processed_at >= last_message_time`
+**When**: The idle loop checks again
+**Then**: `pipeline.needs_processing()` returns False and the loop skips. No redundant post-processing.
+**Rationale**: Once post-processing has run for all content since the last message, re-running would be wasteful.
 
 ### Scenario: Clean shutdown closes active session
 
 **Given**: An active session exists
 **When**: The coordinator exits its async context
-**Then**: The idle close loop is cancelled first (if running), then `registry.close_session()` sets `ended_at`. If idle close already closed the session, no active session is found and the close is skipped. Errors are logged but not propagated.
-**Rationale**: Clean session close enables time-range queries and signals readiness for post-processing. Cancelling the idle loop first prevents a race between idle close and shutdown close.
+**Then**: The idle post-processing loop is cancelled first (if running), then `registry.close_session()` sets `ended_at`. Background tasks (including any in-flight idle or topic-shift post-processing) are awaited first — this ensures `is_processing` is cleared before evaluating the active session. Then if `pipeline.needs_processing()` returns True, post-processing runs synchronously for the active session. If idle post-processing already handled it (`processed_at >= last_message_time`), shutdown skips redundant post-processing. Errors are logged but not propagated.
+**Rationale**: Clean session close enables time-range queries and signals readiness for post-processing. Cancelling the idle loop first prevents a race between idle post-processing and shutdown close.
 
 ### Scenario: Close on already-closed session (idempotent)
 
-**Given**: A session with `ended_at` already set
+**Given**: A session with `ended_at` already set and `_active_session` still referencing it
 **When**: A close signal is received again
-**Then**: The operation completes without error or change.
-**Rationale**: Multiple close sources may fire redundantly; idempotency prevents errors.
+**Then**: `_active_session` is cleared (so `get_active_session()` returns None), no database update occurs, and `close_session` returns False.
+**Rationale**: Multiple close sources may fire redundantly; idempotency prevents errors. Clearing `_active_session` on the idempotent path prevents stale references — without this, a race between `close_session` and `update_summary` (which re-fetches the session from DB) can leave `_active_session` pointing to a closed session.
 
 ### Scenario: Crash recovery on startup
 

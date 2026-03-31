@@ -14,11 +14,43 @@ from claude_agent_sdk import McpSdkServerConfig, create_sdk_mcp_server, tool
 from cronsim import CronSim
 from cronsim.cronsim import CronSimError
 from loguru import logger
+from pydantic import BaseModel, ValidationError
 
 from tachikoma.tasks.model import ScheduleConfig, TaskDefinition
 from tachikoma.tasks.repository import TaskRepository
 
 _log = logger.bind(component="task_tools")
+
+
+# ---------------------------------------------------------------------------
+# Pydantic models for MCP tool args
+# ---------------------------------------------------------------------------
+
+
+class ListTasksArgs(BaseModel):
+    archived: bool = False
+
+
+class CreateTaskArgs(BaseModel):
+    name: str
+    schedule: str
+    type: str
+    prompt: str
+    notify: str | None = None
+    enabled: bool = True
+
+
+class UpdateTaskArgs(BaseModel):
+    task_id: str
+    name: str | None = None
+    schedule: str | None = None
+    prompt: str | None = None
+    notify: str | None = None
+    enabled: bool | None = None
+
+
+class DeleteTaskArgs(BaseModel):
+    task_id: str
 
 
 def create_task_tools_server(repository: TaskRepository) -> McpSdkServerConfig:
@@ -35,20 +67,20 @@ def create_task_tools_server(repository: TaskRepository) -> McpSdkServerConfig:
         "list_tasks",
         "List task definitions. Shows active tasks by default;"
         " set archived=true to see disabled tasks.",
-        {"archived": bool},
+        ListTasksArgs.model_json_schema(),
     )
     async def list_tasks(args: dict) -> dict:
         """List task definitions, filtered by active/archived status."""
         try:
-            archived = args.get("archived", False)
+            parsed = ListTasksArgs.model_validate(args)
 
-            if archived:
+            if parsed.archived:
                 definitions = await repository.list_disabled_definitions()
             else:
                 definitions = await repository.list_enabled_definitions()
 
             if not definitions:
-                label = "archived" if archived else "active"
+                label = "archived" if parsed.archived else "active"
                 return {
                     "content": [{"type": "text", "text": f"No {label} tasks found."}],
                 }
@@ -83,57 +115,32 @@ def create_task_tools_server(repository: TaskRepository) -> McpSdkServerConfig:
     @tool(
         "create_task",
         "Create a new scheduled task.",
-        {
-            "name": str,
-            "schedule": str,
-            "type": str,
-            "prompt": str,
-            "notify": str | None,
-            "enabled": bool,
-        },
+        CreateTaskArgs.model_json_schema(),
     )
     async def create_task(args: dict) -> dict:
         """Create a new task definition."""
-        name = args.get("name", "")
-        schedule = args.get("schedule", "")
-        task_type = args.get("type", "")
-        prompt = args.get("prompt", "")
-        notify = args.get("notify")
-        enabled = args.get("enabled", True)
-
-        # Validate required fields
-        errors = []
-        if not name:
-            errors.append("name is required")
-        if not schedule:
-            errors.append("schedule is required")
-        if not task_type:
-            errors.append("type is required")
-        if not prompt:
-            errors.append("prompt is required")
-
-        if errors:
+        try:
+            parsed = CreateTaskArgs.model_validate(args)
+        except ValidationError as exc:
             return {
                 "is_error": True,
-                "content": [
-                    {"type": "text", "text": f"Missing required fields: {', '.join(errors)}"},
-                ],
+                "content": [{"type": "text", "text": f"Invalid arguments: {exc}"}],
             }
 
         # Validate type
-        if task_type not in ("session", "background"):
+        if parsed.type not in ("session", "background"):
             return {
                 "is_error": True,
                 "content": [
                     {
                         "type": "text",
-                        "text": f"Invalid type '{task_type}'. Must be 'session' or 'background'.",
+                        "text": f"Invalid type '{parsed.type}'. Must be 'session' or 'background'.",
                     }
                 ],
             }
 
         # Parse and validate schedule
-        schedule_config = _parse_schedule(schedule)
+        schedule_config = _parse_schedule(parsed.schedule)
         if schedule_config is None:
             return {
                 "is_error": True,
@@ -141,7 +148,7 @@ def create_task_tools_server(repository: TaskRepository) -> McpSdkServerConfig:
                     {
                         "type": "text",
                         "text": (
-                            f"Invalid schedule '{schedule}'. Use a cron expression"
+                            f"Invalid schedule '{parsed.schedule}'. Use a cron expression"
                             " (e.g., '0 9 * * *') or an ISO datetime"
                             " (e.g., '2026-03-22T10:00:00Z')."
                         ),
@@ -171,12 +178,12 @@ def create_task_tools_server(repository: TaskRepository) -> McpSdkServerConfig:
         # Create the definition
         definition = TaskDefinition(
             id=str(uuid4()),
-            name=name,
+            name=parsed.name,
             schedule=schedule_config,
-            task_type=task_type,
-            prompt=prompt,
-            enabled=enabled,
-            notify=notify,
+            task_type=parsed.type,  # type: ignore[arg-type]  # validated above
+            prompt=parsed.prompt,
+            enabled=parsed.enabled,
+            notify=parsed.notify,
             last_fired_at=None,
             created_at=datetime.now(UTC),
         )
@@ -208,44 +215,32 @@ def create_task_tools_server(repository: TaskRepository) -> McpSdkServerConfig:
     @tool(
         "update_task",
         "Update an existing task definition.",
-        {
-            "task_id": str,
-            "name": str | None,
-            "schedule": str | None,
-            "prompt": str | None,
-            "notify": str | None,
-            "enabled": bool | None,
-        },
+        UpdateTaskArgs.model_json_schema(),
     )
     async def update_task(args: dict) -> dict:
         """Update an existing task definition."""
-        task_id = args.get("task_id", "")
-        name = args.get("name")
-        schedule = args.get("schedule")
-        prompt = args.get("prompt")
-        notify = args.get("notify")
-        enabled = args.get("enabled")
-
-        if not task_id:
+        try:
+            parsed = UpdateTaskArgs.model_validate(args)
+        except ValidationError as exc:
             return {
                 "is_error": True,
-                "content": [{"type": "text", "text": "task_id is required."}],
+                "content": [{"type": "text", "text": f"Invalid arguments: {exc}"}],
             }
 
         # Check task exists
-        existing = await repository.get_definition(task_id)
+        existing = await repository.get_definition(parsed.task_id)
         if existing is None:
             return {
                 "is_error": True,
-                "content": [{"type": "text", "text": f"Task '{task_id}' not found."}],
+                "content": [{"type": "text", "text": f"Task '{parsed.task_id}' not found."}],
             }
 
         # Build updates
         updates = {}
-        if name is not None:
-            updates["name"] = name
-        if schedule is not None:
-            schedule_config = _parse_schedule(schedule)
+        if parsed.name is not None:
+            updates["name"] = parsed.name
+        if parsed.schedule is not None:
+            schedule_config = _parse_schedule(parsed.schedule)
             if schedule_config is None:
                 return {
                     "is_error": True,
@@ -253,19 +248,19 @@ def create_task_tools_server(repository: TaskRepository) -> McpSdkServerConfig:
                         {
                             "type": "text",
                             "text": (
-                                f"Invalid schedule '{schedule}'."
+                                f"Invalid schedule '{parsed.schedule}'."
                                 " Use a cron expression or ISO datetime."
                             ),
                         }
                     ],
                 }
             updates["schedule"] = schedule_config
-        if prompt is not None:
-            updates["prompt"] = prompt
-        if notify is not None:
-            updates["notify"] = notify
-        if enabled is not None:
-            updates["enabled"] = enabled
+        if parsed.prompt is not None:
+            updates["prompt"] = parsed.prompt
+        if parsed.notify is not None:
+            updates["notify"] = parsed.notify
+        if parsed.enabled is not None:
+            updates["enabled"] = parsed.enabled
 
         if not updates:
             return {
@@ -273,12 +268,12 @@ def create_task_tools_server(repository: TaskRepository) -> McpSdkServerConfig:
             }
 
         try:
-            await repository.update_definition(task_id, **updates)
+            await repository.update_definition(parsed.task_id, **updates)
             return {
                 "content": [
                     {
                         "type": "text",
-                        "text": f"Task '{task_id}' updated successfully.",
+                        "text": f"Task '{parsed.task_id}' updated successfully.",
                     }
                 ],
             }
@@ -293,29 +288,29 @@ def create_task_tools_server(repository: TaskRepository) -> McpSdkServerConfig:
     @tool(
         "delete_task",
         "Delete a task definition.",
-        {"task_id": str},
+        DeleteTaskArgs.model_json_schema(),
     )
     async def delete_task(args: dict) -> dict:
         """Delete a task definition."""
-        task_id = args.get("task_id", "")
-
-        if not task_id:
+        try:
+            parsed = DeleteTaskArgs.model_validate(args)
+        except ValidationError as exc:
             return {
                 "is_error": True,
-                "content": [{"type": "text", "text": "task_id is required."}],
+                "content": [{"type": "text", "text": f"Invalid arguments: {exc}"}],
             }
 
         try:
-            deleted = await repository.delete_definition(task_id)
+            deleted = await repository.delete_definition(parsed.task_id)
 
             if deleted:
                 return {
-                    "content": [{"type": "text", "text": f"Task '{task_id}' deleted."}],
+                    "content": [{"type": "text", "text": f"Task '{parsed.task_id}' deleted."}],
                 }
             else:
                 return {
                     "is_error": True,
-                    "content": [{"type": "text", "text": f"Task '{task_id}' not found."}],
+                    "content": [{"type": "text", "text": f"Task '{parsed.task_id}' not found."}],
                 }
 
         except Exception as exc:

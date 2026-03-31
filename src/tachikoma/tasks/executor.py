@@ -7,23 +7,66 @@ This module contains:
 
 import asyncio
 import json
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 from bubus import EventBus
 from claude_agent_sdk import ClaudeAgentOptions, ClaudeSDKClient
-from claude_agent_sdk.types import SystemPromptPreset
+from claude_agent_sdk.types import AssistantMessage, ResultMessage, SystemPromptPreset, TextBlock
 from loguru import logger
 
 from tachikoma.agent_defaults import AgentDefaults
 from tachikoma.config import TaskSettings
-from tachikoma.post_processing import PostProcessingPipeline, fork_and_capture
-from tachikoma.pre_processing import PreProcessingPipeline, assemble_context
+from tachikoma.git.processor import GitProcessor
+from tachikoma.memory.context_provider import MemoryContextProvider
+from tachikoma.memory.episodic import EpisodicProcessor
+from tachikoma.post_processing import PRE_FINALIZE_PHASE, PostProcessingPipeline, fork_and_capture
+from tachikoma.pre_processing import McpServerConfig, PreProcessingPipeline, assemble_context
+from tachikoma.projects.context_provider import ProjectsContextProvider
+from tachikoma.projects.processor import ProjectsProcessor
+from tachikoma.sessions.model import Session
+from tachikoma.sessions.registry import SessionRegistry
+from tachikoma.skills.context_provider import SkillsContextProvider
 from tachikoma.tasks.events import TaskNotification
 from tachikoma.tasks.model import TaskDefinition, TaskInstance
 from tachikoma.tasks.repository import TaskRepository
 
+if TYPE_CHECKING:
+    from claude_agent_sdk.types import AgentDefinition
+
+    from tachikoma.skills.registry import SkillRegistry
+
+
+@dataclass
+class _PreprocessingResult:
+    """Result from background task pre-processing.
+
+    Holds the enriched prompt text plus structured data (MCP servers,
+    agent definitions) extracted from context providers.
+    """
+
+    prompt: str
+    mcp_servers: dict[str, McpServerConfig] = field(default_factory=dict)
+    agents: "dict[str, AgentDefinition] | None" = None
+
+
 _log = logger.bind(component="task_executor")
+
+# Prompt templates for coordinator-routed notifications
+NOTIFICATION_PROMPT = (
+    "A background task has completed. Deliver this notification to the user, "
+    "keeping your message concise.\n\n"
+    "Task: {task_summary}\n"
+    "{notification_text}"
+)
+
+NOTIFICATION_ERROR_PROMPT = (
+    "A background task has failed. Inform the user about the failure, "
+    "keeping your message concise.\n\n"
+    "Task: {task_summary}\n"
+    "Error: {error_message}"
+)
 
 # How often the background task runner checks for pending instances
 RUNNER_CHECK_INTERVAL_SECONDS = 30
@@ -64,6 +107,8 @@ async def background_task_runner(
     settings: TaskSettings,
     bus: EventBus,
     agent_defaults: AgentDefaults,
+    skill_registry: "SkillRegistry",
+    session_registry: SessionRegistry,
 ) -> None:
     """Async loop that picks up and executes pending background tasks.
 
@@ -75,6 +120,8 @@ async def background_task_runner(
         settings: TaskSettings with max_concurrent_background and other config
         bus: EventBus for dispatching TaskNotification events
         agent_defaults: Common SDK options (cwd, cli_path, env)
+        skill_registry: Shared skill registry for SkillsContextProvider
+        session_registry: SessionRegistry for post-processing pipeline
     """
     semaphore = asyncio.Semaphore(settings.max_concurrent_background)
     running_tasks: dict[str, asyncio.Task[None]] = {}
@@ -110,6 +157,8 @@ async def background_task_runner(
                             settings=settings,
                             bus=bus,
                             agent_defaults=agent_defaults,
+                            skill_registry=skill_registry,
+                            session_registry=session_registry,
                         )
                         await executor.execute(inst)
 
@@ -173,12 +222,16 @@ class BackgroundTaskExecutor:
         settings: TaskSettings,
         bus: EventBus,
         agent_defaults: AgentDefaults,
+        skill_registry: "SkillRegistry",
+        session_registry: SessionRegistry,
     ) -> None:
         self._repository = repository
         self._settings = settings
         self._bus = bus
         self._agent_defaults = agent_defaults
         self._cwd = agent_defaults.cwd
+        self._skill_registry = skill_registry
+        self._session_registry = session_registry
 
     async def execute(self, instance: TaskInstance) -> None:
         """Execute a background task instance.
@@ -206,8 +259,8 @@ class BackgroundTaskExecutor:
             if instance.definition_id:
                 definition = await self._repository.get_definition(instance.definition_id)
 
-            # Run pre-processing pipeline (memory context injection)
-            enriched_prompt = await self._run_preprocessing(instance.prompt)
+            # Run pre-processing pipeline (memory, projects, skills context)
+            preprocessing_result = await self._run_preprocessing(instance.prompt)
 
             # Build SDK options with adapted system prompt
             options = ClaudeAgentOptions(
@@ -220,6 +273,8 @@ class BackgroundTaskExecutor:
                     append=BACKGROUND_TASK_SYSTEM_PROMPT,
                 ),
                 permission_mode="bypassPermissions",
+                mcp_servers=preprocessing_result.mcp_servers,
+                agents=preprocessing_result.agents,
             )
 
             # Execute with evaluator loop
@@ -230,7 +285,7 @@ class BackgroundTaskExecutor:
 
             async with ClaudeSDKClient(options) as client:
                 # Initial query
-                await client.query(enriched_prompt)
+                await client.query(preprocessing_result.prompt)
 
                 while iteration < max_iterations:
                     iteration += 1
@@ -239,13 +294,13 @@ class BackgroundTaskExecutor:
                     response_chunks: list[str] = []
                     async for sdk_message in client.receive_response():
                         # Extract session ID from result message
-                        if hasattr(sdk_message, "session_id") and sdk_message.session_id:
+                        if isinstance(sdk_message, ResultMessage) and sdk_message.session_id:
                             sdk_session_id = sdk_message.session_id
 
                         # Collect text content
-                        if hasattr(sdk_message, "content"):
+                        if isinstance(sdk_message, AssistantMessage):
                             for block in sdk_message.content:
-                                if hasattr(block, "text"):
+                                if isinstance(block, TextBlock):
                                     response_chunks.append(block.text)
 
                     response_text = "".join(response_chunks)
@@ -330,25 +385,47 @@ class BackgroundTaskExecutor:
                 severity="error",
             )
 
-    async def _run_preprocessing(self, prompt: str) -> str:
-        """Run pre-processing pipeline for memory context injection.
+    async def _run_preprocessing(self, prompt: str) -> _PreprocessingResult:
+        """Run pre-processing pipeline for context injection.
+
+        Registers all three context providers (memory, projects, skills) and
+        extracts MCP servers and agents from results alongside the enriched
+        prompt text.
 
         Args:
             prompt: The original task prompt
 
         Returns:
-            Enriched prompt with memory context, or original if no enrichment
+            PreprocessingResult with enriched prompt, MCP servers, and agents.
         """
         try:
-            # Import here to avoid circular dependency
-            from tachikoma.memory.context_provider import MemoryContextProvider  # noqa: PLC0415
-
             pipeline = PreProcessingPipeline()
             pipeline.register(MemoryContextProvider(self._agent_defaults))
+            pipeline.register(ProjectsContextProvider(workspace_path=self._cwd))
+            pipeline.register(SkillsContextProvider(self._agent_defaults, self._skill_registry))
 
             results = await pipeline.run(prompt)
-            if results:
-                return assemble_context(results, prompt)
+
+            if not results:
+                return _PreprocessingResult(prompt=prompt)
+
+            # Merge MCP servers and agents from all results (coordinator pattern)
+            merged_servers: dict[str, McpServerConfig] = {}
+            merged_agents: dict[str, AgentDefinition] = {}
+
+            for r in results:
+                if r.mcp_servers:
+                    merged_servers.update(r.mcp_servers)
+                if r.agents:
+                    merged_agents.update(r.agents)
+
+            enriched_prompt = assemble_context(results, prompt)
+
+            return _PreprocessingResult(
+                prompt=enriched_prompt,
+                mcp_servers=merged_servers,
+                agents=merged_agents if merged_agents else None,
+            )
 
         except Exception as exc:
             _log.warning(
@@ -356,7 +433,7 @@ class BackgroundTaskExecutor:
                 err=str(exc),
             )
 
-        return prompt
+        return _PreprocessingResult(prompt=prompt)
 
     async def _run_evaluator(
         self,
@@ -372,7 +449,7 @@ class BackgroundTaskExecutor:
         Returns:
             Parsed evaluator result with status and feedback
         """
-        from claude_agent_sdk import ClaudeAgentOptions, query  # noqa: PLC0415
+        from claude_agent_sdk import query  # noqa: PLC0415  – lazy for test mockability
 
         eval_prompt = EVALUATOR_PROMPT_TEMPLATE.format(
             task_prompt=task_prompt,
@@ -390,9 +467,9 @@ class BackgroundTaskExecutor:
         try:
             # DES-005: Fully consume the generator
             async for message in query(prompt=eval_prompt, options=options):
-                if hasattr(message, "content"):
+                if isinstance(message, AssistantMessage):
                     for block in message.content:
-                        if hasattr(block, "text"):
+                        if isinstance(block, TextBlock):
                             response_text += block.text
         except Exception as exc:
             _log.warning("Evaluator query failed: {err}", err=str(exc))
@@ -426,11 +503,6 @@ class BackgroundTaskExecutor:
             return
 
         try:
-            # Import processors here to avoid circular dependencies
-            from tachikoma.git.processor import GitProcessor  # noqa: PLC0415
-            from tachikoma.memory.episodic import EpisodicProcessor  # noqa: PLC0415
-            from tachikoma.sessions.model import Session  # noqa: PLC0415
-
             # Build a minimal Session for the pipeline
             session = Session(
                 id="background-task",  # Synthetic ID for background tasks
@@ -441,10 +513,14 @@ class BackgroundTaskExecutor:
                 transcript_path=None,
             )
 
-            pipeline = PostProcessingPipeline()
+            pipeline = PostProcessingPipeline(self._session_registry)
             pipeline.register(
                 EpisodicProcessor(self._agent_defaults),
                 phase="main",
+            )
+            pipeline.register(
+                ProjectsProcessor(self._agent_defaults),
+                phase=PRE_FINALIZE_PHASE,
             )
             pipeline.register(
                 GitProcessor(self._agent_defaults),
@@ -491,15 +567,17 @@ class BackgroundTaskExecutor:
         message: str,
         severity: Literal["info", "error"],
     ) -> None:
-        """Dispatch TaskNotification event.
+        """Dispatch TaskNotification event with coordinator-routed prompt.
 
         Only dispatches if:
         - Task completed successfully and definition has non-null notify field, OR
         - Task failed (always notify on failure)
 
         For success notifications with ``definition.notify`` set, forks the
-        task's SDK session with the notify prompt to generate a context-aware
-        notification message. Falls back to the evaluator feedback on failure.
+        task's SDK session with the notify prompt to generate context-aware
+        notification text. The generated text is then wrapped in a coordinator-
+        routed prompt template. Error notifications use a direct error template
+        (no fork).
 
         Args:
             instance: The task instance
@@ -510,25 +588,38 @@ class BackgroundTaskExecutor:
         """
         # Check if we should notify
         should_notify = False
-        notification_message = message
+        notification_prompt: str = ""
 
         if severity == "error":
-            # Always notify on failure
+            # Always notify on failure — use error template directly
             should_notify = True
+            task_summary = instance.prompt[:200] if instance.prompt else "unknown"
+            notification_prompt = NOTIFICATION_ERROR_PROMPT.format(
+                task_summary=task_summary,
+                error_message=message,
+            )
         elif definition is not None and definition.notify:
             # Notify on success if definition.notify is set
             should_notify = True
-            notification_message = await self._generate_notification(
+
+            # Fork task session to generate context-aware notification text
+            task_summary = instance.prompt[:200] if instance.prompt else "unknown"
+            notification_text = await self._generate_notification(
                 sdk_session_id,
                 definition.notify,
                 fallback=message,
+            )
+
+            notification_prompt = NOTIFICATION_PROMPT.format(
+                task_summary=task_summary,
+                notification_text=notification_text,
             )
 
         if not should_notify:
             return
 
         event = TaskNotification(
-            message=notification_message,
+            prompt=notification_prompt,
             source_task_id=instance.id,
             severity=severity,
         )
@@ -566,8 +657,6 @@ class BackgroundTaskExecutor:
             return fallback
 
         try:
-            from tachikoma.sessions.model import Session  # noqa: PLC0415
-
             session = Session(
                 id="notification-gen",
                 sdk_session_id=sdk_session_id,

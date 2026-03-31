@@ -6,6 +6,7 @@ crash recovery. Delegates all persistence to SessionRepository.
 
 import asyncio
 import uuid
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -54,27 +55,31 @@ class SessionRegistry:
             _log.info("Session created: session_id={id}", id=session.id)
             return session
 
-    async def close_session(self, session_id: str) -> None:
+    async def close_session(self, session_id: str) -> bool:
         """Close the session with the given ID by setting ended_at.
 
         Idempotent: if the session is already closed or doesn't exist, no-op.
+
+        Returns:
+            True if the session was actually transitioned from open to closed.
+            False if no transition occurred (no-op, already closed, wrong ID).
         """
         if self._active_session is None:
-            return
-
-        if self._active_session.ended_at is not None:
-            # Already closed — idempotent
-            return
+            return False
 
         if self._active_session.id != session_id:
-            # Close signal for a different session — ignore
-            return
+            return False
+
+        if self._active_session.ended_at is not None:
+            self._active_session = None
+            return False
 
         ended_at = datetime.now(UTC)
         await self._repository.update(session_id, ended_at=ended_at)
         self._active_session = None
 
         _log.info("Session closed: session_id={id}", id=session_id)
+        return True
 
     async def update_metadata(
         self,
@@ -120,6 +125,22 @@ class SessionRegistry:
             id=session_id,
             len=len(summary),
         )
+
+    async def mark_processed(self, session_id: str) -> None:
+        """Mark a session as post-processed by setting processed_at.
+
+        Updates the in-memory active session reference if it matches.
+
+        Args:
+            session_id: The ID of the session to mark as processed.
+        """
+        now = datetime.now(UTC)
+        await self._repository.update(session_id, processed_at=now)
+
+        if self._active_session is not None and self._active_session.id == session_id:
+            self._active_session = replace(self._active_session, processed_at=now)
+
+        _log.debug("Session marked as processed: session_id={id}", id=session_id)
 
     async def get_active_session(self) -> Session | None:
         """Return the currently active session, or None if no session is open."""
@@ -173,8 +194,6 @@ class SessionRegistry:
         )
 
         # Construct the reopened session from known data (avoids a second DB fetch)
-        from dataclasses import replace  # noqa: PLC0415
-
         reopened = replace(session, ended_at=None, last_resumed_at=now)
         self._active_session = reopened
 
@@ -244,9 +263,7 @@ class SessionRegistry:
     # Context entries
     # ------------------------------------------------------------------
 
-    async def save_context_entries(
-        self, session_id: str, entries: list[tuple[str, str]]
-    ) -> None:
+    async def save_context_entries(self, session_id: str, entries: list[tuple[str, str]]) -> None:
         """Save context entries for a session.
 
         Best-effort persistence: failures are logged but not raised.
@@ -274,9 +291,7 @@ class SessionRegistry:
                 err=str(exc),
             )
 
-    async def load_context_entries(
-        self, session_id: str
-    ) -> list[SessionContextEntry]:
+    async def load_context_entries(self, session_id: str) -> list[SessionContextEntry]:
         """Load all context entries for a session.
 
         Delegates to repository. Returns entries ordered by insertion order (id asc).
@@ -291,7 +306,6 @@ class SessionRegistry:
             SessionRepositoryError: If the load operation fails.
         """
         return await self._repository.load_context_entries(session_id)
-
 
     async def recover_interrupted(self) -> None:
         """Close any sessions left open from a previous ungraceful shutdown.

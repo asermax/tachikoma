@@ -40,15 +40,9 @@ class TestBuildSystemPrompt:
     def test_multiple_entries_maintain_input_order(self) -> None:
         """AC: multiple entries are assembled in the order provided (deterministic)."""
         entries = [
-            SessionContextEntry(
-                id=1, session_id="s1", owner="foundational", content="First entry"
-            ),
-            SessionContextEntry(
-                id=2, session_id="s1", owner="memories", content="Second entry"
-            ),
-            SessionContextEntry(
-                id=3, session_id="s1", owner="skills", content="Third entry"
-            ),
+            SessionContextEntry(id=1, session_id="s1", owner="foundational", content="First entry"),
+            SessionContextEntry(id=2, session_id="s1", owner="memories", content="Second entry"),
+            SessionContextEntry(id=3, session_id="s1", owner="skills", content="Third entry"),
         ]
 
         result = build_system_prompt(entries)
@@ -67,11 +61,7 @@ class TestBuildSystemPrompt:
 
     def test_preamble_always_prepended(self) -> None:
         """AC: SYSTEM_PREAMBLE is always at the start of the result."""
-        entries = [
-            SessionContextEntry(
-                id=1, session_id="s1", owner="test", content="content"
-            )
-        ]
+        entries = [SessionContextEntry(id=1, session_id="s1", owner="test", content="content")]
 
         result = build_system_prompt(entries)
 
@@ -80,9 +70,7 @@ class TestBuildSystemPrompt:
     def test_deterministic_output_for_same_entries(self) -> None:
         """AC: same entries always produce identical output (deterministic per R2)."""
         entries = [
-            SessionContextEntry(
-                id=1, session_id="s1", owner="memories", content="Test content"
-            )
+            SessionContextEntry(id=1, session_id="s1", owner="memories", content="Test content")
         ]
 
         result1 = build_system_prompt(entries)
@@ -97,9 +85,7 @@ Line 2
 Line 3"""
 
         entries = [
-            SessionContextEntry(
-                id=1, session_id="s1", owner="memories", content=multiline_content
-            )
+            SessionContextEntry(id=1, session_id="s1", owner="memories", content=multiline_content)
         ]
 
         result = build_system_prompt(entries)
@@ -111,9 +97,7 @@ Line 3"""
         special_content = "User said: <hello> & 'goodbye'"
 
         entries = [
-            SessionContextEntry(
-                id=1, session_id="s1", owner="test", content=special_content
-            )
+            SessionContextEntry(id=1, session_id="s1", owner="test", content=special_content)
         ]
 
         result = build_system_prompt(entries)

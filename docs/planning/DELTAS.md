@@ -143,42 +143,42 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 ### DLT-040: Unify sub-agent execution into shared abstraction
 **Status**: ✗ Defined
 **Depends on**: None
-**Priority**: 1 (Critical)
+**Priority**: 3 (Medium)
 **Complexity**: Medium
 **Description**: The prompt-driven processor pattern, fork-and-consume helper, and ad-hoc SDK call construction are repeated across multiple sub-agent sites (post-processors, boundary detection, memory search, skills classification, task execution) with similar boilerplate for building options, calling the SDK, and consuming results. Extract a common agent execution abstraction — a class with shared methods for running sub-agents — that encapsulates these patterns, and refactor existing call sites to use it. This replaces scattered SDK option assembly and result consumption with a uniform interface, reducing duplication and making it easier to apply cross-cutting changes (like sandboxing or observability) to all sub-agents.
 
 ### DLT-042: Add invalidation and refresh support to persisted context entries
 **Status**: ✗ Defined
 **Depends on**: None
-**Priority**: 2 (High)
+**Priority**: 4 (Low)
 **Complexity**: Easy
 **Description**: Persisted context entries can go stale when underlying data changes, but the coordinator has no mechanism to detect or respond to this. This delta adds an invalidation flag to the persisted context entry model and a pre-message check in the coordinator: before processing each message, any flagged entries are regenerated from their source and updated in the store. Completion criteria: the flag can be set externally and the coordinator regenerates the entry on the next message without requiring a restart.
 
 ### DLT-043: Move foundational context assembly into pre-processing pipeline with file-change invalidation
 **Status**: ✗ Defined
 **Depends on**: DLT-042
-**Priority**: 2 (High)
+**Priority**: 4 (Low)
 **Complexity**: Medium
 **Description**: Foundational context (soul, user knowledge, agent guidelines) is currently assembled once at startup, meaning changes to SOUL.md, USER.md, or AGENTS.md are not reflected until the process restarts. This delta moves that assembly into a dedicated pre-processing context provider and marks the corresponding context entries invalid whenever those files are written, so the next message automatically regenerates them from current file contents using the context invalidation and refresh infrastructure.
 
 ### DLT-044: Invalidate memories context on memory file changes
 **Status**: ✗ Defined
 **Depends on**: DLT-043
-**Priority**: 3 (Medium)
+**Priority**: 4 (Low)
 **Complexity**: Easy
 **Description**: Using the context invalidation mechanism, mark the memories context entry as invalid whenever a file under memories/ is written during the session. The next message triggers a fresh memory search against the updated memory store, ensuring the agent is not working with stale memory context after post-processing has extracted new memories from the conversation.
 
 ### DLT-045: Invalidate skills context on skill file changes
 **Status**: ✗ Defined
 **Depends on**: DLT-043
-**Priority**: 3 (Medium)
+**Priority**: 4 (Low)
 **Complexity**: Easy
 **Description**: Using the context invalidation mechanism, mark the skills context entry as invalid whenever a skill file under skills/ is written during the session. The next message triggers a fresh skill classification pass against the updated skill registry, complementing the runtime skill registry hot-reload by also refreshing the injected skills context so the agent immediately sees newly authored or modified skill instructions.
 
 ### DLT-046: Invalidate projects context on submodule changes
 **Status**: ✗ Defined
 **Depends on**: DLT-043
-**Priority**: 3 (Medium)
+**Priority**: 4 (Low)
 **Complexity**: Easy
 **Description**: Using the context invalidation mechanism, mark the projects context entry as invalid whenever a project submodule under projects/ changes state, detected by watching for writes to git ref files within the submodule directories. The next message triggers a fresh projects listing, ensuring the agent reflects the current state of registered projects without requiring a session restart.
 
@@ -304,9 +304,9 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 ### DLT-064: Collapse intensive work sections in Telegram
 **Status**: ✗ Defined
 **Depends on**: None
-**Priority**: 3 (Medium)
+**Priority**: 2 (High)
 **Complexity**: Medium
-**Description**: When the agent performs intensive work — rapid sequences of tool calls interspersed with short text responses (e.g. reading, editing, and searching files during code implementation) — the Telegram channel currently renders every tool summary and intermediate text inline, producing long, noisy messages that obscure the final answer. This delta adds detection of intensive work patterns within the Telegram renderer: when the number of tool-to-text boundaries within a single Telegram message exceeds a configurable threshold, subsequent intermediate content (tool summaries and short bridging text) is wrapped in a collapsible section, leaving only the final substantive text visible by default. Detection resets at each Telegram message boundary (when the message splits due to length). The collapsing mechanism (Telegram's ExpandableBlockQuote, spoiler tags, or another approach) and the threshold tuning should be evaluated during speccing.
+**Description**: When the agent performs intensive work — rapid sequences of tool calls interspersed with short text responses (e.g. reading, editing, and searching files during code implementation) — the Telegram channel currently renders every tool summary and intermediate text inline, producing long, noisy messages that obscure the final answer. This delta adds detection of intensive work patterns within the Telegram renderer: when the number of tool-to-text boundaries within a single Telegram message exceeds a configurable threshold, subsequent intermediate content (tool summaries and short bridging text) is wrapped in a collapsible section, leaving only the final substantive text visible by default. Detection resets at each Telegram message boundary (when the message splits due to length). The collapsing mechanism (Telegram's ExpandableBlockQuote, spoiler tags, or another approach) and the threshold tuning should be evaluated during speccing. Collapsible sections must only collapse after the tool execution is complete — in-progress tools should remain visible (expanded) so the user can see active work, transitioning to collapsed only when the next text or tool boundary confirms the tool has finished.
 
 ### DLT-065: Parallel conversation sessions
 **Status**: ✗ Defined
@@ -321,3 +321,206 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 **Priority**: 2 (High)
 **Complexity**: Medium
 **Description**: When the process stops during session post-processing — whether from a crash, signal, or unhandled error — the work done by completed processors is preserved but remaining processors never run, leaving memory extraction, context updates, or git commits incomplete. This delta adds checkpoint tracking to the post-processing pipeline: each processor's completion is recorded as it finishes, and on startup the recovery hook detects sessions with incomplete post-processing and resumes from the last checkpoint, running only the processors that haven't completed yet. This prevents both data loss (skipped processors) and duplication (re-running completed ones).
+
+### DLT-067: Telegram inline button support
+**Status**: ✗ Defined
+**Depends on**: None
+**Priority**: 3 (Medium)
+**Complexity**: Medium
+**Description**: Enable the agent to present interactive inline buttons in Telegram conversations, allowing users to respond to structured prompts by tapping a button instead of typing. How buttons are triggered, rendered, and how user interactions are routed back to the agent should be evaluated during speccing.
+
+### DLT-068: Structured error handling for message generation
+**Status**: ✗ Defined
+**Depends on**: None
+**Priority**: 3 (Medium)
+**Complexity**: Medium
+**Description**: Currently, errors during session management, boundary detection, context loading, and metadata updates within the coordinator's message generation flow are silently logged, while only SDK stream errors surface to the user. Introduce error classification (severity levels, recoverability) and a surfacing mechanism that replaces silent logging and raw exception text with categorized messages indicating what went wrong and whether the conversation can continue normally. The classification scheme and surfacing approach established here become the standard adopted by subsequent error handling deltas.
+
+### DLT-069: Structured error handling for pre-processing pipeline
+**Status**: ✗ Defined
+**Depends on**: DLT-068
+**Priority**: 3 (Medium)
+**Complexity**: Easy
+**Description**: Apply the error classification and surfacing mechanism to the pre-processing pipeline. Currently, context provider failures (memory search, skills detection, projects loading) are silently logged and skipped — the agent proceeds with degraded context and neither the user nor the coordinator knows what was lost. Surface provider failures as classified error notices so users are informed when context is incomplete, enabling them to judge response quality or retry.
+
+### DLT-070: Structured error handling for post-processing pipeline
+**Status**: ✗ Defined
+**Depends on**: DLT-068
+**Priority**: 3 (Medium)
+**Complexity**: Easy
+**Description**: Apply the error classification and surfacing mechanism to both the session-level and per-message post-processing pipelines. Currently, processor failures during memory extraction, facts capture, preferences detection, context updates, and summary generation are silently logged — users never know whether their conversations were properly processed and persisted. Surface processor failures as classified error notices so users are informed when post-processing is incomplete, making extraction gaps visible rather than silently losing conversation learnings.
+
+### DLT-071: Structured error handling for task execution
+**Status**: ✗ Defined
+**Depends on**: DLT-068
+**Priority**: 3 (Medium)
+**Complexity**: Easy
+**Description**: Apply the error classification and surfacing mechanism to the task execution subsystem. Currently, task pre-processing fallbacks, evaluator failures, and notification delivery issues are handled with ad-hoc logging and silent degradation. Classify and surface failures during task pre-processing, evaluation loops, post-processing, and notification generation consistently with the rest of the system.
+
+### DLT-072: Fix task management MCP tool bugs
+**Status**: ✗ Defined
+**Depends on**: None
+**Priority**: 1 (Critical)
+**Complexity**: Easy
+**Description**: The task management MCP tools have multiple bugs that force the agent to fall back to raw SQLite queries. `list_tasks` does not expose task IDs, making it impossible to discover which ID to pass to `update_task` or `delete_task`. `update_task` rejects valid inputs with an unhelpful generic validation error that does not indicate which field failed or what schema is expected, and it is missing the `task_type` parameter — the column exists in the database but cannot be set through the MCP tool, preventing task type changes without falling back to raw SQL. The `notify` parameter description is misleading: it says "if omitted, background tasks run silently" but the system actually notifies on failure by default, leading to redundant notify strings. Tool descriptions lack parameter type documentation and cross-references between tools, leading to trial-and-error usage. Fix all of these: expose IDs in list output, fix update validation, expose `task_type` in `update_task`, clarify `notify` default behavior, and enrich tool descriptions with types, examples, and usage guidance.
+
+### DLT-073: Block Claude Code built-in cron tools in default config
+**Status**: ✗ Defined
+**Depends on**: None
+**Priority**: 1 (Critical)
+**Complexity**: Easy
+**Description**: Claude Code ships with built-in `CronCreate`, `CronDelete`, and `CronList` tools that create session-only in-memory cron jobs. These shadow Tachikoma's persistent task system — the agent defaults to the built-in tools since they appear first in the tool list, and any reminders created through them silently vanish on exit because they are never persisted to the database or picked up by Tachikoma's scheduler. A manual workaround exists (adding these tools to the deny list in `.claude/settings.local.json`), but this is not baked into the default project configuration. Incorporate the deny list into the project template or default configuration so every workspace starts with these tools blocked.
+
+### DLT-074: Rename skills subsystem to avoid Claude Code naming collision
+**Status**: ✗ Defined
+**Depends on**: None
+**Priority**: 4 (Low)
+**Complexity**: Medium
+**Description**: Claude Code uses "skills" internally for its plugin-provided slash-command capabilities, and Tachikoma also uses "skills" for its own sub-agent packages. When both systems share the same term, the agent conflates them — attempting to invoke a Tachikoma skill via the Claude Code Skill tool, or ignoring a Claude Code skill because it assumes it belongs to Tachikoma's registry. This leads to incorrect tool routing and missed capabilities. Rename Tachikoma's skill subsystem to a distinct term (e.g., "modules", "packages", or "capabilities") across the codebase, configuration, and internal references, and add internal disambiguation logic so the agent reliably distinguishes between the two systems without relying on external guidance files.
+
+### DLT-075: Re-evaluate skill context per message
+**Status**: ✗ Defined
+**Depends on**: None
+**Priority**: 2 (High)
+**Complexity**: Medium
+**Description**: The skills context provider currently runs only on the first message of a new session — its output is persisted and reused for all subsequent messages in that session. When a conversation shifts topic mid-session (e.g., the user starts discussing routines after talking about a reading list), newly relevant skills are never loaded because the classification was based on the first message alone. Re-evaluate skill relevance on each message so follow-up messages can trigger loading of additional skills that match the evolving conversation context.
+
+### DLT-076: Re-evaluate memory context per message
+**Status**: ✗ Defined
+**Depends on**: None
+**Priority**: 2 (High)
+**Complexity**: Medium
+**Description**: The memory context provider currently runs only on the first message of a new session — its output is persisted and reused for all subsequent messages in that session. When the conversation topic evolves, the initially retrieved memories may no longer be the most relevant, and memories that would be highly relevant to follow-up messages are never injected. Re-evaluate memory relevance on each message so the agent always has the most pertinent memories for the current point in the conversation.
+
+### DLT-077: Route settings requests to correct config system
+**Status**: ✗ Defined
+**Depends on**: None
+**Priority**: 2 (High)
+**Complexity**: Easy
+**Description**: Claude Code has its own configuration system (global, project, and local settings files) that is separate from Tachikoma's TOML-based config. The agent sometimes confuses the two when asked to "update settings," modifying Claude Code settings when the user meant Tachikoma settings or vice versa. Add internal disambiguation logic — through system prompt injection, configuration metadata, or routing rules in the coordinator — that routes settings requests to the correct config system based on what is being configured (e.g., task scheduling routes to Tachikoma MCP tools, permissions and hooks route to Claude Code settings).
+
+### DLT-078: Session routing rollback on context mismatch
+**Status**: ✗ Defined
+**Depends on**: None
+**Priority**: 3 (Medium)
+**Complexity**: Medium
+**Description**: When a message gets routed to a resumed session via boundary detection, there is no mechanism to undo the routing if the session context does not actually match the user's intent. The conversation gets forced down the wrong path with no recovery. Add a verification step that forks the candidate session and evaluates whether the incoming message makes sense within its context before committing to the routing, catching mismatches early instead of requiring the user to manually correct the course.
+
+### DLT-079: Escape markdown-sensitive characters in Telegram output
+**Status**: ✗ Defined
+**Depends on**: None
+**Priority**: 2 (High)
+**Complexity**: Easy
+**Description**: When the Telegram channel displays search commands or tool output containing glob or regex patterns with asterisks, the asterisks are interpreted as markdown formatting (italic/bold) instead of being rendered literally. For example, `* Searching for 'git.*push'` renders with broken formatting instead of displaying as plain text. Escape markdown-sensitive characters in displayed patterns and tool output so they render correctly in Telegram messages, and format tool activity output (file paths, commands, search patterns) using code blocks for improved readability.
+
+### DLT-080: Self-healing skill system via post-conversation analysis
+**Status**: ✗ Defined
+**Depends on**: None
+**Priority**: 3 (Medium)
+**Complexity**: Hard
+**Description**: Skills currently only improve when the user explicitly notices a gap and requests changes. Add a post-conversation processor that analyzes skill usage during the completed session — which skills were invoked, which failed or were misapplied, what workarounds the agent resorted to — and surfaces concrete edit suggestions to the user for improving skill definitions. For example: detecting that a workflow required manually chaining references that should be linked, that a CLI flag used in practice is missing from a skill's guidance, or that documented instructions diverged from actual usage patterns. Suggestions are presented for user review and approval, not applied automatically.
+
+### DLT-081: Workflow state machine for skills
+**Status**: ✗ Defined
+**Depends on**: None
+**Priority**: 3 (Medium)
+**Complexity**: Hard
+**Description**: Skills that define multi-step workflows (e.g., a morning routine skill that sequences reading a plan, having a conversation, marking activities, and updating a calendar) currently rely entirely on the LLM to remember which steps are done and what comes next. Without explicit state, the agent skips steps, repeats completed ones, or loses its place after context compaction. Introduce a workflow construct that lets skills declare ordered steps with completion conditions, tracks progression across messages, and injects step-specific reminders or continuations into the agent's context — enabling the agent to reliably execute multi-step workflows like deploying a service (build → test → push → verify) or processing a reading list (fetch → summarize → file → notify).
+
+### DLT-082: CLI for querying internal state
+**Status**: ✗ Defined
+**Depends on**: None
+**Priority**: 4 (Low)
+**Complexity**: Medium
+**Description**: Operators managing a Tachikoma deployment (especially on a remote server) currently have no way to inspect internal state without starting a full agent conversation or running raw SQLite queries against the database. Add CLI subcommands to the Tachikoma entry point for querying internal state: list and inspect task definitions and execution history, view session history and summaries, check which context entries are loaded, and review skill registry status. These commands read directly from the database and print formatted output, enabling quick operational checks and debugging without requiring an active agent session.
+
+### DLT-083: External command processor for remote management
+**Status**: ✗ Defined
+**Depends on**: None
+**Priority**: 4 (Low)
+**Complexity**: Hard
+**Description**: When Tachikoma runs on a remote server, the user needs to manage it from their local machine without SSH-ing in and running CLI commands directly. Add a lightweight command listener that runs as a separate process alongside the main Tachikoma process, accepting management commands (pause/resume tasks, close sessions, reload config, query status) over a network interface. A companion client on the local machine connects to this listener, enabling remote administration without interrupting active conversations. The IPC mechanism and security model (authentication, encryption) should be evaluated during speccing.
+
+### DLT-084: Resume matching conversation on return after restart
+**Status**: ✗ Defined
+**Depends on**: None
+**Priority**: 2 (High)
+**Complexity**: Easy
+**Description**: When a user sends a message after a restart, the system always starts a new conversation even if the message relates to a recently discussed topic. This delta enables the system to check the incoming message against recent closed session summaries and resume the matching conversation instead of starting fresh, providing seamless topic continuation across process restarts.
+
+### DLT-085: Tracked schema migration system
+**Status**: ✗ Defined
+**Depends on**: None
+**Priority**: 2 (High)
+**Complexity**: Medium
+**Description**: Replace the current pragma-based migration checks with a tracked migration system that records applied migrations in a dedicated database table. On startup, the system queries already-applied migrations and only executes new ones in order, skipping already-completed migrations entirely. This eliminates redundant schema inspection on every startup and provides a clean, extensible mechanism for adding future schema changes without accumulating pragma checks.
+
+### DLT-086: Manual session switching via Telegram reply
+**Status**: ✗ Defined
+**Depends on**: None
+**Priority**: 4 (Low)
+**Complexity**: Medium
+**Description**: Allow the user to switch to a specific previous session by replying to a Telegram message that was part of that session. Currently, messages are routed automatically via boundary detection with no user override. This delta adds message-to-session tracking (associating Telegram message IDs with the session they belong to), reply detection in the Telegram channel, and explicit session routing when a reply targets a past session. The user replies to any message from a previous conversation and the new message is routed to that session instead of following automatic routing logic. Edge cases include replying to a message with no associated session or a closed session that shouldn't be resumed.
+
+### DLT-087: Disable Claude Code built-in skills in default config
+**Status**: ✗ Defined
+**Depends on**: None
+**Priority**: 1 (Critical)
+**Complexity**: Easy
+**Description**: Claude Code ships with a built-in `Skill` tool that provides access to plugin-provided slash-command capabilities. This shadows Tachikoma's own skill subsystem — the agent conflates the two systems, attempting to invoke Tachikoma skills via the Claude Code Skill tool or ignoring Claude Code skills assuming they belong to Tachikoma's registry. This delta disables the Skill tool through the default project configuration's deny list, alongside the cron tools already blocked by DLT-073, preventing the agent from accessing Claude Code's skill system entirely. This is the immediate mitigation while the full renaming solution (DLT-074) is deferred.
+
+### DLT-088: Scheduled memory store maintenance
+**Status**: ✗ Defined
+**Depends on**: None
+**Priority**: 4 (Low)
+**Complexity**: Medium
+**Description**: A scheduled background task that periodically reviews and cleans up the memory store. The task runs on a cron schedule using the background task execution system, evaluating stored memories against maintenance criteria — such as staleness, redundancy, relevance decay, or excessive granularity in episodic entries — and consolidating, archiving, or removing entries that no longer provide value. The specific criteria and cleanup strategies should be investigated during speccing by analyzing real memory data for common patterns worth addressing.
+
+### DLT-089: Abort tool execution on stop steering message
+**Status**: ✗ Defined
+**Depends on**: None
+**Priority**: 2 (High)
+**Complexity**: Medium
+**Description**: When the user sends a steering message with stop intent (e.g., "stop", "cancel") during an active generation, immediately abort any in-progress tool execution chain rather than waiting for the full chain to complete before the message takes effect. Currently, steering messages do halt generation across all channels, but the agent continues executing queued tool calls before processing the stop — resulting in a noticeable delay. This delta detects stop intent in incoming steering messages and triggers an immediate interrupt that cuts the tool chain short, similar to how Esc works in Claude Code.
+
+### DLT-090: Prevent duplicate task instances from scheduler
+**Status**: ✗ Defined
+**Depends on**: None
+**Priority**: 1 (Critical)
+**Complexity**: Easy
+**Description**: The cron evaluator for session-type tasks fires multiple times within the same scheduled minute, creating duplicate instances. The `last_fired_at` field is updated after firing but does not prevent re-queuing within the same cron period — the scheduler only checks whether the task has ever fired, not whether it has already fired for the current period. This causes users to receive multiple duplicate notifications for a single scheduled execution. Deduplicate based on the current cron period rather than just the `last_fired_at` timestamp, ensuring each cron match produces at most one task instance.
+
+### DLT-091: Conditional notification suppression for background tasks
+**Status**: ✗ Defined
+**Depends on**: None
+**Priority**: 3 (Medium)
+**Complexity**: Medium
+**Description**: Background tasks have no mechanism to conditionally suppress notifications at runtime. The `notify` field is static text set at task definition time, so every execution either always notifies or never does — there is no way for the task's output to signal whether notification is warranted. This is a problem for tasks that should only notify when there is meaningful content (e.g., a routine check-in that should stay silent when the daily plan is empty but notify when activities are scheduled). Add a mechanism for background tasks to signal at execution time whether the result should trigger a notification. The specific signaling approach should be evaluated during design — the key requirement is that the task's output can deterministically control whether the notification fires, without requiring the task to be redefined.
+
+### DLT-092: Timezone-aware scheduling for one-shot tasks
+**Status**: ✗ Defined
+**Depends on**: None
+**Priority**: 1 (Critical)
+**Complexity**: Easy
+**Description**: One-shot datetime schedules are interpreted as UTC without respecting the configured timezone, causing tasks created with local time to silently land in the past and fail with a confusing "must be in the future" error. The `_parse_schedule` function defaults to UTC when no timezone info is provided in the datetime string. Plumb the configured timezone into the task tool server context so bare datetimes are interpreted as local time, and document the timezone behavior in the `create_task` tool description with examples of accepted formats.
+
+### DLT-093: Add task instance history MCP tool
+**Status**: ✗ Defined
+**Depends on**: None
+**Priority**: 3 (Medium)
+**Complexity**: Easy
+**Description**: There is no MCP tool to query task execution history, so the agent cannot answer whether a task ran or why it failed. The `task_instances` table tracks every run (ID, definition ID, status, scheduled time, start/completion times, result, created at) but it is only accessible via raw SQLite queries. Add a `list_task_instances` tool that queries execution history for a given task definition, with optional filters for status and result count, enabling the agent to inspect past runs and diagnose failures without falling back to direct database access.
+
+### DLT-094: Delegate work to autonomous long-running agents
+**Status**: ✗ Defined
+**Depends on**: None
+**Priority**: 3 (Medium)
+**Complexity**: Hard
+**Description**: Persistent, communicative agents that execute extended work autonomously — unlike background tasks which are fire-and-forget with a single prompt and evaluator loop, these agents maintain ongoing sessions, report progress, ask clarifying questions, and collaborate with the user over time. Think autonomous coworkers rather than one-off jobs. The user delegates a task ("research this topic thoroughly and report back", "refactor this module over the next hour, ask me if you get stuck") and the agent works independently while keeping the user informed and able to course-correct. The user can see intermediate progress, answer agent questions mid-execution, and control the agent's lifecycle (pause, resume, terminate) — all without blocking their main conversation for other interactions.
+
+### DLT-095: Enrich task execution records with SDK session tracking and structured errors
+**Status**: ✗ Defined
+**Depends on**: DLT-090, DLT-071
+**Priority**: 2 (High)
+**Complexity**: Medium
+**Description**: Developers need to debug failed background tasks and understand execution history, but task instances currently record only status, timestamps, and a free-text result — with no link to the SDK session that ran, no transcript reference, and no structured error context. This delta enriches the task instance model and execution flow with traceability data: recording the SDK session ID and transcript path for each background execution, capturing structured error context (error type, message, tool calls leading to failure) on failure using the error classification from the structured error handling subsystem, and computing execution duration as a first-class field. These fields enable querying past executions by session, inspecting failure artifacts, and displaying execution metrics without manual timestamp arithmetic. The scope is limited to the tasks subsystem — background jobs are not interactive conversations, but they still require an audit trail linking execution to its artifacts and outcomes.

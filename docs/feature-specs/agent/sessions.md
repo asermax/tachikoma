@@ -17,7 +17,7 @@ A persistent registry of conversation sessions that tracks when conversations st
 | ID | Requirement |
 |----|-------------|
 | R0 | Maintain a persistent registry of conversation sessions with lifecycle tracking |
-| R1 | Each session tracks: unique ID, SDK session ID, transcript path, summary, start timestamp, end timestamp |
+| R1 | Each session tracks: unique ID, SDK session ID, transcript path, summary, start timestamp, end timestamp, post-processing timestamp |
 | R2 | Create a new session when a conversation starts (first message or boundary detection) |
 | R3 | Close a session when a conversation ends (set end timestamp and final metadata) |
 | R4 | Query sessions by time range |
@@ -57,15 +57,24 @@ When the coordinator receives a Result event from the SDK, it populates the sess
 
 ### Session Closing (R3)
 
-Sessions close when a boundary detection topic shift is detected, after a configurable idle timeout, or on clean shutdown.
+Sessions close when a boundary detection topic shift is detected or on clean shutdown. Idle timeout triggers post-processing without closing the session (see Idle Post-Processing below).
 
 **Acceptance Criteria**:
 - Given an active session, when a conversation end signal is received, then the session's `ended_at` is set to the current timestamp
-- Given an active session with no message exchange for longer than the configured idle timeout, when the coordinator is not busy, then the session is closed and async post-processing is triggered
-- Given a session closed due to idle timeout, then its summary is stored for injection into the next session's system prompt
-- Given a session was closed due to idle timeout, when the user sends a new message, then a new session is created via the normal first-message path
-- Given a session is already closed, when a close signal is received again, then the operation is idempotent (no error, no change)
+- Given a session is already closed, when a close signal is received again, then the active session reference is cleared and the operation completes without error or database change
 - Given no active session exists, when a close signal is received, then the operation is a no-op
+
+### Idle Post-Processing (R1)
+
+After a configurable idle timeout, the post-processing pipeline runs on the open session without closing it. The session stays open so the next message goes through boundary detection, which either continues the session or routes to a new/resumed one.
+
+**Acceptance Criteria**:
+- Given an active session with no message exchange for longer than the configured idle timeout, when the coordinator is not busy, then post-processing runs but the session remains open (`ended_at` stays None)
+- Given idle post-processing already completed (`processed_at >= last_message_time`), when the idle loop checks again, then it skips
+- Given idle post-processing is running, when the idle loop or shutdown checks, then it skips
+- Given idle post-processing completed with no new messages, when shutdown occurs, then the session is closed but post-processing is skipped
+- Given a new message arrives after idle post-processing, when idle timeout fires again, then post-processing fires again (`processed_at < last_message_time`)
+- Given idle post-processing fired, when a new message arrives, then boundary detection runs (session has summary) and the session continues or transitions normally
 
 ### Querying (R4, R5)
 

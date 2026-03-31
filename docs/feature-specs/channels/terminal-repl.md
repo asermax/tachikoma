@@ -60,12 +60,12 @@ The REPL accepts multiline input using prompt_toolkit with custom key bindings t
 
 ### Event Bus Integration (R5)
 
-The REPL subscribes to task events via the event bus. Session tasks are buffered in an `asyncio.Queue` and processed before each input prompt. Notifications are printed directly.
+The REPL subscribes to task events via the event bus. Both session tasks and task notifications are buffered in an `asyncio.Queue[SessionTaskReady | TaskNotification]` and processed before each input prompt. Items are dispatched by type — session tasks via `_execute_session_task`, notifications via `_execute_notification`.
 
 **Acceptance Criteria**:
 - Given a `SessionTaskReady` event arrives while the REPL is waiting for input, then the task is queued and processed before the next input prompt
 - Given a queued session task is processed, then it is sent through the coordinator and rendered normally
-- Given a `TaskNotification` event is received, then the notification message is printed to the terminal
+- Given a `TaskNotification` event is received, then it is enqueued into `_task_queue` and processed by `_execute_notification` (which enqueues the prompt into the coordinator for pipeline-routed delivery)
 
 ### Exit Handling (R3)
 

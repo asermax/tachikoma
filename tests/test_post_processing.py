@@ -24,6 +24,13 @@ from tachikoma.post_processing import (
 from tachikoma.sessions.model import Session
 
 
+def _make_mock_registry():
+    """Create a mock SessionRegistry for pipeline tests."""
+    registry = MagicMock()
+    registry.mark_processed = AsyncMock()
+    return registry
+
+
 class _FakeProcessor(PostProcessor):
     """Concrete processor for testing - methods overridden per-test."""
 
@@ -35,7 +42,7 @@ def _make_mock_processor() -> _FakeProcessor:
     """Create a processor with mockable process method."""
     processor = _FakeProcessor()
     # Override the process method with an AsyncMock
-    processor.process = AsyncMock()  # type: ignore[method-assign]
+    processor.process = AsyncMock()
     return processor
 
 
@@ -57,7 +64,7 @@ class TestPostProcessingPipeline:
         processor2 = _make_mock_processor()
         session = _make_session()
 
-        pipeline = PostProcessingPipeline()
+        pipeline = PostProcessingPipeline(_make_mock_registry())
         pipeline.register(processor1)
         pipeline.register(processor2)
 
@@ -73,7 +80,7 @@ class TestPostProcessingPipeline:
         processor2 = _make_mock_processor()
         session = _make_session()
 
-        pipeline = PostProcessingPipeline()
+        pipeline = PostProcessingPipeline(_make_mock_registry())
         pipeline.register(processor1)
         pipeline.register(processor2)
 
@@ -89,7 +96,7 @@ class TestPostProcessingPipeline:
         processor.process.side_effect = RuntimeError("test error")
         session = _make_session()
 
-        pipeline = PostProcessingPipeline()
+        pipeline = PostProcessingPipeline(_make_mock_registry())
         pipeline.register(processor)
 
         # Run the pipeline - the error should be caught and logged
@@ -117,7 +124,7 @@ class TestPostProcessingPipeline:
         fast_processor = _make_mock_processor()
         fast_processor.process.side_effect = fast_process
 
-        pipeline = PostProcessingPipeline()
+        pipeline = PostProcessingPipeline(_make_mock_registry())
         pipeline.register(slow_processor)
         pipeline.register(fast_processor)
 
@@ -139,7 +146,7 @@ class TestPostProcessingPipeline:
         processor = _make_mock_processor()
         processor.process.side_effect = track_process
 
-        pipeline = PostProcessingPipeline()
+        pipeline = PostProcessingPipeline(_make_mock_registry())
         pipeline.register(processor)
 
         # Run two invocations concurrently
@@ -158,7 +165,7 @@ class TestPostProcessingPipeline:
 
     async def test_runs_with_no_registered_processors(self) -> None:
         """AC: Empty pipeline runs without error."""
-        pipeline = PostProcessingPipeline()
+        pipeline = PostProcessingPipeline(_make_mock_registry())
         session = _make_session()
 
         # Should not raise
@@ -171,7 +178,7 @@ class TestPhasedPipelineExecution:
     def test_unknown_phase_raises_value_error(self) -> None:
         """AC: Registration with unknown phase raises ValueError with clear message."""
         processor = _make_mock_processor()
-        pipeline = PostProcessingPipeline()
+        pipeline = PostProcessingPipeline(_make_mock_registry())
 
         with pytest.raises(ValueError, match="Invalid phase 'invalid'"):
             pipeline.register(processor, phase="invalid")
@@ -194,7 +201,7 @@ class TestPhasedPipelineExecution:
         finalize_processor = _make_mock_processor()
         finalize_processor.process.side_effect = track_finalize
 
-        pipeline = PostProcessingPipeline()
+        pipeline = PostProcessingPipeline(_make_mock_registry())
         pipeline.register(main_processor, phase=MAIN_PHASE)
         pipeline.register(finalize_processor, phase=FINALIZE_PHASE)
 
@@ -209,7 +216,7 @@ class TestPhasedPipelineExecution:
         main_processor.process.side_effect = RuntimeError("main failed")
         finalize_processor = _make_mock_processor()
 
-        pipeline = PostProcessingPipeline()
+        pipeline = PostProcessingPipeline(_make_mock_registry())
         pipeline.register(main_processor, phase=MAIN_PHASE)
         pipeline.register(finalize_processor, phase=FINALIZE_PHASE)
 
@@ -223,7 +230,7 @@ class TestPhasedPipelineExecution:
         """AC: Default phase is 'main' for backward compatibility."""
         processor = _make_mock_processor()
 
-        pipeline = PostProcessingPipeline()
+        pipeline = PostProcessingPipeline(_make_mock_registry())
         pipeline.register(processor)  # No phase specified
 
         # Verify it went to main phase by checking internal structure
@@ -234,7 +241,7 @@ class TestPhasedPipelineExecution:
         """AC: Empty phase is skipped without error."""
         finalize_processor = _make_mock_processor()
 
-        pipeline = PostProcessingPipeline()
+        pipeline = PostProcessingPipeline(_make_mock_registry())
         # Only register finalize, leave main empty
         pipeline.register(finalize_processor, phase=FINALIZE_PHASE)
 
@@ -262,7 +269,7 @@ class TestPhasedPipelineExecution:
         fast_processor = _make_mock_processor()
         fast_processor.process.side_effect = fast_finalize
 
-        pipeline = PostProcessingPipeline()
+        pipeline = PostProcessingPipeline(_make_mock_registry())
         pipeline.register(slow_processor, phase=FINALIZE_PHASE)
         pipeline.register(fast_processor, phase=FINALIZE_PHASE)
 
@@ -303,7 +310,7 @@ class TestPhasedPipelineExecution:
         finalize_processor = _make_mock_processor()
         finalize_processor.process.side_effect = track_finalize
 
-        pipeline = PostProcessingPipeline()
+        pipeline = PostProcessingPipeline(_make_mock_registry())
         pipeline.register(main_processor, phase=MAIN_PHASE)
         pipeline.register(pre_finalize_processor, phase=PRE_FINALIZE_PHASE)
         pipeline.register(finalize_processor, phase=FINALIZE_PHASE)
@@ -321,7 +328,7 @@ class TestPhasedPipelineExecution:
         pre_finalize_processor = _make_mock_processor()
         finalize_processor = _make_mock_processor()
 
-        pipeline = PostProcessingPipeline()
+        pipeline = PostProcessingPipeline(_make_mock_registry())
         pipeline.register(main_processor, phase=MAIN_PHASE)
         pipeline.register(pre_finalize_processor, phase=PRE_FINALIZE_PHASE)
         pipeline.register(finalize_processor, phase=FINALIZE_PHASE)
@@ -352,7 +359,7 @@ class TestPhasedPipelineExecution:
         fast_processor = _make_mock_processor()
         fast_processor.process.side_effect = fast_pre_finalize
 
-        pipeline = PostProcessingPipeline()
+        pipeline = PostProcessingPipeline(_make_mock_registry())
         pipeline.register(slow_processor, phase=PRE_FINALIZE_PHASE)
         pipeline.register(fast_processor, phase=PRE_FINALIZE_PHASE)
 
@@ -361,6 +368,99 @@ class TestPhasedPipelineExecution:
         # Both should have started before either finished (parallel execution)
         assert call_order.index("slow_start") < call_order.index("slow_end")
         assert call_order.index("fast_start") < call_order.index("fast_end")
+
+
+class TestNeedsProcessing:
+    """Tests for PostProcessingPipeline.needs_processing()."""
+
+    def test_returns_true_when_never_processed(self) -> None:
+        """AC: Session with no processed_at needs processing."""
+        pipeline = PostProcessingPipeline(_make_mock_registry())
+        session = _make_session()
+
+        assert pipeline.needs_processing(session, datetime(2026, 1, 1, tzinfo=UTC)) is True
+
+    def test_returns_false_when_is_processing(self) -> None:
+        """AC3: Returns False when pipeline is already running."""
+        pipeline = PostProcessingPipeline(_make_mock_registry())
+        pipeline._is_processing = True
+        session = _make_session()
+
+        assert pipeline.needs_processing(session, datetime(2026, 1, 1, tzinfo=UTC)) is False
+
+    def test_returns_false_when_processed_at_after_last_message(self) -> None:
+        """AC2: Returns False when processed_at >= last_message_time."""
+        pipeline = PostProcessingPipeline(_make_mock_registry())
+        session = Session(
+            id="s1",
+            started_at=datetime(2026, 1, 1, tzinfo=UTC),
+            sdk_session_id="sdk-1",
+            processed_at=datetime(2026, 1, 1, hour=12, tzinfo=UTC),
+        )
+
+        last_msg = datetime(2026, 1, 1, hour=11, tzinfo=UTC)
+        assert pipeline.needs_processing(session, last_msg) is False
+
+    def test_returns_true_when_processed_at_before_last_message(self) -> None:
+        """AC5: Returns True when processed_at < last_message_time."""
+        pipeline = PostProcessingPipeline(_make_mock_registry())
+        session = Session(
+            id="s1",
+            started_at=datetime(2026, 1, 1, tzinfo=UTC),
+            sdk_session_id="sdk-1",
+            processed_at=datetime(2026, 1, 1, hour=10, tzinfo=UTC),
+        )
+
+        last_msg = datetime(2026, 1, 1, hour=11, tzinfo=UTC)
+        assert pipeline.needs_processing(session, last_msg) is True
+
+    def test_returns_true_when_last_message_time_is_none(self) -> None:
+        """Edge case: No messages exchanged yet — conservatively returns True."""
+        pipeline = PostProcessingPipeline(_make_mock_registry())
+        session = Session(
+            id="s1",
+            started_at=datetime(2026, 1, 1, tzinfo=UTC),
+            sdk_session_id="sdk-1",
+            processed_at=datetime(2026, 1, 1, hour=12, tzinfo=UTC),
+        )
+
+        assert pipeline.needs_processing(session, None) is True
+
+
+class TestMarkProcessed:
+    """Tests for PostProcessingPipeline calling mark_processed after run."""
+
+    async def test_calls_mark_processed_after_run(self) -> None:
+        """AC7: Pipeline calls mark_processed on completion."""
+        registry = _make_mock_registry()
+        pipeline = PostProcessingPipeline(registry)
+
+        session = _make_session()
+        await pipeline.run(session)
+
+        registry.mark_processed.assert_awaited_once_with(session.id)
+
+    async def test_is_processing_flag_lifecycle(self) -> None:
+        """AC3: is_processing is True during run, False after."""
+        registry = _make_mock_registry()
+        pipeline = PostProcessingPipeline(registry)
+
+        assert pipeline.is_processing is False
+
+        observed_during: list[bool] = []
+
+        processor = _make_mock_processor()
+
+        async def capture_state(session):
+            observed_during.append(pipeline.is_processing)
+
+        processor.process.side_effect = capture_state
+        pipeline.register(processor)
+
+        await pipeline.run(_make_session())
+
+        assert observed_during == [True]
+        assert pipeline.is_processing is False
 
 
 class TestForkAndConsume:

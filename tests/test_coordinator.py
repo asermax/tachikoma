@@ -331,12 +331,13 @@ def _make_mock_registry(active_session=None):
     registry.create_session = AsyncMock(
         return_value=Session(id="new-session", started_at=datetime.now(UTC)),
     )
-    registry.close_session = AsyncMock()
+    registry.close_session = AsyncMock(return_value=True)
     registry.update_metadata = AsyncMock()
     registry.get_recent_closed = AsyncMock(return_value=[])
     registry.reopen_session = AsyncMock(return_value=None)
     registry.save_context_entries = AsyncMock(return_value=None)
     registry.load_context_entries = AsyncMock(return_value=[])
+    registry.mark_processed = AsyncMock()
     return registry
 
 
@@ -479,7 +480,8 @@ class TestCoordinatorSystemPrompt:
     """Tests for DLT-005/DLT-041: system prompt integration via foundational context."""
 
     async def test_foundational_context_persisted_to_db(
-        self, mock_sdk,
+        self,
+        mock_sdk,
     ) -> None:
         """AC: Given foundational_context is provided -> saved to DB for new session."""
         client, _ = mock_sdk
@@ -491,9 +493,7 @@ class TestCoordinatorSystemPrompt:
         registry = _make_mock_registry(active_session=None)
         foundational = [("soul", "Soul content"), ("user", "User content")]
 
-        async with Coordinator(
-            registry=registry, foundational_context=foundational
-        ) as coord:
+        async with Coordinator(registry=registry, foundational_context=foundational) as coord:
             _ = await _send(coord, "hello")
 
         # Foundational context should be saved to DB
@@ -507,7 +507,8 @@ class TestCoordinatorSystemPrompt:
         assert "user" in owners
 
     async def test_foundational_context_assembled_into_system_prompt(
-        self, mock_sdk,
+        self,
+        mock_sdk,
     ) -> None:
         """AC: Foundational context is assembled into SDK system prompt via DB."""
         client, mock_cls = mock_sdk
@@ -530,9 +531,7 @@ class TestCoordinatorSystemPrompt:
         )
         foundational = [("soul", "Soul content")]
 
-        async with Coordinator(
-            registry=registry, foundational_context=foundational
-        ) as coord:
+        async with Coordinator(registry=registry, foundational_context=foundational) as coord:
             _ = await _send(coord, "hello")
 
         options = mock_cls.call_args[0][0]
@@ -542,7 +541,8 @@ class TestCoordinatorSystemPrompt:
         assert "Soul content" in options.system_prompt["append"]
 
     async def test_no_foundational_context_uses_preamble_only(
-        self, mock_sdk,
+        self,
+        mock_sdk,
     ) -> None:
         """AC: No foundational_context -> system prompt uses preamble only."""
         client, mock_cls = mock_sdk
@@ -573,9 +573,7 @@ class TestCoordinatorSystemPrompt:
         registry = _make_mock_registry(active_session=None)
         foundational = [("soul", "Soul content")]
 
-        async with Coordinator(
-            registry=registry, foundational_context=foundational
-        ) as coord:
+        async with Coordinator(registry=registry, foundational_context=foundational) as coord:
             events = await _send(coord, "hi")
 
         text_events = [e for e in events if isinstance(e, TextChunk)]
@@ -651,6 +649,8 @@ def _make_mock_pipeline():
     """Create a mock PostProcessingPipeline with sensible defaults."""
     pipeline = MagicMock()
     pipeline.run = AsyncMock()
+    pipeline.is_processing = False
+    pipeline.needs_processing = MagicMock(return_value=True)
     return pipeline
 
 
@@ -750,8 +750,9 @@ class TestCoordinatorPostProcessing:
         # Track call order
         call_order = []
 
-        async def track_close(session_id: str) -> None:
+        async def track_close(session_id: str) -> bool:
             call_order.append("close")
+            return True
 
         async def track_run(session: Session) -> None:
             call_order.append("pipeline")
@@ -1956,7 +1957,9 @@ class TestBuildOptions:
         assert options.resume is None
 
     async def test_previous_summary_persisted_to_db_on_topic_shift(
-        self, mock_sdk, mocker,
+        self,
+        mock_sdk,
+        mocker,
     ) -> None:
         """AC: Previous conversation summary is persisted to DB after topic shift."""
         client, mock_cls = mock_sdk
@@ -1996,7 +1999,9 @@ class TestBuildOptions:
         assert found_previous_summary
 
     async def test_previous_summary_assembled_from_db(
-        self, mock_sdk, mocker,
+        self,
+        mock_sdk,
+        mocker,
     ) -> None:
         """AC: Previous summary is assembled into system prompt from DB entries."""
         client, mock_cls = mock_sdk
@@ -2051,7 +2056,9 @@ class TestBuildOptions:
         assert "Summary text" in append_text
 
     async def test_previous_summary_not_repeated_on_second_message(
-        self, mock_sdk, mocker,
+        self,
+        mock_sdk,
+        mocker,
     ) -> None:
         """AC: Previous summary is not repeated after first message (DB only has it once)."""
         client, mock_cls = mock_sdk
@@ -2077,18 +2084,24 @@ class TestBuildOptions:
         # First msg: active -> new_session (after create_session) -> new_session
         # Second msg: new_session -> new_session -> new_session
         registry.get_active_session.side_effect = [
-            active, new_session, new_session,  # First message
-            new_session, new_session, new_session,  # Second message
+            active,
+            new_session,
+            new_session,  # First message
+            new_session,
+            new_session,
+            new_session,  # Second message
         ]
         # First call returns previous-summary, second call returns empty (consumed)
         registry.load_context_entries = AsyncMock(
             side_effect=[
-                [SessionContextEntry(
-                    id=1,
-                    session_id="s2",
-                    owner="previous-summary",
-                    content="Previous summary",
-                )],
+                [
+                    SessionContextEntry(
+                        id=1,
+                        session_id="s2",
+                        owner="previous-summary",
+                        content="Previous summary",
+                    )
+                ],
                 [],  # Second message: no previous-summary entry
             ]
         )
@@ -2370,6 +2383,150 @@ class TestCoordinatorShutdownWithBoundaryDetection:
         ) as coord:
             _ = await _send(coord, "new topic")
 
+    async def test_background_shutdown_calls_on_status(
+        self,
+        mock_sdk,
+        mocker,
+    ) -> None:
+        """AC1: on_status is called before gathering background tasks on shutdown."""
+        client, _ = mock_sdk
+        client.receive_response.return_value = _mock_messages(
+            make_assistant([TextBlock(text="new topic")]),
+            make_result(),
+        )
+
+        active = Session(
+            id="s1",
+            started_at=datetime.now(UTC),
+            summary="Summary",
+            sdk_session_id="sdk-old",
+        )
+        registry = _make_mock_registry(active_session=active)
+        registry.get_active_session.side_effect = [active, None, None]
+
+        task_completed = asyncio.Event()
+
+        async def slow_pipeline(session):
+            await asyncio.sleep(0.05)
+            task_completed.set()
+
+        pipeline = MagicMock()
+        pipeline.run = AsyncMock(side_effect=slow_pipeline)
+
+        on_status = MagicMock()
+
+        mocker.patch(
+            "tachikoma.coordinator.detect_boundary",
+            return_value=BoundaryResult(continues=False),
+        )
+
+        async with Coordinator(
+            registry=registry,
+            agent_defaults=AgentDefaults(cwd=Path("/workspace")),
+            pipeline=pipeline,
+            on_status=on_status,
+        ) as coord:
+            _ = await _send(coord, "new topic")
+
+        on_status.assert_called_with("Processing memories...")
+        assert task_completed.is_set()
+
+    async def test_background_shutdown_logs_task_count(
+        self,
+        mock_sdk,
+        mocker,
+    ) -> None:
+        """AC2: Info-level log emitted with task count before gathering.
+
+        Loguru writes to stderr (not stdlib logging), so caplog cannot capture
+        the message. This test verifies the log call via mock. The message is
+        also visible in pytest's captured stderr output.
+        """
+        client, _ = mock_sdk
+        client.receive_response.return_value = _mock_messages(
+            make_assistant([TextBlock(text="new topic")]),
+            make_result(),
+        )
+
+        active = Session(
+            id="s1",
+            started_at=datetime.now(UTC),
+            summary="Summary",
+            sdk_session_id="sdk-old",
+        )
+        registry = _make_mock_registry(active_session=active)
+        registry.get_active_session.side_effect = [active, None, None]
+
+        pipeline = _make_mock_pipeline()
+
+        mocker.patch(
+            "tachikoma.coordinator.detect_boundary",
+            return_value=BoundaryResult(continues=False),
+        )
+
+        mock_log = mocker.patch("tachikoma.coordinator._log")
+
+        async with Coordinator(
+            registry=registry,
+            agent_defaults=AgentDefaults(cwd=Path("/workspace")),
+            pipeline=pipeline,
+        ) as coord:
+            _ = await _send(coord, "new topic")
+
+        mock_log.info.assert_any_call(
+            "Awaiting background post-processing tasks: count={count}",
+            count=1,
+        )
+
+    async def test_background_shutdown_catches_status_exception(
+        self,
+        mock_sdk,
+        mocker,
+    ) -> None:
+        """AC4: on_status exception is caught; background tasks still awaited."""
+        client, _ = mock_sdk
+        client.receive_response.return_value = _mock_messages(
+            make_assistant([TextBlock(text="new topic")]),
+            make_result(),
+        )
+
+        active = Session(
+            id="s1",
+            started_at=datetime.now(UTC),
+            summary="Summary",
+            sdk_session_id="sdk-old",
+        )
+        registry = _make_mock_registry(active_session=active)
+        registry.get_active_session.side_effect = [active, None, None]
+
+        task_completed = asyncio.Event()
+
+        async def slow_pipeline(session):
+            await asyncio.sleep(0.05)
+            task_completed.set()
+
+        pipeline = MagicMock()
+        pipeline.run = AsyncMock(side_effect=slow_pipeline)
+
+        on_status = MagicMock(side_effect=RuntimeError("status broke"))
+
+        mocker.patch(
+            "tachikoma.coordinator.detect_boundary",
+            return_value=BoundaryResult(continues=False),
+        )
+
+        # Should not raise despite on_status failure
+        async with Coordinator(
+            registry=registry,
+            agent_defaults=AgentDefaults(cwd=Path("/workspace")),
+            pipeline=pipeline,
+            on_status=on_status,
+        ) as coord:
+            _ = await _send(coord, "new topic")
+
+        # Background task should still have been awaited
+        assert task_completed.is_set()
+
 
 class TestCoordinatorPipelineAgents:
     """Tests for DLT-021: agent extraction from pre-processing pipeline results."""
@@ -2566,8 +2723,8 @@ class TestCoordinatorPipelineAgents:
         assert "skills/b/agent" in options.agents
 
 
-class TestIdleCloseConfig:
-    """Tests for DLT-036: idle close configuration and startup behavior."""
+class TestIdlePostProcessingConfig:
+    """Tests for idle post-processing configuration and startup behavior."""
 
     async def test_idle_timeout_stored(self) -> None:
         """AC: _idle_timeout is set from parameter."""
@@ -2576,15 +2733,15 @@ class TestIdleCloseConfig:
         assert coord._idle_timeout == 600
 
     async def test_idle_loop_not_started_when_timeout_zero(self, mock_sdk) -> None:
-        """AC: timeout=0 means no idle close loop task."""
+        """AC: timeout=0 means no idle post-processing loop task."""
         async with Coordinator(session_idle_timeout=0) as coord:
-            assert coord._idle_close_task is None
+            assert coord._idle_pp_task is None
 
     async def test_idle_loop_started_when_timeout_positive(self, mock_sdk) -> None:
-        """AC: __aenter__ creates idle close task when timeout > 0."""
+        """AC: __aenter__ creates idle post-processing task when timeout > 0."""
         async with Coordinator(session_idle_timeout=900) as coord:
-            assert coord._idle_close_task is not None
-            assert not coord._idle_close_task.done()
+            assert coord._idle_pp_task is not None
+            assert not coord._idle_pp_task.done()
 
 
 class TestIsBusy:
@@ -2631,11 +2788,11 @@ class TestIsBusy:
         coord._pending_msg_task = None  # Clear so coordinator doesn't await it
 
 
-class TestCloseIdleSession:
-    """Tests for DLT-036: _close_idle_session() method behavior."""
+class TestIdlePostProcess:
+    """Tests for _idle_post_process() method behavior."""
 
-    async def test_closes_session_in_registry(self, mock_sdk) -> None:
-        """AC: _close_idle_session calls registry.close_session."""
+    async def test_fires_post_processing_without_closing(self, mock_sdk) -> None:
+        """AC1: Session stays open and post-processing fires."""
         active = Session(
             id="s1",
             started_at=datetime.now(UTC),
@@ -2645,29 +2802,17 @@ class TestCloseIdleSession:
         pipeline = _make_mock_pipeline()
 
         coord = Coordinator(registry=registry, pipeline=pipeline)
-        await coord._close_idle_session()
+        coord._last_message_time = datetime.now(UTC) - timedelta(seconds=1000)
+        await coord._idle_post_process()
 
-        registry.close_session.assert_awaited_once_with("s1")
-
-    async def test_fires_post_processing(self, mock_sdk) -> None:
-        """AC: _close_idle_session fires async post-processing."""
-        active = Session(
-            id="s2",
-            started_at=datetime.now(UTC),
-            sdk_session_id="sdk-2",
-        )
-        registry = _make_mock_registry(active_session=active)
-        pipeline = _make_mock_pipeline()
-
-        coord = Coordinator(registry=registry, pipeline=pipeline)
-        await coord._close_idle_session()
         # Allow background task to start
         await asyncio.sleep(0.01)
 
         pipeline.run.assert_awaited_once()
+        registry.close_session.assert_not_awaited()
 
-    async def test_clears_sdk_state(self, mock_sdk) -> None:
-        """AC: _close_idle_session clears _sdk_session_id, _agents, _mcp_servers."""
+    async def test_preserves_sdk_state(self, mock_sdk) -> None:
+        """AC: _idle_post_process preserves _sdk_session_id, _agents, _mcp_servers."""
         active = Session(
             id="s3",
             started_at=datetime.now(UTC),
@@ -2680,55 +2825,71 @@ class TestCloseIdleSession:
         coord._sdk_session_id = "old-sdk"
         coord._agents = {"test/agent": AgentDefinition(description="test", prompt="Test prompt")}
         coord._mcp_servers = {"test-server": MagicMock()}
+        coord._last_message_time = datetime.now(UTC) - timedelta(seconds=1000)
 
-        await coord._close_idle_session()
+        await coord._idle_post_process()
 
-        assert coord._sdk_session_id is None
-        assert coord._agents is None
-        assert coord._mcp_servers == {}
+        assert coord._sdk_session_id == "old-sdk"
+        assert coord._agents is not None
+        assert "test-server" in coord._mcp_servers
 
-    async def test_skips_post_processing_without_sdk_session(self, mock_sdk) -> None:
+    async def test_skips_when_no_sdk_session(self, mock_sdk) -> None:
         """AC: Session without sdk_session_id skips post-processing."""
         active = Session(
             id="s5",
             started_at=datetime.now(UTC),
-            sdk_session_id=None,  # No SDK session
+            sdk_session_id=None,
         )
         registry = _make_mock_registry(active_session=active)
         pipeline = _make_mock_pipeline()
 
         async with Coordinator(registry=registry, pipeline=pipeline) as coord:
-            await coord._close_idle_session()
+            await coord._idle_post_process()
+
+        pipeline.run.assert_not_awaited()
+
+    async def test_skips_when_needs_processing_false(self, mock_sdk) -> None:
+        """AC2/AC3: Skips when pipeline.needs_processing returns False."""
+        active = Session(
+            id="s6",
+            started_at=datetime.now(UTC),
+            sdk_session_id="sdk-6",
+        )
+        registry = _make_mock_registry(active_session=active)
+        pipeline = _make_mock_pipeline()
+        pipeline.needs_processing = MagicMock(return_value=False)
+
+        coord = Coordinator(registry=registry, pipeline=pipeline)
+        await coord._idle_post_process()
 
         pipeline.run.assert_not_awaited()
 
     async def test_noop_when_no_active_session(self, mock_sdk) -> None:
-        """AC: No active session means _close_idle_session is a no-op."""
+        """AC: No active session means _idle_post_process is a no-op."""
         registry = _make_mock_registry(active_session=None)
+        pipeline = _make_mock_pipeline()
 
-        async with Coordinator(registry=registry) as coord:
-            # Should not raise
-            await coord._close_idle_session()
+        async with Coordinator(registry=registry, pipeline=pipeline) as coord:
+            await coord._idle_post_process()
 
-        registry.close_session.assert_not_awaited()
+        pipeline.run.assert_not_awaited()
 
     async def test_graceful_on_registry_error(self, mock_sdk) -> None:
         """AC: Registry errors are logged, no crash."""
         registry = MagicMock()
-        registry.get_active_session = AsyncMock(
-            side_effect=RuntimeError("DB connection lost")
-        )
+        registry.get_active_session = AsyncMock(side_effect=RuntimeError("DB connection lost"))
 
-        coord = Coordinator(registry=registry)
+        pipeline = _make_mock_pipeline()
+        coord = Coordinator(registry=registry, pipeline=pipeline)
         # Should not raise
-        await coord._close_idle_session()
+        await coord._idle_post_process()
 
 
-class TestIdleCloseLoop:
-    """Tests for DLT-036: _idle_close_loop periodic check behavior."""
+class TestIdlePostProcessingLoop:
+    """Tests for _idle_post_processing_loop periodic check behavior."""
 
-    async def test_closes_after_timeout(self, mock_sdk) -> None:
-        """AC: Elapsed > timeout triggers _close_idle_session."""
+    async def test_fires_after_timeout(self, mock_sdk) -> None:
+        """AC1: Elapsed > timeout triggers _idle_post_process."""
         active = Session(
             id="s1",
             started_at=datetime.now(UTC),
@@ -2740,42 +2901,50 @@ class TestIdleCloseLoop:
         coord = Coordinator(
             registry=registry,
             pipeline=pipeline,
-            session_idle_timeout=1,  # 1 second timeout
+            session_idle_timeout=1,
         )
-        # Set _last_message_time to more than timeout ago
         coord._last_message_time = datetime.now(UTC) - timedelta(seconds=10)
 
-        # Manually trigger close
-        await coord._close_idle_session()
+        await coord._idle_post_process()
 
-        registry.close_session.assert_awaited_once_with("s1")
+        # Allow background task to start
+        await asyncio.sleep(0.01)
+        pipeline.run.assert_awaited_once()
+        registry.close_session.assert_not_awaited()
 
     async def test_skips_when_no_active_session(self, mock_sdk) -> None:
         """AC: Loop skips when no active session."""
         registry = _make_mock_registry(active_session=None)
+        pipeline = _make_mock_pipeline()
 
-        coord = Coordinator(registry=registry, session_idle_timeout=1)
+        coord = Coordinator(registry=registry, pipeline=pipeline, session_idle_timeout=1)
         coord._last_message_time = datetime.now(UTC) - timedelta(seconds=10)
 
-        # _close_idle_session should be a no-op
-        await coord._close_idle_session()
+        await coord._idle_post_process()
 
-        registry.close_session.assert_not_awaited()
+        pipeline.run.assert_not_awaited()
 
-    async def test_skips_when_no_last_message_time(self, mock_sdk) -> None:
-        """AC: Loop skips when _last_message_time is None."""
-        active = Session(id="s1", started_at=datetime.now(UTC))
+    async def test_skips_when_needs_processing_false(self, mock_sdk) -> None:
+        """AC2: Skips when processed_at >= last_message_time."""
+        active = Session(
+            id="s1",
+            started_at=datetime.now(UTC),
+            sdk_session_id="sdk-1",
+            processed_at=datetime.now(UTC),
+        )
         registry = _make_mock_registry(active_session=active)
+        pipeline = _make_mock_pipeline()
+        pipeline.needs_processing = MagicMock(return_value=False)
 
-        coord = Coordinator(registry=registry, session_idle_timeout=1)
-        # _last_message_time is None by default
-        assert coord._last_message_time is None
+        coord = Coordinator(registry=registry, pipeline=pipeline, session_idle_timeout=1)
+        coord._last_message_time = datetime.now(UTC) - timedelta(seconds=10)
 
-        # _close_idle_session should handle this gracefully
-        await coord._close_idle_session()
+        await coord._idle_post_process()
+
+        pipeline.run.assert_not_awaited()
 
     async def test_snoozes_when_busy(self, mock_sdk) -> None:
-        """AC: Busy coordinator snoozes instead of closing."""
+        """AC: Busy coordinator snoozes instead of processing."""
         active = Session(
             id="s1",
             started_at=datetime.now(UTC),
@@ -2789,26 +2958,19 @@ class TestIdleCloseLoop:
             pipeline=pipeline,
             session_idle_timeout=300,
         )
-        # Set conditions for close
         coord._last_message_time = datetime.now(UTC) - timedelta(seconds=400)
 
         # Make coordinator busy
         coord.enqueue("pending")
 
-        # _is_busy should be True
         assert coord._is_busy is True
-
-        # The actual snooze logic is in _idle_close_loop
-        # Here we verify the busy check works
 
     async def test_snooze_duration_capped(self) -> None:
         """AC: Snooze duration is min(300, timeout)."""
-        # With timeout=120, snooze should be 120
         _ = Coordinator(session_idle_timeout=120)
         expected_snooze = min(300, 120)
         assert expected_snooze == 120
 
-        # With timeout=600, snooze should be 300
         _ = Coordinator(session_idle_timeout=600)
         expected_snooze = min(300, 600)
         assert expected_snooze == 300
@@ -2820,11 +2982,10 @@ class TestIdleCloseLoop:
             side_effect=RuntimeError("Transient error"),
         )
 
-        coord = Coordinator(registry=registry, session_idle_timeout=1)
-        # First close attempt fails but doesn't crash
-        await coord._close_idle_session()
+        pipeline = _make_mock_pipeline()
+        coord = Coordinator(registry=registry, pipeline=pipeline, session_idle_timeout=1)
+        await coord._idle_post_process()
 
-        # Coordinator should still be functional
         assert coord._idle_timeout == 1
 
     async def test_independent_of_task_scheduler(self, mock_sdk) -> None:
@@ -2837,37 +2998,36 @@ class TestIdleCloseLoop:
         registry = _make_mock_registry(active_session=active)
         pipeline = _make_mock_pipeline()
 
-        # tasks.idle_window = 300 (default), session_idle_timeout = 900
         coord = Coordinator(
             registry=registry,
             pipeline=pipeline,
             session_idle_timeout=900,
         )
-        # 6 minutes idle (360s) > tasks.idle_window (300) but < session_idle_timeout (900)
+        # 6 minutes idle — still under session_idle_timeout
         coord._last_message_time = datetime.now(UTC) - timedelta(seconds=360)
 
-        # Elapsed < timeout, so should NOT close automatically
-        # But if we call close directly, it should work
-        await coord._close_idle_session()
+        await coord._idle_post_process()
+        await asyncio.sleep(0.01)
 
-        # Now it should have closed
-        registry.close_session.assert_awaited_once()
+        # Post-processing fires (called directly, bypasses timeout check)
+        pipeline.run.assert_awaited_once()
+        # Session stays open
+        registry.close_session.assert_not_awaited()
 
 
-class TestIdleCloseShutdown:
-    """Tests for DLT-036: idle close behavior during shutdown."""
+class TestIdlePostProcessingShutdown:
+    """Tests for idle post-processing behavior during shutdown."""
 
     async def test_idle_loop_cancelled_on_aexit(self, mock_sdk) -> None:
-        """AC: __aexit__ cancels _idle_close_task before shutdown close."""
+        """AC: __aexit__ cancels _idle_pp_task before shutdown."""
         async with Coordinator(session_idle_timeout=900) as coord:
-            task = coord._idle_close_task
+            task = coord._idle_pp_task
             assert task is not None
 
-        # After exit, task should be cancelled
         assert task.cancelled() or task.done()
 
-    async def test_aexit_skips_close_after_idle_close(self, mock_sdk) -> None:
-        """AC: If idle close already closed session, __aexit__ skips double-close."""
+    async def test_aexit_skips_pp_after_idle_pp(self, mock_sdk) -> None:
+        """AC4: If idle PP already processed, __aexit__ skips redundant PP."""
         active = Session(
             id="s1",
             started_at=datetime.now(UTC),
@@ -2876,26 +3036,23 @@ class TestIdleCloseShutdown:
         registry = _make_mock_registry(active_session=active)
         pipeline = _make_mock_pipeline()
 
-        # Make registry return None after close_session is called
-        close_call_count = 0
-
-        async def mock_close(*args):
-            nonlocal close_call_count
-            close_call_count += 1
-            # After close, make get_active_session return None
-            registry.get_active_session.return_value = None
-
-        registry.close_session.side_effect = mock_close
-
         async with Coordinator(registry=registry, pipeline=pipeline) as coord:
-            # Manually close via idle close
-            await coord._close_idle_session()
+            coord._last_message_time = datetime.now(UTC) - timedelta(seconds=1000)
 
-        # close_session should only be called once (by _close_idle_session)
-        assert close_call_count == 1
+            # Manually trigger idle post-processing
+            await coord._idle_post_process()
+            await asyncio.sleep(0.01)
 
-    async def test_idle_close_does_not_fire_during_message_exchange(self, mock_sdk) -> None:
-        """AC: Idle close respects busy check during message processing."""
+            # After idle PP, make needs_processing return False
+            pipeline.needs_processing = MagicMock(return_value=False)
+
+        # pipeline.run was called once by idle PP, not again on shutdown
+        pipeline.run.assert_awaited_once()
+        # Session was closed on shutdown
+        registry.close_session.assert_awaited_once()
+
+    async def test_idle_pp_does_not_fire_during_message_exchange(self, mock_sdk) -> None:
+        """AC: Idle post-processing respects busy check during message processing."""
         client, _ = mock_sdk
 
         steered = asyncio.Event()
@@ -2916,19 +3073,11 @@ class TestIdleCloseShutdown:
         ) as coord:
             coord.enqueue("hello")
 
-            # Start send_message in background
             async def consume():
                 return [e async for e in coord.send_message()]
 
             task = asyncio.create_task(consume())
             await asyncio.sleep(0.05)
 
-            # _client should be set during exchange
-            # _is_busy should be True
-            # (though with mocking, _client may not be set the same way)
-
             steered.set()
             await task
-
-        # Session should not be closed by idle timeout during active exchange
-        # (The idle loop would have snoozed)

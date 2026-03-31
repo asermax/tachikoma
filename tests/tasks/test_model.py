@@ -130,7 +130,7 @@ class TestTaskDefinition:
         )
 
         with pytest.raises(AttributeError):
-            definition.name = "Changed"  # type: ignore[misc]
+            definition.name = "Changed"
 
 
 class TestTaskInstance:
@@ -175,7 +175,7 @@ class TestTaskInstance:
         )
 
         with pytest.raises(AttributeError):
-            instance.status = "running"  # type: ignore[misc]
+            instance.status = "running"
 
 
 class TestORMModels:

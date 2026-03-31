@@ -139,30 +139,32 @@ class TestSessionRegistryClose:
         mock_repo.create.return_value = session
         await registry.create_session()
 
-        await registry.close_session("s1")
+        result = await registry.close_session("s1")
         active = await registry.get_active_session()
 
+        assert result is True
         assert active is None
 
     async def test_close_with_no_active_session_is_noop(
         self, registry: SessionRegistry, mock_repo
     ) -> None:
         """AC: close_session with no active session completes without error."""
-        await registry.close_session("nonexistent")
+        result = await registry.close_session("nonexistent")
 
+        assert result is False
         mock_repo.update.assert_not_awaited()
 
     async def test_close_already_closed_session_is_idempotent(self, mock_repo) -> None:
-        """AC: closing an already-closed session is a no-op."""
-        # Manually set active session to an already-closed one
+        """AC: closing an already-closed session clears _active_session but does not update DB."""
         closed_session = _make_session("s1", ended_at=_utcnow())
         registry = SessionRegistry(mock_repo)
         registry._active_session = closed_session
 
-        await registry.close_session("s1")
+        result = await registry.close_session("s1")
 
-        # Should not call update since it's already closed
+        assert result is False
         mock_repo.update.assert_not_awaited()
+        assert await registry.get_active_session() is None
 
 
 class TestSessionRegistryUpdateMetadata:
@@ -377,9 +379,7 @@ class TestSessionRegistryContextEntries:
         self, registry: SessionRegistry, mock_repo
     ) -> None:
         """AC: save failures are logged but not raised (graceful degradation per R7)."""
-        mock_repo.save_context_entries = AsyncMock(
-            side_effect=Exception("DB error")
-        )
+        mock_repo.save_context_entries = AsyncMock(side_effect=Exception("DB error"))
 
         # Should not raise - best-effort save
         await registry.save_context_entries("s1", [("memories", "test")])
@@ -391,12 +391,8 @@ class TestSessionRegistryContextEntries:
     ) -> None:
         """AC: load_context_entries delegates to repository and returns entries."""
         expected_entries = [
-            SessionContextEntry(
-                id=1, session_id="s1", owner="foundational", content="first"
-            ),
-            SessionContextEntry(
-                id=2, session_id="s1", owner="memories", content="second"
-            ),
+            SessionContextEntry(id=1, session_id="s1", owner="foundational", content="first"),
+            SessionContextEntry(id=2, session_id="s1", owner="memories", content="second"),
         ]
         mock_repo.load_context_entries = AsyncMock(return_value=expected_entries)
 
@@ -409,9 +405,7 @@ class TestSessionRegistryContextEntries:
         self, registry: SessionRegistry, mock_repo
     ) -> None:
         """AC: load failures propagate to caller (caller handles graceful degradation)."""
-        mock_repo.load_context_entries = AsyncMock(
-            side_effect=Exception("DB error")
-        )
+        mock_repo.load_context_entries = AsyncMock(side_effect=Exception("DB error"))
 
         with pytest.raises(Exception, match="DB error"):
             await registry.load_context_entries("s1")

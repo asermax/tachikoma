@@ -88,12 +88,12 @@ The key components:
 | Event Type | Rendering |
 |------------|-----------|
 | `TextChunk` | Accumulated in buffer, formatted via telegramify-markdown, sent as progressive message edits |
-| `ToolActivity` | Inline status line appended to current message as blockquote with wrench icon (e.g., "> 🔧 Reading src/main.py"); replaced by next tool; activities collected for summary generation at tool→text transitions |
+| `ToolActivity` | Italicized inline status line appended to current message with wrench icon (e.g., "*🔧 Reading src/main.py*"), separated from surrounding text by blank lines; replaced by next tool; activities collected for summary generation at tool→text transitions |
 | `Result` | Final edit with complete formatted text; copy+delete for push notification (if enabled); renderer reset for next turn |
 | `Status` | Transient italic message sent via `handle_status()` method; replaced when the first TextChunk or ToolActivity arrives |
 | `Error` | Separate error message sent to chat; conversation continues if recoverable |
 
-**Tool display format:** Uses shared `TOOL_DISPLAY` map from `display.py` for live status lines — present-progressive format with wrench icon in blockquote (e.g., "> 🔧 Reading src/main.py"). Known tools show contextual present-progressive details; unknown tools fall back to tool name with ellipsis — MCP tool names (starting with `mcp__`) are first formatted into human-readable labels via `format_tool_name()` (e.g., `mcp__projects__list_projects` becomes "List Projects"). Both are rendered with wrench icon in blockquote format. At tool→text transitions, `summarize_tool_activity()` generates a post-hoc summary from the collected activities using `TOOL_SUMMARY` — present-progressive format matching active display (e.g., "> 🔧 Reading 3 files and searching for 'config'").
+**Tool display format:** Uses shared `TOOL_DISPLAY` map from `display.py` for live status lines — present-progressive format with wrench icon in markdown italics (e.g., "*🔧 Reading src/main.py*"), separated from surrounding text by blank lines. Known tools show contextual present-progressive details; unknown tools fall back to tool name with ellipsis — MCP tool names (starting with `mcp__`) are first formatted into human-readable labels via `format_tool_name()` (e.g., `mcp__projects__list_projects` becomes "List Projects"). Both are rendered with wrench icon in italics format. At tool→text transitions, `summarize_tool_activity()` generates a post-hoc summary from the collected activities using `TOOL_SUMMARY` — present-progressive format matching active display (e.g., "*🔧 Reading 3 files and searching for 'config'*"), with blank lines before and after to visually separate tool activity from response text.
 
 ### Cross-Layer Contracts
 
@@ -240,18 +240,17 @@ When `push_notifications` is enabled, all `send_message` calls during streaming 
 ### Message splitting
 
 ```
-1. Buffer accumulates text chunks; tool line (if any) is included in character count
-2. Before each edit, check if formatted output (buffer + tool line) > ~3800 chars
-3. If over limit:
-   a. Find last paragraph boundary (\n\n) before the limit in the text buffer
-   b. Split: send everything up to boundary as final edit of current message
-   c. Start new message with remainder + current tool line (if active)
-   d. Reset _current_message_id to new message
-4. If no paragraph boundary found, split at last newline
-5. If no newline found, hard-split at MAX_MESSAGE_SIZE (3800)
+1. Buffer accumulates text chunks; tool line (if any) is included
+2. On each flush, convert(display_text) produces (text, entities)
+3. Measure converted text with utf16_len(text) against TELEGRAM_MAX_UTF16 (4096)
+4. If over limit:
+   a. split_entities(text, entities, 4096) produces list of (text, entities) chunks
+   b. Send/edit first chunk as the current message
+   c. Send remaining chunks as new messages
+5. If under limit: send/edit as a single message
 ```
 
-The 3800-char safety margin (7% buffer) accounts for entity overhead and encoding variations.
+Splitting operates on the post-conversion text+entities via `telegramify_markdown.split_entities()`, which respects UTF-16 code unit length (Telegram's actual constraint), clips entities at split boundaries, and prefers newline-based split points.
 
 ### Message buffer flow
 
@@ -377,15 +376,16 @@ The `Result` event serves as a turn boundary signal. The channel finalizes the c
 - Pro: Pydantic validates all fields when the section exists
 - Con: Requires the bootstrap hook to check and prompt when the section is missing
 
-### MAX_MESSAGE_SIZE = 3800 (safety margin)
+### Post-conversion splitting via split_entities
 
-**Choice**: Use 3800 characters as the practical limit instead of Telegram's 4096
-**Why**: The 7% safety margin accounts for entity serialization overhead and UTF-16 code unit variations. Splitting earlier prevents edge cases where formatted output exceeds the limit.
+**Choice**: Always convert markdown first, then split using `telegramify_markdown.split_entities()` against Telegram's 4096 UTF-16 code unit hard limit
+**Why**: The previous approach (pre-conversion split at 3800 raw chars) couldn't account for text expansion during conversion — `convert()` pads table cells with spaces for alignment, causing ~1.5x expansion that exceeded 4096 after splitting. Splitting post-conversion against the actual UTF-16 limit eliminates this mismatch.
 
 **Consequences**:
-- Pro: Fewer edge cases at the boundary
-- Pro: Room for entity metadata overhead
-- Con: Slightly more messages for very long responses
+- Pro: Correct splitting regardless of how `convert()` transforms the text
+- Pro: Uses UTF-16 code units (Telegram's real constraint) via `utf16_len()`
+- Pro: Simpler code — one split mechanism instead of two (pre-conversion + fallback)
+- Con: Always calls `convert()` even on long text (lightweight, not a bottleneck)
 
 ## System Behavior
 

@@ -56,7 +56,7 @@ class TestSessionDataclass:
         session = Session(id="abc", started_at=_utcnow())
 
         with pytest.raises(FrozenInstanceError):
-            session.id = "other"  # type: ignore[misc]
+            session.id = "other"
 
     def test_optional_fields_default_to_none(self) -> None:
         """Optional fields have None defaults."""
@@ -120,7 +120,7 @@ class TestSessionContextEntry:
         )
 
         with pytest.raises(FrozenInstanceError):
-            entry.content = "modified"  # type: ignore[misc]
+            entry.content = "modified"
 
     def test_fields_set_correctly(self) -> None:
         """All fields round-trip correctly."""
@@ -139,10 +139,10 @@ class TestSessionContextEntry:
     def test_required_fields_have_no_defaults(self) -> None:
         """All fields are required — no defaults."""
         with pytest.raises(TypeError):
-            SessionContextEntry()  # type: ignore[call-arg]
+            SessionContextEntry()
 
         with pytest.raises(TypeError):
-            SessionContextEntry(id=1, session_id="abc", owner="test")  # type: ignore[call-arg]
+            SessionContextEntry(id=1, session_id="abc", owner="test")
 
     def test_entry_captures_context_at_injection_time(self) -> None:
         """AC: Entry content matches what was injected (content integrity)."""

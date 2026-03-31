@@ -32,10 +32,13 @@ class SessionTaskReady(BaseEvent[None]):
 class TaskNotification(BaseEvent[None]):
     """Event dispatched when a background task completes or fails.
 
-    Channels subscribe to this event to deliver notifications to the user.
+    Channels subscribe to this event and enqueue the prompt into the coordinator
+    for delivery through the standard message processing pipeline.
     """
 
-    message: str = Field(description="The notification message content")
+    prompt: str = Field(
+        description="The notification prompt to route through the coordinator pipeline"
+    )
 
     source_task_id: str | None = Field(
         default=None,

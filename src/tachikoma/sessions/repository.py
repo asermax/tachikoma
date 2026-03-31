@@ -52,6 +52,7 @@ class SessionRepository:
                 started_at=session.started_at,
                 ended_at=session.ended_at,
                 last_resumed_at=session.last_resumed_at,
+                processed_at=session.processed_at,
             )
 
             async with self._session_factory() as db:
@@ -259,9 +260,7 @@ class SessionRepository:
                 f"Failed to save context entries for session {session_id}"
             ) from exc
 
-    async def load_context_entries(
-        self, session_id: str
-    ) -> list[SessionContextEntry]:
+    async def load_context_entries(self, session_id: str) -> list[SessionContextEntry]:
         """Load all context entries for a session.
 
         Entries are returned ordered by id ascending (insertion order).
@@ -291,4 +290,3 @@ class SessionRepository:
             raise SessionRepositoryError(
                 f"Failed to load context entries for session {session_id}"
             ) from exc
-

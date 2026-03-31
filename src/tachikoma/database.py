@@ -8,6 +8,7 @@ receive the shared session_factory.
 from pathlib import Path
 
 from loguru import logger
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase
 
@@ -91,7 +92,6 @@ class Database:
             await conn.run_sync(Base.metadata.create_all)
 
             # Check for and add missing columns on existing databases
-            from sqlalchemy import text  # noqa: PLC0415
 
             # Check if summary column exists on sessions table (added in DLT-027)
             result = await conn.execute(
@@ -108,6 +108,14 @@ class Database:
             if result.fetchone() is None:
                 await conn.execute(text("ALTER TABLE sessions ADD COLUMN last_resumed_at DATETIME"))
                 _log.info("Schema migration: added 'last_resumed_at' column to sessions table")
+
+            # Check if processed_at column exists on sessions table
+            result = await conn.execute(
+                text("SELECT * FROM pragma_table_info('sessions') WHERE name='processed_at'")
+            )
+            if result.fetchone() is None:
+                await conn.execute(text("ALTER TABLE sessions ADD COLUMN processed_at DATETIME"))
+                _log.info("Schema migration: added 'processed_at' column to sessions table")
 
             # Check if session_resumptions table exists (added in DLT-028)
             result = await conn.execute(

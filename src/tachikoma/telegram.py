@@ -21,7 +21,7 @@ from aiogram.types import Message
 from aiogram.utils.chat_action import ChatActionSender
 from bubus import EventBus
 from loguru import logger
-from telegramify_markdown import convert
+from telegramify_markdown import convert, split_entities, utf16_len
 
 from tachikoma.bootstrap import BootstrapContext, BootstrapError
 from tachikoma.config import TelegramSettings
@@ -32,8 +32,8 @@ from tachikoma.tasks.events import SessionTaskReady, TaskNotification
 
 _log = logger.bind(component="telegram")
 
-# Telegram message size limit with safety margin
-MAX_MESSAGE_SIZE = 3800
+# Telegram hard limit in UTF-16 code units
+TELEGRAM_MAX_UTF16 = 4096
 
 # Time-based throttle interval for edits (seconds)
 EDIT_THROTTLE_INTERVAL = 2.0
@@ -100,8 +100,9 @@ class ResponseRenderer:
             if self._buffer and not self._buffer.endswith("\n"):
                 self._buffer += "\n"
 
+            prefix = "\n" if self._buffer else ""
             summary = summarize_tool_activity(self._tool_activities)
-            self._buffer += f"> 🔧 {summary}\n"
+            self._buffer += f"{prefix}*🔧 {summary}*\n\n"
             self._tool_activities = []  # Clear — each transition gets independent summary
             self._tool_line = None  # Clear tool line - marker replaces it
 
@@ -117,7 +118,7 @@ class ResponseRenderer:
         display_fn = TOOL_DISPLAY.get(activity.tool_name)
         name = format_tool_name(activity.tool_name)
         label = display_fn(activity.tool_input) if display_fn else f"{name}..."
-        self._tool_line = f"> 🔧 {label}"
+        self._tool_line = f"*🔧 {label}*"
         await self._flush(force=False)
 
     async def handle_error(self, error: Error) -> None:
@@ -144,8 +145,12 @@ class ResponseRenderer:
     async def finalize(self) -> None:
         """Send the final state of the current message, bypassing throttle."""
         if self._tool_activities:
+            if self._buffer and not self._buffer.endswith("\n"):
+                self._buffer += "\n"
+
+            prefix = "\n" if self._buffer else ""
             summary = summarize_tool_activity(self._tool_activities)
-            self._buffer += f"> 🔧 {summary}\n"
+            self._buffer += f"{prefix}*🔧 {summary}*\n"
             self._tool_activities = []
 
         self._tool_line = None
@@ -201,7 +206,7 @@ class ResponseRenderer:
         display_text = self._buffer
         if self._tool_line:
             if display_text:
-                display_text += f"\n{self._tool_line}"
+                display_text += f"\n\n{self._tool_line}"
             else:
                 display_text = self._tool_line
 
@@ -209,13 +214,15 @@ class ResponseRenderer:
         if not display_text:
             return
 
-        # Check for message splitting before formatting
-        if len(display_text) > MAX_MESSAGE_SIZE:
-            await self._split_and_send(display_text)
-            return
-
         # Convert markdown to Telegram entities format
         text, entities = convert(display_text)
+
+        # Split if converted text exceeds Telegram's UTF-16 limit
+        if utf16_len(text) > TELEGRAM_MAX_UTF16:
+            chunks = split_entities(text, entities, TELEGRAM_MAX_UTF16)
+            await self._send_chunks(chunks)
+            self._last_edit_time = time.monotonic()
+            return
 
         try:
             if self._current_message_id is None:
@@ -266,46 +273,50 @@ class ResponseRenderer:
         except TelegramAPIError:
             _log.exception("Failed to send/edit message")
 
-    async def _split_and_send(self, display_text: str) -> None:
-        """Split text at paragraph boundary and send as multiple messages."""
-        # Find the best split point
-        split_pos = self._find_split_position(display_text)
+    async def _send_chunks(
+        self,
+        chunks: list[tuple[str, list]],
+    ) -> None:
+        """Send multiple pre-split chunks as separate Telegram messages."""
+        for i, (text, entities) in enumerate(chunks):
+            try:
+                if i == 0 and self._current_message_id is not None:
+                    # Edit existing message with first chunk
+                    await self._bot.edit_message_text(
+                        text=text,
+                        chat_id=self._chat_id,
+                        message_id=self._current_message_id,
+                        parse_mode=None,
+                        entities=[e.to_dict() for e in entities],
+                    )
+                    _log.debug("Edited message: id={id}", id=self._current_message_id)
+                else:
+                    if i > 0:
+                        self._current_message_id = None
 
-        # Split the text
-        first_part = display_text[:split_pos].rstrip()
-        remainder = display_text[split_pos:].lstrip()
+                    msg = await self._bot.send_message(
+                        self._chat_id,
+                        text,
+                        parse_mode=None,
+                        entities=[e.to_dict() for e in entities],
+                        disable_notification=self._push_notifications,
+                    )
+                    self._current_message_id = msg.message_id
+                    self._message_count += 1
+                    _log.debug(
+                        "Sent message: id={id}, count={n}",
+                        id=self._current_message_id,
+                        n=self._message_count,
+                    )
 
-        # Finalize current message with first part
-        self._buffer = first_part
-        self._tool_line = None  # Tool line goes with remainder
+            except TelegramBadRequest as e:
+                if "message is not modified" in str(e):
+                    _log.debug("Edit skipped: message content unchanged")
+                else:
+                    _log.exception("Failed to send/edit message")
 
-        # Send first part (force to bypass throttle)
-        await self._flush(force=True)
-
-        # Start new message with remainder
-        self._current_message_id = None
-        self._buffer = remainder
-
-        # If remainder is still too long, recursively split
-        if len(remainder) > MAX_MESSAGE_SIZE:
-            await self._split_and_send(remainder)
-        else:
-            await self._flush(force=True)
-
-    def _find_split_position(self, text: str) -> int:
-        """Find the best position to split text, preferring paragraph boundaries."""
-        # Look for paragraph boundary (\n\n) before the limit
-        paragraph_split = text.rfind("\n\n", 0, MAX_MESSAGE_SIZE)
-        if paragraph_split > 0:
-            return paragraph_split + 2  # Include one newline
-
-        # Fall back to single newline
-        newline_split = text.rfind("\n", 0, MAX_MESSAGE_SIZE)
-        if newline_split > 0:
-            return newline_split + 1
-
-        # Hard split at limit
-        return MAX_MESSAGE_SIZE
+            except TelegramAPIError:
+                _log.exception("Failed to send/edit message")
 
 
 class TelegramChannel:
@@ -516,8 +527,7 @@ class TelegramChannel:
             _log.exception("Error during message processing")
 
             had_content = (
-                self._active_renderer is not None
-                and self._active_renderer.has_sent_content()
+                self._active_renderer is not None and self._active_renderer.has_sent_content()
             )
 
             if had_content:
@@ -539,25 +549,22 @@ class TelegramChannel:
     async def _handle_notification(self, event: TaskNotification) -> None:
         """Handle a TaskNotification event from the background task executor.
 
-        Notifications are delivered directly to the user via Telegram message.
+        Routes the notification prompt through the coordinator pipeline,
+        following the same delivery pattern as session tasks.
         """
-        severity_emoji = "ℹ️" if event.severity == "info" else "⚠️"
-        message = f"{severity_emoji} {event.message}"
-
         _log.info(
-            "Sending task notification: severity={severity}, source={source}",
+            "Routing task notification: severity={severity}, source={source}",
             severity=event.severity,
             source=event.source_task_id,
         )
 
-        try:
-            await self._bot.send_message(
-                self._settings.authorized_chat_id,
-                message,
-                parse_mode=None,
-            )
-        except TelegramAPIError:
-            _log.exception("Failed to send task notification")
+        self._coordinator.enqueue(event.prompt)
+
+        if self._is_processing:
+            _log.debug("Buffered task notification mid-stream")
+            return
+
+        await self._process_through_coordinator()
 
 
 async def telegram_hook(ctx: BootstrapContext) -> None:

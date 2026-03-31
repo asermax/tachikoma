@@ -55,9 +55,7 @@ class TestSummarizeSingleTool:
 
     def test_bash_description_preserves_casing(self) -> None:
         """AC: Bash description preserves casing of rest of string (proper nouns)."""
-        activity = ToolActivity(
-            tool_name="Bash", tool_input={"description": "Install Docker deps"}
-        )
+        activity = ToolActivity(tool_name="Bash", tool_input={"description": "Install Docker deps"})
         assert summarize_tool_activity([activity]) == "Install Docker deps"
 
     def test_bash_with_command_only(self) -> None:
@@ -137,10 +135,7 @@ class TestSummarizeMultipleTools:
             ToolActivity(tool_name="Read", tool_input={"file_path": "/src/c.py"}),
             ToolActivity(tool_name="Grep", tool_input={"pattern": "pattern"}),
         ]
-        assert (
-            summarize_tool_activity(activities)
-            == "Reading 3 files and searching for 'pattern'"
-        )
+        assert summarize_tool_activity(activities) == "Reading 3 files and searching for 'pattern'"
 
     def test_three_plus_groups_with_oxford_comma(self) -> None:
         """AC: 3+ groups joined with commas and Oxford comma."""
@@ -181,6 +176,7 @@ class TestSummarizeMultipleTools:
         # Should have first 5 + "and more"
         assert "and more" in result
         assert "searching tools" not in result.lower()  # 7th tool not included
+
 
 class TestSummarizeBashDescription:
     """Tests for Bash description formatting."""
@@ -249,7 +245,8 @@ class TestSummarizeMcpTool:
     def test_single_mcp_tool_formatted(self) -> None:
         """AC4: Single MCP tool shows formatted name in summary."""
         activity = ToolActivity(
-            tool_name="mcp__projects__list_projects", tool_input={},
+            tool_name="mcp__projects__list_projects",
+            tool_input={},
         )
         assert summarize_tool_activity([activity]) == "Used List Projects"
 

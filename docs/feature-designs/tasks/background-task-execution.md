@@ -16,7 +16,7 @@ Background tasks need to run in isolated sessions with multi-turn conversation s
 **Constraints:**
 - Background tasks must not interfere with the main conversation session
 - The evaluator needs multi-turn conversation continuity via `resume`
-- Post-processing must be selective (episodic + git only)
+- Post-processing must be selective (episodic + project submodule commit + git only)
 - Concurrency must be bounded to avoid resource exhaustion
 - Uses the SDK's `query()` and `receive_response()` per DES-005
 
@@ -52,8 +52,8 @@ Two components work together: the `BackgroundTaskRunner` (async loop picking up 
 
 | Layer/Component | Responsibility | Key Decisions |
 |-----------------|----------------|---------------|
-| `src/tachikoma/tasks/executor.py` | `background_task_runner()` — async loop picking up pending background instances; `BackgroundTaskExecutor` — manages single task's SDK session lifecycle with evaluator loop; dispatches `TaskNotification` events | Coordinator-like SDK client management; `asyncio.Semaphore` for concurrency; separate `PostProcessingPipeline` with `EpisodicProcessor` (main phase) + `GitProcessor` (finalize phase) |
-| `src/tachikoma/tasks/events.py` | `TaskNotification(BaseEvent)` — typed event carrying `message: str`, `source_task_id: str | None`, and `severity: str` ("info" or "error") | Pydantic `BaseEvent` subclass for typed dispatch |
+| `src/tachikoma/tasks/executor.py` | `background_task_runner()` — async loop picking up pending background instances; `BackgroundTaskExecutor` — manages single task's SDK session lifecycle with evaluator loop; dispatches `TaskNotification` events | Coordinator-like SDK client management; `asyncio.Semaphore` for concurrency; full `PreProcessingPipeline` (memory, projects, skills); separate `PostProcessingPipeline` with `EpisodicProcessor` (main phase) + `ProjectsProcessor` (pre_finalize phase) + `GitProcessor` (finalize phase) |
+| `src/tachikoma/tasks/events.py` | `TaskNotification(BaseEvent)` — typed event carrying `prompt: str` (coordinator-routed notification prompt), `source_task_id: str | None`, and `severity: str` ("info" or "error"); channels subscribe and enqueue the prompt into the coordinator for pipeline-routed delivery | Pydantic `BaseEvent` subclass for typed dispatch |
 
 ### Cross-Layer Contracts
 
@@ -96,7 +96,7 @@ sequenceDiagram
 
     rect rgba(0, 200, 100, 0.1)
         Note over Exec: Post-processing (adapted pipeline)
-        Note over Exec: EpisodicProcessor (main) + GitProcessor (finalize)
+        Note over Exec: EpisodicProcessor (main) + ProjectsProcessor (pre_finalize) + GitProcessor (finalize)
     end
 ```
 
@@ -105,7 +105,8 @@ sequenceDiagram
 - Executor ↔ SDK: per-task `ClaudeSDKClient` with `resume` for multi-turn
 - Executor ↔ Evaluator: lightweight model assessment after each agent response
 - Executor ↔ Event bus: dispatches `TaskNotification` on completion/failure
-- Executor ↔ Pipeline: separate `PostProcessingPipeline` instance with selective processors
+- Executor ↔ Pre-processing pipeline: full `PreProcessingPipeline` with memory, projects, skills providers; extracts MCP servers and agents into SDK options
+- Executor ↔ Post-processing pipeline: separate `PostProcessingPipeline` instance with selective processors
 - Executor ↔ `fork_and_capture` (`post_processing.py`): forks task session for notification generation
 
 **Error contract:**
@@ -123,8 +124,9 @@ sequenceDiagram
 3. For each instance (gated by asyncio.Semaphore, max_concurrent=3):
    a. Mark instance as running
    b. Create BackgroundTaskExecutor with:
+      - Full pre-processing pipeline (memory, projects, skills context providers)
       - Adapted system prompt (task context + instructions)
-      - Adapted pipeline (EpisodicProcessor in main phase + GitProcessor in finalize phase)
+      - Adapted post-processing pipeline (EpisodicProcessor in main phase + ProjectsProcessor in pre_finalize phase + GitProcessor in finalize phase)
       - Task instance prompt
    c. Executor creates ClaudeSDKClient, calls query(prompt)
    d. Evaluator loop (max_iterations):
@@ -149,8 +151,8 @@ Fallback chain: if `sdk_session_id` is unavailable, the fork fails, or no text i
 
 Channels subscribe to `TaskNotification` events via `bus.on(TaskNotification, handler)`:
 
-- **Telegram**: `_handle_notification` sends the message directly to the user with a severity emoji prefix (info → ℹ️, error → ⚠️)
-- **REPL**: prints the notification to the terminal via the renderer
+- **Telegram**: `_handle_notification` enqueues `event.prompt` into the coordinator via `coordinator.enqueue()`, then calls `_process_through_coordinator()` if not already processing (same pattern as `_handle_session_task`). When already processing, the prompt is buffered in the coordinator's message queue and picked up by the active processing loop.
+- **REPL**: `_handle_notification` enqueues the event into `_task_queue` (same queue as session tasks, widened to `SessionTaskReady | TaskNotification`). The main REPL loop drains the queue via `_process_queued_tasks()`, which dispatches to `_execute_notification()` for notification events — enqueuing the prompt into the coordinator and rendering the agent response through the standard pipeline.
 
 ## Key Decisions
 
@@ -166,13 +168,14 @@ Channels subscribe to `TaskNotification` events via `bus.on(TaskNotification, ha
 
 ### Adapted pipeline via separate instance
 
-**Choice**: Background tasks create a separate `PostProcessingPipeline` instance with only `EpisodicProcessor` (main phase) and `GitProcessor` (finalize phase).
-**Why**: Background tasks should capture episodic memories and commit changes, but should not extract facts/preferences or update core context — those are user-conversation concerns.
+**Choice**: Background tasks run the full pre-processing pipeline (same context providers as the main conversation: memory, projects, skills) and create a separate `PostProcessingPipeline` instance with `EpisodicProcessor` (main phase), `ProjectsProcessor` (pre_finalize phase), and `GitProcessor` (finalize phase). Pre-processing results include MCP servers and agent definitions, which are passed to the SDK client options via a `_PreprocessingResult` dataclass.
+**Why**: Background tasks need the same context awareness as the main conversation (project awareness, skill-based context, memory search) and should commit project submodule changes. They should not extract facts/preferences or update core context — those are user-conversation concerns.
 
 **Consequences**:
-- Pro: Clean separation of pipeline concerns
+- Pro: Background tasks have full project/skill awareness and can use project management tools
 - Pro: Reuses existing pipeline infrastructure and processor implementations
 - Con: Pipeline registration duplicated between `__main__.py` (full) and executor (adapted)
+- Con: `SkillRegistry` must be threaded from bootstrap through `background_task_runner` to `BackgroundTaskExecutor`
 
 ### Lightweight evaluator model
 
@@ -184,15 +187,17 @@ Channels subscribe to `TaskNotification` events via `bus.on(TaskNotification, ha
 - Pro: Fast assessment turnaround
 - Con: Less nuanced assessment than a larger model
 
-### Fork-based notification generation
+### Fork-based notification generation with coordinator routing
 
-**Choice**: Generate success notification messages by forking the task's SDK session with `definition.notify` as a prompt, using `fork_and_capture` to capture the agent's text response.
-**Why**: The `notify` field is described as "an instruction for generating a notification message." Treating it as a prompt and forking the session gives the notification agent full context about what the task accomplished, producing richer notifications than a static template string. The fork pattern is already established for post-processors (DES-004).
+**Choice**: Generate success notification text by forking the task's SDK session with `definition.notify` as a prompt (via `fork_and_capture`), then wrap the generated text in a coordinator-routed prompt template and dispatch a `TaskNotification` event carrying the prompt. Channels subscribe to the event and enqueue the prompt into the coordinator's standard message processing pipeline for delivery.
+**Why**: The `notify` field is described as "an instruction for generating a notification message." Forking gives the notification agent full context about what the task accomplished, producing richer text than a static template. Routing through the coordinator pipeline provides message length handling, boundary detection, and consistent delivery — the same path used for session tasks. The coordinator's response renderer handles message splitting, preventing Telegram's 4096-char limit errors.
 
 **Consequences**:
 - Pro: Context-aware notifications that summarize actual task outcomes
 - Pro: Users control notification quality via the prompt they write in `notify`
-- Con: Adds latency (one additional SDK invocation per success notification)
+- Pro: Coordinator pipeline handles message splitting and rendering — no channel-specific length handling needed
+- Pro: Consistent delivery pattern with session tasks (both route through coordinator)
+- Con: Adds latency (one fork SDK invocation + one coordinator SDK invocation per notification)
 - Con: Fallback needed when fork fails
 
 ### Semaphore-based concurrency gating
@@ -211,7 +216,7 @@ Channels subscribe to `TaskNotification` events via `bus.on(TaskNotification, ha
 
 **Given**: A pending background task with `notify` set
 **When**: The executor runs and the evaluator marks it complete
-**Then**: The instance is marked completed, post-processing runs (episodic + git), the task session is forked with the `notify` prompt to generate a notification message, and a `TaskNotification` event with the generated text and severity "info" is dispatched.
+**Then**: The instance is marked completed, post-processing runs (episodic + git), the task session is forked with the `notify` prompt to generate notification text, the generated text is wrapped in a coordinator-routed prompt template (`NOTIFICATION_PROMPT`), and a `TaskNotification` event with the prompt and severity "info" is dispatched. Channels receive the event, enqueue the prompt into the coordinator, and process it through the standard message pipeline.
 
 ### Scenario: Background task stuck
 
@@ -235,4 +240,5 @@ Channels subscribe to `TaskNotification` events via `bus.on(TaskNotification, ha
 
 - The evaluator uses the SDK's standalone `query()` function (not `ClaudeSDKClient`) for the assessment — it's a single-turn evaluation with no conversation continuity needed
 - The `on_complete` callback in `SessionTaskReady` is an async callable that marks the instance as completed in the repository — channels invoke it after successful delivery
-- Background task notifications in Telegram are sent directly as messages (not as session tasks), using `bot.send_message()` with severity-appropriate emoji formatting
+- Background task notifications in Telegram are routed through the coordinator pipeline (same path as session tasks), using `coordinator.enqueue()` + `_process_through_coordinator()` — this handles message splitting and prevents Telegram's 4096-char limit errors
+- The REPL channels handle notifications through the same `_task_queue` used for session tasks, with `isinstance` dispatch to `_execute_notification()` — notifications are buffered when the user is mid-conversation

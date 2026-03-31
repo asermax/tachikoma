@@ -11,6 +11,7 @@ from pathlib import Path
 from claude_agent_sdk import create_sdk_mcp_server, tool
 from claude_agent_sdk.types import McpSdkServerConfig
 from loguru import logger
+from pydantic import BaseModel
 
 from tachikoma.projects.git import (
     add_submodule,
@@ -21,6 +22,16 @@ from tachikoma.projects.git import (
 )
 
 _log = logger.bind(component="projects")
+
+
+class RegisterProjectArgs(BaseModel):
+    name: str
+    url: str
+
+
+class DeregisterProjectArgs(BaseModel):
+    name: str
+    force: bool = False
 
 
 async def handle_register_project(name: str, url: str, workspace_path: Path) -> dict:
@@ -182,24 +193,26 @@ def create_projects_server(workspace_path: Path) -> McpSdkServerConfig:
     @tool(
         "register_project",
         "Register a new project as a git submodule under projects/<name>.",
-        {"name": str, "url": str},
+        RegisterProjectArgs.model_json_schema(),
     )
     async def register_project(args: dict) -> dict:
+        parsed = RegisterProjectArgs.model_validate(args)
         return await handle_register_project(
-            args.get("name", ""),
-            args.get("url", ""),
+            parsed.name,
+            parsed.url,
             workspace_path,
         )
 
     @tool(
         "deregister_project",
         "Remove a registered project. Warns if uncommitted changes exist unless force=true.",
-        {"name": str, "force": bool},
+        DeregisterProjectArgs.model_json_schema(),
     )
     async def deregister_project(args: dict) -> dict:
+        parsed = DeregisterProjectArgs.model_validate(args)
         return await handle_deregister_project(
-            args.get("name", ""),
-            args.get("force", False),
+            parsed.name,
+            parsed.force,
             workspace_path,
         )
 

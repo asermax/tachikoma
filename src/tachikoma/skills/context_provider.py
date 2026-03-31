@@ -60,9 +60,7 @@ class SkillsContextProvider(ContextProvider):
     and is refreshed before each provide() call to pick up runtime changes.
     """
 
-    def __init__(
-        self, agent_defaults: AgentDefaults, registry: SkillRegistry
-    ) -> None:
+    def __init__(self, agent_defaults: AgentDefaults, registry: SkillRegistry) -> None:
         self._agent_defaults = agent_defaults
         self._registry = registry
 

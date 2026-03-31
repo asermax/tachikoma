@@ -29,7 +29,7 @@ def _make_mock_provider() -> _FakeProvider:
     """Create a provider with mockable provide method."""
     provider = _FakeProvider()
     # Override the provide method with an AsyncMock
-    provider.provide = AsyncMock()  # type: ignore[method-assign]
+    provider.provide = AsyncMock()
     return provider
 
 

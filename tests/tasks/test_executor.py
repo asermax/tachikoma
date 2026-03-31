@@ -7,14 +7,63 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from bubus import EventBus
+from claude_agent_sdk.types import AssistantMessage, ResultMessage, TextBlock
 
 from tachikoma.agent_defaults import AgentDefaults
 from tachikoma.config import TaskSettings
 from tachikoma.tasks.events import TaskNotification
-from tachikoma.tasks.executor import BackgroundTaskExecutor, background_task_runner
+from tachikoma.tasks.executor import (
+    BackgroundTaskExecutor,
+    _PreprocessingResult,
+    background_task_runner,
+)
 from tachikoma.tasks.repository import TaskRepository
 
 from .conftest import _make_definition, _make_instance
+
+
+def _mock_skill_registry() -> MagicMock:
+    return MagicMock()
+
+
+def _mock_session_registry() -> MagicMock:
+    registry = MagicMock()
+    registry.mark_processed = AsyncMock()
+    return registry
+
+
+def _mock_preproc_result(prompt: str = "Test task") -> _PreprocessingResult:
+    return _PreprocessingResult(prompt=prompt)
+
+
+def _make_sdk_response(
+    text: str = "Task done",
+    session_id: str | None = "sdk-session-123",
+):
+    """Create a mock SDK response async generator function for receive_response."""
+
+    async def _stream():
+        yield AssistantMessage(content=[TextBlock(text=text)], model="test")
+        if session_id is not None:
+            yield ResultMessage(
+                subtype="success",
+                duration_ms=0,
+                duration_api_ms=0,
+                is_error=False,
+                num_turns=1,
+                session_id=session_id,
+            )
+
+    return _stream
+
+
+def _make_eval_response(text: str = '{"status": "complete", "feedback": "Done"}'):
+    """Create a mock evaluator response async generator."""
+
+    async def _stream():
+        yield AssistantMessage(content=[TextBlock(text=text)], model="test")
+
+    return _stream()
 
 
 class TestBackgroundTaskRunner:
@@ -43,7 +92,14 @@ class TestBackgroundTaskRunner:
 
         with patch.object(BackgroundTaskExecutor, "execute", mock_execute):
             task = asyncio.create_task(
-                background_task_runner(repo, settings, bus, AgentDefaults(cwd=Path("/tmp")))
+                background_task_runner(
+                    repo,
+                    settings,
+                    bus,
+                    AgentDefaults(cwd=Path("/tmp")),
+                    _mock_skill_registry(),
+                    _mock_session_registry(),
+                )
             )
             await asyncio.sleep(0.2)
             task.cancel()
@@ -81,7 +137,14 @@ class TestBackgroundTaskRunner:
 
         with patch.object(BackgroundTaskExecutor, "execute", mock_execute):
             task = asyncio.create_task(
-                background_task_runner(repo, settings, bus, AgentDefaults(cwd=Path("/tmp")))
+                background_task_runner(
+                    repo,
+                    settings,
+                    bus,
+                    AgentDefaults(cwd=Path("/tmp")),
+                    _mock_skill_registry(),
+                    _mock_session_registry(),
+                )
             )
             await asyncio.sleep(0.5)
             task.cancel()
@@ -103,7 +166,14 @@ class TestBackgroundTaskRunner:
 
         with patch.object(BackgroundTaskExecutor, "execute", mock_execute):
             task = asyncio.create_task(
-                background_task_runner(repo, settings, bus, AgentDefaults(cwd=Path("/tmp")))
+                background_task_runner(
+                    repo,
+                    settings,
+                    bus,
+                    AgentDefaults(cwd=Path("/tmp")),
+                    _mock_skill_registry(),
+                    _mock_session_registry(),
+                )
             )
             await asyncio.sleep(0.2)
             task.cancel()
@@ -143,6 +213,8 @@ class TestBackgroundTaskExecutor:
             settings=settings,
             bus=bus,
             agent_defaults=AgentDefaults(cwd=Path("/tmp")),
+            skill_registry=_mock_skill_registry(),
+            session_registry=_mock_session_registry(),
         )
 
         # Mock SDK client and evaluator
@@ -154,30 +226,22 @@ class TestBackgroundTaskExecutor:
 
             # Mock query and receive_response
             mock_client.query = AsyncMock()
-
-            # First response with session_id
-            mock_result = MagicMock()
-            mock_result.session_id = "sdk-session-123"
-            mock_result.content = [MagicMock(text="Task done")]
-
-            async def mock_receive():
-                yield mock_result
-
-            mock_client.receive_response = mock_receive
+            mock_client.receive_response = _make_sdk_response(
+                text="Task done",
+                session_id="sdk-session-123",
+            )
 
             # Mock evaluator to return complete
             with patch("claude_agent_sdk.query") as mock_query:
-                eval_result = MagicMock()
-                eval_result.content = [MagicMock(text='{"status": "complete", "feedback": "Done"}')]
-
-                async def mock_eval_query(*args, **kwargs):
-                    yield eval_result
-
-                mock_query.return_value = mock_eval_query()
+                mock_query.return_value = _make_eval_response()
 
                 # Mock pre-processing to return original prompt
                 with (
-                    patch.object(executor, "_run_preprocessing", return_value="Test task"),
+                    patch.object(
+                        executor,
+                        "_run_preprocessing",
+                        return_value=_mock_preproc_result(),
+                    ),
                     patch.object(executor, "_run_postprocessing", return_value=None),
                 ):
                     await executor.execute(instance)
@@ -213,6 +277,8 @@ class TestBackgroundTaskExecutor:
             settings=settings,
             bus=bus,
             agent_defaults=AgentDefaults(cwd=Path("/tmp")),
+            skill_registry=_mock_skill_registry(),
+            session_registry=_mock_session_registry(),
         )
 
         # Mock SDK client to raise exception
@@ -266,6 +332,8 @@ class TestBackgroundTaskExecutor:
             settings=settings,
             bus=bus,
             agent_defaults=AgentDefaults(cwd=Path("/tmp")),
+            skill_registry=_mock_skill_registry(),
+            session_registry=_mock_session_registry(),
         )
 
         # Mock SDK client and evaluator
@@ -276,27 +344,17 @@ class TestBackgroundTaskExecutor:
             mock_client_class.return_value = mock_client
 
             mock_client.query = AsyncMock()
-
-            mock_result = MagicMock()
-            mock_result.session_id = "sdk-session-123"
-            mock_result.content = [MagicMock(text="Done")]
-
-            async def mock_receive():
-                yield mock_result
-
-            mock_client.receive_response = mock_receive
+            mock_client.receive_response = _make_sdk_response(text="Done")
 
             with patch("claude_agent_sdk.query") as mock_query:
-                eval_result = MagicMock()
-                eval_result.content = [MagicMock(text='{"status": "complete", "feedback": "Done"}')]
-
-                async def mock_eval_query(*args, **kwargs):
-                    yield eval_result
-
-                mock_query.return_value = mock_eval_query()
+                mock_query.return_value = _make_eval_response()
 
                 with (
-                    patch.object(executor, "_run_preprocessing", return_value="Test task"),
+                    patch.object(
+                        executor,
+                        "_run_preprocessing",
+                        return_value=_mock_preproc_result(),
+                    ),
                     patch.object(executor, "_run_postprocessing", return_value=None),
                 ):
                     await executor.execute(instance)
@@ -324,6 +382,8 @@ class TestBackgroundTaskExecutor:
             settings=settings,
             bus=bus,
             agent_defaults=AgentDefaults(cwd=Path("/tmp")),
+            skill_registry=_mock_skill_registry(),
+            session_registry=_mock_session_registry(),
         )
 
         with patch("tachikoma.tasks.executor.ClaudeSDKClient") as mock_client_class:
@@ -333,29 +393,18 @@ class TestBackgroundTaskExecutor:
             mock_client_class.return_value = mock_client
 
             mock_client.query = AsyncMock()
-
-            mock_result = MagicMock()
-            mock_result.session_id = "sdk-session-123"
-            mock_result.content = [MagicMock(text="Working...")]
-
-            async def mock_receive():
-                yield mock_result
-
-            mock_client.receive_response = mock_receive
+            mock_client.receive_response = _make_sdk_response(text="Working...")
 
             with patch("claude_agent_sdk.query") as mock_query:
-                eval_result = MagicMock()
-                # Evaluator always says continue
-                eval_result.content = [
-                    MagicMock(text='{"status": "continue", "feedback": "Keep going"}')
-                ]
+                mock_query.return_value = _make_eval_response(
+                    '{"status": "continue", "feedback": "Keep going"}',
+                )
 
-                async def mock_eval_query(*args, **kwargs):
-                    yield eval_result
-
-                mock_query.return_value = mock_eval_query()
-
-                with patch.object(executor, "_run_preprocessing", return_value="Test task"):
+                with patch.object(
+                    executor,
+                    "_run_preprocessing",
+                    return_value=_mock_preproc_result(),
+                ):
                     await executor.execute(instance)
 
         # Verify instance is failed due to max iterations
@@ -402,6 +451,8 @@ class TestNotificationGeneration:
             settings=settings,
             bus=bus,
             agent_defaults=AgentDefaults(cwd=Path("/tmp")),
+            skill_registry=_mock_skill_registry(),
+            session_registry=_mock_session_registry(),
         )
 
         with patch("tachikoma.tasks.executor.ClaudeSDKClient") as mock_client_class:
@@ -411,27 +462,17 @@ class TestNotificationGeneration:
             mock_client_class.return_value = mock_client
 
             mock_client.query = AsyncMock()
-
-            mock_result = MagicMock()
-            mock_result.session_id = "sdk-session-123"
-            mock_result.content = [MagicMock(text="Task done")]
-
-            async def mock_receive():
-                yield mock_result
-
-            mock_client.receive_response = mock_receive
+            mock_client.receive_response = _make_sdk_response(text="Task done")
 
             with patch("claude_agent_sdk.query") as mock_query:
-                eval_result = MagicMock()
-                eval_result.content = [MagicMock(text='{"status": "complete", "feedback": "Done"}')]
-
-                async def mock_eval_query(*args, **kwargs):
-                    yield eval_result
-
-                mock_query.return_value = mock_eval_query()
+                mock_query.return_value = _make_eval_response()
 
                 with (
-                    patch.object(executor, "_run_preprocessing", return_value="Test task"),
+                    patch.object(
+                        executor,
+                        "_run_preprocessing",
+                        return_value=_mock_preproc_result(),
+                    ),
                     patch.object(executor, "_run_postprocessing", return_value=None),
                     patch(
                         "tachikoma.tasks.executor.fork_and_capture",
@@ -445,9 +486,9 @@ class TestNotificationGeneration:
         call_args = mock_fork.call_args
         assert call_args[0][1] == "Summarize what you accomplished"
 
-        # Verify notification uses generated text
+        # Verify notification uses coordinator-routed prompt with fork output
         assert len(dispatched_events) == 1
-        assert dispatched_events[0].message == "Task completed: updated 3 files"
+        assert "Task completed: updated 3 files" in dispatched_events[0].prompt
         assert dispatched_events[0].severity == "info"
 
     @pytest.mark.asyncio
@@ -487,6 +528,8 @@ class TestNotificationGeneration:
             settings=settings,
             bus=bus,
             agent_defaults=AgentDefaults(cwd=Path("/tmp")),
+            skill_registry=_mock_skill_registry(),
+            session_registry=_mock_session_registry(),
         )
 
         with patch("tachikoma.tasks.executor.ClaudeSDKClient") as mock_client_class:
@@ -496,29 +539,19 @@ class TestNotificationGeneration:
             mock_client_class.return_value = mock_client
 
             mock_client.query = AsyncMock()
-
-            mock_result = MagicMock()
-            mock_result.session_id = "sdk-session-123"
-            mock_result.content = [MagicMock(text="Done")]
-
-            async def mock_receive():
-                yield mock_result
-
-            mock_client.receive_response = mock_receive
+            mock_client.receive_response = _make_sdk_response(text="Done")
 
             with patch("claude_agent_sdk.query") as mock_query:
-                eval_result = MagicMock()
-                eval_result.content = [
-                    MagicMock(text='{"status": "complete", "feedback": "Evaluator says done"}')
-                ]
-
-                async def mock_eval_query(*args, **kwargs):
-                    yield eval_result
-
-                mock_query.return_value = mock_eval_query()
+                mock_query.return_value = _make_eval_response(
+                    '{"status": "complete", "feedback": "Evaluator says done"}',
+                )
 
                 with (
-                    patch.object(executor, "_run_preprocessing", return_value="Test task"),
+                    patch.object(
+                        executor,
+                        "_run_preprocessing",
+                        return_value=_mock_preproc_result(),
+                    ),
                     patch.object(executor, "_run_postprocessing", return_value=None),
                     patch(
                         "tachikoma.tasks.executor.fork_and_capture",
@@ -527,9 +560,9 @@ class TestNotificationGeneration:
                 ):
                     await executor.execute(instance)
 
-        # Verify fallback to evaluator feedback
+        # Verify fallback: prompt includes evaluator feedback since fork failed
         assert len(dispatched_events) == 1
-        assert dispatched_events[0].message == "Evaluator says done"
+        assert "Evaluator says done" in dispatched_events[0].prompt
         assert dispatched_events[0].severity == "info"
 
     @pytest.mark.asyncio
@@ -566,6 +599,8 @@ class TestNotificationGeneration:
             settings=settings,
             bus=bus,
             agent_defaults=AgentDefaults(cwd=Path("/tmp")),
+            skill_registry=_mock_skill_registry(),
+            session_registry=_mock_session_registry(),
         )
 
         with patch("tachikoma.tasks.executor.ClaudeSDKClient") as mock_client_class:
@@ -577,28 +612,19 @@ class TestNotificationGeneration:
             mock_client.query = AsyncMock()
 
             # Response with NO session_id
-            mock_result = MagicMock()
-            mock_result.session_id = None
-            mock_result.content = [MagicMock(text="Done")]
-
-            async def mock_receive():
-                yield mock_result
-
-            mock_client.receive_response = mock_receive
+            mock_client.receive_response = _make_sdk_response(text="Done", session_id=None)
 
             with patch("claude_agent_sdk.query") as mock_query:
-                eval_result = MagicMock()
-                eval_result.content = [
-                    MagicMock(text='{"status": "complete", "feedback": "Evaluator feedback"}')
-                ]
-
-                async def mock_eval_query(*args, **kwargs):
-                    yield eval_result
-
-                mock_query.return_value = mock_eval_query()
+                mock_query.return_value = _make_eval_response(
+                    '{"status": "complete", "feedback": "Evaluator feedback"}',
+                )
 
                 with (
-                    patch.object(executor, "_run_preprocessing", return_value="Test task"),
+                    patch.object(
+                        executor,
+                        "_run_preprocessing",
+                        return_value=_mock_preproc_result(),
+                    ),
                     patch.object(executor, "_run_postprocessing", return_value=None),
                     patch(
                         "tachikoma.tasks.executor.fork_and_capture",
@@ -609,9 +635,9 @@ class TestNotificationGeneration:
         # Fork should NOT have been called
         mock_fork.assert_not_awaited()
 
-        # Fallback to evaluator feedback
+        # Fallback to evaluator feedback in prompt
         assert len(dispatched_events) == 1
-        assert dispatched_events[0].message == "Evaluator feedback"
+        assert "Evaluator feedback" in dispatched_events[0].prompt
 
     @pytest.mark.asyncio
     async def test_error_with_notify_set_bypasses_fork(self, repo: TaskRepository) -> None:
@@ -647,6 +673,8 @@ class TestNotificationGeneration:
             settings=settings,
             bus=bus,
             agent_defaults=AgentDefaults(cwd=Path("/tmp")),
+            skill_registry=_mock_skill_registry(),
+            session_registry=_mock_session_registry(),
         )
 
         with patch("tachikoma.tasks.executor.ClaudeSDKClient") as mock_client_class:
@@ -656,29 +684,19 @@ class TestNotificationGeneration:
             mock_client_class.return_value = mock_client
 
             mock_client.query = AsyncMock()
-
-            mock_result = MagicMock()
-            mock_result.session_id = "sdk-session-123"
-            mock_result.content = [MagicMock(text="Stuck in loop")]
-
-            async def mock_receive():
-                yield mock_result
-
-            mock_client.receive_response = mock_receive
+            mock_client.receive_response = _make_sdk_response(text="Stuck in loop")
 
             with patch("claude_agent_sdk.query") as mock_query:
-                eval_result = MagicMock()
-                eval_result.content = [
-                    MagicMock(text='{"status": "stuck", "feedback": "Agent is looping"}')
-                ]
-
-                async def mock_eval_query(*args, **kwargs):
-                    yield eval_result
-
-                mock_query.return_value = mock_eval_query()
+                mock_query.return_value = _make_eval_response(
+                    '{"status": "stuck", "feedback": "Agent is looping"}',
+                )
 
                 with (
-                    patch.object(executor, "_run_preprocessing", return_value="Test task"),
+                    patch.object(
+                        executor,
+                        "_run_preprocessing",
+                        return_value=_mock_preproc_result(),
+                    ),
                     patch(
                         "tachikoma.tasks.executor.fork_and_capture",
                     ) as mock_fork,
@@ -688,10 +706,10 @@ class TestNotificationGeneration:
         # Fork should NOT have been called for error notifications
         mock_fork.assert_not_awaited()
 
-        # Error notification with raw message, not the notify prompt
+        # Error notification with error prompt, not the notify prompt
         assert len(dispatched_events) == 1
         assert dispatched_events[0].severity == "error"
-        assert "Agent is looping" in dispatched_events[0].message
+        assert "Agent is looping" in dispatched_events[0].prompt
 
     @pytest.mark.asyncio
     async def test_transient_instance_no_fork(self, repo: TaskRepository) -> None:
@@ -720,6 +738,8 @@ class TestNotificationGeneration:
             settings=settings,
             bus=bus,
             agent_defaults=AgentDefaults(cwd=Path("/tmp")),
+            skill_registry=_mock_skill_registry(),
+            session_registry=_mock_session_registry(),
         )
 
         with patch("tachikoma.tasks.executor.ClaudeSDKClient") as mock_client_class:
@@ -729,27 +749,17 @@ class TestNotificationGeneration:
             mock_client_class.return_value = mock_client
 
             mock_client.query = AsyncMock()
-
-            mock_result = MagicMock()
-            mock_result.session_id = "sdk-session-123"
-            mock_result.content = [MagicMock(text="Done")]
-
-            async def mock_receive():
-                yield mock_result
-
-            mock_client.receive_response = mock_receive
+            mock_client.receive_response = _make_sdk_response(text="Done")
 
             with patch("claude_agent_sdk.query") as mock_query:
-                eval_result = MagicMock()
-                eval_result.content = [MagicMock(text='{"status": "complete", "feedback": "Done"}')]
-
-                async def mock_eval_query(*args, **kwargs):
-                    yield eval_result
-
-                mock_query.return_value = mock_eval_query()
+                mock_query.return_value = _make_eval_response()
 
                 with (
-                    patch.object(executor, "_run_preprocessing", return_value="Test task"),
+                    patch.object(
+                        executor,
+                        "_run_preprocessing",
+                        return_value=_mock_preproc_result(),
+                    ),
                     patch.object(executor, "_run_postprocessing", return_value=None),
                     patch(
                         "tachikoma.tasks.executor.fork_and_capture",
