@@ -7,6 +7,7 @@ auto-generated on first run.
 
 import sys
 import tomllib
+import types
 from pathlib import Path
 from typing import Any, Literal, Union, cast, get_args
 
@@ -187,8 +188,7 @@ class SettingsManager:
 
         # Unwrap union types (e.g., TelegramSettings | None -> TelegramSettings)
         origin = getattr(section_model, "__origin__", None)
-        if origin is Union:
-            # Extract the non-None type from the union
+        if origin is Union or isinstance(section_model, types.UnionType):
             args = get_args(section_model)
             section_model = next((arg for arg in args if arg is not type(None)), section_model)
 
