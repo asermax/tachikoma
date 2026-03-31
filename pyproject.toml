@@ -1,6 +1,6 @@
 [project]
 name = "tachikoma-agent"
-version = "1.0.1"
+version = "1.0.2"
 description = "A proactive personal assistant built on Claude Agent SDK"
 readme = "README.md"
 license = {text = "MIT"}
