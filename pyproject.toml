@@ -59,6 +59,9 @@ Issues = "https://github.com/asermax/tachikoma/issues"
 requires = ["uv_build>=0.11.2,<0.12.0"]
 build-backend = "uv_build"
 
+[tool.uv.build-backend]
+module-name = "tachikoma"
+
 [tool.semantic_release]
 commit_parser = "conventional"
 version_toml = ["pyproject.toml:project.version"]
