@@ -103,7 +103,7 @@ Boundary detection is a best-effort enhancement that never blocks normal message
 
 ### Session Resumption Matching (R15, R16)
 
-When a topic shift is detected, the boundary detector also checks whether the incoming message matches a recently closed session. If a match is found, the system resumes that session instead of starting fresh.
+When a topic shift is detected, the boundary detector also checks whether the incoming message matches a recently closed session. If a match is found, the system resumes that session instead of starting fresh. Candidates are pre-filtered to exclude sessions with missing transcript files or excessive age (see sessions spec R20).
 
 **Acceptance Criteria**:
 - Given an active session with a summary and recent closed session candidates within the lookup window, when a new message arrives, then boundary detection receives both the current session summary and the recent session summaries (with their IDs)
@@ -114,3 +114,4 @@ When a topic shift is detected, the boundary detector also checks whether the in
 - Given the boundary detector identifies a topic shift that could match multiple recent sessions, when it selects a match, then it returns the single best match
 - Given a configurable time-based lookup window (default: 1 day), when querying recent sessions for boundary detection, then only sessions closed within that window with non-null SDK session IDs and non-null summaries are included
 - Given the boundary detector returns an invalid or unfound session ID, when the coordinator processes the transition, then it falls back to fresh-session behavior and logs a warning
+- Given recent closed sessions exist but their transcript files are missing from the local filesystem, when the coordinator builds candidates for boundary detection, then those sessions are excluded from the candidate list

@@ -322,20 +322,26 @@ Note: The `needs_processing()` check prevents re-triggering: once `processed_at`
 ```
 1. Coordinator calls registry.reopen_session(session_id)
 2. Registry fetches session via repository.get_by_id()
-3. Registry validates: exists, is closed (ended_at not None), is not already active
-4. If invalid: log warning, return None
-5. Registry calls repository.update(id, ended_at=None, last_resumed_at=now)
-6. Registry constructs reopened Session via dataclasses.replace()
+3. Registry validates: exists
+4. Registry validates: transcript_path is not None
+5. Registry validates: Path(transcript_path).exists() (transcript on local machine)
+6. Registry validates: now - started_at <= max_session_age (session not too old)
+7. Registry validates: is closed (ended_at not None), is not already active
+8. If any validation fails: log warning, return None
+9. Registry calls repository.update(id, ended_at=None, last_resumed_at=now)
+10. Registry constructs reopened Session via dataclasses.replace()
    (avoids a second DB fetch since all field values are known)
-7. Registry sets _active_session = reopened
-8. Returns reopened Session
+11. Registry sets _active_session = reopened
+12. Returns reopened Session
 ```
+
+**Max session age**: Configured via `session_resume_window` setting (default: 86400s / 1 day), passed to the registry constructor from the bootstrap hook. The same setting controls both the candidate lookup window (`get_recent_closed`) and the per-session age validation, ensuring consistent behavior.
 
 ### Recent sessions query (resumption candidates)
 
 ```
 1. Coordinator calls registry.get_recent_closed(before=now, window=timedelta)
-2. Registry delegates to repository.get_recent_closed(before, window)
+2. Registry delegates to repository.get_recent_closed(before, window) for the DB query
 3. Repository queries:
    SELECT * FROM sessions
    WHERE ended_at IS NOT NULL
@@ -343,8 +349,14 @@ Note: The `needs_processing()` check prevents re-triggering: once `processed_at`
      AND summary IS NOT NULL
      AND ended_at > (before - window)
    ORDER BY ended_at DESC
-4. Returns list of Session dataclass instances
+4. Registry filters results:
+   - transcript_path is not None
+   - Path(transcript_path).exists() (file on local machine)
+   - started_at > (before - max_session_age)
+5. Returns filtered list of Session dataclass instances
 ```
+
+**Why filter in registry, not coordinator**: The registry owns session lifecycle and knows what makes a session valid for resumption. The DB can't check filesystem existence, so post-query filtering in the registry keeps the coordinator thin and the business logic centralized.
 
 ### Resumption tracking
 
@@ -508,13 +520,33 @@ Note: The `needs_processing()` check prevents re-triggering: once `processed_at`
 
 ### Scenario: Session reopened for resumption
 
-**Given**: A closed session with `sdk_session_id` and `ended_at` set
+**Given**: A closed session with `sdk_session_id`, transcript file that exists locally, and `started_at` within the max age
 **When**: The coordinator calls `reopen_session()` with the session ID
 **Then**: `ended_at` is cleared, `last_resumed_at` is set to now, the session becomes the active session. The registry constructs the reopened session via `dataclasses.replace()` without a redundant DB fetch.
 
 ### Scenario: Reopen fails — session not found
 
 **Given**: A session ID that doesn't exist in the database
+**When**: `reopen_session()` is called
+**Then**: A warning is logged and None is returned. The coordinator falls back to fresh-session behavior.
+
+### Scenario: Reopen fails — transcript missing locally
+
+**Given**: A closed session whose transcript file doesn't exist on the local machine (e.g., session created on a different server)
+**When**: `reopen_session()` is called
+**Then**: A warning is logged with the transcript path and None is returned. The coordinator falls back to fresh-session behavior.
+**Rationale**: Prevents resuming sessions whose SDK context is unavailable, which would cause the Claude CLI to crash with exit code 1.
+
+### Scenario: Reopen fails — session too old
+
+**Given**: A closed session whose `started_at` exceeds the configured max session age
+**When**: `reopen_session()` is called
+**Then**: A warning is logged with the session's started_at timestamp and None is returned. The coordinator falls back to fresh-session behavior.
+**Rationale**: Prevents resuming stale sessions from old deployments, which may have incompatible context or excessive transcript size.
+
+### Scenario: Reopen fails — no transcript path
+
+**Given**: A closed session whose `transcript_path` is None (interrupted session that never received a Result event)
 **When**: `reopen_session()` is called
 **Then**: A warning is logged and None is returned. The coordinator falls back to fresh-session behavior.
 

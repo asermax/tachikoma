@@ -34,6 +34,9 @@ A persistent registry of conversation sessions that tracks when conversations st
 | R15 | Persist context entries injected into a session as queryable records tied to the session — one entry per context source (each foundational context file as a separate entry, each pre-processing provider as one entry, each session transition artifact as one entry) |
 | R16 | Context entries are queryable by session ID |
 | R17 | Context persistence failures must not interrupt active conversations (graceful degradation, consistent with session tracking pattern) |
+| R18 | Before reopening a session, validate that the SDK transcript file exists on the local filesystem — reject sessions created on other machines |
+| R19 | Before reopening a session, validate that the session's `started_at` is within the configured max age — reject stale sessions |
+| R20 | `get_recent_closed()` filters returned sessions to only those with valid (existing) transcript files and `started_at` within the configured max age |
 
 ## Behaviors
 
@@ -110,13 +113,16 @@ When the per-message pipeline completes, it updates the session's rolling conver
 - Given an active session, when the per-message pipeline produces a new summary, then the session's `summary` field is updated and persisted
 - Given the session is a frozen dataclass, when the summary is updated, then the active session reference is refreshed with the updated value
 
-### Session Reopening (R11, R14)
+### Session Reopening (R11, R14, R18, R19)
 
-The registry can reopen a closed session, making it the active session again for resumption.
+The registry can reopen a closed session, making it the active session again for resumption. Validates transcript availability and session age before allowing resumption.
 
 **Acceptance Criteria**:
-- Given a closed session with a valid ID, when `reopen_session()` is called, then its `ended_at` is cleared, `last_resumed_at` is set to the current timestamp, and it becomes the active session
+- Given a closed session with a valid ID, transcript that exists locally, and `started_at` within the max age, when `reopen_session()` is called, then its `ended_at` is cleared, `last_resumed_at` is set to the current timestamp, and it becomes the active session
 - Given a session ID that does not exist, when `reopen_session()` is called, then it returns None and logs a warning
+- Given a session with no `transcript_path`, when `reopen_session()` is called, then it returns None and logs a warning
+- Given a session whose transcript file does not exist on the local filesystem, when `reopen_session()` is called, then it returns None and logs a warning
+- Given a session whose `started_at` is older than the configured max age, when `reopen_session()` is called, then it returns None and logs a warning
 - Given a session that is already open, when `reopen_session()` is called, then it returns None and logs a warning
 - Given a session that is already the active session, when `reopen_session()` is called, then it returns None and logs a warning
 
