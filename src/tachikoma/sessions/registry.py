@@ -32,8 +32,13 @@ class SessionRegistry:
         await registry.close_session(session.id)
     """
 
-    def __init__(self, repository: SessionRepository) -> None:
+    def __init__(
+        self,
+        repository: SessionRepository,
+        max_session_age: timedelta = timedelta(hours=24),
+    ) -> None:
         self._repository = repository
+        self._max_session_age = max_session_age
         self._lock = asyncio.Lock()
         self._active_session: Session | None = None
 
@@ -149,9 +154,8 @@ class SessionRegistry:
     async def reopen_session(self, session_id: str) -> Session | None:
         """Reopen a closed session for resumption.
 
-        Validates that the session exists, is closed, and is not already active.
-        On success, clears ended_at and sets last_resumed_at, then updates
-        _active_session to the reopened session.
+        Validates transcript availability, session age, and state before allowing
+        resumption. On failure, returns None and logs a warning.
 
         Args:
             session_id: The ID of the closed session to reopen.
@@ -165,6 +169,31 @@ class SessionRegistry:
             _log.warning(
                 "Cannot reopen session: not found session_id={id}",
                 id=session_id,
+            )
+            return None
+
+        # Validate transcript path exists
+        if session.transcript_path is None:
+            _log.warning(
+                "Cannot reopen session: no transcript_path session_id={id}",
+                id=session_id,
+            )
+            return None
+
+        if not Path(session.transcript_path).exists():
+            _log.warning(
+                "Cannot reopen session: transcript not exists locally session_id={id} path={path}",
+                id=session_id,
+                path=session.transcript_path,
+            )
+            return None
+
+        # Validate session age
+        if datetime.now(UTC) - session.started_at > self._max_session_age:
+            _log.warning(
+                "Cannot reopen session: too old session_id={id} started_at={ts}",
+                id=session_id,
+                ts=session.started_at.isoformat(),
             )
             return None
 
@@ -206,15 +235,25 @@ class SessionRegistry:
         return reopened
 
     async def get_recent_closed(self, before: datetime, window: timedelta) -> list[Session]:
-        """Return recently closed sessions within the time window.
+        """Return recently closed sessions that are valid for resumption.
 
-        Delegates to repository. Used by coordinator to find resumption candidates.
+        Delegates to repository for the DB query, then filters to only include
+        sessions whose transcript exists locally and whose started_at is within
+        the configured max age. Used by coordinator to find resumption candidates.
 
         Args:
             before: The reference timestamp (typically now).
             window: How far back to look for closed sessions.
         """
-        return await self._repository.get_recent_closed(before, window)
+        recent = await self._repository.get_recent_closed(before, window)
+        cutoff = before - self._max_session_age
+
+        return [
+            s for s in recent
+            if s.transcript_path is not None
+            and Path(s.transcript_path).exists()
+            and s.started_at > cutoff
+        ]
 
     async def record_resumption(self, session_id: str, previous_ended_at: datetime) -> None:
         """Record a session resumption event.

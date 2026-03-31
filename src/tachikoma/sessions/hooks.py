@@ -1,8 +1,10 @@
 """Bootstrap hooks for the sessions package.
 
-Registers crash recovery as an async bootstrap hook so that interrupted
+Registers crash recovery as an async bootstrap hook so so that interrupted
 sessions from previous runs are closed before normal operation resumes.
 """
+
+from datetime import timedelta
 
 from loguru import logger
 
@@ -30,7 +32,11 @@ async def session_recovery_hook(ctx: BootstrapContext) -> None:
     database: Database = ctx.extras["database"]
 
     repository = SessionRepository(database.session_factory)
-    registry = SessionRegistry(repository)
+
+    settings = ctx.settings_manager.settings
+    max_session_age = timedelta(seconds=settings.agent.session_resume_window)
+    registry = SessionRegistry(repository, max_session_age=max_session_age)
+
     await registry.recover_interrupted()
 
     ctx.extras["session_repository"] = repository
