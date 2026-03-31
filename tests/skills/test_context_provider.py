@@ -7,7 +7,6 @@ Updated for DLT-038: Registry injected via constructor.
 
 from pathlib import Path
 
-import pytest
 from claude_agent_sdk.types import ResultMessage
 from pytest_mock import MockerFixture
 

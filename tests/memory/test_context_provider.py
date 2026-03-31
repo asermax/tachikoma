@@ -5,7 +5,6 @@ Tests for DLT-006: Pre-process messages with memory context injection.
 
 from pathlib import Path
 
-import pytest
 from claude_agent_sdk.types import ResultMessage
 from pytest_mock import MockerFixture
 
