@@ -517,3 +517,17 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 **Priority**: 3 (Medium)
 **Complexity**: Easy
 **Description**: There is no MCP tool to query task execution history, so the agent cannot answer whether a task ran or why it failed. The `task_instances` table tracks every run (ID, definition ID, status, scheduled time, start/completion times, result, created at) but it is only accessible via raw SQLite queries. Add a `list_task_instances` tool that queries execution history for a given task definition, with optional filters for status and result count, enabling the agent to inspect past runs and diagnose failures without falling back to direct database access.
+
+### DLT-094: Delegate work to autonomous long-running agents
+**Status**: ✗ Defined
+**Depends on**: None
+**Priority**: 3 (Medium)
+**Complexity**: Hard
+**Description**: Persistent, communicative agents that execute extended work autonomously — unlike background tasks which are fire-and-forget with a single prompt and evaluator loop, these agents maintain ongoing sessions, report progress, ask clarifying questions, and collaborate with the user over time. Think autonomous coworkers rather than one-off jobs. The user delegates a task ("research this topic thoroughly and report back", "refactor this module over the next hour, ask me if you get stuck") and the agent works independently while keeping the user informed and able to course-correct. The user can see intermediate progress, answer agent questions mid-execution, and control the agent's lifecycle (pause, resume, terminate) — all without blocking their main conversation for other interactions.
+
+### DLT-095: Enrich task execution records with SDK session tracking and structured errors
+**Status**: ✗ Defined
+**Depends on**: DLT-090, DLT-071
+**Priority**: 2 (High)
+**Complexity**: Medium
+**Description**: Developers need to debug failed background tasks and understand execution history, but task instances currently record only status, timestamps, and a free-text result — with no link to the SDK session that ran, no transcript reference, and no structured error context. This delta enriches the task instance model and execution flow with traceability data: recording the SDK session ID and transcript path for each background execution, capturing structured error context (error type, message, tool calls leading to failure) on failure using the error classification from the structured error handling subsystem, and computing execution duration as a first-class field. These fields enable querying past executions by session, inspecting failure artifacts, and displaying execution metrics without manual timestamp arithmetic. The scope is limited to the tasks subsystem — background jobs are not interactive conversations, but they still require an audit trail linking execution to its artifacts and outcomes.
