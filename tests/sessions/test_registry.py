@@ -5,7 +5,7 @@ Uses a mocked SessionRepository to test registry business logic in isolation.
 """
 
 import asyncio
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
@@ -460,8 +460,6 @@ class TestSessionRegistryReopenSession:
         self, mock_repo, tmp_path: Path
     ) -> None:
         """AC: reopen_session returns None when session started_at exceeds max_session_age."""
-        from datetime import timedelta
-
         transcript = tmp_path / "old.jsonl"
         transcript.touch()
 
@@ -486,8 +484,6 @@ class TestSessionRegistryReopenSession:
         self, mock_repo, tmp_path: Path
     ) -> None:
         """AC: reopen_session succeeds when transcript exists and session is within age."""
-        from datetime import timedelta
-
         transcript = tmp_path / "valid.jsonl"
         transcript.touch()
 
@@ -515,8 +511,6 @@ class TestSessionRegistryReopenSession:
         self, mock_repo, tmp_path: Path
     ) -> None:
         """AC: reopen_session returns None when session has no ended_at (still open)."""
-        from datetime import timedelta
-
         transcript = tmp_path / "open.jsonl"
         transcript.touch()
 
