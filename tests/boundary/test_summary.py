@@ -9,6 +9,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from claude_agent_sdk.types import AssistantMessage, TextBlock
+from pytest_mock import MockerFixture
 
 from tachikoma.agent_defaults import AgentDefaults
 from tachikoma.boundary.summary import SummaryProcessor
@@ -27,7 +28,7 @@ def _make_session(summary: str | None = None) -> Session:
 class TestSummaryProcessor:
     """Tests for SummaryProcessor."""
 
-    async def test_calls_query_with_opus_low_effort(self, mocker: pytest.MockerFixture) -> None:
+    async def test_calls_query_with_opus_low_effort(self, mocker: MockerFixture) -> None:
         """AC: Summary processor uses Opus model with low effort."""
         mock_query = mocker.patch("tachikoma.boundary.summary.query")
         mock_registry = MagicMock()
@@ -51,7 +52,7 @@ class TestSummaryProcessor:
         assert options.model == "opus"
         assert options.effort == "low"
 
-    async def test_updates_summary_on_registry(self, mocker: pytest.MockerFixture) -> None:
+    async def test_updates_summary_on_registry(self, mocker: MockerFixture) -> None:
         """AC: Summary is persisted to registry."""
         mock_query = mocker.patch("tachikoma.boundary.summary.query")
         mock_registry = MagicMock()
@@ -74,7 +75,7 @@ class TestSummaryProcessor:
 
         mock_registry.update_summary.assert_awaited_once_with(session.id, expected_summary)
 
-    async def test_handles_none_previous_summary(self, mocker: pytest.MockerFixture) -> None:
+    async def test_handles_none_previous_summary(self, mocker: MockerFixture) -> None:
         """AC: First exchange (None summary) is handled correctly."""
         mock_query = mocker.patch("tachikoma.boundary.summary.query")
         mock_registry = MagicMock()
@@ -98,7 +99,7 @@ class TestSummaryProcessor:
         prompt = call_kwargs[1]["prompt"]
         assert "No previous summary" in prompt
 
-    async def test_uses_existing_summary_in_prompt(self, mocker: pytest.MockerFixture) -> None:
+    async def test_uses_existing_summary_in_prompt(self, mocker: MockerFixture) -> None:
         """AC: Previous summary is included in the prompt for updates."""
         mock_query = mocker.patch("tachikoma.boundary.summary.query")
         mock_registry = MagicMock()
@@ -123,7 +124,7 @@ class TestSummaryProcessor:
         prompt = call_kwargs[1]["prompt"]
         assert existing_summary in prompt
 
-    async def test_uses_no_tools(self, mocker: pytest.MockerFixture) -> None:
+    async def test_uses_no_tools(self, mocker: MockerFixture) -> None:
         """AC: Summary processor uses no tools."""
         mock_query = mocker.patch("tachikoma.boundary.summary.query")
         mock_registry = MagicMock()
@@ -148,7 +149,7 @@ class TestSummaryProcessor:
         assert options.max_turns == 3
         assert options.permission_mode is None
 
-    async def test_propagates_query_errors(self, mocker: pytest.MockerFixture) -> None:
+    async def test_propagates_query_errors(self, mocker: MockerFixture) -> None:
         """AC: SDK errors propagate to pipeline for error isolation."""
 
         async def failing_query(*args, **kwargs):

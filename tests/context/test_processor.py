@@ -8,6 +8,7 @@ from pathlib import Path
 from unittest.mock import AsyncMock
 
 import pytest
+from pytest_mock import MockerFixture
 
 from tachikoma.agent_defaults import AgentDefaults
 from tachikoma.context.processor import (
@@ -107,7 +108,7 @@ class TestCoreContextProcessor:
     """Tests for CoreContextProcessor."""
 
     async def test_calls_clean_pending_signals(
-        self, mocker: pytest.MockerFixture, tmp_path: Path
+        self, mocker: MockerFixture, tmp_path: Path
     ) -> None:
         """AC: process() calls clean_pending_signals with correct data_dir."""
         mock_clean = mocker.patch("tachikoma.context.processor.clean_pending_signals")
@@ -124,7 +125,7 @@ class TestCoreContextProcessor:
         mock_clean.assert_called_once_with(tmp_path / ".tachikoma")
 
     async def test_calls_create_pending_signals_server_with_snapshot(
-        self, mocker: pytest.MockerFixture, tmp_path: Path
+        self, mocker: MockerFixture, tmp_path: Path
     ) -> None:
         """AC: process() calls create_pending_signals_server with data_dir and snapshot."""
         mock_create_server = mocker.patch(
@@ -147,7 +148,7 @@ class TestCoreContextProcessor:
         assert isinstance(call_args[0][1], list)
 
     async def test_calls_fork_and_consume_with_formatted_prompt(
-        self, mocker: pytest.MockerFixture, tmp_path: Path
+        self, mocker: MockerFixture, tmp_path: Path
     ) -> None:
         """AC: process() calls fork_and_consume with formatted prompt containing signals section."""
         mock_fork = mocker.patch(
@@ -175,7 +176,7 @@ class TestCoreContextProcessor:
         "making post-step comparison difficult to observe",
     )
     async def test_logs_when_file_created(
-        self, mocker: pytest.MockerFixture, tmp_path: Path, caplog: pytest.LogCaptureFixture
+        self, mocker: MockerFixture, tmp_path: Path, caplog: pytest.LogCaptureFixture
     ) -> None:
         """AC: mtime comparison logs when files are created."""
         # Note: This would require side_effect in mock to simulate file creation
@@ -187,7 +188,7 @@ class TestCoreContextProcessor:
         "making post-step comparison difficult to observe",
     )
     async def test_logs_when_file_updated(
-        self, mocker: pytest.MockerFixture, tmp_path: Path, caplog: pytest.LogCaptureFixture
+        self, mocker: MockerFixture, tmp_path: Path, caplog: pytest.LogCaptureFixture
     ) -> None:
         """AC: mtime comparison logs when files are modified."""
         # Note: This would require side_effect in mock to simulate file modification
@@ -195,7 +196,7 @@ class TestCoreContextProcessor:
         pass
 
     async def test_handles_missing_context_file_gracefully(
-        self, mocker: pytest.MockerFixture, tmp_path: Path
+        self, mocker: MockerFixture, tmp_path: Path
     ) -> None:
         """AC: Graceful handling when context files don't exist (missing mtime)."""
         mock_fork = mocker.patch(

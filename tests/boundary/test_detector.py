@@ -8,6 +8,7 @@ from pathlib import Path
 
 import pytest
 from claude_agent_sdk.types import ResultMessage
+from pytest_mock import MockerFixture
 
 from tachikoma.agent_defaults import AgentDefaults
 from tachikoma.boundary.detector import (
@@ -64,7 +65,7 @@ class TestDetectBoundary:
     """Tests for detect_boundary() function."""
 
     async def test_returns_boundary_result_for_continuation(
-        self, mocker: pytest.MockerFixture
+        self, mocker: MockerFixture
     ) -> None:
         """AC: Continuation returns BoundaryResult with continues=True."""
 
@@ -94,7 +95,7 @@ class TestDetectBoundary:
         assert result.resume_session_id is None
 
     async def test_returns_boundary_result_for_topic_shift(
-        self, mocker: pytest.MockerFixture
+        self, mocker: MockerFixture
     ) -> None:
         """AC: Topic shift returns BoundaryResult with continues=False."""
 
@@ -124,7 +125,7 @@ class TestDetectBoundary:
         assert result.resume_session_id is None
 
     async def test_returns_resume_session_id_when_match_found(
-        self, mocker: pytest.MockerFixture
+        self, mocker: MockerFixture
     ) -> None:
         """AC: Topic shift with matching candidate returns resume_session_id."""
 
@@ -161,7 +162,7 @@ class TestDetectBoundary:
         assert result.continues is False
         assert result.resume_session_id == "session-123"
 
-    async def test_returns_none_resume_id_when_no_match(self, mocker: pytest.MockerFixture) -> None:
+    async def test_returns_none_resume_id_when_no_match(self, mocker: MockerFixture) -> None:
         """AC: Topic shift without match returns resume_session_id=None."""
 
         async def fake_query(*args, **kwargs):
@@ -197,7 +198,7 @@ class TestDetectBoundary:
         assert result.continues is False
         assert result.resume_session_id is None
 
-    async def test_with_empty_candidates_list(self, mocker: pytest.MockerFixture) -> None:
+    async def test_with_empty_candidates_list(self, mocker: MockerFixture) -> None:
         """AC: Empty candidates list works correctly."""
 
         async def fake_query(*args, **kwargs):
@@ -226,7 +227,7 @@ class TestDetectBoundary:
         assert result.resume_session_id is None
 
     async def test_passes_opus_low_effort_model_to_options(
-        self, mocker: pytest.MockerFixture
+        self, mocker: MockerFixture
     ) -> None:
         """AC: Uses Opus model with low effort for fast, reliable classification."""
         mock_query = mocker.patch("tachikoma.boundary.detector.query")
@@ -259,7 +260,7 @@ class TestDetectBoundary:
         assert options.effort == "low"
 
     async def test_passes_json_schema_output_format_with_resume_field(
-        self, mocker: pytest.MockerFixture
+        self, mocker: MockerFixture
     ) -> None:
         """AC: Uses JSON schema with continues_conversation and resume_session_id."""
         mock_query = mocker.patch("tachikoma.boundary.detector.query")
@@ -292,7 +293,7 @@ class TestDetectBoundary:
         assert "continues_conversation" in options.output_format["schema"]["properties"]
         assert "resume_session_id" in options.output_format["schema"]["properties"]
 
-    async def test_propagates_query_errors(self, mocker: pytest.MockerFixture) -> None:
+    async def test_propagates_query_errors(self, mocker: MockerFixture) -> None:
         """AC: SDK errors propagate (coordinator handles fail-open)."""
 
         async def failing_query(*args, **kwargs):
@@ -309,7 +310,7 @@ class TestDetectBoundary:
             )
 
     async def test_defaults_to_continuation_when_no_structured_output(
-        self, mocker: pytest.MockerFixture
+        self, mocker: MockerFixture
     ) -> None:
         """AC: Returns BoundaryResult(continues=True) when structured_output is None."""
 
@@ -338,7 +339,7 @@ class TestDetectBoundary:
         assert result.resume_session_id is None
 
     async def test_defaults_to_continuation_when_no_result_message(
-        self, mocker: pytest.MockerFixture
+        self, mocker: MockerFixture
     ) -> None:
         """AC: Returns BoundaryResult(continues=True) when no ResultMessage received."""
 
@@ -358,7 +359,7 @@ class TestDetectBoundary:
         assert result.continues is True
         assert result.resume_session_id is None
 
-    async def test_passes_cwd_to_options(self, mocker: pytest.MockerFixture) -> None:
+    async def test_passes_cwd_to_options(self, mocker: MockerFixture) -> None:
         """AC: Working directory is passed to SDK options."""
         mock_query = mocker.patch("tachikoma.boundary.detector.query")
 
@@ -388,7 +389,7 @@ class TestDetectBoundary:
         options = call_kwargs[1]["options"]
         assert options.cwd == cwd
 
-    async def test_uses_no_tools(self, mocker: pytest.MockerFixture) -> None:
+    async def test_uses_no_tools(self, mocker: MockerFixture) -> None:
         """AC: Detection uses no tools for fast inference."""
         mock_query = mocker.patch("tachikoma.boundary.detector.query")
 
@@ -420,7 +421,7 @@ class TestDetectBoundary:
         assert options.permission_mode is None
 
     async def test_includes_candidates_in_prompt_when_provided(
-        self, mocker: pytest.MockerFixture
+        self, mocker: MockerFixture
     ) -> None:
         """AC: Candidates are formatted into the user prompt."""
         mock_query = mocker.patch("tachikoma.boundary.detector.query")
@@ -457,7 +458,7 @@ class TestDetectBoundary:
         assert "Discussion about Python" in prompt
 
     async def test_does_not_include_candidates_when_not_provided(
-        self, mocker: pytest.MockerFixture
+        self, mocker: MockerFixture
     ) -> None:
         """AC: Candidates section is not added when no candidates provided."""
         mock_query = mocker.patch("tachikoma.boundary.detector.query")
@@ -488,7 +489,7 @@ class TestDetectBoundary:
         assert "Previous Session Candidates" not in prompt
 
     async def test_empty_string_resume_id_treated_as_none(
-        self, mocker: pytest.MockerFixture
+        self, mocker: MockerFixture
     ) -> None:
         """AC: Empty string resume_session_id is converted to None."""
 

@@ -8,6 +8,7 @@ from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from pytest_mock import MockerFixture
 
 from tachikoma.skills.events import SkillsChanged
 from tachikoma.skills.registry import SkillRegistry
@@ -18,7 +19,7 @@ class TestWatchSkills:
     """Tests for watch_skills async function."""
 
     async def test_mark_dirty_called_on_changes(
-        self, tmp_path: Path, mocker: pytest.MockerFixture
+        self, tmp_path: Path, mocker: MockerFixture
     ) -> None:
         """AC: mark_dirty() is called when watcher yields changes."""
         # Create skills directory
@@ -54,7 +55,7 @@ class TestWatchSkills:
         registry.mark_dirty.assert_called_once()
 
     async def test_dispatches_skills_changed_event(
-        self, tmp_path: Path, mocker: pytest.MockerFixture
+        self, tmp_path: Path, mocker: MockerFixture
     ) -> None:
         """AC: SkillsChanged event is dispatched on the bus."""
         skills_dir = tmp_path / "skills"
@@ -83,7 +84,7 @@ class TestWatchSkills:
         assert isinstance(call_args[0], SkillsChanged)
 
     async def test_exception_caught_and_logged(
-        self, tmp_path: Path, mocker: pytest.MockerFixture
+        self, tmp_path: Path, mocker: MockerFixture
     ) -> None:
         """AC: Exceptions from awatch are caught and logged (task doesn't crash)."""
         skills_dir = tmp_path / "skills"
@@ -108,7 +109,7 @@ class TestWatchSkills:
         registry.mark_dirty.assert_not_called()
 
     async def test_cancelled_error_propagates(
-        self, tmp_path: Path, mocker: pytest.MockerFixture
+        self, tmp_path: Path, mocker: MockerFixture
     ) -> None:
         """AC: CancelledError propagates (not caught by Exception handler)."""
         skills_dir = tmp_path / "skills"
@@ -130,7 +131,7 @@ class TestWatchSkills:
             await watch_skills(skills_dir, registry, bus)
 
     async def test_missing_directory_logs_and_returns(
-        self, tmp_path: Path, mocker: pytest.MockerFixture
+        self, tmp_path: Path, mocker: MockerFixture
     ) -> None:
         """AC: Missing directory logs and returns gracefully."""
         non_existent = tmp_path / "does-not-exist"
@@ -148,7 +149,7 @@ class TestWatchSkills:
         bus.dispatch.assert_not_called()
 
     async def test_debounce_passed_to_awatch(
-        self, tmp_path: Path, mocker: pytest.MockerFixture
+        self, tmp_path: Path, mocker: MockerFixture
     ) -> None:
         """AC: debounce=5000 and rust_timeout=500 passed to awatch."""
         skills_dir = tmp_path / "skills"

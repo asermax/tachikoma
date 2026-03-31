@@ -9,6 +9,7 @@ from pathlib import Path
 
 import pytest
 from claude_agent_sdk.types import ResultMessage
+from pytest_mock import MockerFixture
 
 from tachikoma.agent_defaults import AgentDefaults
 from tachikoma.pre_processing import ContextResult
@@ -74,7 +75,7 @@ class TestSkillsContextProvider:
         return SkillsContextProvider(defaults, registry)
 
     async def test_empty_registry_returns_none_without_query(
-        self, mocker: pytest.MockerFixture, tmp_path: Path
+        self, mocker: MockerFixture, tmp_path: Path
     ) -> None:
         """AC: No LLM call when registry has no skills (R10)."""
         mock_query = mocker.patch("tachikoma.skills.context_provider.query")
@@ -91,7 +92,7 @@ class TestSkillsContextProvider:
         mock_query.assert_not_called()
 
     async def test_calls_query_with_correct_options(
-        self, mocker: pytest.MockerFixture, tmp_path: Path
+        self, mocker: MockerFixture, tmp_path: Path
     ) -> None:
         """AC: query() called with model=opus, effort=low, max_turns=3, no allowed_tools."""
         mock_query = mocker.patch("tachikoma.skills.context_provider.query")
@@ -124,7 +125,7 @@ class TestSkillsContextProvider:
         assert result is None
 
     async def test_embeds_skill_names_and_message_in_prompt(
-        self, mocker: pytest.MockerFixture, tmp_path: Path
+        self, mocker: MockerFixture, tmp_path: Path
     ) -> None:
         """AC: Prompt contains skill names/descriptions and user message."""
         mock_query = mocker.patch("tachikoma.skills.context_provider.query")
@@ -148,7 +149,7 @@ class TestSkillsContextProvider:
         assert "Find my documents" in prompt
 
     async def test_returns_context_result_with_skills_tag(
-        self, mocker: pytest.MockerFixture, tmp_path: Path
+        self, mocker: MockerFixture, tmp_path: Path
     ) -> None:
         """AC: Happy path returns ContextResult with tag='skills'."""
         mock_query = mocker.patch("tachikoma.skills.context_provider.query")
@@ -169,7 +170,7 @@ class TestSkillsContextProvider:
         assert result.tag == "skills"
 
     async def test_xml_block_contains_skill_body_and_path(
-        self, mocker: pytest.MockerFixture, tmp_path: Path
+        self, mocker: MockerFixture, tmp_path: Path
     ) -> None:
         """AC: XML block contains skill body (no frontmatter) and directory path."""
         mock_query = mocker.patch("tachikoma.skills.context_provider.query")
@@ -195,7 +196,7 @@ class TestSkillsContextProvider:
         assert "description: Test" not in result.content
 
     async def test_filters_agents_by_detected_skill_prefix(
-        self, mocker: pytest.MockerFixture, tmp_path: Path
+        self, mocker: MockerFixture, tmp_path: Path
     ) -> None:
         """AC: Only agents from detected skills are returned."""
         mock_query = mocker.patch("tachikoma.skills.context_provider.query")
@@ -233,7 +234,7 @@ class TestSkillsContextProvider:
         assert "other/helper" not in result.agents
 
     async def test_returns_none_for_no_relevant_skills_sentinel(
-        self, mocker: pytest.MockerFixture, tmp_path: Path
+        self, mocker: MockerFixture, tmp_path: Path
     ) -> None:
         """AC: NO_RELEVANT_SKILLS sentinel returns None."""
         mock_query = mocker.patch("tachikoma.skills.context_provider.query")
@@ -251,7 +252,7 @@ class TestSkillsContextProvider:
         assert result is None
 
     async def test_discards_unrecognized_skill_names(
-        self, mocker: pytest.MockerFixture, tmp_path: Path
+        self, mocker: MockerFixture, tmp_path: Path
     ) -> None:
         """AC: Skill names not in registry are discarded."""
         mock_query = mocker.patch("tachikoma.skills.context_provider.query")
@@ -272,7 +273,7 @@ class TestSkillsContextProvider:
         assert "fake-skill" not in result.content
 
     async def test_returns_none_on_query_exception(
-        self, mocker: pytest.MockerFixture, tmp_path: Path
+        self, mocker: MockerFixture, tmp_path: Path
     ) -> None:
         """AC: Exception during query returns None (DES-002 logging)."""
         mock_query = mocker.patch("tachikoma.skills.context_provider.query")
@@ -289,7 +290,7 @@ class TestSkillsContextProvider:
         assert result is None
 
     async def test_returns_none_on_error_result_message(
-        self, mocker: pytest.MockerFixture, tmp_path: Path
+        self, mocker: MockerFixture, tmp_path: Path
     ) -> None:
         """AC: is_error=True in ResultMessage returns None."""
         mock_query = mocker.patch("tachikoma.skills.context_provider.query")
@@ -307,7 +308,7 @@ class TestSkillsContextProvider:
         assert result is None
 
     async def test_graceful_degradation_on_skill_read_failure(
-        self, mocker: pytest.MockerFixture, tmp_path: Path
+        self, mocker: MockerFixture, tmp_path: Path
     ) -> None:
         """AC: When skill body read fails, other skills still work."""
         mock_query = mocker.patch("tachikoma.skills.context_provider.query")
@@ -329,7 +330,7 @@ class TestSkillsContextProvider:
         assert "Valid content" in result.content
 
     async def test_multiple_skills_detected(
-        self, mocker: pytest.MockerFixture, tmp_path: Path
+        self, mocker: MockerFixture, tmp_path: Path
     ) -> None:
         """AC: Multiple detected skills in XML block, agents from both."""
         mock_query = mocker.patch("tachikoma.skills.context_provider.query")
@@ -367,7 +368,7 @@ class TestSkillsContextProvider:
         assert "skill-b/agent2" in result.agents
 
     async def test_does_not_mutate_registry_agents_dict(
-        self, mocker: pytest.MockerFixture, tmp_path: Path
+        self, mocker: MockerFixture, tmp_path: Path
     ) -> None:
         """AC: Filtering creates new dict, does not mutate registry's internal dict."""
         mock_query = mocker.patch("tachikoma.skills.context_provider.query")

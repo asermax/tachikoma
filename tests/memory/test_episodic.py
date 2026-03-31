@@ -8,6 +8,7 @@ from pathlib import Path
 from unittest.mock import AsyncMock
 
 import pytest
+from pytest_mock import MockerFixture
 
 from tachikoma.agent_defaults import AgentDefaults
 from tachikoma.memory.episodic import EPISODIC_PROMPT, EpisodicProcessor
@@ -27,7 +28,7 @@ class TestEpisodicProcessor:
     """Tests for EpisodicProcessor."""
 
     async def test_calls_fork_and_consume_with_correct_args(
-        self, mocker: pytest.MockerFixture
+        self, mocker: MockerFixture
     ) -> None:
         """AC: Processor calls fork_and_consume with session, prompt, and cwd."""
         mock_fork = mocker.patch(
@@ -67,7 +68,7 @@ class TestEpisodicProcessor:
         """AC: Prompt mentions consolidating same-day entries."""
         assert "consolidat" in EPISODIC_PROMPT.lower()
 
-    async def test_propagates_fork_and_consume_error(self, mocker: pytest.MockerFixture) -> None:
+    async def test_propagates_fork_and_consume_error(self, mocker: MockerFixture) -> None:
         """AC: Exceptions from fork_and_consume propagate."""
         _mock_fork = mocker.patch(
             "tachikoma.post_processing.fork_and_consume",

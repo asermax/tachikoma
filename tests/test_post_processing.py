@@ -9,6 +9,7 @@ from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from pytest_mock import MockerFixture
 
 from tachikoma.agent_defaults import AgentDefaults
 from tachikoma.post_processing import (
@@ -466,7 +467,7 @@ class TestMarkProcessed:
 class TestForkAndConsume:
     """Tests for fork_and_consume helper."""
 
-    async def test_calls_query_with_fork_options(self, mocker: pytest.MockerFixture) -> None:
+    async def test_calls_query_with_fork_options(self, mocker: MockerFixture) -> None:
         """AC: query() called with correct prompt, resume, fork_session, cwd."""
         mock_query = mocker.patch("tachikoma.post_processing.query")
 
@@ -491,7 +492,7 @@ class TestForkAndConsume:
         assert options.fork_session is True
         assert options.permission_mode == "bypassPermissions"
 
-    async def test_consumes_full_async_iterator(self, mocker: pytest.MockerFixture) -> None:
+    async def test_consumes_full_async_iterator(self, mocker: MockerFixture) -> None:
         """AC: Async iterator is fully consumed."""
         consume_count = 0
 
@@ -508,7 +509,7 @@ class TestForkAndConsume:
 
         assert consume_count == 3
 
-    async def test_propagates_query_error(self, mocker: pytest.MockerFixture) -> None:
+    async def test_propagates_query_error(self, mocker: MockerFixture) -> None:
         """AC: Exceptions from query() propagate."""
 
         async def failing_query(*args, **kwargs):
@@ -529,7 +530,7 @@ class TestForkAndConsume:
         with pytest.raises(RuntimeError, match="no sdk_session_id"):
             await fork_and_consume(session, "prompt", AgentDefaults(cwd=Path("/workspace")))
 
-    async def test_mcp_servers_passed_to_query_options(self, mocker: pytest.MockerFixture) -> None:
+    async def test_mcp_servers_passed_to_query_options(self, mocker: MockerFixture) -> None:
         """AC: mcp_servers parameter is passed through to ClaudeAgentOptions."""
         mock_query = mocker.patch("tachikoma.post_processing.query")
 
@@ -550,7 +551,7 @@ class TestForkAndConsume:
         options = call_kwargs[1]["options"]
         assert options.mcp_servers == mcp_servers
 
-    async def test_mcp_servers_default_none_not_passed(self, mocker: pytest.MockerFixture) -> None:
+    async def test_mcp_servers_default_none_not_passed(self, mocker: MockerFixture) -> None:
         """AC: When mcp_servers is None (default), options use SDK default (empty dict)."""
         mock_query = mocker.patch("tachikoma.post_processing.query")
 
@@ -569,7 +570,7 @@ class TestForkAndConsume:
         assert options.mcp_servers == {}
 
     async def test_system_prompt_append_sets_system_prompt_preset(
-        self, mocker: pytest.MockerFixture
+        self, mocker: MockerFixture
     ) -> None:
         """AC: system_prompt_append param sets SystemPromptPreset on options (DLT-041)."""
         mock_query = mocker.patch("tachikoma.post_processing.query")
@@ -598,7 +599,7 @@ class TestForkAndConsume:
         assert options.system_prompt["append"] == context
 
     async def test_system_prompt_append_none_no_system_prompt(
-        self, mocker: pytest.MockerFixture
+        self, mocker: MockerFixture
     ) -> None:
         """AC: system_prompt_append=None (default) leaves system_prompt unset (DLT-041)."""
         mock_query = mocker.patch("tachikoma.post_processing.query")
@@ -626,7 +627,7 @@ class TestForkAndConsume:
 class TestForkAndCapture:
     """Tests for fork_and_capture helper."""
 
-    async def test_captures_text_from_content_blocks(self, mocker: pytest.MockerFixture) -> None:
+    async def test_captures_text_from_content_blocks(self, mocker: MockerFixture) -> None:
         """AC: Text from content blocks is captured and concatenated."""
         msg1 = MagicMock()
         msg1.content = [MagicMock(text="Hello ")]
@@ -649,7 +650,7 @@ class TestForkAndCapture:
 
         assert result == "Hello world"
 
-    async def test_returns_empty_string_when_no_text(self, mocker: pytest.MockerFixture) -> None:
+    async def test_returns_empty_string_when_no_text(self, mocker: MockerFixture) -> None:
         """AC: Returns empty string when no text blocks in response."""
         msg = MagicMock(spec=[])  # No content attribute
 
@@ -667,7 +668,7 @@ class TestForkAndCapture:
 
         assert result == ""
 
-    async def test_fully_consumes_generator(self, mocker: pytest.MockerFixture) -> None:
+    async def test_fully_consumes_generator(self, mocker: MockerFixture) -> None:
         """AC: DES-005 compliance — generator is fully consumed."""
         consume_count = 0
 
@@ -684,7 +685,7 @@ class TestForkAndCapture:
 
         assert consume_count == 3
 
-    async def test_calls_query_with_fork_options(self, mocker: pytest.MockerFixture) -> None:
+    async def test_calls_query_with_fork_options(self, mocker: MockerFixture) -> None:
         """AC: query() called with correct resume, fork_session, cwd."""
         mock_query = mocker.patch("tachikoma.post_processing.query")
 
@@ -717,7 +718,7 @@ class TestForkAndCapture:
         with pytest.raises(RuntimeError, match="no sdk_session_id"):
             await fork_and_capture(session, "prompt", AgentDefaults(cwd=Path("/workspace")))
 
-    async def test_propagates_query_error(self, mocker: pytest.MockerFixture) -> None:
+    async def test_propagates_query_error(self, mocker: MockerFixture) -> None:
         """AC: Exceptions from query() propagate."""
 
         async def failing_query(*args, **kwargs):
@@ -732,7 +733,7 @@ class TestForkAndCapture:
             await fork_and_capture(session, "prompt", AgentDefaults(cwd=Path("/workspace")))
 
     async def test_system_prompt_append_sets_system_prompt_preset(
-        self, mocker: pytest.MockerFixture
+        self, mocker: MockerFixture
     ) -> None:
         """AC: system_prompt_append param sets SystemPromptPreset on options (DLT-041)."""
         mock_query = mocker.patch("tachikoma.post_processing.query")
@@ -763,7 +764,7 @@ class TestForkAndCapture:
         assert options.system_prompt["append"] == context
 
     async def test_system_prompt_append_none_no_system_prompt(
-        self, mocker: pytest.MockerFixture
+        self, mocker: MockerFixture
     ) -> None:
         """AC: system_prompt_append=None (default) leaves system_prompt unset (DLT-041)."""
         mock_query = mocker.patch("tachikoma.post_processing.query")
@@ -794,7 +795,7 @@ class TestPromptDrivenProcessor:
     """Tests for PromptDrivenProcessor base class."""
 
     async def test_process_calls_fork_and_consume_with_correct_args(
-        self, mocker: pytest.MockerFixture
+        self, mocker: MockerFixture
     ) -> None:
         """AC: process() calls fork_and_consume with session, prompt, and agent_defaults."""
         mock_fork = mocker.patch(
@@ -809,7 +810,7 @@ class TestPromptDrivenProcessor:
 
         mock_fork.assert_awaited_once_with(session, prompt, defaults)
 
-    async def test_simple_subclass_inherits_process(self, mocker: pytest.MockerFixture) -> None:
+    async def test_simple_subclass_inherits_process(self, mocker: MockerFixture) -> None:
         """AC: Simple subclasses inherit process() and only need a prompt constant."""
 
         class SimpleProcessor(PromptDrivenProcessor):
@@ -833,7 +834,7 @@ class TestPromptDrivenProcessor:
             defaults,
         )
 
-    async def test_subclass_can_override_process(self, mocker: pytest.MockerFixture) -> None:
+    async def test_subclass_can_override_process(self, mocker: MockerFixture) -> None:
         """AC: Subclasses can override process() without calling super().process()."""
         mock_fork = mocker.patch(
             "tachikoma.post_processing.fork_and_consume", new_callable=AsyncMock
@@ -866,7 +867,7 @@ class TestPromptDrivenProcessor:
         assert processor.post_called
         mock_fork.assert_awaited_once_with(session, "Custom prompt", defaults)
 
-    async def test_propagates_fork_and_consume_error(self, mocker: pytest.MockerFixture) -> None:
+    async def test_propagates_fork_and_consume_error(self, mocker: MockerFixture) -> None:
         """AC: Exceptions from fork_and_consume propagate."""
         mocker.patch(
             "tachikoma.post_processing.fork_and_consume",

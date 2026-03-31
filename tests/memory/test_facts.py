@@ -8,6 +8,7 @@ from pathlib import Path
 from unittest.mock import AsyncMock
 
 import pytest
+from pytest_mock import MockerFixture
 
 from tachikoma.agent_defaults import AgentDefaults
 from tachikoma.memory.facts import FACTS_PROMPT, FactsProcessor
@@ -27,7 +28,7 @@ class TestFactsProcessor:
     """Tests for FactsProcessor."""
 
     async def test_calls_fork_and_consume_with_correct_args(
-        self, mocker: pytest.MockerFixture
+        self, mocker: MockerFixture
     ) -> None:
         """AC: Processor calls fork_and_consume with session, prompt, and cwd."""
         mock_fork = mocker.patch(
@@ -59,7 +60,7 @@ class TestFactsProcessor:
         """AC: Prompt mentions descriptive, topic-based naming."""
         assert "topic" in FACTS_PROMPT.lower() or "descriptive" in FACTS_PROMPT.lower()
 
-    async def test_propagates_fork_and_consume_error(self, mocker: pytest.MockerFixture) -> None:
+    async def test_propagates_fork_and_consume_error(self, mocker: MockerFixture) -> None:
         """AC: Exceptions from fork_and_consume propagate."""
         _mock_fork = mocker.patch(
             "tachikoma.post_processing.fork_and_consume",

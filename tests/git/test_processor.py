@@ -8,6 +8,7 @@ from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from pytest_mock import MockerFixture
 
 from tachikoma.agent_defaults import AgentDefaults
 from tachikoma.git.processor import GIT_COMMIT_PROMPT, GitProcessor, query_and_consume
@@ -26,7 +27,7 @@ def _make_session() -> Session:
 class TestGitProcessor:
     """Tests for GitProcessor."""
 
-    async def test_calls_query_when_workspace_dirty(self, mocker: pytest.MockerFixture) -> None:
+    async def test_calls_query_when_workspace_dirty(self, mocker: MockerFixture) -> None:
         """AC: Processor calls query_and_consume when workspace is dirty."""
         mocker.patch(
             "tachikoma.git.processor._check_git_status",
@@ -51,7 +52,7 @@ class TestGitProcessor:
             AgentDefaults(cwd=Path("/workspace")),
         )
 
-    async def test_no_op_when_workspace_clean(self, mocker: pytest.MockerFixture) -> None:
+    async def test_no_op_when_workspace_clean(self, mocker: MockerFixture) -> None:
         """AC: Processor returns no-op when workspace is clean (no agent spawned)."""
         mocker.patch(
             "tachikoma.git.processor._check_git_status",
@@ -68,7 +69,7 @@ class TestGitProcessor:
 
         mock_query.assert_not_awaited()
 
-    async def test_logs_warning_if_changes_remain(self, mocker: pytest.MockerFixture) -> None:
+    async def test_logs_warning_if_changes_remain(self, mocker: MockerFixture) -> None:
         """AC: Processor runs post-agent git status check and logs warning if changes remain."""
         mock_status = mocker.patch(
             "tachikoma.git.processor._check_git_status",
@@ -91,7 +92,7 @@ class TestGitProcessor:
         # Should have called status twice (before and after agent)
         assert mock_status.call_count == 2
 
-    async def test_pushes_when_remote_exists(self, mocker: pytest.MockerFixture) -> None:
+    async def test_pushes_when_remote_exists(self, mocker: MockerFixture) -> None:
         """AC1: Processor pushes after committing when origin remote exists."""
         mocker.patch(
             "tachikoma.git.processor._check_git_status",
@@ -117,7 +118,7 @@ class TestGitProcessor:
 
         mock_push.assert_awaited_once_with(Path("/workspace"))
 
-    async def test_skips_push_when_no_remote(self, mocker: pytest.MockerFixture) -> None:
+    async def test_skips_push_when_no_remote(self, mocker: MockerFixture) -> None:
         """AC2: Processor skips push when no origin remote is configured."""
         mocker.patch(
             "tachikoma.git.processor._check_git_status",
@@ -144,7 +145,7 @@ class TestGitProcessor:
         mock_push.assert_not_awaited()
 
     async def test_push_failure_logs_warning_and_continues(
-        self, mocker: pytest.MockerFixture
+        self, mocker: MockerFixture
     ) -> None:
         """AC3: Push failure logs warning with details; processor completes normally."""
         mocker.patch(
@@ -172,7 +173,7 @@ class TestGitProcessor:
         # Should not raise — push failure is caught and logged
         await processor.process(_make_session())
 
-    async def test_no_push_when_workspace_clean(self, mocker: pytest.MockerFixture) -> None:
+    async def test_no_push_when_workspace_clean(self, mocker: MockerFixture) -> None:
         """AC: No push attempted when workspace is clean (early return before push)."""
         mocker.patch(
             "tachikoma.git.processor._check_git_status",
@@ -193,7 +194,7 @@ class TestGitProcessor:
 class TestQueryAndConsume:
     """Tests for query_and_consume helper."""
 
-    async def test_calls_query_with_correct_options(self, mocker: pytest.MockerFixture) -> None:
+    async def test_calls_query_with_correct_options(self, mocker: MockerFixture) -> None:
         """AC: query_and_consume calls query() with correct options."""
         mock_query = mocker.patch("tachikoma.git.processor.query")
 
@@ -214,7 +215,7 @@ class TestQueryAndConsume:
         assert options.cwd == Path("/workspace")
         assert options.permission_mode == "bypassPermissions"
 
-    async def test_consumes_full_async_iterator(self, mocker: pytest.MockerFixture) -> None:
+    async def test_consumes_full_async_iterator(self, mocker: MockerFixture) -> None:
         """AC: query_and_consume fully consumes async iterator."""
         consume_count = 0
 
@@ -230,7 +231,7 @@ class TestQueryAndConsume:
 
         assert consume_count == 3
 
-    async def test_propagates_query_error(self, mocker: pytest.MockerFixture) -> None:
+    async def test_propagates_query_error(self, mocker: MockerFixture) -> None:
         """AC: query_and_consume propagates query() errors."""
 
         async def failing_query(*args, **kwargs):
