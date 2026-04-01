@@ -463,7 +463,7 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 **Description**: Allow the user to switch to a specific previous session by replying to a Telegram message that was part of that session. Currently, messages are routed automatically via boundary detection with no user override. This delta adds message-to-session tracking (associating Telegram message IDs with the session they belong to), reply detection in the Telegram channel, and explicit session routing when a reply targets a past session. The user replies to any message from a previous conversation and the new message is routed to that session instead of following automatic routing logic. Edge cases include replying to a message with no associated session or a closed session that shouldn't be resumed.
 
 ### DLT-087: Disable Claude Code built-in skills in default config
-**Status**: ✗ Defined
+**Status**: ⧗ Spec
 **Depends on**: None
 **Priority**: 1 (Critical)
 **Complexity**: Easy
