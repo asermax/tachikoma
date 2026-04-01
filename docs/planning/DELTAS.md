@@ -332,28 +332,28 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 ### DLT-068: Structured error handling for message generation
 **Status**: ✗ Defined
 **Depends on**: None
-**Priority**: 3 (Medium)
+**Priority**: 4 (Low)
 **Complexity**: Medium
 **Description**: Currently, errors during session management, boundary detection, context loading, and metadata updates within the coordinator's message generation flow are silently logged, while only SDK stream errors surface to the user. Introduce error classification (severity levels, recoverability) and a surfacing mechanism that replaces silent logging and raw exception text with categorized messages indicating what went wrong and whether the conversation can continue normally. The classification scheme and surfacing approach established here become the standard adopted by subsequent error handling deltas.
 
 ### DLT-069: Structured error handling for pre-processing pipeline
 **Status**: ✗ Defined
 **Depends on**: DLT-068
-**Priority**: 3 (Medium)
+**Priority**: 4 (Low)
 **Complexity**: Easy
 **Description**: Apply the error classification and surfacing mechanism to the pre-processing pipeline. Currently, context provider failures (memory search, skills detection, projects loading) are silently logged and skipped — the agent proceeds with degraded context and neither the user nor the coordinator knows what was lost. Surface provider failures as classified error notices so users are informed when context is incomplete, enabling them to judge response quality or retry.
 
 ### DLT-070: Structured error handling for post-processing pipeline
 **Status**: ✗ Defined
 **Depends on**: DLT-068
-**Priority**: 3 (Medium)
+**Priority**: 4 (Low)
 **Complexity**: Easy
 **Description**: Apply the error classification and surfacing mechanism to both the session-level and per-message post-processing pipelines. Currently, processor failures during memory extraction, facts capture, preferences detection, context updates, and summary generation are silently logged — users never know whether their conversations were properly processed and persisted. Surface processor failures as classified error notices so users are informed when post-processing is incomplete, making extraction gaps visible rather than silently losing conversation learnings.
 
 ### DLT-071: Structured error handling for task execution
 **Status**: ✗ Defined
 **Depends on**: DLT-068
-**Priority**: 3 (Medium)
+**Priority**: 4 (Low)
 **Complexity**: Easy
 **Description**: Apply the error classification and surfacing mechanism to the task execution subsystem. Currently, task pre-processing fallbacks, evaluator failures, and notification delivery issues are handled with ad-hoc logging and silent degradation. Classify and surface failures during task pre-processing, evaluation loops, post-processing, and notification generation consistently with the rest of the system.
 
@@ -521,6 +521,13 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 ### DLT-095: Enrich task execution records with SDK session tracking and structured errors
 **Status**: ✗ Defined
 **Depends on**: DLT-090, DLT-071
-**Priority**: 2 (High)
+**Priority**: 4 (Low)
 **Complexity**: Medium
 **Description**: Developers need to debug failed background tasks and understand execution history, but task instances currently record only status, timestamps, and a free-text result — with no link to the SDK session that ran, no transcript reference, and no structured error context. This delta enriches the task instance model and execution flow with traceability data: recording the SDK session ID and transcript path for each background execution, capturing structured error context (error type, message, tool calls leading to failure) on failure using the error classification from the structured error handling subsystem, and computing execution duration as a first-class field. These fields enable querying past executions by session, inspecting failure artifacts, and displaying execution metrics without manual timestamp arithmetic. The scope is limited to the tasks subsystem — background jobs are not interactive conversations, but they still require an audit trail linking execution to its artifacts and outcomes.
+
+### DLT-096: Include last exchange in session resumption candidates
+**Status**: ✗ Defined
+**Depends on**: None
+**Priority**: 3 (Medium)
+**Complexity**: Easy
+**Description**: The boundary detector evaluates whether an incoming message should resume a previous session, but it only receives the candidate sessions' summaries — which are rolling condensations of the full conversation. Including the actual last user message and assistant response from each candidate session would give the routing decision significantly better signal about whether the new message belongs in that session, especially for recent conversations where the summary may not yet capture the latest context.
