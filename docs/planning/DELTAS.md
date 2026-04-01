@@ -498,7 +498,7 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 **Description**: Background tasks have no mechanism to conditionally suppress notifications at runtime. The `notify` field is static text set at task definition time, so every execution either always notifies or never does — there is no way for the task's output to signal whether notification is warranted. This is a problem for tasks that should only notify when there is meaningful content (e.g., a routine check-in that should stay silent when the daily plan is empty but notify when activities are scheduled). Add a mechanism for background tasks to signal at execution time whether the result should trigger a notification. The specific signaling approach should be evaluated during design — the key requirement is that the task's output can deterministically control whether the notification fires, without requiring the task to be redefined.
 
 ### DLT-092: Timezone-aware scheduling for one-shot tasks
-**Status**: ⧗ Spec
+**Status**: ✓ Spec
 **Depends on**: None
 **Priority**: 1 (Critical)
 **Complexity**: Easy
