@@ -283,7 +283,7 @@ class TestDefaultConfigGeneration:
         assert '"Skill"' in content
 
     def test_explicit_disallowed_tools_override_keeps_system_tools(self, tmp_path: Path) -> None:
-        """AC (AC3): Explicit disallowed_tools override replaces user defaults but system tools persist."""
+        """AC (AC3): Explicit override replaces user defaults but system tools persist."""
         config_file = tmp_path / "config.toml"
         config_file.write_text('[agent]\ndisallowed_tools = ["AskUserQuestion"]\n')
 
