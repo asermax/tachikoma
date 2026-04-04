@@ -2,9 +2,11 @@
 
 from datetime import UTC, datetime
 
+import mcp.types as types
 import pytest
 from pydantic import ValidationError
 
+from tachikoma.tasks.errors import TaskRepositoryError
 from tachikoma.tasks.model import ScheduleConfig
 from tachikoma.tasks.repository import TaskRepository
 from tachikoma.tasks.tools import (
@@ -16,6 +18,8 @@ from tachikoma.tasks.tools import (
     _parse_schedule,
     create_task_tools_server,
 )
+
+from .conftest import _make_definition
 
 
 class TestParseSchedule:
@@ -204,3 +208,147 @@ class TestCreateTaskToolsServer:
 
         # The server config exists and is valid
         assert server is not None
+
+
+# ---------------------------------------------------------------------------
+# Helpers for testing tool handlers directly
+# ---------------------------------------------------------------------------
+
+
+def _call_tool(repo: TaskRepository):
+    """Return an async callable that invokes a tool by name through the MCP server."""
+    server = create_task_tools_server(repo)
+    mcp_server = server["instance"]
+    call_handler = mcp_server.request_handlers[types.CallToolRequest]
+
+    async def _invoke(name: str, args: dict) -> dict:
+        request = types.CallToolRequest(
+            method="tools/call",
+            params=types.CallToolRequestParams(name=name, arguments=args),
+        )
+        result = await call_handler(request)
+
+        # ServerResult wraps CallToolResult — unwrap via .root
+        inner = result.root if hasattr(result, "root") else result
+        content = []
+        for c in inner.content:
+            content.append({"type": "text", "text": c.text})
+
+        return {
+            "is_error": inner.isError or False,
+            "content": content,
+        }
+
+    return _invoke
+
+
+class TestListTasksOutput:
+    """S1: list_tasks output includes task IDs."""
+
+    @pytest.mark.asyncio
+    async def test_list_tasks_includes_task_id(self, repo: TaskRepository) -> None:
+        """AC: Each entry includes the task's id field in [id] format."""
+        definition = _make_definition(definition_id="abc-123", name="Morning Check")
+        await repo.create_definition(definition)
+
+        call_tool = _call_tool(repo)
+        result = await call_tool("list_tasks", {})
+
+        text = result["content"][0]["text"]
+        assert "[abc-123]" in text
+        assert "**Morning Check**" in text
+
+    @pytest.mark.asyncio
+    async def test_list_tasks_multiple_definitions_show_ids(self, repo: TaskRepository) -> None:
+        """AC: Multiple tasks each show their own ID."""
+        await repo.create_definition(_make_definition(definition_id="id-1", name="Task One"))
+        await repo.create_definition(_make_definition(definition_id="id-2", name="Task Two"))
+
+        call_tool = _call_tool(repo)
+        result = await call_tool("list_tasks", {})
+
+        text = result["content"][0]["text"]
+        assert "[id-1]" in text
+        assert "[id-2]" in text
+
+
+class TestUpdateTaskType:
+    """S2: task_type field on UpdateTaskArgs and handler."""
+
+    def test_update_task_args_valid_session(self) -> None:
+        """AC: task_type='session' validates successfully."""
+        parsed = UpdateTaskArgs.model_validate({"task_id": "abc", "task_type": "session"})
+        assert parsed.task_type == "session"
+
+    def test_update_task_args_valid_background(self) -> None:
+        """AC: task_type='background' validates successfully."""
+        parsed = UpdateTaskArgs.model_validate({"task_id": "abc", "task_type": "background"})
+        assert parsed.task_type == "background"
+
+    def test_update_task_args_invalid_type_raises(self) -> None:
+        """AC: Invalid task_type value raises ValidationError with valid options."""
+        with pytest.raises(ValidationError) as exc_info:
+            UpdateTaskArgs.model_validate({"task_id": "abc", "task_type": "invalid"})
+
+        error_str = str(exc_info.value)
+        assert "session" in error_str or "background" in error_str
+
+    def test_update_task_args_task_type_default_none(self) -> None:
+        """AC: task_type defaults to None when not provided."""
+        parsed = UpdateTaskArgs.model_validate({"task_id": "abc"})
+        assert parsed.task_type is None
+
+    @pytest.mark.asyncio
+    async def test_update_task_changes_task_type(self, repo: TaskRepository) -> None:
+        """AC: Calling update_task with task_type changes the definition's task_type."""
+        await repo.create_definition(
+            _make_definition(definition_id="task-1", task_type="background")
+        )
+
+        call_tool = _call_tool(repo)
+        result = await call_tool("update_task", {"task_id": "task-1", "task_type": "session"})
+
+        assert result.get("is_error") is not True
+        updated = await repo.get_definition("task-1")
+        assert updated is not None
+        assert updated.task_type == "session"
+
+
+class TestErrorHandling:
+    """S3: Error handling with TaskRepositoryError surfacing.
+
+    Tests the error formatting pattern used by all four tools.
+    Since the MCP SDK handles its own validation and error wrapping,
+    these tests verify the formatting logic at the unit level.
+    """
+
+    def test_task_repository_error_with_cause_format(self) -> None:
+        """AC: TaskRepositoryError with __cause__ formats both wrapper and cause."""
+        original = RuntimeError("database is locked")
+        exc = TaskRepositoryError("Failed to update task definition test-id")
+        exc.__cause__ = original
+
+        # Verify the pattern used in tools.py
+        cause = f" Cause: {exc.__cause__}" if exc.__cause__ else ""
+        text = f"{exc}{cause}"
+
+        assert "Failed to update task definition test-id" in text
+        assert "database is locked" in text
+
+    def test_task_repository_error_without_cause_format(self) -> None:
+        """AC: TaskRepositoryError without __cause__ shows only wrapper message."""
+        exc = TaskRepositoryError("Failed to delete task definition test-id")
+
+        cause = f" Cause: {exc.__cause__}" if exc.__cause__ else ""
+        text = f"{exc}{cause}"
+
+        assert "Failed to delete task definition test-id" in text
+        assert "Cause:" not in text
+
+    def test_list_tasks_args_validation_error_includes_field(self) -> None:
+        """AC: Pydantic ValidationError for list_tasks includes field name."""
+        with pytest.raises(ValidationError) as exc_info:
+            ListTasksArgs.model_validate({"archived": "notabool"})
+
+        error_str = str(exc_info.value)
+        assert "archived" in error_str

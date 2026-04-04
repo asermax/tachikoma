@@ -8,6 +8,7 @@ Provides MCP tools for managing task definitions:
 """
 
 from datetime import UTC, datetime
+from typing import Literal
 from uuid import uuid4
 
 from claude_agent_sdk import McpSdkServerConfig, create_sdk_mcp_server, tool
@@ -16,6 +17,7 @@ from cronsim.cronsim import CronSimError
 from loguru import logger
 from pydantic import BaseModel, ValidationError
 
+from tachikoma.tasks.errors import TaskRepositoryError
 from tachikoma.tasks.model import ScheduleConfig, TaskDefinition
 from tachikoma.tasks.repository import TaskRepository
 
@@ -44,6 +46,7 @@ class UpdateTaskArgs(BaseModel):
     task_id: str
     name: str | None = None
     schedule: str | None = None
+    task_type: Literal["session", "background"] | None = None
     prompt: str | None = None
     notify: str | None = None
     enabled: bool | None = None
@@ -73,7 +76,13 @@ def create_task_tools_server(repository: TaskRepository) -> McpSdkServerConfig:
         """List task definitions, filtered by active/archived status."""
         try:
             parsed = ListTasksArgs.model_validate(args)
+        except ValidationError as exc:
+            return {
+                "is_error": True,
+                "content": [{"type": "text", "text": f"Invalid arguments: {exc}"}],
+            }
 
+        try:
             if parsed.archived:
                 definitions = await repository.list_disabled_definitions()
             else:
@@ -94,7 +103,7 @@ def create_task_tools_server(repository: TaskRepository) -> McpSdkServerConfig:
                     if d.last_fired_at
                     else ""
                 )
-                lines.append(f"- **{d.name}** [{d.task_type}] {status}")
+                lines.append(f"- [{d.id}] **{d.name}** [{d.task_type}] {status}")
                 lines.append(f"  Schedule: {schedule_desc}{last_fired}")
                 lines.append(f"  Prompt: {d.prompt[:100]}{'...' if len(d.prompt) > 100 else ''}")
                 if d.notify:
@@ -105,11 +114,14 @@ def create_task_tools_server(repository: TaskRepository) -> McpSdkServerConfig:
                 "content": [{"type": "text", "text": "\n".join(lines)}],
             }
 
+        except TaskRepositoryError as exc:
+            cause = f" Cause: {exc.__cause__}" if exc.__cause__ else ""
+            return {"is_error": True, "content": [{"type": "text", "text": f"{exc}{cause}"}]}
         except Exception as exc:
-            _log.exception("Failed to list tasks: {err}", err=str(exc))
+            _log.exception("Unexpected error listing tasks: {err}", err=str(exc))
             return {
                 "is_error": True,
-                "content": [{"type": "text", "text": f"Error listing tasks: {exc}"}],
+                "content": [{"type": "text", "text": f"Unexpected error: {exc}"}],
             }
 
     @tool(
@@ -205,11 +217,14 @@ def create_task_tools_server(repository: TaskRepository) -> McpSdkServerConfig:
                 ],
             }
 
+        except TaskRepositoryError as exc:
+            cause = f" Cause: {exc.__cause__}" if exc.__cause__ else ""
+            return {"is_error": True, "content": [{"type": "text", "text": f"{exc}{cause}"}]}
         except Exception as exc:
-            _log.exception("Failed to create task: {err}", err=str(exc))
+            _log.exception("Unexpected error creating task: {err}", err=str(exc))
             return {
                 "is_error": True,
-                "content": [{"type": "text", "text": f"Error creating task: {exc}"}],
+                "content": [{"type": "text", "text": f"Unexpected error: {exc}"}],
             }
 
     @tool(
@@ -261,6 +276,8 @@ def create_task_tools_server(repository: TaskRepository) -> McpSdkServerConfig:
             updates["notify"] = parsed.notify
         if parsed.enabled is not None:
             updates["enabled"] = parsed.enabled
+        if parsed.task_type is not None:
+            updates["task_type"] = parsed.task_type
 
         if not updates:
             return {
@@ -278,11 +295,14 @@ def create_task_tools_server(repository: TaskRepository) -> McpSdkServerConfig:
                 ],
             }
 
+        except TaskRepositoryError as exc:
+            cause = f" Cause: {exc.__cause__}" if exc.__cause__ else ""
+            return {"is_error": True, "content": [{"type": "text", "text": f"{exc}{cause}"}]}
         except Exception as exc:
-            _log.exception("Failed to update task: {err}", err=str(exc))
+            _log.exception("Unexpected error updating task: {err}", err=str(exc))
             return {
                 "is_error": True,
-                "content": [{"type": "text", "text": f"Error updating task: {exc}"}],
+                "content": [{"type": "text", "text": f"Unexpected error: {exc}"}],
             }
 
     @tool(
@@ -313,11 +333,14 @@ def create_task_tools_server(repository: TaskRepository) -> McpSdkServerConfig:
                     "content": [{"type": "text", "text": f"Task '{parsed.task_id}' not found."}],
                 }
 
+        except TaskRepositoryError as exc:
+            cause = f" Cause: {exc.__cause__}" if exc.__cause__ else ""
+            return {"is_error": True, "content": [{"type": "text", "text": f"{exc}{cause}"}]}
         except Exception as exc:
-            _log.exception("Failed to delete task: {err}", err=str(exc))
+            _log.exception("Unexpected error deleting task: {err}", err=str(exc))
             return {
                 "is_error": True,
-                "content": [{"type": "text", "text": f"Error deleting task: {exc}"}],
+                "content": [{"type": "text", "text": f"Unexpected error: {exc}"}],
             }
 
     return create_sdk_mcp_server(
