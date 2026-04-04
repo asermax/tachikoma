@@ -357,13 +357,6 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 **Complexity**: Easy
 **Description**: Apply the error classification and surfacing mechanism to the task execution subsystem. Currently, task pre-processing fallbacks, evaluator failures, and notification delivery issues are handled with ad-hoc logging and silent degradation. Classify and surface failures during task pre-processing, evaluation loops, post-processing, and notification generation consistently with the rest of the system.
 
-### DLT-072: Fix task management MCP tool bugs
-**Status**: ✗ Defined
-**Depends on**: None
-**Priority**: 1 (Critical)
-**Complexity**: Easy
-**Description**: The task management MCP tools have multiple bugs that force the agent to fall back to raw SQLite queries. `list_tasks` does not expose task IDs, making it impossible to discover which ID to pass to `update_task` or `delete_task`. `update_task` rejects valid inputs with an unhelpful generic validation error that does not indicate which field failed or what schema is expected, and it is missing the `task_type` parameter — the column exists in the database but cannot be set through the MCP tool, preventing task type changes without falling back to raw SQL. The `notify` parameter description is misleading: it says "if omitted, background tasks run silently" but the system actually notifies on failure by default, leading to redundant notify strings. Tool descriptions lack parameter type documentation and cross-references between tools, leading to trial-and-error usage. Fix all of these: expose IDs in list output, fix update validation, expose `task_type` in `update_task`, clarify `notify` default behavior, and enrich tool descriptions with types, examples, and usage guidance.
-
 ### DLT-074: Rename skills subsystem to avoid Claude Code naming collision
 **Status**: ✗ Defined
 **Depends on**: None
