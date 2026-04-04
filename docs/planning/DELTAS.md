@@ -364,13 +364,6 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 **Complexity**: Easy
 **Description**: The task management MCP tools have multiple bugs that force the agent to fall back to raw SQLite queries. `list_tasks` does not expose task IDs, making it impossible to discover which ID to pass to `update_task` or `delete_task`. `update_task` rejects valid inputs with an unhelpful generic validation error that does not indicate which field failed or what schema is expected, and it is missing the `task_type` parameter — the column exists in the database but cannot be set through the MCP tool, preventing task type changes without falling back to raw SQL. The `notify` parameter description is misleading: it says "if omitted, background tasks run silently" but the system actually notifies on failure by default, leading to redundant notify strings. Tool descriptions lack parameter type documentation and cross-references between tools, leading to trial-and-error usage. Fix all of these: expose IDs in list output, fix update validation, expose `task_type` in `update_task`, clarify `notify` default behavior, and enrich tool descriptions with types, examples, and usage guidance.
 
-### DLT-073: Block Claude Code built-in cron tools in default config
-**Status**: ✗ Defined
-**Depends on**: None
-**Priority**: 1 (Critical)
-**Complexity**: Easy
-**Description**: Claude Code ships with built-in `CronCreate`, `CronDelete`, and `CronList` tools that create session-only in-memory cron jobs. These shadow Tachikoma's persistent task system — the agent defaults to the built-in tools since they appear first in the tool list, and any reminders created through them silently vanish on exit because they are never persisted to the database or picked up by Tachikoma's scheduler. A manual workaround exists (adding these tools to the deny list in `.claude/settings.local.json`), but this is not baked into the default project configuration. Incorporate the deny list into the project template or default configuration so every workspace starts with these tools blocked.
-
 ### DLT-074: Rename skills subsystem to avoid Claude Code naming collision
 **Status**: ✗ Defined
 **Depends on**: None

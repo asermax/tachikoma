@@ -54,7 +54,7 @@ class AgentSettings(BaseModel):
         description="Tools the agent is allowed to use",
     )
     disallowed_tools: list[str] = Field(
-        default=["AskUserQuestion"],
+        default=["AskUserQuestion", "CronCreate", "CronDelete", "CronList"],
         description="Tools the agent is blocked from using",
     )
     cli_path: str | None = Field(

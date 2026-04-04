@@ -54,10 +54,11 @@ class TestSettingsModel:
         assert settings.agent.allowed_tools == ["Read", "Glob", "Grep"]
 
     def test_default_agent_disallowed_tools(self) -> None:
-        """AC (AC1): agent.disallowed_tools defaults to AskUserQuestion."""
+        """AC (AC1/R0/R1): agent.disallowed_tools defaults to blocking cron tools."""
         settings = Settings()
 
-        assert settings.agent.disallowed_tools == ["AskUserQuestion"]
+        expected = ["AskUserQuestion", "CronCreate", "CronDelete", "CronList"]
+        assert settings.agent.disallowed_tools == expected
 
     def test_default_session_resume_window(self) -> None:
         """AC (DLT-028): agent.session_resume_window defaults to 86400 (1 day)."""
@@ -227,7 +228,7 @@ class TestDefaultConfigGeneration:
         assert "console" in content
 
     def test_generated_file_contains_disallowed_tools(self, tmp_path: Path) -> None:
-        """AC (AC3): Generated file contains disallowed_tools with default value."""
+        """AC (AC4/R3): Generated file contains disallowed_tools with all blocked tools."""
         config_path = tmp_path / "config.toml"
         _generate_default_config(config_path)
 
@@ -235,6 +236,18 @@ class TestDefaultConfigGeneration:
 
         assert "disallowed_tools" in content
         assert '"AskUserQuestion"' in content
+        assert '"CronCreate"' in content
+        assert '"CronDelete"' in content
+        assert '"CronList"' in content
+
+    def test_explicit_disallowed_tools_override_excludes_cron(self, tmp_path: Path) -> None:
+        """AC (AC3/R2): Explicit disallowed_tools override replaces defaults entirely."""
+        config_file = tmp_path / "config.toml"
+        config_file.write_text('[agent]\ndisallowed_tools = ["AskUserQuestion"]\n')
+
+        settings = load_settings(config_file)
+
+        assert settings.agent.disallowed_tools == ["AskUserQuestion"]
 
     def test_generated_file_contains_session_resume_window(self, tmp_path: Path) -> None:
         """AC (DLT-028): Generated file contains session_resume_window with int format."""
