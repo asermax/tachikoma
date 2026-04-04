@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v1.2.1 (2026-04-04)
+
+### Bug Fixes
+
+- **ci**: Backfill CHANGELOG.md with release history and insertion flag
+  ([`f816f62`](https://github.com/asermax/tachikoma/commit/f816f62a5d7c11586b5b1ba055d5231e597e0749))
+
+
 ## v1.2.0 (2026-04-04)
 
 ### Chores
