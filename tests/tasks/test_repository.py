@@ -196,7 +196,7 @@ class TestRepositoryInstanceCRUD:
         assert active.id == "pending-1"
 
     async def test_get_active_instance_excludes_completed(self, repo: TaskRepository) -> None:
-        """AC: completed instances are not returned as active."""
+        """AC: completed instances are not returned as active (backward-compat path)."""
         await repo.create_instance(
             _make_instance("completed-1", definition_id="def-1", status="completed")
         )
@@ -245,6 +245,94 @@ class TestRepositoryInstanceCRUD:
         result = await repo.delete_instance("ghost")
 
         assert result is False
+
+
+class TestGetActiveInstancePeriodAware:
+    """Tests for period-aware duplicate detection via scheduled_for param (DLT-090 S2).
+
+    See: docs/delta-specs/DLT-090.md (R2)
+    """
+
+    async def test_finds_pending_instance_matching_scheduled_for(
+        self, repo: TaskRepository
+    ) -> None:
+        """AC: When scheduled_for provided, pending instance with matching time is returned."""
+        match_time = datetime(2026, 4, 4, 9, 0, tzinfo=UTC)
+        await repo.create_instance(
+            _make_instance(
+                "pending-1",
+                definition_id="def-1",
+                status="pending",
+                scheduled_for=match_time,
+            )
+        )
+
+        active = await repo.get_active_instance_for_definition("def-1", scheduled_for=match_time)
+
+        assert active is not None
+        assert active.id == "pending-1"
+
+    async def test_finds_completed_instance_matching_scheduled_for(
+        self, repo: TaskRepository
+    ) -> None:
+        """AC: Completed instance with matching scheduled_for is returned (new behavior)."""
+        match_time = datetime(2026, 4, 4, 9, 0, tzinfo=UTC)
+        await repo.create_instance(
+            _make_instance(
+                "completed-1",
+                definition_id="def-1",
+                status="completed",
+                scheduled_for=match_time,
+            )
+        )
+
+        active = await repo.get_active_instance_for_definition("def-1", scheduled_for=match_time)
+
+        assert active is not None
+        assert active.id == "completed-1"
+
+    async def test_excludes_failed_instance_matching_scheduled_for(
+        self, repo: TaskRepository
+    ) -> None:
+        """AC: Failed instance with matching scheduled_for is excluded (retry allowed)."""
+        match_time = datetime(2026, 4, 4, 9, 0, tzinfo=UTC)
+        await repo.create_instance(
+            _make_instance(
+                "failed-1",
+                definition_id="def-1",
+                status="failed",
+                scheduled_for=match_time,
+            )
+        )
+
+        active = await repo.get_active_instance_for_definition("def-1", scheduled_for=match_time)
+
+        assert active is None
+
+    async def test_no_match_when_scheduled_for_differs(self, repo: TaskRepository) -> None:
+        """AC: Instance with different scheduled_for is not returned."""
+        match_time = datetime(2026, 4, 4, 9, 0, tzinfo=UTC)
+        other_time = datetime(2026, 4, 4, 10, 0, tzinfo=UTC)
+        await repo.create_instance(
+            _make_instance(
+                "pending-1",
+                definition_id="def-1",
+                status="pending",
+                scheduled_for=other_time,
+            )
+        )
+
+        active = await repo.get_active_instance_for_definition("def-1", scheduled_for=match_time)
+
+        assert active is None
+
+    async def test_no_match_when_no_instances_exist(self, repo: TaskRepository) -> None:
+        """AC: No instances at all returns None."""
+        match_time = datetime(2026, 4, 4, 9, 0, tzinfo=UTC)
+
+        active = await repo.get_active_instance_for_definition("def-1", scheduled_for=match_time)
+
+        assert active is None
 
 
 class TestRepositoryCrashRecovery:
