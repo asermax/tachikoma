@@ -25,6 +25,7 @@ Persistent task definitions with cron-like scheduling, automatic instance genera
 | R7 | Task definitions and instances survive restarts (persistent storage) |
 | R8 | Bootstrap step to initialize task database tables and run crash recovery |
 | R9 | Base system prompt preamble includes a static Tasks section so the agent has foundational awareness of the task system regardless of whether tasks currently exist |
+| R10 | Schedule deserialization is robust to malformed data — legacy bare ISO datetime strings are recovered as one-shot schedules, and corrupted definitions are auto-disabled |
 
 ## Behaviors
 
@@ -78,6 +79,16 @@ The base system prompt preamble includes a static Tasks section that gives the a
 - Given the preamble Tasks section, then it lists each MCP tool with parameter types, required/optional indicators, valid values, and behavioral notes
 - Given the preamble Tasks section, then tool descriptions include cross-references between tools (e.g., "get task IDs from list_tasks" for update_task and delete_task)
 - Given the preamble Tasks section describes the `notify` parameter, then it states that `notify` is a success notification instruction — when set, generates a user-facing message on completion; when omitted, successful tasks complete silently; failures always notify regardless of this field
+
+### Schedule Deserialization Robustness (R10)
+
+Schedule deserialization handles malformed data gracefully, preventing corrupted definitions from blocking the entire task scheduler.
+
+**Acceptance Criteria**:
+- Given a task definition with a bare ISO datetime string in the schedule column (legacy format), when `from_json` is called, then it recovers the value as a one-shot schedule with UTC defaulting for naive datetimes
+- Given a task definition with completely invalid data in the schedule column, when `from_json` is called, then it raises `ValueError` (not `JSONDecodeError`) with the malformed input in the message
+- Given a task definition with structurally valid JSON but an unexpected type (e.g., array), when `from_json` is called, then it raises `ValueError` describing the unexpected type
+- Given multiple enabled definitions where one has a corrupted schedule, when the repository lists enabled definitions, then valid definitions are returned and the corrupted definition is auto-disabled (logged as warning)
 
 ## Requires
 
