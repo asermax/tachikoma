@@ -262,7 +262,7 @@ The ORM models are internal to the persistence layer. A `to_domain()` method on 
 5. Repository queries by ID, updates fields, commits
 ```
 
-The `transcript_path` is derived from the SDK session ID using the known Claude SDK directory structure: `~/.claude/projects/<sanitized-cwd>/<session-id>.jsonl`, where `<sanitized-cwd>` replaces `/` with `-` and strips the leading `-`. This derivation is isolated to a single helper function (`_derive_transcript_path` in the coordinator) so it can be updated in one place.
+The `transcript_path` is derived from the SDK session ID using the known Claude SDK directory structure: `~/.claude/projects/<sanitized-cwd>/<session-id>.jsonl`, where `<sanitized-cwd>` replaces `/` with `-`, preserving the leading `-` from the absolute path. This derivation is isolated to a single helper function (`_derive_transcript_path` in the coordinator) so it can be updated in one place.
 
 ### Session close (shutdown)
 

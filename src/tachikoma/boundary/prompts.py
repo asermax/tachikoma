@@ -47,7 +47,13 @@ Current: API design → New: "How do I handle errors?" → CONTINUATION
 
 Current: API design → New: "Remember that Python debugging we did?" → NEW TOPIC + candidate match if available
 
-Respond with a JSON object: {"continues_conversation": boolean, "resume_session_id": string or null}"""  # noqa: E501
+Respond with exactly one of these JSON objects:
+- {"continues_conversation": true, "resume_session_id": null}
+  → The message continues the current topic
+- {"continues_conversation": false, "resume_session_id": null}
+  → The message starts a new topic with no matching previous session
+- {"continues_conversation": false, "resume_session_id": "<candidate_id>"}
+  → The message starts a new topic that matches a previous session"""  # noqa: E501
 
 BOUNDARY_DETECTION_USER_PROMPT = """Current conversation summary:
 {summary}
