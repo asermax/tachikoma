@@ -518,6 +518,13 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 **Complexity**: Medium
 **Description**: The agent must work with current repository state and push changes without conflicts. Currently, the workspace is never pulled from its remote, projects are only synced at startup, and pushes are bare `git push` with no prior fetch — which fails when the remote has moved forward. This delta ensures the agent works with up-to-date state by pulling the workspace and project submodules before processing each message, replaces the direct push in both post-processors with a fetch-rebase-push sequence, and introduces conflict recovery that resolves conflicts by rebasing local commits on top of the remote and pushing the result, rather than aborting.
 
+### DLT-098: Capture SDK stderr on error for debugging
+**Status**: ✗ Defined
+**Depends on**: None
+**Priority**: 3 (Medium)
+**Complexity**: Easy
+**Description**: Capture stderr output from the Claude Agent SDK CLI subprocess and attach it to error logs when SDK calls fail. Currently, stderr from the SDK process is not captured — when an exception occurs (CLIConnectionError, ProcessError, or any sub-agent failure), the error message lacks any context about what the CLI process reported on stderr, making diagnosis difficult. This delta adds stderr capture to the agent defaults layer (shared across all SDK call sites) and includes the captured stderr in error logs when an exception is raised, preserving the fail-open error handling policy while giving operators the diagnostic context needed to debug SDK failures.
+
 ### DLT-096: Include last exchange in session resumption candidates
 **Status**: ✗ Defined
 **Depends on**: None
