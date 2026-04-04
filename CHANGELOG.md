@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v1.3.0 (2026-04-04)
+
+### Documentation
+
+- **planning**: Add DLT-098 for SDK stderr capture on error
+  ([`822e746`](https://github.com/asermax/tachikoma/commit/822e7466463247d78e703be95672e3890e0e436b))
+
+
 ## v1.2.1 (2026-04-04)
 
 ### Bug Fixes
