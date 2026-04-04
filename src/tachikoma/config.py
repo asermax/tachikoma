@@ -16,6 +16,10 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_valida
 
 CONFIG_PATH = Path.home() / ".config" / "tachikoma" / "config.toml"
 
+# System-level tools that are always blocked regardless of user config.
+# Extended by DLT-073 with cron tools.
+SYSTEM_DISALLOWED_TOOLS = frozenset({"Skill"})
+
 
 class WorkspaceSettings(BaseModel):
     model_config = ConfigDict(frozen=True, extra="ignore")
@@ -55,6 +59,7 @@ class AgentSettings(BaseModel):
     )
     disallowed_tools: list[str] = Field(
         default=["AskUserQuestion"],
+        validate_default=True,
         description="Tools the agent is blocked from using",
     )
     cli_path: str | None = Field(
@@ -77,6 +82,11 @@ class AgentSettings(BaseModel):
         default_factory=dict,
         description="Extra environment variables passed to all Claude SDK sessions",
     )
+
+    @field_validator("disallowed_tools", mode="after")
+    @classmethod
+    def merge_system_disallowed_tools(cls, v: list[str]) -> list[str]:
+        return list(dict.fromkeys([*v, *SYSTEM_DISALLOWED_TOOLS]))
 
     @field_validator("env", mode="before")
     @classmethod
@@ -259,13 +269,15 @@ def _generate_default_config(config_path: Path = CONFIG_PATH) -> None:
     # [agent] section
     doc.add(tomlkit.comment("[agent]"))
 
+    agent_defaults = AgentSettings()
+
     for name, field_info in AgentSettings.model_fields.items():
         # env is a sub-table, handled separately below
         if name == "env":
             continue
 
         desc = field_info.description or ""
-        default = field_info.default
+        default = getattr(agent_defaults, name)
 
         doc.add(tomlkit.comment(f"{desc}"))
 
