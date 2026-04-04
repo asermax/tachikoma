@@ -357,13 +357,6 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 **Complexity**: Easy
 **Description**: Apply the error classification and surfacing mechanism to the task execution subsystem. Currently, task pre-processing fallbacks, evaluator failures, and notification delivery issues are handled with ad-hoc logging and silent degradation. Classify and surface failures during task pre-processing, evaluation loops, post-processing, and notification generation consistently with the rest of the system.
 
-### DLT-073: Block Claude Code built-in cron tools in default config
-**Status**: ✗ Defined
-**Depends on**: None
-**Priority**: 1 (Critical)
-**Complexity**: Easy
-**Description**: Claude Code ships with built-in `CronCreate`, `CronDelete`, and `CronList` tools that create session-only in-memory cron jobs. These shadow Tachikoma's persistent task system — the agent defaults to the built-in tools since they appear first in the tool list, and any reminders created through them silently vanish on exit because they are never persisted to the database or picked up by Tachikoma's scheduler. A manual workaround exists (adding these tools to the deny list in `.claude/settings.local.json`), but this is not baked into the default project configuration. Incorporate the deny list into the project template or default configuration so every workspace starts with these tools blocked.
-
 ### DLT-074: Rename skills subsystem to avoid Claude Code naming collision
 **Status**: ✗ Defined
 **Depends on**: None
@@ -517,6 +510,13 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 **Priority**: 4 (Low)
 **Complexity**: Medium
 **Description**: Developers need to debug failed background tasks and understand execution history, but task instances currently record only status, timestamps, and a free-text result — with no link to the SDK session that ran, no transcript reference, and no structured error context. This delta enriches the task instance model and execution flow with traceability data: recording the SDK session ID and transcript path for each background execution, capturing structured error context (error type, message, tool calls leading to failure) on failure using the error classification from the structured error handling subsystem, and computing execution duration as a first-class field. These fields enable querying past executions by session, inspecting failure artifacts, and displaying execution metrics without manual timestamp arithmetic. The scope is limited to the tasks subsystem — background jobs are not interactive conversations, but they still require an audit trail linking execution to its artifacts and outcomes.
+
+### DLT-097: Keep local repositories in sync with remotes
+**Status**: ✗ Defined
+**Depends on**: None
+**Priority**: 2 (High)
+**Complexity**: Medium
+**Description**: The agent must work with current repository state and push changes without conflicts. Currently, the workspace is never pulled from its remote, projects are only synced at startup, and pushes are bare `git push` with no prior fetch — which fails when the remote has moved forward. This delta ensures the agent works with up-to-date state by pulling the workspace and project submodules before processing each message, replaces the direct push in both post-processors with a fetch-rebase-push sequence, and introduces conflict recovery that resolves conflicts by rebasing local commits on top of the remote and pushing the result, rather than aborting.
 
 ### DLT-096: Include last exchange in session resumption candidates
 **Status**: ✗ Defined

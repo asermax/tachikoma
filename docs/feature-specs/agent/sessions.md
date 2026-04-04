@@ -56,7 +56,7 @@ When the coordinator receives a Result event from the SDK, it populates the sess
 
 **Acceptance Criteria**:
 - Given an active session, when the coordinator produces a Result event with `session_id`, then the session's `sdk_session_id` and `transcript_path` are populated from the SDK data
-- The `transcript_path` is derived from the SDK session ID using the known SDK transcript directory structure
+- The `transcript_path` is derived from the SDK session ID using the known SDK transcript directory structure (preserving the leading `-` from the path sanitization)
 
 ### Session Closing (R3)
 
