@@ -358,7 +358,7 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 **Description**: Apply the error classification and surfacing mechanism to the task execution subsystem. Currently, task pre-processing fallbacks, evaluator failures, and notification delivery issues are handled with ad-hoc logging and silent degradation. Classify and surface failures during task pre-processing, evaluation loops, post-processing, and notification generation consistently with the rest of the system.
 
 ### DLT-072: Fix task management MCP tool bugs
-**Status**: ⧗ Plan
+**Status**: ✓ Plan
 **Depends on**: None
 **Priority**: 1 (Critical)
 **Complexity**: Easy
