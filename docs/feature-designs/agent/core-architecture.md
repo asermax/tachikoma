@@ -387,8 +387,8 @@ The `Result` event serves as a turn boundary. Channels can detect it to reset th
 
 ### Tool blocking via disallowed_tools
 
-**Choice**: Use `disallowed_tools=["AskUserQuestion"]` to unconditionally block specific tools
-**Why**: `disallowed_tools` blocks tools regardless of `permission_mode` — it is evaluated before `allowed_tools` and `bypassPermissions` in the SDK's tool evaluation chain. The default blocks `AskUserQuestion` because Tachikoma is an autonomous assistant that should not prompt users interactively. Configurable via `agent.disallowed_tools`.
+**Choice**: Use `disallowed_tools` to unconditionally block specific tools (default blocks `AskUserQuestion` and Claude Code's built-in cron tools)
+**Why**: `disallowed_tools` blocks tools regardless of `permission_mode` — it is evaluated before `allowed_tools` and `bypassPermissions` in the SDK's tool evaluation chain. The default blocks `AskUserQuestion` because Tachikoma is an autonomous assistant that should not prompt users interactively, and blocks `CronCreate`/`CronDelete`/`CronList` because Tachikoma has its own persistent task system that supersedes ephemeral built-in cron jobs. Configurable via `agent.disallowed_tools`.
 **Alternatives Considered**:
 - Permission rules or hooks: More complex, require per-call evaluation logic
 - System prompt instruction: Unreliable, prompt-level control

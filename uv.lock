@@ -191,7 +191,7 @@ wheels = [
 
 [[package]]
 name = "bubus"
-version = "1.6.0"
+version = "1.5.6"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "aiofiles" },
@@ -201,9 +201,9 @@ dependencies = [
     { name = "typing-extensions" },
     { name = "uuid7" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/b5/38/e4250b2bad10d145f699bf418627030f8b581c79d29ab43f0ae1c1f7ecf9/bubus-1.6.0.tar.gz", hash = "sha256:e9906f639ea9b17b44bd72e1bd1edf333d5d29443b3f8a0ff906112b10bf8ace", size = 67354, upload-time = "2026-03-18T05:32:52.441Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/2d/85/aa72d1ffced7402fe41805519dab9935e9ce2bce18a10a55f2273ba8ba59/bubus-1.5.6.tar.gz", hash = "sha256:1a5456f0a576e86613a7bd66e819891b677778320b6e291094e339b0d9df2e0d", size = 60186, upload-time = "2025-08-30T18:20:43.032Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/e5/59/39214d57f98677061edf22b27399a9c85a3d49236a086948d4a9ed264de6/bubus-1.6.0-py3-none-any.whl", hash = "sha256:2a566863a09141f5924b6052829bb02784d7f0191afc4ce014fe5c79b5e64b91", size = 58286, upload-time = "2026-03-18T05:32:49.036Z" },
+    { url = "https://files.pythonhosted.org/packages/f5/54/23aae0681500a459fc4498b60754cb8ead8df964d8166e5915edb7e8136c/bubus-1.5.6-py3-none-any.whl", hash = "sha256:254ae37cd9299941f5e9d6afb11f8e3ce069f83e5b9476f88c6b2e32912f237d", size = 52121, upload-time = "2025-08-30T18:20:42.091Z" },
 ]
 
 [[package]]
@@ -1740,7 +1740,7 @@ wheels = [
 
 [[package]]
 name = "tachikoma-agent"
-version = "1.0.2"
+version = "1.2.1"
 source = { editable = "." }
 dependencies = [
     { name = "aiogram" },

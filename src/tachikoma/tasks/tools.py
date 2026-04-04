@@ -8,6 +8,7 @@ Provides MCP tools for managing task definitions:
 """
 
 from datetime import UTC, datetime
+from typing import Literal
 from uuid import uuid4
 
 from claude_agent_sdk import McpSdkServerConfig, create_sdk_mcp_server, tool
@@ -16,6 +17,7 @@ from cronsim.cronsim import CronSimError
 from loguru import logger
 from pydantic import BaseModel, ValidationError
 
+from tachikoma.tasks.errors import TaskRepositoryError
 from tachikoma.tasks.model import ScheduleConfig, TaskDefinition
 from tachikoma.tasks.repository import TaskRepository
 
@@ -44,6 +46,7 @@ class UpdateTaskArgs(BaseModel):
     task_id: str
     name: str | None = None
     schedule: str | None = None
+    task_type: Literal["session", "background"] | None = None
     prompt: str | None = None
     notify: str | None = None
     enabled: bool | None = None
@@ -65,15 +68,27 @@ def create_task_tools_server(repository: TaskRepository) -> McpSdkServerConfig:
 
     @tool(
         "list_tasks",
-        "List task definitions. Shows active tasks by default;"
-        " set archived=true to see disabled tasks.",
+        "List task definitions.\n"
+        "\n"
+        "Parameters:\n"
+        "- archived (bool, optional, default false): Set true to show disabled"
+        " (archived) tasks instead of active ones.\n"
+        "\n"
+        "Each entry includes the task ID (needed for update_task and delete_task),"
+        " name, type, schedule, and status.",
         ListTasksArgs.model_json_schema(),
     )
     async def list_tasks(args: dict) -> dict:
         """List task definitions, filtered by active/archived status."""
         try:
             parsed = ListTasksArgs.model_validate(args)
+        except ValidationError as exc:
+            return {
+                "is_error": True,
+                "content": [{"type": "text", "text": f"Invalid arguments: {exc}"}],
+            }
 
+        try:
             if parsed.archived:
                 definitions = await repository.list_disabled_definitions()
             else:
@@ -94,7 +109,7 @@ def create_task_tools_server(repository: TaskRepository) -> McpSdkServerConfig:
                     if d.last_fired_at
                     else ""
                 )
-                lines.append(f"- **{d.name}** [{d.task_type}] {status}")
+                lines.append(f"- [{d.id}] **{d.name}** [{d.task_type}] {status}")
                 lines.append(f"  Schedule: {schedule_desc}{last_fired}")
                 lines.append(f"  Prompt: {d.prompt[:100]}{'...' if len(d.prompt) > 100 else ''}")
                 if d.notify:
@@ -105,16 +120,31 @@ def create_task_tools_server(repository: TaskRepository) -> McpSdkServerConfig:
                 "content": [{"type": "text", "text": "\n".join(lines)}],
             }
 
+        except TaskRepositoryError as exc:
+            cause = f" Cause: {exc.__cause__}" if exc.__cause__ else ""
+            return {"is_error": True, "content": [{"type": "text", "text": f"{exc}{cause}"}]}
         except Exception as exc:
-            _log.exception("Failed to list tasks: {err}", err=str(exc))
+            _log.exception("Unexpected error listing tasks: {err}", err=str(exc))
             return {
                 "is_error": True,
-                "content": [{"type": "text", "text": f"Error listing tasks: {exc}"}],
+                "content": [{"type": "text", "text": f"Unexpected error: {exc}"}],
             }
 
     @tool(
         "create_task",
-        "Create a new scheduled task.",
+        "Create a new scheduled task definition.\n"
+        "\n"
+        "Parameters:\n"
+        "- name (str, required): Human-readable task name\n"
+        "- schedule (str, required): Cron expression (e.g., '0 9 * * *' for daily at 9 AM)"
+        " or ISO datetime for one-shot (e.g., '2026-04-01T14:00:00Z')\n"
+        "- type (str, required): 'session' (delivered during idle) or 'background'"
+        " (isolated execution)\n"
+        "- prompt (str, required): Instruction the agent follows when the task fires\n"
+        "- notify (str, optional): Success notification instruction — when set, generates"
+        " a user-facing message on completion. Omit for silent success. Failures always"
+        " notify regardless of this field.\n"
+        "- enabled (bool, optional, default true): Whether the task is active",
         CreateTaskArgs.model_json_schema(),
     )
     async def create_task(args: dict) -> dict:
@@ -205,16 +235,30 @@ def create_task_tools_server(repository: TaskRepository) -> McpSdkServerConfig:
                 ],
             }
 
+        except TaskRepositoryError as exc:
+            cause = f" Cause: {exc.__cause__}" if exc.__cause__ else ""
+            return {"is_error": True, "content": [{"type": "text", "text": f"{exc}{cause}"}]}
         except Exception as exc:
-            _log.exception("Failed to create task: {err}", err=str(exc))
+            _log.exception("Unexpected error creating task: {err}", err=str(exc))
             return {
                 "is_error": True,
-                "content": [{"type": "text", "text": f"Error creating task: {exc}"}],
+                "content": [{"type": "text", "text": f"Unexpected error: {exc}"}],
             }
 
     @tool(
         "update_task",
-        "Update an existing task definition.",
+        "Update an existing task definition.\n"
+        "\n"
+        "Parameters:\n"
+        "- task_id (str, required): ID of the task to update (get IDs from list_tasks)\n"
+        "- name (str, optional): New human-readable name\n"
+        "- schedule (str, optional): New cron expression or ISO datetime\n"
+        "- task_type (str, optional): Change type — 'session' or 'background'\n"
+        "- prompt (str, optional): New agent instruction\n"
+        "- notify (str, optional): New success notification instruction\n"
+        "- enabled (bool, optional): Enable or disable the task\n"
+        "\n"
+        "Only provided fields are updated; omitted fields remain unchanged.",
         UpdateTaskArgs.model_json_schema(),
     )
     async def update_task(args: dict) -> dict:
@@ -261,6 +305,8 @@ def create_task_tools_server(repository: TaskRepository) -> McpSdkServerConfig:
             updates["notify"] = parsed.notify
         if parsed.enabled is not None:
             updates["enabled"] = parsed.enabled
+        if parsed.task_type is not None:
+            updates["task_type"] = parsed.task_type
 
         if not updates:
             return {
@@ -278,16 +324,25 @@ def create_task_tools_server(repository: TaskRepository) -> McpSdkServerConfig:
                 ],
             }
 
+        except TaskRepositoryError as exc:
+            cause = f" Cause: {exc.__cause__}" if exc.__cause__ else ""
+            return {"is_error": True, "content": [{"type": "text", "text": f"{exc}{cause}"}]}
         except Exception as exc:
-            _log.exception("Failed to update task: {err}", err=str(exc))
+            _log.exception("Unexpected error updating task: {err}", err=str(exc))
             return {
                 "is_error": True,
-                "content": [{"type": "text", "text": f"Error updating task: {exc}"}],
+                "content": [{"type": "text", "text": f"Unexpected error: {exc}"}],
             }
 
     @tool(
         "delete_task",
-        "Delete a task definition.",
+        "Delete a task definition permanently.\n"
+        "\n"
+        "Parameters:\n"
+        "- task_id (str, required): ID of the task to delete (get IDs from list_tasks)\n"
+        "\n"
+        "This action is permanent and cannot be undone."
+        " To disable without deleting, use update_task with enabled=false.",
         DeleteTaskArgs.model_json_schema(),
     )
     async def delete_task(args: dict) -> dict:
@@ -313,11 +368,14 @@ def create_task_tools_server(repository: TaskRepository) -> McpSdkServerConfig:
                     "content": [{"type": "text", "text": f"Task '{parsed.task_id}' not found."}],
                 }
 
+        except TaskRepositoryError as exc:
+            cause = f" Cause: {exc.__cause__}" if exc.__cause__ else ""
+            return {"is_error": True, "content": [{"type": "text", "text": f"{exc}{cause}"}]}
         except Exception as exc:
-            _log.exception("Failed to delete task: {err}", err=str(exc))
+            _log.exception("Unexpected error deleting task: {err}", err=str(exc))
             return {
                 "is_error": True,
-                "content": [{"type": "text", "text": f"Error deleting task: {exc}"}],
+                "content": [{"type": "text", "text": f"Unexpected error: {exc}"}],
             }
 
     return create_sdk_mcp_server(

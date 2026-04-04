@@ -38,11 +38,11 @@ The task management subsystem lives in `src/tachikoma/tasks/` as a self-containe
 | `src/tachikoma/tasks/__init__.py` | Public API re-exports | Clean package interface |
 | `src/tachikoma/tasks/model.py` | `TaskDefinition` and `TaskInstance` frozen dataclasses (domain types); `TaskDefinitionRecord` and `TaskInstanceRecord` ORM models; `TaskStatus` and `TaskType` constant maps; `ScheduleConfig` type | Domain types frozen; ORM models internal to persistence; schedule stored as JSON column |
 | `src/tachikoma/tasks/repository.py` | `TaskRepository` — async SQLAlchemy CRUD for definitions and instances; `list_enabled_definitions()` and `list_disabled_definitions()` for filtered queries; crash recovery (mark running as failed) | Receives shared `async_sessionmaker` from `Database`; follows ADR-007 pattern |
-| `src/tachikoma/tasks/tools.py` | `create_task_tools_server()` — MCP server factory; `list_tasks` (defaults to enabled-only, `archived` parameter for disabled), `create_task`, `update_task`, `delete_task` with `cronsim` validation; Pydantic `BaseModel` classes (`ListTasksArgs`, `CreateTaskArgs`, `UpdateTaskArgs`, `DeleteTaskArgs`) for arg validation and type coercion | Tools validate cron expressions at creation time; `list_tasks` uses `archived` parameter to toggle between enabled/disabled views; Pydantic models provide schema generation, bool coercion, and required-field validation; follows DES-006 |
+| `src/tachikoma/tasks/tools.py` | `create_task_tools_server()` — MCP server factory; `list_tasks` (defaults to enabled-only, `archived` parameter for disabled; output includes task ID for referencing in other tools), `create_task`, `update_task` (supports `task_type` changes via `Literal` validation), `delete_task` with `cronsim` validation; Pydantic `BaseModel` classes (`ListTasksArgs`, `CreateTaskArgs`, `UpdateTaskArgs`, `DeleteTaskArgs`) for arg validation and type coercion; enriched `@tool()` descriptions with parameter documentation | Tools validate cron expressions at creation time; `list_tasks` uses `archived` parameter to toggle between enabled/disabled views; Pydantic models provide schema generation, bool coercion, and required-field validation; `UpdateTaskArgs.task_type` uses `Literal["session", "background"]` for automatic validation; `TaskRepositoryError`-specific error handling surfaces root causes via `__cause__`; follows DES-006 |
 | `src/tachikoma/tasks/hooks.py` | `tasks_hook` — bootstrap hook (DES-003): retrieves shared `Database` from extras, creates repository, runs crash recovery; stores `task_repository` in `bootstrap.extras` | Subsystem-owned hook; runs after `database_hook` |
 | `src/tachikoma/tasks/scheduler.py` | `instance_generator()` — async loop with strict cron firing and period-aware dedup; `_create_pending_instance()` helper for instance creation and logging | Plain async function started as `asyncio.Task` |
 | `src/tachikoma/database.py` | Shared `Database` class with `Base(DeclarativeBase)`, `AsyncEngine`, `async_sessionmaker`; `database_hook` bootstrap hook | All ORM models share one `Base`; single engine for all subsystems |
-| `src/tachikoma/context/loading.py` (`SYSTEM_PREAMBLE`) | Static tasks documentation in the system prompt preamble: task types, scheduling formats, MCP tools, and notify field | Part of the `SYSTEM_PREAMBLE` constant; loaded once at startup; follows ADR-008 append pattern |
+| `src/tachikoma/context/loading.py` (`SYSTEM_PREAMBLE`) | Static tasks documentation in the system prompt preamble: task types, scheduling formats, MCP tool descriptions with parameter documentation and cross-references, and corrected `notify` field behavior (success notification instruction; failures always notify) | Part of the `SYSTEM_PREAMBLE` constant; loaded once at startup; follows ADR-008 append pattern |
 
 ### Cross-Layer Contracts
 
@@ -70,7 +70,7 @@ sequenceDiagram
 ```
 
 **Error contract:**
-- MCP tool errors: return `{"is_error": true, "content": [...]}` — agent sees error message and can retry
+- MCP tool errors: return `{"is_error": true, "content": [...]}` — agent sees error message and can retry; `TaskRepositoryError` is caught specifically to surface root cause via `__cause__`; unexpected errors use a generic fallback
 - Instance generator errors: logged, loop continues on next tick
 - Repository errors: wrapped in `TaskRepositoryError`, logged at call sites
 
@@ -207,7 +207,8 @@ stateDiagram-v2
 2. Tool checks archived parameter (default: false)
 3. If archived: calls repository.list_disabled_definitions()
    If not archived: calls repository.list_enabled_definitions()
-4. Returns formatted list or "No active/archived tasks found."
+4. Returns formatted list with task ID, name, type, schedule, and status per entry
+   Or "No active/archived tasks found." if empty
 ```
 
 ## Key Decisions
@@ -305,4 +306,4 @@ stateDiagram-v2
 
 - `cronsim` is used for cron expression evaluation (lightweight, timezone-aware)
 - Task `type` is copied from definition to instance at creation time to enable direct queries without joins
-- The `notify` field on `TaskDefinition` is a nullable instruction string — when set, the background task executor uses it to generate a notification message on completion
+- The `notify` field on `TaskDefinition` is a nullable success notification instruction — when set, the background task executor uses it to generate a user-facing message on completion; when null, successful tasks complete silently; failures always generate notifications regardless of this field
