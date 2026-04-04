@@ -53,7 +53,7 @@ async def instance_generator(
 
     Runs every ~60 seconds. For each enabled definition:
     - Evaluate schedule against current time (cronsim for cron, datetime comparison for one-shot)
-    - Check for existing pending/running instance (duplicate prevention)
+    - Period-aware duplicate check (pending/running/completed with matching scheduled_for)
     - Create pending instance if schedule fires and no duplicate exists
     - Auto-disable one-shot definitions after firing
 
@@ -66,41 +66,88 @@ async def instance_generator(
 
     while True:
         try:
-            # Get current time in configured timezone for cron evaluation
             now_utc = datetime.now(UTC)
             now_tz = datetime.now(tz)
 
-            # Query all enabled definitions
             definitions = await repository.list_enabled_definitions()
 
             for definition in definitions:
                 try:
                     schedule = definition.schedule
 
-                    # Determine if schedule should fire
-                    should_fire = False
-                    schedule_time = now_utc
-
                     if schedule.type == "cron" and schedule.expression:
                         # Cron schedule: evaluate using cronsim
                         try:
-                            # If never fired before, use a past anchor to get next fire time
-                            # If fired before, use last_fired_at as anchor
+                            # Compute anchor in evaluation timezone
+                            # See DLT-090 design: last_fired_at is UTC, must convert to tz
                             if definition.last_fired_at is None:
-                                # Use an hour ago as anchor to ensure we get the next occurrence
-                                # that could have fired recently
-                                anchor = now_tz.replace(minute=0, second=0, microsecond=0)
+                                anchor_tz = now_tz.replace(
+                                    minute=0,
+                                    second=0,
+                                    microsecond=0,
+                                )
                             else:
-                                anchor = definition.last_fired_at
+                                anchor_tz = definition.last_fired_at.astimezone(tz)
 
-                            cron = CronSim(schedule.expression, anchor)
-                            next_fire = next(cron)
+                            next_fire = next(CronSim(schedule.expression, anchor_tz))
 
-                            # Check if next fire time has passed or is very close to now
-                            # (within 1 minute tolerance for test timing)
-                            if next_fire <= now_tz or (next_fire - now_tz).total_seconds() < 60:
-                                should_fire = True
-                                schedule_time = now_utc
+                            # Strict firing: only when cron time has definitively passed (R1)
+                            if next_fire > now_tz:
+                                continue
+
+                            cron_match_utc = next_fire.astimezone(UTC)
+
+                            # Period-aware duplicate check (S2)
+                            active = await repository.get_active_instance_for_definition(
+                                definition.id,
+                                scheduled_for=cron_match_utc,
+                            )
+                            if active is not None:
+                                # S3: log when safety net catches a duplicate
+                                _log.info(
+                                    "Duplicate suppressed for {name} "
+                                    "— period {match} already covered",
+                                    name=definition.name,
+                                    match=cron_match_utc.isoformat(),
+                                )
+                                continue
+
+                            # Create instance with scheduled_for=cron_match_utc (S1)
+                            instance = TaskInstance(
+                                id=str(uuid4()),
+                                definition_id=definition.id,
+                                task_type=definition.task_type,
+                                prompt=definition.prompt,
+                                status="pending",
+                                scheduled_for=cron_match_utc,
+                                started_at=None,
+                                completed_at=None,
+                                result=None,
+                                created_at=now_utc,
+                            )
+                            await repository.create_instance(instance)
+
+                            _log.info(
+                                "Created instance {inst_id} for {name} (type={task_type})",
+                                inst_id=instance.id,
+                                name=definition.name,
+                                task_type=definition.task_type,
+                            )
+
+                            # Fast-forward last_fired_at to latest cron match <= now_tz
+                            # This ensures catch-up creates only one instance per restart (R4)
+                            last_match = next_fire
+                            for future_match in CronSim(schedule.expression, next_fire):
+                                if future_match > now_tz:
+                                    break
+                                last_match = future_match
+
+                            last_fired_utc = last_match.astimezone(UTC)
+
+                            await repository.update_definition(
+                                definition.id,
+                                last_fired_at=last_fired_utc,
+                            )
 
                         except CronSimError as e:
                             _log.warning(
@@ -120,46 +167,40 @@ async def instance_generator(
                         and definition.last_fired_at is None
                         and schedule.at <= now_utc
                     ):
-                        # One-shot: fire if target time passed and hasn't fired yet
-                        should_fire = True
-                        schedule_time = schedule.at
-
-                    if not should_fire:
-                        continue
-
-                    # Duplicate prevention: check for existing pending/running instance
-                    active = await repository.get_active_instance_for_definition(definition.id)
-                    if active is not None:
-                        _log.debug(
-                            "Skipping {name} - already has active instance {inst_id}",
-                            name=definition.name,
-                            inst_id=active.id,
+                        # One-shot: fire if target time passed and hasn't fired yet (R5)
+                        # Duplicate check without scheduled_for (backward-compat)
+                        active = await repository.get_active_instance_for_definition(
+                            definition.id,
                         )
-                        continue
+                        if active is not None:
+                            _log.debug(
+                                "Skipping {name} - already has active instance {inst_id}",
+                                name=definition.name,
+                                inst_id=active.id,
+                            )
+                            continue
 
-                    # Create pending instance
-                    instance = TaskInstance(
-                        id=str(uuid4()),
-                        definition_id=definition.id,
-                        task_type=definition.task_type,
-                        prompt=definition.prompt,
-                        status="pending",
-                        scheduled_for=schedule_time,
-                        started_at=None,
-                        completed_at=None,
-                        result=None,
-                        created_at=now_utc,
-                    )
-                    await repository.create_instance(instance)
+                        instance = TaskInstance(
+                            id=str(uuid4()),
+                            definition_id=definition.id,
+                            task_type=definition.task_type,
+                            prompt=definition.prompt,
+                            status="pending",
+                            scheduled_for=schedule.at,
+                            started_at=None,
+                            completed_at=None,
+                            result=None,
+                            created_at=now_utc,
+                        )
+                        await repository.create_instance(instance)
 
-                    _log.info(
-                        "Created instance {inst_id} for {name} (type={task_type})",
-                        inst_id=instance.id,
-                        name=definition.name,
-                        task_type=definition.task_type,
-                    )
+                        _log.info(
+                            "Created instance {inst_id} for {name} (type={task_type})",
+                            inst_id=instance.id,
+                            name=definition.name,
+                            task_type=definition.task_type,
+                        )
 
-                    if schedule.type == "once":
                         await repository.update_definition(
                             definition.id,
                             last_fired_at=now_utc,
@@ -168,11 +209,6 @@ async def instance_generator(
                         _log.info(
                             "Auto-disabled one-shot definition {name}",
                             name=definition.name,
-                        )
-                    else:
-                        await repository.update_definition(
-                            definition.id,
-                            last_fired_at=now_utc,
                         )
 
                 except Exception as exc:
