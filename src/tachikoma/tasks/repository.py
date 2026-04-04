@@ -228,20 +228,42 @@ class TaskRepository:
         except Exception as exc:
             raise TaskRepositoryError(f"Failed to get pending {task_type} instances") from exc
 
-    async def get_active_instance_for_definition(self, definition_id: str) -> TaskInstance | None:
-        """Return pending or running instance for a definition, if any exists.
+    async def get_active_instance_for_definition(
+        self,
+        definition_id: str,
+        scheduled_for: datetime | None = None,
+    ) -> TaskInstance | None:
+        """Return matching instance for a definition, if any exists.
 
-        Used for duplicate prevention — only one active instance per definition.
+        Used for duplicate prevention.
+
+        When ``scheduled_for`` is provided, performs a period-aware duplicate
+        check: matches instances where ``scheduled_for`` equals the given cron
+        match time AND status is pending, running, or completed (failed is
+        excluded to allow retry within the same period).
+
+        When ``scheduled_for`` is None, preserves backward-compatible behavior:
+        returns pending or running instances regardless of scheduled_for.
         """
         try:
             async with self._session_factory() as db:
-                result = await db.execute(
-                    select(TaskInstanceRecord)
-                    .where(TaskInstanceRecord.definition_id == definition_id)
-                    .where(
+                query = select(TaskInstanceRecord).where(
+                    TaskInstanceRecord.definition_id == definition_id
+                )
+
+                if scheduled_for is not None:
+                    query = query.where(
+                        TaskInstanceRecord.scheduled_for == scheduled_for,
+                        TaskInstanceRecord.status.in_(  # noqa: S610
+                            ["pending", "running", "completed"]
+                        ),
+                    )
+                else:
+                    query = query.where(
                         TaskInstanceRecord.status.in_(["pending", "running"])  # noqa: S610
                     )
-                )
+
+                result = await db.execute(query)
                 record = result.scalar_one_or_none()
 
             return record.to_domain() if record is not None else None

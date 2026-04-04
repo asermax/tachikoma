@@ -20,7 +20,7 @@ Persistent task definitions with cron-like scheduling, automatic instance genera
 | R2 | Automatic instance generation from enabled definitions when their schedule fires |
 | R3 | Task instance status tracking (pending, running, completed, failed) |
 | R4 | One-shot task definitions auto-disable after single execution |
-| R5 | Duplicate instance prevention — no new instance if one is already pending or running for the same definition |
+| R5 | Duplicate instance prevention — cron tasks deduplicate per cron period (including completed); one-shot tasks check pending/running only |
 | R6 | Catch-up on missed schedules after restart using `last_fired_at` |
 | R7 | Task definitions and instances survive restarts (persistent storage) |
 | R8 | Bootstrap step to initialize task database tables and run crash recovery |
@@ -50,10 +50,11 @@ The agent manages task definitions through MCP tools exposed during conversation
 An async loop continuously evaluates enabled definitions and creates pending instances when schedules fire. Cron expressions are evaluated in the user's configured timezone.
 
 **Acceptance Criteria**:
-- Given an enabled cron-based task definition, when the cron expression matches the current time, then a new task instance with status `pending` is created and the definition's `last_fired_at` is updated
+- Given an enabled cron-based task definition, when the cron expression matches a time that has already passed, then a new task instance with status `pending` is created and the definition's `last_fired_at` is updated
 - Given an enabled one-shot task definition, when the scheduled datetime has passed, then a single task instance is created and the definition is set to `enabled=false`
 - Given a disabled task definition, then no instances are generated regardless of schedule
-- Given a definition already has a pending or running instance, then no duplicate instance is created for the same definition
+- Given a cron task definition where a pending, running, or completed instance already exists for the current cron period, then no duplicate instance is created; failed instances are excluded to allow retry within the same period
+- Given a one-shot task definition that already has a pending or running instance, then no duplicate instance is created
 - Given the system restarts, then the instance generator resumes and creates at most one catch-up instance per definition that was missed during downtime (using `last_fired_at` to determine what was missed)
 - Given cron expressions are evaluated, then they use the user's configured timezone (via `cronsim` + stdlib `zoneinfo`)
 

@@ -40,7 +40,7 @@ The task management subsystem lives in `src/tachikoma/tasks/` as a self-containe
 | `src/tachikoma/tasks/repository.py` | `TaskRepository` — async SQLAlchemy CRUD for definitions and instances; `list_enabled_definitions()` and `list_disabled_definitions()` for filtered queries; crash recovery (mark running as failed) | Receives shared `async_sessionmaker` from `Database`; follows ADR-007 pattern |
 | `src/tachikoma/tasks/tools.py` | `create_task_tools_server()` — MCP server factory; `list_tasks` (defaults to enabled-only, `archived` parameter for disabled; output includes task ID for referencing in other tools), `create_task`, `update_task` (supports `task_type` changes via `Literal` validation), `delete_task` with `cronsim` validation; Pydantic `BaseModel` classes (`ListTasksArgs`, `CreateTaskArgs`, `UpdateTaskArgs`, `DeleteTaskArgs`) for arg validation and type coercion; enriched `@tool()` descriptions with parameter documentation | Tools validate cron expressions at creation time; `list_tasks` uses `archived` parameter to toggle between enabled/disabled views; Pydantic models provide schema generation, bool coercion, and required-field validation; `UpdateTaskArgs.task_type` uses `Literal["session", "background"]` for automatic validation; `TaskRepositoryError`-specific error handling surfaces root causes via `__cause__`; follows DES-006 |
 | `src/tachikoma/tasks/hooks.py` | `tasks_hook` — bootstrap hook (DES-003): retrieves shared `Database` from extras, creates repository, runs crash recovery; stores `task_repository` in `bootstrap.extras` | Subsystem-owned hook; runs after `database_hook` |
-| `src/tachikoma/tasks/scheduler.py` | `instance_generator()` — async loop evaluating definitions via `cronsim` | Plain async function started as `asyncio.Task` |
+| `src/tachikoma/tasks/scheduler.py` | `instance_generator()` — async loop with strict cron firing and period-aware dedup; `_create_pending_instance()` helper for instance creation and logging | Plain async function started as `asyncio.Task` |
 | `src/tachikoma/database.py` | Shared `Database` class with `Base(DeclarativeBase)`, `AsyncEngine`, `async_sessionmaker`; `database_hook` bootstrap hook | All ORM models share one `Base`; single engine for all subsystems |
 | `src/tachikoma/context/loading.py` (`SYSTEM_PREAMBLE`) | Static tasks documentation in the system prompt preamble: task types, scheduling formats, MCP tool descriptions with parameter documentation and cross-references, and corrected `notify` field behavior (success notification instruction; failures always notify) | Part of the `SYSTEM_PREAMBLE` constant; loaded once at startup; follows ADR-008 append pattern |
 
@@ -100,7 +100,7 @@ TaskInstance (frozen dataclass)
 ├── task_type: str                   ("session" or "background", copied from definition)
 ├── status: str                      ("pending", "running", "completed", "failed")
 ├── prompt: str                      (copied from definition at creation time)
-├── scheduled_for: datetime          (when the instance should execute)
+├── scheduled_for: datetime          (cron match time for cron tasks; schedule.at for one-shot tasks)
 ├── started_at: datetime | None      (when execution began)
 ├── completed_at: datetime | None    (when execution finished)
 ├── result: str | None               (completion/failure summary)
@@ -168,12 +168,19 @@ stateDiagram-v2
 1. Instance generator loop wakes up (~60s interval)
 2. Query all enabled definitions from repository
 3. For each definition:
-   a. Parse schedule: CronSim(expr, anchor_time, tz=configured_timezone)
-   b. Check if next fire time ≤ now
-   c. If yes, check no pending/running instance exists for this definition
-   d. If clear, create TaskInstance(status="pending", task_type=definition.task_type, scheduled_for=fire_time)
-   e. Update definition.last_fired_at = now
-   f. If one-shot, set definition.enabled = false
+   a. If cron schedule:
+      - Compute anchor in evaluation timezone (convert last_fired_at from UTC to tz, or start-of-hour for first run)
+      - Get next fire time from CronSim using anchor
+      - If next fire time > now (hasn't passed), skip
+      - Compute cron_match_utc from next fire time
+      - Period-aware duplicate check: query for pending/running/completed instance with matching scheduled_for (failed excluded for retry)
+      - If duplicate found, log suppression and skip
+      - Create TaskInstance(status="pending", scheduled_for=cron_match_utc)
+      - Update definition.last_fired_at = now (ensures CronSim anchors past missed periods on catch-up)
+   b. If one-shot schedule (hasn't fired yet and time has passed):
+      - Check no pending/running instance exists for this definition
+      - Create TaskInstance(status="pending", scheduled_for=schedule.at)
+      - Update definition.last_fired_at, set definition.enabled=false
 4. Sleep until next tick
 ```
 
@@ -247,6 +254,16 @@ stateDiagram-v2
 - Pro: Handles both fresh and existing databases
 - Con: Manual pragma checks for each new column addition
 
+### Strict cron firing condition
+
+**Choice**: Fire only when the cron match time has already passed (`next_fire <= now_tz`), with no tolerance window.
+**Why**: A tolerance window caused early and repeated firing within the same cron period. Accepting up to 60s lateness (bounded by the generator interval) is preferable to duplicate instances.
+
+### Period-aware duplicate check via `scheduled_for`
+
+**Choice**: Store the cron match time in `scheduled_for` and check for existing instances matching that time and a non-failed status.
+**Why**: Using the cron match time as a period identifier enables deduplication across instance status changes (e.g., a completed instance still blocks a duplicate). The previous approach only checked pending/running, allowing duplicates after completion within the same period.
+
 ## System Behavior
 
 ### Scenario: Agent creates a recurring task
@@ -258,14 +275,26 @@ stateDiagram-v2
 ### Scenario: Instance generation for a cron task
 
 **Given**: An enabled cron-based task definition exists
-**When**: The cron expression matches the current time
-**Then**: A pending instance is created and `last_fired_at` is updated.
+**When**: The cron match time has already passed
+**Then**: A pending instance is created with `scheduled_for` set to the cron match time, and `last_fired_at` is updated.
 
 ### Scenario: One-shot task auto-disables
 
 **Given**: An enabled one-shot task definition
 **When**: The scheduled datetime passes and an instance is generated
 **Then**: The definition is set to `enabled=false`.
+
+### Scenario: Cron period-aware duplicate prevention
+
+**Given**: A cron task where a pending, running, or completed instance already exists with `scheduled_for` matching the current cron match time
+**When**: The instance generator evaluates the definition
+**Then**: No new instance is created. Failed instances are excluded from this check to allow retry within the same period.
+
+### Scenario: Catch-up after restart
+
+**Given**: The system was down for multiple cron periods
+**When**: The instance generator runs after restart
+**Then**: At most one catch-up instance is created per definition. The generator evaluates each definition once per tick, and the `last_fired_at` update (set to wall-clock now) ensures subsequent ticks anchor CronSim past all missed periods.
 
 ### Scenario: Crash recovery on startup
 
