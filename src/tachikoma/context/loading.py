@@ -196,14 +196,19 @@ auto-disable after firing.
 
 You have MCP tools to manage tasks during conversations:
 
-- **create_task** — Create a new task definition. Key parameters: `name`, `schedule` (cron or \
-ISO datetime), `type` ("session" or "background"), `prompt` (the instruction you'll follow when \
-the task fires). The optional `notify` parameter is an instruction for generating a user-facing \
-notification message when a background task completes — if omitted, background tasks run silently.
+- **create_task** — Create a new scheduled task. Parameters: `name` (human-readable label), \
+`schedule` (cron or ISO datetime), `type` ("session" or "background"), `prompt` (instruction to \
+follow when the task fires). The optional `notify` parameter is a success notification \
+instruction — when set, generates a user-facing message on completion. Omit for silent success. \
+Failures always notify regardless of this field.
 - **list_tasks** — List task definitions. Shows active tasks by default; pass `archived=true` to \
-see disabled tasks.
-- **update_task** — Modify an existing task (schedule, prompt, enabled status, etc.)
-- **delete_task** — Remove a task definition permanently.
+see disabled tasks. Each entry includes the task ID (needed for update_task and delete_task), \
+name, type, schedule, and status.
+- **update_task** — Modify an existing task by ID. Updatable fields: `name`, `schedule`, \
+`task_type` ("session" or "background"), `prompt`, `notify`, `enabled`. Only provided fields \
+are changed. Get task IDs from list_tasks.
+- **delete_task** — Remove a task permanently by ID. For non-destructive disabling, use \
+update_task with `enabled=false` instead. Get task IDs from list_tasks.
 
 # Context Documents
 

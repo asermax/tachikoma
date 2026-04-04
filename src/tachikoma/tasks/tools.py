@@ -68,8 +68,14 @@ def create_task_tools_server(repository: TaskRepository) -> McpSdkServerConfig:
 
     @tool(
         "list_tasks",
-        "List task definitions. Shows active tasks by default;"
-        " set archived=true to see disabled tasks.",
+        "List task definitions.\n"
+        "\n"
+        "Parameters:\n"
+        "- archived (bool, optional, default false): Set true to show disabled"
+        " (archived) tasks instead of active ones.\n"
+        "\n"
+        "Each entry includes the task ID (needed for update_task and delete_task),"
+        " name, type, schedule, and status.",
         ListTasksArgs.model_json_schema(),
     )
     async def list_tasks(args: dict) -> dict:
@@ -126,7 +132,19 @@ def create_task_tools_server(repository: TaskRepository) -> McpSdkServerConfig:
 
     @tool(
         "create_task",
-        "Create a new scheduled task.",
+        "Create a new scheduled task definition.\n"
+        "\n"
+        "Parameters:\n"
+        "- name (str, required): Human-readable task name\n"
+        "- schedule (str, required): Cron expression (e.g., '0 9 * * *' for daily at 9 AM)"
+        " or ISO datetime for one-shot (e.g., '2026-04-01T14:00:00Z')\n"
+        "- type (str, required): 'session' (delivered during idle) or 'background'"
+        " (isolated execution)\n"
+        "- prompt (str, required): Instruction the agent follows when the task fires\n"
+        "- notify (str, optional): Success notification instruction — when set, generates"
+        " a user-facing message on completion. Omit for silent success. Failures always"
+        " notify regardless of this field.\n"
+        "- enabled (bool, optional, default true): Whether the task is active",
         CreateTaskArgs.model_json_schema(),
     )
     async def create_task(args: dict) -> dict:
@@ -229,7 +247,18 @@ def create_task_tools_server(repository: TaskRepository) -> McpSdkServerConfig:
 
     @tool(
         "update_task",
-        "Update an existing task definition.",
+        "Update an existing task definition.\n"
+        "\n"
+        "Parameters:\n"
+        "- task_id (str, required): ID of the task to update (get IDs from list_tasks)\n"
+        "- name (str, optional): New human-readable name\n"
+        "- schedule (str, optional): New cron expression or ISO datetime\n"
+        "- task_type (str, optional): Change type — 'session' or 'background'\n"
+        "- prompt (str, optional): New agent instruction\n"
+        "- notify (str, optional): New success notification instruction\n"
+        "- enabled (bool, optional): Enable or disable the task\n"
+        "\n"
+        "Only provided fields are updated; omitted fields remain unchanged.",
         UpdateTaskArgs.model_json_schema(),
     )
     async def update_task(args: dict) -> dict:
@@ -307,7 +336,13 @@ def create_task_tools_server(repository: TaskRepository) -> McpSdkServerConfig:
 
     @tool(
         "delete_task",
-        "Delete a task definition.",
+        "Delete a task definition permanently.\n"
+        "\n"
+        "Parameters:\n"
+        "- task_id (str, required): ID of the task to delete (get IDs from list_tasks)\n"
+        "\n"
+        "This action is permanent and cannot be undone."
+        " To disable without deleting, use update_task with enabled=false.",
         DeleteTaskArgs.model_json_schema(),
     )
     async def delete_task(args: dict) -> dict:
