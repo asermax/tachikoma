@@ -19,13 +19,44 @@ from loguru import logger
 
 from tachikoma.config import TaskSettings
 from tachikoma.tasks.events import SessionTaskReady
-from tachikoma.tasks.model import TaskInstance
+from tachikoma.tasks.model import TaskDefinition, TaskInstance
 from tachikoma.tasks.repository import TaskRepository
 
 _log = logger.bind(component="task_scheduler")
 
 # How often the instance generator checks for schedule matches
 GENERATION_INTERVAL_SECONDS = 60
+
+
+async def _create_pending_instance(
+    repository: TaskRepository,
+    definition: TaskDefinition,
+    scheduled_for: datetime,
+    now_utc: datetime,
+) -> TaskInstance:
+    """Create a pending task instance, persist it, and log."""
+    instance = TaskInstance(
+        id=str(uuid4()),
+        definition_id=definition.id,
+        task_type=definition.task_type,
+        prompt=definition.prompt,
+        status="pending",
+        scheduled_for=scheduled_for,
+        started_at=None,
+        completed_at=None,
+        result=None,
+        created_at=now_utc,
+    )
+    await repository.create_instance(instance)
+
+    _log.info(
+        "Created instance {inst_id} for {name} (type={task_type})",
+        inst_id=instance.id,
+        name=definition.name,
+        task_type=definition.task_type,
+    )
+
+    return instance
 
 
 def _get_timezone(settings: TaskSettings) -> ZoneInfo:
@@ -103,8 +134,7 @@ async def instance_generator(
                                 scheduled_for=cron_match_utc,
                             )
                             if active is not None:
-                                # S3: log when safety net catches a duplicate
-                                _log.info(
+                                _log.debug(
                                     "Duplicate suppressed for {name} "
                                     "— period {match} already covered",
                                     name=definition.name,
@@ -113,40 +143,15 @@ async def instance_generator(
                                 continue
 
                             # Create instance with scheduled_for=cron_match_utc (S1)
-                            instance = TaskInstance(
-                                id=str(uuid4()),
-                                definition_id=definition.id,
-                                task_type=definition.task_type,
-                                prompt=definition.prompt,
-                                status="pending",
-                                scheduled_for=cron_match_utc,
-                                started_at=None,
-                                completed_at=None,
-                                result=None,
-                                created_at=now_utc,
-                            )
-                            await repository.create_instance(instance)
-
-                            _log.info(
-                                "Created instance {inst_id} for {name} (type={task_type})",
-                                inst_id=instance.id,
-                                name=definition.name,
-                                task_type=definition.task_type,
+                            await _create_pending_instance(
+                                repository, definition, cron_match_utc, now_utc,
                             )
 
-                            # Fast-forward last_fired_at to latest cron match <= now_tz
-                            # This ensures catch-up creates only one instance per restart (R4)
-                            last_match = next_fire
-                            for future_match in CronSim(schedule.expression, next_fire):
-                                if future_match > now_tz:
-                                    break
-                                last_match = future_match
-
-                            last_fired_utc = last_match.astimezone(UTC)
-
+                            # Advance last_fired_at so next cycle's CronSim anchor
+                            # produces a future time, preventing catch-up duplicates (R4)
                             await repository.update_definition(
                                 definition.id,
-                                last_fired_at=last_fired_utc,
+                                last_fired_at=now_utc,
                             )
 
                         except CronSimError as e:
@@ -180,25 +185,8 @@ async def instance_generator(
                             )
                             continue
 
-                        instance = TaskInstance(
-                            id=str(uuid4()),
-                            definition_id=definition.id,
-                            task_type=definition.task_type,
-                            prompt=definition.prompt,
-                            status="pending",
-                            scheduled_for=schedule.at,
-                            started_at=None,
-                            completed_at=None,
-                            result=None,
-                            created_at=now_utc,
-                        )
-                        await repository.create_instance(instance)
-
-                        _log.info(
-                            "Created instance {inst_id} for {name} (type={task_type})",
-                            inst_id=instance.id,
-                            name=definition.name,
-                            task_type=definition.task_type,
+                        await _create_pending_instance(
+                            repository, definition, schedule.at, now_utc,
                         )
 
                         await repository.update_definition(
