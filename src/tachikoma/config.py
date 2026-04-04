@@ -17,7 +17,6 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_valida
 CONFIG_PATH = Path.home() / ".config" / "tachikoma" / "config.toml"
 
 # System-level tools that are always blocked regardless of user config.
-# Extended by DLT-073 with cron tools.
 SYSTEM_DISALLOWED_TOOLS = frozenset({"Skill"})
 
 
