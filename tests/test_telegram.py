@@ -1021,3 +1021,76 @@ class TestRendererTelegramFormatting:
         await renderer.handle_tool(activity)
 
         assert "`install dependencies`" in renderer._tool_line
+
+
+class TestResponseRendererSanitization:
+    """Tests for surrogate sanitization at the Telegram boundary."""
+
+    async def test_handle_error_sanitizes_surrogates(self) -> None:
+        """Error messages with surrogates are sanitized before sending."""
+        bot = MagicMock()
+        bot.send_message = AsyncMock(return_value=MockMessage())
+        renderer = ResponseRenderer(bot, chat_id=123)
+
+        error = Error(message="bad\ud83edata", recoverable=True)
+        await renderer.handle_error(error)
+
+        call_args = bot.send_message.call_args
+        sent_text = call_args[0][1]
+        clean = sent_text.encode("utf-8", errors="surrogatepass")
+        assert "\ud83e" not in clean.decode("utf-8", errors="ignore")
+
+    async def test_flush_sanitizes_surrogates_from_tool_labels(self) -> None:
+        """Tool labels with surrogates in tool_input are sanitized before sending."""
+        bot = MagicMock()
+        bot.send_message = AsyncMock(return_value=MockMessage(message_id=1))
+        bot.edit_message_text = AsyncMock()
+        renderer = ResponseRenderer(bot, chat_id=123)
+
+        # Tool with surrogate in file_path
+        activity = ToolActivity(
+            tool_name="Read",
+            tool_input={"file_path": "path/with/\ud83e/surrogate"},
+        )
+        await renderer.handle_tool(activity)
+        renderer._last_edit_time = 0.0
+
+        # Text after tool triggers flush
+        await renderer.handle_text("Response")
+
+        # Verify no surrogates in any sent text
+        for call in bot.send_message.call_args_list:
+            sent_text = call[0][1]
+            clean = sent_text.encode("utf-8", errors="surrogatepass")
+            assert "\ud83e" not in clean.decode("utf-8", errors="ignore")
+
+    async def test_top_level_exception_sanitizes_surrogates(self) -> None:
+        """Top-level exception handler sanitizes surrogates in error message."""
+        bot = MagicMock()
+        bot.send_message = AsyncMock(return_value=MockMessage())
+        coordinator = MagicMock()
+        coordinator.has_pending_messages = True
+
+        settings = MagicMock()
+        settings.authorized_chat_id = 123
+        settings.push_notifications = False
+
+        with patch("tachikoma.telegram.Bot"):
+            channel = TelegramChannel(coordinator, settings)
+        channel._bot = bot
+
+        # Mock coordinator to raise exception with surrogate
+        async def failing_generator():
+            raise RuntimeError("crash\ud83efail")
+            yield  # makes this an async generator
+
+        coordinator.send_message = failing_generator
+
+        await channel._process_through_coordinator()
+
+        # Find the error message call
+        error_calls = [c for c in bot.send_message.call_args_list if "crash" in str(c)]
+        assert len(error_calls) >= 1
+        sent_text = error_calls[0][0][1]
+        clean = sent_text.encode("utf-8", errors="surrogatepass")
+        assert "\ud83e" not in clean.decode("utf-8", errors="ignore")

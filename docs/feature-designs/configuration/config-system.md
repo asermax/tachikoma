@@ -82,7 +82,7 @@ Settings (root, frozen)
 ├── agent: AgentSettings
 │   ├── model: str | None = None (SDK default)
 │   ├── allowed_tools: list[str] = ["Read", "Glob", "Grep"]
-│   ├── disallowed_tools: list[str] = ["AskUserQuestion", "CronCreate", "CronDelete", "CronList"]
+│   ├── disallowed_tools: list[str] = ["AskUserQuestion", "CronCreate", "CronDelete", "CronList"] (effective: ["AskUserQuestion", "CronCreate", "CronDelete", "CronList", "Skill"] after system merge)
 │   ├── cli_path: str | None = None (SDK bundled binary)
 │   ├── session_resume_window: int = 86400 (seconds; lookup window for session resumption matching)
 │   ├── session_idle_timeout: int = 900 (seconds of inactivity before auto-closing session; 0 = disabled)
@@ -96,12 +96,14 @@ Settings (root, frozen)
 │   ├── check_interval: int = 300              (session task check interval in seconds)
 │   ├── max_iterations: int = 10               (max evaluator iterations for background tasks)
 │   ├── max_concurrent_background: int = 3     (max parallel background tasks)
-│   └── timezone: str | None = None            (IANA timezone, None = system timezone)
+│   └── timezone: str = ""                     (validate_default=True; validators resolve "" → system IANA key, then validate via ZoneInfo; invalid = startup error)
 └── telegram: TelegramSettings | None = None
     ├── bot_token: str
     ├── authorized_chat_id: int
     └── push_notifications: bool = True   (enables post-response push via copy+delete)
 ```
+
+A module-level `SYSTEM_DISALLOWED_TOOLS: frozenset[str]` constant defines tools that are always blocked regardless of user configuration. A `field_validator` on `AgentSettings.disallowed_tools` merges this set into the user value after type validation, deduplicating via `dict.fromkeys` to preserve insertion order (user entries first, then system entries). This merge is transparent to all downstream consumers — the field type remains `list[str]`.
 
 All models use `ConfigDict(frozen=True, extra="ignore")`. Frozen prevents accidental mutation. Extra="ignore" provides forward compatibility — unknown TOML keys are silently ignored.
 
@@ -199,6 +201,20 @@ flowchart TD
 - Pro: Default file stays in sync with model as fields are added
 - Pro: Comments derived from field descriptions — single source of truth
 - Con: Adds `tomlkit` as a runtime dependency
+- Note: The generator instantiates a default `AgentSettings()` instance and reads `getattr(agent_defaults, name)` instead of `field_info.default`, so the generated config reflects post-validator values (e.g., system-merged `disallowed_tools`)
+
+### System-level tool blocking via field_validator
+
+**Choice**: Use a `field_validator(mode='after')` on `disallowed_tools` to merge a module-level `frozenset` constant into the user-configured value
+**Why**: The agent must never access certain Claude Code built-in tools (e.g., `Skill`) that shadow Tachikoma's own subsystems. A field-level validator keeps the merge logic contained within the config model — no changes needed to the Coordinator or SDK integration layer. The `frozenset` constant is extensible (future deltas can add more tools).
+**Alternatives Considered**:
+- Hardcode tools in the field default: Duplicates values; user overrides would remove system tools
+- Merge at the Coordinator level: Scatters config logic; config consumers would see incomplete lists
+
+**Consequences**:
+- Pro: Transparent to all consumers — merged list flows through existing wiring
+- Pro: Extensible — additional system-blocked tools can be added to the constant
+- Con: System tools cannot be unblocked by user configuration (by design)
 
 ### SettingsManager for read-write config access
 
@@ -273,6 +289,26 @@ flowchart TD
 - Pro: Clear distinction — None means "not configured", present means "fully configured"
 - Pro: Pydantic validates all fields when the section exists
 - Con: Bootstrap hook must prompt for missing values when channel is "telegram"
+
+### Timezone field as str with validators
+
+**Choice**: Keep `TaskSettings.timezone` as `str` with Pydantic `field_validator`s that (1) replace `""` with the system timezone IANA name and (2) validate via `ZoneInfo()`.
+**Why**: The field is loaded from TOML (a string) and needs to work with `_generate_default_config()`. `ZoneInfo` type would break config generation and TOML serialization. Validators ensure the value is always a valid IANA timezone key after loading.
+
+**Consequences**:
+- Pro: Config generation, write-back, and TOML serialization work unchanged
+- Pro: Invalid values fail at startup with clear Pydantic error
+- Con: Consumers must call `ZoneInfo(settings.timezone)` (trivial due to caching)
+
+### System timezone detection via /etc/localtime symlink
+
+**Choice**: When `tasks.timezone` is not configured, detect the system timezone by resolving the `/etc/localtime` symlink target and extracting the IANA name (everything after `zoneinfo/` in the path). Falls back to `"UTC"` if resolution fails.
+**Why**: Zero extra dependencies. Produces real IANA timezone name for correct DST handling. Works on Linux/macOS (project's target platforms).
+
+**Consequences**:
+- Pro: Zero new dependencies, correct timezone math (DST transitions)
+- Pro: Logs and display show the real IANA timezone name
+- Con: Falls back to UTC if `/etc/localtime` is a copy (not a symlink) — acceptable for single-user self-hosted deployment
 
 ## System Behavior
 

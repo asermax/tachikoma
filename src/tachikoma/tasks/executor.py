@@ -16,6 +16,7 @@ from claude_agent_sdk import ClaudeAgentOptions, ClaudeSDKClient
 from claude_agent_sdk.types import AssistantMessage, ResultMessage, SystemPromptPreset, TextBlock
 from loguru import logger
 
+from tachikoma.adapter import sanitize_text
 from tachikoma.agent_defaults import AgentDefaults
 from tachikoma.config import TaskSettings
 from tachikoma.git.processor import GitProcessor
@@ -31,6 +32,7 @@ from tachikoma.skills.context_provider import SkillsContextProvider
 from tachikoma.tasks.events import TaskNotification
 from tachikoma.tasks.model import TaskDefinition, TaskInstance
 from tachikoma.tasks.repository import TaskRepository
+from tachikoma.tasks.scheduler import get_timezone
 
 if TYPE_CHECKING:
     from claude_agent_sdk.types import AgentDefinition
@@ -262,6 +264,14 @@ class BackgroundTaskExecutor:
             # Run pre-processing pipeline (memory, projects, skills context)
             preprocessing_result = await self._run_preprocessing(instance.prompt)
 
+            tz = get_timezone(self._settings)
+            now = datetime.now(tz)
+            datetime_line = (
+                f"Current date and time: "
+                f"{now.strftime('%A, %B %d, %Y at %H:%M:%S')} {tz.key}\n"
+            )
+            system_prompt_text = datetime_line + "\n" + BACKGROUND_TASK_SYSTEM_PROMPT
+
             # Build SDK options with adapted system prompt
             options = ClaudeAgentOptions(
                 cwd=self._agent_defaults.cwd,
@@ -270,7 +280,7 @@ class BackgroundTaskExecutor:
                 system_prompt=SystemPromptPreset(
                     type="preset",
                     preset="claude_code",
-                    append=BACKGROUND_TASK_SYSTEM_PROMPT,
+                    append=system_prompt_text,
                 ),
                 permission_mode="bypassPermissions",
                 mcp_servers=preprocessing_result.mcp_servers,
@@ -301,7 +311,7 @@ class BackgroundTaskExecutor:
                         if isinstance(sdk_message, AssistantMessage):
                             for block in sdk_message.content:
                                 if isinstance(block, TextBlock):
-                                    response_chunks.append(block.text)
+                                    response_chunks.append(sanitize_text(block.text))
 
                     response_text = "".join(response_chunks)
 
@@ -470,7 +480,7 @@ class BackgroundTaskExecutor:
                 if isinstance(message, AssistantMessage):
                     for block in message.content:
                         if isinstance(block, TextBlock):
-                            response_text += block.text
+                            response_text += sanitize_text(block.text)
         except Exception as exc:
             _log.warning("Evaluator query failed: {err}", err=str(exc))
             return {"status": "continue", "feedback": "Evaluator failed, continuing"}

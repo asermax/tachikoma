@@ -36,11 +36,14 @@ The system loads parameters from the TOML config file at startup, applying defau
 **Acceptance Criteria**:
 - Given a valid TOML config file, when the application starts, then all parameters are loaded and available to components
 - Given a config file with no `[workspace]` section, when loaded, then `workspace.path` defaults to `~/tachikoma`
-- Given a config file with no `[agent]` section, when loaded, then `agent.model` defaults to `None` (SDK default), `agent.sub_agent_model` defaults to `"opus"` (sub-agent default), `agent.allowed_tools` defaults to `["Read", "Glob", "Grep"]`, `agent.disallowed_tools` defaults to `["AskUserQuestion", "CronCreate", "CronDelete", "CronList"]`, `agent.cli_path` defaults to `None` (SDK bundled binary), `agent.session_resume_window` defaults to `86400` (1 day in seconds), `agent.session_idle_timeout` defaults to `900` (15 min; 0 disables idle close), and `agent.env` defaults to `{}` (empty dict)
+- Given a config file with no `[agent]` section, when loaded, then `agent.model` defaults to `None` (SDK default), `agent.sub_agent_model` defaults to `"opus"` (sub-agent default), `agent.allowed_tools` defaults to `["Read", "Glob", "Grep"]`, `agent.disallowed_tools` effectively defaults to `["AskUserQuestion", "CronCreate", "CronDelete", "CronList", "Skill"]` (user default merged with system-blocked tools), `agent.cli_path` defaults to `None` (SDK bundled binary), `agent.session_resume_window` defaults to `86400` (1 day in seconds), `agent.session_idle_timeout` defaults to `900` (15 min; 0 disables idle close), and `agent.env` defaults to `{}` (empty dict)
 - Given a config file with an `[agent.env]` section containing string key-value pairs, when loaded, then `agent.env` contains those values
 - Given a config file with an `[agent.env]` section containing non-string values (e.g., `FOO = 42`), when the application starts, then it exits with a clear validation error
 - Given a config file with no `[logging]` section, when loaded, then `logging.level` defaults to `"INFO"` and `logging.console` defaults to `false`
 - Given a completely empty config file, when loaded, then all non-secret parameters use their defaults and the application starts successfully
+- Given a config file with custom `agent.disallowed_tools` (e.g., `["AskUserQuestion", "WebSearch"]`), when loaded, then the final list contains all user entries plus system-blocked tools (e.g., `["AskUserQuestion", "WebSearch", "Skill"]`)
+- Given a config file with `agent.disallowed_tools = []`, when loaded, then system-blocked tools are still present in the final list
+- Given a config file where the user already includes a system-blocked tool in `agent.disallowed_tools`, when loaded, then no duplicate entries exist in the final list
 
 ### Startup Validation (R3)
 
@@ -95,8 +98,9 @@ The optional `[telegram]` section configures the Telegram bot channel. When the 
 The `[tasks]` section configures task scheduler parameters. Unlike `[telegram]`, `settings.tasks` always has a default value (never None) — the task subsystem operates with sensible defaults when no `[tasks]` section is present.
 
 **Acceptance Criteria**:
-- Given a config file with no `[tasks]` section, when loaded, then `settings.tasks` is populated with default values: `idle_window=300`, `check_interval=300`, `max_iterations=10`, `max_concurrent_background=3`, `timezone=None` (system timezone)
+- Given a config file with no `[tasks]` section, when loaded, then `settings.tasks` is populated with default values: `idle_window=300`, `check_interval=300`, `max_iterations=10`, `max_concurrent_background=3`, `timezone` auto-detects the system's IANA timezone key (e.g. `America/Buenos_Aires`) when not explicitly configured
 - Given a config file with a `[tasks]` section specifying custom values, when loaded, then those values override the defaults
+- Given a config file with `tasks.timezone` set to an invalid value (e.g. `"Fake/Timezone"`), when the application starts, then it exits with a clear validation error
 
 ### CLI Override (R8)
 

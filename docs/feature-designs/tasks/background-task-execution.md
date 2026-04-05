@@ -52,7 +52,7 @@ Two components work together: the `BackgroundTaskRunner` (async loop picking up 
 
 | Layer/Component | Responsibility | Key Decisions |
 |-----------------|----------------|---------------|
-| `src/tachikoma/tasks/executor.py` | `background_task_runner()` — async loop picking up pending background instances; `BackgroundTaskExecutor` — manages single task's SDK session lifecycle with evaluator loop; dispatches `TaskNotification` events | Coordinator-like SDK client management; `asyncio.Semaphore` for concurrency; full `PreProcessingPipeline` (memory, projects, skills); separate `PostProcessingPipeline` with `EpisodicProcessor` (main phase) + `ProjectsProcessor` (pre_finalize phase) + `GitProcessor` (finalize phase) |
+| `src/tachikoma/tasks/executor.py` | `background_task_runner()` — async loop picking up pending background instances; `BackgroundTaskExecutor` — manages single task's SDK session lifecycle with evaluator loop; injects current date/time in configured timezone into system prompt; dispatches `TaskNotification` events | Coordinator-like SDK client management; `asyncio.Semaphore` for concurrency; datetime injection via `get_timezone(settings)` + `datetime.now(tz)` prepended to `BACKGROUND_TASK_SYSTEM_PROMPT`; full `PreProcessingPipeline` (memory, projects, skills); separate `PostProcessingPipeline` with `EpisodicProcessor` (main phase) + `ProjectsProcessor` (pre_finalize phase) + `GitProcessor` (finalize phase) |
 | `src/tachikoma/tasks/events.py` | `TaskNotification(BaseEvent)` — typed event carrying `prompt: str` (coordinator-routed notification prompt), `source_task_id: str | None`, and `severity: str` ("info" or "error"); channels subscribe and enqueue the prompt into the coordinator for pipeline-routed delivery | Pydantic `BaseEvent` subclass for typed dispatch |
 
 ### Cross-Layer Contracts
@@ -125,7 +125,7 @@ sequenceDiagram
    a. Mark instance as running
    b. Create BackgroundTaskExecutor with:
       - Full pre-processing pipeline (memory, projects, skills context providers)
-      - Adapted system prompt (task context + instructions)
+      - Adapted system prompt prepended with current date/time in configured timezone (task context + instructions)
       - Adapted post-processing pipeline (EpisodicProcessor in main phase + ProjectsProcessor in pre_finalize phase + GitProcessor in finalize phase)
       - Task instance prompt
    c. Executor creates ClaudeSDKClient, calls query(prompt)

@@ -11,10 +11,10 @@ from tachikoma.context.loading import (
     DEFAULT_AGENTS_CONTENT,
     DEFAULT_SOUL_CONTENT,
     DEFAULT_USER_CONTENT,
-    SYSTEM_PREAMBLE,
+    SYSTEM_PREAMBLE_TEMPLATE,
     context_hook,
-    load_context,
     load_foundational_context,
+    render_system_preamble,
 )
 from tachikoma.context.processor import CoreContextProcessor
 
@@ -25,9 +25,9 @@ __all__ = [
     "DEFAULT_AGENTS_CONTENT",
     "DEFAULT_SOUL_CONTENT",
     "DEFAULT_USER_CONTENT",
-    "SYSTEM_PREAMBLE",
+    "SYSTEM_PREAMBLE_TEMPLATE",
     "build_system_prompt",
     "context_hook",
-    "load_context",
     "load_foundational_context",
+    "render_system_preamble",
 ]

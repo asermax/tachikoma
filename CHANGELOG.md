@@ -7,6 +7,67 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v1.5.1 (2026-04-05)
+
+### Bug Fixes
+
+- **adapter**: Sanitize invalid UTF-8 surrogates from SDK text output
+  ([`6107723`](https://github.com/asermax/tachikoma/commit/610772321091daa36d9c6c253292f69574868cfa))
+
+- **tasks**: Prevent hour-boundary cron tasks from never firing
+  ([`82335f7`](https://github.com/asermax/tachikoma/commit/82335f7a54624ad6cb03386c22665e887dfeee5f))
+
+### Documentation
+
+- **agent**: Add text sanitization to architecture docs
+  ([`db6aa62`](https://github.com/asermax/tachikoma/commit/db6aa62867058c3e962d7d1f958a6e6a14db5650))
+
+- **planning**: Add deltas DLT-099 through DLT-110 to inventory
+  ([`f053b62`](https://github.com/asermax/tachikoma/commit/f053b623526b46031541e23d6634184f59eaddf0))
+
+
+## v1.5.0 (2026-04-05)
+
+### Documentation
+
+- **tasks**: Clarify notify parameter and R10 UTC defaulting in spec
+  ([`b68c855`](https://github.com/asermax/tachikoma/commit/b68c8550c9446fd5f3b6cea8371b400782298c62))
+
+
+## v1.4.0 (2026-04-05)
+
+### Chores
+
+- Update lockfile for version 1.3.1
+  ([`222be73`](https://github.com/asermax/tachikoma/commit/222be73a21830a56cede5806fa30b6feae1528cd))
+
+### Documentation
+
+- **tasks**: Replace DLT-091 with agent-driven notification tool
+  ([`107dc5e`](https://github.com/asermax/tachikoma/commit/107dc5eab6a5c728545477ca39e591378bce6cea))
+
+
+## v1.3.1 (2026-04-04)
+
+### Bug Fixes
+
+- **tasks**: Make schedule deserialization robust to malformed data
+  ([`790613b`](https://github.com/asermax/tachikoma/commit/790613baaabac0ef55d7d80ff33c7913b4185cb3))
+
+### Documentation
+
+- **tasks**: Add schedule deserialization robustness to feature documentation
+  ([`1de898e`](https://github.com/asermax/tachikoma/commit/1de898e44829da375561dd2e7eee505e9c159226))
+
+
+## v1.3.0 (2026-04-04)
+
+### Documentation
+
+- **planning**: Add DLT-098 for SDK stderr capture on error
+  ([`822e746`](https://github.com/asermax/tachikoma/commit/822e7466463247d78e703be95672e3890e0e436b))
+
+
 ## v1.2.1 (2026-04-04)
 
 ### Bug Fixes

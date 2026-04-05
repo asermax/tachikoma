@@ -5,17 +5,20 @@ Tests for DLT-012: Configure application parameters and secrets.
 
 import tomllib
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 import pytest
 from pydantic import ValidationError
 
 from tachikoma.config import (
+    SYSTEM_DISALLOWED_TOOLS,
     LoggingSettings,
     Settings,
     SettingsManager,
     TaskSettings,
     TelegramSettings,
     WorkspaceSettings,
+    _detect_system_timezone,
     _generate_default_config,
     load_settings,
 )
@@ -54,10 +57,10 @@ class TestSettingsModel:
         assert settings.agent.allowed_tools == ["Read", "Glob", "Grep"]
 
     def test_default_agent_disallowed_tools(self) -> None:
-        """AC (AC1/R0/R1): agent.disallowed_tools defaults to blocking cron tools."""
+        """AC (AC1): agent.disallowed_tools defaults to user defaults + system tools."""
         settings = Settings()
 
-        expected = ["AskUserQuestion", "CronCreate", "CronDelete", "CronList"]
+        expected = ["AskUserQuestion", "CronCreate", "CronDelete", "CronList", "Skill"]
         assert settings.agent.disallowed_tools == expected
 
     def test_default_session_resume_window(self) -> None:
@@ -193,6 +196,46 @@ class TestSettingsModel:
             LoggingSettings(level="VERBOSE")
 
 
+class TestSystemDisallowedTools:
+    """Tests for system-level disallowed tools merge behavior (DLT-087)."""
+
+    def test_system_tools_merged_with_user_config(self) -> None:
+        """AC (R2): User-configured tools preserved, system tools appended."""
+        settings = Settings.model_validate(
+            {"agent": {"disallowed_tools": ["AskUserQuestion", "WebSearch"]}}
+        )
+
+        assert settings.agent.disallowed_tools == ["AskUserQuestion", "WebSearch", "Skill"]
+
+    def test_system_tools_present_with_empty_list(self) -> None:
+        """AC (R2): System tools present even when user sets empty list."""
+        settings = Settings.model_validate(
+            {"agent": {"disallowed_tools": []}}
+        )
+
+        assert settings.agent.disallowed_tools == ["Skill"]
+
+    def test_system_tools_no_duplicate_when_user_includes(self) -> None:
+        """AC (R2): No duplicate when user already includes a system tool."""
+        settings = Settings.model_validate(
+            {"agent": {"disallowed_tools": ["AskUserQuestion", "Skill"]}}
+        )
+
+        assert settings.agent.disallowed_tools == ["AskUserQuestion", "Skill"]
+
+    def test_system_tools_user_order_preserved(self) -> None:
+        """AC (R3): User entry order preserved, system tools appended."""
+        settings = Settings.model_validate(
+            {"agent": {"disallowed_tools": ["WebSearch", "AskUserQuestion"]}}
+        )
+
+        assert settings.agent.disallowed_tools == ["WebSearch", "AskUserQuestion", "Skill"]
+
+    def test_constant_contains_skill(self) -> None:
+        """SYSTEM_DISALLOWED_TOOLS contains 'Skill'."""
+        assert "Skill" in SYSTEM_DISALLOWED_TOOLS
+
+
 class TestDefaultConfigGeneration:
     def test_generates_file_that_parses_to_empty_dict(self, tmp_path: Path) -> None:
         """AC (R4): Generated file has all values commented out."""
@@ -228,7 +271,7 @@ class TestDefaultConfigGeneration:
         assert "console" in content
 
     def test_generated_file_contains_disallowed_tools(self, tmp_path: Path) -> None:
-        """AC (AC4/R3): Generated file contains disallowed_tools with all blocked tools."""
+        """AC (AC3): Generated file contains disallowed_tools with all blocked tools."""
         config_path = tmp_path / "config.toml"
         _generate_default_config(config_path)
 
@@ -239,15 +282,16 @@ class TestDefaultConfigGeneration:
         assert '"CronCreate"' in content
         assert '"CronDelete"' in content
         assert '"CronList"' in content
+        assert '"Skill"' in content
 
-    def test_explicit_disallowed_tools_override_excludes_cron(self, tmp_path: Path) -> None:
-        """AC (AC3/R2): Explicit disallowed_tools override replaces defaults entirely."""
+    def test_explicit_disallowed_tools_override_keeps_system_tools(self, tmp_path: Path) -> None:
+        """AC (AC3): Explicit override replaces user defaults but system tools persist."""
         config_file = tmp_path / "config.toml"
         config_file.write_text('[agent]\ndisallowed_tools = ["AskUserQuestion"]\n')
 
         settings = load_settings(config_file)
 
-        assert settings.agent.disallowed_tools == ["AskUserQuestion"]
+        assert settings.agent.disallowed_tools == ["AskUserQuestion", "Skill"]
 
     def test_generated_file_contains_session_resume_window(self, tmp_path: Path) -> None:
         """AC (DLT-028): Generated file contains session_resume_window with int format."""
@@ -764,10 +808,11 @@ class TestTaskSettings:
         assert settings.max_concurrent_background == 3
 
     def test_default_timezone(self) -> None:
-        """AC (DLT-010): tasks.timezone defaults to empty string (system tz)."""
+        """AC (R5): tasks.timezone resolves to a non-empty valid IANA key."""
         settings = TaskSettings()
 
-        assert settings.timezone == ""
+        assert settings.timezone != ""
+        assert len(settings.timezone) > 0
 
     def test_settings_has_tasks_with_defaults(self) -> None:
         """AC (DLT-010): Settings has tasks field with default TaskSettings."""
@@ -798,6 +843,47 @@ class TestTaskSettings:
         )
 
         assert settings.tasks.idle_window == 120
+
+    def test_timezone_empty_resolves_to_system_tz(self) -> None:
+        """AC (R5): Empty timezone resolves to a non-empty valid IANA key."""
+        settings = TaskSettings()
+
+        assert settings.timezone != ""
+        # Verify it's a valid IANA key
+        ZoneInfo(settings.timezone)  # Should not raise
+
+    def test_timezone_explicit_valid_preserved(self) -> None:
+        """AC (R5): Explicit valid timezone is preserved."""
+        settings = TaskSettings(timezone="US/Eastern")
+
+        assert settings.timezone == "US/Eastern"
+
+    def test_timezone_invalid_raises_validation_error(self) -> None:
+        """AC (R5): Invalid timezone raises ValidationError."""
+        with pytest.raises(ValidationError, match="not a valid IANA timezone"):
+            TaskSettings(timezone="Fake/Timezone")
+
+    def test_detect_system_timezone_resolves_symlink(self, mocker) -> None:
+        """AC (R5): _detect_system_timezone extracts IANA name from symlink."""
+        mock_path = mocker.patch("tachikoma.config.Path")
+        mock_localtime = mocker.MagicMock()
+        mock_localtime.resolve.return_value = "/usr/share/zoneinfo/America/Buenos_Aires"
+        mock_path.return_value = mock_localtime
+
+        result = _detect_system_timezone()
+
+        assert result == "America/Buenos_Aires"
+
+    def test_detect_system_timezone_fallback_utc(self, mocker) -> None:
+        """AC (R5): _detect_system_timezone falls back to UTC on failure."""
+        mock_path = mocker.patch("tachikoma.config.Path")
+        mock_localtime = mocker.MagicMock()
+        mock_localtime.resolve.side_effect = OSError("no symlink")
+        mock_path.return_value = mock_localtime
+
+        result = _detect_system_timezone()
+
+        assert result == "UTC"
 
 
 class TestTaskSettingsDefaultConfig:

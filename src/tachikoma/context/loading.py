@@ -31,7 +31,7 @@ maintaining a warm, conversational tone.
 ## Core Traits
 
 - **Curious**: Ask clarifying questions when something is ambiguous rather than assuming.
-- **Honest**: Admit when you don't know something or made a mistake.
+- **Honest**: Admit when you don't know something or you made a mistake.
 - **Proactive**: Anticipate needs and offer suggestions without being asked.
 - **Concise**: Get to the point while remaining friendly.
 
@@ -86,9 +86,10 @@ CONTEXT_FILES = [
     ("AGENTS.md", "agents", DEFAULT_AGENTS_CONTENT),
 ]
 
-# Hard-coded system preamble: identity, role, memory guidance, and context explanation.
+# System preamble template: identity, role, memory guidance, and context explanation.
 # Always included in the system prompt, even when context files are missing or empty.
-SYSTEM_PREAMBLE = """\
+# The {timezone} placeholder is resolved by render_system_preamble() at assembly time.
+SYSTEM_PREAMBLE_TEMPLATE = """\
 # Your Identity
 
 You are Tachikoma — a personal assistant. While you run on top of Claude Code, your role is \
@@ -183,14 +184,22 @@ where you need to see the user's response.
 this for autonomous work that doesn't need user input: data gathering, file processing, periodic \
 analysis, or maintenance routines.
 
+## Date and Time
+
+Your configured timezone is **{timezone}**. To get the current date and time at any point, run:
+
+    TZ='{timezone}' date '+%A, %B %d, %Y at %H:%M:%S %Z (%z)'
+
 ## Scheduling
 
 Tasks support two schedule formats:
 
 - **Cron expressions** for recurring tasks (e.g., `0 9 * * *` for daily at 9 AM, `0 */2 * * *` \
 for every 2 hours). Evaluated in the user's configured timezone.
-- **ISO datetimes** for one-shot tasks (e.g., `2026-03-25T14:00:00Z`). One-shot tasks \
-auto-disable after firing.
+- **ISO datetimes** for one-shot tasks. Bare datetimes without timezone info are interpreted in \
+the configured timezone (e.g., `2026-04-01T15:00:00` means 3 PM local time). Datetimes with \
+explicit timezone info are preserved as-is: `2026-04-01T15:00:00Z` (UTC) or \
+`2026-04-01T15:00:00+05:30` (explicit offset). One-shot tasks auto-disable after firing.
 
 ## Tools
 
@@ -213,6 +222,18 @@ update_task with `enabled=false` instead. Get task IDs from list_tasks.
 # Context Documents
 
 The following sections contain your current foundational context, wrapped in XML tags."""
+
+
+def render_system_preamble(timezone: str) -> str:
+    """Render the system preamble with the configured timezone.
+
+    Args:
+        timezone: Valid IANA timezone string (pre-validated by config).
+
+    Returns:
+        The rendered system preamble string.
+    """
+    return SYSTEM_PREAMBLE_TEMPLATE.format(timezone=timezone)
 
 
 def load_foundational_context(workspace_path: Path) -> list[tuple[str, str]]:
@@ -266,28 +287,6 @@ def load_foundational_context(workspace_path: Path) -> list[tuple[str, str]]:
 
     return entries
 
-
-def load_context(workspace_path: Path) -> str:
-    """Read context files and assemble into a system prompt string.
-
-    DEPRECATED: Use load_foundational_context() + build_system_prompt() instead.
-
-    Synchronous — files are small. Always returns at least the system preamble.
-
-    Args:
-        workspace_path: Path to the workspace root directory.
-
-    Returns:
-        Assembled system prompt string with preamble and XML-wrapped sections.
-    """
-    entries = load_foundational_context(workspace_path)
-
-    if not entries:
-        return SYSTEM_PREAMBLE
-
-    # XML-wrap each entry (same logic as build_system_prompt)
-    sections = [f"<{owner}>\n{content}\n</{owner}>" for owner, content in entries]
-    return SYSTEM_PREAMBLE + "\n\n" + "\n\n".join(sections)
 
 
 async def context_hook(ctx: BootstrapContext) -> None:

@@ -1,6 +1,6 @@
 [project]
 name = "tachikoma-agent"
-version = "1.2.1"
+version = "1.5.1"
 description = "A proactive personal assistant built on Claude Agent SDK"
 readme = "README.md"
 license = {text = "MIT"}
@@ -65,7 +65,12 @@ module-name = "tachikoma"
 [tool.semantic_release]
 commit_parser = "conventional"
 version_toml = ["pyproject.toml:project.version"]
-build_command = "uv lock && uv build"
+build_command = """
+    pip install uv
+    uv lock --upgrade-package "$PACKAGE_NAME"
+    git add uv.lock
+    uv build
+"""
 major_on_zero = false
 tag_format = "v{version}"
 

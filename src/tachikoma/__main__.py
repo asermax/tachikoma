@@ -8,6 +8,7 @@ import asyncio
 import sys
 from pathlib import Path
 from typing import Literal
+from zoneinfo import ZoneInfo
 
 from bubus import EventBus
 from claude_agent_sdk import CLIConnectionError, CLINotFoundError, ProcessError
@@ -154,7 +155,7 @@ async def run(
     msg_pipeline = MessagePostProcessingPipeline()
     msg_pipeline.register(SummaryProcessor(registry=registry, agent_defaults=agent_defaults))
 
-    task_tools = create_task_tools_server(task_repository)
+    task_tools = create_task_tools_server(task_repository, ZoneInfo(settings.tasks.timezone))
 
     console = Console()
 
@@ -176,6 +177,7 @@ async def run(
             session_resume_window=settings.agent.session_resume_window,
             session_idle_timeout=settings.agent.session_idle_timeout,
             mcp_servers={"task-tools": task_tools},
+            timezone=settings.tasks.timezone,
         ) as coordinator:
             scheduler_tasks.append(
                 asyncio.create_task(

@@ -19,6 +19,7 @@ from claude_agent_sdk.types import (
 )
 from loguru import logger
 
+from tachikoma.adapter import sanitize_text
 from tachikoma.agent_defaults import AgentDefaults
 from tachikoma.sessions.model import Session
 from tachikoma.sessions.registry import SessionRegistry
@@ -356,7 +357,7 @@ async def fork_and_capture(
         if content is not None:
             for block in content:
                 if hasattr(block, "text"):
-                    chunks.append(block.text)
+                    chunks.append(sanitize_text(block.text))
 
     result = "".join(chunks)
     _log.debug(
