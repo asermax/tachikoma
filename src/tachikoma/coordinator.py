@@ -26,7 +26,7 @@ from claude_agent_sdk import (
 from claude_agent_sdk.types import AgentDefinition, PermissionMode, SystemPromptPreset
 from loguru import logger
 
-from tachikoma.adapter import adapt
+from tachikoma.adapter import adapt, is_encoding_error, sanitize_text
 from tachikoma.agent_defaults import AgentDefaults
 from tachikoma.boundary import BoundaryResult, SessionCandidate, detect_boundary
 from tachikoma.context.assembly import build_system_prompt
@@ -37,7 +37,7 @@ from tachikoma.pre_processing import (
     McpServerConfig,
     PreProcessingPipeline,
 )
-from tachikoma.sessions.model import Session
+from tachikoma.sessions.model import Session, SessionContextEntry
 from tachikoma.sessions.registry import SessionRegistry
 
 _log = logger.bind(component="coordinator")
@@ -121,6 +121,7 @@ class Coordinator:
         session_resume_window: int = 86400,
         session_idle_timeout: int = 900,
         mcp_servers: dict[str, McpSdkServerConfig] | None = None,
+        timezone: str = "",
     ) -> None:
         # Store individual options for building ClaudeAgentOptions per message
         self._allowed_tools = allowed_tools or []
@@ -132,6 +133,7 @@ class Coordinator:
         self._permission_mode = permission_mode
         self._agents = agents
         self._base_mcp_servers: dict[str, McpSdkServerConfig] = mcp_servers or {}
+        self._timezone = timezone
 
         # Session resumption configuration
         self._session_resume_window = session_resume_window
@@ -458,17 +460,18 @@ class Coordinator:
         resume_id = self._sdk_session_id if not is_new_session else None
 
         # Build system prompt from persisted entries
-        system_prompt_append = build_system_prompt([])
+        entries: list[SessionContextEntry] = []
         if self._registry is not None and active is not None:
             try:
                 entries = await self._registry.load_context_entries(active.id)
-                system_prompt_append = build_system_prompt(entries)
             except Exception as exc:
                 _log.exception(
                     "Context load failed, using preamble only: session_id={id} err={err}",
                     id=active.id,
                     err=str(exc),
                 )
+
+        system_prompt_append = build_system_prompt(entries, timezone=self._timezone)
 
         # Build options and create a fresh client for this exchange
         options = self._build_options(resume=resume_id, system_prompt_append=system_prompt_append)
@@ -488,6 +491,9 @@ class Coordinator:
 
                     if isinstance(event, TextChunk):
                         response_chunks.append(event.text)
+
+                    if isinstance(event, Error) and is_encoding_error(event.message):
+                        await self._handle_encoding_error(active)
 
                     if (
                         isinstance(event, Result)
@@ -511,7 +517,9 @@ class Coordinator:
 
         except (CLIConnectionError, ProcessError) as exc:
             _log.error("Stream error (recoverable): err={err}", err=str(exc))
-            yield Error(message=str(exc), recoverable=True)
+            if is_encoding_error(str(exc)):
+                await self._handle_encoding_error(active)
+            yield Error(message=sanitize_text(str(exc)), recoverable=True)
 
         finally:
             await client.disconnect()
@@ -531,6 +539,29 @@ class Coordinator:
         self._last_message_time = datetime.now(UTC)
 
         _log.debug("Response complete")
+
+    async def _handle_encoding_error(self, session: Session | None) -> None:
+        """Clear contaminated SDK session reference and mark session as errored.
+
+        Called when the SDK returns a UTF-8 encoding error (e.g. surrogates in its
+        internal transcript). Clears the in-memory session ID to prevent resuming
+        the broken session, and marks the DB record as errored so it's excluded
+        from resumable candidates.
+        """
+        _log.warning(
+            "Encoding error detected, clearing SDK session: session_id={id}",
+            id=self._sdk_session_id,
+        )
+        self._sdk_session_id = None
+
+        if session is not None and self._registry is not None:
+            try:
+                await self._registry.mark_errored(session.id)
+            except Exception as exc:
+                _log.exception(
+                    "Failed to mark session as errored: err={err}",
+                    err=str(exc),
+                )
 
     async def _close_and_fire_postprocessing(self, session: Session) -> None:
         """Close a session in the registry and fire async post-processing.

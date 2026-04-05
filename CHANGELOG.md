@@ -7,6 +7,133 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v1.6.0 (2026-04-05)
+
+### Chores
+
+- Update uv.lock
+  ([`6e87fc3`](https://github.com/asermax/tachikoma/commit/6e87fc3d71848592541ca27d1b4db7e446df6cdf))
+
+- Update uv.lock after master merge
+  ([`7c3cb24`](https://github.com/asermax/tachikoma/commit/7c3cb24d2cf437a07dad58fbe12e2fe6567d1772))
+
+### Documentation
+
+- **design**: Add design for Telegram markdown escaping
+  ([`6163d0f`](https://github.com/asermax/tachikoma/commit/6163d0fef3647b502003d380502824db64bfaf57))
+
+- **design**: Resolve S2 flag and detail Telegram markdown escaping design
+  ([`c10f402`](https://github.com/asermax/tachikoma/commit/c10f402c7fe3c80b20de13f6050d4b68e6289a7a))
+
+- **planning**: Add DLT-079 implementation plan
+  ([`080879f`](https://github.com/asermax/tachikoma/commit/080879f08a5d7652ea9c5c9878b12f22446953d6))
+
+- **planning**: Advance DLT-079 status to plan phase
+  ([`6ac976d`](https://github.com/asermax/tachikoma/commit/6ac976d305a0bb53b5e926594749113532913cf2))
+
+- **planning**: Mark DLT-079 design as approved
+  ([`df6b266`](https://github.com/asermax/tachikoma/commit/df6b2668a3282abf9ffd258745afe1f21c678691))
+
+- **planning**: Mark DLT-079 implementation complete
+  ([`5dacc9b`](https://github.com/asermax/tachikoma/commit/5dacc9bc7166958df43983b49536abb74fd28687))
+
+- **planning**: Update DLT-079 status to design
+  ([`84b5644`](https://github.com/asermax/tachikoma/commit/84b564426cfe90e8128adfe535c087f3f7098d81))
+
+- **planning**: Update DLT-079 status to spec
+  ([`479e1ec`](https://github.com/asermax/tachikoma/commit/479e1ec3385b0299b358d9391c7f6b78e1d2c935))
+
+- **spec**: Add spec for Telegram markdown escaping
+  ([`bce7155`](https://github.com/asermax/tachikoma/commit/bce71559ee749bbf20a5a02a1fd357a2b2cf1c84))
+
+- **spec**: Refine DLT-079 spec for clarity and edge cases
+  ([`85af704`](https://github.com/asermax/tachikoma/commit/85af70428fc1977cde05676a938c9ae65b2368ba))
+
+- **spec**: Refine R4 isolation requirement for display.py changes
+  ([`e5ee979`](https://github.com/asermax/tachikoma/commit/e5ee9796ebb6ef3e55cbb5e1bf8c0234332db4ca))
+
+- **spec,design**: Extend Bash description preference to shared TOOL_DISPLAY
+  ([`459a62f`](https://github.com/asermax/tachikoma/commit/459a62f606145ce26bb4847bdd0d2d7e5c1a9519))
+
+- **telegram**: Reconcile DLT-079 into feature docs and clean up delta files
+  ([`2ffc745`](https://github.com/asermax/tachikoma/commit/2ffc7451453e817ae269e23c258f1069d727e234))
+
+### Features
+
+- **display**: Prefer Bash description and support channel-specific summaries
+  ([`8e809a8`](https://github.com/asermax/tachikoma/commit/8e809a890d39df49e338552107972da440ecf251))
+
+- **telegram**: Add channel-specific formatters with code wrapping
+  ([`4fc5f56`](https://github.com/asermax/tachikoma/commit/4fc5f5685e6c8d1d93cfd5962a6c63e69a5433e0))
+
+### Refactoring
+
+- **display**: Unify Bash summary formatting with wrapper parameter
+  ([`8d43d90`](https://github.com/asermax/tachikoma/commit/8d43d90f052b0db3e8b1d81445aac2b2fa2ad2ba))
+
+### Testing
+
+- **telegram**: Replace glob test with read and fallback cases
+  ([`f28e976`](https://github.com/asermax/tachikoma/commit/f28e9760bbc1b21fda8b5e67269795de7e20ede9))
+
+
+## v1.5.2 (2026-04-05)
+
+### Bug Fixes
+
+- **adapter**: Sanitize error messages from SDK output
+  ([`d12b42b`](https://github.com/asermax/tachikoma/commit/d12b42b3a78c89423f4af982bf90d52542645c66))
+
+- **ci**: Install uv inside PSR Docker container for build_command
+  ([`daefeff`](https://github.com/asermax/tachikoma/commit/daefeff5e6398d04e917f60c4f4e51109c1c7bec))
+
+- **ci**: Let PSR handle uv.lock update during release
+  ([`a6355fb`](https://github.com/asermax/tachikoma/commit/a6355fb1261d293943c8390f40150111284b8a07))
+
+- **telegram**: Add defense-in-depth surrogate sanitization at API boundary
+  ([`2e58dee`](https://github.com/asermax/tachikoma/commit/2e58dee94f27177bac7d9b7e942404f9572b193a))
+
+
+## v1.5.1 (2026-04-05)
+
+### Bug Fixes
+
+- **adapter**: Sanitize invalid UTF-8 surrogates from SDK text output
+  ([`6107723`](https://github.com/asermax/tachikoma/commit/610772321091daa36d9c6c253292f69574868cfa))
+
+- **tasks**: Prevent hour-boundary cron tasks from never firing
+  ([`82335f7`](https://github.com/asermax/tachikoma/commit/82335f7a54624ad6cb03386c22665e887dfeee5f))
+
+### Documentation
+
+- **agent**: Add text sanitization to architecture docs
+  ([`db6aa62`](https://github.com/asermax/tachikoma/commit/db6aa62867058c3e962d7d1f958a6e6a14db5650))
+
+- **planning**: Add deltas DLT-099 through DLT-110 to inventory
+  ([`f053b62`](https://github.com/asermax/tachikoma/commit/f053b623526b46031541e23d6634184f59eaddf0))
+
+
+## v1.5.0 (2026-04-05)
+
+### Documentation
+
+- **tasks**: Clarify notify parameter and R10 UTC defaulting in spec
+  ([`b68c855`](https://github.com/asermax/tachikoma/commit/b68c8550c9446fd5f3b6cea8371b400782298c62))
+
+
+## v1.4.0 (2026-04-05)
+
+### Chores
+
+- Update lockfile for version 1.3.1
+  ([`222be73`](https://github.com/asermax/tachikoma/commit/222be73a21830a56cede5806fa30b6feae1528cd))
+
+### Documentation
+
+- **tasks**: Replace DLT-091 with agent-driven notification tool
+  ([`107dc5e`](https://github.com/asermax/tachikoma/commit/107dc5eab6a5c728545477ca39e591378bce6cea))
+
+
 ## v1.3.1 (2026-04-04)
 
 ### Bug Fixes

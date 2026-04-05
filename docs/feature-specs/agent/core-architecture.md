@@ -34,6 +34,7 @@ The core agent loop: receive a user message, pass it to the Claude agent via the
 | R15 | MCP server registration: coordinator accepts an optional mapping of named MCP server configurations at construction and passes them to `ClaudeAgentOptions` |
 | R16 | Last message time tracking: coordinator tracks the timestamp of the last message exchange for idle gating by external subsystems |
 | R17 | Configurable tool blocking: specific tools can be unconditionally blocked via `disallowed_tools` config, defaulting to `["AskUserQuestion", "CronCreate", "CronDelete", "CronList"]` |
+| R18 | Text sanitization: the adapter strips invalid UTF-8 characters (surrogate code points, overlong encodings) from all SDK text before passing to domain types, preventing encoding failures in downstream consumers |
 
 ## Behaviors
 
@@ -162,7 +163,7 @@ On the first message of a new session, the coordinator triggers a registered pre
 The system prompt is assembled from persisted database entries on every SDK client creation, making the database the canonical source of context.
 
 **Acceptance Criteria**:
-- Given a session with persisted entries, when an SDK client is created, then the system prompt append is assembled from: the base system preamble (hardcoded identity, role, and memory guidance) + persisted entries (each wrapped in XML tags by owner, in the order they were persisted)
+- Given a session with persisted entries, when an SDK client is created, then the system prompt append is assembled from: the base system preamble (rendered with the configured timezone; includes identity, role, and memory guidance) + persisted entries (each wrapped in XML tags by owner, in the order they were persisted)
 - Given the coordinator creates a client for subsequent messages in a session, then context is loaded from the database on each client creation — not from in-memory state
 - Given context loading fails during prompt assembly, then the error is logged and the system prompt falls back to the base system preamble only (no dynamic context entries)
 - Given a fork helper is called with a system prompt append parameter, then the assembly function builds the system prompt append from the parent session's entries, set on the fork's options

@@ -147,6 +147,22 @@ class SessionRegistry:
 
         _log.debug("Session marked as processed: session_id={id}", id=session_id)
 
+    async def mark_errored(self, session_id: str) -> None:
+        """Mark a session as errored to prevent resuming a contaminated session.
+
+        Sets the error flag on the session, which excludes it from resumable
+        candidates in get_recent_closed() and makes its status "interrupted".
+
+        Args:
+            session_id: The ID of the session to mark as errored.
+        """
+        await self._repository.update(session_id, error=True)
+
+        if self._active_session is not None and self._active_session.id == session_id:
+            self._active_session = await self._repository.get_by_id(session_id)
+
+        _log.info("Session marked as errored: session_id={id}", id=session_id)
+
     async def get_active_session(self) -> Session | None:
         """Return the currently active session, or None if no session is open."""
         return self._active_session

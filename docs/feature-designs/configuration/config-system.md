@@ -96,7 +96,7 @@ Settings (root, frozen)
 │   ├── check_interval: int = 300              (session task check interval in seconds)
 │   ├── max_iterations: int = 10               (max evaluator iterations for background tasks)
 │   ├── max_concurrent_background: int = 3     (max parallel background tasks)
-│   └── timezone: str | None = None            (IANA timezone, None = system timezone)
+│   └── timezone: str = ""                     (validate_default=True; validators resolve "" → system IANA key, then validate via ZoneInfo; invalid = startup error)
 └── telegram: TelegramSettings | None = None
     ├── bot_token: str
     ├── authorized_chat_id: int
@@ -289,6 +289,26 @@ flowchart TD
 - Pro: Clear distinction — None means "not configured", present means "fully configured"
 - Pro: Pydantic validates all fields when the section exists
 - Con: Bootstrap hook must prompt for missing values when channel is "telegram"
+
+### Timezone field as str with validators
+
+**Choice**: Keep `TaskSettings.timezone` as `str` with Pydantic `field_validator`s that (1) replace `""` with the system timezone IANA name and (2) validate via `ZoneInfo()`.
+**Why**: The field is loaded from TOML (a string) and needs to work with `_generate_default_config()`. `ZoneInfo` type would break config generation and TOML serialization. Validators ensure the value is always a valid IANA timezone key after loading.
+
+**Consequences**:
+- Pro: Config generation, write-back, and TOML serialization work unchanged
+- Pro: Invalid values fail at startup with clear Pydantic error
+- Con: Consumers must call `ZoneInfo(settings.timezone)` (trivial due to caching)
+
+### System timezone detection via /etc/localtime symlink
+
+**Choice**: When `tasks.timezone` is not configured, detect the system timezone by resolving the `/etc/localtime` symlink target and extracting the IANA name (everything after `zoneinfo/` in the path). Falls back to `"UTC"` if resolution fails.
+**Why**: Zero extra dependencies. Produces real IANA timezone name for correct DST handling. Works on Linux/macOS (project's target platforms).
+
+**Consequences**:
+- Pro: Zero new dependencies, correct timezone math (DST transitions)
+- Pro: Logs and display show the real IANA timezone name
+- Con: Falls back to UTC if `/etc/localtime` is a copy (not a symlink) — acceptable for single-user self-hosted deployment
 
 ## System Behavior
 

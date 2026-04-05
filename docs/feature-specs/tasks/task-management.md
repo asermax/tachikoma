@@ -24,7 +24,7 @@ Persistent task definitions with cron-like scheduling, automatic instance genera
 | R6 | Catch-up on missed schedules after restart using `last_fired_at` |
 | R7 | Task definitions and instances survive restarts (persistent storage) |
 | R8 | Bootstrap step to initialize task database tables and run crash recovery |
-| R9 | Base system prompt preamble includes a static Tasks section so the agent has foundational awareness of the task system regardless of whether tasks currently exist |
+| R9 | Base system prompt preamble includes a Tasks section (rendered with the configured timezone) so the agent has foundational awareness of the task system regardless of whether tasks currently exist |
 | R10 | Schedule deserialization is robust to malformed data — legacy bare ISO datetime strings are recovered as one-shot schedules, and corrupted definitions are auto-disabled |
 
 ## Behaviors
@@ -37,10 +37,13 @@ The agent manages task definitions through MCP tools exposed during conversation
 - Given the agent is in a conversation, when it calls `create_task` with a valid cron expression, type, prompt, and name, then a task definition is persisted with `enabled=true` and `last_fired_at=null`
 - Given the agent calls `create_task` with a one-shot schedule, then a task definition is created that will fire exactly once
 - Given the agent calls `create_task` with a one-shot schedule in the past, then the tool returns a clear error without creating a definition
+- Given the agent calls `create_task` with a bare ISO datetime (no timezone info), then the datetime is interpreted in the user's configured timezone (not UTC)
+- Given the agent calls `create_task` with an ISO datetime including an explicit timezone offset or `Z` suffix, then the explicit timezone is preserved as-is
 - Given the agent calls `create_task` with an invalid cron expression, then the tool returns a clear error message
 - Given the agent calls `create_task` without a required field (name, schedule, type, or prompt), then the tool returns a clear error identifying the missing field
+- Given the agent calls `create_task` with an optional `notify` field, then the task definition stores the notification instruction; when `notify` is omitted, the definition is created with `notify=null`
 - Given the agent calls `create_task` with a type value other than "session" or "background", then the tool returns a clear error
-- Given the agent calls `list_tasks` with no arguments, then it receives only enabled task definitions with their task ID, current status, type, schedule, and last_fired_at information
+- Given the agent calls `list_tasks` with no arguments, then it receives only enabled task definitions with their task ID, current status, type, schedule (one-shot times displayed in the configured timezone), and last_fired_at information
 - Given the agent calls `list_tasks` with `archived=true`, then it receives only disabled task definitions
 - Given the agent calls `list_tasks` and no matching definitions exist (no enabled tasks by default, or no disabled tasks when archived), then a clear "no tasks found" message is returned
 - Given the agent calls `update_task` with a modified schedule, prompt, task_type, or other updatable field, then the definition is updated and future instances use the new configuration
@@ -71,11 +74,12 @@ Task data survives restarts. The bootstrap hook initializes the database and per
 
 ### Preamble Awareness (R9)
 
-The base system prompt preamble includes a static Tasks section that gives the agent foundational awareness of the task system.
+The base system prompt preamble includes a timezone-aware Tasks section that gives the agent foundational awareness of the task system.
 
 **Acceptance Criteria**:
 - Given the system prompt is assembled, then the preamble Tasks section describes task types (session and background) and when to use each
-- Given the preamble Tasks section, then it explains scheduling formats (cron expressions and ISO datetimes)
+- Given the preamble Tasks section, then it explains scheduling formats (cron expressions and ISO datetimes) including timezone behavior (bare datetimes interpreted in configured timezone, explicit offsets preserved)
+- Given the preamble Tasks section, then it includes a Date and Time subsection showing the configured timezone and a date command for current time lookup
 - Given the preamble Tasks section, then it lists each MCP tool with parameter types, required/optional indicators, valid values, and behavioral notes
 - Given the preamble Tasks section, then tool descriptions include cross-references between tools (e.g., "get task IDs from list_tasks" for update_task and delete_task)
 - Given the preamble Tasks section describes the `notify` parameter, then it states that `notify` is a success notification instruction — when set, generates a user-facing message on completion; when omitted, successful tasks complete silently; failures always notify regardless of this field
@@ -85,7 +89,7 @@ The base system prompt preamble includes a static Tasks section that gives the a
 Schedule deserialization handles malformed data gracefully, preventing corrupted definitions from blocking the entire task scheduler.
 
 **Acceptance Criteria**:
-- Given a task definition with a bare ISO datetime string in the schedule column (legacy format), when `from_json` is called, then it recovers the value as a one-shot schedule with UTC defaulting for naive datetimes
+- Given a task definition with a bare ISO datetime string in the schedule column (legacy format), when `from_json` is called, then it recovers the value as a one-shot schedule with UTC defaulting for naive datetimes (legacy data recovery, distinct from `create_task` timezone stamping for new user input)
 - Given a task definition with completely invalid data in the schedule column, when `from_json` is called, then it raises `ValueError` (not `JSONDecodeError`) with the malformed input in the message
 - Given a task definition with structurally valid JSON but an unexpected type (e.g., array), when `from_json` is called, then it raises `ValueError` describing the unexpected type
 - Given multiple enabled definitions where one has a corrupted schedule, when the repository lists enabled definitions, then valid definitions are returned and the corrupted definition is auto-disabled (logged as warning)

@@ -11,7 +11,7 @@ from claude_agent_sdk.types import AssistantMessage, ResultMessage, TextBlock
 
 from tachikoma.agent_defaults import AgentDefaults
 from tachikoma.config import TaskSettings
-from tachikoma.notifications import Notification
+from tachikoma.notifications import Notification, handle_send_notification
 from tachikoma.tasks.executor import (
     BackgroundTaskExecutor,
     _PreprocessingResult,
@@ -501,12 +501,6 @@ class TestBackgroundTaskExecutor:
             session_registry=_mock_session_registry(),
         )
 
-        agent_notification = Notification(
-            prompt="Progress update from agent",
-            source_id="inst-1",
-            severity="info",
-        )
-
         with patch("tachikoma.tasks.executor.ClaudeSDKClient") as mock_client_class:
             mock_client = AsyncMock()
             mock_client.__aenter__ = AsyncMock(return_value=mock_client)
@@ -515,8 +509,13 @@ class TestBackgroundTaskExecutor:
             # Simulate agent calling send_notification during execution,
             # then evaluator says stuck
             async def mock_receive_response():
-                # Agent sends notification during execution (simulating tool call)
-                dispatched_events.append(agent_notification)
+                # Agent sends notification via the actual handler (end-to-end path)
+                await handle_send_notification(
+                    message="Progress update: halfway through",
+                    bus=bus,
+                    source="Background task: Test task",
+                    source_id="inst-1",
+                )
                 async for msg in _make_sdk_response(text="Working...")():
                     yield msg
 

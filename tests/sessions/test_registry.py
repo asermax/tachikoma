@@ -26,6 +26,7 @@ def _make_session(
     sdk_session_id: str | None = None,
     transcript_path: str | None = None,
     summary: str | None = None,
+    error: bool = False,
 ) -> Session:
     return Session(
         id=session_id,
@@ -34,6 +35,7 @@ def _make_session(
         sdk_session_id=sdk_session_id,
         transcript_path=transcript_path,
         summary=summary,
+        error=error,
     )
 
 
@@ -523,3 +525,35 @@ class TestSessionRegistryReopenSession:
         result = await registry.reopen_session("s1")
 
         assert result is None
+
+
+class TestMarkErrored:
+    """Tests for mark_errored() behavior."""
+
+    async def test_sets_error_flag(self, registry: SessionRegistry, mock_repo) -> None:
+        """AC: mark_errored sets error=True on the session."""
+        await registry.mark_errored("test-id")
+
+        mock_repo.update.assert_awaited_once_with("test-id", error=True)
+
+    async def test_updates_active_session_reference(self, mock_repo) -> None:
+        """AC: mark_errored refreshes the in-memory active session."""
+        original = _make_session("s1", sdk_session_id="sdk-1")
+        errored = _make_session("s1", sdk_session_id="sdk-1", error=True)
+        mock_repo.create = AsyncMock(return_value=original)
+        mock_repo.get_by_id = AsyncMock(return_value=errored)
+
+        registry = SessionRegistry(mock_repo)
+        await registry.create_session()
+
+        await registry.mark_errored("s1")
+
+        active = await registry.get_active_session()
+        assert active is not None
+        assert active.error is True
+
+    async def test_works_without_active_session(self, registry: SessionRegistry, mock_repo) -> None:
+        """AC: mark_errored works when no active session exists."""
+        await registry.mark_errored("nonexistent-id")
+
+        mock_repo.update.assert_awaited_once()

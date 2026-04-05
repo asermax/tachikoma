@@ -14,10 +14,39 @@ from claude_agent_sdk.types import (
     ToolUseBlock,
     UserMessage,
 )
+from loguru import logger
 
 from tachikoma.events import AgentEvent, Error, Result, TextChunk, ToolActivity
 
+_log = logger.bind(component="adapter")
+
 NON_RECOVERABLE_ERRORS = frozenset({"authentication_failed", "billing_error"})
+
+
+def sanitize_text(text: str) -> str:
+    """Strip characters that cannot be represented in valid UTF-8.
+
+    The SDK CLI subprocess occasionally produces text containing invalid surrogate
+    code points (U+D800–U+DFFF) or other unencodable characters. These cause
+    encoding failures in downstream consumers (Telegram API, post-processing pipeline).
+
+    The encode/decode roundtrip preserves all valid Unicode while silently removing
+    anything that cannot be encoded as UTF-8.
+    """
+    sanitized = text.encode("utf-8", errors="ignore").decode("utf-8")
+
+    if len(sanitized) != len(text):
+        _log.debug(
+            "Sanitized text: removed {removed} unencodable characters",
+            removed=len(text) - len(sanitized),
+        )
+
+    return sanitized
+
+
+def is_encoding_error(message: str) -> bool:
+    """Check if an error message indicates a Unicode encoding failure."""
+    return "surrogates not allowed" in message or "codec can't encode" in message
 
 
 def adapt(message: Any) -> list[AgentEvent]:
@@ -41,13 +70,13 @@ def adapt(message: Any) -> list[AgentEvent]:
 def _adapt_assistant(message: AssistantMessage) -> list[AgentEvent]:
     if message.error is not None:
         recoverable = message.error not in NON_RECOVERABLE_ERRORS
-        return [Error(message=message.error, recoverable=recoverable)]
+        return [Error(message=sanitize_text(message.error), recoverable=recoverable)]
 
     events: list[AgentEvent] = []
 
     for block in message.content:
         if isinstance(block, TextBlock):
-            events.append(TextChunk(text=block.text))
+            events.append(TextChunk(text=sanitize_text(block.text)))
         elif isinstance(block, ToolUseBlock):
             events.append(ToolActivity(tool_name=block.name, tool_input=block.input))
 
@@ -56,7 +85,9 @@ def _adapt_assistant(message: AssistantMessage) -> list[AgentEvent]:
 
 def _adapt_result(message: ResultMessage) -> list[AgentEvent]:
     if message.is_error:
-        return [Error(message=message.result or "Unknown error", recoverable=False)]
+        error_msg = sanitize_text(message.result or "Unknown error")
+        recoverable = is_encoding_error(error_msg)
+        return [Error(message=error_msg, recoverable=recoverable)]
 
     return [
         Result(
