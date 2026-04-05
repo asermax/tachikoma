@@ -81,22 +81,28 @@ def format_tool_name(name: str) -> str:
     return last_segment.replace("_", " ").title()
 
 
-def _format_bash_summary(tool_input: dict[str, Any]) -> str:
-    """Format Bash tool summary with preference for description over command."""
-    # Prefer description field (first char lowercased for sentence flow)
+def _format_bash_summary(
+    tool_input: dict[str, Any],
+    wrapper: Callable[[str], str] | None = None,
+) -> str:
+    """Format Bash tool summary with preference for description over command.
+
+    Args:
+        tool_input: The tool's input dict.
+        wrapper: Optional function to wrap argument text (e.g. code_wrap for Telegram).
+    """
+    wrap = wrapper or (lambda s: s)
+
     if tool_input.get("description"):
         desc = tool_input["description"]
-        # Lowercase first character, preserve rest (proper nouns, paths)
-        return desc[0].lower() + desc[1:] if len(desc) > 1 else desc.lower()
+        formatted = desc[0].lower() + desc[1:] if len(desc) > 1 else desc.lower()
+        return wrap(formatted)
 
-    # Fall back to truncated command
     if "command" in tool_input:
         cmd = tool_input["command"]
-        if len(cmd) > 40:
-            return f"running: {cmd[:40]}..."
-        return f"running: {cmd}"
+        truncated = f"{cmd[:40]}..." if len(cmd) > 40 else cmd
+        return f"running: {wrap(truncated)}"
 
-    # Final fallback
     return "running a command"
 
 

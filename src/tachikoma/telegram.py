@@ -28,7 +28,7 @@ from telegramify_markdown import convert, split_entities, utf16_len
 from tachikoma.bootstrap import BootstrapContext, BootstrapError
 from tachikoma.config import TelegramSettings
 from tachikoma.coordinator import Coordinator
-from tachikoma.display import format_tool_name, summarize_tool_activity
+from tachikoma.display import _format_bash_summary, format_tool_name, summarize_tool_activity
 from tachikoma.events import Error, Result, Status, TextChunk, ToolActivity
 from tachikoma.tasks.events import SessionTaskReady, TaskNotification
 
@@ -72,22 +72,7 @@ TELEGRAM_TOOL_DISPLAY: dict[str, Callable[[dict[str, Any]], str]] = {
 
 
 # Telegram-specific summary formatters (present-progressive, basenames)
-# No single quotes on Grep/Glob (R6) — inline code provides visual grouping
-def _format_telegram_bash_summary(inp: dict[str, Any]) -> str:
-    """Format Bash summary for Telegram with code_wrap, preferring description."""
-    if inp.get("description"):
-        desc = inp["description"]
-        formatted = desc[0].lower() + desc[1:] if len(desc) > 1 else desc.lower()
-        return code_wrap(formatted)
-
-    if "command" in inp:
-        cmd = inp["command"]
-        truncated = f"{cmd[:40]}..." if len(cmd) > 40 else cmd
-        return f"running: {code_wrap(truncated)}"
-
-    return "running a command"
-
-
+# Inline code provides visual grouping, so single quotes are omitted on Grep/Glob
 TELEGRAM_TOOL_SUMMARY: dict[str, Callable[[dict[str, Any]], str]] = {
     "Read": lambda inp: (
         f"reading {code_wrap(basename(inp['file_path']))}"
@@ -104,7 +89,7 @@ TELEGRAM_TOOL_SUMMARY: dict[str, Callable[[dict[str, Any]], str]] = {
         if "pattern" in inp
         else "globbing a pattern"
     ),
-    "Bash": lambda inp: _format_telegram_bash_summary(inp),
+    "Bash": lambda inp: _format_bash_summary(inp, wrapper=code_wrap),
     "Edit": lambda inp: (
         f"editing {code_wrap(basename(inp['file_path']))}"
         if "file_path" in inp
