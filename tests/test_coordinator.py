@@ -26,7 +26,7 @@ from helpers import make_assistant, make_result
 from tachikoma.agent_defaults import AgentDefaults
 from tachikoma.boundary import BoundaryResult
 from tachikoma.coordinator import Coordinator, _derive_transcript_path
-from tachikoma.events import Error, Result, TextChunk, ToolActivity
+from tachikoma.events import Error, Result, Status, TextChunk, ToolActivity
 from tachikoma.pre_processing import ContextResult
 from tachikoma.sessions.errors import SessionRepositoryError
 from tachikoma.sessions.model import Session, SessionContextEntry
@@ -3131,3 +3131,422 @@ class TestIdlePostProcessingShutdown:
 
             steered.set()
             await task
+
+
+class TestStartupMatching:
+    """Tests for DLT-084: startup matching on first message after restart."""
+
+    async def test_startup_queries_candidates_and_runs_detection(
+        self, mock_sdk, mocker
+    ) -> None:
+        """AC: When no active session, candidates are queried and detection runs."""
+        client, _ = mock_sdk
+        client.receive_response.return_value = _mock_messages(
+            make_assistant([TextBlock(text="hi")]),
+            make_result(),
+        )
+
+        closed_session = Session(
+            id="s2",
+            started_at=datetime.now(UTC) - timedelta(hours=1),
+            ended_at=datetime.now(UTC) - timedelta(minutes=30),
+            sdk_session_id="sdk-2",
+            summary="Discussion about Python testing",
+        )
+        registry = _make_mock_registry(active_session=None)
+        registry.get_recent_closed = AsyncMock(return_value=[closed_session])
+
+        mock_detect = mocker.patch(
+            "tachikoma.coordinator.detect_boundary",
+            return_value=BoundaryResult(continues=False, resume_session_id=None),
+        )
+
+        async with Coordinator(
+            registry=registry,
+            agent_defaults=AgentDefaults(cwd=Path("/workspace")),
+        ) as coord:
+            _ = await _send(coord, "hello")
+
+        # Candidates queried and detection called with summary=None
+        registry.get_recent_closed.assert_awaited_once()
+        mock_detect.assert_awaited_once()
+        call_args = mock_detect.call_args
+        assert call_args[0][1] is None  # summary=None (candidates-only mode)
+        assert call_args[1]["candidates"] is not None
+        # No match → fresh session created
+        registry.create_session.assert_awaited_once()
+
+    async def test_startup_no_candidates_skips_detection(
+        self, mock_sdk, mocker
+    ) -> None:
+        """AC: No candidates means no detection, fresh session created."""
+        client, _ = mock_sdk
+        client.receive_response.return_value = _mock_messages(
+            make_assistant([TextBlock(text="hi")]),
+            make_result(),
+        )
+
+        registry = _make_mock_registry(active_session=None)
+        registry.get_recent_closed = AsyncMock(return_value=[])
+
+        mock_detect = mocker.patch(
+            "tachikoma.coordinator.detect_boundary",
+            return_value=BoundaryResult(continues=False),
+        )
+
+        async with Coordinator(
+            registry=registry,
+            agent_defaults=AgentDefaults(cwd=Path("/workspace")),
+        ) as coord:
+            events = await _send(coord, "hello")
+
+        mock_detect.assert_not_awaited()
+        registry.create_session.assert_awaited_once()
+        # No "Thinking..." status when no candidates
+        status_events = [e for e in events if isinstance(e, Status)]
+        assert len(status_events) == 0
+
+    async def test_startup_match_reopens_session(
+        self, mock_sdk, mocker
+    ) -> None:
+        """AC: Matching session is reopened, create_session not called."""
+        client, mock_cls = mock_sdk
+        client.receive_response.return_value = _mock_messages(
+            make_assistant([TextBlock(text="back to Python")]),
+            make_result(),
+        )
+
+        ended_at = datetime.now(UTC) - timedelta(minutes=30)
+        closed_session = Session(
+            id="s2",
+            started_at=datetime.now(UTC) - timedelta(hours=1),
+            ended_at=ended_at,
+            sdk_session_id="sdk-resume",
+            summary="Discussion about Python testing",
+        )
+        reopened_session = Session(
+            id="s2",
+            started_at=datetime.now(UTC) - timedelta(hours=1),
+            sdk_session_id="sdk-resume",
+        )
+
+        registry = _make_mock_registry(active_session=None)
+        registry.get_recent_closed = AsyncMock(return_value=[closed_session])
+        registry.reopen_session = AsyncMock(return_value=reopened_session)
+        registry.record_resumption = AsyncMock()
+
+        mocker.patch(
+            "tachikoma.coordinator.detect_boundary",
+            return_value=BoundaryResult(continues=False, resume_session_id="s2"),
+        )
+
+        async with Coordinator(
+            registry=registry,
+            agent_defaults=AgentDefaults(cwd=Path("/workspace")),
+        ) as coord:
+            _ = await _send(coord, "continue with Python tests")
+
+        registry.reopen_session.assert_awaited_once_with("s2")
+        registry.create_session.assert_not_awaited()
+        # SDK should receive resume=sdk-resume
+        options = mock_cls.call_args[0][0]
+        assert options.resume == "sdk-resume"
+
+    async def test_startup_match_uses_captured_ended_at(
+        self, mock_sdk, mocker
+    ) -> None:
+        """AC: ended_at is captured from candidates BEFORE reopen clears it."""
+        client, _ = mock_sdk
+        client.receive_response.return_value = _mock_messages(
+            make_assistant([TextBlock(text="back")]),
+            make_result(),
+        )
+
+        captured_time = datetime(2026, 4, 5, 14, 0, tzinfo=UTC)
+        closed_session = Session(
+            id="s2",
+            started_at=datetime.now(UTC) - timedelta(hours=2),
+            ended_at=captured_time,
+            sdk_session_id="sdk-resume",
+            summary="Python debugging",
+        )
+        reopened_session = Session(
+            id="s2",
+            started_at=datetime.now(UTC) - timedelta(hours=2),
+            sdk_session_id="sdk-resume",
+        )
+
+        registry = _make_mock_registry(active_session=None)
+        registry.get_recent_closed = AsyncMock(return_value=[closed_session])
+        registry.reopen_session = AsyncMock(return_value=reopened_session)
+        registry.record_resumption = AsyncMock()
+
+        mocker.patch(
+            "tachikoma.coordinator.detect_boundary",
+            return_value=BoundaryResult(continues=False, resume_session_id="s2"),
+        )
+
+        async with Coordinator(
+            registry=registry,
+            agent_defaults=AgentDefaults(cwd=Path("/workspace")),
+        ) as coord:
+            _ = await _send(coord, "continue")
+
+        # record_resumption uses captured ended_at, NOT datetime.now()
+        registry.record_resumption.assert_awaited_once()
+        call_kwargs = registry.record_resumption.call_args[1]
+        assert call_kwargs["previous_ended_at"] == captured_time
+
+    async def test_startup_no_match_creates_fresh(
+        self, mock_sdk, mocker
+    ) -> None:
+        """AC: No match → fresh session with pre-processing."""
+        client, _ = mock_sdk
+        client.receive_response.return_value = _mock_messages(
+            make_assistant([TextBlock(text="hi")]),
+            make_result(),
+        )
+
+        closed_session = Session(
+            id="s2",
+            started_at=datetime.now(UTC) - timedelta(hours=1),
+            ended_at=datetime.now(UTC) - timedelta(minutes=30),
+            sdk_session_id="sdk-2",
+            summary="Discussion about cooking",
+        )
+
+        registry = _make_mock_registry(active_session=None)
+        registry.get_recent_closed = AsyncMock(return_value=[closed_session])
+
+        mocker.patch(
+            "tachikoma.coordinator.detect_boundary",
+            return_value=BoundaryResult(continues=False, resume_session_id=None),
+        )
+
+        async with Coordinator(
+            registry=registry,
+            agent_defaults=AgentDefaults(cwd=Path("/workspace")),
+        ) as coord:
+            _ = await _send(coord, "hello")
+
+        registry.create_session.assert_awaited_once()
+
+    async def test_startup_detection_error_creates_fresh(
+        self, mock_sdk, mocker
+    ) -> None:
+        """AC: Detection error → fail-open, fresh session created."""
+        client, _ = mock_sdk
+        client.receive_response.return_value = _mock_messages(
+            make_assistant([TextBlock(text="hi")]),
+            make_result(),
+        )
+
+        closed_session = Session(
+            id="s2",
+            started_at=datetime.now(UTC) - timedelta(hours=1),
+            ended_at=datetime.now(UTC) - timedelta(minutes=30),
+            sdk_session_id="sdk-2",
+            summary="Some discussion",
+        )
+
+        registry = _make_mock_registry(active_session=None)
+        registry.get_recent_closed = AsyncMock(return_value=[closed_session])
+
+        mocker.patch(
+            "tachikoma.coordinator.detect_boundary",
+            side_effect=RuntimeError("SDK error"),
+        )
+
+        async with Coordinator(
+            registry=registry,
+            agent_defaults=AgentDefaults(cwd=Path("/workspace")),
+        ) as coord:
+            _ = await _send(coord, "hello")
+
+        registry.create_session.assert_awaited_once()
+
+    async def test_startup_reopen_failure_creates_fresh(
+        self, mock_sdk, mocker
+    ) -> None:
+        """AC: reopen_session returns None → fresh session created."""
+        client, _ = mock_sdk
+        client.receive_response.return_value = _mock_messages(
+            make_assistant([TextBlock(text="hi")]),
+            make_result(),
+        )
+
+        closed_session = Session(
+            id="s2",
+            started_at=datetime.now(UTC) - timedelta(hours=1),
+            ended_at=datetime.now(UTC) - timedelta(minutes=30),
+            sdk_session_id="sdk-2",
+            summary="Some discussion",
+        )
+
+        registry = _make_mock_registry(active_session=None)
+        registry.get_recent_closed = AsyncMock(return_value=[closed_session])
+        registry.reopen_session = AsyncMock(return_value=None)
+
+        mocker.patch(
+            "tachikoma.coordinator.detect_boundary",
+            return_value=BoundaryResult(continues=False, resume_session_id="s2"),
+        )
+
+        async with Coordinator(
+            registry=registry,
+            agent_defaults=AgentDefaults(cwd=Path("/workspace")),
+        ) as coord:
+            _ = await _send(coord, "hello")
+
+        registry.create_session.assert_awaited_once()
+
+    async def test_startup_emits_thinking_status(
+        self, mock_sdk, mocker
+    ) -> None:
+        """AC: 'Thinking...' status emitted when candidates are available."""
+        client, _ = mock_sdk
+        client.receive_response.return_value = _mock_messages(
+            make_assistant([TextBlock(text="hi")]),
+            make_result(),
+        )
+
+        closed_session = Session(
+            id="s2",
+            started_at=datetime.now(UTC) - timedelta(hours=1),
+            ended_at=datetime.now(UTC) - timedelta(minutes=30),
+            sdk_session_id="sdk-2",
+            summary="Some discussion",
+        )
+
+        registry = _make_mock_registry(active_session=None)
+        registry.get_recent_closed = AsyncMock(return_value=[closed_session])
+
+        mocker.patch(
+            "tachikoma.coordinator.detect_boundary",
+            return_value=BoundaryResult(continues=False, resume_session_id=None),
+        )
+
+        async with Coordinator(
+            registry=registry,
+            agent_defaults=AgentDefaults(cwd=Path("/workspace")),
+        ) as coord:
+            events = await _send(coord, "hello")
+
+        status_events = [e for e in events if isinstance(e, Status)]
+        assert len(status_events) >= 1
+        assert any(s.message == "Thinking..." for s in status_events)
+
+    async def test_startup_respects_resume_window(
+        self, mock_sdk, mocker
+    ) -> None:
+        """AC: get_recent_closed called with session_resume_window."""
+        client, _ = mock_sdk
+        client.receive_response.return_value = _mock_messages(
+            make_assistant([TextBlock(text="hi")]),
+            make_result(),
+        )
+
+        registry = _make_mock_registry(active_session=None)
+        registry.get_recent_closed = AsyncMock(return_value=[])
+
+        mocker.patch(
+            "tachikoma.coordinator.detect_boundary",
+            return_value=BoundaryResult(continues=False),
+        )
+
+        resume_window = 3600  # 1 hour
+        async with Coordinator(
+            registry=registry,
+            agent_defaults=AgentDefaults(cwd=Path("/workspace")),
+            session_resume_window=resume_window,
+        ) as coord:
+            _ = await _send(coord, "hello")
+
+        # Verify window is passed as timedelta
+        call_kwargs = registry.get_recent_closed.call_args[1]
+        assert call_kwargs["window"] == timedelta(seconds=resume_window)
+
+    async def test_startup_fresh_runs_preprocessing(
+        self, mock_sdk, mocker
+    ) -> None:
+        """AC: No match → fresh session → pre-processing pipeline runs."""
+        client, _ = mock_sdk
+        client.receive_response.return_value = _mock_messages(
+            make_assistant([TextBlock(text="hi")]),
+            make_result(),
+        )
+
+        closed_session = Session(
+            id="s2",
+            started_at=datetime.now(UTC) - timedelta(hours=1),
+            ended_at=datetime.now(UTC) - timedelta(minutes=30),
+            sdk_session_id="sdk-2",
+            summary="Some discussion",
+        )
+
+        registry = _make_mock_registry(active_session=None)
+        registry.get_recent_closed = AsyncMock(return_value=[closed_session])
+
+        pre_pipeline = _make_mock_pre_pipeline()
+        pre_pipeline.run.return_value = [
+            ContextResult(tag="memories", content="Some memories"),
+        ]
+
+        mocker.patch(
+            "tachikoma.coordinator.detect_boundary",
+            return_value=BoundaryResult(continues=False, resume_session_id=None),
+        )
+
+        async with Coordinator(
+            registry=registry,
+            agent_defaults=AgentDefaults(cwd=Path("/workspace")),
+            pre_pipeline=pre_pipeline,
+        ) as coord:
+            _ = await _send(coord, "hello")
+
+        pre_pipeline.run.assert_awaited_once()
+
+    async def test_startup_match_skips_preprocessing(
+        self, mock_sdk, mocker
+    ) -> None:
+        """AC: Match found → resumed session → pre-processing NOT run."""
+        client, _ = mock_sdk
+        client.receive_response.return_value = _mock_messages(
+            make_assistant([TextBlock(text="back")]),
+            make_result(),
+        )
+
+        ended_at = datetime.now(UTC) - timedelta(minutes=30)
+        closed_session = Session(
+            id="s2",
+            started_at=datetime.now(UTC) - timedelta(hours=1),
+            ended_at=ended_at,
+            sdk_session_id="sdk-resume",
+            summary="Python testing",
+        )
+        reopened_session = Session(
+            id="s2",
+            started_at=datetime.now(UTC) - timedelta(hours=1),
+            sdk_session_id="sdk-resume",
+        )
+
+        registry = _make_mock_registry(active_session=None)
+        registry.get_recent_closed = AsyncMock(return_value=[closed_session])
+        registry.reopen_session = AsyncMock(return_value=reopened_session)
+        registry.record_resumption = AsyncMock()
+
+        pre_pipeline = _make_mock_pre_pipeline()
+
+        mocker.patch(
+            "tachikoma.coordinator.detect_boundary",
+            return_value=BoundaryResult(continues=False, resume_session_id="s2"),
+        )
+
+        async with Coordinator(
+            registry=registry,
+            agent_defaults=AgentDefaults(cwd=Path("/workspace")),
+            pre_pipeline=pre_pipeline,
+        ) as coord:
+            _ = await _send(coord, "continue")
+
+        pre_pipeline.run.assert_not_awaited()
