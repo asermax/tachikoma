@@ -23,6 +23,7 @@ from bubus import EventBus
 from loguru import logger
 from telegramify_markdown import convert, split_entities, utf16_len
 
+from tachikoma.adapter import sanitize_text
 from tachikoma.bootstrap import BootstrapContext, BootstrapError
 from tachikoma.config import TelegramSettings
 from tachikoma.coordinator import Coordinator
@@ -123,7 +124,7 @@ class ResponseRenderer:
 
     async def handle_error(self, error: Error) -> None:
         """Handle an Error event by sending a separate error message."""
-        error_text = f"⚠️ Error: {error.message}"
+        error_text = sanitize_text(f"⚠️ Error: {error.message}")
 
         # Send silently if push notifications are enabled AND content was already streamed
         # (the copy+delete will provide the push notification)
@@ -213,6 +214,9 @@ class ResponseRenderer:
         # Handle empty state (nothing to send yet)
         if not display_text:
             return
+
+        # Sanitize before API call — strips surrogates from tool labels/input
+        display_text = sanitize_text(display_text)
 
         # Convert markdown to Telegram entities format
         text, entities = convert(display_text)
@@ -537,7 +541,7 @@ class TelegramChannel:
             with contextlib.suppress(TelegramAPIError):
                 await self._bot.send_message(
                     chat_id,
-                    f"⚠️ Error: {e!s}",
+                    sanitize_text(f"⚠️ Error: {e!s}"),
                     parse_mode=None,
                     disable_notification=had_content,
                 )
