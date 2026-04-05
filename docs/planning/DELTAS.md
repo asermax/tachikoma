@@ -393,7 +393,7 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 **Description**: When a message gets routed to a resumed session via boundary detection, there is no mechanism to undo the routing if the session context does not actually match the user's intent. The conversation gets forced down the wrong path with no recovery. Add a verification step that forks the candidate session and evaluates whether the incoming message makes sense within its context before committing to the routing, catching mismatches early instead of requiring the user to manually correct the course.
 
 ### DLT-079: Escape markdown-sensitive characters in Telegram output
-**Status**: ✗ Defined
+**Status**: ✓ Spec
 **Depends on**: None
 **Priority**: 2 (High)
 **Complexity**: Easy
