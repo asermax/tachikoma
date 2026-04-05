@@ -33,6 +33,8 @@ Detects whether an incoming message continues the current conversation or starts
 | R14 | On graceful shutdown, await running background post-processing tasks before exiting |
 | R15 | On topic shift, compare the incoming message against recent closed session summaries and return a matching session ID when found |
 | R16 | Configurable time-based lookup window for recent session candidates, defaulting to 1 day |
+| R17 | When no active session exists (typically after restart), match the incoming message against recent closed session summaries before creating a fresh session |
+| R18 | Candidates-only detection mode uses neutral bias (no-match default) without a current-topic baseline |
 
 ## Behaviors
 
@@ -95,11 +97,26 @@ Before boundary detection, the coordinator ensures any pending per-message post-
 Boundary detection is a best-effort enhancement that never blocks normal message processing.
 
 **Acceptance Criteria**:
-- Given no active session exists (first message ever, or after startup), when a message arrives, then boundary detection is skipped and a new session is created normally
+- Given no active session exists and recent closed sessions are available within the resume window, when a message arrives, then startup matching runs in candidates-only mode (see Startup Session Matching)
+- Given no active session exists and no recent closed sessions are available, when a message arrives, then a fresh session is created without invoking boundary detection
 - Given an active session with no summary yet (first message in session, per-message pipeline hasn't run), when the next message arrives, then boundary detection is skipped and the message proceeds normally
 - Given the coordinator has no workspace directory configured, when a message arrives, then boundary detection is skipped
 - Given the boundary detector encounters an error (SDK failure, timeout, malformed response), when the error occurs, then it is logged and the message proceeds as a continuation (fail-open)
 - Given a topic shift triggers a session transition, when the SDK session ID is cleared, then the next message creates a fresh SDK session with no prior conversation context
+
+### Startup Session Matching (R17, R18)
+
+When no active session exists (typically after a restart), the system attempts to match the incoming message against recent closed sessions before creating a fresh one. This uses candidates-only boundary detection — comparing the message solely against candidate summaries without a current-topic baseline.
+
+**Acceptance Criteria**:
+- Given no active session exists and recent closed sessions are available within the resume window, when a message arrives, then the system queries candidates and runs boundary detection in candidates-only mode (no current-topic summary)
+- Given boundary detection runs in candidates-only mode, when it returns a result, then `continues` is always false and the match outcome is conveyed solely via `resume_session_id` (non-null for match, null for no match)
+- Given candidates-only detection returns a matching `resume_session_id`, when the coordinator processes the result, then the matched session is reopened directly with bridging context — no previous session is closed and no post-processing fires
+- Given a session is reopened via startup matching, when bridging context is assembled, then summaries of sessions that occurred between the matched session's close and now are injected into the system prompt
+- Given candidates-only detection returns no match (all candidates rejected), when the coordinator processes the result, then a fresh session is created normally with full pre-processing
+- Given startup matching fails (detection error, timeout, reopen failure), when the coordinator handles the failure, then a fresh session is created normally (fail-open)
+- Given startup matching runs with candidates available, when detection begins, then the user sees a "Thinking..." status indicator
+- Given no recent closed sessions exist within the resume window (or all are filtered out), when a message arrives, then startup matching is skipped entirely and a fresh session is created without any status indicator
 
 ### Session Resumption Matching (R15, R16)
 

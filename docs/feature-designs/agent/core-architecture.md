@@ -153,7 +153,8 @@ Note: `send_message()` is an async generator. The per-message pipeline launch ha
 - Coordinator ↔ SessionRegistry (optional): `create_session()` on first message, `update_metadata()` on Result events, `close_session()` on shutdown and on topic shift (see [sessions design](sessions.md))
 - Coordinator ↔ PreProcessingPipeline (optional): `pipeline.run(message)` in `send_message()`, on first message of new session (including after topic shift transition), before `client.query()` (see [pipeline design](pre-processing-pipeline.md))
 - Coordinator ↔ PostProcessingPipeline (optional): `pipeline.run(session)` in `__aexit__` (after session close) and as background task during topic shift transitions. Note: `on_status` callback is called on shutdown — both for direct post-processing (active session) and before awaiting background tasks from prior transitions/idle close (see [pipeline design](post-processing-pipeline.md))
-- Coordinator ↔ `detect_boundary` (from `boundary` package): pure function call before processing, accepts optional `candidates: list[SessionCandidate]`, returns `BoundaryResult(continues, resume_session_id)`, errors caught and defaulted to `BoundaryResult(continues=True)` (continuation). Skipped when no session, no summary, or no cwd (see [boundary detection design](boundary-detection.md))
+- Coordinator ↔ `detect_boundary` (from `boundary` package): pure function call before processing, accepts optional `candidates: list[SessionCandidate]`, returns `BoundaryResult(continues, resume_session_id)`, errors caught and defaulted to `BoundaryResult(continues=True)` for normal mode or `BoundaryResult(continues=False)` in candidates-only mode). Skipped when no session, no summary, or no cwd (see [boundary detection design](boundary-detection.md))
+- Coordinator startup matching: when no active session and cwd configured, coordinator queries candidates inline (via `registry.get_recent_closed()`), runs `detect_boundary(summary=None)` in candidates-only mode, and either reopens matched session (with bridging context) or creates fresh. Uses fail-open on any error. (see [boundary detection design](boundary-detection.md))
 - Coordinator ↔ `MessagePostProcessingPipeline` (optional): `run(session, text, response_text)` as background `asyncio.Task` after each response, reference stored as `_pending_msg_task` (see [boundary detection design](boundary-detection.md))
 - Coordinator ↔ MCP servers (optional): `mcp_servers` parameter passed to `ClaudeAgentOptions.mcp_servers` in `_build_options()` — used by task subsystem for task CRUD tools
 - Coordinator ↔ Task subsystem: `last_message_time` property read by session task scheduler for idle gating
@@ -225,6 +226,7 @@ Coordinator
 ├── _background_tasks: list[asyncio.Task]   (session post-processing from topic shifts)
 ├── _build_options(resume=..., system_prompt_append=...) → ClaudeAgentOptions  (constructs per-message options; system_prompt_append is pre-built from build_system_prompt())
 ├── _handle_transition(session, *, resume_session_id=None) → bool  (True=resumed, False=fresh)
+├── _query_resume_candidates() → list[SessionCandidate] | None  (shared helper for querying recent closed sessions; used by normal boundary detection; returns None on query failure. NOTE: startup matching uses its own inline query that also captures ended_at_by_id)
 ├── _persist_bridging_context(resumed_session, closed_at) → None  (assembles and saves bridging context to DB)
 ├── enqueue(text) → None
 │   └── sync, zero preconditions, puts message into _message_buffer
@@ -246,7 +248,7 @@ The `enqueue()` method allows channels to buffer user messages at any time (sync
 1. Channel receives user input
 2. Channel calls coordinator.send_message()
 3. Coordinator awaits any pending per-message task (logs errors, doesn't propagate)
-4. Coordinator checks for active session; creates one via registry if needed — sets is_new_session flag
+4. Coordinator checks for active session; if none exists AND cwd is configured, runs startup matching (queries candidates, runs candidates-only boundary detection, reopens matched session or creates fresh); otherwise creates fresh session via registry — sets is_new_session flag
 5. If boundary detection or pre-processing will run, yield Status("Thinking...")
 6. If active session has a summary AND cwd is not None:
    a. Fetch recent closed session candidates via registry.get_recent_closed()

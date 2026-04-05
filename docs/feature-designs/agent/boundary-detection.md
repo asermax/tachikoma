@@ -63,15 +63,15 @@ Three new mechanisms layer onto the existing coordinator:
 | Layer/Component | Responsibility | Key Decisions |
 |-----------------|----------------|---------------|
 | `src/tachikoma/boundary/__init__.py` | Re-exports public API: `detect_boundary`, `BoundaryResult`, `SessionCandidate`, `SummaryProcessor` | New package for boundary detection |
-| `src/tachikoma/boundary/detector.py` | `detect_boundary(message, summary, cwd, *, candidates=None, cli_path=None)` — standalone `query()` with Opus low effort, JSON schema output, returns `BoundaryResult(continues, resume_session_id)`. Uses defense-in-depth tool restriction: default permission mode, `allowed_tools=[]`, `max_turns=3` (DES-007 "Disabling Tools"). Accepts optional `candidates: list[SessionCandidate]` for session matching. `cwd` is passed from the coordinator's `self._cwd`. Fully consumes the query() generator (DES-005). Includes structured logging for results and warnings. Validates `resume_session_id` (sanitizes empty strings and non-string values to None). | Independent of coordinator; pure function + SDK call |
-| `src/tachikoma/boundary/prompts.py` | Prompt templates for boundary detection (including session matching instructions) and summary generation. Includes `CANDIDATES_SECTION_TEMPLATE` for formatting candidate sessions into the user prompt. | Separated for easy iteration and testing |
+| `src/tachikoma/boundary/detector.py` | `detect_boundary(message, summary, agent_defaults, *, candidates=None)` — standalone `query()` with Opus low effort, JSON schema output, returns `BoundaryResult(continues, resume_session_id)`. Uses defense-in-depth tool restriction: default permission mode, `allowed_tools=[]`, `max_turns=3` (DES-007 "Disabling Tools"). Accepts optional `candidates: list[SessionCandidate]` for session matching. When `summary is None`: candidates-only mode — uses separate prompt templates with neutral no-match bias, forces `continues=False` in result. Defense-in-depth: returns early with `BoundaryResult(continues=False)` when `summary is None` and no candidates provided (no SDK call needed). Fully consumes the query() generator (DES-005). Includes structured logging for results and warnings. Validates `resume_session_id` (sanitizes empty strings and non-string values to None). | Independent of coordinator; pure function + SDK call |
+| `src/tachikoma/boundary/prompts.py` | Prompt templates for boundary detection (including session matching instructions) and summary generation. Includes `CANDIDATES_SECTION_TEMPLATE` for formatting candidate sessions into the user prompt. Includes `CANDIDATES_ONLY_SYSTEM_PROMPT` and `CANDIDATES_ONLY_USER_PROMPT` for startup matching — neutral bias (no continuation preference), explicitly instructs the model that `continues_conversation` is always false, and omits the current-summary section since there is no current conversation. | Separated for easy iteration and testing |
 | `src/tachikoma/boundary/summary.py` | `SummaryProcessor` — `MessagePostProcessor` that calls standalone `query()` with Opus low effort to update the rolling summary. Accepts `cli_path` parameter. Logs a warning on empty responses. Fully consumes the query() generator (DES-005). | Uses incremental pattern: previous summary + latest exchange → updated summary |
 | `src/tachikoma/message_post_processing.py` | `MessagePostProcessor` ABC (`process(session, user_message, agent_response)`) and `MessagePostProcessingPipeline` class | Parallel to `post_processing.py` but with a different interface reflecting the per-message context |
 
 ### Cross-Layer Contracts
 
 **Integration Points:**
-- Coordinator ↔ `detect_boundary`: pure function call, accepts optional `candidates: list[SessionCandidate]`, returns `BoundaryResult`, catches all errors and defaults to `BoundaryResult(continues=True)` (continuation). Skipped when `cwd is None`.
+- Coordinator ↔ `detect_boundary`: pure function call, accepts optional `candidates: list[SessionCandidate]`, returns `BoundaryResult`, catches all errors and defaults to `BoundaryResult(continues=True)` for normal mode or `BoundaryResult(continues=False)` for candidates-only mode (`summary is None`). Skipped when `cwd is None`.
 - Coordinator ↔ `MessagePostProcessingPipeline`: `run(session, user_message, agent_response)`, launched as `asyncio.Task`, reference stored on coordinator
 - `SummaryProcessor` ↔ `SessionRegistry`: calls `update_summary()` to persist the rolling summary
 
@@ -119,11 +119,15 @@ SessionCandidate (frozen dataclass)
 ├── id: str                                (session ID)
 └── summary: str                           (session summary for LLM matching)
 
-detect_boundary(message: str, summary: str, cwd: Path, *, candidates: list[SessionCandidate] | None = None, cli_path: str | None = None) → BoundaryResult
+detect_boundary(message: str, summary: str | None, agent_defaults: AgentDefaults, *, candidates: list[SessionCandidate] | None = None) → BoundaryResult
 └── standalone query() with Opus low effort, JSON schema → BoundaryResult
 ```
 
-The function returns a `BoundaryResult`, while the underlying query returns `{"continues_conversation": boolean, "resume_session_id": string | null}` JSON — the function parses and converts the structured output. When candidates are provided, the prompt includes their summaries for the LLM to match against.
+When `summary is not None` (normal mode): uses `BOUNDARY_DETECTION_SYSTEM_PROMPT`/`BOUNDARY_DETECTION_USER_PROMPT`, continuation bias, `continues` reflects SDK response.
+
+When `summary is None` (candidates-only mode): uses `CANDIDATES_ONLY_SYSTEM_PROMPT`/`CANDIDATES_ONLY_USER_PROMPT`, neutral no-match bias, `continues` forced to `False`, match outcome conveyed via `resume_session_id` only. Returns early with `BoundaryResult(continues=False)` when no candidates provided (defense-in-depth — avoids unnecessary SDK call).
+
+The function returns a `BoundaryResult`, while the underlying query returns `{"continues_conversation": boolean, "resume_session_id": string | null}` JSON — the function parses and converts the structured output. When candidates are provided in normal mode, the prompt includes their summaries for the LLM to match against.
 
 ### Component relationships
 
@@ -259,6 +263,82 @@ erDiagram
    pattern as update_metadata())
 ```
 
+### Startup matching flow (match found)
+
+```
+1. Channel calls coordinator.send_message(text)
+2. Coordinator reads text from buffer, updates last_message_time
+3. Awaits any pending per-message post-processing task
+4. Coordinator checks registry.get_active_session() → None (no active session)
+5. Startup matching path (only when cwd is configured):
+   a. Query candidates: recent = registry.get_recent_closed(before=now, window=session_resume_window)
+   b. Build SessionCandidate list (id + summary pairs, filtering summary IS NOT NULL)
+   c. Build ended_at lookup: ended_at_by_id = {s.id: s.ended_at for s in recent if s.ended_at is not None}
+      (CRITICAL: must happen before reopen_session() clears ended_at on the DB record)
+   d. If candidates is empty → skip detection, create fresh session (step 7)
+   e. Emit Status("Thinking...")
+   f. Call detect_boundary(text, summary=None, agent_defaults, candidates=candidates)
+   g. Result: BoundaryResult(continues=False, resume_session_id="abc123")
+6. Startup resume path (match found):
+   a. Look up captured_ended_at = ended_at_by_id[resume_session_id]
+   b. Call registry.reopen_session("abc123")
+   c. If reopen succeeds:
+      - Set _sdk_session_id to reopened session's sdk_session_id
+      - Call registry.record_resumption(session_id, previous_ended_at=captured_ended_at)
+      - Call _persist_bridging_context(reopened, closed_at=captured_ended_at)
+      - active = reopened session, is_new_session = False
+   d. If reopen fails (returns None):
+      - Fall through to fresh session creation (step 7)
+7. Fresh session creation (no match, no candidates, or reopen failure):
+   a. registry.create_session()
+   b. is_new_session = True
+8. Normal processing continues (build options, SDK client, streaming, etc.)
+   - Resumed session: pre-processing skipped (has full prior context via resume)
+   - Fresh session: pre-processing runs normally
+```
+
+### Startup matching flow (no match)
+
+```
+1-4. Same as above
+5. Startup matching path:
+   a-e. Same as above (candidates available, status emitted)
+   f. Call detect_boundary(text, summary=None, agent_defaults, candidates=candidates)
+   g. Result: BoundaryResult(continues=False, resume_session_id=None)
+6. No match → skip to step 7
+7. Fresh session creation:
+   a. registry.create_session()
+   b. is_new_session = True
+8. Normal processing continues (pre-processing runs, fresh SDK client)
+```
+
+### Startup matching flow (no candidates)
+
+```
+1-4. Same as above
+5. Startup matching path:
+   a. Query candidates: registry.get_recent_closed() → empty list
+   b. No candidates → skip boundary detection entirely
+6. Skip to step 7
+7. Fresh session creation:
+   a. registry.create_session()
+   b. is_new_session = True
+8. Normal processing continues (no Status emitted — no delay)
+```
+
+### Startup matching flow (error)
+
+```
+1-4. Same as above
+5. Startup matching path:
+   a-e. Same as above
+   f. detect_boundary() raises an exception
+   g. Exception caught, logged (fail-open)
+6. Fall through to step 7
+7. Fresh session creation (normal)
+8. Normal processing continues
+```
+
 ## Key Decisions
 
 ### Opus with low effort for boundary detection and summarization
@@ -336,6 +416,19 @@ erDiagram
 - Pro: No risk of cancel scope leaks or dual-process overhead
 - Pro: No failure modes to handle (clearing a field can't fail)
 
+### Separate prompt templates for candidates-only mode
+
+**Choice**: Add `CANDIDATES_ONLY_SYSTEM_PROMPT` and `CANDIDATES_ONLY_USER_PROMPT` as separate templates rather than conditionally modifying the existing boundary detection prompts.
+**Why**: The two modes have fundamentally different goals and biases. Normal detection is biased strongly toward continuation ("when in doubt, say continuation") — this makes sense when there's an active conversation. Candidates-only mode has no conversation to continue; the safe default is "no match" (create fresh session). Sharing prompts would require diluting the continuation bias or adding complex conditionals. Each prompt pair is optimized for its use case, and having separate templates makes both easier to tune independently.
+**Alternatives Considered**:
+- Conditional within existing prompt: Less duplication, but mixes two different framing goals. The continuation bias in the system prompt doesn't apply to candidates-only mode. Makes both prompts harder to reason about and tune independently.
+
+**Consequences**:
+- Pro: Each prompt pair optimized for its use case
+- Pro: Easier to tune startup matching quality without affecting normal boundary detection
+- Pro: Clear code path — `if summary is None: use candidates-only prompts`
+- Con: Two prompt template pairs to maintain (but they serve distinct purposes)
+
 ## System Behavior
 
 ### Scenario: Normal message (continuation)
@@ -358,9 +451,44 @@ erDiagram
 
 ### Scenario: First message (no prior session)
 
-**Given**: No active session exists (first message ever, or after startup)
+**Given**: No active session exists (first message ever, or after restart)
 **When**: A message arrives
-**Then**: Boundary detection is skipped. A new session is created via the existing `create_session()` flow. Message processed normally.
+**Then**: If recent closed sessions are available within the resume window, startup matching runs in candidates-only mode. If a match is found, the matched session is reopened with bridging context (see startup matching scenarios below). If no candidates exist, matching is skipped and a fresh session is created.
+
+### Scenario: Startup matching — match found
+
+**Given**: No active session exists, a closed session about "Python testing" exists within the resume window
+**When**: The user sends "Let's continue with the Python tests"
+**Then**: Coordinator queries candidates, runs candidates-only detection (`summary=None`), gets a match. The matched session is reopened directly (no previous session to close, no post-processing). `ended_at` is captured from the already-fetched candidate data before `reopen_session()` clears it. Bridging context includes summaries of any sessions between the matched session's close and now. SDK client uses `resume=<sdk_session_id>` for full conversation continuity.
+**Rationale**: User expects seamless continuation. Startup matching bridges the restart gap transparently.
+
+### Scenario: Startup matching — no match
+
+**Given**: No active session exists, closed sessions exist within the resume window
+**When**: The user sends "What's the weather like?"
+**Then**: Candidates-only detection returns `resume_session_id=None`. Fresh session created normally with full pre-processing.
+**Rationale**: When the new topic doesn't match any previous session, the system behaves exactly as before this delta.
+
+### Scenario: Startup matching — no candidates (skipped)
+
+**Given**: No active session exists, no closed sessions within the resume window (or all filtered out)
+**When**: A message arrives
+**Then**: No candidates available → startup matching skipped entirely. Fresh session created. No "Thinking..." status emitted.
+**Rationale**: No candidates means no possible match. Skipping avoids unnecessary latency and status indicators.
+
+### Scenario: Startup matching — detection error (fail-open)
+
+**Given**: No active session exists, candidates are available
+**When**: `detect_boundary()` raises an exception (SDK error, timeout)
+**Then**: Exception caught and logged. Fresh session created (fail-open).
+**Rationale**: Matching is best-effort. A failure should never prevent the user from starting a conversation.
+
+### Scenario: Startup matching — reopen fails (fail-open)
+
+**Given**: Candidates-only detection returns a match, but `reopen_session()` returns `None` (e.g., transcript deleted since candidate query, session too old)
+**When**: The coordinator processes the failed reopen
+**Then**: Falls through to fresh session creation. Logged as warning.
+**Rationale**: Race conditions possible (transcript deleted between query and reopen). Fail-open is correct behavior.
 
 ### Scenario: Second message (no summary yet)
 

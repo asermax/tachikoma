@@ -36,7 +36,7 @@ A persistent registry of conversation sessions that tracks when conversations st
 | R17 | Context persistence failures must not interrupt active conversations (graceful degradation, consistent with session tracking pattern) |
 | R18 | Before reopening a session, validate that the SDK transcript file exists on the local filesystem — reject sessions created on other machines |
 | R19 | Before reopening a session, validate that the session's `started_at` is within the configured max age — reject stale sessions |
-| R20 | `get_recent_closed()` filters returned sessions to only those with valid (existing) transcript files and `started_at` within the configured max age |
+| R20 | `get_recent_closed()` filters returned sessions at two levels: repository-level (non-null `sdk_session_id`, non-null `summary`, within time window) and registry-level (valid transcript file on local filesystem, `started_at` within configured max age) |
 
 ## Behaviors
 
@@ -143,6 +143,9 @@ The registry provides a query for recently closed sessions within a configurable
 - Given a time window and reference timestamp, when `get_recent_closed()` is called, then only sessions closed within that window with non-null SDK session IDs and non-null summaries are returned
 - Given sessions closed outside the time window, when queried, then they are excluded
 - Given only interrupted sessions (no `sdk_session_id`) exist within the window, when queried, then they are excluded
+- Given sessions that pass repository-level filters but have missing transcript files, when `get_recent_closed()` is called, then those sessions are excluded at the registry level
+- Given sessions that pass all other filters but whose `started_at` exceeds the configured max session age, when `get_recent_closed()` is called, then those sessions are excluded at the registry level
+- Given sessions passing all filters (non-null `sdk_session_id`, non-null `summary`, within time window, transcript exists, within max age), when `get_recent_closed()` is called, then those sessions are included in results
 
 ### Context Entry Persistence (R15, R16, R17)
 

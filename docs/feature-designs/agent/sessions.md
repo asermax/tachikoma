@@ -358,6 +358,8 @@ Note: The `needs_processing()` check prevents re-triggering: once `processed_at`
 
 **Why filter in registry, not coordinator**: The registry owns session lifecycle and knows what makes a session valid for resumption. The DB can't check filesystem existence, so post-query filtering in the registry keeps the coordinator thin and the business logic centralized.
 
+This two-level filtering (repository SQL + registry post-filters) is verified by dedicated test coverage, ensuring sessions without SDK IDs, summaries, transcripts, or within age bounds, or within age bounds are universally excluded.
+
 ### Resumption tracking
 
 ```
