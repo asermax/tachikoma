@@ -15,7 +15,11 @@ TOOL_DISPLAY: dict[str, Callable[[dict[str, Any]], str]] = {
     "Read": lambda inp: f"Reading {inp.get('file_path', '...')}",
     "Grep": lambda inp: f"Searching for '{inp.get('pattern', '...')}'",
     "Glob": lambda inp: f"Globbing {inp.get('pattern', '...')}",
-    "Bash": lambda inp: f"Running: {inp.get('command', '...')}",
+    "Bash": lambda inp: (
+        inp["description"]
+        if inp.get("description")
+        else f"Running: {inp.get('command', '...')}"
+    ),
     "Edit": lambda inp: f"Editing {inp.get('file_path', '...')}",
     "Write": lambda inp: f"Writing {inp.get('file_path', '...')}",
     "Agent": lambda inp: f"Agent: {inp['description']}" if "description" in inp else "Agent...",
@@ -96,7 +100,10 @@ def _format_bash_summary(tool_input: dict[str, Any]) -> str:
     return "running a command"
 
 
-def summarize_tool_activity(activities: list[ToolActivity]) -> str:
+def summarize_tool_activity(
+    activities: list[ToolActivity],
+    summary_map: dict[str, Callable[[dict[str, Any]], str]] | None = None,
+) -> str:
     """Generate a human-readable summary from a list of tool activities.
 
     The summary is a single-line, capitalized verb-phrase describing what
@@ -105,12 +112,16 @@ def summarize_tool_activity(activities: list[ToolActivity]) -> str:
 
     Args:
         activities: List of ToolActivity events from a tool→text segment.
+        summary_map: Optional per-tool formatters to use instead of TOOL_SUMMARY.
+            Aggregation (_TOOL_AGGREGATE) is always shared.
 
     Returns:
         A summary string, or empty string if activities is empty.
     """
     if not activities:
         return ""
+
+    effective_summary = summary_map if summary_map is not None else TOOL_SUMMARY
 
     # Group activities by tool_name, preserving first-seen order
     groups: dict[str, list[ToolActivity]] = {}
@@ -134,8 +145,8 @@ def summarize_tool_activity(activities: list[ToolActivity]) -> str:
         else:
             # List individually (count is 1 or 2)
             for activity in group_activities:
-                if tool_name in TOOL_SUMMARY:
-                    phrases.append(TOOL_SUMMARY[tool_name](activity.tool_input))
+                if tool_name in effective_summary:
+                    phrases.append(effective_summary[tool_name](activity.tool_input))
                 else:
                     # Unknown tool fallback
                     phrases.append(f"used {format_tool_name(tool_name)}")
