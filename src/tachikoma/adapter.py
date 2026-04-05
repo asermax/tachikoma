@@ -65,7 +65,7 @@ def adapt(message: Any) -> list[AgentEvent]:
 def _adapt_assistant(message: AssistantMessage) -> list[AgentEvent]:
     if message.error is not None:
         recoverable = message.error not in NON_RECOVERABLE_ERRORS
-        return [Error(message=message.error, recoverable=recoverable)]
+        return [Error(message=sanitize_text(message.error), recoverable=recoverable)]
 
     events: list[AgentEvent] = []
 
@@ -80,7 +80,7 @@ def _adapt_assistant(message: AssistantMessage) -> list[AgentEvent]:
 
 def _adapt_result(message: ResultMessage) -> list[AgentEvent]:
     if message.is_error:
-        return [Error(message=message.result or "Unknown error", recoverable=False)]
+        return [Error(message=sanitize_text(message.result or "Unknown error"), recoverable=False)]
 
     return [
         Result(

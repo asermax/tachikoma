@@ -220,3 +220,29 @@ class TestAdaptWithSanitization:
         assert len(events) == 1
         assert isinstance(events[0], TextChunk)
         assert events[0].text == "Hello 🌍!"
+
+    def test_surrogates_stripped_in_error_message(self) -> None:
+        msg = make_assistant([], error="fail\ud83eerror")
+
+        events = adapt(msg)
+
+        assert len(events) == 1
+        assert isinstance(events[0], Error)
+        assert events[0].message == "failerror"
+
+    def test_surrogates_stripped_in_error_result_message(self) -> None:
+        msg = ResultMessage(
+            subtype="error",
+            duration_ms=500,
+            duration_api_ms=400,
+            is_error=True,
+            num_turns=0,
+            session_id="sess-abc",
+            result="Bad\ud83eResult",
+        )
+
+        events = adapt(msg)
+
+        assert len(events) == 1
+        assert isinstance(events[0], Error)
+        assert events[0].message == "BadResult"

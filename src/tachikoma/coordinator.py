@@ -26,7 +26,7 @@ from claude_agent_sdk import (
 from claude_agent_sdk.types import AgentDefinition, PermissionMode, SystemPromptPreset
 from loguru import logger
 
-from tachikoma.adapter import adapt
+from tachikoma.adapter import adapt, sanitize_text
 from tachikoma.agent_defaults import AgentDefaults
 from tachikoma.boundary import BoundaryResult, SessionCandidate, detect_boundary
 from tachikoma.context.assembly import build_system_prompt
@@ -514,7 +514,7 @@ class Coordinator:
 
         except (CLIConnectionError, ProcessError) as exc:
             _log.error("Stream error (recoverable): err={err}", err=str(exc))
-            yield Error(message=str(exc), recoverable=True)
+            yield Error(message=sanitize_text(str(exc)), recoverable=True)
 
         finally:
             await client.disconnect()
