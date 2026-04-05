@@ -16,6 +16,7 @@ from claude_agent_sdk import ClaudeAgentOptions, ClaudeSDKClient
 from claude_agent_sdk.types import AssistantMessage, ResultMessage, SystemPromptPreset, TextBlock
 from loguru import logger
 
+from tachikoma.adapter import sanitize_text
 from tachikoma.agent_defaults import AgentDefaults
 from tachikoma.config import TaskSettings
 from tachikoma.git.processor import GitProcessor
@@ -310,7 +311,7 @@ class BackgroundTaskExecutor:
                         if isinstance(sdk_message, AssistantMessage):
                             for block in sdk_message.content:
                                 if isinstance(block, TextBlock):
-                                    response_chunks.append(block.text)
+                                    response_chunks.append(sanitize_text(block.text))
 
                     response_text = "".join(response_chunks)
 
@@ -479,7 +480,7 @@ class BackgroundTaskExecutor:
                 if isinstance(message, AssistantMessage):
                     for block in message.content:
                         if isinstance(block, TextBlock):
-                            response_text += block.text
+                            response_text += sanitize_text(block.text)
         except Exception as exc:
             _log.warning("Evaluator query failed: {err}", err=str(exc))
             return {"status": "continue", "feedback": "Evaluator failed, continuing"}

@@ -14,7 +14,7 @@ from claude_agent_sdk.types import (
 )
 from helpers import make_assistant
 
-from tachikoma.adapter import adapt
+from tachikoma.adapter import adapt, sanitize_text
 from tachikoma.events import Error, Result, TextChunk, ToolActivity
 
 
@@ -170,3 +170,53 @@ class TestAdaptFilteredMessages:
         msg = MagicMock()
 
         assert adapt(msg) == []
+
+
+class TestSanitizeText:
+    def test_removes_unpaired_high_surrogate(self) -> None:
+        assert sanitize_text("Hello \ud83e World") == "Hello  World"
+
+    def test_removes_unpaired_low_surrogate(self) -> None:
+        assert sanitize_text("Hello \udddd World") == "Hello  World"
+
+    def test_preserves_valid_emoji(self) -> None:
+        emoji_text = "Hello 🌍🎉🤖 World"
+        assert sanitize_text(emoji_text) == emoji_text
+
+    def test_all_surrogates_becomes_empty(self) -> None:
+        assert sanitize_text("\ud83e\udddd\ud800\udc00") == ""
+
+    def test_mixed_valid_and_invalid(self) -> None:
+        assert sanitize_text("abc\ud83edef") == "abcdef"
+
+    def test_empty_string_passes_through(self) -> None:
+        assert sanitize_text("") == ""
+
+    def test_normal_ascii_unchanged(self) -> None:
+        text = "The quick brown fox jumps over the lazy dog."
+        assert sanitize_text(text) == text
+
+    def test_preserves_multibyte_unicode(self) -> None:
+        text = "日本語テスト 中文测试 한국어"
+        assert sanitize_text(text) == text
+
+
+
+class TestAdaptWithSanitization:
+    def test_surrogates_stripped_in_text_chunk(self) -> None:
+        msg = make_assistant([TextBlock(text="Clean\ud83eText")])
+
+        events = adapt(msg)
+
+        assert len(events) == 1
+        assert isinstance(events[0], TextChunk)
+        assert events[0].text == "CleanText"
+
+    def test_clean_text_unchanged_through_adapt(self) -> None:
+        msg = make_assistant([TextBlock(text="Hello 🌍!")])
+
+        events = adapt(msg)
+
+        assert len(events) == 1
+        assert isinstance(events[0], TextChunk)
+        assert events[0].text == "Hello 🌍!"

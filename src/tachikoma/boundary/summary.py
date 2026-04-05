@@ -8,6 +8,7 @@ from claude_agent_sdk import ClaudeAgentOptions, query
 from claude_agent_sdk.types import AssistantMessage, TextBlock
 from loguru import logger
 
+from tachikoma.adapter import sanitize_text
 from tachikoma.agent_defaults import AgentDefaults
 from tachikoma.boundary.prompts import SUMMARY_SYSTEM_PROMPT, SUMMARY_USER_PROMPT
 from tachikoma.message_post_processing import MessagePostProcessor
@@ -80,7 +81,7 @@ class SummaryProcessor(MessagePostProcessor):
             if isinstance(sdk_message, AssistantMessage):
                 for block in sdk_message.content:
                     if isinstance(block, TextBlock):
-                        response_text += block.text
+                        response_text += sanitize_text(block.text)
 
         # Update the session summary if we got a response
         if response_text.strip():

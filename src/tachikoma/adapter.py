@@ -14,10 +14,34 @@ from claude_agent_sdk.types import (
     ToolUseBlock,
     UserMessage,
 )
+from loguru import logger
 
 from tachikoma.events import AgentEvent, Error, Result, TextChunk, ToolActivity
 
+_log = logger.bind(component="adapter")
+
 NON_RECOVERABLE_ERRORS = frozenset({"authentication_failed", "billing_error"})
+
+
+def sanitize_text(text: str) -> str:
+    """Strip characters that cannot be represented in valid UTF-8.
+
+    The SDK CLI subprocess occasionally produces text containing invalid surrogate
+    code points (U+D800–U+DFFF) or other unencodable characters. These cause
+    encoding failures in downstream consumers (Telegram API, post-processing pipeline).
+
+    The encode/decode roundtrip preserves all valid Unicode while silently removing
+    anything that cannot be encoded as UTF-8.
+    """
+    sanitized = text.encode("utf-8", errors="ignore").decode("utf-8")
+
+    if len(sanitized) != len(text):
+        _log.debug(
+            "Sanitized text: removed {removed} unencodable characters",
+            removed=len(text) - len(sanitized),
+        )
+
+    return sanitized
 
 
 def adapt(message: Any) -> list[AgentEvent]:
@@ -47,7 +71,7 @@ def _adapt_assistant(message: AssistantMessage) -> list[AgentEvent]:
 
     for block in message.content:
         if isinstance(block, TextBlock):
-            events.append(TextChunk(text=block.text))
+            events.append(TextChunk(text=sanitize_text(block.text)))
         elif isinstance(block, ToolUseBlock):
             events.append(ToolActivity(tool_name=block.name, tool_input=block.input))
 
