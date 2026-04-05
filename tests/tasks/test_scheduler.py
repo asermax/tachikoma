@@ -6,7 +6,7 @@ See: docs/delta-specs/DLT-090.md (R0–R6 acceptance criteria)
 import asyncio
 import contextlib
 from datetime import UTC, datetime, timedelta
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, patch
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -25,10 +25,10 @@ from .conftest import _make_definition, _make_instance
 def _cron_first_match(expression: str, tz: ZoneInfo) -> datetime:
     """Compute the first cron match time that the generator would fire for now.
 
-    Uses the same anchor logic as the generator (start-of-hour when no last_fired_at).
+    Uses the same anchor logic as the generator (start-of-hour minus 1s when no last_fired_at).
     """
     now_tz = datetime.now(tz)
-    anchor_tz = now_tz.replace(minute=0, second=0, microsecond=0)
+    anchor_tz = now_tz.replace(minute=0, second=0, microsecond=0) - timedelta(seconds=1)
     return next(CronSim(expression, anchor_tz)).astimezone(UTC)
 
 
@@ -413,6 +413,131 @@ class TestInstanceGenerator:
         assert len(instances) == 1
         # The instance should have been created with a valid scheduled_for
         assert instances[0].scheduled_for is not None
+
+    async def test_fires_for_hour_boundary_cron_with_no_last_fired_at(
+        self,
+        repo: TaskRepository,
+    ) -> None:
+        """AC1: Hour-boundary cron fires when last_fired_at is NULL and time has passed."""
+        # 2026-04-05 is a Sunday. Cron `0 13 * * 0` fires at 13:00 on Sundays.
+        tz = ZoneInfo("UTC")
+        sunday_13_00_30 = datetime(2026, 4, 5, 13, 0, 30, tzinfo=tz)
+
+        schedule = ScheduleConfig(type="cron", expression="0 13 * * 0")
+        definition = _make_definition("def-1", schedule=schedule)
+        await repo.create_definition(definition)
+
+        settings = TaskSettings(timezone="UTC")
+
+        def mock_now(tz_arg):
+            return sunday_13_00_30 if tz_arg else datetime.now()
+
+        with patch("tachikoma.tasks.scheduler.datetime") as mock_dt:
+            mock_dt.now = mock_now
+            mock_dt.UTC = UTC
+            task = asyncio.create_task(instance_generator(repo, settings))
+            await asyncio.sleep(0.2)
+            task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
+
+        instances = await repo.get_pending_instances("session")
+        assert len(instances) == 1
+        assert instances[0].scheduled_for == datetime(2026, 4, 5, 13, 0, 0, tzinfo=tz)
+
+    async def test_does_not_fire_before_hour_boundary_cron(
+        self,
+        repo: TaskRepository,
+    ) -> None:
+        """AC2: Hour-boundary cron does not fire before the match time."""
+        tz = ZoneInfo("UTC")
+        sunday_12_59_30 = datetime(2026, 4, 5, 12, 59, 30, tzinfo=tz)
+
+        schedule = ScheduleConfig(type="cron", expression="0 13 * * 0")
+        definition = _make_definition("def-1", schedule=schedule)
+        await repo.create_definition(definition)
+
+        settings = TaskSettings(timezone="UTC")
+
+        def mock_now(tz_arg):
+            return sunday_12_59_30 if tz_arg else datetime.now()
+
+        with patch("tachikoma.tasks.scheduler.datetime") as mock_dt:
+            mock_dt.now = mock_now
+            mock_dt.UTC = UTC
+            task = asyncio.create_task(instance_generator(repo, settings))
+            await asyncio.sleep(0.1)
+            task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
+
+        instances = await repo.get_pending_instances("session")
+        assert len(instances) == 0
+
+    async def test_non_hour_boundary_cron_unchanged_with_null_last_fired_at(
+        self,
+        repo: TaskRepository,
+    ) -> None:
+        """AC3: Non-hour-boundary cron behavior unchanged by the fix."""
+        tz = ZoneInfo("UTC")
+        sunday_13_30_30 = datetime(2026, 4, 5, 13, 30, 30, tzinfo=tz)
+
+        schedule = ScheduleConfig(type="cron", expression="30 13 * * 0")
+        definition = _make_definition("def-1", schedule=schedule)
+        await repo.create_definition(definition)
+
+        settings = TaskSettings(timezone="UTC")
+
+        def mock_now(tz_arg):
+            return sunday_13_30_30 if tz_arg else datetime.now()
+
+        with patch("tachikoma.tasks.scheduler.datetime") as mock_dt:
+            mock_dt.now = mock_now
+            mock_dt.UTC = UTC
+            task = asyncio.create_task(instance_generator(repo, settings))
+            await asyncio.sleep(0.1)
+            task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
+
+        instances = await repo.get_pending_instances("session")
+        assert len(instances) == 1
+        assert instances[0].scheduled_for == datetime(2026, 4, 5, 13, 30, 0, tzinfo=tz)
+
+    async def test_hour_boundary_cron_with_last_fired_at(
+        self,
+        repo: TaskRepository,
+    ) -> None:
+        """AC4: Non-NULL last_fired_at with hour-boundary cron still fires correctly."""
+        tz = ZoneInfo("UTC")
+        sunday_13_00_30 = datetime(2026, 4, 5, 13, 0, 30, tzinfo=tz)
+        prev_sunday_13_00 = datetime(2026, 3, 29, 13, 0, 0, tzinfo=UTC)
+
+        schedule = ScheduleConfig(type="cron", expression="0 13 * * 0")
+        definition = _make_definition(
+            "def-1",
+            schedule=schedule,
+            last_fired_at=prev_sunday_13_00,
+        )
+        await repo.create_definition(definition)
+
+        settings = TaskSettings(timezone="UTC")
+
+        def mock_now(tz_arg):
+            return sunday_13_00_30 if tz_arg else datetime.now()
+
+        with patch("tachikoma.tasks.scheduler.datetime") as mock_dt:
+            mock_dt.now = mock_now
+            mock_dt.UTC = UTC
+            task = asyncio.create_task(instance_generator(repo, settings))
+            await asyncio.sleep(0.1)
+            task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
+
+        instances = await repo.get_pending_instances("session")
+        assert len(instances) == 1
+        assert instances[0].scheduled_for == datetime(2026, 4, 5, 13, 0, 0, tzinfo=tz)
 
 
 class TestSessionTaskScheduler:

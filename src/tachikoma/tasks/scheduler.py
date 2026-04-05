@@ -8,7 +8,7 @@ This module contains:
 import asyncio
 from collections.abc import Callable
 from dataclasses import replace
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 from zoneinfo import ZoneInfo
 
@@ -107,7 +107,7 @@ async def instance_generator(
                                     minute=0,
                                     second=0,
                                     microsecond=0,
-                                )
+                                ) - timedelta(seconds=1)
                             else:
                                 anchor_tz = definition.last_fired_at.astimezone(tz)
 
