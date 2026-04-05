@@ -401,7 +401,10 @@ class Coordinator:
                                         active = reopened
                                         startup_matched = True
 
-                                        # Best-effort: record resumption + bridging context
+                                        # Best-effort: record resumption + bridging context.
+                                        # If these fail after startup_matched=True,
+                                        # the session is still active — only the
+                                        # ancillary metadata is lost.
                                         await self._registry.record_resumption(
                                             session_id=reopened.id,
                                             previous_ended_at=captured_ended_at,
@@ -416,8 +419,6 @@ class Coordinator:
                                 "Startup matching failed, creating fresh session: err={err}",
                                 err=str(exc),
                             )
-
-                    # Fall-through: fresh session creation
 
                     # Fall-through: fresh session creation (no stale state to clear at startup)
                     if not startup_matched:

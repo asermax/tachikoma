@@ -101,6 +101,9 @@ async def detect_boundary(
 
     # Select prompt templates based on mode
     if summary is None:
+        # Defense-in-depth: skip SDK call when there are no candidates to match
+        if not candidates:
+            return BoundaryResult(continues=False)
         # Candidates-only mode: startup matching with no current conversation
         system_prompt = CANDIDATES_ONLY_SYSTEM_PROMPT
         user_prompt = CANDIDATES_ONLY_USER_PROMPT.format(

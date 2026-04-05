@@ -1367,8 +1367,8 @@ class TestCoordinatorMcpServers:
 class TestBoundaryDetection:
     """Tests for DLT-026: boundary detection integration in send_message()."""
 
-    async def test_skips_detection_when_no_active_session(self, mock_sdk) -> None:
-        """AC: No active session means detection is skipped."""
+    async def test_no_active_session_creates_fresh_when_no_candidates(self, mock_sdk) -> None:
+        """AC: No active session and no candidates → fresh session created."""
         client, _ = mock_sdk
         client.receive_response.return_value = _mock_messages(
             make_assistant([TextBlock(text="hi")]),
@@ -1381,7 +1381,7 @@ class TestBoundaryDetection:
         ) as coord:
             _ = await _send(coord, "hello")
 
-        # No boundary detection call should happen - message should be processed normally
+        # No candidates available → startup matching skipped, fresh session created
         registry.create_session.assert_awaited_once()
 
     async def test_skips_detection_when_no_summary(self, mock_sdk) -> None:
@@ -3550,3 +3550,31 @@ class TestStartupMatching:
             _ = await _send(coord, "continue")
 
         pre_pipeline.run.assert_not_awaited()
+
+    async def test_startup_skips_matching_when_no_cwd(
+        self, mock_sdk, mocker
+    ) -> None:
+        """AC: When cwd is None, startup matching is skipped entirely."""
+        client, _ = mock_sdk
+        client.receive_response.return_value = _mock_messages(
+            make_assistant([TextBlock(text="hi")]),
+            make_result(),
+        )
+
+        registry = _make_mock_registry(active_session=None)
+
+        mock_detect = mocker.patch(
+            "tachikoma.coordinator.detect_boundary",
+            return_value=BoundaryResult(continues=False),
+        )
+
+        async with Coordinator(
+            registry=registry,
+            agent_defaults=AgentDefaults(cwd=None),
+        ) as coord:
+            _ = await _send(coord, "hello")
+
+        # No candidates queried, no detection attempted
+        registry.get_recent_closed.assert_not_awaited()
+        mock_detect.assert_not_awaited()
+        registry.create_session.assert_awaited_once()
