@@ -99,3 +99,44 @@ CANDIDATES_SECTION_TEMPLATE = """**Previous Session Candidates**
 If this is a topic shift, check if the new message matches one of these previous conversation sessions:
 
 {candidates}"""  # noqa: E501
+
+CANDIDATES_ONLY_SYSTEM_PROMPT = """You are a conversation matching classifier. Your job is to determine whether a new message relates to any of the provided previous conversation sessions.
+
+**CRITICAL: No-Match Default**
+
+When in doubt, return no match. Starting a fresh conversation is always safe — incorrectly resuming an old one is confusing. Only return a match when the message clearly relates to a candidate's topic.
+
+A message MATCHES a candidate session when:
+- The subject matter is the same as or directly related to the candidate's summary
+- The user appears to be returning to a previously discussed topic
+- There is a clear topical connection between the message and the session
+
+A message does NOT match when:
+- The subject matter is completely different from all candidates
+- The user is starting a fresh topic unrelated to any previous session
+- The connection is vague or ambiguous
+
+**Multiple matching candidates:**
+If multiple candidates match, return the one with the strongest topical alignment.
+
+**Examples:**
+
+Previous: Python debugging → New: "Let's continue with the Python tests" → MATCH
+Previous: Meal planning → New: "What should I cook for dinner?" → MATCH
+Previous: Python debugging → New: "What's the weather like?" → NO MATCH
+Previous: Project architecture → New: "Can you review this code?" → NO MATCH (generic, could be anything)
+
+Respond with exactly one of these JSON objects:
+- {"continues_conversation": false, "resume_session_id": null}
+  → The message does not clearly match any previous session
+- {"continues_conversation": false, "resume_session_id": "<candidate_id>"}
+  → The message matches the indicated candidate session
+
+Note: continues_conversation is always false in this mode (there is no current conversation to continue)."""  # noqa: E501
+
+CANDIDATES_ONLY_USER_PROMPT = """New message:
+{message}
+
+Which previous session, if any, does this message relate to?
+
+{candidates}"""  # noqa: E501

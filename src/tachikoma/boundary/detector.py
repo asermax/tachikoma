@@ -15,6 +15,8 @@ from tachikoma.agent_defaults import AgentDefaults
 from tachikoma.boundary.prompts import (
     BOUNDARY_DETECTION_SYSTEM_PROMPT,
     BOUNDARY_DETECTION_USER_PROMPT,
+    CANDIDATES_ONLY_SYSTEM_PROMPT,
+    CANDIDATES_ONLY_USER_PROMPT,
     CANDIDATES_SECTION_TEMPLATE,
 )
 
@@ -51,7 +53,7 @@ class BoundaryResult:
 
 async def detect_boundary(
     message: str,
-    summary: str,
+    summary: str | None,
     agent_defaults: AgentDefaults,
     *,
     candidates: list[SessionCandidate] | None = None,
@@ -65,12 +67,17 @@ async def detect_boundary(
     When a topic shift is detected and candidate sessions are provided, the detector
     may return a resume_session_id if a matching previous session is found.
 
+    When summary is None, operates in candidates-only mode — comparing the message
+    solely against candidate session summaries without a current-topic baseline.
+    In this mode, continues is always forced to False.
+
     Uses a standalone Opus query with low effort and JSON schema output for fast,
     reliable classification. This call is independent of the coordinator's SDK session.
 
     Args:
         message: The incoming user message text.
-        summary: The current session's rolling conversation summary.
+        summary: The current session's rolling conversation summary, or None for
+            candidates-only mode (startup matching).
         agent_defaults: Common SDK options (cwd, cli_path, env).
         candidates: Optional list of candidate sessions for resumption matching.
             Each candidate has an ID and summary for topic matching.
@@ -78,6 +85,7 @@ async def detect_boundary(
     Returns:
         BoundaryResult with:
         - continues: True if the message continues the conversation, False if new topic.
+          Always False in candidates-only mode.
         - resume_session_id: If a topic shift and matching candidate found, the ID to resume.
 
     Raises:
@@ -90,6 +98,30 @@ async def detect_boundary(
     # 2. allowed_tools=[] — documents intent. Currently a no-op due to an SDK bug
     #    (empty list is falsy, so --allowedTools is never passed to CLI).
     # 3. max_turns=3 — hard limit prevents runaway execution.
+
+    # Select prompt templates based on mode
+    if summary is None:
+        # Candidates-only mode: startup matching with no current conversation
+        system_prompt = CANDIDATES_ONLY_SYSTEM_PROMPT
+        user_prompt = CANDIDATES_ONLY_USER_PROMPT.format(
+            message=message,
+            candidates=(
+                _format_candidates(candidates)
+                if candidates
+                else "No previous sessions available."
+            ),
+        )
+    else:
+        # Normal mode: compare against current conversation summary
+        system_prompt = BOUNDARY_DETECTION_SYSTEM_PROMPT
+        user_prompt = BOUNDARY_DETECTION_USER_PROMPT.format(summary=summary, message=message)
+
+        if candidates:
+            candidates_text = CANDIDATES_SECTION_TEMPLATE.format(
+                candidates=_format_candidates(candidates)
+            )
+            user_prompt = f"{user_prompt}\n\n{candidates_text}"
+
     options = ClaudeAgentOptions(
         model=agent_defaults.model,
         effort="low",
@@ -97,7 +129,7 @@ async def detect_boundary(
         cwd=agent_defaults.cwd,
         cli_path=agent_defaults.cli_path,
         env=agent_defaults.env,
-        system_prompt=BOUNDARY_DETECTION_SYSTEM_PROMPT,
+        system_prompt=system_prompt,
         allowed_tools=[],
         output_format={
             "type": "json_schema",
@@ -113,18 +145,10 @@ async def detect_boundary(
         },
     )
 
-    # Build user prompt with optional candidates section
-    user_prompt = BOUNDARY_DETECTION_USER_PROMPT.format(summary=summary, message=message)
-
-    if candidates:
-        candidates_text = CANDIDATES_SECTION_TEMPLATE.format(
-            candidates=_format_candidates(candidates)
-        )
-        user_prompt = f"{user_prompt}\n\n{candidates_text}"
-
     # Fully consume the query() generator to ensure proper SDK cleanup.
-    # Default: fail-open (continues=True, no resume)
-    result = BoundaryResult(continues=True)
+    # Default: fail-open (continues=True for normal mode, False for candidates-only)
+    default_continues = summary is not None
+    result = BoundaryResult(continues=default_continues)
     got_result = False
 
     async for sdk_message in query(prompt=user_prompt, options=options):
@@ -137,11 +161,19 @@ async def detect_boundary(
                     err=sdk_message.result,
                 )
             elif sdk_message.structured_output is not None:
-                continues = bool(sdk_message.structured_output.get("continues_conversation", True))
+                continues = bool(
+                    sdk_message.structured_output.get(
+                        "continues_conversation", default_continues
+                    )
+                )
                 resume_id = sdk_message.structured_output.get("resume_session_id")
 
                 if not isinstance(resume_id, str) or resume_id == "":
                     resume_id = None
+
+                # Candidates-only mode: force continues=False
+                if summary is None:
+                    continues = False
 
                 result = BoundaryResult(continues=continues, resume_session_id=resume_id)
 
