@@ -926,10 +926,15 @@ class TestTelegramToolDisplay:
         assert result == "Searching tools: git"
         assert "`" not in result
 
-    def test_glob_with_markdown_chars(self) -> None:
-        """Glob with markdown-sensitive chars is properly code-wrapped."""
-        result = TELEGRAM_TOOL_DISPLAY["Glob"]({"pattern": "**/*.ts"})
-        assert "`**/*.ts`" in result
+    def test_read_with_dunder_path(self) -> None:
+        """Read with dunder filename is properly code-wrapped."""
+        result = TELEGRAM_TOOL_DISPLAY["Read"]({"file_path": "/src/__init__.py"})
+        assert "`/src/__init__.py`" in result
+
+    def test_fallback_placeholder_code_wrapped(self) -> None:
+        """Missing key fallback '...' is still code-wrapped."""
+        result = TELEGRAM_TOOL_DISPLAY["Grep"]({})
+        assert "`...`" in result
 
 
 class TestTelegramToolSummary:
