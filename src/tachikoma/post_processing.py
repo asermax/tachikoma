@@ -142,9 +142,7 @@ class PostProcessingPipeline:
         """Whether the pipeline is currently executing."""
         return self._is_processing
 
-    def needs_processing(
-        self, session: Session, last_message_time: datetime | None
-    ) -> bool:
+    def needs_processing(self, session: Session, last_message_time: datetime | None) -> bool:
         """Whether the session has unprocessed content.
 
         Returns False if the pipeline is already running or if

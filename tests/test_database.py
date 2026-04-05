@@ -88,7 +88,6 @@ class TestDatabaseInitialization:
             "schedule",
             "task_type",
             "prompt",
-            "notify",
             "enabled",
             "last_fired_at",
             "created_at",

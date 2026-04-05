@@ -207,9 +207,7 @@ class TestSystemDisallowedTools:
 
     def test_system_tools_present_with_empty_list(self) -> None:
         """AC (R2): System tools present even when user sets empty list."""
-        settings = Settings.model_validate(
-            {"agent": {"disallowed_tools": []}}
-        )
+        settings = Settings.model_validate({"agent": {"disallowed_tools": []}})
 
         assert settings.agent.disallowed_tools == ["Skill"]
 

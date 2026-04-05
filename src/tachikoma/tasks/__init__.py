@@ -5,13 +5,13 @@ Provides:
 - TaskDefinition, TaskInstance: Domain dataclasses
 - ScheduleConfig: Schedule configuration (cron or one-shot)
 - TaskStatus, TaskType: Literal type aliases
-- SessionTaskReady, TaskNotification: Typed event classes for event bus
+- SessionTaskReady: Typed event class for event bus
 - instance_generator, session_task_scheduler: Async scheduling loops
 - background_task_runner, BackgroundTaskExecutor: Background task execution
 """
 
 from tachikoma.tasks.errors import TaskRepositoryError
-from tachikoma.tasks.events import SessionTaskReady, TaskNotification
+from tachikoma.tasks.events import SessionTaskReady
 from tachikoma.tasks.executor import BackgroundTaskExecutor, background_task_runner
 from tachikoma.tasks.model import (
     ScheduleConfig,
@@ -30,7 +30,6 @@ __all__ = [
     "SessionTaskReady",
     "TaskDefinition",
     "TaskInstance",
-    "TaskNotification",
     "TaskRepository",
     "TaskRepositoryError",
     "TaskStatus",

@@ -144,9 +144,7 @@ class TestGitProcessor:
 
         mock_push.assert_not_awaited()
 
-    async def test_push_failure_logs_warning_and_continues(
-        self, mocker: MockerFixture
-    ) -> None:
+    async def test_push_failure_logs_warning_and_continues(self, mocker: MockerFixture) -> None:
         """AC3: Push failure logs warning with details; processor completes normally."""
         mocker.patch(
             "tachikoma.git.processor._check_git_status",

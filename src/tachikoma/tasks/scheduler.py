@@ -144,7 +144,10 @@ async def instance_generator(
 
                             # Create instance with scheduled_for=cron_match_utc (S1)
                             await _create_pending_instance(
-                                repository, definition, cron_match_utc, now_utc,
+                                repository,
+                                definition,
+                                cron_match_utc,
+                                now_utc,
                             )
 
                             # Advance last_fired_at so next cycle's CronSim anchor
@@ -186,7 +189,10 @@ async def instance_generator(
                             continue
 
                         await _create_pending_instance(
-                            repository, definition, schedule.at, now_utc,
+                            repository,
+                            definition,
+                            schedule.at,
+                            now_utc,
                         )
 
                         await repository.update_definition(

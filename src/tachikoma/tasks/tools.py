@@ -38,7 +38,6 @@ class CreateTaskArgs(BaseModel):
     schedule: str
     type: str
     prompt: str
-    notify: str | None = None
     enabled: bool = True
 
 
@@ -48,7 +47,6 @@ class UpdateTaskArgs(BaseModel):
     schedule: str | None = None
     task_type: Literal["session", "background"] | None = None
     prompt: str | None = None
-    notify: str | None = None
     enabled: bool | None = None
 
 
@@ -112,8 +110,6 @@ def create_task_tools_server(repository: TaskRepository) -> McpSdkServerConfig:
                 lines.append(f"- [{d.id}] **{d.name}** [{d.task_type}] {status}")
                 lines.append(f"  Schedule: {schedule_desc}{last_fired}")
                 lines.append(f"  Prompt: {d.prompt[:100]}{'...' if len(d.prompt) > 100 else ''}")
-                if d.notify:
-                    lines.append(f"  Notify: {d.notify}")
                 lines.append("")
 
             return {
@@ -141,9 +137,6 @@ def create_task_tools_server(repository: TaskRepository) -> McpSdkServerConfig:
         "- type (str, required): 'session' (delivered during idle) or 'background'"
         " (isolated execution)\n"
         "- prompt (str, required): Instruction the agent follows when the task fires\n"
-        "- notify (str, optional): Success notification instruction — when set, generates"
-        " a user-facing message on completion. Omit for silent success. Failures always"
-        " notify regardless of this field.\n"
         "- enabled (bool, optional, default true): Whether the task is active",
         CreateTaskArgs.model_json_schema(),
     )
@@ -213,7 +206,6 @@ def create_task_tools_server(repository: TaskRepository) -> McpSdkServerConfig:
             task_type=parsed.type,  # type: ignore[arg-type]  # validated above
             prompt=parsed.prompt,
             enabled=parsed.enabled,
-            notify=parsed.notify,
             last_fired_at=None,
             created_at=datetime.now(UTC),
         )
@@ -255,7 +247,6 @@ def create_task_tools_server(repository: TaskRepository) -> McpSdkServerConfig:
         "- schedule (str, optional): New cron expression or ISO datetime\n"
         "- task_type (str, optional): Change type — 'session' or 'background'\n"
         "- prompt (str, optional): New agent instruction\n"
-        "- notify (str, optional): New success notification instruction\n"
         "- enabled (bool, optional): Enable or disable the task\n"
         "\n"
         "Only provided fields are updated; omitted fields remain unchanged.",
@@ -301,8 +292,6 @@ def create_task_tools_server(repository: TaskRepository) -> McpSdkServerConfig:
             updates["schedule"] = schedule_config
         if parsed.prompt is not None:
             updates["prompt"] = parsed.prompt
-        if parsed.notify is not None:
-            updates["notify"] = parsed.notify
         if parsed.enabled is not None:
             updates["enabled"] = parsed.enabled
         if parsed.task_type is not None:

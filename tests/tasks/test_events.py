@@ -4,7 +4,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from tachikoma.tasks.events import SessionTaskReady, TaskNotification
+from tachikoma.tasks.events import SessionTaskReady
 
 from .conftest import _make_instance
 
@@ -48,49 +48,3 @@ class TestSessionTaskReady:
         await event.on_complete()
 
         mock_callback.assert_called_once()
-
-
-class TestTaskNotification:
-    """Tests for TaskNotification event."""
-
-    def test_construction_info(self) -> None:
-        """AC: TaskNotification event is created with info severity."""
-        event = TaskNotification(
-            prompt="A background task has completed. Deliver this to the user.",
-            source_task_id="task-123",
-            severity="info",
-        )
-
-        assert event.prompt == "A background task has completed. Deliver this to the user."
-        assert event.source_task_id == "task-123"
-        assert event.severity == "info"
-
-    def test_construction_error(self) -> None:
-        """AC: TaskNotification event is created with error severity."""
-        event = TaskNotification(
-            prompt="A background task has failed. Inform the user.",
-            source_task_id="task-456",
-            severity="error",
-        )
-
-        assert event.prompt == "A background task has failed. Inform the user."
-        assert event.source_task_id == "task-456"
-        assert event.severity == "error"
-
-    def test_defaults(self) -> None:
-        """AC: TaskNotification has sensible defaults."""
-        event = TaskNotification(prompt="Notification")
-
-        assert event.prompt == "Notification"
-        assert event.source_task_id is None
-        assert event.severity == "info"  # default
-
-    def test_severity_literal(self) -> None:
-        """AC: severity must be 'info' or 'error'."""
-        # Valid values
-        TaskNotification(prompt="test", severity="info")
-        TaskNotification(prompt="test", severity="error")
-
-        # Invalid value should raise
-        with pytest.raises(Exception):  # Pydantic ValidationError
-            TaskNotification(prompt="test", severity="warning")

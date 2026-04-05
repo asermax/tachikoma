@@ -598,9 +598,7 @@ class TestForkAndConsume:
         assert options.system_prompt["preset"] == "claude_code"
         assert options.system_prompt["append"] == context
 
-    async def test_system_prompt_append_none_no_system_prompt(
-        self, mocker: MockerFixture
-    ) -> None:
+    async def test_system_prompt_append_none_no_system_prompt(self, mocker: MockerFixture) -> None:
         """AC: system_prompt_append=None (default) leaves system_prompt unset (DLT-041)."""
         mock_query = mocker.patch("tachikoma.post_processing.query")
 
@@ -763,9 +761,7 @@ class TestForkAndCapture:
         assert options.system_prompt["preset"] == "claude_code"
         assert options.system_prompt["append"] == context
 
-    async def test_system_prompt_append_none_no_system_prompt(
-        self, mocker: MockerFixture
-    ) -> None:
+    async def test_system_prompt_append_none_no_system_prompt(self, mocker: MockerFixture) -> None:
         """AC: system_prompt_append=None (default) leaves system_prompt unset (DLT-041)."""
         mock_query = mocker.patch("tachikoma.post_processing.query")
 

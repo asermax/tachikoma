@@ -100,7 +100,6 @@ class TaskDefinition:
     task_type: TaskType
     prompt: str
     enabled: bool = True
-    notify: str | None = None
     last_fired_at: datetime | None = None
     created_at: datetime | None = None
 
@@ -144,7 +143,6 @@ class TaskDefinitionRecord(Base):
     schedule: Mapped[str] = mapped_column(String, nullable=False)  # JSON string
     task_type: Mapped[str] = mapped_column(String, nullable=False)
     prompt: Mapped[str] = mapped_column(String, nullable=False)
-    notify: Mapped[str | None] = mapped_column(String, nullable=True)
     enabled: Mapped[bool] = mapped_column(default=True)
     last_fired_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
@@ -157,7 +155,6 @@ class TaskDefinitionRecord(Base):
             schedule=ScheduleConfig.from_json(self.schedule),
             task_type=self.task_type,  # type: ignore[arg-type]
             prompt=self.prompt,
-            notify=self.notify,
             enabled=self.enabled,
             last_fired_at=ensure_utc(self.last_fired_at),
             created_at=ensure_utc(self.created_at),

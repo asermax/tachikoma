@@ -11,7 +11,7 @@ from claude_agent_sdk.types import AssistantMessage, ResultMessage, TextBlock
 
 from tachikoma.agent_defaults import AgentDefaults
 from tachikoma.config import TaskSettings
-from tachikoma.tasks.events import TaskNotification
+from tachikoma.notifications import Notification
 from tachikoma.tasks.executor import (
     BackgroundTaskExecutor,
     _PreprocessingResult,
@@ -19,7 +19,7 @@ from tachikoma.tasks.executor import (
 )
 from tachikoma.tasks.repository import TaskRepository
 
-from .conftest import _make_definition, _make_instance
+from .conftest import _make_instance
 
 
 def _mock_skill_registry() -> MagicMock:
@@ -72,7 +72,6 @@ class TestBackgroundTaskRunner:
     @pytest.mark.asyncio
     async def test_picks_up_pending_instances(self, repo: TaskRepository) -> None:
         """AC: Runner picks up pending background instances."""
-        # Create pending background instance
         instance = _make_instance(
             "inst-1",
             task_type="background",
@@ -83,7 +82,6 @@ class TestBackgroundTaskRunner:
         settings = TaskSettings(max_concurrent_background=1)
         bus = EventBus()
 
-        # Mock the executor to track calls
         executed_instances = []
 
         async def mock_execute(self, inst):
@@ -111,7 +109,6 @@ class TestBackgroundTaskRunner:
     @pytest.mark.asyncio
     async def test_respects_concurrency_limit(self, repo: TaskRepository) -> None:
         """AC: Runner respects max_concurrent_background limit."""
-        # Create multiple pending instances
         for i in range(5):
             instance = _make_instance(
                 f"inst-{i}",
@@ -123,7 +120,6 @@ class TestBackgroundTaskRunner:
         settings = TaskSettings(max_concurrent_background=2)
         bus = EventBus()
 
-        # Track concurrent executions
         concurrent_count = 0
         max_concurrent = 0
 
@@ -200,7 +196,6 @@ class TestBackgroundTaskExecutor:
         settings = TaskSettings()
         bus = EventBus()
 
-        # Track dispatched events
         dispatched_events = []
 
         async def capture_dispatch(event):
@@ -217,25 +212,21 @@ class TestBackgroundTaskExecutor:
             session_registry=_mock_session_registry(),
         )
 
-        # Mock SDK client and evaluator
         with patch("tachikoma.tasks.executor.ClaudeSDKClient") as mock_client_class:
             mock_client = AsyncMock()
             mock_client.__aenter__ = AsyncMock(return_value=mock_client)
             mock_client.__aexit__ = AsyncMock(return_value=None)
             mock_client_class.return_value = mock_client
 
-            # Mock query and receive_response
             mock_client.query = AsyncMock()
             mock_client.receive_response = _make_sdk_response(
                 text="Task done",
                 session_id="sdk-session-123",
             )
 
-            # Mock evaluator to return complete
             with patch("claude_agent_sdk.query") as mock_query:
                 mock_query.return_value = _make_eval_response()
 
-                # Mock pre-processing to return original prompt
                 with (
                     patch.object(
                         executor,
@@ -253,7 +244,7 @@ class TestBackgroundTaskExecutor:
 
     @pytest.mark.asyncio
     async def test_failure_dispatches_error_notification(self, repo: TaskRepository) -> None:
-        """AC: Executor dispatches error notification on failure."""
+        """AC: Executor dispatches error Notification on failure."""
         instance = _make_instance(
             "inst-1",
             task_type="background",
@@ -294,23 +285,15 @@ class TestBackgroundTaskExecutor:
 
         # Verify error notification dispatched
         assert len(dispatched_events) == 1
-        assert isinstance(dispatched_events[0], TaskNotification)
+        assert isinstance(dispatched_events[0], Notification)
         assert dispatched_events[0].severity == "error"
+        assert dispatched_events[0].source_id == "inst-1"
 
     @pytest.mark.asyncio
-    async def test_no_notification_when_notify_null(self, repo: TaskRepository) -> None:
-        """AC: No notification when definition.notify is null on completion."""
-        # Create definition with notify=None
-        definition = _make_definition(
-            "def-1",
-            task_type="background",
-            notify=None,
-        )
-        await repo.create_definition(definition)
-
+    async def test_no_notification_on_success(self, repo: TaskRepository) -> None:
+        """AC: No notification on success — agent controls notifications."""
         instance = _make_instance(
             "inst-1",
-            definition_id="def-1",
             task_type="background",
             status="pending",
             prompt="Test task",
@@ -336,7 +319,6 @@ class TestBackgroundTaskExecutor:
             session_registry=_mock_session_registry(),
         )
 
-        # Mock SDK client and evaluator
         with patch("tachikoma.tasks.executor.ClaudeSDKClient") as mock_client_class:
             mock_client = AsyncMock()
             mock_client.__aenter__ = AsyncMock(return_value=mock_client)
@@ -359,7 +341,7 @@ class TestBackgroundTaskExecutor:
                 ):
                     await executor.execute(instance)
 
-        # No notification should be dispatched (notify is null)
+        # No notification should be dispatched on success
         assert len(dispatched_events) == 0
 
     @pytest.mark.asyncio
@@ -375,7 +357,13 @@ class TestBackgroundTaskExecutor:
 
         settings = TaskSettings(max_iterations=2)
         bus = EventBus()
-        bus.dispatch = AsyncMock()
+
+        dispatched_events = []
+
+        async def capture_dispatch(event):
+            dispatched_events.append(event)
+
+        bus.dispatch = AsyncMock(side_effect=capture_dispatch)
 
         executor = BackgroundTaskExecutor(
             repository=repo,
@@ -413,23 +401,18 @@ class TestBackgroundTaskExecutor:
         assert updated.status == "failed"
         assert "max iterations" in updated.result.lower()
 
-
-class TestNotificationGeneration:
-    """Tests for fork-based notification generation."""
+        # Verify error notification dispatched
+        assert len(dispatched_events) == 1
+        assert isinstance(dispatched_events[0], Notification)
+        assert dispatched_events[0].severity == "error"
 
     @pytest.mark.asyncio
-    async def test_success_with_notify_forks_session(self, repo: TaskRepository) -> None:
-        """AC1: Success + notify set → fork called, generated text used."""
-        definition = _make_definition(
-            "def-1",
-            task_type="background",
-            notify="Summarize what you accomplished",
-        )
-        await repo.create_definition(definition)
-
+    async def test_notification_server_registered_in_sdk_options(
+        self, repo: TaskRepository
+    ) -> None:
+        """AC: Notification MCP server is present in SDK options mcp_servers."""
         instance = _make_instance(
             "inst-1",
-            definition_id="def-1",
             task_type="background",
             status="pending",
             prompt="Test task",
@@ -438,13 +421,7 @@ class TestNotificationGeneration:
 
         settings = TaskSettings()
         bus = EventBus()
-
-        dispatched_events: list[TaskNotification] = []
-
-        async def capture_dispatch(event):
-            dispatched_events.append(event)
-
-        bus.dispatch = AsyncMock(side_effect=capture_dispatch)
+        bus.dispatch = AsyncMock()
 
         executor = BackgroundTaskExecutor(
             repository=repo,
@@ -455,14 +432,22 @@ class TestNotificationGeneration:
             session_registry=_mock_session_registry(),
         )
 
+        captured_mcp_servers = {}
+
         with patch("tachikoma.tasks.executor.ClaudeSDKClient") as mock_client_class:
             mock_client = AsyncMock()
             mock_client.__aenter__ = AsyncMock(return_value=mock_client)
             mock_client.__aexit__ = AsyncMock(return_value=None)
-            mock_client_class.return_value = mock_client
+
+            # Capture the options passed to ClaudeSDKClient constructor
+            def capture_options(options):
+                captured_mcp_servers.update(options.mcp_servers or {})
+                return mock_client
+
+            mock_client_class.side_effect = capture_options
 
             mock_client.query = AsyncMock()
-            mock_client.receive_response = _make_sdk_response(text="Task done")
+            mock_client.receive_response = _make_sdk_response(text="Done")
 
             with patch("claude_agent_sdk.query") as mock_query:
                 mock_query.return_value = _make_eval_response()
@@ -474,39 +459,23 @@ class TestNotificationGeneration:
                         return_value=_mock_preproc_result(),
                     ),
                     patch.object(executor, "_run_postprocessing", return_value=None),
-                    patch(
-                        "tachikoma.tasks.executor.fork_and_capture",
-                        return_value="Task completed: updated 3 files",
-                    ) as mock_fork,
                 ):
                     await executor.execute(instance)
 
-        # Verify fork was called with the notify prompt
-        mock_fork.assert_awaited_once()
-        call_args = mock_fork.call_args
-        assert call_args[0][1] == "Summarize what you accomplished"
-
-        # Verify notification uses coordinator-routed prompt with fork output
-        assert len(dispatched_events) == 1
-        assert "Task completed: updated 3 files" in dispatched_events[0].prompt
-        assert dispatched_events[0].severity == "info"
+        # Verify the notification server was added to mcp_servers
+        assert "notifications" in captured_mcp_servers
 
     @pytest.mark.asyncio
-    async def test_fork_failure_falls_back_to_evaluator_feedback(
-        self,
-        repo: TaskRepository,
+    async def test_agent_notification_and_failure_both_delivered(
+        self, repo: TaskRepository
     ) -> None:
-        """AC3: Fork failure → falls back to evaluator feedback."""
-        definition = _make_definition(
-            "def-1",
-            task_type="background",
-            notify="Summarize results",
-        )
-        await repo.create_definition(definition)
+        """AC: Agent and failure notifications dispatched independently.
 
+        Simulates an agent calling send_notification during execution (dispatching directly
+        to the bus) followed by a failure — both notifications should be present.
+        """
         instance = _make_instance(
             "inst-1",
-            definition_id="def-1",
             task_type="background",
             status="pending",
             prompt="Test task",
@@ -516,7 +485,7 @@ class TestNotificationGeneration:
         settings = TaskSettings()
         bus = EventBus()
 
-        dispatched_events: list[TaskNotification] = []
+        dispatched_events = []
 
         async def capture_dispatch(event):
             dispatched_events.append(event)
@@ -532,241 +501,49 @@ class TestNotificationGeneration:
             session_registry=_mock_session_registry(),
         )
 
-        with patch("tachikoma.tasks.executor.ClaudeSDKClient") as mock_client_class:
-            mock_client = AsyncMock()
-            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-            mock_client.__aexit__ = AsyncMock(return_value=None)
-            mock_client_class.return_value = mock_client
-
-            mock_client.query = AsyncMock()
-            mock_client.receive_response = _make_sdk_response(text="Done")
-
-            with patch("claude_agent_sdk.query") as mock_query:
-                mock_query.return_value = _make_eval_response(
-                    '{"status": "complete", "feedback": "Evaluator says done"}',
-                )
-
-                with (
-                    patch.object(
-                        executor,
-                        "_run_preprocessing",
-                        return_value=_mock_preproc_result(),
-                    ),
-                    patch.object(executor, "_run_postprocessing", return_value=None),
-                    patch(
-                        "tachikoma.tasks.executor.fork_and_capture",
-                        side_effect=RuntimeError("Fork failed"),
-                    ),
-                ):
-                    await executor.execute(instance)
-
-        # Verify fallback: prompt includes evaluator feedback since fork failed
-        assert len(dispatched_events) == 1
-        assert "Evaluator says done" in dispatched_events[0].prompt
-        assert dispatched_events[0].severity == "info"
-
-    @pytest.mark.asyncio
-    async def test_no_sdk_session_id_falls_back(self, repo: TaskRepository) -> None:
-        """AC4: No sdk_session_id → skips fork, uses evaluator feedback."""
-        definition = _make_definition(
-            "def-1",
-            task_type="background",
-            notify="Summarize results",
-        )
-        await repo.create_definition(definition)
-
-        instance = _make_instance(
-            "inst-1",
-            definition_id="def-1",
-            task_type="background",
-            status="pending",
-            prompt="Test task",
-        )
-        await repo.create_instance(instance)
-
-        settings = TaskSettings()
-        bus = EventBus()
-
-        dispatched_events: list[TaskNotification] = []
-
-        async def capture_dispatch(event):
-            dispatched_events.append(event)
-
-        bus.dispatch = AsyncMock(side_effect=capture_dispatch)
-
-        executor = BackgroundTaskExecutor(
-            repository=repo,
-            settings=settings,
-            bus=bus,
-            agent_defaults=AgentDefaults(cwd=Path("/tmp")),
-            skill_registry=_mock_skill_registry(),
-            session_registry=_mock_session_registry(),
+        agent_notification = Notification(
+            prompt="Progress update from agent",
+            source_id="inst-1",
+            severity="info",
         )
 
         with patch("tachikoma.tasks.executor.ClaudeSDKClient") as mock_client_class:
             mock_client = AsyncMock()
             mock_client.__aenter__ = AsyncMock(return_value=mock_client)
             mock_client.__aexit__ = AsyncMock(return_value=None)
+
+            # Simulate agent calling send_notification during execution,
+            # then evaluator says stuck
+            async def mock_receive_response():
+                # Agent sends notification during execution (simulating tool call)
+                dispatched_events.append(agent_notification)
+                async for msg in _make_sdk_response(text="Working...")():
+                    yield msg
+
             mock_client_class.return_value = mock_client
-
             mock_client.query = AsyncMock()
-
-            # Response with NO session_id
-            mock_client.receive_response = _make_sdk_response(text="Done", session_id=None)
-
-            with patch("claude_agent_sdk.query") as mock_query:
-                mock_query.return_value = _make_eval_response(
-                    '{"status": "complete", "feedback": "Evaluator feedback"}',
-                )
-
-                with (
-                    patch.object(
-                        executor,
-                        "_run_preprocessing",
-                        return_value=_mock_preproc_result(),
-                    ),
-                    patch.object(executor, "_run_postprocessing", return_value=None),
-                    patch(
-                        "tachikoma.tasks.executor.fork_and_capture",
-                    ) as mock_fork,
-                ):
-                    await executor.execute(instance)
-
-        # Fork should NOT have been called
-        mock_fork.assert_not_awaited()
-
-        # Fallback to evaluator feedback in prompt
-        assert len(dispatched_events) == 1
-        assert "Evaluator feedback" in dispatched_events[0].prompt
-
-    @pytest.mark.asyncio
-    async def test_error_with_notify_set_bypasses_fork(self, repo: TaskRepository) -> None:
-        """AC2: Error severity with notify set → raw error message, no fork."""
-        definition = _make_definition(
-            "def-1",
-            task_type="background",
-            notify="Summarize results",
-        )
-        await repo.create_definition(definition)
-
-        instance = _make_instance(
-            "inst-1",
-            definition_id="def-1",
-            task_type="background",
-            status="pending",
-            prompt="Test task",
-        )
-        await repo.create_instance(instance)
-
-        settings = TaskSettings()
-        bus = EventBus()
-
-        dispatched_events: list[TaskNotification] = []
-
-        async def capture_dispatch(event):
-            dispatched_events.append(event)
-
-        bus.dispatch = AsyncMock(side_effect=capture_dispatch)
-
-        executor = BackgroundTaskExecutor(
-            repository=repo,
-            settings=settings,
-            bus=bus,
-            agent_defaults=AgentDefaults(cwd=Path("/tmp")),
-            skill_registry=_mock_skill_registry(),
-            session_registry=_mock_session_registry(),
-        )
-
-        with patch("tachikoma.tasks.executor.ClaudeSDKClient") as mock_client_class:
-            mock_client = AsyncMock()
-            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-            mock_client.__aexit__ = AsyncMock(return_value=None)
-            mock_client_class.return_value = mock_client
-
-            mock_client.query = AsyncMock()
-            mock_client.receive_response = _make_sdk_response(text="Stuck in loop")
+            mock_client.receive_response = mock_receive_response
 
             with patch("claude_agent_sdk.query") as mock_query:
                 mock_query.return_value = _make_eval_response(
                     '{"status": "stuck", "feedback": "Agent is looping"}',
                 )
 
-                with (
-                    patch.object(
-                        executor,
-                        "_run_preprocessing",
-                        return_value=_mock_preproc_result(),
-                    ),
-                    patch(
-                        "tachikoma.tasks.executor.fork_and_capture",
-                    ) as mock_fork,
+                with patch.object(
+                    executor,
+                    "_run_preprocessing",
+                    return_value=_mock_preproc_result(),
                 ):
                     await executor.execute(instance)
 
-        # Fork should NOT have been called for error notifications
-        mock_fork.assert_not_awaited()
+        # Both the agent notification and the failure notification should be present
+        assert len(dispatched_events) == 2
 
-        # Error notification with error prompt, not the notify prompt
-        assert len(dispatched_events) == 1
-        assert dispatched_events[0].severity == "error"
-        assert "Agent is looping" in dispatched_events[0].prompt
+        # Agent's info notification
+        info_events = [e for e in dispatched_events if e.severity == "info"]
+        assert len(info_events) == 1
 
-    @pytest.mark.asyncio
-    async def test_transient_instance_no_fork(self, repo: TaskRepository) -> None:
-        """AC5: Transient instance (no definition) → no fork, no notification."""
-        instance = _make_instance(
-            "inst-1",
-            definition_id=None,
-            task_type="background",
-            status="pending",
-            prompt="Test task",
-        )
-        await repo.create_instance(instance)
-
-        settings = TaskSettings()
-        bus = EventBus()
-
-        dispatched_events: list[TaskNotification] = []
-
-        async def capture_dispatch(event):
-            dispatched_events.append(event)
-
-        bus.dispatch = AsyncMock(side_effect=capture_dispatch)
-
-        executor = BackgroundTaskExecutor(
-            repository=repo,
-            settings=settings,
-            bus=bus,
-            agent_defaults=AgentDefaults(cwd=Path("/tmp")),
-            skill_registry=_mock_skill_registry(),
-            session_registry=_mock_session_registry(),
-        )
-
-        with patch("tachikoma.tasks.executor.ClaudeSDKClient") as mock_client_class:
-            mock_client = AsyncMock()
-            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-            mock_client.__aexit__ = AsyncMock(return_value=None)
-            mock_client_class.return_value = mock_client
-
-            mock_client.query = AsyncMock()
-            mock_client.receive_response = _make_sdk_response(text="Done")
-
-            with patch("claude_agent_sdk.query") as mock_query:
-                mock_query.return_value = _make_eval_response()
-
-                with (
-                    patch.object(
-                        executor,
-                        "_run_preprocessing",
-                        return_value=_mock_preproc_result(),
-                    ),
-                    patch.object(executor, "_run_postprocessing", return_value=None),
-                    patch(
-                        "tachikoma.tasks.executor.fork_and_capture",
-                    ) as mock_fork,
-                ):
-                    await executor.execute(instance)
-
-        # No fork should have been called, no notification dispatched
-        mock_fork.assert_not_awaited()
-        assert len(dispatched_events) == 0
+        # Executor's error notification
+        error_events = [e for e in dispatched_events if e.severity == "error"]
+        assert len(error_events) == 1
+        assert "failed" in error_events[0].prompt.lower()

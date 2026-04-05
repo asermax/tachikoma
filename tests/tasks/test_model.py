@@ -150,7 +150,6 @@ class TestTaskDefinition:
             task_type="session",
             prompt="Remind the user to check emails",
             enabled=True,
-            notify=None,
             last_fired_at=None,
             created_at=datetime.now(UTC),
         )
@@ -231,7 +230,6 @@ class TestORMModels:
             schedule='{"type": "cron", "expression": "0 9 * * *"}',
             task_type="session",
             prompt="Test prompt",
-            notify="Tell user",
             enabled=True,
             last_fired_at=None,
             created_at=now,
@@ -243,7 +241,6 @@ class TestORMModels:
         assert domain.name == "Test Task"
         assert domain.schedule.type == "cron"
         assert domain.schedule.expression == "0 9 * * *"
-        assert domain.notify == "Tell user"
 
     def test_instance_record_to_domain(self) -> None:
         """AC: TaskInstanceRecord converts to domain correctly."""

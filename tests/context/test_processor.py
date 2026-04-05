@@ -107,9 +107,7 @@ class TestFormatPendingSignalsSection:
 class TestCoreContextProcessor:
     """Tests for CoreContextProcessor."""
 
-    async def test_calls_clean_pending_signals(
-        self, mocker: MockerFixture, tmp_path: Path
-    ) -> None:
+    async def test_calls_clean_pending_signals(self, mocker: MockerFixture, tmp_path: Path) -> None:
         """AC: process() calls clean_pending_signals with correct data_dir."""
         mock_clean = mocker.patch("tachikoma.context.processor.clean_pending_signals")
         mocker.patch(

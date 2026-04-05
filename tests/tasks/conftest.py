@@ -25,7 +25,6 @@ def _make_definition(
     task_type: str = "session",
     prompt: str = "Test prompt",
     enabled: bool = True,
-    notify: str | None = None,
     last_fired_at: datetime | None = None,
 ) -> TaskDefinition:
     """Create a TaskDefinition with sensible defaults."""
@@ -36,7 +35,6 @@ def _make_definition(
         task_type=task_type,
         prompt=prompt,
         enabled=enabled,
-        notify=notify,
         last_fired_at=last_fired_at,
         created_at=_utcnow(),
     )

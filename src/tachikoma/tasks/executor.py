@@ -9,7 +9,7 @@ import asyncio
 import json
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any
 
 from bubus import EventBus
 from claude_agent_sdk import ClaudeAgentOptions, ClaudeSDKClient
@@ -21,14 +21,17 @@ from tachikoma.config import TaskSettings
 from tachikoma.git.processor import GitProcessor
 from tachikoma.memory.context_provider import MemoryContextProvider
 from tachikoma.memory.episodic import EpisodicProcessor
-from tachikoma.post_processing import PRE_FINALIZE_PHASE, PostProcessingPipeline, fork_and_capture
+from tachikoma.notifications import (
+    create_notification_server,
+    dispatch_notification,
+)
+from tachikoma.post_processing import PRE_FINALIZE_PHASE, PostProcessingPipeline
 from tachikoma.pre_processing import McpServerConfig, PreProcessingPipeline, assemble_context
 from tachikoma.projects.context_provider import ProjectsContextProvider
 from tachikoma.projects.processor import ProjectsProcessor
 from tachikoma.sessions.model import Session
 from tachikoma.sessions.registry import SessionRegistry
 from tachikoma.skills.context_provider import SkillsContextProvider
-from tachikoma.tasks.events import TaskNotification
 from tachikoma.tasks.model import TaskDefinition, TaskInstance
 from tachikoma.tasks.repository import TaskRepository
 
@@ -53,28 +56,22 @@ class _PreprocessingResult:
 
 _log = logger.bind(component="task_executor")
 
-# Prompt templates for coordinator-routed notifications
-NOTIFICATION_PROMPT = (
-    "A background task has completed. Deliver this notification to the user, "
-    "keeping your message concise.\n\n"
-    "Task: {task_summary}\n"
-    "{notification_text}"
-)
-
-NOTIFICATION_ERROR_PROMPT = (
-    "A background task has failed. Inform the user about the failure, "
-    "keeping your message concise.\n\n"
-    "Task: {task_summary}\n"
-    "Error: {error_message}"
-)
-
 # How often the background task runner checks for pending instances
 RUNNER_CHECK_INTERVAL_SECONDS = 30
 
 # Background task system prompt
 BACKGROUND_TASK_SYSTEM_PROMPT = """You are a background task agent. You are executing a scheduled task autonomously. Complete the task described below. Your work will be saved automatically.
 
-You are operating without direct user interaction. Work through the task methodically, and when you believe the task is complete, provide a clear summary of what was accomplished."""  # noqa: E501
+You are operating without direct user interaction. Work through the task methodically, and when you believe the task is complete, provide a clear summary of what was accomplished.
+
+## Notifications
+
+You have access to the `send_notification` tool, which delivers a message to the user. Use it when:
+- You have meaningful results or findings to share (not for every task)
+- You want to provide a progress update during a long-running task
+- The task outcome is worth the user's attention
+
+You can call `send_notification` multiple times during execution (e.g., for progress updates). Failure notifications are sent automatically — you do not need to notify on failure."""  # noqa: E501
 
 # Evaluator prompt for assessing task completion
 EVALUATOR_PROMPT_TEMPLATE = """You are a task completion evaluator. Assess whether the following background task has been completed.
@@ -254,13 +251,28 @@ class BackgroundTaskExecutor:
         )
 
         try:
-            # Get the definition if available (for notify field)
+            # Get the definition if available (for notification source naming)
             definition: TaskDefinition | None = None
             if instance.definition_id:
                 definition = await self._repository.get_definition(instance.definition_id)
 
+            # Build notification context for failure dispatch
+            notification_source = (
+                f"Background task: {definition.name}"
+                if definition
+                else f"Background task: {instance.prompt[:100]}"
+            )
+
             # Run pre-processing pipeline (memory, projects, skills context)
             preprocessing_result = await self._run_preprocessing(instance.prompt)
+
+            # Register notification MCP server for agent-driven notifications
+            notification_server = create_notification_server(
+                self._bus,
+                notification_source,
+                instance.id,
+            )
+            preprocessing_result.mcp_servers["notifications"] = notification_server
 
             # Build SDK options with adapted system prompt
             options = ClaudeAgentOptions(
@@ -321,27 +333,20 @@ class BackgroundTaskExecutor:
                     )
 
                     if status == "complete":
-                        # Task completed successfully
+                        # Agent controls notifications via send_notification tool
                         await self._complete_instance(instance.id, feedback)
                         await self._run_postprocessing(sdk_session_id)
-                        await self._dispatch_notification(
-                            instance,
-                            definition,
-                            sdk_session_id=sdk_session_id,
-                            message=feedback,
-                            severity="info",
-                        )
                         return
 
                     if status == "stuck":
                         # Agent is stuck
                         await self._fail_instance(instance.id, f"Agent stuck: {feedback}")
-                        await self._dispatch_notification(
-                            instance,
-                            definition,
-                            sdk_session_id=sdk_session_id,
-                            message=f"Task failed: {feedback}",
-                            severity="error",
+                        await dispatch_notification(
+                            self._bus,
+                            notification_source,
+                            f"Task failed: {feedback}",
+                            "error",
+                            instance.id,
                         )
                         return
 
@@ -357,12 +362,12 @@ class BackgroundTaskExecutor:
                     instance.id,
                     f"Max iterations ({max_iterations}) reached without completion",
                 )
-                await self._dispatch_notification(
-                    instance,
-                    definition,
-                    sdk_session_id=sdk_session_id,
-                    message=f"Task failed: reached max iterations ({max_iterations})",
-                    severity="error",
+                await dispatch_notification(
+                    self._bus,
+                    notification_source,
+                    f"Task failed: reached max iterations ({max_iterations})",
+                    "error",
+                    instance.id,
                 )
 
         except asyncio.CancelledError:
@@ -377,12 +382,12 @@ class BackgroundTaskExecutor:
                 err=str(exc),
             )
             await self._fail_instance(instance.id, str(exc))
-            await self._dispatch_notification(
-                instance,
-                None,
-                sdk_session_id=sdk_session_id,
-                message=f"Task failed with error: {exc}",
-                severity="error",
+            await dispatch_notification(
+                self._bus,
+                notification_source,
+                f"Task failed with error: {exc}",
+                "error",
+                instance.id,
             )
 
     async def _run_preprocessing(self, prompt: str) -> _PreprocessingResult:
@@ -558,122 +563,3 @@ class BackgroundTaskExecutor:
             inst_id=instance_id,
             reason=reason,
         )
-
-    async def _dispatch_notification(
-        self,
-        instance: TaskInstance,
-        definition: TaskDefinition | None,
-        sdk_session_id: str | None,
-        message: str,
-        severity: Literal["info", "error"],
-    ) -> None:
-        """Dispatch TaskNotification event with coordinator-routed prompt.
-
-        Only dispatches if:
-        - Task completed successfully and definition has non-null notify field, OR
-        - Task failed (always notify on failure)
-
-        For success notifications with ``definition.notify`` set, forks the
-        task's SDK session with the notify prompt to generate context-aware
-        notification text. The generated text is then wrapped in a coordinator-
-        routed prompt template. Error notifications use a direct error template
-        (no fork).
-
-        Args:
-            instance: The task instance
-            definition: The task definition (may be None for transient instances)
-            sdk_session_id: The SDK session ID from the task execution
-            message: Fallback notification message (evaluator feedback)
-            severity: "info" or "error"
-        """
-        # Check if we should notify
-        should_notify = False
-        notification_prompt: str = ""
-
-        if severity == "error":
-            # Always notify on failure — use error template directly
-            should_notify = True
-            task_summary = instance.prompt[:200] if instance.prompt else "unknown"
-            notification_prompt = NOTIFICATION_ERROR_PROMPT.format(
-                task_summary=task_summary,
-                error_message=message,
-            )
-        elif definition is not None and definition.notify:
-            # Notify on success if definition.notify is set
-            should_notify = True
-
-            # Fork task session to generate context-aware notification text
-            task_summary = instance.prompt[:200] if instance.prompt else "unknown"
-            notification_text = await self._generate_notification(
-                sdk_session_id,
-                definition.notify,
-                fallback=message,
-            )
-
-            notification_prompt = NOTIFICATION_PROMPT.format(
-                task_summary=task_summary,
-                notification_text=notification_text,
-            )
-
-        if not should_notify:
-            return
-
-        event = TaskNotification(
-            prompt=notification_prompt,
-            source_task_id=instance.id,
-            severity=severity,
-        )
-
-        await self._bus.dispatch(event)
-        _log.info(
-            "Dispatched TaskNotification for {inst_id}: severity={severity}",
-            inst_id=instance.id,
-            severity=severity,
-        )
-
-    async def _generate_notification(
-        self,
-        sdk_session_id: str | None,
-        notify_prompt: str,
-        fallback: str,
-    ) -> str:
-        """Generate a notification message by forking the task session.
-
-        Forks the task's SDK session with the notify prompt, letting the
-        agent generate a context-aware notification from the conversation
-        history. Falls back to the provided fallback message if the fork
-        fails or produces no text.
-
-        Args:
-            sdk_session_id: The SDK session ID from the task execution.
-            notify_prompt: The notification generation instruction.
-            fallback: Message to use if generation fails.
-
-        Returns:
-            The generated notification message, or fallback on failure.
-        """
-        if sdk_session_id is None:
-            _log.warning("No SDK session ID, using fallback notification")
-            return fallback
-
-        try:
-            session = Session(
-                id="notification-gen",
-                sdk_session_id=sdk_session_id,
-                started_at=datetime.now(UTC),
-            )
-
-            generated = await fork_and_capture(session, notify_prompt, self._agent_defaults)
-
-            if generated.strip():
-                return generated.strip()
-
-            _log.warning("Fork produced no text, using fallback notification")
-            return fallback
-
-        except Exception as exc:
-            _log.warning(
-                "Notification generation failed, using fallback: {err}",
-                err=str(exc),
-            )
-            return fallback

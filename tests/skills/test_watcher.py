@@ -83,9 +83,7 @@ class TestWatchSkills:
         call_args = bus.dispatch.call_args[0]
         assert isinstance(call_args[0], SkillsChanged)
 
-    async def test_exception_caught_and_logged(
-        self, tmp_path: Path, mocker: MockerFixture
-    ) -> None:
+    async def test_exception_caught_and_logged(self, tmp_path: Path, mocker: MockerFixture) -> None:
         """AC: Exceptions from awatch are caught and logged (task doesn't crash)."""
         skills_dir = tmp_path / "skills"
         skills_dir.mkdir()
@@ -108,9 +106,7 @@ class TestWatchSkills:
         # Registry should NOT have been marked dirty
         registry.mark_dirty.assert_not_called()
 
-    async def test_cancelled_error_propagates(
-        self, tmp_path: Path, mocker: MockerFixture
-    ) -> None:
+    async def test_cancelled_error_propagates(self, tmp_path: Path, mocker: MockerFixture) -> None:
         """AC: CancelledError propagates (not caught by Exception handler)."""
         skills_dir = tmp_path / "skills"
         skills_dir.mkdir()
@@ -148,9 +144,7 @@ class TestWatchSkills:
         registry.mark_dirty.assert_not_called()
         bus.dispatch.assert_not_called()
 
-    async def test_debounce_passed_to_awatch(
-        self, tmp_path: Path, mocker: MockerFixture
-    ) -> None:
+    async def test_debounce_passed_to_awatch(self, tmp_path: Path, mocker: MockerFixture) -> None:
         """AC: debounce=5000 and rust_timeout=500 passed to awatch."""
         skills_dir = tmp_path / "skills"
         skills_dir.mkdir()

@@ -64,9 +64,7 @@ class TestBoundaryResult:
 class TestDetectBoundary:
     """Tests for detect_boundary() function."""
 
-    async def test_returns_boundary_result_for_continuation(
-        self, mocker: MockerFixture
-    ) -> None:
+    async def test_returns_boundary_result_for_continuation(self, mocker: MockerFixture) -> None:
         """AC: Continuation returns BoundaryResult with continues=True."""
 
         async def fake_query(*args, **kwargs):
@@ -94,9 +92,7 @@ class TestDetectBoundary:
         assert result.continues is True
         assert result.resume_session_id is None
 
-    async def test_returns_boundary_result_for_topic_shift(
-        self, mocker: MockerFixture
-    ) -> None:
+    async def test_returns_boundary_result_for_topic_shift(self, mocker: MockerFixture) -> None:
         """AC: Topic shift returns BoundaryResult with continues=False."""
 
         async def fake_query(*args, **kwargs):
@@ -124,9 +120,7 @@ class TestDetectBoundary:
         assert result.continues is False
         assert result.resume_session_id is None
 
-    async def test_returns_resume_session_id_when_match_found(
-        self, mocker: MockerFixture
-    ) -> None:
+    async def test_returns_resume_session_id_when_match_found(self, mocker: MockerFixture) -> None:
         """AC: Topic shift with matching candidate returns resume_session_id."""
 
         async def fake_query(*args, **kwargs):
@@ -226,9 +220,7 @@ class TestDetectBoundary:
         assert result.continues is True
         assert result.resume_session_id is None
 
-    async def test_passes_opus_low_effort_model_to_options(
-        self, mocker: MockerFixture
-    ) -> None:
+    async def test_passes_opus_low_effort_model_to_options(self, mocker: MockerFixture) -> None:
         """AC: Uses Opus model with low effort for fast, reliable classification."""
         mock_query = mocker.patch("tachikoma.boundary.detector.query")
 
@@ -420,9 +412,7 @@ class TestDetectBoundary:
         assert options.max_turns == 3
         assert options.permission_mode is None
 
-    async def test_includes_candidates_in_prompt_when_provided(
-        self, mocker: MockerFixture
-    ) -> None:
+    async def test_includes_candidates_in_prompt_when_provided(self, mocker: MockerFixture) -> None:
         """AC: Candidates are formatted into the user prompt."""
         mock_query = mocker.patch("tachikoma.boundary.detector.query")
 
@@ -488,9 +478,7 @@ class TestDetectBoundary:
         prompt = call_kwargs[1]["prompt"]
         assert "Previous Session Candidates" not in prompt
 
-    async def test_empty_string_resume_id_treated_as_none(
-        self, mocker: MockerFixture
-    ) -> None:
+    async def test_empty_string_resume_id_treated_as_none(self, mocker: MockerFixture) -> None:
         """AC: Empty string resume_session_id is converted to None."""
 
         async def fake_query(*args, **kwargs):

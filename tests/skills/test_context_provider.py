@@ -328,9 +328,7 @@ class TestSkillsContextProvider:
         assert "valid-skill" in result.content
         assert "Valid content" in result.content
 
-    async def test_multiple_skills_detected(
-        self, mocker: MockerFixture, tmp_path: Path
-    ) -> None:
+    async def test_multiple_skills_detected(self, mocker: MockerFixture, tmp_path: Path) -> None:
         """AC: Multiple detected skills in XML block, agents from both."""
         mock_query = mocker.patch("tachikoma.skills.context_provider.query")
 

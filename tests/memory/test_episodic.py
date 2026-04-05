@@ -27,9 +27,7 @@ def _make_session(sdk_session_id: str = "sdk-123") -> Session:
 class TestEpisodicProcessor:
     """Tests for EpisodicProcessor."""
 
-    async def test_calls_fork_and_consume_with_correct_args(
-        self, mocker: MockerFixture
-    ) -> None:
+    async def test_calls_fork_and_consume_with_correct_args(self, mocker: MockerFixture) -> None:
         """AC: Processor calls fork_and_consume with session, prompt, and cwd."""
         mock_fork = mocker.patch(
             "tachikoma.post_processing.fork_and_consume", new_callable=AsyncMock

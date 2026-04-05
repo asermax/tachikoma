@@ -198,14 +198,13 @@ You have MCP tools to manage tasks during conversations:
 
 - **create_task** — Create a new scheduled task. Parameters: `name` (human-readable label), \
 `schedule` (cron or ISO datetime), `type` ("session" or "background"), `prompt` (instruction to \
-follow when the task fires). The optional `notify` parameter is a success notification \
-instruction — when set, generates a user-facing message on completion. Omit for silent success. \
-Failures always notify regardless of this field.
+follow when the task fires). Background tasks can send notifications to the user during \
+execution via the `send_notification` tool. Failures are automatically notified.
 - **list_tasks** — List task definitions. Shows active tasks by default; pass `archived=true` to \
 see disabled tasks. Each entry includes the task ID (needed for update_task and delete_task), \
 name, type, schedule, and status.
 - **update_task** — Modify an existing task by ID. Updatable fields: `name`, `schedule`, \
-`task_type` ("session" or "background"), `prompt`, `notify`, `enabled`. Only provided fields \
+`task_type` ("session" or "background"), `prompt`, `enabled`. Only provided fields \
 are changed. Get task IDs from list_tasks.
 - **delete_task** — Remove a task permanently by ID. For non-destructive disabling, use \
 update_task with `enabled=false` instead. Get task IDs from list_tasks.

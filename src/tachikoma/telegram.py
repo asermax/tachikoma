@@ -28,7 +28,8 @@ from tachikoma.config import TelegramSettings
 from tachikoma.coordinator import Coordinator
 from tachikoma.display import TOOL_DISPLAY, format_tool_name, summarize_tool_activity
 from tachikoma.events import Error, Result, Status, TextChunk, ToolActivity
-from tachikoma.tasks.events import SessionTaskReady, TaskNotification
+from tachikoma.notifications import Notification
+from tachikoma.tasks.events import SessionTaskReady
 
 _log = logger.bind(component="telegram")
 
@@ -329,7 +330,7 @@ class TelegramChannel:
 
     When an event bus is provided, the channel subscribes to:
     - SessionTaskReady: Proactive tasks from the task scheduler
-    - TaskNotification: Completion/failure notifications from background tasks
+    - Notification: Completion/failure notifications from background tasks
     """
 
     def __init__(
@@ -362,7 +363,7 @@ class TelegramChannel:
         # Subscribe to task events if bus is provided
         if self._bus is not None:
             self._bus.on(SessionTaskReady, self._handle_session_task)
-            self._bus.on(TaskNotification, self._handle_notification)
+            self._bus.on(Notification, self._handle_notification)
 
     async def run(self) -> None:
         """Start the bot and begin polling for messages.
@@ -546,16 +547,16 @@ class TelegramChannel:
             self._is_processing = False
             self._active_renderer = None
 
-    async def _handle_notification(self, event: TaskNotification) -> None:
-        """Handle a TaskNotification event from the background task executor.
+    async def _handle_notification(self, event: Notification) -> None:
+        """Handle a Notification event from the background task executor.
 
         Routes the notification prompt through the coordinator pipeline,
         following the same delivery pattern as session tasks.
         """
         _log.info(
-            "Routing task notification: severity={severity}, source={source}",
+            "Routing notification: severity={severity}, source={source}",
             severity=event.severity,
-            source=event.source_task_id,
+            source=event.source_id,
         )
 
         self._coordinator.enqueue(event.prompt)

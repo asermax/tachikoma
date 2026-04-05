@@ -249,7 +249,8 @@ class SessionRegistry:
         cutoff = before - self._max_session_age
 
         return [
-            s for s in recent
+            s
+            for s in recent
             if s.transcript_path is not None
             and Path(s.transcript_path).exists()
             and s.started_at > cutoff

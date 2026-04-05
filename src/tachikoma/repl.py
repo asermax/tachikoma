@@ -15,7 +15,8 @@ from rich.markdown import Markdown
 from tachikoma.coordinator import Coordinator
 from tachikoma.display import TOOL_DISPLAY, format_tool_name
 from tachikoma.events import AgentEvent, Error, Result, Status, TextChunk, ToolActivity
-from tachikoma.tasks.events import SessionTaskReady, TaskNotification
+from tachikoma.notifications import Notification
+from tachikoma.tasks.events import SessionTaskReady
 
 _log = logger.bind(component="repl")
 
@@ -65,7 +66,7 @@ class Repl:
 
     When an event bus is provided, the REPL subscribes to:
     - SessionTaskReady: Proactive tasks from the task scheduler
-    - TaskNotification: Completion/failure notifications from background tasks
+    - Notification: Completion/failure notifications from background tasks
     """
 
     def __init__(
@@ -77,7 +78,7 @@ class Repl:
         self._coordinator = coordinator
         self._renderer = Renderer()
         self._bus = bus
-        self._task_queue: asyncio.Queue[SessionTaskReady | TaskNotification] = asyncio.Queue()
+        self._task_queue: asyncio.Queue[SessionTaskReady | Notification] = asyncio.Queue()
 
         kb = KeyBindings()
 
@@ -104,7 +105,7 @@ class Repl:
         # Subscribe to task events if bus is provided
         if self._bus is not None:
             self._bus.on(SessionTaskReady, self._handle_session_task)
-            self._bus.on(TaskNotification, self._handle_notification)
+            self._bus.on(Notification, self._handle_notification)
 
     async def run(self) -> None:
         """Run the REPL input loop until the user exits.
@@ -152,7 +153,7 @@ class Repl:
 
             if isinstance(event, SessionTaskReady):
                 await self._execute_session_task(event)
-            elif isinstance(event, TaskNotification):
+            elif isinstance(event, Notification):
                 await self._execute_notification(event)
 
     async def _execute_through_coordinator(self, prompt: str) -> bool:
@@ -200,24 +201,24 @@ class Repl:
         _log.debug("Queueing session task: id={task_id}", task_id=event.instance.id)
         await self._task_queue.put(event)
 
-    async def _handle_notification(self, event: TaskNotification) -> None:
-        """Handle a TaskNotification event from the background task executor.
+    async def _handle_notification(self, event: Notification) -> None:
+        """Handle a Notification event from the background task executor.
 
         Queues the notification for processing in the main REPL loop,
         following the same pattern as session tasks.
         """
         _log.debug(
             "Queueing notification: source={source}",
-            source=event.source_task_id,
+            source=event.source_id,
         )
         await self._task_queue.put(event)
 
-    async def _execute_notification(self, event: TaskNotification) -> None:
+    async def _execute_notification(self, event: Notification) -> None:
         """Execute a notification by sending it through the coordinator."""
         _log.info(
-            "Processing task notification: severity={severity}, source={source}",
+            "Processing notification: severity={severity}, source={source}",
             severity=event.severity,
-            source=event.source_task_id,
+            source=event.source_id,
         )
 
         self._renderer._console.print(

@@ -49,7 +49,6 @@ class TaskRepository:
                 schedule=definition.schedule.to_json(),
                 task_type=definition.task_type,
                 prompt=definition.prompt,
-                notify=definition.notify,
                 enabled=definition.enabled,
                 last_fired_at=definition.last_fired_at,
                 created_at=definition.created_at or datetime.now(UTC),
@@ -125,7 +124,7 @@ class TaskRepository:
     async def update_definition(self, definition_id: str, **fields) -> None:
         """Update arbitrary fields on a task definition by ID.
 
-        Accepted fields: name, schedule, task_type, prompt, notify, enabled,
+        Accepted fields: name, schedule, task_type, prompt, enabled,
         last_fired_at.
         """
         try:

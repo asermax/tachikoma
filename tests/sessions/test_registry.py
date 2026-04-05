@@ -456,9 +456,7 @@ class TestSessionRegistryReopenSession:
 
         assert result is None
 
-    async def test_returns_none_when_session_too_old(
-        self, mock_repo, tmp_path: Path
-    ) -> None:
+    async def test_returns_none_when_session_too_old(self, mock_repo, tmp_path: Path) -> None:
         """AC: reopen_session returns None when session started_at exceeds max_session_age."""
         transcript = tmp_path / "old.jsonl"
         transcript.touch()
@@ -507,9 +505,7 @@ class TestSessionRegistryReopenSession:
         assert result.last_resumed_at is not None
         mock_repo.update.assert_awaited_once()
 
-    async def test_returns_none_when_session_still_open(
-        self, mock_repo, tmp_path: Path
-    ) -> None:
+    async def test_returns_none_when_session_still_open(self, mock_repo, tmp_path: Path) -> None:
         """AC: reopen_session returns None when session has no ended_at (still open)."""
         transcript = tmp_path / "open.jsonl"
         transcript.touch()

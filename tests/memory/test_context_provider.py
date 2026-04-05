@@ -59,9 +59,7 @@ class TestMemoryContextProvider:
         assert options.cwd == cwd
         assert result is not None
 
-    async def test_returns_context_result_with_memories_tag(
-        self, mocker: MockerFixture
-    ) -> None:
+    async def test_returns_context_result_with_memories_tag(self, mocker: MockerFixture) -> None:
         """AC: Returns ContextResult with tag='memories' when memories found."""
         mock_query = mocker.patch("tachikoma.memory.context_provider.query")
 
@@ -76,9 +74,7 @@ class TestMemoryContextProvider:
         assert result.tag == "memories"
         assert "## Relevant Memories" in result.content
 
-    async def test_returns_none_when_no_relevant_memories(
-        self, mocker: MockerFixture
-    ) -> None:
+    async def test_returns_none_when_no_relevant_memories(self, mocker: MockerFixture) -> None:
         """AC: Returns None when result contains NO_RELEVANT_MEMORIES."""
         mock_query = mocker.patch("tachikoma.memory.context_provider.query")
 
@@ -100,9 +96,7 @@ class TestMemoryContextProvider:
 
         assert result is None
 
-    async def test_returns_none_when_result_field_is_none(
-        self, mocker: MockerFixture
-    ) -> None:
+    async def test_returns_none_when_result_field_is_none(self, mocker: MockerFixture) -> None:
         """AC: Returns None when ResultMessage.result is None."""
         mock_query = mocker.patch("tachikoma.memory.context_provider.query")
 

@@ -169,6 +169,14 @@ class Database:
                 )
                 _log.info("Schema migration: created 'session_context_entries' table")
 
+            # Check if notify column exists on task_definitions table (removed in DLT-091)
+            result = await conn.execute(
+                text("SELECT * FROM pragma_table_info('task_definitions') WHERE name='notify'")
+            )
+            if result.fetchone() is not None:
+                await conn.execute(text("ALTER TABLE task_definitions DROP COLUMN notify"))
+                _log.info("Schema migration: dropped 'notify' column from task_definitions table")
+
         _log.debug("Schema migrations completed: db_path={path}", path=self._db_path)
 
     async def close(self) -> None:
