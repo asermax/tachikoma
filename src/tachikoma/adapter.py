@@ -44,6 +44,11 @@ def sanitize_text(text: str) -> str:
     return sanitized
 
 
+def is_encoding_error(message: str) -> bool:
+    """Check if an error message indicates a Unicode encoding failure."""
+    return "surrogates not allowed" in message or "codec can't encode" in message
+
+
 def adapt(message: Any) -> list[AgentEvent]:
     """Map a single SDK Message to zero or more AgentEvents.
 
@@ -80,7 +85,9 @@ def _adapt_assistant(message: AssistantMessage) -> list[AgentEvent]:
 
 def _adapt_result(message: ResultMessage) -> list[AgentEvent]:
     if message.is_error:
-        return [Error(message=sanitize_text(message.result or "Unknown error"), recoverable=False)]
+        error_msg = sanitize_text(message.result or "Unknown error")
+        recoverable = is_encoding_error(error_msg)
+        return [Error(message=error_msg, recoverable=recoverable)]
 
     return [
         Result(

@@ -26,7 +26,7 @@ from claude_agent_sdk import (
 from claude_agent_sdk.types import AgentDefinition, PermissionMode, SystemPromptPreset
 from loguru import logger
 
-from tachikoma.adapter import adapt, sanitize_text
+from tachikoma.adapter import adapt, is_encoding_error, sanitize_text
 from tachikoma.agent_defaults import AgentDefaults
 from tachikoma.boundary import BoundaryResult, SessionCandidate, detect_boundary
 from tachikoma.context.assembly import build_system_prompt
@@ -492,6 +492,9 @@ class Coordinator:
                     if isinstance(event, TextChunk):
                         response_chunks.append(event.text)
 
+                    if isinstance(event, Error) and is_encoding_error(event.message):
+                        await self._handle_encoding_error(active)
+
                     if (
                         isinstance(event, Result)
                         and self._registry is not None
@@ -514,6 +517,8 @@ class Coordinator:
 
         except (CLIConnectionError, ProcessError) as exc:
             _log.error("Stream error (recoverable): err={err}", err=str(exc))
+            if is_encoding_error(str(exc)):
+                await self._handle_encoding_error(active)
             yield Error(message=sanitize_text(str(exc)), recoverable=True)
 
         finally:
@@ -534,6 +539,29 @@ class Coordinator:
         self._last_message_time = datetime.now(UTC)
 
         _log.debug("Response complete")
+
+    async def _handle_encoding_error(self, session: Session | None) -> None:
+        """Clear contaminated SDK session reference and mark session as errored.
+
+        Called when the SDK returns a UTF-8 encoding error (e.g. surrogates in its
+        internal transcript). Clears the in-memory session ID to prevent resuming
+        the broken session, and marks the DB record as errored so it's excluded
+        from resumable candidates.
+        """
+        _log.warning(
+            "Encoding error detected, clearing SDK session: session_id={id}",
+            id=self._sdk_session_id,
+        )
+        self._sdk_session_id = None
+
+        if session is not None and self._registry is not None:
+            try:
+                await self._registry.mark_errored(session.id)
+            except Exception as exc:
+                _log.exception(
+                    "Failed to mark session as errored: err={err}",
+                    err=str(exc),
+                )
 
     async def _close_and_fire_postprocessing(self, session: Session) -> None:
         """Close a session in the registry and fire async post-processing.

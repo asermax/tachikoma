@@ -14,7 +14,7 @@ from claude_agent_sdk.types import (
 )
 from helpers import make_assistant
 
-from tachikoma.adapter import adapt, sanitize_text
+from tachikoma.adapter import adapt, is_encoding_error, sanitize_text
 from tachikoma.events import Error, Result, TextChunk, ToolActivity
 
 
@@ -246,3 +246,55 @@ class TestAdaptWithSanitization:
         assert len(events) == 1
         assert isinstance(events[0], Error)
         assert events[0].message == "BadResult"
+
+
+class TestIsEncodingError:
+    def test_detects_surrogates_not_allowed(self) -> None:
+        assert is_encoding_error(
+            "'utf-8' codec can't encode character '\\ud83e': surrogates not allowed",
+        ) is True
+
+    def test_detects_codec_cant_encode(self) -> None:
+        assert is_encoding_error("codec can't encode character '\\ud800'") is True
+
+    def test_does_not_match_other_errors(self) -> None:
+        assert is_encoding_error("Budget exceeded") is False
+
+    def test_does_not_match_empty_string(self) -> None:
+        assert is_encoding_error("") is False
+
+
+class TestEncodingErrorRecoverability:
+    def test_encoding_result_error_is_recoverable(self) -> None:
+        msg = ResultMessage(
+            subtype="error",
+            duration_ms=500,
+            duration_api_ms=400,
+            is_error=True,
+            num_turns=0,
+            session_id="sess-abc",
+            result="API Error: 500 surrogates not allowed",
+        )
+
+        events = adapt(msg)
+
+        assert len(events) == 1
+        assert isinstance(events[0], Error)
+        assert events[0].recoverable is True
+
+    def test_non_encoding_result_error_is_not_recoverable(self) -> None:
+        msg = ResultMessage(
+            subtype="error",
+            duration_ms=500,
+            duration_api_ms=400,
+            is_error=True,
+            num_turns=0,
+            session_id="sess-abc",
+            result="Budget exceeded",
+        )
+
+        events = adapt(msg)
+
+        assert len(events) == 1
+        assert isinstance(events[0], Error)
+        assert events[0].recoverable is False
