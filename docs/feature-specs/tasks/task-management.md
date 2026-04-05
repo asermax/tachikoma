@@ -41,6 +41,7 @@ The agent manages task definitions through MCP tools exposed during conversation
 - Given the agent calls `create_task` with an ISO datetime including an explicit timezone offset or `Z` suffix, then the explicit timezone is preserved as-is
 - Given the agent calls `create_task` with an invalid cron expression, then the tool returns a clear error message
 - Given the agent calls `create_task` without a required field (name, schedule, type, or prompt), then the tool returns a clear error identifying the missing field
+- Given the agent calls `create_task` with an optional `notify` field, then the task definition stores the notification instruction; when `notify` is omitted, the definition is created with `notify=null`
 - Given the agent calls `create_task` with a type value other than "session" or "background", then the tool returns a clear error
 - Given the agent calls `list_tasks` with no arguments, then it receives only enabled task definitions with their task ID, current status, type, schedule (one-shot times displayed in the configured timezone), and last_fired_at information
 - Given the agent calls `list_tasks` with `archived=true`, then it receives only disabled task definitions
@@ -88,7 +89,7 @@ The base system prompt preamble includes a timezone-aware Tasks section that giv
 Schedule deserialization handles malformed data gracefully, preventing corrupted definitions from blocking the entire task scheduler.
 
 **Acceptance Criteria**:
-- Given a task definition with a bare ISO datetime string in the schedule column (legacy format), when `from_json` is called, then it recovers the value as a one-shot schedule with UTC defaulting for naive datetimes
+- Given a task definition with a bare ISO datetime string in the schedule column (legacy format), when `from_json` is called, then it recovers the value as a one-shot schedule with UTC defaulting for naive datetimes (legacy data recovery, distinct from `create_task` timezone stamping for new user input)
 - Given a task definition with completely invalid data in the schedule column, when `from_json` is called, then it raises `ValueError` (not `JSONDecodeError`) with the malformed input in the message
 - Given a task definition with structurally valid JSON but an unexpected type (e.g., array), when `from_json` is called, then it raises `ValueError` describing the unexpected type
 - Given multiple enabled definitions where one has a corrupted schedule, when the repository lists enabled definitions, then valid definitions are returned and the corrupted definition is auto-disabled (logged as warning)
