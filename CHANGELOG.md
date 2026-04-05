@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v1.5.0 (2026-04-05)
+
+### Documentation
+
+- **tasks**: Clarify notify parameter and R10 UTC defaulting in spec
+  ([`b68c855`](https://github.com/asermax/tachikoma/commit/b68c8550c9446fd5f3b6cea8371b400782298c62))
+
+
 ## v1.4.0 (2026-04-05)
 
 ### Chores
