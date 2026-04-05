@@ -258,7 +258,6 @@ class BackgroundTaskExecutor:
             if instance.definition_id:
                 definition = await self._repository.get_definition(instance.definition_id)
 
-            # Build notification context for failure dispatch
             notification_source = (
                 f"Background task: {definition.name}"
                 if definition
@@ -268,7 +267,6 @@ class BackgroundTaskExecutor:
             # Run pre-processing pipeline (memory, projects, skills context)
             preprocessing_result = await self._run_preprocessing(instance.prompt)
 
-            # Register notification MCP server for agent-driven notifications
             notification_server = create_notification_server(
                 self._bus,
                 notification_source,
@@ -276,7 +274,6 @@ class BackgroundTaskExecutor:
             )
             preprocessing_result.mcp_servers["notifications"] = notification_server
 
-            # Build system prompt with timezone-aware current time
             tz = get_timezone(self._settings)
             now = datetime.now(tz)
             datetime_line = (
@@ -523,8 +520,8 @@ class BackgroundTaskExecutor:
             session = Session(
                 id="background-task",  # Synthetic ID for background tasks
                 sdk_session_id=sdk_session_id,
-                started_at=datetime.now(UTC),
-                ended_at=datetime.now(UTC),
+                started_at=(now := datetime.now(UTC)),
+                ended_at=now,
                 summary=None,
                 transcript_path=None,
             )
