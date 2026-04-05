@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v1.4.0 (2026-04-05)
+
+### Chores
+
+- Update lockfile for version 1.3.1
+  ([`222be73`](https://github.com/asermax/tachikoma/commit/222be73a21830a56cede5806fa30b6feae1528cd))
+
+### Documentation
+
+- **tasks**: Replace DLT-091 with agent-driven notification tool
+  ([`107dc5e`](https://github.com/asermax/tachikoma/commit/107dc5eab6a5c728545477ca39e591378bce6cea))
+
+
 ## v1.3.1 (2026-04-04)
 
 ### Bug Fixes
