@@ -5,6 +5,7 @@ Tests for DLT-012: Configure application parameters and secrets.
 
 import tomllib
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 import pytest
 from pydantic import ValidationError
@@ -17,6 +18,7 @@ from tachikoma.config import (
     TaskSettings,
     TelegramSettings,
     WorkspaceSettings,
+    _detect_system_timezone,
     _generate_default_config,
     load_settings,
 )
@@ -806,10 +808,11 @@ class TestTaskSettings:
         assert settings.max_concurrent_background == 3
 
     def test_default_timezone(self) -> None:
-        """AC (DLT-010): tasks.timezone defaults to empty string (system tz)."""
+        """AC (R5): tasks.timezone resolves to a non-empty valid IANA key."""
         settings = TaskSettings()
 
-        assert settings.timezone == ""
+        assert settings.timezone != ""
+        assert len(settings.timezone) > 0
 
     def test_settings_has_tasks_with_defaults(self) -> None:
         """AC (DLT-010): Settings has tasks field with default TaskSettings."""
@@ -840,6 +843,47 @@ class TestTaskSettings:
         )
 
         assert settings.tasks.idle_window == 120
+
+    def test_timezone_empty_resolves_to_system_tz(self) -> None:
+        """AC (R5): Empty timezone resolves to a non-empty valid IANA key."""
+        settings = TaskSettings()
+
+        assert settings.timezone != ""
+        # Verify it's a valid IANA key
+        ZoneInfo(settings.timezone)  # Should not raise
+
+    def test_timezone_explicit_valid_preserved(self) -> None:
+        """AC (R5): Explicit valid timezone is preserved."""
+        settings = TaskSettings(timezone="US/Eastern")
+
+        assert settings.timezone == "US/Eastern"
+
+    def test_timezone_invalid_raises_validation_error(self) -> None:
+        """AC (R5): Invalid timezone raises ValidationError."""
+        with pytest.raises(ValidationError, match="not a valid IANA timezone"):
+            TaskSettings(timezone="Fake/Timezone")
+
+    def test_detect_system_timezone_resolves_symlink(self, mocker) -> None:
+        """AC (R5): _detect_system_timezone extracts IANA name from symlink."""
+        mock_path = mocker.patch("tachikoma.config.Path")
+        mock_localtime = mocker.MagicMock()
+        mock_localtime.resolve.return_value = "/usr/share/zoneinfo/America/Buenos_Aires"
+        mock_path.return_value = mock_localtime
+
+        result = _detect_system_timezone()
+
+        assert result == "America/Buenos_Aires"
+
+    def test_detect_system_timezone_fallback_utc(self, mocker) -> None:
+        """AC (R5): _detect_system_timezone falls back to UTC on failure."""
+        mock_path = mocker.patch("tachikoma.config.Path")
+        mock_localtime = mocker.MagicMock()
+        mock_localtime.resolve.side_effect = OSError("no symlink")
+        mock_path.return_value = mock_localtime
+
+        result = _detect_system_timezone()
+
+        assert result == "UTC"
 
 
 class TestTaskSettingsDefaultConfig:

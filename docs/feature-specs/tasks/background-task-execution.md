@@ -31,6 +31,7 @@ Background tasks run in fresh SDK sessions separate from the main conversation, 
 
 **Acceptance Criteria**:
 - Given a pending background task instance, when the runner picks it up, then a fresh SDK session is created (not forked from the main session) with an adapted base prompt explaining the background task context
+- Given a background task instance is being executed, then the adapted system prompt includes the current date and time in the configured timezone so the agent has temporal awareness during execution
 - Given a background task session starts, then the pre-processing pipeline runs with all context providers (memory, projects, skills) — MCP servers and agent definitions from providers are passed to the SDK client options
 - Given a background task session completes, then the adapted post-processing pipeline runs with phased execution: episodic extraction (main phase), project submodule commit/push (pre_finalize phase), and git commit (finalize phase) — no facts, preferences, or core context extraction
 

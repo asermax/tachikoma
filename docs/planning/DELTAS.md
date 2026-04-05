@@ -476,13 +476,6 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 **Complexity**: Medium
 **Description**: Replace the static `notify` field on task definitions with an MCP tool (`send_notification`) that background task agents call during execution to send user notifications. Currently, notification behavior is defined at task creation time as a static instruction — every execution either always notifies or never does, with no runtime control. This delta removes the `notify` field from task definitions and MCP tools, strips the executor's automatic success notification dispatch, and exposes a `send_notification` tool through the task MCP tool server that background task agents can invoke to deliver notifications on demand. Failure notifications remain automatic (handled by the executor) since failures occur when the agent can no longer act. This gives tasks full runtime control: conditional notification based on results, multiple notifications during long execution, progress updates, or silence when there's nothing meaningful to report.
 
-### DLT-092: Timezone-aware scheduling for one-shot tasks
-**Status**: ✗ Defined
-**Depends on**: None
-**Priority**: 1 (Critical)
-**Complexity**: Easy
-**Description**: One-shot datetime schedules are interpreted as UTC without respecting the configured timezone, causing tasks created with local time to silently land in the past and fail with a confusing "must be in the future" error. The `_parse_schedule` function defaults to UTC when no timezone info is provided in the datetime string. Plumb the configured timezone into the task tool server context so bare datetimes are interpreted as local time, and document the timezone behavior in the `create_task` tool description with examples of accepted formats.
-
 ### DLT-093: Add task instance history MCP tool
 **Status**: ✗ Defined
 **Depends on**: None

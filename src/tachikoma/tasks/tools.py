@@ -10,6 +10,7 @@ Provides MCP tools for managing task definitions:
 from datetime import UTC, datetime
 from typing import Literal
 from uuid import uuid4
+from zoneinfo import ZoneInfo
 
 from claude_agent_sdk import McpSdkServerConfig, create_sdk_mcp_server, tool
 from cronsim import CronSim
@@ -56,11 +57,15 @@ class DeleteTaskArgs(BaseModel):
     task_id: str
 
 
-def create_task_tools_server(repository: TaskRepository) -> McpSdkServerConfig:
+def create_task_tools_server(
+    repository: TaskRepository,
+    timezone: ZoneInfo,
+) -> McpSdkServerConfig:
     """Create an MCP server exposing task management tools.
 
     Args:
         repository: The TaskRepository to use for persistence.
+        timezone: The configured timezone for interpreting bare datetimes.
 
     Returns:
         McpSdkServerConfig for registration with ClaudeAgentOptions.mcp_servers.
@@ -103,7 +108,7 @@ def create_task_tools_server(repository: TaskRepository) -> McpSdkServerConfig:
             lines = ["# Task Definitions\n"]
             for d in definitions:
                 status = "✓ enabled" if d.enabled else "✗ disabled"
-                schedule_desc = _format_schedule(d.schedule)
+                schedule_desc = _format_schedule(d.schedule, timezone)
                 last_fired = (
                     f" (last: {d.last_fired_at.strftime('%Y-%m-%d %H:%M')})"
                     if d.last_fired_at
@@ -136,8 +141,11 @@ def create_task_tools_server(repository: TaskRepository) -> McpSdkServerConfig:
         "\n"
         "Parameters:\n"
         "- name (str, required): Human-readable task name\n"
-        "- schedule (str, required): Cron expression (e.g., '0 9 * * *' for daily at 9 AM)"
-        " or ISO datetime for one-shot (e.g., '2026-04-01T14:00:00Z')\n"
+        "- schedule (str, required): Cron expression (e.g., '0 9 * * *' for daily at 9 AM),"
+        " bare ISO datetime interpreted in the configured timezone"
+        " (e.g., '2026-04-01T15:00:00' = 3 PM local),"
+        " ISO datetime with 'Z' suffix for UTC (e.g., '2026-04-01T15:00:00Z'),"
+        " or ISO datetime with explicit offset (e.g., '2026-04-01T15:00:00+05:30')\n"
         "- type (str, required): 'session' (delivered during idle) or 'background'"
         " (isolated execution)\n"
         "- prompt (str, required): Instruction the agent follows when the task fires\n"
@@ -170,7 +178,7 @@ def create_task_tools_server(repository: TaskRepository) -> McpSdkServerConfig:
             }
 
         # Parse and validate schedule
-        schedule_config = _parse_schedule(parsed.schedule)
+        schedule_config = _parse_schedule(parsed.schedule, timezone)
         if schedule_config is None:
             return {
                 "is_error": True,
@@ -221,7 +229,7 @@ def create_task_tools_server(repository: TaskRepository) -> McpSdkServerConfig:
         try:
             created = await repository.create_definition(definition)
 
-            schedule_desc = _format_schedule(created.schedule)
+            schedule_desc = _format_schedule(created.schedule, timezone)
             return {
                 "content": [
                     {
@@ -252,7 +260,8 @@ def create_task_tools_server(repository: TaskRepository) -> McpSdkServerConfig:
         "Parameters:\n"
         "- task_id (str, required): ID of the task to update (get IDs from list_tasks)\n"
         "- name (str, optional): New human-readable name\n"
-        "- schedule (str, optional): New cron expression or ISO datetime\n"
+        "- schedule (str, optional): New cron expression or ISO datetime"
+        " (same formats as create_task — bare datetimes use configured timezone)\n"
         "- task_type (str, optional): Change type — 'session' or 'background'\n"
         "- prompt (str, optional): New agent instruction\n"
         "- notify (str, optional): New success notification instruction\n"
@@ -284,7 +293,7 @@ def create_task_tools_server(repository: TaskRepository) -> McpSdkServerConfig:
         if parsed.name is not None:
             updates["name"] = parsed.name
         if parsed.schedule is not None:
-            schedule_config = _parse_schedule(parsed.schedule)
+            schedule_config = _parse_schedule(parsed.schedule, timezone)
             if schedule_config is None:
                 return {
                     "is_error": True,
@@ -384,16 +393,19 @@ def create_task_tools_server(repository: TaskRepository) -> McpSdkServerConfig:
     )
 
 
-def _parse_schedule(schedule: str) -> ScheduleConfig | None:
+def _parse_schedule(schedule: str, tz: ZoneInfo) -> ScheduleConfig | None:
     """Parse a schedule string into a ScheduleConfig.
+
+    Bare ISO datetimes (no tz info) are stamped with the configured timezone.
+    Datetimes with explicit offsets (including Z) are preserved as-is.
 
     Returns None if the schedule is invalid.
     """
     # Try ISO datetime first (one-shot)
     try:
-        at = datetime.fromisoformat(schedule.replace("Z", "+00:00"))
+        at = datetime.fromisoformat(schedule)
         if at.tzinfo is None:
-            at = at.replace(tzinfo=UTC)
+            at = at.replace(tzinfo=tz)
         return ScheduleConfig(type="once", at=at)
     except ValueError:
         pass
@@ -406,11 +418,12 @@ def _parse_schedule(schedule: str) -> ScheduleConfig | None:
         return None
 
 
-def _format_schedule(schedule: ScheduleConfig) -> str:
-    """Format a ScheduleConfig for display."""
+def _format_schedule(schedule: ScheduleConfig, tz: ZoneInfo) -> str:
+    """Format a ScheduleConfig for display in the configured timezone."""
     if schedule.type == "cron":
         return f"cron: {schedule.expression}"
     else:
         if schedule.at:
-            return f"once: {schedule.at.strftime('%Y-%m-%d %H:%M %Z')}"
+            local_dt = schedule.at.astimezone(tz)
+            return f"once: {local_dt.strftime('%Y-%m-%d %H:%M %Z')}"
         return "once: (invalid datetime)"

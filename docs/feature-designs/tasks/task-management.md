@@ -38,11 +38,11 @@ The task management subsystem lives in `src/tachikoma/tasks/` as a self-containe
 | `src/tachikoma/tasks/__init__.py` | Public API re-exports | Clean package interface |
 | `src/tachikoma/tasks/model.py` | `TaskDefinition` and `TaskInstance` frozen dataclasses (domain types); `TaskDefinitionRecord` and `TaskInstanceRecord` ORM models; `TaskStatus` and `TaskType` constant maps; `ScheduleConfig` type | Domain types frozen; ORM models internal to persistence; schedule stored as JSON column; `from_json` recovers legacy bare ISO datetime strings as one-shot schedules; all parse failures raise `ValueError` (never bare `JSONDecodeError` or `KeyError`) |
 | `src/tachikoma/tasks/repository.py` | `TaskRepository` — async SQLAlchemy CRUD for definitions and instances; `list_enabled_definitions()` and `list_disabled_definitions()` for filtered queries; `_to_domains_with_isolation()` for per-record error isolation with auto-disable; crash recovery (mark running as failed) | Receives shared `async_sessionmaker` from `Database`; follows ADR-007 pattern; list methods auto-disable corrupted definitions instead of failing the entire query |
-| `src/tachikoma/tasks/tools.py` | `create_task_tools_server()` — MCP server factory; `list_tasks` (defaults to enabled-only, `archived` parameter for disabled; output includes task ID for referencing in other tools), `create_task`, `update_task` (supports `task_type` changes via `Literal` validation), `delete_task` with `cronsim` validation; Pydantic `BaseModel` classes (`ListTasksArgs`, `CreateTaskArgs`, `UpdateTaskArgs`, `DeleteTaskArgs`) for arg validation and type coercion; enriched `@tool()` descriptions with parameter documentation | Tools validate cron expressions at creation time; `list_tasks` uses `archived` parameter to toggle between enabled/disabled views; Pydantic models provide schema generation, bool coercion, and required-field validation; `UpdateTaskArgs.task_type` uses `Literal["session", "background"]` for automatic validation; `TaskRepositoryError`-specific error handling surfaces root causes via `__cause__`; follows DES-006 |
+| `src/tachikoma/tasks/tools.py` | `create_task_tools_server(repository, timezone)` — MCP server factory receiving `ZoneInfo` at construction; `_parse_schedule(schedule, tz)` stamps naive datetimes with configured timezone, preserves aware as-is; `_format_schedule(schedule, tz)` converts display to configured timezone; `list_tasks` (defaults to enabled-only, `archived` parameter for disabled; output includes task ID for referencing in other tools), `create_task`, `update_task` (supports `task_type` changes via `Literal` validation), `delete_task` with `cronsim` validation; Pydantic `BaseModel` classes (`ListTasksArgs`, `CreateTaskArgs`, `UpdateTaskArgs`, `DeleteTaskArgs`) for arg validation and type coercion; enriched `@tool()` descriptions with parameter documentation including timezone-aware schedule formats | Factory receives `ZoneInfo`, passes to `_parse_schedule` and `_format_schedule` via closures; uses `replace(tzinfo=tz)` for naive, `astimezone(tz)` for display; `UpdateTaskArgs.task_type` uses `Literal["session", "background"]` for automatic validation; `TaskRepositoryError`-specific error handling surfaces root causes via `__cause__`; follows DES-006 |
 | `src/tachikoma/tasks/hooks.py` | `tasks_hook` — bootstrap hook (DES-003): retrieves shared `Database` from extras, creates repository, runs crash recovery; stores `task_repository` in `bootstrap.extras` | Subsystem-owned hook; runs after `database_hook` |
-| `src/tachikoma/tasks/scheduler.py` | `instance_generator()` — async loop with strict cron firing and period-aware dedup; `_create_pending_instance()` helper for instance creation and logging | Plain async function started as `asyncio.Task` |
+| `src/tachikoma/tasks/scheduler.py` | `instance_generator()` — async loop with strict cron firing and period-aware dedup; `_create_pending_instance()` helper for instance creation and logging; `get_timezone(settings)` — returns `ZoneInfo` from pre-validated settings string (shared utility used by scheduler, preamble rendering, and executor) | Plain async function started as `asyncio.Task`; `get_timezone` has no fallback logic — validation happens at config load |
 | `src/tachikoma/database.py` | Shared `Database` class with `Base(DeclarativeBase)`, `AsyncEngine`, `async_sessionmaker`; `database_hook` bootstrap hook | All ORM models share one `Base`; single engine for all subsystems |
-| `src/tachikoma/context/loading.py` (`SYSTEM_PREAMBLE`) | Static tasks documentation in the system prompt preamble: task types, scheduling formats, MCP tool descriptions with parameter documentation and cross-references, and corrected `notify` field behavior (success notification instruction; failures always notify) | Part of the `SYSTEM_PREAMBLE` constant; loaded once at startup; follows ADR-008 append pattern |
+| `src/tachikoma/context/loading.py` (`SYSTEM_PREAMBLE_TEMPLATE`) | Timezone-aware tasks documentation in the system prompt preamble: task types, scheduling formats with timezone behavior, Date and Time section, MCP tool descriptions with parameter documentation, cross-references, and corrected `notify` field behavior | `SYSTEM_PREAMBLE_TEMPLATE` with `{timezone}` placeholder; `render_system_preamble(timezone)` resolves and formats; follows ADR-008 append pattern |
 
 ### Cross-Layer Contracts
 
@@ -61,6 +61,7 @@ sequenceDiagram
     Channel->>Coord: send_message(text)
     Coord->>SDK: query(text) with mcp_servers=[task-tools]
     SDK->>MCP: create_task({name, schedule, type, prompt})
+    MCP->>MCP: _parse_schedule(schedule, tz) → ScheduleConfig
     MCP->>Repo: create definition
     Repo-->>MCP: definition created
     MCP-->>SDK: "Task created successfully"
@@ -193,8 +194,10 @@ stateDiagram-v2
 4. Tool validates:
    a. Required fields present (name, schedule, type, prompt)
    b. Type is "session" or "background"
-   c. Schedule is valid: CronSim(expr, now) doesn't raise CronSimError
-      or one-shot datetime is in the future
+   c. Schedule parsed via _parse_schedule(schedule, tz):
+      - datetime.fromisoformat(schedule): if naive, stamp with configured tz; if aware, preserve
+      - Falls back to CronSim for cron expressions
+   d. One-shot datetime must be in the future (tz-aware comparison)
 5. Tool calls repository.create_definition()
 6. Returns success/error message to agent
 7. Agent confirms to user
@@ -207,7 +210,8 @@ stateDiagram-v2
 2. Tool checks archived parameter (default: false)
 3. If archived: calls repository.list_disabled_definitions()
    If not archived: calls repository.list_enabled_definitions()
-4. Returns formatted list with task ID, name, type, schedule, and status per entry
+4. Formats one-shot schedules via _format_schedule(schedule, tz): converts to configured timezone via astimezone(tz)
+5. Returns formatted list with task ID, name, type, schedule, and status per entry
    Or "No active/archived tasks found." if empty
 ```
 
@@ -253,6 +257,25 @@ stateDiagram-v2
 - Pro: Simplest initial setup
 - Pro: Handles both fresh and existing databases
 - Con: Manual pragma checks for each new column addition
+
+### Timezone-aware schedule parsing
+
+**Choice**: Stamp naive datetimes with the configured timezone via `replace(tzinfo=tz)` rather than `astimezone(tz)`.
+**Why**: `replace` means "this datetime is expressed in timezone X" — preserves wall-clock values. `astimezone` means "convert this instant to timezone X" — would adjust clock values, which is wrong for user-intended wall-clock times.
+
+**Consequences**:
+- Pro: "3pm" means 3pm in the configured timezone
+- Pro: Explicit tz offsets and `Z` suffix preserved as-is
+- Pro: No dependency on system local time during parsing
+
+### Timezone plumbing via factory closure
+
+**Choice**: Resolve timezone once in `__main__.py` as `ZoneInfo(settings.tasks.timezone)` and inject via `create_task_tools_server(repository, timezone)`. Inner tool closures capture the timezone from the factory.
+**Why**: Follows DES-006 factory pattern. Single resolution point; no repeated lookups.
+
+**Consequences**:
+- Pro: Clean single-resolution pattern
+- Pro: Consistent with existing factory parameter passing
 
 ### Strict cron firing condition
 

@@ -5,8 +5,8 @@ Tests for DLT-041: Persist session context to database.
 
 import re
 
-from tachikoma.context.assembly import SYSTEM_PREAMBLE, build_system_prompt
-from tachikoma.context.loading import SYSTEM_PREAMBLE as LOADING_PREAMBLE
+from tachikoma.context.assembly import build_system_prompt
+from tachikoma.context.loading import render_system_preamble
 from tachikoma.sessions.model import SessionContextEntry
 
 
@@ -14,10 +14,17 @@ class TestBuildSystemPrompt:
     """Tests for build_system_prompt() pure function (DLT-041 S3)."""
 
     def test_empty_entries_returns_preamble_only(self) -> None:
-        """AC: empty entries list returns SYSTEM_PREAMBLE alone."""
-        result = build_system_prompt([])
+        """AC: empty entries list returns rendered preamble alone."""
+        result = build_system_prompt([], timezone="UTC")
 
-        assert result == LOADING_PREAMBLE
+        assert result == render_system_preamble("UTC")
+
+    def test_empty_entries_with_timezone(self) -> None:
+        """AC: empty entries with timezone returns preamble with that timezone."""
+        result = build_system_prompt([], timezone="UTC")
+
+        assert "UTC" in result
+        assert "## Date and Time" in result
 
     def test_single_entry_wraps_in_xml(self) -> None:
         """AC: single entry is wrapped in <owner> XML tags."""
@@ -30,9 +37,9 @@ class TestBuildSystemPrompt:
             )
         ]
 
-        result = build_system_prompt(entries)
+        result = build_system_prompt(entries, timezone="UTC")
 
-        assert LOADING_PREAMBLE in result
+        assert render_system_preamble("UTC") in result
         assert "<memories>" in result
         assert "User prefers dark mode" in result
         assert "</memories>" in result
@@ -45,10 +52,10 @@ class TestBuildSystemPrompt:
             SessionContextEntry(id=3, session_id="s1", owner="skills", content="Third entry"),
         ]
 
-        result = build_system_prompt(entries)
+        result = build_system_prompt(entries, timezone="UTC")
 
         # Use regex to find actual entry tags (with newline after) to avoid
-        # false matches from documentation references in SYSTEM_PREAMBLE
+        # false matches from documentation references in the rendered preamble
         foundational_match = re.search(r"<foundational>\n", result)
         memories_match = re.search(r"<memories>\n", result)
         skills_match = re.search(r"<skills>\n", result)
@@ -56,16 +63,17 @@ class TestBuildSystemPrompt:
         assert foundational_match is not None
         assert memories_match is not None
         assert skills_match is not None
+
         # Check ordering: foundational comes before memories, memories before skills
         assert foundational_match.start() < memories_match.start() < skills_match.start()
 
     def test_preamble_always_prepended(self) -> None:
-        """AC: SYSTEM_PREAMBLE is always at the start of the result."""
+        """AC: rendered preamble is always at the start of the result."""
         entries = [SessionContextEntry(id=1, session_id="s1", owner="test", content="content")]
 
-        result = build_system_prompt(entries)
+        result = build_system_prompt(entries, timezone="UTC")
 
-        assert result.startswith(LOADING_PREAMBLE)
+        assert result.startswith(render_system_preamble("UTC"))
 
     def test_deterministic_output_for_same_entries(self) -> None:
         """AC: same entries always produce identical output (deterministic per R2)."""
@@ -73,8 +81,8 @@ class TestBuildSystemPrompt:
             SessionContextEntry(id=1, session_id="s1", owner="memories", content="Test content")
         ]
 
-        result1 = build_system_prompt(entries)
-        result2 = build_system_prompt(entries)
+        result1 = build_system_prompt(entries, timezone="UTC")
+        result2 = build_system_prompt(entries, timezone="UTC")
 
         assert result1 == result2
 
@@ -88,7 +96,7 @@ Line 3"""
             SessionContextEntry(id=1, session_id="s1", owner="memories", content=multiline_content)
         ]
 
-        result = build_system_prompt(entries)
+        result = build_system_prompt(entries, timezone="UTC")
 
         assert multiline_content in result
 
@@ -100,12 +108,7 @@ Line 3"""
             SessionContextEntry(id=1, session_id="s1", owner="test", content=special_content)
         ]
 
-        result = build_system_prompt(entries)
+        result = build_system_prompt(entries, timezone="UTC")
 
         # Content should be preserved exactly, not XML-escaped
         assert special_content in result
-
-    def test_preamble_import_is_correct(self) -> None:
-        """AC: assembly module imports SYSTEM_PREAMBLE from loading module."""
-        # Both imports are at module level; this verifies they're equal
-        assert SYSTEM_PREAMBLE == LOADING_PREAMBLE

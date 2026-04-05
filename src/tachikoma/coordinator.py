@@ -37,7 +37,7 @@ from tachikoma.pre_processing import (
     McpServerConfig,
     PreProcessingPipeline,
 )
-from tachikoma.sessions.model import Session
+from tachikoma.sessions.model import Session, SessionContextEntry
 from tachikoma.sessions.registry import SessionRegistry
 
 _log = logger.bind(component="coordinator")
@@ -121,6 +121,7 @@ class Coordinator:
         session_resume_window: int = 86400,
         session_idle_timeout: int = 900,
         mcp_servers: dict[str, McpSdkServerConfig] | None = None,
+        timezone: str = "",
     ) -> None:
         # Store individual options for building ClaudeAgentOptions per message
         self._allowed_tools = allowed_tools or []
@@ -132,6 +133,7 @@ class Coordinator:
         self._permission_mode = permission_mode
         self._agents = agents
         self._base_mcp_servers: dict[str, McpSdkServerConfig] = mcp_servers or {}
+        self._timezone = timezone
 
         # Session resumption configuration
         self._session_resume_window = session_resume_window
@@ -458,17 +460,18 @@ class Coordinator:
         resume_id = self._sdk_session_id if not is_new_session else None
 
         # Build system prompt from persisted entries
-        system_prompt_append = build_system_prompt([])
+        entries: list[SessionContextEntry] = []
         if self._registry is not None and active is not None:
             try:
                 entries = await self._registry.load_context_entries(active.id)
-                system_prompt_append = build_system_prompt(entries)
             except Exception as exc:
                 _log.exception(
                     "Context load failed, using preamble only: session_id={id} err={err}",
                     id=active.id,
                     err=str(exc),
                 )
+
+        system_prompt_append = build_system_prompt(entries, timezone=self._timezone)
 
         # Build options and create a fresh client for this exchange
         options = self._build_options(resume=resume_id, system_prompt_append=system_prompt_append)
