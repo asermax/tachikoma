@@ -34,6 +34,7 @@ The core agent loop: receive a user message, pass it to the Claude agent via the
 | R15 | MCP server registration: coordinator accepts an optional mapping of named MCP server configurations at construction and passes them to `ClaudeAgentOptions` |
 | R16 | Last message time tracking: coordinator tracks the timestamp of the last message exchange for idle gating by external subsystems |
 | R17 | Configurable tool blocking: specific tools can be unconditionally blocked via `disallowed_tools` config, defaulting to `["AskUserQuestion", "CronCreate", "CronDelete", "CronList"]` |
+| R18 | Text sanitization: the adapter strips invalid UTF-8 characters (surrogate code points, overlong encodings) from all SDK text before passing to domain types, preventing encoding failures in downstream consumers |
 
 ## Behaviors
 

@@ -73,7 +73,7 @@ The **Message Adapter** is a pure transformation layer — it maps SDK `Message`
 | `src/tachikoma/agent_defaults.py` | `AgentDefaults` frozen dataclass grouping `cwd`, `cli_path`, `env`, and `model`; `merge_env()` function for merging hardcoded defaults with config env (rejects collisions); `HARDCODED_ENV` constant | Single object replaces individual `cwd`/`cli_path`/`env` parameter threading across 10+ component signatures; `model` defaults to `"opus"` and is sourced from `settings.agent.sub_agent_model` |
 | `src/tachikoma/coordinator.py` | Creates a per-message `ClaudeSDKClient`, manages session lifecycle via `resume`, exposes `send_message()`. Accepts `agent_defaults` (for `cwd`, `cli_path`, `env`), `foundational_context` (list of (owner, content) tuples from bootstrap), `permission_mode`, `mcp_servers`, `session_resume_window`, and `timezone` for SDK configuration, and an optional `on_status` callback for shutdown-phase notifications. Saves context entries to DB at lifecycle points (foundational on session creation, provider results after pre-processing, transition context on boundary detection); loads entries and calls `build_system_prompt(entries, timezone=self._timezone)` before every `_build_options()`. `_build_options()` simplified: accepts `system_prompt_append: str | None` (the fully assembled system prompt from `build_system_prompt()`), no longer assembles context inline. Extracts detected agents and additional MCP servers from pre-processing pipeline results per-session (both are session-scoped, cleared on topic shift). Tracks `last_message_time` (updated on `send_message()` entry and response completion) for idle gating by external subsystems. Optionally integrates with `SessionRegistry` for persistent session tracking (see [sessions design](sessions.md)), `PreProcessingPipeline` for context enrichment on new sessions (see [pipeline design](pre-processing-pipeline.md)), `PostProcessingPipeline` for post-conversation analysis (see [pipeline design](post-processing-pipeline.md)), and `MessagePostProcessingPipeline` for per-message processing (see [boundary detection design](boundary-detection.md)). Extended with boundary detection gating (with session candidate fetching), per-message post-processing trigger, session transition orchestration (`_handle_transition` with resume branch), and `_persist_bridging_context` for assembling and saving bridging context to DB. Tracks `_sdk_session_id`, `_agents`, `_foundational_context`, `_mcp_servers`, `_pending_msg_task`, and `_background_tasks` for lifecycle management. Extracts `mcp_servers` from pre-processing pipeline results per-session, merges with constructor-provided servers, and passes them to `ClaudeAgentOptions` via `_build_options()`. Clears `_agents` and `_mcp_servers` on session transition. | Async context manager pattern; creates fresh `ClaudeSDKClient` per `send_message()` call with `resume` for continuity; wraps assembled system prompt in SystemPromptPreset with append mode (see ADR-008); optional registry, pre_pipeline, pipeline, msg_pipeline, and on_status dependencies; `_agents` populated from pipeline results (not constructor), cleared on transition; unpacks `agent_defaults` for `cwd`, `cli_path`, `env` in `_build_options()` and passes `agent_defaults` to `detect_boundary()` |
 | `src/tachikoma/events.py` | `AgentEvent` domain type hierarchy | Dataclasses; no SDK dependency |
-| `src/tachikoma/adapter.py` | Transforms SDK messages to `AgentEvent`s | Pure function, stateless; only module that imports SDK message types |
+| `src/tachikoma/adapter.py` | Transforms SDK messages to `AgentEvent`s; sanitizes text to strip invalid UTF-8 characters (surrogates, overlong encodings) via `sanitize_text()` | Pure function, stateless; only module that imports SDK message types; `sanitize_text()` is imported by all SDK-consuming sites that extract `TextBlock.text` (executor, summary processor, fork-and-capture) |
 
 ### Cross-Layer Contracts
 
@@ -459,6 +459,21 @@ The `Result` event serves as a turn boundary. Channels can detect it to reset th
 - Pro: Custom env vars configurable via TOML
 - Pro: Hardcoded defaults protected from accidental override
 - Pro: Non-string values rejected at startup with clear error
+
+### Text sanitization at the adapter boundary
+
+**Choice**: Define `sanitize_text()` in the adapter module and apply it at all 5 sites that consume `TextBlock.text` from SDK messages
+**Why**: The SDK CLI subprocess occasionally produces text containing invalid surrogate code points (U+D800–U+DFFF) that cannot be encoded as UTF-8. These cause Telegram API 500 errors (`surrogates not allowed`) and SDK CLI crashes during post-processing fork operations. The function uses `str.encode('utf-8', errors='ignore').decode('utf-8')` to strip unencodable characters while preserving all valid Unicode. The adapter module is the SDK boundary layer, making it the natural home for sanitization logic. Other SDK-consuming sites (executor, summary processor, fork-and-capture) import the function.
+**Alternatives Considered**:
+- Sanitize only at the Telegram channel: Per-consumer fix, leaves other paths unprotected
+- Sanitize in `TextChunk.__post_init__`: Couples encoding concerns to the data model
+- `errors='replace'` (insert `?`): Creates confusing output; surrogates have no meaningful visual representation
+
+**Consequences**:
+- Pro: All SDK text paths guaranteed to produce valid UTF-8
+- Pro: Single function definition, minimal maintenance surface
+- Pro: Silent removal — no visual artifacts in rendered output
+- Con: Removed characters are invisible (mitigated by debug-level logging when removal occurs)
 
 ### Message-level streaming via receive_response()
 
