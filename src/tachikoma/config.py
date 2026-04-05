@@ -10,11 +10,35 @@ import tomllib
 import types
 from pathlib import Path
 from typing import Any, Literal, Union, cast, get_args
+from zoneinfo import ZoneInfo
 
 import tomlkit
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
 CONFIG_PATH = Path.home() / ".config" / "tachikoma" / "config.toml"
+
+
+def _detect_system_timezone() -> str:
+    """Resolve the system timezone from /etc/localtime symlink.
+
+    Extracts the IANA timezone name from the symlink target path.
+    Falls back to "UTC" if resolution fails.
+    """
+    localtime = Path("/etc/localtime")
+
+    try:
+        target = localtime.resolve()
+        target_str = str(target)
+
+        # Extract everything after "zoneinfo/" in the path
+        marker = "zoneinfo/"
+        idx = target_str.find(marker)
+        if idx != -1:
+            return target_str[idx + len(marker):]
+    except Exception:
+        pass
+
+    return "UTC"
 
 
 class WorkspaceSettings(BaseModel):
@@ -142,8 +166,25 @@ class TaskSettings(BaseModel):
     )
     timezone: str = Field(
         default="",
+        validate_default=True,
         description="Timezone for cron evaluation (empty = system tz)",
     )
+
+    @field_validator("timezone", mode="before")
+    @classmethod
+    def _resolve_empty_timezone(cls, v: object) -> object:
+        if isinstance(v, str) and v == "":
+            return _detect_system_timezone()
+        return v
+
+    @field_validator("timezone", mode="after")
+    @classmethod
+    def _validate_timezone(cls, v: str) -> str:
+        try:
+            ZoneInfo(v)
+        except KeyError:
+            raise ValueError(f"'{v}' is not a valid IANA timezone") from None
+        return v
 
 
 class Settings(BaseModel):
