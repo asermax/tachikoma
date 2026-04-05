@@ -527,3 +527,168 @@ class TestSessionRegistryReopenSession:
         result = await registry.reopen_session("s1")
 
         assert result is None
+
+
+class TestCandidateFiltering:
+    """Tests for DLT-084 R8: universal candidate filtering verification.
+
+    Verifies that get_recent_closed() properly filters out sessions that
+    cannot be meaningfully resumed. These tests formalize existing behavior
+    — no production code changes expected.
+    """
+
+    async def test_excludes_sessions_without_transcript_path(
+        self, mock_repo, tmp_path: Path
+    ) -> None:
+        """AC: Sessions with transcript_path=None are excluded (registry-level filter)."""
+        now = _utcnow()
+        window = timedelta(hours=24)
+
+        # Repository returns sessions that passed SQL filters but lack transcript_path
+        session_no_transcript = _make_session(
+            "s1",
+            started_at=now - timedelta(hours=1),
+            ended_at=now - timedelta(minutes=30),
+            sdk_session_id="sdk-1",
+            summary="Discussion about Python",
+            transcript_path=None,
+        )
+        mock_repo.get_recent_closed = AsyncMock(return_value=[session_no_transcript])
+
+        registry = SessionRegistry(mock_repo, max_session_age=timedelta(days=1))
+        results = await registry.get_recent_closed(before=now, window=window)
+
+        assert len(results) == 0
+
+    async def test_excludes_sessions_with_missing_transcript_file(
+        self, mock_repo, tmp_path: Path
+    ) -> None:
+        """AC: Sessions with non-existent transcript files are excluded."""
+        now = _utcnow()
+        window = timedelta(hours=24)
+
+        session_missing_transcript = _make_session(
+            "s1",
+            started_at=now - timedelta(hours=1),
+            ended_at=now - timedelta(minutes=30),
+            sdk_session_id="sdk-1",
+            summary="Discussion about Python",
+            transcript_path=str(tmp_path / "nonexistent.jsonl"),
+        )
+        mock_repo.get_recent_closed = AsyncMock(return_value=[session_missing_transcript])
+
+        registry = SessionRegistry(mock_repo, max_session_age=timedelta(days=1))
+        results = await registry.get_recent_closed(before=now, window=window)
+
+        assert len(results) == 0
+
+    async def test_excludes_sessions_outside_max_age(
+        self, mock_repo, tmp_path: Path
+    ) -> None:
+        """AC: Sessions with started_at older than max_session_age are excluded."""
+        now = _utcnow()
+        window = timedelta(hours=48)
+
+        transcript = tmp_path / "old.jsonl"
+        transcript.touch()
+
+        old_session = _make_session(
+            "s1",
+            started_at=now - timedelta(days=2),
+            ended_at=now - timedelta(hours=47),
+            sdk_session_id="sdk-1",
+            summary="Discussion about Python",
+            transcript_path=str(transcript),
+        )
+        mock_repo.get_recent_closed = AsyncMock(return_value=[old_session])
+
+        # Registry with 1-day max age — session started 2 days ago
+        registry = SessionRegistry(mock_repo, max_session_age=timedelta(days=1))
+        results = await registry.get_recent_closed(before=now, window=window)
+
+        assert len(results) == 0
+
+    async def test_includes_valid_sessions(
+        self, mock_repo, tmp_path: Path
+    ) -> None:
+        """AC: Sessions passing all filters are included."""
+        now = _utcnow()
+        window = timedelta(hours=24)
+
+        transcript = tmp_path / "valid.jsonl"
+        transcript.touch()
+
+        valid_session = _make_session(
+            "s1",
+            started_at=now - timedelta(hours=1),
+            ended_at=now - timedelta(minutes=30),
+            sdk_session_id="sdk-1",
+            summary="Discussion about Python",
+            transcript_path=str(transcript),
+        )
+        mock_repo.get_recent_closed = AsyncMock(return_value=[valid_session])
+
+        registry = SessionRegistry(mock_repo, max_session_age=timedelta(days=1))
+        results = await registry.get_recent_closed(before=now, window=window)
+
+        assert len(results) == 1
+        assert results[0].id == "s1"
+
+    async def test_filters_mixed_sessions(
+        self, mock_repo, tmp_path: Path
+    ) -> None:
+        """AC: Only valid sessions pass all filters; invalid ones are excluded."""
+        now = _utcnow()
+        window = timedelta(hours=48)
+
+        transcript = tmp_path / "valid.jsonl"
+        transcript.touch()
+
+        valid_session = _make_session(
+            "s1",
+            started_at=now - timedelta(hours=1),
+            ended_at=now - timedelta(minutes=30),
+            sdk_session_id="sdk-1",
+            summary="Valid discussion",
+            transcript_path=str(transcript),
+        )
+
+        # No transcript path
+        no_transcript = _make_session(
+            "s2",
+            started_at=now - timedelta(hours=1),
+            ended_at=now - timedelta(minutes=30),
+            sdk_session_id="sdk-2",
+            summary="No transcript",
+            transcript_path=None,
+        )
+
+        # Missing transcript file
+        missing_file = _make_session(
+            "s3",
+            started_at=now - timedelta(hours=1),
+            ended_at=now - timedelta(minutes=30),
+            sdk_session_id="sdk-3",
+            summary="Missing file",
+            transcript_path=str(tmp_path / "missing.jsonl"),
+        )
+
+        # Too old
+        old_session = _make_session(
+            "s4",
+            started_at=now - timedelta(days=2),
+            ended_at=now - timedelta(hours=47),
+            sdk_session_id="sdk-4",
+            summary="Old session",
+            transcript_path=str(transcript),
+        )
+
+        mock_repo.get_recent_closed = AsyncMock(
+            return_value=[valid_session, no_transcript, missing_file, old_session]
+        )
+
+        registry = SessionRegistry(mock_repo, max_session_age=timedelta(days=1))
+        results = await registry.get_recent_closed(before=now, window=window)
+
+        assert len(results) == 1
+        assert results[0].id == "s1"
