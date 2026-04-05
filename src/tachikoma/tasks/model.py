@@ -46,13 +46,40 @@ class ScheduleConfig:
 
     @classmethod
     def from_json(cls, json_str: str) -> "ScheduleConfig":
-        """Deserialize from JSON string."""
-        data = json.loads(json_str)
+        """Deserialize from JSON string.
+
+        Handles legacy bare ISO datetime strings (treated as one-shot).
+        """
+        try:
+            data = json.loads(json_str)
+        except json.JSONDecodeError:
+            # Legacy format: bare ISO datetime string stored instead of JSON
+            try:
+                at = datetime.fromisoformat(json_str)
+                if at.tzinfo is None:
+                    at = at.replace(tzinfo=UTC)
+                return cls(type="once", at=at)
+            except (ValueError, TypeError):
+                raise ValueError(f"Invalid schedule: {json_str!r}") from None
+
+        if isinstance(data, str):
+            at = datetime.fromisoformat(data)
+            if at.tzinfo is None:
+                at = at.replace(tzinfo=UTC)
+            return cls(type="once", at=at)
+
+        if not isinstance(data, dict):
+            raise ValueError(f"Invalid schedule JSON: expected object, got {type(data).__name__}")
+
         at = None
         if "at" in data and data["at"] is not None:
             at = datetime.fromisoformat(data["at"])
             if at.tzinfo is None:
                 at = at.replace(tzinfo=UTC)
+
+        if "type" not in data:
+            raise ValueError(f"Invalid schedule JSON: missing 'type' key in {data!r}")
+
         return cls(
             type=data["type"],
             expression=data.get("expression"),

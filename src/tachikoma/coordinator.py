@@ -79,13 +79,13 @@ def _derive_transcript_path(sdk_session_id: str, cwd: Path | None) -> str:
     Follows the Claude SDK convention:
         ~/.claude/projects/<sanitized-cwd>/<session-id>.jsonl
 
-    where <sanitized-cwd> replaces "/" with "-" and strips the leading "-".
+    where <sanitized-cwd> replaces "/" with "-", preserving the leading "-".
 
     Isolated here so that if the SDK changes its transcript storage format,
     only this one function needs updating.
     """
     effective_cwd = cwd or Path.cwd()
-    sanitized = str(effective_cwd).replace("/", "-").lstrip("-")
+    sanitized = str(effective_cwd).replace("/", "-")
     return str(Path.home() / ".claude" / "projects" / sanitized / f"{sdk_session_id}.jsonl")
 
 
@@ -395,11 +395,19 @@ class Coordinator:
                     self._agent_defaults,
                     candidates=candidates,
                 )
-                if not result.continues:
+                if result.resume_session_id is not None:
+                    # resume_id is authoritative — always transition to resume
                     _log.info(
-                        "Topic shift detected, transitioning session (resume_id={resume_id})",
+                        "Session match detected, resuming session (resume_id={resume_id})",
                         resume_id=result.resume_session_id,
                     )
+                    resumed = await self._handle_transition(
+                        active, resume_session_id=result.resume_session_id
+                    )
+                    active = await self._registry.get_active_session()
+                    is_new_session = not resumed
+                elif not result.continues:
+                    _log.info("Topic shift detected, transitioning session")
                     resumed = await self._handle_transition(
                         active, resume_session_id=result.resume_session_id
                     )

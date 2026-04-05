@@ -54,7 +54,7 @@ For success notifications, the `notify` field is an instruction for generating c
 **Acceptance Criteria**:
 - Given the evaluator determines the task is complete and the definition has a non-null `notify` field, then the task session is forked with `notify` as a prompt, the generated text is wrapped in a coordinator-routed prompt template, and a `TaskNotification` event carrying the prompt is dispatched with severity "info"
 - Given the evaluator determines the task is complete and `notify` is null, then no notification is generated
-- Given a background task fails (stuck, error, or max iterations), then a `TaskNotification` event is dispatched with severity "error" carrying an error prompt template (no fork)
+- Given a background task fails (stuck, error, or max iterations), then a `TaskNotification` event is dispatched with severity "error" carrying an error prompt template (no fork), regardless of the `notify` field value
 - Given notification generation fails (fork error, no session ID, or no text produced), then the evaluator's completion feedback is used in the prompt template as a fallback
 - Given a `TaskNotification` event is received by a channel, then the notification prompt is enqueued into the coordinator for pipeline-routed delivery (same path as session tasks)
 

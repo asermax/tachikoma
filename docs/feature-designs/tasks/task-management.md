@@ -36,13 +36,13 @@ The task management subsystem lives in `src/tachikoma/tasks/` as a self-containe
 | Layer/Component | Responsibility | Key Decisions |
 |-----------------|----------------|---------------|
 | `src/tachikoma/tasks/__init__.py` | Public API re-exports | Clean package interface |
-| `src/tachikoma/tasks/model.py` | `TaskDefinition` and `TaskInstance` frozen dataclasses (domain types); `TaskDefinitionRecord` and `TaskInstanceRecord` ORM models; `TaskStatus` and `TaskType` constant maps; `ScheduleConfig` type | Domain types frozen; ORM models internal to persistence; schedule stored as JSON column |
-| `src/tachikoma/tasks/repository.py` | `TaskRepository` — async SQLAlchemy CRUD for definitions and instances; `list_enabled_definitions()` and `list_disabled_definitions()` for filtered queries; crash recovery (mark running as failed) | Receives shared `async_sessionmaker` from `Database`; follows ADR-007 pattern |
-| `src/tachikoma/tasks/tools.py` | `create_task_tools_server(repository, timezone)` — MCP server factory receiving `ZoneInfo` at construction; `_parse_schedule(schedule, tz)` stamps naive datetimes with configured timezone, preserves aware as-is; `_format_schedule(schedule, tz)` converts display to configured timezone; `list_tasks`, `create_task`, `update_task`, `delete_task` with `cronsim` validation; Pydantic `BaseModel` classes (`ListTasksArgs`, `CreateTaskArgs`, `UpdateTaskArgs`, `DeleteTaskArgs`) for arg validation | Factory receives `ZoneInfo`, passes to `_parse_schedule` and `_format_schedule` via closures; uses `replace(tzinfo=tz)` for naive, `astimezone(tz)` for display; follows DES-006 |
+| `src/tachikoma/tasks/model.py` | `TaskDefinition` and `TaskInstance` frozen dataclasses (domain types); `TaskDefinitionRecord` and `TaskInstanceRecord` ORM models; `TaskStatus` and `TaskType` constant maps; `ScheduleConfig` type | Domain types frozen; ORM models internal to persistence; schedule stored as JSON column; `from_json` recovers legacy bare ISO datetime strings as one-shot schedules; all parse failures raise `ValueError` (never bare `JSONDecodeError` or `KeyError`) |
+| `src/tachikoma/tasks/repository.py` | `TaskRepository` — async SQLAlchemy CRUD for definitions and instances; `list_enabled_definitions()` and `list_disabled_definitions()` for filtered queries; `_to_domains_with_isolation()` for per-record error isolation with auto-disable; crash recovery (mark running as failed) | Receives shared `async_sessionmaker` from `Database`; follows ADR-007 pattern; list methods auto-disable corrupted definitions instead of failing the entire query |
+| `src/tachikoma/tasks/tools.py` | `create_task_tools_server(repository, timezone)` — MCP server factory receiving `ZoneInfo` at construction; `_parse_schedule(schedule, tz)` stamps naive datetimes with configured timezone, preserves aware as-is; `_format_schedule(schedule, tz)` converts display to configured timezone; `list_tasks` (defaults to enabled-only, `archived` parameter for disabled; output includes task ID for referencing in other tools), `create_task`, `update_task` (supports `task_type` changes via `Literal` validation), `delete_task` with `cronsim` validation; Pydantic `BaseModel` classes (`ListTasksArgs`, `CreateTaskArgs`, `UpdateTaskArgs`, `DeleteTaskArgs`) for arg validation and type coercion; enriched `@tool()` descriptions with parameter documentation including timezone-aware schedule formats | Factory receives `ZoneInfo`, passes to `_parse_schedule` and `_format_schedule` via closures; uses `replace(tzinfo=tz)` for naive, `astimezone(tz)` for display; `UpdateTaskArgs.task_type` uses `Literal["session", "background"]` for automatic validation; `TaskRepositoryError`-specific error handling surfaces root causes via `__cause__`; follows DES-006 |
 | `src/tachikoma/tasks/hooks.py` | `tasks_hook` — bootstrap hook (DES-003): retrieves shared `Database` from extras, creates repository, runs crash recovery; stores `task_repository` in `bootstrap.extras` | Subsystem-owned hook; runs after `database_hook` |
-| `src/tachikoma/tasks/scheduler.py` | `instance_generator()` — async loop evaluating definitions via `cronsim`; `get_timezone(settings)` — returns `ZoneInfo` from pre-validated settings string (shared utility used by scheduler, preamble rendering, and executor) | Plain async function started as `asyncio.Task`; `get_timezone` has no fallback logic — validation happens at config load |
+| `src/tachikoma/tasks/scheduler.py` | `instance_generator()` — async loop with strict cron firing and period-aware dedup; `_create_pending_instance()` helper for instance creation and logging; `get_timezone(settings)` — returns `ZoneInfo` from pre-validated settings string (shared utility used by scheduler, preamble rendering, and executor) | Plain async function started as `asyncio.Task`; `get_timezone` has no fallback logic — validation happens at config load |
 | `src/tachikoma/database.py` | Shared `Database` class with `Base(DeclarativeBase)`, `AsyncEngine`, `async_sessionmaker`; `database_hook` bootstrap hook | All ORM models share one `Base`; single engine for all subsystems |
-| `src/tachikoma/context/loading.py` (`SYSTEM_PREAMBLE_TEMPLATE`) | Timezone-aware tasks documentation in the system prompt preamble: task types, scheduling formats with timezone behavior, Date and Time section, MCP tools, and notify field | `SYSTEM_PREAMBLE_TEMPLATE` with `{timezone}` placeholder; `render_system_preamble(timezone)` resolves and formats; follows ADR-008 append pattern |
+| `src/tachikoma/context/loading.py` (`SYSTEM_PREAMBLE_TEMPLATE`) | Timezone-aware tasks documentation in the system prompt preamble: task types, scheduling formats with timezone behavior, Date and Time section, MCP tool descriptions with parameter documentation, cross-references, and corrected `notify` field behavior | `SYSTEM_PREAMBLE_TEMPLATE` with `{timezone}` placeholder; `render_system_preamble(timezone)` resolves and formats; follows ADR-008 append pattern |
 
 ### Cross-Layer Contracts
 
@@ -71,7 +71,7 @@ sequenceDiagram
 ```
 
 **Error contract:**
-- MCP tool errors: return `{"is_error": true, "content": [...]}` — agent sees error message and can retry
+- MCP tool errors: return `{"is_error": true, "content": [...]}` — agent sees error message and can retry; `TaskRepositoryError` is caught specifically to surface root cause via `__cause__`; unexpected errors use a generic fallback
 - Instance generator errors: logged, loop continues on next tick
 - Repository errors: wrapped in `TaskRepositoryError`, logged at call sites
 
@@ -101,7 +101,7 @@ TaskInstance (frozen dataclass)
 ├── task_type: str                   ("session" or "background", copied from definition)
 ├── status: str                      ("pending", "running", "completed", "failed")
 ├── prompt: str                      (copied from definition at creation time)
-├── scheduled_for: datetime          (when the instance should execute)
+├── scheduled_for: datetime          (cron match time for cron tasks; schedule.at for one-shot tasks)
 ├── started_at: datetime | None      (when execution began)
 ├── completed_at: datetime | None    (when execution finished)
 ├── result: str | None               (completion/failure summary)
@@ -169,12 +169,19 @@ stateDiagram-v2
 1. Instance generator loop wakes up (~60s interval)
 2. Query all enabled definitions from repository
 3. For each definition:
-   a. Parse schedule: CronSim(expr, anchor_time, tz=configured_timezone)
-   b. Check if next fire time ≤ now
-   c. If yes, check no pending/running instance exists for this definition
-   d. If clear, create TaskInstance(status="pending", task_type=definition.task_type, scheduled_for=fire_time)
-   e. Update definition.last_fired_at = now
-   f. If one-shot, set definition.enabled = false
+   a. If cron schedule:
+      - Compute anchor in evaluation timezone (convert last_fired_at from UTC to tz, or start-of-hour for first run)
+      - Get next fire time from CronSim using anchor
+      - If next fire time > now (hasn't passed), skip
+      - Compute cron_match_utc from next fire time
+      - Period-aware duplicate check: query for pending/running/completed instance with matching scheduled_for (failed excluded for retry)
+      - If duplicate found, log suppression and skip
+      - Create TaskInstance(status="pending", scheduled_for=cron_match_utc)
+      - Update definition.last_fired_at = now (ensures CronSim anchors past missed periods on catch-up)
+   b. If one-shot schedule (hasn't fired yet and time has passed):
+      - Check no pending/running instance exists for this definition
+      - Create TaskInstance(status="pending", scheduled_for=schedule.at)
+      - Update definition.last_fired_at, set definition.enabled=false
 4. Sleep until next tick
 ```
 
@@ -204,7 +211,8 @@ stateDiagram-v2
 3. If archived: calls repository.list_disabled_definitions()
    If not archived: calls repository.list_enabled_definitions()
 4. Formats one-shot schedules via _format_schedule(schedule, tz): converts to configured timezone via astimezone(tz)
-5. Returns formatted list or "No active/archived tasks found."
+5. Returns formatted list with task ID, name, type, schedule, and status per entry
+   Or "No active/archived tasks found." if empty
 ```
 
 ## Key Decisions
@@ -269,6 +277,27 @@ stateDiagram-v2
 - Pro: Clean single-resolution pattern
 - Pro: Consistent with existing factory parameter passing
 
+### Strict cron firing condition
+
+**Choice**: Fire only when the cron match time has already passed (`next_fire <= now_tz`), with no tolerance window.
+**Why**: A tolerance window caused early and repeated firing within the same cron period. Accepting up to 60s lateness (bounded by the generator interval) is preferable to duplicate instances.
+
+### Period-aware duplicate check via `scheduled_for`
+
+**Choice**: Store the cron match time in `scheduled_for` and check for existing instances matching that time and a non-failed status.
+**Why**: Using the cron match time as a period identifier enables deduplication across instance status changes (e.g., a completed instance still blocks a duplicate). The previous approach only checked pending/running, allowing duplicates after completion within the same period.
+
+### Corrupted definition auto-disable
+
+**Choice**: When a repository list method encounters a record with an unparseable schedule, log a warning and disable the definition rather than failing the entire query.
+**Why**: One corrupted definition blocked the entire instance generator loop (the list comprehension fails before per-definition error handling). Auto-disabling quarantines the bad record so it won't be re-encountered every tick, while allowing all valid definitions to continue scheduling. The user can see what happened via logs and re-create the task if needed. This is consistent with the one-shot auto-disable pattern already in the scheduler.
+
+**Consequences**:
+- Pro: One bad record cannot halt all task scheduling
+- Pro: Corrupted definitions are quarantined rather than causing log spam
+- Con: The definition is disabled (not deleted), so the user must manually clean up or re-create
+- Con: If the disable write itself fails, it is logged and skipped (fail-open to preserve other definitions)
+
 ## System Behavior
 
 ### Scenario: Agent creates a recurring task
@@ -280,8 +309,8 @@ stateDiagram-v2
 ### Scenario: Instance generation for a cron task
 
 **Given**: An enabled cron-based task definition exists
-**When**: The cron expression matches the current time
-**Then**: A pending instance is created and `last_fired_at` is updated.
+**When**: The cron match time has already passed
+**Then**: A pending instance is created with `scheduled_for` set to the cron match time, and `last_fired_at` is updated.
 
 ### Scenario: One-shot task auto-disables
 
@@ -289,14 +318,32 @@ stateDiagram-v2
 **When**: The scheduled datetime passes and an instance is generated
 **Then**: The definition is set to `enabled=false`.
 
+### Scenario: Cron period-aware duplicate prevention
+
+**Given**: A cron task where a pending, running, or completed instance already exists with `scheduled_for` matching the current cron match time
+**When**: The instance generator evaluates the definition
+**Then**: No new instance is created. Failed instances are excluded from this check to allow retry within the same period.
+
+### Scenario: Catch-up after restart
+
+**Given**: The system was down for multiple cron periods
+**When**: The instance generator runs after restart
+**Then**: At most one catch-up instance is created per definition. The generator evaluates each definition once per tick, and the `last_fired_at` update (set to wall-clock now) ensures subsequent ticks anchor CronSim past all missed periods.
+
 ### Scenario: Crash recovery on startup
 
 **Given**: The application crashed while tasks were running
 **When**: The bootstrap hook runs
 **Then**: All previously-running instances are marked as `failed`.
 
+### Scenario: Corrupted definition auto-disable
+
+**Given**: An enabled task definition has a malformed schedule value in the database
+**When**: The repository lists enabled definitions
+**Then**: The corrupted definition is disabled (enabled=false), a warning is logged with the definition ID and error, and all other valid definitions are returned normally.
+
 ## Notes
 
 - `cronsim` is used for cron expression evaluation (lightweight, timezone-aware)
 - Task `type` is copied from definition to instance at creation time to enable direct queries without joins
-- The `notify` field on `TaskDefinition` is a nullable instruction string — when set, the background task executor uses it to generate a notification message on completion
+- The `notify` field on `TaskDefinition` is a nullable success notification instruction — when set, the background task executor uses it to generate a user-facing message on completion; when null, successful tasks complete silently; failures always generate notifications regardless of this field

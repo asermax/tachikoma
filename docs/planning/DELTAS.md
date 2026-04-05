@@ -357,20 +357,6 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 **Complexity**: Easy
 **Description**: Apply the error classification and surfacing mechanism to the task execution subsystem. Currently, task pre-processing fallbacks, evaluator failures, and notification delivery issues are handled with ad-hoc logging and silent degradation. Classify and surface failures during task pre-processing, evaluation loops, post-processing, and notification generation consistently with the rest of the system.
 
-### DLT-072: Fix task management MCP tool bugs
-**Status**: ✗ Defined
-**Depends on**: None
-**Priority**: 1 (Critical)
-**Complexity**: Easy
-**Description**: The task management MCP tools have multiple bugs that force the agent to fall back to raw SQLite queries. `list_tasks` does not expose task IDs, making it impossible to discover which ID to pass to `update_task` or `delete_task`. `update_task` rejects valid inputs with an unhelpful generic validation error that does not indicate which field failed or what schema is expected, and it is missing the `task_type` parameter — the column exists in the database but cannot be set through the MCP tool, preventing task type changes without falling back to raw SQL. The `notify` parameter description is misleading: it says "if omitted, background tasks run silently" but the system actually notifies on failure by default, leading to redundant notify strings. Tool descriptions lack parameter type documentation and cross-references between tools, leading to trial-and-error usage. Fix all of these: expose IDs in list output, fix update validation, expose `task_type` in `update_task`, clarify `notify` default behavior, and enrich tool descriptions with types, examples, and usage guidance.
-
-### DLT-073: Block Claude Code built-in cron tools in default config
-**Status**: ✗ Defined
-**Depends on**: None
-**Priority**: 1 (Critical)
-**Complexity**: Easy
-**Description**: Claude Code ships with built-in `CronCreate`, `CronDelete`, and `CronList` tools that create session-only in-memory cron jobs. These shadow Tachikoma's persistent task system — the agent defaults to the built-in tools since they appear first in the tool list, and any reminders created through them silently vanish on exit because they are never persisted to the database or picked up by Tachikoma's scheduler. A manual workaround exists (adding these tools to the deny list in `.claude/settings.local.json`), but this is not baked into the default project configuration. Incorporate the deny list into the project template or default configuration so every workspace starts with these tools blocked.
-
 ### DLT-074: Rename skills subsystem to avoid Claude Code naming collision
 **Status**: ✗ Defined
 **Depends on**: None
@@ -462,13 +448,6 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 **Complexity**: Medium
 **Description**: Allow the user to switch to a specific previous session by replying to a Telegram message that was part of that session. Currently, messages are routed automatically via boundary detection with no user override. This delta adds message-to-session tracking (associating Telegram message IDs with the session they belong to), reply detection in the Telegram channel, and explicit session routing when a reply targets a past session. The user replies to any message from a previous conversation and the new message is routed to that session instead of following automatic routing logic. Edge cases include replying to a message with no associated session or a closed session that shouldn't be resumed.
 
-### DLT-087: Disable Claude Code built-in skills in default config
-**Status**: ✗ Defined
-**Depends on**: None
-**Priority**: 1 (Critical)
-**Complexity**: Easy
-**Description**: Claude Code ships with a built-in `Skill` tool that provides access to plugin-provided slash-command capabilities. This shadows Tachikoma's own skill subsystem — the agent conflates the two systems, attempting to invoke Tachikoma skills via the Claude Code Skill tool or ignoring Claude Code skills assuming they belong to Tachikoma's registry. This delta disables the Skill tool through the default project configuration's deny list, alongside the cron tools already blocked by DLT-073, preventing the agent from accessing Claude Code's skill system entirely. This is the immediate mitigation while the full renaming solution (DLT-074) is deferred.
-
 ### DLT-088: Scheduled memory store maintenance
 **Status**: ✗ Defined
 **Depends on**: None
@@ -490,12 +469,12 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 **Complexity**: Easy
 **Description**: The cron evaluator for session-type tasks fires multiple times within the same scheduled minute, creating duplicate instances. The `last_fired_at` field is updated after firing but does not prevent re-queuing within the same cron period — the scheduler only checks whether the task has ever fired, not whether it has already fired for the current period. This causes users to receive multiple duplicate notifications for a single scheduled execution. Deduplicate based on the current cron period rather than just the `last_fired_at` timestamp, ensuring each cron match produces at most one task instance.
 
-### DLT-091: Conditional notification suppression for background tasks
+### DLT-091: Replace task notify field with agent-driven notification tool
 **Status**: ✗ Defined
 **Depends on**: None
 **Priority**: 3 (Medium)
 **Complexity**: Medium
-**Description**: Background tasks have no mechanism to conditionally suppress notifications at runtime. The `notify` field is static text set at task definition time, so every execution either always notifies or never does — there is no way for the task's output to signal whether notification is warranted. This is a problem for tasks that should only notify when there is meaningful content (e.g., a routine check-in that should stay silent when the daily plan is empty but notify when activities are scheduled). Add a mechanism for background tasks to signal at execution time whether the result should trigger a notification. The specific signaling approach should be evaluated during design — the key requirement is that the task's output can deterministically control whether the notification fires, without requiring the task to be redefined.
+**Description**: Replace the static `notify` field on task definitions with an MCP tool (`send_notification`) that background task agents call during execution to send user notifications. Currently, notification behavior is defined at task creation time as a static instruction — every execution either always notifies or never does, with no runtime control. This delta removes the `notify` field from task definitions and MCP tools, strips the executor's automatic success notification dispatch, and exposes a `send_notification` tool through the task MCP tool server that background task agents can invoke to deliver notifications on demand. Failure notifications remain automatic (handled by the executor) since failures occur when the agent can no longer act. This gives tasks full runtime control: conditional notification based on results, multiple notifications during long execution, progress updates, or silence when there's nothing meaningful to report.
 
 ### DLT-093: Add task instance history MCP tool
 **Status**: ✗ Defined
@@ -513,10 +492,24 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 
 ### DLT-095: Enrich task execution records with SDK session tracking and structured errors
 **Status**: ✗ Defined
-**Depends on**: DLT-090, DLT-071
+**Depends on**: DLT-071
 **Priority**: 4 (Low)
 **Complexity**: Medium
 **Description**: Developers need to debug failed background tasks and understand execution history, but task instances currently record only status, timestamps, and a free-text result — with no link to the SDK session that ran, no transcript reference, and no structured error context. This delta enriches the task instance model and execution flow with traceability data: recording the SDK session ID and transcript path for each background execution, capturing structured error context (error type, message, tool calls leading to failure) on failure using the error classification from the structured error handling subsystem, and computing execution duration as a first-class field. These fields enable querying past executions by session, inspecting failure artifacts, and displaying execution metrics without manual timestamp arithmetic. The scope is limited to the tasks subsystem — background jobs are not interactive conversations, but they still require an audit trail linking execution to its artifacts and outcomes.
+
+### DLT-097: Keep local repositories in sync with remotes
+**Status**: ✗ Defined
+**Depends on**: None
+**Priority**: 2 (High)
+**Complexity**: Medium
+**Description**: The agent must work with current repository state and push changes without conflicts. Currently, the workspace is never pulled from its remote, projects are only synced at startup, and pushes are bare `git push` with no prior fetch — which fails when the remote has moved forward. This delta ensures the agent works with up-to-date state by pulling the workspace and project submodules before processing each message, replaces the direct push in both post-processors with a fetch-rebase-push sequence, and introduces conflict recovery that resolves conflicts by rebasing local commits on top of the remote and pushing the result, rather than aborting.
+
+### DLT-098: Capture SDK stderr on error for debugging
+**Status**: ✗ Defined
+**Depends on**: None
+**Priority**: 3 (Medium)
+**Complexity**: Easy
+**Description**: Capture stderr output from the Claude Agent SDK CLI subprocess and attach it to error logs when SDK calls fail. Currently, stderr from the SDK process is not captured — when an exception occurs (CLIConnectionError, ProcessError, or any sub-agent failure), the error message lacks any context about what the CLI process reported on stderr, making diagnosis difficult. This delta adds stderr capture to the agent defaults layer (shared across all SDK call sites) and includes the captured stderr in error logs when an exception is raised, preserving the fail-open error handling policy while giving operators the diagnostic context needed to debug SDK failures.
 
 ### DLT-096: Include last exchange in session resumption candidates
 **Status**: ✗ Defined

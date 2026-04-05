@@ -67,6 +67,47 @@ class TestScheduleConfig:
         assert restored.at.tzinfo is not None
         assert restored.at.tzinfo == UTC
 
+    def test_from_json_bare_iso_datetime(self) -> None:
+        """AC1: Bare ISO datetime string treated as one-shot."""
+        config = ScheduleConfig.from_json("2026-04-04T12:12:00")
+
+        assert config.type == "once"
+        assert config.at is not None
+        assert config.at.year == 2026
+        assert config.at.month == 4
+        assert config.at.day == 4
+        assert config.at.hour == 12
+        assert config.at.minute == 12
+        assert config.expression is None
+
+    def test_from_json_bare_naive_datetime_gets_utc(self) -> None:
+        """AC1: Bare naive datetime gets UTC tzinfo."""
+        config = ScheduleConfig.from_json("2026-04-04T12:12:00")
+
+        assert config.at is not None
+        assert config.at.tzinfo == UTC
+
+    def test_from_json_invalid_json_raises_value_error(self) -> None:
+        """AC2: Invalid JSON raises ValueError with input in message."""
+        with pytest.raises(ValueError, match="not-json") as exc_info:
+            ScheduleConfig.from_json("not-json")
+
+        # Verify it's a plain ValueError, not a JSONDecodeError
+        assert type(exc_info.value) is ValueError
+
+    def test_from_json_invalid_type_raises_value_error(self) -> None:
+        """AC2: Valid JSON with unexpected type raises ValueError."""
+        with pytest.raises(ValueError, match="expected object, got list"):
+            ScheduleConfig.from_json("[1, 2, 3]")
+
+    def test_from_json_valid_cron_unchanged(self) -> None:
+        """AC3: Valid cron JSON works as before (regression guard)."""
+        config = ScheduleConfig.from_json('{"type": "cron", "expression": "0 9 * * *"}')
+
+        assert config.type == "cron"
+        assert config.expression == "0 9 * * *"
+        assert config.at is None
+
 
 class TestEnsureUtc:
     """Tests for ensure_utc helper."""

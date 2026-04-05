@@ -338,6 +338,8 @@ def _make_mock_registry(active_session=None):
     registry.save_context_entries = AsyncMock(return_value=None)
     registry.load_context_entries = AsyncMock(return_value=[])
     registry.mark_processed = AsyncMock()
+    registry.get_by_time_range = AsyncMock(return_value=[])
+    registry.record_resumption = AsyncMock()
     return registry
 
 
@@ -451,15 +453,15 @@ class TestTranscriptPathDerivation:
         result = _derive_transcript_path("abc123", Path("/home/user/myproject"))
 
         home = str(Path.home())
-        assert result == f"{home}/.claude/projects/home-user-myproject/abc123.jsonl"
+        assert result == f"{home}/.claude/projects/-home-user-myproject/abc123.jsonl"
 
-    def test_leading_dash_stripped(self) -> None:
-        """Leading '-' from the sanitized cwd is stripped."""
+    def test_leading_dash_preserved(self) -> None:
+        """Leading '-' from the sanitized cwd is preserved (matches SDK convention)."""
         result = _derive_transcript_path("sess-1", Path("/workspace"))
 
-        # "/workspace" -> "-workspace" -> "workspace" (leading dash stripped)
+        # "/workspace" -> "-workspace" (leading dash preserved)
         home = str(Path.home())
-        assert result == f"{home}/.claude/projects/workspace/sess-1.jsonl"
+        assert result == f"{home}/.claude/projects/-workspace/sess-1.jsonl"
 
     def test_none_cwd_uses_current_working_directory(self) -> None:
         """When cwd is None, falls back to Path.cwd()."""
@@ -473,7 +475,7 @@ class TestTranscriptPathDerivation:
         result = _derive_transcript_path("deep-sess", Path("/a/b/c/d"))
 
         home = str(Path.home())
-        assert result == f"{home}/.claude/projects/a-b-c-d/deep-sess.jsonl"
+        assert result == f"{home}/.claude/projects/-a-b-c-d/deep-sess.jsonl"
 
 
 class TestCoordinatorSystemPrompt:
@@ -1598,6 +1600,54 @@ class TestSessionTransition:
             _ = await _send(coord, "what's for dinner?")
 
         registry.close_session.assert_awaited_once_with("s1")
+
+    async def test_resume_id_overrides_continues_true(
+        self,
+        mock_sdk,
+        mocker,
+    ) -> None:
+        """AC: resume_session_id is authoritative — transitions even when continues=True."""
+        client, _ = mock_sdk
+        client.receive_response.return_value = _mock_messages(
+            make_assistant([TextBlock(text="back to Python")]),
+            make_result(),
+        )
+        active = Session(
+            id="s1",
+            started_at=datetime.now(UTC),
+            summary="User was discussing Python.",
+            sdk_session_id="sdk-old",
+        )
+        resumed = Session(
+            id="s2",
+            started_at=datetime.now(UTC),
+            summary="User was discussing Python debugging.",
+            sdk_session_id="sdk-resume",
+        )
+        registry = _make_mock_registry(active_session=active)
+        registry.get_active_session.side_effect = [active, resumed, resumed]
+        registry.reopen_session.return_value = resumed
+        registry.record_resumption = AsyncMock()
+
+        mocker.patch(
+            "tachikoma.coordinator.detect_boundary",
+            return_value=BoundaryResult(
+                continues=True,
+                resume_session_id="s2",
+            ),
+        )
+
+        async with Coordinator(
+            registry=registry,
+            agent_defaults=AgentDefaults(cwd=Path("/workspace")),
+        ) as coord:
+            _ = await _send(coord, "remember that Python debugging?")
+
+        # Should have closed the old session and resumed s2
+        close_calls = [c.args[0] for c in registry.close_session.await_args_list]
+        assert "s1" in close_calls
+        registry.reopen_session.assert_awaited_once_with("s2")
+        registry.record_resumption.assert_awaited_once()
 
     async def test_fires_async_session_post_processing(
         self,

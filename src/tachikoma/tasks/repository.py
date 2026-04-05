@@ -85,7 +85,7 @@ class TaskRepository:
                 result = await db.execute(select(TaskDefinitionRecord))
                 records = result.scalars().all()
 
-            return [r.to_domain() for r in records]
+            return await self._to_domains_with_isolation(records)
 
         except Exception as exc:
             raise TaskRepositoryError("Failed to list task definitions") from exc
@@ -101,7 +101,7 @@ class TaskRepository:
                 )
                 records = result.scalars().all()
 
-            return [r.to_domain() for r in records]
+            return await self._to_domains_with_isolation(records)
 
         except Exception as exc:
             raise TaskRepositoryError("Failed to list enabled task definitions") from exc
@@ -117,7 +117,7 @@ class TaskRepository:
                 )
                 records = result.scalars().all()
 
-            return [r.to_domain() for r in records]
+            return await self._to_domains_with_isolation(records)
 
         except Exception as exc:
             raise TaskRepositoryError("Failed to list disabled task definitions") from exc
@@ -172,6 +172,32 @@ class TaskRepository:
     # ------------------------------------------------------------------
     # Instance CRUD operations
     # ------------------------------------------------------------------
+
+    async def _to_domains_with_isolation(
+        self, records: list[TaskDefinitionRecord]
+    ) -> list[TaskDefinition]:
+        """Convert records to domain objects, disabling corrupted definitions."""
+        definitions: list[TaskDefinition] = []
+
+        for record in records:
+            try:
+                definitions.append(record.to_domain())
+            except (ValueError, TypeError) as exc:
+                _log.warning(
+                    "Disabling corrupted definition {id} ({name}): {err}",
+                    id=record.id,
+                    name=record.name,
+                    err=exc,
+                )
+                try:
+                    await self.update_definition(record.id, enabled=False)
+                except Exception:
+                    _log.exception(
+                        "Failed to disable corrupted definition {id}",
+                        id=record.id,
+                    )
+
+        return definitions
 
     async def create_instance(self, instance: TaskInstance) -> TaskInstance:
         """Persist a new task instance and return it."""
@@ -228,20 +254,42 @@ class TaskRepository:
         except Exception as exc:
             raise TaskRepositoryError(f"Failed to get pending {task_type} instances") from exc
 
-    async def get_active_instance_for_definition(self, definition_id: str) -> TaskInstance | None:
-        """Return pending or running instance for a definition, if any exists.
+    async def get_active_instance_for_definition(
+        self,
+        definition_id: str,
+        scheduled_for: datetime | None = None,
+    ) -> TaskInstance | None:
+        """Return matching instance for a definition, if any exists.
 
-        Used for duplicate prevention — only one active instance per definition.
+        Used for duplicate prevention.
+
+        When ``scheduled_for`` is provided, performs a period-aware duplicate
+        check: matches instances where ``scheduled_for`` equals the given cron
+        match time AND status is pending, running, or completed (failed is
+        excluded to allow retry within the same period).
+
+        When ``scheduled_for`` is None, preserves backward-compatible behavior:
+        returns pending or running instances regardless of scheduled_for.
         """
         try:
             async with self._session_factory() as db:
-                result = await db.execute(
-                    select(TaskInstanceRecord)
-                    .where(TaskInstanceRecord.definition_id == definition_id)
-                    .where(
+                query = select(TaskInstanceRecord).where(
+                    TaskInstanceRecord.definition_id == definition_id
+                )
+
+                if scheduled_for is not None:
+                    query = query.where(
+                        TaskInstanceRecord.scheduled_for == scheduled_for,
+                        TaskInstanceRecord.status.in_(  # noqa: S610
+                            ["pending", "running", "completed"]
+                        ),
+                    )
+                else:
+                    query = query.where(
                         TaskInstanceRecord.status.in_(["pending", "running"])  # noqa: S610
                     )
-                )
+
+                result = await db.execute(query)
                 record = result.scalar_one_or_none()
 
             return record.to_domain() if record is not None else None

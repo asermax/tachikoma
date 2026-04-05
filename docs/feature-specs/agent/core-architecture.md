@@ -33,7 +33,7 @@ The core agent loop: receive a user message, pass it to the Claude agent via the
 | R14 | Session resumption: on topic shift with a matching recent session, reopen the matched session instead of creating a fresh one; inject bridging context from intermediate sessions; skip pre-processing (resumed SDK session has full prior context) |
 | R15 | MCP server registration: coordinator accepts an optional mapping of named MCP server configurations at construction and passes them to `ClaudeAgentOptions` |
 | R16 | Last message time tracking: coordinator tracks the timestamp of the last message exchange for idle gating by external subsystems |
-| R17 | Configurable tool blocking: specific tools can be unconditionally blocked via `disallowed_tools` config, defaulting to `["AskUserQuestion"]` |
+| R17 | Configurable tool blocking: specific tools can be unconditionally blocked via `disallowed_tools` config, defaulting to `["AskUserQuestion", "CronCreate", "CronDelete", "CronList"]` |
 
 ## Behaviors
 
@@ -120,7 +120,7 @@ The agent operates with full tool access, bypassing Claude Code's default permis
 Specific tools can be unconditionally blocked via a configurable list. This prevents the agent from using tools that conflict with Tachikoma's autonomous operation model (e.g., `AskUserQuestion` triggers interactive user prompts).
 
 **Acceptance Criteria**:
-- Given default config, when the coordinator builds options, then `ClaudeAgentOptions.disallowed_tools` contains `["AskUserQuestion"]`
+- Given default config, when the coordinator builds options, then `ClaudeAgentOptions.disallowed_tools` contains `["AskUserQuestion", "CronCreate", "CronDelete", "CronList"]`
 - Given a custom `disallowed_tools` list in config, when the coordinator builds options, then `ClaudeAgentOptions.disallowed_tools` matches the configured list
 
 ### Auto-Memory Disabled and Configurable Env (R8)
