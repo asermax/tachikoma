@@ -470,7 +470,7 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 **Description**: The cron evaluator for session-type tasks fires multiple times within the same scheduled minute, creating duplicate instances. The `last_fired_at` field is updated after firing but does not prevent re-queuing within the same cron period — the scheduler only checks whether the task has ever fired, not whether it has already fired for the current period. This causes users to receive multiple duplicate notifications for a single scheduled execution. Deduplicate based on the current cron period rather than just the `last_fired_at` timestamp, ensuring each cron match produces at most one task instance.
 
 ### DLT-091: Replace task notify field with agent-driven notification tool
-**Status**: ⧗ Spec
+**Status**: ✓ Spec
 **Depends on**: None
 **Priority**: 3 (Medium)
 **Complexity**: Medium
