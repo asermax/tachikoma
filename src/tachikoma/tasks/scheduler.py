@@ -28,8 +28,12 @@ _log = logger.bind(component="task_scheduler")
 GENERATION_INTERVAL_SECONDS = 60
 
 
-def _get_timezone(settings: TaskSettings) -> ZoneInfo:
-    """Get the timezone for schedule evaluation."""
+def get_timezone(settings: TaskSettings) -> ZoneInfo:
+    """Get the timezone for schedule evaluation.
+
+    Resolution chain: configured timezone -> system timezone -> UTC.
+    Reused across scheduler, executor, and preamble rendering.
+    """
     if settings.timezone:
         try:
             return ZoneInfo(settings.timezone)
@@ -61,7 +65,7 @@ async def instance_generator(
         repository: TaskRepository for persistence
         settings: TaskSettings with timezone and other config
     """
-    tz = _get_timezone(settings)
+    tz = get_timezone(settings)
     _log.info("Instance generator started with timezone: {tz}", tz=tz.key)
 
     while True:

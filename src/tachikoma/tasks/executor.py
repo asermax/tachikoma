@@ -31,6 +31,7 @@ from tachikoma.skills.context_provider import SkillsContextProvider
 from tachikoma.tasks.events import TaskNotification
 from tachikoma.tasks.model import TaskDefinition, TaskInstance
 from tachikoma.tasks.repository import TaskRepository
+from tachikoma.tasks.scheduler import get_timezone
 
 if TYPE_CHECKING:
     from claude_agent_sdk.types import AgentDefinition
@@ -262,6 +263,15 @@ class BackgroundTaskExecutor:
             # Run pre-processing pipeline (memory, projects, skills context)
             preprocessing_result = await self._run_preprocessing(instance.prompt)
 
+            # Resolve timezone and format current datetime for the background task
+            tz = get_timezone(self._settings)
+            now = datetime.now(tz)
+            datetime_line = (
+                f"Current date and time: "
+                f"{now.strftime('%A, %B %d, %Y at %H:%M:%S')} {tz.key}\n"
+            )
+            system_prompt_text = datetime_line + "\n" + BACKGROUND_TASK_SYSTEM_PROMPT
+
             # Build SDK options with adapted system prompt
             options = ClaudeAgentOptions(
                 cwd=self._agent_defaults.cwd,
@@ -270,7 +280,7 @@ class BackgroundTaskExecutor:
                 system_prompt=SystemPromptPreset(
                     type="preset",
                     preset="claude_code",
-                    append=BACKGROUND_TASK_SYSTEM_PROMPT,
+                    append=system_prompt_text,
                 ),
                 permission_mode="bypassPermissions",
                 mcp_servers=preprocessing_result.mcp_servers,

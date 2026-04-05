@@ -121,6 +121,7 @@ class Coordinator:
         session_resume_window: int = 86400,
         session_idle_timeout: int = 900,
         mcp_servers: dict[str, McpSdkServerConfig] | None = None,
+        timezone: str = "",
     ) -> None:
         # Store individual options for building ClaudeAgentOptions per message
         self._allowed_tools = allowed_tools or []
@@ -132,6 +133,7 @@ class Coordinator:
         self._permission_mode = permission_mode
         self._agents = agents
         self._base_mcp_servers: dict[str, McpSdkServerConfig] = mcp_servers or {}
+        self._timezone = timezone
 
         # Session resumption configuration
         self._session_resume_window = session_resume_window
@@ -450,11 +452,11 @@ class Coordinator:
         resume_id = self._sdk_session_id if not is_new_session else None
 
         # Build system prompt from persisted entries
-        system_prompt_append = build_system_prompt([])
+        system_prompt_append = build_system_prompt([], timezone=self._timezone)
         if self._registry is not None and active is not None:
             try:
                 entries = await self._registry.load_context_entries(active.id)
-                system_prompt_append = build_system_prompt(entries)
+                system_prompt_append = build_system_prompt(entries, timezone=self._timezone)
             except Exception as exc:
                 _log.exception(
                     "Context load failed, using preamble only: session_id={id} err={err}",

@@ -1,10 +1,13 @@
 """Core context file management.
 
+
 Provides foundational context for the assistant through three markdown files:
 SOUL.md (personality/tone), USER.md (user knowledge), and AGENTS.md (behavioral instructions).
 
+
 These files are loaded once at startup and assembled into a system prompt that layers
 on top of the SDK's default prompt.
+
 
 See: DLT-005 (Load foundational context for personality and user knowledge).
 """
@@ -14,6 +17,8 @@ from pathlib import Path
 from loguru import logger
 
 from tachikoma.bootstrap import BootstrapContext
+from tachikoma.config import TaskSettings
+from tachikoma.tasks.scheduler import get_timezone
 
 _log = logger.bind(component="context")
 
@@ -31,7 +36,7 @@ maintaining a warm, conversational tone.
 ## Core Traits
 
 - **Curious**: Ask clarifying questions when something is ambiguous rather than assuming.
-- **Honest**: Admit when you don't know something or made a mistake.
+- **Honest**: Admit when you don't know something or you made a mistake.
 - **Proactive**: Anticipate needs and offer suggestions without being asked.
 - **Concise**: Get to the point while remaining friendly.
 
@@ -86,9 +91,10 @@ CONTEXT_FILES = [
     ("AGENTS.md", "agents", DEFAULT_AGENTS_CONTENT),
 ]
 
-# Hard-coded system preamble: identity, role, memory guidance, and context explanation.
+# System preamble template: identity, role, memory guidance, and context explanation.
 # Always included in the system prompt, even when context files are missing or empty.
-SYSTEM_PREAMBLE = """\
+# The {timezone} placeholder is resolved by render_system_preamble() at assembly time.
+SYSTEM_PREAMBLE_TEMPLATE = """\
 # Your Identity
 
 You are Tachikoma — a personal assistant. While you run on top of Claude Code, your role is \
@@ -183,6 +189,12 @@ where you need to see the user's response.
 this for autonomous work that doesn't need user input: data gathering, file processing, periodic \
 analysis, or maintenance routines.
 
+## Date and Time
+
+Your configured timezone is **{timezone}**. To get the current date and time at any point, run:
+
+    TZ='{timezone}' date '+%A, %B %d, %Y at %H:%M:%S %Z (%z)'
+
 ## Scheduling
 
 Tasks support two schedule formats:
@@ -208,6 +220,22 @@ see disabled tasks.
 # Context Documents
 
 The following sections contain your current foundational context, wrapped in XML tags."""
+
+
+def render_system_preamble(timezone: str = "") -> str:
+    """Render the system preamble with the configured timezone.
+
+    Resolves the timezone through the shared resolution chain
+    (configured -> system -> UTC) and formats the template.
+
+    Args:
+        timezone: Timezone string from config (empty = system default).
+
+    Returns:
+        The rendered system preamble string.
+    """
+    tz = get_timezone(TaskSettings(timezone=timezone))
+    return SYSTEM_PREAMBLE_TEMPLATE.format(timezone=tz.key)
 
 
 def load_foundational_context(workspace_path: Path) -> list[tuple[str, str]]:
@@ -261,28 +289,6 @@ def load_foundational_context(workspace_path: Path) -> list[tuple[str, str]]:
 
     return entries
 
-
-def load_context(workspace_path: Path) -> str:
-    """Read context files and assemble into a system prompt string.
-
-    DEPRECATED: Use load_foundational_context() + build_system_prompt() instead.
-
-    Synchronous — files are small. Always returns at least the system preamble.
-
-    Args:
-        workspace_path: Path to the workspace root directory.
-
-    Returns:
-        Assembled system prompt string with preamble and XML-wrapped sections.
-    """
-    entries = load_foundational_context(workspace_path)
-
-    if not entries:
-        return SYSTEM_PREAMBLE
-
-    # XML-wrap each entry (same logic as build_system_prompt)
-    sections = [f"<{owner}>\n{content}\n</{owner}>" for owner, content in entries]
-    return SYSTEM_PREAMBLE + "\n\n" + "\n\n".join(sections)
 
 
 async def context_hook(ctx: BootstrapContext) -> None:

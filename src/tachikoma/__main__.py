@@ -176,6 +176,7 @@ async def run(
             session_resume_window=settings.agent.session_resume_window,
             session_idle_timeout=settings.agent.session_idle_timeout,
             mcp_servers={"task-tools": task_tools},
+            timezone=settings.tasks.timezone,
         ) as coordinator:
             scheduler_tasks.append(
                 asyncio.create_task(

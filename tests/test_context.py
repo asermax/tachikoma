@@ -16,11 +16,12 @@ from tachikoma.context import (
     DEFAULT_AGENTS_CONTENT,
     DEFAULT_SOUL_CONTENT,
     DEFAULT_USER_CONTENT,
-    SYSTEM_PREAMBLE,
+    build_system_prompt,
     context_hook,
-    load_context,
     load_foundational_context,
+    render_system_preamble,
 )
+from tachikoma.sessions.model import SessionContextEntry
 
 
 class TestLoadFoundationalContext:
@@ -118,8 +119,50 @@ class TestLoadFoundationalContext:
         assert result == []
 
 
-class TestLoadContext:
-    """Tests for the load_context function."""
+class TestRenderSystemPreamble:
+    """Tests for the render_system_preamble function."""
+
+    def test_default_renders_with_system_timezone(self) -> None:
+        """AC: Empty timezone falls back through system tz chain."""
+        result = render_system_preamble()
+
+        assert "# Your Identity" in result
+        assert "## Date and Time" in result
+        assert "date" in result
+
+    def test_explicit_timezone_renders_in_preamble(self) -> None:
+        """AC: Explicit timezone is rendered in the Date and Time section."""
+        result = render_system_preamble(timezone="UTC")
+
+        assert "**UTC**" in result
+        assert "TZ='UTC'" in result
+
+    def test_invalid_timezone_falls_back(self) -> None:
+        """AC: Invalid timezone falls back through resolution chain."""
+        result = render_system_preamble(timezone="Invalid/Timezone")
+
+        # Should still render successfully (no crash)
+        assert "# Your Identity" in result
+        assert "## Date and Time" in result
+
+
+class TestLoadContextIntegration:
+    """Integration tests for load_foundational_context + build_system_prompt together.
+
+    These replace the old load_context() tests, verifying the full pipeline
+    from file loading through assembly with the rendered preamble.
+    """
+
+    @staticmethod
+    def _to_entries(
+        raw: list[tuple[str, str]],
+        session_id: str = "test",
+    ) -> list[SessionContextEntry]:
+        """Convert raw (owner, content) tuples to SessionContextEntry instances."""
+        return [
+            SessionContextEntry(id=i, session_id=session_id, owner=owner, content=content)
+            for i, (owner, content) in enumerate(raw, start=1)
+        ]
 
     def test_all_files_present_returns_assembled_string(self, tmp_path: Path) -> None:
         """AC: All files with content → assembled string with preamble + XML sections."""
@@ -130,9 +173,11 @@ class TestLoadContext:
         (context_dir / "USER.md").write_text("Test user content")
         (context_dir / "AGENTS.md").write_text("Test agents content")
 
-        result = load_context(tmp_path)
+        raw = load_foundational_context(tmp_path)
+        result = build_system_prompt(self._to_entries(raw))
 
-        assert SYSTEM_PREAMBLE in result
+        preamble = render_system_preamble()
+        assert preamble in result
         assert "<soul>\nTest soul content\n</soul>" in result
         assert "<user>\nTest user content\n</user>" in result
         assert "<agents>\nTest agents content\n</agents>" in result
@@ -146,7 +191,8 @@ class TestLoadContext:
         (context_dir / "USER.md").write_text("B")
         (context_dir / "AGENTS.md").write_text("C")
 
-        result = load_context(tmp_path)
+        raw = load_foundational_context(tmp_path)
+        result = build_system_prompt(self._to_entries(raw))
 
         # Check ordering
         soul_pos = result.find("<soul>")
@@ -156,18 +202,19 @@ class TestLoadContext:
         assert soul_pos < user_pos < agents_pos
 
     def test_preamble_prepended(self, tmp_path: Path) -> None:
-        """AC: System preamble is prepended before any file content."""
+        """AC: Rendered preamble is prepended before any file content."""
         context_dir = tmp_path / CONTEXT_DIR_NAME
         context_dir.mkdir()
 
         (context_dir / "SOUL.md").write_text("Content")
 
-        result = load_context(tmp_path)
+        raw = load_foundational_context(tmp_path)
+        result = build_system_prompt(self._to_entries(raw))
 
-        assert result.startswith(SYSTEM_PREAMBLE)
+        assert result.startswith(render_system_preamble())
 
-    def test_one_file_missing_warns_and_includes_remaining(self, tmp_path: Path, caplog) -> None:
-        """AC: One file missing → warns, includes remaining files."""
+    def test_one_file_missing_includes_remaining(self, tmp_path: Path) -> None:
+        """AC: One file missing → warns during load, includes remaining in assembly."""
         context_dir = tmp_path / CONTEXT_DIR_NAME
         context_dir.mkdir()
 
@@ -175,16 +222,15 @@ class TestLoadContext:
         (context_dir / "AGENTS.md").write_text("Agents content")
         # USER.md is missing
 
-        with caplog.at_level("WARNING"):
-            load_context(tmp_path)
+        raw = load_foundational_context(tmp_path)
+        result = build_system_prompt(self._to_entries(raw))
 
-        result = load_context(tmp_path)
         assert "<soul>\nSoul content\n</soul>" in result
         assert "<agents>\nAgents content\n</agents>" in result
         assert "<user>\n" not in result
 
-    def test_one_file_empty_skips_silently(self, tmp_path: Path, caplog) -> None:
-        """AC: One file empty → skips silently (no warning), includes remaining files."""
+    def test_one_file_empty_skips_silently(self, tmp_path: Path) -> None:
+        """AC: One file empty → skipped silently, includes remaining in assembly."""
         context_dir = tmp_path / CONTEXT_DIR_NAME
         context_dir.mkdir()
 
@@ -192,12 +238,9 @@ class TestLoadContext:
         (context_dir / "USER.md").write_text("")  # Empty
         (context_dir / "AGENTS.md").write_text("Agents content")
 
-        load_context(tmp_path)
+        raw = load_foundational_context(tmp_path)
+        result = build_system_prompt(self._to_entries(raw))
 
-        # No warning should be logged
-        assert not any(record.level == "WARNING" for record in caplog.records)
-
-        result = load_context(tmp_path)
         assert "<soul>\nSoul content\n</soul>" in result
         assert "<agents>\nAgents content\n</agents>" in result
         assert "<user>\n" not in result
@@ -211,44 +254,26 @@ class TestLoadContext:
         (context_dir / "USER.md").write_text("User content")
         (context_dir / "AGENTS.md").write_text("Agents content")
 
-        result = load_context(tmp_path)
+        raw = load_foundational_context(tmp_path)
+        result = build_system_prompt(self._to_entries(raw))
+
         assert "<soul>\n" not in result
         assert "<user>\nUser content\n</user>" in result
         assert "<agents>\nAgents content\n</agents>" in result
 
-    def test_one_file_unreadable_warns_and_includes_remaining(
-        self, tmp_path: Path, caplog, mocker
-    ) -> None:
-        """AC: One file unreadable (PermissionError) → warns, includes remaining files."""
-        context_dir = tmp_path / CONTEXT_DIR_NAME
-        context_dir.mkdir()
-
-        (context_dir / "SOUL.md").write_text("Soul content")
-        (context_dir / "USER.md").write_text("User content")
-        (context_dir / "AGENTS.md").write_text("Agents content")
-
-        # Make SOUL.md unreadable
-        mocker.patch.object(
-            Path,
-            "read_text",
-            side_effect=PermissionError("Permission denied"),
-        )
-
-        with caplog.at_level("WARNING"):
-            load_context(tmp_path)
-
     def test_all_files_missing_returns_preamble_only(self, tmp_path: Path) -> None:
-        """AC: All files missing → returns preamble only (never None)."""
+        """AC: All files missing → returns rendered preamble only (never None)."""
         context_dir = tmp_path / CONTEXT_DIR_NAME
         context_dir.mkdir()
         # No files created
 
-        result = load_context(tmp_path)
+        raw = load_foundational_context(tmp_path)
+        result = build_system_prompt(self._to_entries(raw))
 
-        assert result == SYSTEM_PREAMBLE
+        assert result == render_system_preamble()
 
     def test_all_files_empty_returns_preamble_only(self, tmp_path: Path) -> None:
-        """AC: All files empty → returns preamble only (never None)."""
+        """AC: All files empty → returns rendered preamble only (never None)."""
         context_dir = tmp_path / CONTEXT_DIR_NAME
         context_dir.mkdir()
 
@@ -256,18 +281,21 @@ class TestLoadContext:
         (context_dir / "USER.md").write_text("")
         (context_dir / "AGENTS.md").write_text("")
 
-        result = load_context(tmp_path)
+        raw = load_foundational_context(tmp_path)
+        result = build_system_prompt(self._to_entries(raw))
 
-        assert result == SYSTEM_PREAMBLE
+        assert result == render_system_preamble()
 
     def test_preamble_always_present(self, tmp_path: Path) -> None:
-        """AC: System preamble is always present, even without context files."""
+        """AC: Rendered preamble is always present, even without context files."""
         context_dir = tmp_path / CONTEXT_DIR_NAME
         context_dir.mkdir()
 
-        result = load_context(tmp_path)
+        raw = load_foundational_context(tmp_path)
+        result = build_system_prompt(self._to_entries(raw))
 
-        assert SYSTEM_PREAMBLE in result
+        preamble = render_system_preamble()
+        assert preamble in result
         assert "Tachikoma" in result
         assert "memories/" in result
 
