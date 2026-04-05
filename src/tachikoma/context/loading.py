@@ -17,8 +17,7 @@ from pathlib import Path
 from loguru import logger
 
 from tachikoma.bootstrap import BootstrapContext
-from tachikoma.config import TaskSettings
-from tachikoma.tasks.scheduler import get_timezone
+from tachikoma.config import _detect_system_timezone
 
 _log = logger.bind(component="context")
 
@@ -201,8 +200,10 @@ Tasks support two schedule formats:
 
 - **Cron expressions** for recurring tasks (e.g., `0 9 * * *` for daily at 9 AM, `0 */2 * * *` \
 for every 2 hours). Evaluated in the user's configured timezone.
-- **ISO datetimes** for one-shot tasks (e.g., `2026-03-25T14:00:00Z`). One-shot tasks \
-auto-disable after firing.
+- **ISO datetimes** for one-shot tasks. Bare datetimes without timezone info are interpreted in \
+the configured timezone (e.g., `2026-04-01T15:00:00` means 3 PM local time). Datetimes with \
+explicit timezone info are preserved as-is: `2026-04-01T15:00:00Z` (UTC) or \
+`2026-04-01T15:00:00+05:30` (explicit offset). One-shot tasks auto-disable after firing.
 
 ## Tools
 
@@ -225,8 +226,8 @@ The following sections contain your current foundational context, wrapped in XML
 def render_system_preamble(timezone: str = "") -> str:
     """Render the system preamble with the configured timezone.
 
-    Resolves the timezone through the shared resolution chain
-    (configured -> system -> UTC) and formats the template.
+    If timezone is empty or not provided, resolves to the system timezone
+    via _detect_system_timezone(). Otherwise uses the provided string as-is.
 
     Args:
         timezone: Timezone string from config (empty = system default).
@@ -234,8 +235,8 @@ def render_system_preamble(timezone: str = "") -> str:
     Returns:
         The rendered system preamble string.
     """
-    tz = get_timezone(TaskSettings(timezone=timezone))
-    return SYSTEM_PREAMBLE_TEMPLATE.format(timezone=tz.key)
+    resolved = timezone if timezone else _detect_system_timezone()
+    return SYSTEM_PREAMBLE_TEMPLATE.format(timezone=resolved)
 
 
 def load_foundational_context(workspace_path: Path) -> list[tuple[str, str]]:

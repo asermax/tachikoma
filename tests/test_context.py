@@ -137,13 +137,12 @@ class TestRenderSystemPreamble:
         assert "**UTC**" in result
         assert "TZ='UTC'" in result
 
-    def test_invalid_timezone_falls_back(self) -> None:
-        """AC: Invalid timezone falls back through resolution chain."""
+    def test_invalid_timezone_renders_as_is(self) -> None:
+        """AC: Invalid timezone is rendered literally (validation is at config level)."""
         result = render_system_preamble(timezone="Invalid/Timezone")
 
-        # Should still render successfully (no crash)
         assert "# Your Identity" in result
-        assert "## Date and Time" in result
+        assert "**Invalid/Timezone**" in result
 
 
 class TestLoadContextIntegration:

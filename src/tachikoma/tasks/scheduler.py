@@ -31,22 +31,9 @@ GENERATION_INTERVAL_SECONDS = 60
 def get_timezone(settings: TaskSettings) -> ZoneInfo:
     """Get the timezone for schedule evaluation.
 
-    Resolution chain: configured timezone -> system timezone -> UTC.
-    Reused across scheduler, executor, and preamble rendering.
+    Settings are pre-validated at startup — timezone is always a valid IANA key.
     """
-    if settings.timezone:
-        try:
-            return ZoneInfo(settings.timezone)
-        except Exception:
-            _log.warning(
-                "Invalid timezone '{tz}', falling back to system",
-                tz=settings.timezone,
-            )
-    # Default to system local timezone or UTC
-    try:
-        return ZoneInfo("localtime")
-    except Exception:
-        return ZoneInfo("UTC")
+    return ZoneInfo(settings.timezone)
 
 
 async def instance_generator(

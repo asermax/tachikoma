@@ -1,6 +1,7 @@
 """Tests for task MCP tools."""
 
 from datetime import UTC, datetime
+from zoneinfo import ZoneInfo
 
 import pytest
 from pydantic import ValidationError
@@ -17,13 +18,16 @@ from tachikoma.tasks.tools import (
     create_task_tools_server,
 )
 
+TZ_UTC = ZoneInfo("UTC")
+TZ_ART = ZoneInfo("America/Argentina/Buenos_Aires")
+
 
 class TestParseSchedule:
     """Tests for _parse_schedule helper."""
 
     def test_parse_cron_expression(self) -> None:
         """AC: Valid cron expressions are parsed correctly."""
-        result = _parse_schedule("0 9 * * *")
+        result = _parse_schedule("0 9 * * *", TZ_UTC)
 
         assert result is not None
         assert result.type == "cron"
@@ -31,7 +35,7 @@ class TestParseSchedule:
 
     def test_parse_complex_cron(self) -> None:
         """AC: Complex cron expressions work."""
-        result = _parse_schedule("*/5 * * * *")
+        result = _parse_schedule("*/5 * * * *", TZ_UTC)
 
         assert result is not None
         assert result.type == "cron"
@@ -39,7 +43,7 @@ class TestParseSchedule:
 
     def test_parse_iso_datetime_with_z(self) -> None:
         """AC: ISO datetime with Z suffix is parsed as one-shot."""
-        result = _parse_schedule("2026-03-22T10:00:00Z")
+        result = _parse_schedule("2026-03-22T10:00:00Z", TZ_UTC)
 
         assert result is not None
         assert result.type == "once"
@@ -50,32 +54,49 @@ class TestParseSchedule:
 
     def test_parse_iso_datetime_with_offset(self) -> None:
         """AC: ISO datetime with timezone offset is parsed."""
-        result = _parse_schedule("2026-03-22T10:00:00+00:00")
+        result = _parse_schedule("2026-03-22T10:00:00+00:00", TZ_UTC)
 
         assert result is not None
         assert result.type == "once"
         assert result.at is not None
 
-    def test_parse_iso_datetime_naive_gets_utc(self) -> None:
-        """AC: Naive ISO datetime gets UTC tzinfo."""
-        result = _parse_schedule("2026-03-22T10:00:00")
+    def test_parse_bare_datetime_gets_configured_tz(self) -> None:
+        """AC: Bare ISO datetime is stamped with the provided timezone."""
+        result = _parse_schedule("2026-03-22T10:00:00", TZ_ART)
 
         assert result is not None
         assert result.type == "once"
         assert result.at is not None
-        assert result.at.tzinfo == UTC
+        assert result.at.tzinfo == TZ_ART
+        assert result.at.hour == 10  # Wall clock preserved
 
     def test_parse_invalid_returns_none(self) -> None:
         """AC: Invalid schedule returns None."""
-        result = _parse_schedule("not a valid schedule")
+        result = _parse_schedule("not a valid schedule", TZ_UTC)
 
         assert result is None
 
     def test_parse_invalid_cron_returns_none(self) -> None:
         """AC: Invalid cron expression returns None."""
-        result = _parse_schedule("invalid cron")
+        result = _parse_schedule("invalid cron", TZ_UTC)
 
         assert result is None
+
+    def test_parse_explicit_utc_preserved(self) -> None:
+        """AC (R3): ISO datetime with Z suffix preserves UTC."""
+        result = _parse_schedule("2026-04-01T15:00:00Z", TZ_ART)
+
+        assert result is not None
+        assert result.at is not None
+        assert result.at.utcoffset().total_seconds() == 0
+
+    def test_parse_explicit_offset_preserved(self) -> None:
+        """AC (R3): ISO datetime with explicit offset preserved as-is."""
+        result = _parse_schedule("2026-04-01T15:00:00+05:30", TZ_ART)
+
+        assert result is not None
+        assert result.at is not None
+        assert result.at.utcoffset().total_seconds() == 5.5 * 3600
 
 
 class TestFormatSchedule:
@@ -84,14 +105,14 @@ class TestFormatSchedule:
     def test_format_cron(self) -> None:
         """AC: Cron schedules are formatted correctly."""
         schedule = ScheduleConfig(type="cron", expression="0 9 * * *")
-        result = _format_schedule(schedule)
+        result = _format_schedule(schedule, TZ_UTC)
 
         assert result == "cron: 0 9 * * *"
 
     def test_format_once(self) -> None:
         """AC: One-shot schedules are formatted with datetime."""
         schedule = ScheduleConfig(type="once", at=datetime(2026, 3, 22, 10, 0, tzinfo=UTC))
-        result = _format_schedule(schedule)
+        result = _format_schedule(schedule, TZ_UTC)
 
         assert "once:" in result
         assert "2026-03-22" in result
@@ -99,10 +120,29 @@ class TestFormatSchedule:
     def test_format_once_null_datetime(self) -> None:
         """AC: One-shot with null datetime shows invalid."""
         schedule = ScheduleConfig(type="once", at=None)
-        result = _format_schedule(schedule)
+        result = _format_schedule(schedule, TZ_UTC)
 
         assert "once:" in result
         assert "invalid" in result
+
+    def test_format_once_converts_to_configured_tz(self) -> None:
+        """AC (R4): UTC datetime displayed in configured timezone."""
+        # 18:00 UTC = 15:00 ART (UTC-3)
+        schedule = ScheduleConfig(type="once", at=datetime(2026, 4, 1, 18, 0, tzinfo=UTC))
+        result = _format_schedule(schedule, TZ_ART)
+
+        assert "once:" in result
+        assert "2026-04-01" in result
+        assert "15:00" in result
+
+    def test_format_once_already_in_configured_tz(self) -> None:
+        """AC (R4): Datetime already in configured tz displays correctly."""
+        schedule = ScheduleConfig(type="once", at=datetime(2026, 4, 1, 15, 0, tzinfo=TZ_ART))
+        result = _format_schedule(schedule, TZ_ART)
+
+        assert "once:" in result
+        assert "2026-04-01" in result
+        assert "15:00" in result
 
 
 class TestToolArgModels:
@@ -189,7 +229,7 @@ class TestCreateTaskToolsServer:
 
     def test_returns_mcp_server_config(self, repo: TaskRepository) -> None:
         """AC: Factory returns a dict with expected structure."""
-        server = create_task_tools_server(repo)
+        server = create_task_tools_server(repo, TZ_UTC)
 
         # McpSdkServerConfig is a TypedDict, so check structure instead
         assert isinstance(server, dict)
@@ -200,7 +240,48 @@ class TestCreateTaskToolsServer:
     def test_server_has_expected_tools(self, repo: TaskRepository) -> None:
         """AC: Server is created successfully (tools are defined)."""
         # We can't easily inspect the tools, but we can verify the server is created
-        server = create_task_tools_server(repo)
+        server = create_task_tools_server(repo, TZ_UTC)
 
         # The server config exists and is valid
         assert server is not None
+
+
+class TestFutureCheckWithTzAware:
+    """Tests for future-check validation with timezone-aware datetimes (R2).
+
+    The future-check logic (schedule.at <= datetime.now(UTC)) compares tz-aware
+    datetimes by absolute instant. These tests verify the parsed output is correct.
+    """
+
+    def test_future_check_accepts_tz_aware_future(self) -> None:
+        """AC (R2): Tz-aware future datetime accepted."""
+        # Parse 15:00 bare → 15:00 ART = 18:00 UTC
+        schedule = _parse_schedule("2026-04-01T15:00:00", TZ_ART)
+        assert schedule is not None
+        assert schedule.at is not None
+
+        # "Now" is 17:00 UTC — schedule at 18:00 UTC is in the future
+        now_utc = datetime(2026, 4, 1, 17, 0, tzinfo=UTC)
+        assert schedule.at > now_utc
+
+    def test_future_check_rejects_tz_aware_past(self) -> None:
+        """AC (R2): Tz-aware past datetime rejected."""
+        # Parse 15:00 bare → 15:00 ART = 18:00 UTC
+        schedule = _parse_schedule("2026-04-01T15:00:00", TZ_ART)
+        assert schedule is not None
+        assert schedule.at is not None
+
+        # "Now" is 19:00 UTC — schedule at 18:00 UTC is in the past
+        now_utc = datetime(2026, 4, 1, 19, 0, tzinfo=UTC)
+        assert schedule.at <= now_utc
+
+    def test_future_check_explicit_utc_accepted(self) -> None:
+        """AC (R2): Explicit UTC in future accepted regardless of local tz."""
+        # Parse 18:00 UTC (explicit Z)
+        schedule = _parse_schedule("2026-04-01T18:00:00Z", TZ_ART)
+        assert schedule is not None
+        assert schedule.at is not None
+
+        # "Now" is 17:00 UTC — schedule at 18:00 UTC is in the future
+        now_utc = datetime(2026, 4, 1, 17, 0, tzinfo=UTC)
+        assert schedule.at > now_utc
