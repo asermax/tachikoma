@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v1.5.2 (2026-04-05)
+
+### Bug Fixes
+
+- **adapter**: Sanitize error messages from SDK output
+  ([`d12b42b`](https://github.com/asermax/tachikoma/commit/d12b42b3a78c89423f4af982bf90d52542645c66))
+
+- **ci**: Install uv inside PSR Docker container for build_command
+  ([`daefeff`](https://github.com/asermax/tachikoma/commit/daefeff5e6398d04e917f60c4f4e51109c1c7bec))
+
+- **ci**: Let PSR handle uv.lock update during release
+  ([`a6355fb`](https://github.com/asermax/tachikoma/commit/a6355fb1261d293943c8390f40150111284b8a07))
+
+- **telegram**: Add defense-in-depth surrogate sanitization at API boundary
+  ([`2e58dee`](https://github.com/asermax/tachikoma/commit/2e58dee94f27177bac7d9b7e942404f9572b193a))
+
+
 ## v1.5.1 (2026-04-05)
 
 ### Bug Fixes
