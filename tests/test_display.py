@@ -3,7 +3,7 @@
 Tests for DLT-034: Summarize agent actions instead of generic tool markers.
 """
 
-from tachikoma.display import format_tool_name, summarize_tool_activity
+from tachikoma.display import TOOL_DISPLAY, format_tool_name, summarize_tool_activity
 from tachikoma.events import ToolActivity
 
 
@@ -258,3 +258,66 @@ class TestSummarizeMcpTool:
             ToolActivity(tool_name="mcp__projects__list_projects", tool_input={}),
         ]
         assert summarize_tool_activity(activities) == "Used List Projects 3 times"
+
+
+class TestToolDisplayBash:
+    """Tests for TOOL_DISPLAY["Bash"] description preference."""
+
+    def test_with_description(self) -> None:
+        """AC: Returns description text when present."""
+        result = TOOL_DISPLAY["Bash"]({"description": "Install dependencies"})
+        assert result == "Install dependencies"
+
+    def test_with_command_only(self) -> None:
+        """AC: Returns 'Running: {command}' when no description."""
+        result = TOOL_DISPLAY["Bash"]({"command": "pytest -v"})
+        assert result == "Running: pytest -v"
+
+    def test_with_both_prefers_description(self) -> None:
+        """AC: Description takes precedence over command."""
+        result = TOOL_DISPLAY["Bash"]({"description": "Install deps", "command": "pip install"})
+        assert result == "Install deps"
+
+    def test_with_neither(self) -> None:
+        """AC: Fallback to 'Running: ...' when neither field present."""
+        result = TOOL_DISPLAY["Bash"]({})
+        assert result == "Running: ..."
+
+
+class TestSummarizeCustomSummaryMap:
+    """Tests for summarize_tool_activity() with custom summary_map."""
+
+    def test_custom_map_used_instead_of_default(self) -> None:
+        """AC: Custom map formatters override TOOL_SUMMARY."""
+        custom = {
+            "Read": lambda inp: f"[reading {inp.get('file_path', '?')}]",
+        }
+        activity = ToolActivity(tool_name="Read", tool_input={"file_path": "/src/main.py"})
+        assert summarize_tool_activity([activity], summary_map=custom) == "[reading /src/main.py]"
+
+    def test_unknown_tool_still_uses_fallback(self) -> None:
+        """AC: Unknown tools fall back regardless of custom map."""
+        custom = {
+            "Read": lambda inp: f"[reading {inp.get('file_path', '?')}]",
+        }
+        activity = ToolActivity(tool_name="CustomMCP", tool_input={})
+        assert summarize_tool_activity([activity], summary_map=custom) == "Used CustomMCP"
+
+    def test_aggregation_ignores_custom_map(self) -> None:
+        """AC: Aggregation (>2) always uses _TOOL_AGGREGATE, not custom map."""
+        custom = {
+            "Read": lambda inp: f"[custom {inp.get('file_path', '?')}]",
+        }
+        activities = [
+            ToolActivity(tool_name="Read", tool_input={"file_path": "/src/a.py"}),
+            ToolActivity(tool_name="Read", tool_input={"file_path": "/src/b.py"}),
+            ToolActivity(tool_name="Read", tool_input={"file_path": "/src/c.py"}),
+        ]
+        # 3 reads → aggregated (shared), not custom
+        assert summarize_tool_activity(activities, summary_map=custom) == "Reading 3 files"
+
+    def test_none_defaults_to_shared(self) -> None:
+        """AC: Passing None (default) behaves identically to current behavior."""
+        activity = ToolActivity(tool_name="Grep", tool_input={"pattern": "config"})
+        result = summarize_tool_activity([activity], summary_map=None)
+        assert result == "Searching for 'config'"

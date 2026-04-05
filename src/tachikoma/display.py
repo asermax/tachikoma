@@ -15,7 +15,11 @@ TOOL_DISPLAY: dict[str, Callable[[dict[str, Any]], str]] = {
     "Read": lambda inp: f"Reading {inp.get('file_path', '...')}",
     "Grep": lambda inp: f"Searching for '{inp.get('pattern', '...')}'",
     "Glob": lambda inp: f"Globbing {inp.get('pattern', '...')}",
-    "Bash": lambda inp: f"Running: {inp.get('command', '...')}",
+    "Bash": lambda inp: (
+        inp["description"]
+        if inp.get("description")
+        else f"Running: {inp.get('command', '...')}"
+    ),
     "Edit": lambda inp: f"Editing {inp.get('file_path', '...')}",
     "Write": lambda inp: f"Writing {inp.get('file_path', '...')}",
     "Agent": lambda inp: f"Agent: {inp['description']}" if "description" in inp else "Agent...",
@@ -77,26 +81,35 @@ def format_tool_name(name: str) -> str:
     return last_segment.replace("_", " ").title()
 
 
-def _format_bash_summary(tool_input: dict[str, Any]) -> str:
-    """Format Bash tool summary with preference for description over command."""
-    # Prefer description field (first char lowercased for sentence flow)
+def _format_bash_summary(
+    tool_input: dict[str, Any],
+    wrapper: Callable[[str], str] | None = None,
+) -> str:
+    """Format Bash tool summary with preference for description over command.
+
+    Args:
+        tool_input: The tool's input dict.
+        wrapper: Optional function to wrap argument text (e.g. code_wrap for Telegram).
+    """
+    wrap = wrapper or (lambda s: s)
+
     if tool_input.get("description"):
         desc = tool_input["description"]
-        # Lowercase first character, preserve rest (proper nouns, paths)
-        return desc[0].lower() + desc[1:] if len(desc) > 1 else desc.lower()
+        formatted = desc[0].lower() + desc[1:] if len(desc) > 1 else desc.lower()
+        return wrap(formatted)
 
-    # Fall back to truncated command
     if "command" in tool_input:
         cmd = tool_input["command"]
-        if len(cmd) > 40:
-            return f"running: {cmd[:40]}..."
-        return f"running: {cmd}"
+        truncated = f"{cmd[:40]}..." if len(cmd) > 40 else cmd
+        return f"running: {wrap(truncated)}"
 
-    # Final fallback
     return "running a command"
 
 
-def summarize_tool_activity(activities: list[ToolActivity]) -> str:
+def summarize_tool_activity(
+    activities: list[ToolActivity],
+    summary_map: dict[str, Callable[[dict[str, Any]], str]] | None = None,
+) -> str:
     """Generate a human-readable summary from a list of tool activities.
 
     The summary is a single-line, capitalized verb-phrase describing what
@@ -105,12 +118,16 @@ def summarize_tool_activity(activities: list[ToolActivity]) -> str:
 
     Args:
         activities: List of ToolActivity events from a tool→text segment.
+        summary_map: Optional per-tool formatters to use instead of TOOL_SUMMARY.
+            Aggregation (_TOOL_AGGREGATE) is always shared.
 
     Returns:
         A summary string, or empty string if activities is empty.
     """
     if not activities:
         return ""
+
+    effective_summary = summary_map if summary_map is not None else TOOL_SUMMARY
 
     # Group activities by tool_name, preserving first-seen order
     groups: dict[str, list[ToolActivity]] = {}
@@ -134,8 +151,8 @@ def summarize_tool_activity(activities: list[ToolActivity]) -> str:
         else:
             # List individually (count is 1 or 2)
             for activity in group_activities:
-                if tool_name in TOOL_SUMMARY:
-                    phrases.append(TOOL_SUMMARY[tool_name](activity.tool_input))
+                if tool_name in effective_summary:
+                    phrases.append(effective_summary[tool_name](activity.tool_input))
                 else:
                     # Unknown tool fallback
                     phrases.append(f"used {format_tool_name(tool_name)}")

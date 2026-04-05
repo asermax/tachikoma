@@ -13,6 +13,8 @@ import termios
 import time
 import tty
 from collections.abc import Awaitable, Callable
+from os.path import basename
+from typing import Any
 
 from aiogram import Bot, Dispatcher, F, Router
 from aiogram.dispatcher.dispatcher import BackoffConfig
@@ -27,7 +29,7 @@ from tachikoma.adapter import sanitize_text
 from tachikoma.bootstrap import BootstrapContext, BootstrapError
 from tachikoma.config import TelegramSettings
 from tachikoma.coordinator import Coordinator
-from tachikoma.display import TOOL_DISPLAY, format_tool_name, summarize_tool_activity
+from tachikoma.display import _format_bash_summary, format_tool_name, summarize_tool_activity
 from tachikoma.events import Error, Result, Status, TextChunk, ToolActivity
 from tachikoma.tasks.events import SessionTaskReady, TaskNotification
 
@@ -38,6 +40,72 @@ TELEGRAM_MAX_UTF16 = 4096
 
 # Time-based throttle interval for edits (seconds)
 EDIT_THROTTLE_INTERVAL = 2.0
+
+
+def code_wrap(text: str) -> str:
+    """Wrap text in markdown inline code span, handling backtick collision.
+
+    Single backticks for normal text; double backticks with space padding
+    when content contains backticks (per CommonMark 6.1).
+    """
+    if "`" not in text:
+        return f"`{text}`"
+
+    return f"`` {text} ``"
+
+
+# Telegram-specific live tool line formatters (present-progressive, full paths)
+# Included tools apply code_wrap() to arguments; excluded tools produce plain text
+TELEGRAM_TOOL_DISPLAY: dict[str, Callable[[dict[str, Any]], str]] = {
+    "Read": lambda inp: f"Reading {code_wrap(inp.get('file_path', '...'))}",
+    "Grep": lambda inp: f"Searching for {code_wrap(inp.get('pattern', '...'))}",
+    "Glob": lambda inp: f"Globbing {code_wrap(inp.get('pattern', '...'))}",
+    "Bash": lambda inp: (
+        code_wrap(inp["description"])
+        if inp.get("description")
+        else f"Running: {code_wrap(inp.get('command', '...'))}"
+    ),
+    "Edit": lambda inp: f"Editing {code_wrap(inp.get('file_path', '...'))}",
+    "Write": lambda inp: f"Writing {code_wrap(inp.get('file_path', '...'))}",
+    "Agent": lambda inp: f"Agent: {inp['description']}" if "description" in inp else "Agent...",
+    "ToolSearch": lambda inp: f"Searching tools: {inp.get('query', '...')}",
+}
+
+
+# Telegram-specific summary formatters (present-progressive, basenames)
+# Inline code provides visual grouping, so single quotes are omitted on Grep/Glob
+TELEGRAM_TOOL_SUMMARY: dict[str, Callable[[dict[str, Any]], str]] = {
+    "Read": lambda inp: (
+        f"reading {code_wrap(basename(inp['file_path']))}"
+        if "file_path" in inp
+        else "reading a file"
+    ),
+    "Grep": lambda inp: (
+        f"searching for {code_wrap(inp['pattern'])}"
+        if "pattern" in inp
+        else "searching for a pattern"
+    ),
+    "Glob": lambda inp: (
+        f"globbing {code_wrap(inp['pattern'])}"
+        if "pattern" in inp
+        else "globbing a pattern"
+    ),
+    "Bash": lambda inp: _format_bash_summary(inp, wrapper=code_wrap),
+    "Edit": lambda inp: (
+        f"editing {code_wrap(basename(inp['file_path']))}"
+        if "file_path" in inp
+        else "editing a file"
+    ),
+    "Write": lambda inp: (
+        f"writing {code_wrap(basename(inp['file_path']))}"
+        if "file_path" in inp
+        else "writing a file"
+    ),
+    "Agent": lambda inp: (
+        f"agent: {inp['description']}" if "description" in inp else "dispatched an agent"
+    ),
+    "ToolSearch": lambda _: "searching tools",
+}
 
 
 class ResponseRenderer:
@@ -102,7 +170,9 @@ class ResponseRenderer:
                 self._buffer += "\n"
 
             prefix = "\n" if self._buffer else ""
-            summary = summarize_tool_activity(self._tool_activities)
+            summary = summarize_tool_activity(
+                self._tool_activities, summary_map=TELEGRAM_TOOL_SUMMARY,
+            )
             self._buffer += f"{prefix}*🔧 {summary}*\n\n"
             self._tool_activities = []  # Clear — each transition gets independent summary
             self._tool_line = None  # Clear tool line - marker replaces it
@@ -116,7 +186,7 @@ class ResponseRenderer:
         self._tool_activities.append(activity)
 
         # Update live tool line display
-        display_fn = TOOL_DISPLAY.get(activity.tool_name)
+        display_fn = TELEGRAM_TOOL_DISPLAY.get(activity.tool_name)
         name = format_tool_name(activity.tool_name)
         label = display_fn(activity.tool_input) if display_fn else f"{name}..."
         self._tool_line = f"*🔧 {label}*"
@@ -150,7 +220,9 @@ class ResponseRenderer:
                 self._buffer += "\n"
 
             prefix = "\n" if self._buffer else ""
-            summary = summarize_tool_activity(self._tool_activities)
+            summary = summarize_tool_activity(
+                self._tool_activities, summary_map=TELEGRAM_TOOL_SUMMARY,
+            )
             self._buffer += f"{prefix}*🔧 {summary}*\n"
             self._tool_activities = []
 

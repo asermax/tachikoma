@@ -9,7 +9,13 @@ import pytest
 from aiogram.exceptions import TelegramAPIError, TelegramRetryAfter
 
 from tachikoma.events import Error, ToolActivity
-from tachikoma.telegram import ResponseRenderer, TelegramChannel
+from tachikoma.telegram import (
+    TELEGRAM_TOOL_DISPLAY,
+    TELEGRAM_TOOL_SUMMARY,
+    ResponseRenderer,
+    TelegramChannel,
+    code_wrap,
+)
 
 
 class MockMessage:
@@ -219,7 +225,7 @@ class TestResponseRendererToolHandling:
         await renderer.handle_text("Response text")
 
         assert "🔧" in renderer._buffer
-        assert "Reading file.py" in renderer._buffer  # Summary includes tool details
+        assert "Reading `file.py`" in renderer._buffer  # Summary includes code-wrapped tool details
         assert "Response text" in renderer._buffer
 
     async def test_multiple_tool_text_cycles_insert_multiple_markers(self) -> None:
@@ -843,6 +849,178 @@ class TestProcessThroughCoordinatorNotify:
         await renderer.notify()
 
         bot.copy_message.assert_not_called()
+
+
+class TestCodeWrap:
+    """Tests for code_wrap() utility."""
+
+    def test_normal_text_single_backtick(self) -> None:
+        """Normal text wrapped in single backticks."""
+        assert code_wrap("hello") == "`hello`"
+
+    def test_text_with_backtick_double_backtick(self) -> None:
+        """Text containing backtick uses double backticks with space padding."""
+        assert code_wrap("echo `date`") == "`` echo `date` ``"
+
+    def test_text_starting_with_backtick(self) -> None:
+        """Text starting with backtick gets space padding."""
+        assert code_wrap("`x`") == "`` `x` ``"
+
+    def test_text_ending_with_backtick(self) -> None:
+        """Text ending with backtick gets space padding."""
+        assert code_wrap("foo`") == "`` foo` ``"
+
+    def test_fallback_placeholder(self) -> None:
+        """Fallback placeholder '...' wrapped in single backticks."""
+        assert code_wrap("...") == "`...`"
+
+
+class TestTelegramToolDisplay:
+    """Tests for TELEGRAM_TOOL_DISPLAY formatters."""
+
+    def test_read_code_wraps_path(self) -> None:
+        """Read wraps file_path in backticks."""
+        result = TELEGRAM_TOOL_DISPLAY["Read"]({"file_path": "/src/main.py"})
+        assert result == "Reading `/src/main.py`"
+
+    def test_grep_code_wraps_pattern(self) -> None:
+        """Grep wraps pattern in backticks, no single quotes."""
+        result = TELEGRAM_TOOL_DISPLAY["Grep"]({"pattern": "git.*push"})
+        assert result == "Searching for `git.*push`"
+        assert "'" not in result
+
+    def test_glob_code_wraps_pattern(self) -> None:
+        """Glob wraps pattern in backticks."""
+        result = TELEGRAM_TOOL_DISPLAY["Glob"]({"pattern": "**/*.ts"})
+        assert result == "Globbing `**/*.ts`"
+
+    def test_bash_with_description_code_wraps(self) -> None:
+        """Bash with description shows code-wrapped description, no prefix."""
+        result = TELEGRAM_TOOL_DISPLAY["Bash"]({"description": "install deps"})
+        assert result == "`install deps`"
+
+    def test_bash_with_command_only(self) -> None:
+        """Bash with command only shows 'Running: ' + code-wrapped command."""
+        result = TELEGRAM_TOOL_DISPLAY["Bash"]({"command": "ls -la *.py"})
+        assert result == "Running: `ls -la *.py`"
+
+    def test_edit_code_wraps_path(self) -> None:
+        """Edit wraps file_path in backticks."""
+        result = TELEGRAM_TOOL_DISPLAY["Edit"]({"file_path": "test_utils.py"})
+        assert result == "Editing `test_utils.py`"
+
+    def test_write_code_wraps_path(self) -> None:
+        """Write wraps file_path in backticks."""
+        result = TELEGRAM_TOOL_DISPLAY["Write"]({"file_path": "output.json"})
+        assert result == "Writing `output.json`"
+
+    def test_agent_no_code_wrap(self) -> None:
+        """Agent description is NOT code-wrapped."""
+        result = TELEGRAM_TOOL_DISPLAY["Agent"]({"description": "research codebase"})
+        assert result == "Agent: research codebase"
+        assert "`" not in result
+
+    def test_tool_search_no_code_wrap(self) -> None:
+        """ToolSearch query is NOT code-wrapped."""
+        result = TELEGRAM_TOOL_DISPLAY["ToolSearch"]({"query": "git"})
+        assert result == "Searching tools: git"
+        assert "`" not in result
+
+    def test_read_with_dunder_path(self) -> None:
+        """Read with dunder filename is properly code-wrapped."""
+        result = TELEGRAM_TOOL_DISPLAY["Read"]({"file_path": "/src/__init__.py"})
+        assert "`/src/__init__.py`" in result
+
+    def test_fallback_placeholder_code_wrapped(self) -> None:
+        """Missing key fallback '...' is still code-wrapped."""
+        result = TELEGRAM_TOOL_DISPLAY["Grep"]({})
+        assert "`...`" in result
+
+
+class TestTelegramToolSummary:
+    """Tests for TELEGRAM_TOOL_SUMMARY formatters."""
+
+    def test_grep_no_quotes_code_wrapped(self) -> None:
+        """Grep summary: code-wrapped, no single quotes (R6)."""
+        result = TELEGRAM_TOOL_SUMMARY["Grep"]({"pattern": "config"})
+        assert result == "searching for `config`"
+        assert "'" not in result
+
+    def test_glob_no_quotes_code_wrapped(self) -> None:
+        """Glob summary: code-wrapped, no single quotes (R6)."""
+        result = TELEGRAM_TOOL_SUMMARY["Glob"]({"pattern": "*.py"})
+        assert result == "globbing `*.py`"
+        assert "'" not in result
+
+    def test_read_code_wraps_basename(self) -> None:
+        """Read summary wraps basename in backticks."""
+        result = TELEGRAM_TOOL_SUMMARY["Read"]({"file_path": "/src/main.py"})
+        assert result == "reading `main.py`"
+
+    def test_bash_description_code_wrapped(self) -> None:
+        """Bash summary code-wraps lowercased description."""
+        result = TELEGRAM_TOOL_SUMMARY["Bash"]({"description": "Run tests"})
+        assert result == "`run tests`"
+
+    def test_agent_no_code_wrap(self) -> None:
+        """Agent summary is NOT code-wrapped (same as shared)."""
+        result = TELEGRAM_TOOL_SUMMARY["Agent"]({"description": "research"})
+        assert result == "agent: research"
+        assert "`" not in result
+
+
+class TestRendererTelegramFormatting:
+    """Integration tests for Telegram-specific formatting in ResponseRenderer."""
+
+    async def test_grep_tool_line_code_wraps_pattern(self) -> None:
+        """Grep tool line in Telegram has backtick-wrapped pattern."""
+        bot = MagicMock()
+        bot.send_message = AsyncMock(return_value=MockMessage())
+        renderer = ResponseRenderer(bot, chat_id=123)
+
+        activity = ToolActivity(tool_name="Grep", tool_input={"pattern": "**/*.ts"})
+        await renderer.handle_tool(activity)
+
+        assert "`**/*.ts`" in renderer._tool_line
+
+    async def test_summary_after_tools_code_wraps_arguments(self) -> None:
+        """Summary after tools has code-wrapped arguments in Telegram."""
+        bot = MagicMock()
+        bot.send_message = AsyncMock(return_value=MockMessage(message_id=1))
+        bot.edit_message_text = AsyncMock()
+        renderer = ResponseRenderer(bot, chat_id=123)
+
+        await renderer.handle_tool(ToolActivity(tool_name="Read", tool_input={"file_path": "a.py"}))
+        renderer._last_edit_time = 0.0
+        await renderer.handle_text("Response")
+
+        assert "Reading `a.py`" in renderer._buffer
+
+    async def test_agent_tool_line_no_code_wrap(self) -> None:
+        """Agent tool line in Telegram does NOT code-wrap description."""
+        bot = MagicMock()
+        bot.send_message = AsyncMock(return_value=MockMessage())
+        renderer = ResponseRenderer(bot, chat_id=123)
+
+        activity = ToolActivity(tool_name="Agent", tool_input={"description": "research patterns"})
+        await renderer.handle_tool(activity)
+
+        assert "`" not in renderer._tool_line
+        assert "research patterns" in renderer._tool_line
+
+    async def test_bash_with_description_code_wraps(self) -> None:
+        """Bash tool line with description shows code-wrapped description."""
+        bot = MagicMock()
+        bot.send_message = AsyncMock(return_value=MockMessage())
+        renderer = ResponseRenderer(bot, chat_id=123)
+
+        activity = ToolActivity(
+            tool_name="Bash",
+            tool_input={"description": "install dependencies"},
+        )
+        await renderer.handle_tool(activity)
+
+        assert "`install dependencies`" in renderer._tool_line
 
 
 class TestResponseRendererSanitization:

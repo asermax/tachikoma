@@ -392,13 +392,6 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 **Complexity**: Medium
 **Description**: When a message gets routed to a resumed session via boundary detection, there is no mechanism to undo the routing if the session context does not actually match the user's intent. The conversation gets forced down the wrong path with no recovery. Add a verification step that forks the candidate session and evaluates whether the incoming message makes sense within its context before committing to the routing, catching mismatches early instead of requiring the user to manually correct the course.
 
-### DLT-079: Escape markdown-sensitive characters in Telegram output
-**Status**: ✗ Defined
-**Depends on**: None
-**Priority**: 2 (High)
-**Complexity**: Easy
-**Description**: When the Telegram channel displays search commands or tool output containing glob or regex patterns with asterisks, the asterisks are interpreted as markdown formatting (italic/bold) instead of being rendered literally. For example, `* Searching for 'git.*push'` renders with broken formatting instead of displaying as plain text. Escape markdown-sensitive characters in displayed patterns and tool output so they render correctly in Telegram messages, and format tool activity output (file paths, commands, search patterns) using code blocks for improved readability.
-
 ### DLT-080: Self-healing skill system via post-conversation analysis
 **Status**: ✗ Defined
 **Depends on**: None
