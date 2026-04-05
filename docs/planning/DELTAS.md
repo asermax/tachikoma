@@ -517,3 +517,87 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 **Priority**: 3 (Medium)
 **Complexity**: Easy
 **Description**: The boundary detector evaluates whether an incoming message should resume a previous session, but it only receives the candidate sessions' summaries — which are rolling condensations of the full conversation. Including the actual last user message and assistant response from each candidate session would give the routing decision significantly better signal about whether the new message belongs in that session, especially for recent conversations where the summary may not yet capture the latest context.
+
+### DLT-099: Archive conversation transcripts to project workspace
+**Status**: ✗ Defined
+**Depends on**: None
+**Priority**: 3 (Medium)
+**Complexity**: Medium
+**Description**: Ensure conversation transcripts are archived to the project workspace for durability and accessibility independent of SDK storage internals. Currently transcripts are stored only in the SDK's standard location (`~/.claude/projects/<sanitized-cwd>/<session-id>.jsonl`), making them dependent on SDK behavior and inaccessible for project-local operations. On session close, copy the transcript file from the SDK location to a `.tachikoma/transcripts/` directory within the project workspace. The session model already tracks transcript paths — this delta adds the copy-on-close hook and ensures transcripts survive SDK storage changes. Lifecycle management (retention, cleanup) is a separate concern to be addressed independently.
+
+### DLT-100: Surface relevant file contents inline in conversations
+**Status**: ✗ Defined
+**Depends on**: None
+**Priority**: 2 (High)
+**Complexity**: Easy
+**Description**: When the agent writes to a file and the result isn't verbatim what the user asked for (the agent rephrased, added context, or took liberties), the user has no way to verify without opening the file. Similarly, when the agent references specific parts of a file it wrote or read, it assumes the user has seen the file contents — but in Telegram or across sessions, the user can't see files. Add agent behavior guidance (through system prompt or preamble instructions) so the agent surfaces relevant file excerpts inline using block quotes or code blocks when: (1) the written content diverges from the user's request, or (2) the agent references file contents the user hasn't seen. Not every write needs verification — only when the user would reasonably want to see what ended up on disk.
+
+### DLT-101: Fix duplicate messages on long Telegram responses
+**Status**: ✗ Defined
+**Depends on**: None
+**Priority**: 2 (High)
+**Complexity**: Medium
+**Description**: When the agent's response is long enough to be split into multiple parts, duplicate messages appear in the Telegram chat. The root cause is in the ResponseRenderer's push notification mechanism: `notify()` copies the final message and deletes the original, but if the delete fails after a successful copy, a duplicate remains. This is especially likely during split messages where the last chunk is the one being copied. The fix should ensure atomicity of the copy+delete operation (retry delete on failure, or use an alternative notification delivery mechanism that doesn't require message duplication). Additionally, investigate whether the splitting logic itself can contribute to duplicates when the pending-to-complete transition coincides with a message boundary.
+
+### DLT-102: Prevent stale cron from firing on create/update
+**Status**: ✗ Defined
+**Depends on**: None
+**Priority**: 2 (High)
+**Complexity**: Easy
+**Description**: When a cron task is created or updated with a schedule time that has already passed today, the instance generator fires it immediately to "catch up" instead of waiting for the next scheduled occurrence. For example: a task runs at 4 PM, you update it to 8 AM at noon, it fires right away instead of waiting until tomorrow. Add a `since` timestamp field to `task_definitions` that gets set to `now()` on every create and update operation. The instance generator should only create instances for cron matches that fall after the `since` timestamp, ensuring schedule changes never trigger retroactive firings. This addresses a distinct problem from preventing duplicate instances within the same cron period — here the issue is newly-created or recently-updated tasks firing retroactively for past schedule matches.
+
+### DLT-103: Log and surface silently skipped session tasks
+**Status**: ✗ Defined
+**Depends on**: None
+**Priority**: 2 (High)
+**Complexity**: Easy
+**Description**: Session-type cron tasks are gated by an idle check — they only fire when the user has been inactive for at least the configured idle window. When the user is active, the session task scheduler silently skips the evaluation with no log entry or feedback. This means tasks like the Sunday planning routine can go weeks without ever firing, with no indication that something is wrong. Add structured logging for every skipped evaluation (task name, reason: user active, next evaluation window), and surface chronically skipped tasks through the task status queries so the user and agent can diagnose why a session task never fires. Scope is limited to logging and surfacing — force-firing and other fallback mechanisms are tracked separately.
+
+### DLT-104: Auto-cleanup of completed one-shot tasks
+**Status**: ✗ Defined
+**Depends on**: None
+**Priority**: 3 (Medium)
+**Complexity**: Easy
+**Description**: One-shot tasks (reading list nudges, reminders) accumulate in the database after they fire and auto-disable — 14 accumulated in just two weeks of usage. The task system should automatically delete completed one-shot task definitions after a configurable retention period (default 24-48 hours). Only one-shot tasks whose instances have all reached terminal status (completed or failed) are eligible for cleanup. Recurring cron tasks are excluded from this cleanup regardless of instance status. The cleanup runs as part of the existing instance generator polling loop, checking for expired one-shot definitions on each evaluation cycle.
+
+### DLT-105: Agent-driven episodic memory search
+**Status**: ✗ Defined
+**Depends on**: None
+**Priority**: 2 (High)
+**Complexity**: Medium
+**Description**: Episodic memories (conversation summaries stored as date-stamped markdown files in `memories/episodic/`) are currently only accessible through the memory context provider, which runs at session start and injects a static set of memories. The agent has no way to search or retrieve episodic memories on demand during a conversation — it cannot answer "what did we discuss about X last month?" or proactively look up context when the topic shifts. Add MCP tools that let the agent search episodic memories by keyword, date range, or relevance during conversations. This complements the automatic injection (which handles initial context) by enabling the agent to pull in additional memories as the conversation evolves. The search mechanism should reuse the existing memory search strategy (Glob → Grep → Read) and return excerpts with date context.
+
+### DLT-106: Proactive nudges from past conversations
+**Status**: ✗ Defined
+**Depends on**: None
+**Priority**: 4 (Low)
+**Complexity**: Hard
+**Description**: The core proactive nudge capability: the agent identifies topics worth following up on from past conversations and delivers a nudge to the user, similar to how a friend might text "hey, been thinking about what you said about X..." Unlike scheduled tasks (which are reactive — defined at fixed times for known purposes) or reminders (which track explicit user requests), proactive nudges are agent-initiated. This delta covers the reflection pass over recent episodic memories to detect follow-up-worthy topics (open threads, time elapsed since discussion, topic resurfacing), the decision logic for when to nudge, and the delivery mechanism using the existing session task system. Starts with simple time-based frequency capping (e.g., max one nudge per day) as a built-in safeguard. Richer fatigue management and user preference controls are a separate delta.
+
+### DLT-107: Sensor framework for proactive nudge signals
+**Status**: ✗ Defined
+**Depends on**: DLT-106
+**Priority**: 4 (Low)
+**Complexity**: Medium
+**Description**: The engine that registers, runs, and aggregates scored signals from input sensors into the proactive nudge system. Provides the sensor abstraction (each sensor produces a data payload with a relevance score and optional nudge suggestion), a scheduling framework for running sensors on different cadences (polling vs event-driven), and user-facing configuration to enable/disable individual sensors and adjust sensitivity. The nudge engine evaluates all active sensor signals to decide whether to create a session task. This is the framework layer — individual sensors (memory, routine, calendar, etc.) are separate deltas that plug into this framework.
+
+### DLT-108: Transcript search and analysis tools
+**Status**: ✗ Defined
+**Depends on**: DLT-099
+**Priority**: 3 (Medium)
+**Complexity**: Medium
+**Description**: Provide CLI subcommands and MCP tools to search, filter, and analyze archived conversation transcripts stored in the project workspace. Enable the agent to reference past conversations by searching transcript content, and enable operators to review conversation history from the terminal. The initial scope covers full-text search across transcripts with date filtering and basic excerpt retrieval — enough for the agent to answer "what did we discuss about X?" by searching past transcripts. Summary extraction and conversation statistics are follow-up enhancements.
+
+### DLT-109: Nudge fatigue management and user preferences
+**Status**: ✗ Defined
+**Depends on**: DLT-106
+**Priority**: 4 (Low)
+**Complexity**: Medium
+**Description**: Rich controls for managing proactive nudge frequency and relevance, building on the basic time-based capping provided by the core proactive nudges capability. Covers configurable frequency limits (per-day, per-week caps), relevance thresholds (minimum score before a nudge is delivered), user control over which topics the agent tracks for nudging purposes, and opt-out mechanisms. This ensures the nudge system remains helpful rather than annoying as the agent identifies more follow-up opportunities over time.
+
+### DLT-110: Memory sensor for proactive nudge signals
+**Status**: ✗ Defined
+**Depends on**: DLT-107
+**Priority**: 4 (Low)
+**Complexity**: Medium
+**Description**: The baseline sensor for the proactive nudge framework, using existing episodic memory data. Polls recent episodic memories with priority weighting for conversations that have open threads, upcoming events mentioned in past chats, or topics that have been discussed multiple times. Produces scored signals (data + relevance score + optional nudge suggestion) that feed into the nudge engine via the sensor framework. This is the first concrete sensor implementation and validates the sensor abstraction. Additional sensors (routine, calendar, time-based, geo-fencing, external events) follow the same pattern and are tracked separately.
