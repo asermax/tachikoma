@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v1.5.1 (2026-04-05)
+
+### Bug Fixes
+
+- **adapter**: Sanitize invalid UTF-8 surrogates from SDK text output
+  ([`6107723`](https://github.com/asermax/tachikoma/commit/610772321091daa36d9c6c253292f69574868cfa))
+
+- **tasks**: Prevent hour-boundary cron tasks from never firing
+  ([`82335f7`](https://github.com/asermax/tachikoma/commit/82335f7a54624ad6cb03386c22665e887dfeee5f))
+
+### Documentation
+
+- **agent**: Add text sanitization to architecture docs
+  ([`db6aa62`](https://github.com/asermax/tachikoma/commit/db6aa62867058c3e962d7d1f958a6e6a14db5650))
+
+- **planning**: Add deltas DLT-099 through DLT-110 to inventory
+  ([`f053b62`](https://github.com/asermax/tachikoma/commit/f053b623526b46031541e23d6634184f59eaddf0))
+
+
 ## v1.5.0 (2026-04-05)
 
 ### Documentation
