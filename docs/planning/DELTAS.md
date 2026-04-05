@@ -428,7 +428,7 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 **Description**: When Tachikoma runs on a remote server, the user needs to manage it from their local machine without SSH-ing in and running CLI commands directly. Add a lightweight command listener that runs as a separate process alongside the main Tachikoma process, accepting management commands (pause/resume tasks, close sessions, reload config, query status) over a network interface. A companion client on the local machine connects to this listener, enabling remote administration without interrupting active conversations. The IPC mechanism and security model (authentication, encryption) should be evaluated during speccing.
 
 ### DLT-084: Resume matching conversation on return after restart
-**Status**: ✗ Defined
+**Status**: ⧗ Design
 **Depends on**: None
 **Priority**: 2 (High)
 **Complexity**: Easy
