@@ -108,11 +108,7 @@ async def detect_boundary(
         system_prompt = CANDIDATES_ONLY_SYSTEM_PROMPT
         user_prompt = CANDIDATES_ONLY_USER_PROMPT.format(
             message=message,
-            candidates=(
-                _format_candidates(candidates)
-                if candidates
-                else "No previous sessions available."
-            ),
+            candidates=_format_candidates(candidates),
         )
     else:
         # Normal mode: compare against current conversation summary

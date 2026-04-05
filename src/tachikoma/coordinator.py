@@ -354,12 +354,11 @@ class Coordinator:
 
                     if self._cwd is not None:
                         try:
-                            now = datetime.now(UTC)
-                            window = timedelta(
-                                seconds=self._session_resume_window,
-                            )
                             recent = await self._registry.get_recent_closed(
-                                before=now, window=window,
+                                before=datetime.now(UTC),
+                                window=timedelta(
+                                    seconds=self._session_resume_window,
+                                ),
                             )
                             candidates = [
                                 SessionCandidate(id=s.id, summary=s.summary)
@@ -367,9 +366,7 @@ class Coordinator:
                                 if s.summary is not None
                             ]
 
-                            # CRITICAL: Capture ended_at BEFORE reopen_session() clears
-                            # it on DB record, so must retain original values
-                            # from the already-fetched data.
+                            # Capture ended_at before reopen_session() clears it
                             ended_at_by_id = {
                                 s.id: s.ended_at
                                 for s in recent
@@ -444,23 +441,7 @@ class Coordinator:
             assert self._registry is not None
 
             try:
-                # Query recent closed sessions as candidates for resumption
-                candidates: list[SessionCandidate] | None = None
-                if self._registry is not None:
-                    try:
-                        now = datetime.now(UTC)
-                        window = timedelta(seconds=self._session_resume_window)
-                        recent = await self._registry.get_recent_closed(before=now, window=window)
-                        candidates = [
-                            SessionCandidate(id=s.id, summary=s.summary)
-                            for s in recent
-                            if s.summary is not None
-                        ]
-                    except Exception as exc:
-                        _log.exception(
-                            "Failed to query resume candidates: err={err}",
-                            err=str(exc),
-                        )
+                candidates = await self._query_resume_candidates()
 
                 result: BoundaryResult = await detect_boundary(
                     text,
@@ -606,6 +587,31 @@ class Coordinator:
         self._last_message_time = datetime.now(UTC)
 
         _log.debug("Response complete")
+
+    async def _query_resume_candidates(self) -> list[SessionCandidate] | None:
+        """Query recent closed sessions and build candidate list for matching.
+
+        Returns None if the query fails (fail-open for boundary detection).
+        """
+        if self._registry is None:
+            return None
+
+        try:
+            recent = await self._registry.get_recent_closed(
+                before=datetime.now(UTC),
+                window=timedelta(seconds=self._session_resume_window),
+            )
+            return [
+                SessionCandidate(id=s.id, summary=s.summary)
+                for s in recent
+                if s.summary is not None
+            ]
+        except Exception as exc:
+            _log.exception(
+                "Failed to query resume candidates: err={err}",
+                err=str(exc),
+            )
+            return None
 
     async def _close_and_fire_postprocessing(self, session: Session) -> None:
         """Close a session in the registry and fire async post-processing.
