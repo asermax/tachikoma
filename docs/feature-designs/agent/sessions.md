@@ -121,6 +121,35 @@ sequenceDiagram
 - SessionRepository → shared Database (AsyncEngine → aiosqlite → tachikoma.db)
 - Bootstrap → SessionRegistry: `recover_interrupted()` on startup via `session_recovery_hook`
 
+### Encoding error handling
+
+When the SDK returns a UTF-8 encoding error (e.g. lone surrogates in its CLI's internal transcript):
+
+```
+1. Coordinator receives Error event from SDK with encoding-related message
+2. Coordinator detects encoding error via `is_encoding_error()` helper
+3. Coordinator clears `_sdk_session_id` (prevents resuming contaminated session)
+4. Coordinator calls `registry.mark_errored(session_id)`
+5. Registry calls `repository.update(id, error=True)`
+6. Session is excluded from future resumable candidates
+7. Encoding errors are classified as recoverable (the user can retry with a fresh session)
+```
+
+### Encoding error data flow
+
+```
+1. SDK CLI subprocess encounters encoding error in its transcript
+2. SDK CLI returns error response to tachikoma coordinator
+3. Coordinator's event loop receives Error event from `adapt()`
+4. Coordinator checks `is_encoding_error(event.message)` → True
+5. Coordinator calls `_handle_encoding_error(active_session)`
+   a. Clears `_sdk_session_id = None (prevents resume)
+   b. Calls `registry.mark_errored(session_id)` via repository
+6. Session status becomes "interrupted" (error=True overrides normal status)
+7. Session excluded from `get_recent_closed()` candidates
+8. Encoding error is recoverable → user can retry
+```
+
 **Session close mechanism:**
 
 Sessions close via two runtime mechanisms and one startup mechanism. Idle timeout triggers post-processing without closing:
@@ -155,6 +184,7 @@ erDiagram
         datetime ended_at "nullable UTC - set on close"
         datetime last_resumed_at "nullable UTC - set on reopen"
         datetime processed_at "nullable UTC - set on post-processing completion"
+        boolean error "default false - set when SDK transcript contaminated"
     }
     SessionResumption {
         int id PK "autoincrement"
@@ -182,10 +212,11 @@ Session (frozen dataclass)
 ├── ended_at: datetime | None         (UTC, set when session closes; cleared on reopen)
 ├── last_resumed_at: datetime | None  (UTC, set when session is reopened for resumption)
 ├── processed_at: datetime | None     (UTC, set when post-processing completes on this session)
+├── error: bool                       (default False — set when SDK transcript is contaminated)
 └── status: SessionStatus (property)  (derived, not persisted)
-    ├── "open"        — ended_at is None
-    ├── "closed"      — ended_at is set AND sdk_session_id is set
-    └── "interrupted" — ended_at is set AND sdk_session_id is None
+    ├── "open"        — ended_at is None AND no error
+    ├── "closed"      — ended_at is set AND sdk_session_id is set AND no error
+    └── "interrupted" — ended_at is set AND sdk_session_id is None, OR error flag set
 
 SessionResumption (frozen dataclass)
 ├── session_id: str                   (FK → sessions.id)
@@ -214,6 +245,7 @@ SessionRecord (DeclarativeBase)
 ├── ended_at: Mapped[datetime | None] (DateTime(timezone=True))
 ├── last_resumed_at: Mapped[datetime | None] (DateTime(timezone=True))
 ├── processed_at: Mapped[datetime | None]   (DateTime(timezone=True))
+├── error: Mapped[bool]               (default=False)
 └── index on started_at               (for time-range queries)
 
 SessionResumptionRecord (DeclarativeBase)
@@ -347,6 +379,7 @@ Note: The `needs_processing()` check prevents re-triggering: once `processed_at`
    WHERE ended_at IS NOT NULL
      AND sdk_session_id IS NOT NULL
      AND summary IS NOT NULL
+     AND error IS FALSE
      AND ended_at > (before - window)
    ORDER BY ended_at DESC
 4. Registry filters results:
@@ -574,6 +607,22 @@ Note: The `needs_processing()` check prevents re-triggering: once `processed_at`
 **When**: The coordinator catches the error
 **Then**: The error is logged and the conversation continues uninterrupted.
 **Rationale**: Session tracking is important but not critical to message processing. Graceful degradation is preferred.
+
+## Notes
+
+### Scenario: SDK encoding error contaminates session transcript
+
+**Given**: An active session where the SDK transcript contains lone surrogate characters
+**When**: The SDK returns a UTF-8 encoding error (500, Internal Server Error)
+**Then**: The coordinator clears the in-memory `_sdk_session_id`, calls `registry.mark_errored(session_id)` to exclude the session from resumable candidates, and marks the encoding error as recoverable in the adapter and coordinator event stream. The next message starts a fresh session.
+
+### Scenario: Session errored but reopened for different topic
+
+**Given**: A session with `error=True` is in the candidate list (via `get_recent_closed()`)
+**When**: Boundary detection evaluates resumption candidates
+**Then**: The session is skipped — not considered for resumption.
+
+**Rationale**: Errored sessions have contaminated transcripts that cannot be resumed safely. The next message must start fresh, triggering new encoding error detection, session marking, and fresh session creation.
 
 ## Notes
 

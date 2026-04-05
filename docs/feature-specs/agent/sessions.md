@@ -17,7 +17,7 @@ A persistent registry of conversation sessions that tracks when conversations st
 | ID | Requirement |
 |----|-------------|
 | R0 | Maintain a persistent registry of conversation sessions with lifecycle tracking |
-| R1 | Each session tracks: unique ID, SDK session ID, transcript path, summary, start timestamp, end timestamp, post-processing timestamp |
+| R1 | Each session tracks: unique ID, SDK session ID, transcript path, summary, start timestamp, end timestamp, post-processing timestamp, error flag |
 | R2 | Create a new session when a conversation starts (first message or boundary detection) |
 | R3 | Close a session when a conversation ends (set end timestamp and final metadata) |
 | R4 | Query sessions by time range |
@@ -37,6 +37,7 @@ A persistent registry of conversation sessions that tracks when conversations st
 | R18 | Before reopening a session, validate that the SDK transcript file exists on the local filesystem — reject sessions created on other machines |
 | R19 | Before reopening a session, validate that the session's `started_at` is within the configured max age — reject stale sessions |
 | R20 | `get_recent_closed()` filters returned sessions to only those with valid (existing) transcript files and `started_at` within the configured max age |
+| R21 | When the SDK returns a UTF-8 encoding error (e.g. surrogates in its internal transcript), mark the session as errored — this excludes it from resumable candidates and makes the error recoverable |
 
 ## Behaviors
 
@@ -143,6 +144,7 @@ The registry provides a query for recently closed sessions within a configurable
 - Given a time window and reference timestamp, when `get_recent_closed()` is called, then only sessions closed within that window with non-null SDK session IDs and non-null summaries are returned
 - Given sessions closed outside the time window, when queried, then they are excluded
 - Given only interrupted sessions (no `sdk_session_id`) exist within the window, when queried, then they are excluded
+- Given errored sessions (error flag set) within the window, when queried, then they are excluded
 
 ### Context Entry Persistence (R15, R16, R17)
 
@@ -155,6 +157,15 @@ Each session can have associated context entries that capture what context was i
 - Given a context entry fails to save, then the error is logged and the conversation continues
 - Given a new session created after a topic shift, then entries may include owners such as: soul, user, agents, previous-summary, memories, projects, skills
 - Given a resumed session with bridging context, then a bridging-context entry is added alongside the session's original entries
+
+### Error Marking (R21)
+
+When the SDK encounters a UTF-8 encoding error in its internal conversation transcript (e.g. lone surrogate characters), the coordinator marks the session as errored to prevent resuming a contaminated session.
+
+**Acceptance Criteria**:
+- Given the SDK returns an encoding error (e.g. "surrogates not allowed"), when the coordinator detects it, then the session's `error` flag is set to True and the in-memory SDK session ID is cleared
+- Given a session with `error=True`, when `get_recent_closed()` queries candidates, then it is excluded from resumable candidates
+- Given a session with `error=True`, when its status is queried, then it reports "interrupted" regardless of other fields
 
 ### Graceful Degradation (R9)
 
