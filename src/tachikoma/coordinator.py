@@ -347,8 +347,82 @@ class Coordinator:
                 active = await self._registry.get_active_session()
 
                 if active is None:
-                    active = await self._registry.create_session()
-                    is_new_session = True
+                    # Startup matching: when no active session exists, try to match
+                    # the incoming message against recent closed sessions before
+                    # creating a fresh one. See DLT-084 design for rationale.
+                    startup_matched = False
+
+                    if self._cwd is not None:
+                        try:
+                            now = datetime.now(UTC)
+                            window = timedelta(
+                                seconds=self._session_resume_window,
+                            )
+                            recent = await self._registry.get_recent_closed(
+                                before=now, window=window,
+                            )
+                            candidates = [
+                                SessionCandidate(id=s.id, summary=s.summary)
+                                for s in recent
+                                if s.summary is not None
+                            ]
+
+                            # CRITICAL: Capture ended_at BEFORE reopen_session() clears
+                            # it on DB record, so must retain original values
+                            # from the already-fetched data.
+                            ended_at_by_id = {
+                                s.id: s.ended_at
+                                for s in recent
+                                if s.ended_at is not None
+                            }
+
+                            if candidates:
+                                yield Status(message="Thinking...")
+                                result = await detect_boundary(
+                                    text, None, self._agent_defaults,
+                                    candidates=candidates,
+                                )
+
+                                if result.resume_session_id is not None:
+                                    captured_ended_at = ended_at_by_id.get(
+                                        result.resume_session_id
+                                    )
+                                    reopened = (
+                                        await self._registry.reopen_session(
+                                            result.resume_session_id
+                                        )
+                                    )
+
+                                    if (
+                                        reopened is not None
+                                        and captured_ended_at is not None
+                                    ):
+                                        self._sdk_session_id = reopened.sdk_session_id
+                                        active = reopened
+                                        startup_matched = True
+
+                                        # Best-effort: record resumption + bridging context
+                                        await self._registry.record_resumption(
+                                            session_id=reopened.id,
+                                            previous_ended_at=captured_ended_at,
+                                        )
+                                        await self._persist_bridging_context(
+                                            reopened, captured_ended_at
+                                        )
+
+                        except Exception as exc:
+                            # Fail-open (R5): any startup matching error → fresh session
+                            _log.exception(
+                                "Startup matching failed, creating fresh session: err={err}",
+                                err=str(exc),
+                            )
+
+                    # Fall-through: fresh session creation
+
+                    # Fall-through: fresh session creation (no stale state to clear at startup)
+                    if not startup_matched:
+                        active = await self._registry.create_session()
+                        is_new_session = True
 
             except Exception as exc:
                 # Session tracking failures are logged but never crash the conversation
