@@ -32,19 +32,20 @@ class Session:
     ended_at: datetime | None = None
     last_resumed_at: datetime | None = None
     processed_at: datetime | None = None
+    error: bool = False
 
     @property
     def status(self) -> SessionStatus:
         """Derived status — never stored in the database.
 
-        - open:        ended_at is None
-        - closed:      ended_at is set AND sdk_session_id is set
-        - interrupted: ended_at is set AND sdk_session_id is None
+        - open:        ended_at is None AND no error
+        - closed:      ended_at is set AND sdk_session_id is set AND no error
+        - interrupted: ended_at is set AND sdk_session_id is None, OR error flag set
         """
-        if self.ended_at is None:
+        if self.ended_at is None and not self.error:
             return "open"
 
-        if self.sdk_session_id is not None:
+        if self.ended_at is not None and self.sdk_session_id is not None and not self.error:
             return "closed"
 
         return "interrupted"
@@ -103,6 +104,7 @@ class SessionRecord(Base):
     ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
     last_resumed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
     processed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
+    error: Mapped[bool] = mapped_column(default=False)
 
     __table_args__ = (Index("ix_sessions_started_at", "started_at"),)
 
@@ -121,6 +123,7 @@ class SessionRecord(Base):
             ended_at=ensure_utc(self.ended_at),
             last_resumed_at=ensure_utc(self.last_resumed_at),
             processed_at=ensure_utc(self.processed_at),
+            error=self.error,
         )
 
 

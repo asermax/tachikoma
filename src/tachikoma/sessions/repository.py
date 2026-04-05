@@ -163,6 +163,7 @@ class SessionRepository:
                         SessionRecord.ended_at.is_not(None),
                         SessionRecord.sdk_session_id.is_not(None),
                         SessionRecord.summary.is_not(None),
+                        SessionRecord.error.is_(False),
                         SessionRecord.ended_at > cutoff,
                     )
                     .order_by(SessionRecord.ended_at.desc())

@@ -169,6 +169,14 @@ class Database:
                 )
                 _log.info("Schema migration: created 'session_context_entries' table")
 
+            # Check if error column exists on sessions table
+            result = await conn.execute(
+                text("SELECT * FROM pragma_table_info('sessions') WHERE name='error'")
+            )
+            if result.fetchone() is None:
+                await conn.execute(text("ALTER TABLE sessions ADD COLUMN error BOOLEAN DEFAULT 0"))
+                _log.info("Schema migration: added 'error' column to sessions table")
+
         _log.debug("Schema migrations completed: db_path={path}", path=self._db_path)
 
     async def close(self) -> None:

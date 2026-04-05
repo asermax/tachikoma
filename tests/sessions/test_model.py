@@ -47,6 +47,29 @@ class TestSessionStatus:
 
         assert session.status == "interrupted"
 
+    def test_interrupted_when_error_flag_is_set_even_if_open(self) -> None:
+        """AC: error=True overrides normal state → 'interrupted'."""
+        session = Session(
+            id="abc",
+            started_at=_utcnow(),
+            sdk_session_id="sdk-123",
+            error=True,
+        )
+
+        assert session.status == "interrupted"
+
+    def test_interrupted_when_error_flag_is_set_even_if_closed(self) -> None:
+        """AC: error=True on a normally closed session → 'interrupted'."""
+        session = Session(
+            id="abc",
+            started_at=_utcnow(),
+            ended_at=_utcnow(),
+            sdk_session_id="sdk-123",
+            error=True,
+        )
+
+        assert session.status == "interrupted"
+
 
 class TestSessionDataclass:
     """Tests for Session dataclass behavior."""
