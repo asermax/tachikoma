@@ -10,6 +10,7 @@ import pytest
 from pydantic import ValidationError
 
 from tachikoma.config import (
+    SYSTEM_DISALLOWED_TOOLS,
     LoggingSettings,
     Settings,
     SettingsManager,
@@ -54,10 +55,10 @@ class TestSettingsModel:
         assert settings.agent.allowed_tools == ["Read", "Glob", "Grep"]
 
     def test_default_agent_disallowed_tools(self) -> None:
-        """AC (AC1/R0/R1): agent.disallowed_tools defaults to blocking cron tools."""
+        """AC (AC1): agent.disallowed_tools defaults to user defaults + system tools."""
         settings = Settings()
 
-        expected = ["AskUserQuestion", "CronCreate", "CronDelete", "CronList"]
+        expected = ["AskUserQuestion", "CronCreate", "CronDelete", "CronList", "Skill"]
         assert settings.agent.disallowed_tools == expected
 
     def test_default_session_resume_window(self) -> None:
@@ -193,6 +194,46 @@ class TestSettingsModel:
             LoggingSettings(level="VERBOSE")
 
 
+class TestSystemDisallowedTools:
+    """Tests for system-level disallowed tools merge behavior (DLT-087)."""
+
+    def test_system_tools_merged_with_user_config(self) -> None:
+        """AC (R2): User-configured tools preserved, system tools appended."""
+        settings = Settings.model_validate(
+            {"agent": {"disallowed_tools": ["AskUserQuestion", "WebSearch"]}}
+        )
+
+        assert settings.agent.disallowed_tools == ["AskUserQuestion", "WebSearch", "Skill"]
+
+    def test_system_tools_present_with_empty_list(self) -> None:
+        """AC (R2): System tools present even when user sets empty list."""
+        settings = Settings.model_validate(
+            {"agent": {"disallowed_tools": []}}
+        )
+
+        assert settings.agent.disallowed_tools == ["Skill"]
+
+    def test_system_tools_no_duplicate_when_user_includes(self) -> None:
+        """AC (R2): No duplicate when user already includes a system tool."""
+        settings = Settings.model_validate(
+            {"agent": {"disallowed_tools": ["AskUserQuestion", "Skill"]}}
+        )
+
+        assert settings.agent.disallowed_tools == ["AskUserQuestion", "Skill"]
+
+    def test_system_tools_user_order_preserved(self) -> None:
+        """AC (R3): User entry order preserved, system tools appended."""
+        settings = Settings.model_validate(
+            {"agent": {"disallowed_tools": ["WebSearch", "AskUserQuestion"]}}
+        )
+
+        assert settings.agent.disallowed_tools == ["WebSearch", "AskUserQuestion", "Skill"]
+
+    def test_constant_contains_skill(self) -> None:
+        """SYSTEM_DISALLOWED_TOOLS contains 'Skill'."""
+        assert "Skill" in SYSTEM_DISALLOWED_TOOLS
+
+
 class TestDefaultConfigGeneration:
     def test_generates_file_that_parses_to_empty_dict(self, tmp_path: Path) -> None:
         """AC (R4): Generated file has all values commented out."""
@@ -228,7 +269,7 @@ class TestDefaultConfigGeneration:
         assert "console" in content
 
     def test_generated_file_contains_disallowed_tools(self, tmp_path: Path) -> None:
-        """AC (AC4/R3): Generated file contains disallowed_tools with all blocked tools."""
+        """AC (AC3): Generated file contains disallowed_tools with all blocked tools."""
         config_path = tmp_path / "config.toml"
         _generate_default_config(config_path)
 
@@ -239,15 +280,16 @@ class TestDefaultConfigGeneration:
         assert '"CronCreate"' in content
         assert '"CronDelete"' in content
         assert '"CronList"' in content
+        assert '"Skill"' in content
 
-    def test_explicit_disallowed_tools_override_excludes_cron(self, tmp_path: Path) -> None:
-        """AC (AC3/R2): Explicit disallowed_tools override replaces defaults entirely."""
+    def test_explicit_disallowed_tools_override_keeps_system_tools(self, tmp_path: Path) -> None:
+        """AC (AC3): Explicit override replaces user defaults but system tools persist."""
         config_file = tmp_path / "config.toml"
         config_file.write_text('[agent]\ndisallowed_tools = ["AskUserQuestion"]\n')
 
         settings = load_settings(config_file)
 
-        assert settings.agent.disallowed_tools == ["AskUserQuestion"]
+        assert settings.agent.disallowed_tools == ["AskUserQuestion", "Skill"]
 
     def test_generated_file_contains_session_resume_window(self, tmp_path: Path) -> None:
         """AC (DLT-028): Generated file contains session_resume_window with int format."""

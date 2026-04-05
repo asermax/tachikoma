@@ -448,13 +448,6 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 **Complexity**: Medium
 **Description**: Allow the user to switch to a specific previous session by replying to a Telegram message that was part of that session. Currently, messages are routed automatically via boundary detection with no user override. This delta adds message-to-session tracking (associating Telegram message IDs with the session they belong to), reply detection in the Telegram channel, and explicit session routing when a reply targets a past session. The user replies to any message from a previous conversation and the new message is routed to that session instead of following automatic routing logic. Edge cases include replying to a message with no associated session or a closed session that shouldn't be resumed.
 
-### DLT-087: Disable Claude Code built-in skills in default config
-**Status**: ✗ Defined
-**Depends on**: None
-**Priority**: 1 (Critical)
-**Complexity**: Easy
-**Description**: Claude Code ships with a built-in `Skill` tool that provides access to plugin-provided slash-command capabilities. This shadows Tachikoma's own skill subsystem — the agent conflates the two systems, attempting to invoke Tachikoma skills via the Claude Code Skill tool or ignoring Claude Code skills assuming they belong to Tachikoma's registry. This delta disables the Skill tool through the default project configuration's deny list, alongside the cron tools already blocked by DLT-073, preventing the agent from accessing Claude Code's skill system entirely. This is the immediate mitigation while the full renaming solution (DLT-074) is deferred.
-
 ### DLT-088: Scheduled memory store maintenance
 **Status**: ✗ Defined
 **Depends on**: None
