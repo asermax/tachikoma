@@ -65,7 +65,11 @@ module-name = "tachikoma"
 [tool.semantic_release]
 commit_parser = "conventional"
 version_toml = ["pyproject.toml:project.version"]
-build_command = "uv lock && uv build"
+build_command = """
+    uv lock --upgrade-package "$PACKAGE_NAME"
+    git add uv.lock
+    uv build
+"""
 major_on_zero = false
 tag_format = "v{version}"
 
