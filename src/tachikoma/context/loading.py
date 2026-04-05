@@ -1,13 +1,10 @@
 """Core context file management.
 
-
 Provides foundational context for the assistant through three markdown files:
 SOUL.md (personality/tone), USER.md (user knowledge), and AGENTS.md (behavioral instructions).
 
-
 These files are loaded once at startup and assembled into a system prompt that layers
 on top of the SDK's default prompt.
-
 
 See: DLT-005 (Load foundational context for personality and user knowledge).
 """
@@ -17,7 +14,6 @@ from pathlib import Path
 from loguru import logger
 
 from tachikoma.bootstrap import BootstrapContext
-from tachikoma.config import _detect_system_timezone
 
 _log = logger.bind(component="context")
 
@@ -223,20 +219,16 @@ see disabled tasks.
 The following sections contain your current foundational context, wrapped in XML tags."""
 
 
-def render_system_preamble(timezone: str = "") -> str:
+def render_system_preamble(timezone: str) -> str:
     """Render the system preamble with the configured timezone.
 
-    If timezone is empty or not provided, resolves to the system timezone
-    via _detect_system_timezone(). Otherwise uses the provided string as-is.
-
     Args:
-        timezone: Timezone string from config (empty = system default).
+        timezone: Valid IANA timezone string (pre-validated by config).
 
     Returns:
         The rendered system preamble string.
     """
-    resolved = timezone if timezone else _detect_system_timezone()
-    return SYSTEM_PREAMBLE_TEMPLATE.format(timezone=resolved)
+    return SYSTEM_PREAMBLE_TEMPLATE.format(timezone=timezone)
 
 
 def load_foundational_context(workspace_path: Path) -> list[tuple[str, str]]:

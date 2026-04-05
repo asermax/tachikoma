@@ -263,7 +263,6 @@ class BackgroundTaskExecutor:
             # Run pre-processing pipeline (memory, projects, skills context)
             preprocessing_result = await self._run_preprocessing(instance.prompt)
 
-            # Resolve timezone and format current datetime for the background task
             tz = get_timezone(self._settings)
             now = datetime.now(tz)
             datetime_line = (

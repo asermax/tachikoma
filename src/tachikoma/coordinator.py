@@ -37,7 +37,7 @@ from tachikoma.pre_processing import (
     McpServerConfig,
     PreProcessingPipeline,
 )
-from tachikoma.sessions.model import Session
+from tachikoma.sessions.model import Session, SessionContextEntry
 from tachikoma.sessions.registry import SessionRegistry
 
 _log = logger.bind(component="coordinator")
@@ -452,17 +452,18 @@ class Coordinator:
         resume_id = self._sdk_session_id if not is_new_session else None
 
         # Build system prompt from persisted entries
-        system_prompt_append = build_system_prompt([], timezone=self._timezone)
+        entries: list[SessionContextEntry] = []
         if self._registry is not None and active is not None:
             try:
                 entries = await self._registry.load_context_entries(active.id)
-                system_prompt_append = build_system_prompt(entries, timezone=self._timezone)
             except Exception as exc:
                 _log.exception(
                     "Context load failed, using preamble only: session_id={id} err={err}",
                     id=active.id,
                     err=str(exc),
                 )
+
+        system_prompt_append = build_system_prompt(entries, timezone=self._timezone)
 
         # Build options and create a fresh client for this exchange
         options = self._build_options(resume=resume_id, system_prompt_append=system_prompt_append)

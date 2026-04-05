@@ -10,7 +10,7 @@ from tachikoma.sessions.model import SessionContextEntry
 
 
 def build_system_prompt(
-    entries: list[SessionContextEntry], *, timezone: str = ""
+    entries: list[SessionContextEntry], *, timezone: str
 ) -> str:
     """Build system prompt append string from persisted context entries.
 
@@ -23,7 +23,7 @@ def build_system_prompt(
     Args:
         entries: List of SessionContextEntry instances to assemble.
             Order is determined by caller (typically by entry.id ascending).
-        timezone: Timezone string from config for preamble rendering.
+        timezone: Valid IANA timezone string (pre-validated by config).
 
     Returns:
         The complete system prompt append string.

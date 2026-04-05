@@ -122,14 +122,6 @@ class TestLoadFoundationalContext:
 class TestRenderSystemPreamble:
     """Tests for the render_system_preamble function."""
 
-    def test_default_renders_with_system_timezone(self) -> None:
-        """AC: Empty timezone falls back through system tz chain."""
-        result = render_system_preamble()
-
-        assert "# Your Identity" in result
-        assert "## Date and Time" in result
-        assert "date" in result
-
     def test_explicit_timezone_renders_in_preamble(self) -> None:
         """AC: Explicit timezone is rendered in the Date and Time section."""
         result = render_system_preamble(timezone="UTC")
@@ -173,9 +165,9 @@ class TestLoadContextIntegration:
         (context_dir / "AGENTS.md").write_text("Test agents content")
 
         raw = load_foundational_context(tmp_path)
-        result = build_system_prompt(self._to_entries(raw))
+        result = build_system_prompt(self._to_entries(raw), timezone="UTC")
 
-        preamble = render_system_preamble()
+        preamble = render_system_preamble("UTC")
         assert preamble in result
         assert "<soul>\nTest soul content\n</soul>" in result
         assert "<user>\nTest user content\n</user>" in result
@@ -191,7 +183,7 @@ class TestLoadContextIntegration:
         (context_dir / "AGENTS.md").write_text("C")
 
         raw = load_foundational_context(tmp_path)
-        result = build_system_prompt(self._to_entries(raw))
+        result = build_system_prompt(self._to_entries(raw), timezone="UTC")
 
         # Check ordering
         soul_pos = result.find("<soul>")
@@ -208,9 +200,9 @@ class TestLoadContextIntegration:
         (context_dir / "SOUL.md").write_text("Content")
 
         raw = load_foundational_context(tmp_path)
-        result = build_system_prompt(self._to_entries(raw))
+        result = build_system_prompt(self._to_entries(raw), timezone="UTC")
 
-        assert result.startswith(render_system_preamble())
+        assert result.startswith(render_system_preamble("UTC"))
 
     def test_one_file_missing_includes_remaining(self, tmp_path: Path) -> None:
         """AC: One file missing → warns during load, includes remaining in assembly."""
@@ -222,7 +214,7 @@ class TestLoadContextIntegration:
         # USER.md is missing
 
         raw = load_foundational_context(tmp_path)
-        result = build_system_prompt(self._to_entries(raw))
+        result = build_system_prompt(self._to_entries(raw), timezone="UTC")
 
         assert "<soul>\nSoul content\n</soul>" in result
         assert "<agents>\nAgents content\n</agents>" in result
@@ -238,7 +230,7 @@ class TestLoadContextIntegration:
         (context_dir / "AGENTS.md").write_text("Agents content")
 
         raw = load_foundational_context(tmp_path)
-        result = build_system_prompt(self._to_entries(raw))
+        result = build_system_prompt(self._to_entries(raw), timezone="UTC")
 
         assert "<soul>\nSoul content\n</soul>" in result
         assert "<agents>\nAgents content\n</agents>" in result
@@ -254,7 +246,7 @@ class TestLoadContextIntegration:
         (context_dir / "AGENTS.md").write_text("Agents content")
 
         raw = load_foundational_context(tmp_path)
-        result = build_system_prompt(self._to_entries(raw))
+        result = build_system_prompt(self._to_entries(raw), timezone="UTC")
 
         assert "<soul>\n" not in result
         assert "<user>\nUser content\n</user>" in result
@@ -267,9 +259,9 @@ class TestLoadContextIntegration:
         # No files created
 
         raw = load_foundational_context(tmp_path)
-        result = build_system_prompt(self._to_entries(raw))
+        result = build_system_prompt(self._to_entries(raw), timezone="UTC")
 
-        assert result == render_system_preamble()
+        assert result == render_system_preamble("UTC")
 
     def test_all_files_empty_returns_preamble_only(self, tmp_path: Path) -> None:
         """AC: All files empty → returns rendered preamble only (never None)."""
@@ -281,9 +273,9 @@ class TestLoadContextIntegration:
         (context_dir / "AGENTS.md").write_text("")
 
         raw = load_foundational_context(tmp_path)
-        result = build_system_prompt(self._to_entries(raw))
+        result = build_system_prompt(self._to_entries(raw), timezone="UTC")
 
-        assert result == render_system_preamble()
+        assert result == render_system_preamble("UTC")
 
     def test_preamble_always_present(self, tmp_path: Path) -> None:
         """AC: Rendered preamble is always present, even without context files."""
@@ -291,9 +283,9 @@ class TestLoadContextIntegration:
         context_dir.mkdir()
 
         raw = load_foundational_context(tmp_path)
-        result = build_system_prompt(self._to_entries(raw))
+        result = build_system_prompt(self._to_entries(raw), timezone="UTC")
 
-        preamble = render_system_preamble()
+        preamble = render_system_preamble("UTC")
         assert preamble in result
         assert "Tachikoma" in result
         assert "memories/" in result
