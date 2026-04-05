@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v1.3.1 (2026-04-04)
+
+### Bug Fixes
+
+- **tasks**: Make schedule deserialization robust to malformed data
+  ([`790613b`](https://github.com/asermax/tachikoma/commit/790613baaabac0ef55d7d80ff33c7913b4185cb3))
+
+### Documentation
+
+- **tasks**: Add schedule deserialization robustness to feature documentation
+  ([`1de898e`](https://github.com/asermax/tachikoma/commit/1de898e44829da375561dd2e7eee505e9c159226))
+
+
+## v1.3.0 (2026-04-04)
+
+### Documentation
+
+- **planning**: Add DLT-098 for SDK stderr capture on error
+  ([`822e746`](https://github.com/asermax/tachikoma/commit/822e7466463247d78e703be95672e3890e0e436b))
+
+
 ## v1.2.1 (2026-04-04)
 
 ### Bug Fixes

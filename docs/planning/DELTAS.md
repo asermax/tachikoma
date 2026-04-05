@@ -462,12 +462,19 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 **Complexity**: Medium
 **Description**: When the user sends a steering message with stop intent (e.g., "stop", "cancel") during an active generation, immediately abort any in-progress tool execution chain rather than waiting for the full chain to complete before the message takes effect. Currently, steering messages do halt generation across all channels, but the agent continues executing queued tool calls before processing the stop — resulting in a noticeable delay. This delta detects stop intent in incoming steering messages and triggers an immediate interrupt that cuts the tool chain short, similar to how Esc works in Claude Code.
 
-### DLT-091: Conditional notification suppression for background tasks
+### DLT-090: Prevent duplicate task instances from scheduler
+**Status**: ✗ Defined
+**Depends on**: None
+**Priority**: 1 (Critical)
+**Complexity**: Easy
+**Description**: The cron evaluator for session-type tasks fires multiple times within the same scheduled minute, creating duplicate instances. The `last_fired_at` field is updated after firing but does not prevent re-queuing within the same cron period — the scheduler only checks whether the task has ever fired, not whether it has already fired for the current period. This causes users to receive multiple duplicate notifications for a single scheduled execution. Deduplicate based on the current cron period rather than just the `last_fired_at` timestamp, ensuring each cron match produces at most one task instance.
+
+### DLT-091: Replace task notify field with agent-driven notification tool
 **Status**: ✗ Defined
 **Depends on**: None
 **Priority**: 3 (Medium)
 **Complexity**: Medium
-**Description**: Background tasks have no mechanism to conditionally suppress notifications at runtime. The `notify` field is static text set at task definition time, so every execution either always notifies or never does — there is no way for the task's output to signal whether notification is warranted. This is a problem for tasks that should only notify when there is meaningful content (e.g., a routine check-in that should stay silent when the daily plan is empty but notify when activities are scheduled). Add a mechanism for background tasks to signal at execution time whether the result should trigger a notification. The specific signaling approach should be evaluated during design — the key requirement is that the task's output can deterministically control whether the notification fires, without requiring the task to be redefined.
+**Description**: Replace the static `notify` field on task definitions with an MCP tool (`send_notification`) that background task agents call during execution to send user notifications. Currently, notification behavior is defined at task creation time as a static instruction — every execution either always notifies or never does, with no runtime control. This delta removes the `notify` field from task definitions and MCP tools, strips the executor's automatic success notification dispatch, and exposes a `send_notification` tool through the task MCP tool server that background task agents can invoke to deliver notifications on demand. Failure notifications remain automatic (handled by the executor) since failures occur when the agent can no longer act. This gives tasks full runtime control: conditional notification based on results, multiple notifications during long execution, progress updates, or silence when there's nothing meaningful to report.
 
 ### DLT-092: Timezone-aware scheduling for one-shot tasks
 **Status**: ✗ Defined

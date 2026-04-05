@@ -5,7 +5,9 @@ Uses real SQLite databases in tmp_path (no mocking of the DB layer).
 
 from datetime import UTC, datetime
 
-from tachikoma.tasks.model import ScheduleConfig
+from sqlalchemy import select
+
+from tachikoma.tasks.model import ScheduleConfig, TaskDefinitionRecord
 from tachikoma.tasks.repository import TaskRepository
 
 from .conftest import _make_definition, _make_instance, _utcnow
@@ -369,3 +371,43 @@ class TestRepositoryCrashRecovery:
         count = await repo.mark_running_as_failed("system restart")
 
         assert count == 0
+
+
+class TestCorruptedScheduleIsolation:
+    """Tests for per-record error isolation with auto-disable of corrupted definitions."""
+
+    async def test_corrupted_definition_disabled_and_others_returned(
+        self, repo: TaskRepository
+    ) -> None:
+        """AC4: Corrupted definition is disabled; valid definitions are returned."""
+        # Create a valid definition
+        await repo.create_definition(_make_definition("valid-1", name="Valid Task"))
+
+        # Insert a corrupted definition directly via the ORM layer
+        async with repo._session_factory() as db:
+            db.add(
+                TaskDefinitionRecord(
+                    id="corrupted-1",
+                    name="Corrupted Task",
+                    schedule="not-valid-json",  # bare invalid string
+                    task_type="session",
+                    prompt="test",
+                    enabled=True,
+                    created_at=_utcnow(),
+                )
+            )
+            await db.commit()
+
+        definitions = await repo.list_enabled_definitions()
+
+        # Only the valid definition is returned
+        assert len(definitions) == 1
+        assert definitions[0].id == "valid-1"
+
+        # The corrupted definition was auto-disabled
+        async with repo._session_factory() as db:
+            result = await db.execute(
+                select(TaskDefinitionRecord).where(TaskDefinitionRecord.id == "corrupted-1")
+            )
+            record = result.scalar_one()
+        assert record.enabled is False

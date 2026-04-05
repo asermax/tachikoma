@@ -36,8 +36,8 @@ The task management subsystem lives in `src/tachikoma/tasks/` as a self-containe
 | Layer/Component | Responsibility | Key Decisions |
 |-----------------|----------------|---------------|
 | `src/tachikoma/tasks/__init__.py` | Public API re-exports | Clean package interface |
-| `src/tachikoma/tasks/model.py` | `TaskDefinition` and `TaskInstance` frozen dataclasses (domain types); `TaskDefinitionRecord` and `TaskInstanceRecord` ORM models; `TaskStatus` and `TaskType` constant maps; `ScheduleConfig` type | Domain types frozen; ORM models internal to persistence; schedule stored as JSON column |
-| `src/tachikoma/tasks/repository.py` | `TaskRepository` — async SQLAlchemy CRUD for definitions and instances; `list_enabled_definitions()` and `list_disabled_definitions()` for filtered queries; crash recovery (mark running as failed) | Receives shared `async_sessionmaker` from `Database`; follows ADR-007 pattern |
+| `src/tachikoma/tasks/model.py` | `TaskDefinition` and `TaskInstance` frozen dataclasses (domain types); `TaskDefinitionRecord` and `TaskInstanceRecord` ORM models; `TaskStatus` and `TaskType` constant maps; `ScheduleConfig` type | Domain types frozen; ORM models internal to persistence; schedule stored as JSON column; `from_json` recovers legacy bare ISO datetime strings as one-shot schedules; all parse failures raise `ValueError` (never bare `JSONDecodeError` or `KeyError`) |
+| `src/tachikoma/tasks/repository.py` | `TaskRepository` — async SQLAlchemy CRUD for definitions and instances; `list_enabled_definitions()` and `list_disabled_definitions()` for filtered queries; `_to_domains_with_isolation()` for per-record error isolation with auto-disable; crash recovery (mark running as failed) | Receives shared `async_sessionmaker` from `Database`; follows ADR-007 pattern; list methods auto-disable corrupted definitions instead of failing the entire query |
 | `src/tachikoma/tasks/tools.py` | `create_task_tools_server()` — MCP server factory; `list_tasks` (defaults to enabled-only, `archived` parameter for disabled; output includes task ID for referencing in other tools), `create_task`, `update_task` (supports `task_type` changes via `Literal` validation), `delete_task` with `cronsim` validation; Pydantic `BaseModel` classes (`ListTasksArgs`, `CreateTaskArgs`, `UpdateTaskArgs`, `DeleteTaskArgs`) for arg validation and type coercion; enriched `@tool()` descriptions with parameter documentation | Tools validate cron expressions at creation time; `list_tasks` uses `archived` parameter to toggle between enabled/disabled views; Pydantic models provide schema generation, bool coercion, and required-field validation; `UpdateTaskArgs.task_type` uses `Literal["session", "background"]` for automatic validation; `TaskRepositoryError`-specific error handling surfaces root causes via `__cause__`; follows DES-006 |
 | `src/tachikoma/tasks/hooks.py` | `tasks_hook` — bootstrap hook (DES-003): retrieves shared `Database` from extras, creates repository, runs crash recovery; stores `task_repository` in `bootstrap.extras` | Subsystem-owned hook; runs after `database_hook` |
 | `src/tachikoma/tasks/scheduler.py` | `instance_generator()` — async loop with strict cron firing and period-aware dedup; `_create_pending_instance()` helper for instance creation and logging | Plain async function started as `asyncio.Task` |
@@ -264,6 +264,17 @@ stateDiagram-v2
 **Choice**: Store the cron match time in `scheduled_for` and check for existing instances matching that time and a non-failed status.
 **Why**: Using the cron match time as a period identifier enables deduplication across instance status changes (e.g., a completed instance still blocks a duplicate). The previous approach only checked pending/running, allowing duplicates after completion within the same period.
 
+### Corrupted definition auto-disable
+
+**Choice**: When a repository list method encounters a record with an unparseable schedule, log a warning and disable the definition rather than failing the entire query.
+**Why**: One corrupted definition blocked the entire instance generator loop (the list comprehension fails before per-definition error handling). Auto-disabling quarantines the bad record so it won't be re-encountered every tick, while allowing all valid definitions to continue scheduling. The user can see what happened via logs and re-create the task if needed. This is consistent with the one-shot auto-disable pattern already in the scheduler.
+
+**Consequences**:
+- Pro: One bad record cannot halt all task scheduling
+- Pro: Corrupted definitions are quarantined rather than causing log spam
+- Con: The definition is disabled (not deleted), so the user must manually clean up or re-create
+- Con: If the disable write itself fails, it is logged and skipped (fail-open to preserve other definitions)
+
 ## System Behavior
 
 ### Scenario: Agent creates a recurring task
@@ -301,6 +312,12 @@ stateDiagram-v2
 **Given**: The application crashed while tasks were running
 **When**: The bootstrap hook runs
 **Then**: All previously-running instances are marked as `failed`.
+
+### Scenario: Corrupted definition auto-disable
+
+**Given**: An enabled task definition has a malformed schedule value in the database
+**When**: The repository lists enabled definitions
+**Then**: The corrupted definition is disabled (enabled=false), a warning is logged with the definition ID and error, and all other valid definitions are returned normally.
 
 ## Notes
 

@@ -85,7 +85,7 @@ class TaskRepository:
                 result = await db.execute(select(TaskDefinitionRecord))
                 records = result.scalars().all()
 
-            return [r.to_domain() for r in records]
+            return await self._to_domains_with_isolation(records)
 
         except Exception as exc:
             raise TaskRepositoryError("Failed to list task definitions") from exc
@@ -101,7 +101,7 @@ class TaskRepository:
                 )
                 records = result.scalars().all()
 
-            return [r.to_domain() for r in records]
+            return await self._to_domains_with_isolation(records)
 
         except Exception as exc:
             raise TaskRepositoryError("Failed to list enabled task definitions") from exc
@@ -117,7 +117,7 @@ class TaskRepository:
                 )
                 records = result.scalars().all()
 
-            return [r.to_domain() for r in records]
+            return await self._to_domains_with_isolation(records)
 
         except Exception as exc:
             raise TaskRepositoryError("Failed to list disabled task definitions") from exc
@@ -172,6 +172,32 @@ class TaskRepository:
     # ------------------------------------------------------------------
     # Instance CRUD operations
     # ------------------------------------------------------------------
+
+    async def _to_domains_with_isolation(
+        self, records: list[TaskDefinitionRecord]
+    ) -> list[TaskDefinition]:
+        """Convert records to domain objects, disabling corrupted definitions."""
+        definitions: list[TaskDefinition] = []
+
+        for record in records:
+            try:
+                definitions.append(record.to_domain())
+            except (ValueError, TypeError) as exc:
+                _log.warning(
+                    "Disabling corrupted definition {id} ({name}): {err}",
+                    id=record.id,
+                    name=record.name,
+                    err=exc,
+                )
+                try:
+                    await self.update_definition(record.id, enabled=False)
+                except Exception:
+                    _log.exception(
+                        "Failed to disable corrupted definition {id}",
+                        id=record.id,
+                    )
+
+        return definitions
 
     async def create_instance(self, instance: TaskInstance) -> TaskInstance:
         """Persist a new task instance and return it."""
