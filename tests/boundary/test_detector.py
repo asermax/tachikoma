@@ -16,6 +16,7 @@ from tachikoma.boundary.detector import (
     SessionCandidate,
     detect_boundary,
 )
+from tachikoma.boundary.prompts import CANDIDATES_ONLY_SYSTEM_PROMPT
 
 
 class TestSessionCandidate:
@@ -517,4 +518,249 @@ class TestDetectBoundary:
             agent_defaults=AgentDefaults(cwd=Path("/workspace")),
         )
 
+        assert result.resume_session_id is None
+
+
+class TestCandidatesOnlyMode:
+    """Tests for DLT-084: candidates-only boundary detection (startup matching)."""
+
+    async def test_summary_none_uses_candidates_only_system_prompt(
+        self, mocker: MockerFixture
+    ) -> None:
+        """AC: summary=None uses CANDIDATES_ONLY_SYSTEM_PROMPT."""
+        mock_query = mocker.patch("tachikoma.boundary.detector.query")
+
+        async def fake_query_gen(*args, **kwargs):
+            yield ResultMessage(
+                subtype="success",
+                duration_ms=100,
+                duration_api_ms=80,
+                is_error=False,
+                num_turns=1,
+                session_id="test-session",
+                total_cost_usd=0.01,
+                usage={"input_tokens": 10},
+                structured_output={"continues_conversation": False, "resume_session_id": None},
+            )
+
+        mock_query.return_value = fake_query_gen()
+
+        candidates = [
+            SessionCandidate(id="s1", summary="Discussion about Python"),
+        ]
+
+        await detect_boundary(
+            message="Let's continue Python tests",
+            summary=None,
+            agent_defaults=AgentDefaults(cwd=Path("/workspace")),
+            candidates=candidates,
+        )
+
+        call_kwargs = mock_query.call_args
+        options = call_kwargs[1]["options"]
+        assert options.system_prompt == CANDIDATES_ONLY_SYSTEM_PROMPT
+
+    async def test_summary_none_forces_continues_false(
+        self, mocker: MockerFixture
+    ) -> None:
+        """AC: In candidates-only mode, continues is forced to False even if SDK returns True."""
+
+        async def fake_query(*args, **kwargs):
+            yield ResultMessage(
+                subtype="success",
+                duration_ms=100,
+                duration_api_ms=80,
+                is_error=False,
+                num_turns=1,
+                session_id="test-session",
+                total_cost_usd=0.01,
+                usage={"input_tokens": 10},
+                # SDK returns True, but candidates-only mode should force False
+                structured_output={"continues_conversation": True, "resume_session_id": None},
+            )
+
+        mocker.patch("tachikoma.boundary.detector.query", side_effect=fake_query)
+
+        candidates = [
+            SessionCandidate(id="s1", summary="Discussion about Python"),
+        ]
+
+        result = await detect_boundary(
+            message="Tell me more",
+            summary=None,
+            agent_defaults=AgentDefaults(cwd=Path("/workspace")),
+            candidates=candidates,
+        )
+
+        assert result.continues is False
+        assert result.resume_session_id is None
+
+    async def test_summary_none_returns_resume_id_on_match(
+        self, mocker: MockerFixture
+    ) -> None:
+        """AC: Candidates-only mode returns resume_session_id on match."""
+
+        async def fake_query(*args, **kwargs):
+            yield ResultMessage(
+                subtype="success",
+                duration_ms=100,
+                duration_api_ms=80,
+                is_error=False,
+                num_turns=1,
+                session_id="test-session",
+                total_cost_usd=0.01,
+                usage={"input_tokens": 10},
+                structured_output={
+                    "continues_conversation": False,
+                    "resume_session_id": "session-123",
+                },
+            )
+
+        mocker.patch("tachikoma.boundary.detector.query", side_effect=fake_query)
+
+        candidates = [
+            SessionCandidate(id="session-123", summary="Discussion about Python debugging"),
+        ]
+
+        result = await detect_boundary(
+            message="Let's continue with the Python tests",
+            summary=None,
+            agent_defaults=AgentDefaults(cwd=Path("/workspace")),
+            candidates=candidates,
+        )
+
+        assert result.continues is False
+        assert result.resume_session_id == "session-123"
+
+    async def test_summary_none_returns_none_resume_id_on_no_match(
+        self, mocker: MockerFixture
+    ) -> None:
+        """AC: Candidates-only mode returns resume_session_id=None on no match."""
+
+        async def fake_query(*args, **kwargs):
+            yield ResultMessage(
+                subtype="success",
+                duration_ms=100,
+                duration_api_ms=80,
+                is_error=False,
+                num_turns=1,
+                session_id="test-session",
+                total_cost_usd=0.01,
+                usage={"input_tokens": 10},
+                structured_output={
+                    "continues_conversation": False,
+                    "resume_session_id": None,
+                },
+            )
+
+        mocker.patch("tachikoma.boundary.detector.query", side_effect=fake_query)
+
+        candidates = [
+            SessionCandidate(id="session-123", summary="Discussion about cooking"),
+        ]
+
+        result = await detect_boundary(
+            message="What's the weather like?",
+            summary=None,
+            agent_defaults=AgentDefaults(cwd=Path("/workspace")),
+            candidates=candidates,
+        )
+
+        assert result.continues is False
+        assert result.resume_session_id is None
+
+    async def test_summary_none_with_no_candidates_returns_no_match(
+        self, mocker: MockerFixture
+    ) -> None:
+        """AC: Candidates-only with empty candidates handles gracefully."""
+
+        async def fake_query(*args, **kwargs):
+            yield ResultMessage(
+                subtype="success",
+                duration_ms=100,
+                duration_api_ms=80,
+                is_error=False,
+                num_turns=1,
+                session_id="test-session",
+                total_cost_usd=0.01,
+                usage={"input_tokens": 10},
+                structured_output={
+                    "continues_conversation": False,
+                    "resume_session_id": None,
+                },
+            )
+
+        mocker.patch("tachikoma.boundary.detector.query", side_effect=fake_query)
+
+        result = await detect_boundary(
+            message="Hello",
+            summary=None,
+            agent_defaults=AgentDefaults(cwd=Path("/workspace")),
+            candidates=[],
+        )
+
+        assert result.continues is False
+        assert result.resume_session_id is None
+
+    async def test_summary_none_prompt_has_no_current_summary_section(
+        self, mocker: MockerFixture
+    ) -> None:
+        """AC: Candidates-only prompt does not contain 'Current conversation summary'."""
+        mock_query = mocker.patch("tachikoma.boundary.detector.query")
+
+        async def fake_query_gen(*args, **kwargs):
+            yield ResultMessage(
+                subtype="success",
+                duration_ms=100,
+                duration_api_ms=80,
+                is_error=False,
+                num_turns=1,
+                session_id="test-session",
+                total_cost_usd=0.01,
+                usage={"input_tokens": 10},
+                structured_output={"continues_conversation": False, "resume_session_id": None},
+            )
+
+        mock_query.return_value = fake_query_gen()
+
+        candidates = [
+            SessionCandidate(id="s1", summary="Discussion about Python"),
+        ]
+
+        await detect_boundary(
+            message="Continue Python",
+            summary=None,
+            agent_defaults=AgentDefaults(cwd=Path("/workspace")),
+            candidates=candidates,
+        )
+
+        call_kwargs = mock_query.call_args
+        prompt = call_kwargs[1]["prompt"]
+        assert "Current conversation summary" not in prompt
+
+    async def test_summary_none_defaults_to_no_match_on_failure(
+        self, mocker: MockerFixture
+    ) -> None:
+        """AC: Default result in candidates-only mode has continues=False."""
+
+        async def fake_query(*args, **kwargs):
+            # No ResultMessage — simulates SDK failure
+            return
+            yield  # make it a generator
+
+        mocker.patch("tachikoma.boundary.detector.query", side_effect=fake_query)
+
+        candidates = [
+            SessionCandidate(id="s1", summary="Discussion about Python"),
+        ]
+
+        result = await detect_boundary(
+            message="Hello",
+            summary=None,
+            agent_defaults=AgentDefaults(cwd=Path("/workspace")),
+            candidates=candidates,
+        )
+
+        # In candidates-only mode, default is no-match (continues=False)
+        assert result.continues is False
         assert result.resume_session_id is None
