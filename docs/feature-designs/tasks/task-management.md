@@ -42,7 +42,7 @@ The task management subsystem lives in `src/tachikoma/tasks/` as a self-containe
 | `src/tachikoma/tasks/hooks.py` | `tasks_hook` — bootstrap hook (DES-003): retrieves shared `Database` from extras, creates repository, runs crash recovery; stores `task_repository` in `bootstrap.extras` | Subsystem-owned hook; runs after `database_hook` |
 | `src/tachikoma/tasks/scheduler.py` | `instance_generator()` — async loop with strict cron firing and period-aware dedup; `_create_pending_instance()` helper for instance creation and logging; `get_timezone(settings)` — returns `ZoneInfo` from pre-validated settings string (shared utility used by scheduler, preamble rendering, and executor) | Plain async function started as `asyncio.Task`; `get_timezone` has no fallback logic — validation happens at config load |
 | `src/tachikoma/database.py` | Shared `Database` class with `Base(DeclarativeBase)`, `AsyncEngine`, `async_sessionmaker`; `database_hook` bootstrap hook | All ORM models share one `Base`; single engine for all subsystems |
-| `src/tachikoma/context/loading.py` (`SYSTEM_PREAMBLE_TEMPLATE`) | Timezone-aware tasks documentation in the system prompt preamble: task types, scheduling formats with timezone behavior, Date and Time section, MCP tool descriptions with parameter documentation, cross-references, and corrected `notify` field behavior | `SYSTEM_PREAMBLE_TEMPLATE` with `{timezone}` placeholder; `render_system_preamble(timezone)` resolves and formats; follows ADR-008 append pattern |
+| `src/tachikoma/context/loading.py` (`SYSTEM_PREAMBLE_TEMPLATE`) | Timezone-aware tasks documentation in the system prompt preamble: task types, scheduling formats with timezone behavior, Date and Time section, MCP tool descriptions with parameter documentation, cross-references, and `send_notification` tool description for background tasks | `SYSTEM_PREAMBLE_TEMPLATE` with `{timezone}` placeholder; `render_system_preamble(timezone)` resolves and formats; follows ADR-008 append pattern |
 
 ### Cross-Layer Contracts
 
@@ -86,7 +86,6 @@ TaskDefinition (frozen dataclass)
 ├── schedule: ScheduleConfig         (cron expression or one-shot datetime)
 ├── task_type: str                   ("session" or "background")
 ├── prompt: str                      (instruction for the agent)
-├── notify: str | None               (notification template, null = silent)
 ├── enabled: bool                    (default True)
 ├── last_fired_at: datetime | None   (last time an instance was generated)
 └── created_at: datetime             (creation timestamp)
@@ -128,7 +127,6 @@ erDiagram
         json schedule
         string task_type
         string prompt
-        string notify
         boolean enabled
         datetime last_fired_at
         datetime created_at
@@ -240,7 +238,7 @@ stateDiagram-v2
 
 ### Task guidance in system preamble
 
-**Choice**: Include task types, scheduling formats, tool descriptions, and the notify field in `SYSTEM_PREAMBLE` as a static Tasks section.
+**Choice**: Include task types, scheduling formats, and tool descriptions (including `send_notification` for background tasks) in `SYSTEM_PREAMBLE` as a static Tasks section.
 **Why**: The agent needs task domain knowledge to interpret user requests (e.g., choosing session vs background type) before invoking MCP tools. Tool schemas describe parameters but not when to use them.
 
 **Consequences**:
@@ -346,4 +344,4 @@ stateDiagram-v2
 
 - `cronsim` is used for cron expression evaluation (lightweight, timezone-aware)
 - Task `type` is copied from definition to instance at creation time to enable direct queries without joins
-- The `notify` field on `TaskDefinition` is a nullable success notification instruction — when set, the background task executor uses it to generate a user-facing message on completion; when null, successful tasks complete silently; failures always generate notifications regardless of this field
+- Background task notifications are agent-driven — the executor registers a `send_notification` MCP tool per background task execution (via DES-006 factory), and the agent calls it to deliver messages; failure notifications are automatic via the shared `dispatch_notification()` from `tachikoma.notifications`

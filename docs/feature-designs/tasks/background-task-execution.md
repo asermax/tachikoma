@@ -23,8 +23,9 @@ Background tasks need to run in isolated sessions with multi-turn conversation s
 **Interactions:**
 - Task repository (`task-management`): queries pending background instances, updates status
 - Post-processing pipeline (`post-processing-pipeline`): separate pipeline instance with selective processors
-- Event bus (ADR-009): dispatches `TaskNotification` events on completion/failure
-- Channels (`telegram`, `terminal-repl`): subscribe to `TaskNotification` for delivery
+- Notification module (`tachikoma.notifications`): generic `Notification` event, `dispatch_notification()` for failures, `create_notification_server()` MCP factory per-execution
+- Event bus (ADR-009): dispatches `Notification` events on agent-driven notification or failure
+- Channels (`telegram`, `terminal-repl`): subscribe to `Notification` for delivery
 - SDK (`core-architecture`): `ClaudeSDKClient` with `resume` for multi-turn execution
 
 ## Design Overview
@@ -52,8 +53,8 @@ Two components work together: the `BackgroundTaskRunner` (async loop picking up 
 
 | Layer/Component | Responsibility | Key Decisions |
 |-----------------|----------------|---------------|
-| `src/tachikoma/tasks/executor.py` | `background_task_runner()` — async loop picking up pending background instances; `BackgroundTaskExecutor` — manages single task's SDK session lifecycle with evaluator loop; injects current date/time in configured timezone into system prompt; dispatches `TaskNotification` events | Coordinator-like SDK client management; `asyncio.Semaphore` for concurrency; datetime injection via `get_timezone(settings)` + `datetime.now(tz)` prepended to `BACKGROUND_TASK_SYSTEM_PROMPT`; full `PreProcessingPipeline` (memory, projects, skills); separate `PostProcessingPipeline` with `EpisodicProcessor` (main phase) + `ProjectsProcessor` (pre_finalize phase) + `GitProcessor` (finalize phase) |
-| `src/tachikoma/tasks/events.py` | `TaskNotification(BaseEvent)` — typed event carrying `prompt: str` (coordinator-routed notification prompt), `source_task_id: str | None`, and `severity: str` ("info" or "error"); channels subscribe and enqueue the prompt into the coordinator for pipeline-routed delivery | Pydantic `BaseEvent` subclass for typed dispatch |
+| `src/tachikoma/tasks/executor.py` | `background_task_runner()` — async loop picking up pending background instances; `BackgroundTaskExecutor` — manages single task's SDK session lifecycle with evaluator loop; injects current date/time in configured timezone into system prompt; registers notification MCP server per-execution; calls `dispatch_notification()` for automatic failure notifications | Coordinator-like SDK client management; `asyncio.Semaphore` for concurrency; datetime injection via `get_timezone(settings)` + `datetime.now(tz)` prepended to `BACKGROUND_TASK_SYSTEM_PROMPT`; full `PreProcessingPipeline` (memory, projects, skills); separate `PostProcessingPipeline` with `EpisodicProcessor` (main phase) + `ProjectsProcessor` (pre_finalize phase) + `GitProcessor` (finalize phase); notification MCP server via DES-006 factory |
+| `src/tachikoma/notifications.py` | `Notification(BaseEvent[None])` — generic event type; `build_notification_prompt()` — template builder with source, timestamp, content; `dispatch_notification()` — shared dispatch for both agent-driven and failure notifications; `create_notification_server()` — MCP tool factory (DES-006) producing `send_notification` tool for agent-driven notifications | Standalone module outside tasks package for reusability; single dispatch path ensures consistent formatting; per-execution MCP server scopes tool to background sessions only |
 
 ### Cross-Layer Contracts
 
@@ -66,30 +67,30 @@ sequenceDiagram
     participant Exec as BackgroundTaskExecutor
     participant SDK as ClaudeSDKClient
     participant Eval as Evaluator
+    participant Notif as tachikoma.notifications
     participant Bus as bubus.EventBus
 
     Runner->>Repo: get pending background instances
     Runner->>Exec: execute(instance) [via semaphore]
+    Exec->>Notif: create_notification_server(bus, source, instance_id)
+    Notif-->>Exec: notification MCP server
 
     rect rgba(0, 128, 255, 0.1)
         Note over Exec,Eval: Multi-turn execution loop
-        Exec->>SDK: create client, query(task.prompt)
+        Exec->>SDK: create client with mcp_servers=[..., notification_server]
+        Exec->>SDK: query(task.prompt)
         loop until complete/failed/max_iterations
             SDK-->>Exec: agent response
             Exec->>Eval: assess(response, task_definition)
             alt complete
                 Exec->>Repo: mark completed
-                opt notify field set
-                    Note over Exec: Fork session with notify prompt
-                    Exec->>SDK: fork_and_capture(notify_prompt)
-                    SDK-->>Exec: generated notification text
-                    Exec->>Bus: dispatch(TaskNotification(generated_text, severity="info"))
-                end
+                Note over Exec: Agent may have called send_notification during execution
             else not complete
                 Exec->>SDK: query(evaluator_feedback) [resume]
             else stuck/failed
                 Exec->>Repo: mark failed
-                Exec->>Bus: dispatch(TaskNotification(message, severity="error"))
+                Exec->>Notif: dispatch_notification(bus, source, error_msg, "error", instance_id)
+                Notif->>Bus: dispatch(Notification(prompt, severity="error"))
             end
         end
     end
@@ -100,18 +101,39 @@ sequenceDiagram
     end
 ```
 
+**Agent-driven notification during execution:**
+
+```mermaid
+sequenceDiagram
+    participant Agent as Background Task Agent
+    participant MCP as send_notification tool
+    participant Notif as tachikoma.notifications
+    participant Bus as bubus.EventBus
+    participant Channel as Channel (Telegram/REPL)
+    participant Coord as Coordinator
+
+    Agent->>MCP: send_notification({message: "Found 3 new items"})
+    MCP->>Notif: dispatch_notification(bus, source, message, "info", source_id)
+    Notif->>Notif: build_notification_prompt(source, message)
+    Notif->>Bus: dispatch(Notification(prompt, severity="info"))
+    Bus-->>Channel: event received
+    Channel->>Coord: enqueue(prompt)
+    Coord-->>Channel: agent response
+    MCP-->>Agent: "Notification sent successfully"
+```
+
 **Integration Points:**
 - Runner ↔ Repository: queries pending background instances, marks as running
 - Executor ↔ SDK: per-task `ClaudeSDKClient` with `resume` for multi-turn
 - Executor ↔ Evaluator: lightweight model assessment after each agent response
-- Executor ↔ Event bus: dispatches `TaskNotification` on completion/failure
+- Executor ↔ Notification module: registers notification MCP server per-execution, calls `dispatch_notification()` for failure notifications
 - Executor ↔ Pre-processing pipeline: full `PreProcessingPipeline` with memory, projects, skills providers; extracts MCP servers and agents into SDK options
 - Executor ↔ Post-processing pipeline: separate `PostProcessingPipeline` instance with selective processors
-- Executor ↔ `fork_and_capture` (`post_processing.py`): forks task session for notification generation
+- Channels ↔ Event bus: subscribe to `Notification` events (from `tachikoma.notifications`) for delivery
 
 **Error contract:**
 - Runner loop errors: logged, continues on next tick
-- Executor errors: instance marked `failed`, `TaskNotification` dispatched
+- Executor errors: instance marked `failed`, `Notification` dispatched via `tachikoma.notifications`
 - Post-processing errors: logged, don't affect task completion status
 
 ## Data Flow
@@ -123,36 +145,39 @@ sequenceDiagram
 2. Query pending background task instances
 3. For each instance (gated by asyncio.Semaphore, max_concurrent=3):
    a. Mark instance as running
-   b. Create BackgroundTaskExecutor with:
+   b. Build notification source string from definition name (or instance prompt fallback)
+   c. Create notification MCP server via create_notification_server(bus, source, instance_id)
+   d. Create BackgroundTaskExecutor with:
       - Full pre-processing pipeline (memory, projects, skills context providers)
+      - Notification MCP server registered in mcp_servers
       - Adapted system prompt prepended with current date/time in configured timezone (task context + instructions)
       - Adapted post-processing pipeline (EpisodicProcessor in main phase + ProjectsProcessor in pre_finalize phase + GitProcessor in finalize phase)
       - Task instance prompt
-   c. Executor creates ClaudeSDKClient, calls query(prompt)
-   d. Evaluator loop (max_iterations):
+   e. Executor creates ClaudeSDKClient, calls query(prompt)
+   f. Evaluator loop (max_iterations):
       i.   Consume agent response via receive_response() (per DES-005)
       ii.  Evaluator prompt assesses: complete / continue / stuck
       iii. If continue: call client.query(feedback) using resume
       iv.  If complete: break loop
+           (Agent may have called send_notification during execution for success notifications)
       v.   If stuck or max iterations: mark failed, break
-   e. Run adapted post-processing pipeline on the executor's session
-   f. If complete and notify is set: fork session with notify prompt via fork_and_capture,
-      use generated text as notification message (fall back to evaluator feedback on failure),
-      dispatch TaskNotification(generated_text, severity="info") on bus
-   g. If failed: dispatch TaskNotification(raw_error_message, severity="error") on bus
+   g. Run adapted post-processing pipeline on the executor's session
+   h. If failed: call dispatch_notification(bus, source, error_msg, "error", instance_id)
 4. Sleep until next tick
 ```
 
 ### Notification generation and delivery
 
-For success notifications with `definition.notify` set, the executor forks the task's SDK session with the `notify` instruction as a prompt via `fork_and_capture`. The forked agent has full task conversation context and generates a user-facing notification message. The `notify` field is sent verbatim — the user controls the notification instruction when creating the task.
+The notification system uses a standalone `tachikoma.notifications` module (not inside the tasks package) with a single shared dispatch path for both agent-driven and automatic failure notifications.
 
-Fallback chain: if `sdk_session_id` is unavailable, the fork fails, or no text is produced, the evaluator's completion feedback is used as the notification message. Error notifications always use the raw error message directly (no fork).
+**Agent-driven notifications**: The executor registers a notification MCP server per-execution via `create_notification_server(bus, source, source_id)`, following the DES-006 factory pattern. The resulting `send_notification` tool is available only within that background task agent's session. When the agent calls the tool with a message, the handler validates it is non-empty, calls `dispatch_notification()` which builds a prompt via `build_notification_prompt()` (source, timestamp, content) and dispatches a `Notification` event on the bus.
 
-Channels subscribe to `TaskNotification` events via `bus.on(TaskNotification, handler)`:
+**Automatic failure notifications**: When the executor detects failure (stuck, error, max iterations), it calls `dispatch_notification()` directly with the error description and severity "error". This uses the same prompt template and dispatch path as agent-driven notifications, ensuring consistent formatting.
+
+**Channel delivery**: Channels subscribe to `Notification` events via `bus.on(Notification, handler)`:
 
 - **Telegram**: `_handle_notification` enqueues `event.prompt` into the coordinator via `coordinator.enqueue()`, then calls `_process_through_coordinator()` if not already processing (same pattern as `_handle_session_task`). When already processing, the prompt is buffered in the coordinator's message queue and picked up by the active processing loop.
-- **REPL**: `_handle_notification` enqueues the event into `_task_queue` (same queue as session tasks, widened to `SessionTaskReady | TaskNotification`). The main REPL loop drains the queue via `_process_queued_tasks()`, which dispatches to `_execute_notification()` for notification events — enqueuing the prompt into the coordinator and rendering the agent response through the standard pipeline.
+- **REPL**: `_handle_notification` enqueues the event into `_task_queue` (same queue as session tasks, widened to `SessionTaskReady | Notification`). The main REPL loop drains the queue via `_process_queued_tasks()`, which dispatches to `_execute_notification()` for notification events — enqueuing the prompt into the coordinator and rendering the agent response through the standard pipeline.
 
 ## Key Decisions
 
@@ -187,18 +212,19 @@ Channels subscribe to `TaskNotification` events via `bus.on(TaskNotification, ha
 - Pro: Fast assessment turnaround
 - Con: Less nuanced assessment than a larger model
 
-### Fork-based notification generation with coordinator routing
+### Agent-driven notification via MCP tool
 
-**Choice**: Generate success notification text by forking the task's SDK session with `definition.notify` as a prompt (via `fork_and_capture`), then wrap the generated text in a coordinator-routed prompt template and dispatch a `TaskNotification` event carrying the prompt. Channels subscribe to the event and enqueue the prompt into the coordinator's standard message processing pipeline for delivery.
-**Why**: The `notify` field is described as "an instruction for generating a notification message." Forking gives the notification agent full context about what the task accomplished, producing richer text than a static template. Routing through the coordinator pipeline provides message length handling, boundary detection, and consistent delivery — the same path used for session tasks. The coordinator's response renderer handles message splitting, preventing Telegram's 4096-char limit errors.
+**Choice**: Background task agents decide at runtime whether and what to notify the user about via a `send_notification` MCP tool, instead of a static `notify` field on task definitions. The executor registers a notification MCP server per-execution (DES-006 factory pattern), and failure notifications are dispatched automatically using the same shared `dispatch_notification()` function.
+**Why**: A static `notify` field decided notification behavior at task creation time — the agent could not adapt at runtime. The MCP tool approach gives the agent full control: it can evaluate results, send progress updates, or complete silently. Failure notifications remain automatic because the agent can no longer act after failure. Using a single `dispatch_notification()` function for both paths ensures consistent prompt formatting.
 
 **Consequences**:
-- Pro: Context-aware notifications that summarize actual task outcomes
-- Pro: Users control notification quality via the prompt they write in `notify`
-- Pro: Coordinator pipeline handles message splitting and rendering — no channel-specific length handling needed
-- Pro: Consistent delivery pattern with session tasks (both route through coordinator)
-- Con: Adds latency (one fork SDK invocation + one coordinator SDK invocation per notification)
-- Con: Fallback needed when fork fails
+- Pro: Agent decides at runtime whether results are worth notifying about
+- Pro: Supports multiple notifications during execution (e.g., progress updates)
+- Pro: No fork latency — notifications dispatch directly via event bus
+- Pro: Consistent formatting between agent-driven and failure notifications
+- Pro: Tool scoped to background execution only (per-execution MCP server registration)
+- Con: Agent may forget to call `send_notification` on success, resulting in silent completion
+- Con: No user-specified notification instruction (the `notify` field is removed)
 
 ### Semaphore-based concurrency gating
 
@@ -212,23 +238,35 @@ Channels subscribe to `TaskNotification` events via `bus.on(TaskNotification, ha
 
 ## System Behavior
 
-### Scenario: Background task completes with notification
+### Scenario: Agent sends notification during execution
 
-**Given**: A pending background task with `notify` set
-**When**: The executor runs and the evaluator marks it complete
-**Then**: The instance is marked completed, post-processing runs (episodic + git), the task session is forked with the `notify` prompt to generate notification text, the generated text is wrapped in a coordinator-routed prompt template (`NOTIFICATION_PROMPT`), and a `TaskNotification` event with the prompt and severity "info" is dispatched. Channels receive the event, enqueue the prompt into the coordinator, and process it through the standard message pipeline.
+**Given**: A background task is executing with `send_notification` available
+**When**: The agent calls `send_notification` with a message
+**Then**: A `Notification` event with the wrapped prompt (source, timestamp, content) and severity "info" is dispatched. Channels receive the event and route it through the coordinator for delivery. The tool returns success to the agent.
+
+### Scenario: Agent sends multiple notifications
+
+**Given**: A long-running background task is executing
+**When**: The agent calls `send_notification` multiple times (e.g., progress updates)
+**Then**: Each call independently dispatches a `Notification` event and is delivered independently. No state accumulates between calls.
+
+### Scenario: Background task completes without notification
+
+**Given**: A background task where the agent did not call `send_notification`
+**When**: The evaluator marks it complete
+**Then**: The instance is marked completed and post-processing runs. No notification is dispatched — the agent chose not to notify.
 
 ### Scenario: Background task stuck
 
 **Given**: A running background task producing repetitive responses
 **When**: The evaluator detects stuck behavior
-**Then**: The instance is marked failed and a `TaskNotification` event with severity "error" is dispatched.
+**Then**: The instance is marked failed and `dispatch_notification()` is called with severity "error", dispatching a `Notification` event via `tachikoma.notifications`.
 
 ### Scenario: Max iterations reached
 
 **Given**: A running background task at the iteration limit
 **When**: The max iteration count is reached
-**Then**: The evaluator forces a final assessment. If not complete, the task is marked failed with a notification.
+**Then**: The evaluator forces a final assessment. If not complete, the task is marked failed and a `Notification` event with severity "error" is dispatched.
 
 ### Scenario: Concurrent tasks at limit
 

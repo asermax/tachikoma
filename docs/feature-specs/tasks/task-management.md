@@ -41,7 +41,6 @@ The agent manages task definitions through MCP tools exposed during conversation
 - Given the agent calls `create_task` with an ISO datetime including an explicit timezone offset or `Z` suffix, then the explicit timezone is preserved as-is
 - Given the agent calls `create_task` with an invalid cron expression, then the tool returns a clear error message
 - Given the agent calls `create_task` without a required field (name, schedule, type, or prompt), then the tool returns a clear error identifying the missing field
-- Given the agent calls `create_task` with an optional `notify` field, then the task definition stores the notification instruction; when `notify` is omitted, the definition is created with `notify=null`
 - Given the agent calls `create_task` with a type value other than "session" or "background", then the tool returns a clear error
 - Given the agent calls `list_tasks` with no arguments, then it receives only enabled task definitions with their task ID, current status, type, schedule (one-shot times displayed in the configured timezone), and last_fired_at information
 - Given the agent calls `list_tasks` with `archived=true`, then it receives only disabled task definitions
@@ -82,7 +81,7 @@ The base system prompt preamble includes a timezone-aware Tasks section that giv
 - Given the preamble Tasks section, then it includes a Date and Time subsection showing the configured timezone and a date command for current time lookup
 - Given the preamble Tasks section, then it lists each MCP tool with parameter types, required/optional indicators, valid values, and behavioral notes
 - Given the preamble Tasks section, then tool descriptions include cross-references between tools (e.g., "get task IDs from list_tasks" for update_task and delete_task)
-- Given the preamble Tasks section describes the `notify` parameter, then it states that `notify` is a success notification instruction — when set, generates a user-facing message on completion; when omitted, successful tasks complete silently; failures always notify regardless of this field
+- Given the preamble Tasks section, then it states that background tasks can send notifications to the user during execution via the `send_notification` tool, and that failures are automatically notified
 
 ### Schedule Deserialization Robustness (R10)
 
