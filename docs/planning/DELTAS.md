@@ -511,13 +511,6 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 **Complexity**: Easy
 **Description**: When the agent writes to a file and the result isn't verbatim what the user asked for (the agent rephrased, added context, or took liberties), the user has no way to verify without opening the file. Similarly, when the agent references specific parts of a file it wrote or read, it assumes the user has seen the file contents — but in Telegram or across sessions, the user can't see files. Add agent behavior guidance (through system prompt or preamble instructions) so the agent surfaces relevant file excerpts inline using block quotes or code blocks when: (1) the written content diverges from the user's request, or (2) the agent references file contents the user hasn't seen. Not every write needs verification — only when the user would reasonably want to see what ended up on disk.
 
-### DLT-101: Fix duplicate messages on long Telegram responses
-**Status**: ✗ Defined
-**Depends on**: None
-**Priority**: 2 (High)
-**Complexity**: Medium
-**Description**: When the agent's response is long enough to be split into multiple parts, duplicate messages appear in the Telegram chat. The root cause is in the ResponseRenderer's push notification mechanism: `notify()` copies the final message and deletes the original, but if the delete fails after a successful copy, a duplicate remains. This is especially likely during split messages where the last chunk is the one being copied. The fix should ensure atomicity of the copy+delete operation (retry delete on failure, or use an alternative notification delivery mechanism that doesn't require message duplication). Additionally, investigate whether the splitting logic itself can contribute to duplicates when the pending-to-complete transition coincides with a message boundary.
-
 ### DLT-102: Prevent stale cron from firing on create/update
 **Status**: ✗ Defined
 **Depends on**: None

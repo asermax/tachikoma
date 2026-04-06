@@ -178,11 +178,12 @@ ResponseRenderer
 ├── _bot: Bot
 ├── _chat_id: int
 ├── _push_notifications: bool = False    (set from TelegramSettings at construction; False default for test safety)
-├── _current_message_id: int | None      (Telegram message being edited)
+├── _current_message_id: int | None      (Telegram message being edited; after split, points to last chunk)
 ├── _buffer: str                          (accumulated markdown text)
 ├── _tool_line: str | None                (current tool status line)
 ├── _tool_activities: list[ToolActivity]  (collected activities for summary; cleared at each tool-to-text transition and on finalize)
 ├── _last_edit_time: float                (monotonic timestamp of last edit)
+├── _split_message_ids: list[int]         (tracked message IDs from split; reused on re-split, excess deleted)
 └── _message_count: int                   (tracks messages sent in current response)
 ```
 
@@ -245,12 +246,21 @@ When `push_notifications` is enabled, all `send_message` calls during streaming 
 3. Measure converted text with utf16_len(text) against TELEGRAM_MAX_UTF16 (4096)
 4. If over limit:
    a. split_entities(text, entities, 4096) produces list of (text, entities) chunks
-   b. Send/edit first chunk as the current message
-   c. Send remaining chunks as new messages
-5. If under limit: send/edit as a single message
+   b. _send_chunks() processes each chunk:
+      - If tracked split message exists at this index → edit in-place (no duplicate)
+      - If first split ever with current streaming message → edit streaming message
+      - Otherwise → send new message
+   c. All message IDs are tracked in _split_message_ids
+   d. Excess tracked messages (from a previous split with more chunks) are deleted
+5. If under limit:
+   a. If _split_message_ids is non-empty (shrink-to-unsplit):
+      - Edit first tracked message with full content
+      - Delete remaining tracked messages
+      - Fall through to normal edit path
+   b. Otherwise: send/edit as a single message
 ```
 
-Splitting operates on the post-conversion text+entities via `telegramify_markdown.split_entities()`, which respects UTF-16 code unit length (Telegram's actual constraint), clips entities at split boundaries, and prefers newline-based split points.
+Splitting operates on the post-conversion text+entities via `telegramify_markdown.split_entities()`, which respects UTF-16 code unit length (Telegram's actual constraint), clips entities at split boundaries, and prefers newline-based split points. Split messages are tracked via `_split_message_ids` to prevent duplicates when `_send_chunks()` is called multiple times per response (during streaming and finalization).
 
 ### Message buffer flow
 
@@ -453,7 +463,7 @@ The `Result` event serves as a turn boundary signal. The channel finalizes the c
 
 **Given**: Push notifications enabled (default), agent streams a text response
 **When**: The Result event arrives
-**Then**: `finalize()` sends the final edit, `notify()` copies the message via `copy_message` (triggering push notification) and deletes the original via `delete_message`. All messages during streaming were sent silently. If copy fails, the original is preserved (no push, logged at warning). If delete fails, duplicate is acceptable (logged at warning).
+**Then**: `finalize()` sends the final edit, `notify()` copies the message via `copy_message` (triggering push notification) and deletes the original via `delete_message` with up to 3 retries (0.5s fixed backoff). All messages during streaming were sent silently. If copy fails, the original is preserved (no push, logged at warning). If delete fails after all retries, duplicate is accepted gracefully (logged at warning).
 
 ### Scenario: Push notification for split response
 

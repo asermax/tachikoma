@@ -65,12 +65,17 @@ The bot progressively edits a single Telegram message as text chunks arrive, thr
 - Given a network error during a message edit, when the edit fails, then the bot skips that edit and continues with the next chunk (no crash, no retry loop)
 - Given a TelegramRetryAfter error on edit, when received, then the bot waits the specified duration before the next edit attempt
 - Given the coordinator yields a Status event (e.g., "Thinking..."), when received before the response stream, then a transient italic status message is sent; this message is replaced when the first TextChunk or ToolActivity arrives
+- Given a response is split into multiple messages, when `_send_chunks()` is called again (during streaming or finalize), then existing split messages are edited in-place with updated content (no stale duplicates left behind)
+- Given a re-split produces fewer chunks than the previous split, when excess messages exist, then they are deleted
+- Given a re-split produces more chunks than the previous split, when additional chunks are needed, then new messages are sent for the additional chunks
+- Given content was previously split but now fits in a single message, when the next edit cycle runs, then the first split message is edited with full content and excess messages are deleted (shrink-to-unsplit)
+- Given `_send_chunks()` fails to edit an existing tracked split message, when the Telegram API error occurs, then the system continues without crash and the failure is logged
 
 **Push notifications (when enabled)**:
 - Given push notifications are enabled (default), when messages are created during streaming (initial, splits, status), then all are sent silently (no push notification for incomplete content)
 - Given the agent streams a response, when the Result event arrives, then the last message is copied (triggering a push notification) and the original is deleted
 - Given a response was split into multiple messages, when the Result event arrives, then only the last message is copy+deleted; earlier splits remain unchanged
-- Given the copy succeeds but delete fails, then the user sees a duplicate message (acceptable degradation) and the failure is logged
+- Given the copy succeeds but delete fails with a transient error, when retrying, then delete is re-attempted up to 3 times with 0.5s backoff; if all retries fail, the duplicate is accepted and the failure is logged
 - Given the copy fails, then delete is NOT called, the original is preserved, and the failure is logged
 - Given an error is the only response (no text streamed), then the error message triggers a normal push notification; no copy+delete is performed
 - Given the agent streams text followed by an error event, then the error message is sent silently because the copy+delete of the text message provides the push notification
