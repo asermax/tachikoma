@@ -66,7 +66,7 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 ### DLT-011: Run as a persistent background service
 **Status**: ✗ Defined
 **Depends on**: None
-**Priority**: 2 (High)
+**Priority**: 3 (Medium)
 **Complexity**: Easy
 **Description**: Run the assistant as a persistent background process that starts automatically on system boot and restarts on failure. This delta covers service lifecycle and process management only — it ensures the application is always running and recovers from crashes. Specific reconnection logic (Telegram) and state persistence (memory files) are handled by their respective deltas. Implementation should use standard Linux service management (e.g., systemd) appropriate for a single-user, self-hosted deployment.
 
@@ -115,7 +115,7 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 ### DLT-031: Granular processing status messages
 **Status**: ✗ Defined
 **Depends on**: None
-**Priority**: 3 (Medium)
+**Priority**: 4 (Low)
 **Complexity**: Medium
 **Description**: Replace the single hardcoded "Thinking..." status message with granular, component-driven status updates during pre-processing and post-processing. Each pipeline component (context providers, post-processors, boundary detection) reports what it is currently doing via a status callback, and the coordinator forwards these as Status events to the active channel. This gives users real-time visibility into what the assistant is doing behind the scenes (e.g., "Searching memories...", "Detecting topic shift...", "Extracting memories...") instead of a generic indicator.
 
@@ -143,7 +143,7 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 ### DLT-040: Unify sub-agent execution into shared abstraction
 **Status**: ✗ Defined
 **Depends on**: None
-**Priority**: 3 (Medium)
+**Priority**: 4 (Low)
 **Complexity**: Medium
 **Description**: The prompt-driven processor pattern, fork-and-consume helper, and ad-hoc SDK call construction are repeated across multiple sub-agent sites (post-processors, boundary detection, memory search, skills classification, task execution) with similar boilerplate for building options, calling the SDK, and consuming results. Extract a common agent execution abstraction — a class with shared methods for running sub-agents — that encapsulates these patterns, and refactor existing call sites to use it. This replaces scattered SDK option assembly and result consumption with a uniform interface, reducing duplication and making it easier to apply cross-cutting changes (like sandboxing or observability) to all sub-agents.
 
@@ -185,49 +185,49 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 ### DLT-047: Proactive session handoff before context compaction
 **Status**: ✗ Defined
 **Depends on**: None
-**Priority**: 2 (High)
+**Priority**: 3 (Medium)
 **Complexity**: Medium
 **Description**: When a conversation grows long enough that the SDK's auto-compaction would compress away injected context (memories, skills, foundational files), proactively detect context pressure and perform an explicit handoff — close the current session with a structured summary and open a new one with fresh context injection plus the summary as bridging context. This replaces opaque auto-compaction with a controlled transition that guarantees critical context survives. The detection mechanism (token estimation, message count heuristic, or SDK signal) and the summary format should be evaluated during speccing. The handoff reuses the existing session close/reopen infrastructure and bridging context assembly.
 
 ### DLT-048: Plugin system with install, discovery, and loading
 **Status**: ✗ Defined
 **Depends on**: None
-**Priority**: 5 (Backlog)
+**Priority**: 3 (Medium)
 **Complexity**: Hard
 **Description**: Introduce a directory-based plugin system that allows extending the assistant with additional capabilities. A plugin is a self-describing directory with a manifest file that declares its structure and contributions — context providers, post-processors, skills, channels, or MCP tools. Plugins are installed by copying from a source location (local path or remote repository) into a managed plugins directory within the workspace. At startup, the plugin loader discovers installed plugins, validates their manifests, and feeds declared contributions into the existing registration points (bootstrap, pipelines, coordinator). Plugin loading is fail-safe: a broken plugin is logged and skipped without affecting the rest of the system. Plugin-specific configuration is managed through the existing TOML config under a plugins section.
 
 ### DLT-055: Plugin update mechanism
 **Status**: ✗ Defined
 **Depends on**: DLT-048
-**Priority**: 5 (Backlog)
+**Priority**: 4 (Low)
 **Complexity**: Medium
 **Description**: Add an update mechanism to the plugin system that checks whether installed plugins' sources have newer versions available and synchronizes the local copy. Updates can be triggered explicitly by the user or run automatically at startup. The synchronization strategy depends on the source type (re-copy for local paths, pull for remote repositories). Failed updates should leave the existing plugin intact rather than corrupting it. This enables plugin authors to publish improvements and bug fixes that users can pull in without manually reinstalling.
 
 ### DLT-056: Plugin removal
 **Status**: ✗ Defined
 **Depends on**: DLT-048
-**Priority**: 5 (Backlog)
+**Priority**: 4 (Low)
 **Complexity**: Easy
 **Description**: Add a removal mechanism to the plugin system that cleanly uninstalls a plugin by removing its directory from the managed plugins location and cleaning up any related configuration. This completes the plugin lifecycle by allowing users to discard plugins they no longer need.
 
 ### DLT-049: Plugin hook for custom context providers
 **Status**: ✗ Defined
 **Depends on**: DLT-048
-**Priority**: 5 (Backlog)
+**Priority**: 4 (Low)
 **Complexity**: Easy
 **Description**: Allow plugins to contribute context providers that participate in the pre-processing pipeline. Plugin-declared providers implement the existing ContextProvider interface and are registered into the PreProcessingPipeline alongside built-in providers during plugin loading. This enables plugins to inject custom context (e.g., calendar events, external knowledge bases, CRM data) into every agent conversation without modifying the core system.
 
 ### DLT-050: Plugin hook for custom post-processors
 **Status**: ✗ Defined
 **Depends on**: DLT-048
-**Priority**: 5 (Backlog)
+**Priority**: 4 (Low)
 **Complexity**: Easy
 **Description**: Allow plugins to contribute post-processors that participate in the post-processing pipeline. Plugin-declared processors implement the existing PostProcessor interface (or extend PromptDrivenProcessor) and are registered into the PostProcessingPipeline at a plugin-specified phase (main, pre_finalize, finalize) during plugin loading. This enables plugins to perform custom extraction, side effects, or integrations after a session closes (e.g., syncing extracted action items to a task tracker, sending conversation summaries to a webhook).
 
 ### DLT-051: Plugin hook for bundled skills
 **Status**: ✗ Defined
 **Depends on**: DLT-048, DLT-054
-**Priority**: 5 (Backlog)
+**Priority**: 4 (Low)
 **Complexity**: Easy
 **Description**: Allow plugins to bundle pre-defined skills (with their agent definitions and MCP tool servers) that become available in the skill registry alongside user-authored skills. During plugin loading, each plugin's declared skill directories are added to the skill registry's search paths, making their skills discoverable by the skills context provider. This includes skills that provide MCP tool servers, which requires the skill-provided MCP tools capability to be in place. This enables plugins to ship ready-to-use capabilities (e.g., a "code review" plugin that includes a skill with specialized agents, prompts, and tools) without requiring users to manually copy skill files into the workspace.
 
@@ -241,7 +241,7 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 ### DLT-053: Plugin hook for secondary channels
 **Status**: ✗ Defined
 **Depends on**: DLT-048, DLT-052
-**Priority**: 5 (Backlog)
+**Priority**: 4 (Low)
 **Complexity**: Easy
 **Description**: Allow plugins to contribute secondary channels that run alongside the primary channel. Plugin-declared channels implement the same channel interface used by the built-in REPL and Telegram channels and are launched as secondary channels during startup using the concurrent channel infrastructure. This enables plugins to add new communication surfaces (e.g., a Slack channel, a web API, a Matrix bridge) without modifying the core application.
 
@@ -255,7 +255,7 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 ### DLT-057: Validate skill structure and metadata
 **Status**: ✗ Defined
 **Depends on**: DLT-054
-**Priority**: 3 (Medium)
+**Priority**: 5 (Backlog)
 **Complexity**: Easy
 **Description**: Skill authoring requires that new skills conform to the system's directory conventions and metadata contracts, but violations are only caught at runtime when the registry silently skips invalid entries. Provide a validation tool that checks a skill's structural correctness: SKILL.md exists with a valid description, agent definition files in agents/ have required frontmatter fields (description) and valid optional fields (model literals, tools as string lists), and the directory layout follows expected patterns. Results include actionable diagnostics listing each violation so the assistant can fix issues before finalizing a new skill. The tool is exposed on the skill authoring guide skill via the skill-provided MCP tools capability.
 
@@ -290,7 +290,7 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 ### DLT-062: Restrict agent file writes to workspace directory
 **Status**: ✗ Defined
 **Depends on**: None
-**Priority**: 2 (High)
+**Priority**: 3 (Medium)
 **Complexity**: Medium
 **Description**: Currently all agents run with `bypassPermissions` and no path restrictions, meaning they can modify any file the process has OS-level access to. Confine file writes, edits, and shell commands to the workspace path while preserving read access for broader system context. All SDK agent instances must be subject to the sandbox boundary, regardless of how they are created. The specific sandboxing mechanism (SDK-level configuration, permission mode restrictions, or another approach) should be evaluated during speccing.
 
@@ -367,14 +367,14 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 ### DLT-075: Re-evaluate skill context per message
 **Status**: ✗ Defined
 **Depends on**: None
-**Priority**: 2 (High)
+**Priority**: 1 (Critical)
 **Complexity**: Medium
 **Description**: The skills context provider currently runs only on the first message of a new session — its output is persisted and reused for all subsequent messages in that session. When a conversation shifts topic mid-session (e.g., the user starts discussing routines after talking about a reading list), newly relevant skills are never loaded because the classification was based on the first message alone. Re-evaluate skill relevance on each message so follow-up messages can trigger loading of additional skills that match the evolving conversation context.
 
 ### DLT-076: Re-evaluate memory context per message
 **Status**: ✗ Defined
 **Depends on**: None
-**Priority**: 2 (High)
+**Priority**: 1 (Critical)
 **Complexity**: Medium
 **Description**: The memory context provider currently runs only on the first message of a new session — its output is persisted and reused for all subsequent messages in that session. When the conversation topic evolves, the initially retrieved memories may no longer be the most relevant, and memories that would be highly relevant to follow-up messages are never injected. Re-evaluate memory relevance on each message so the agent always has the most pertinent memories for the current point in the conversation.
 
@@ -395,14 +395,14 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 ### DLT-080: Self-healing skill system via post-conversation analysis
 **Status**: ✗ Defined
 **Depends on**: None
-**Priority**: 3 (Medium)
+**Priority**: 4 (Low)
 **Complexity**: Hard
 **Description**: Skills currently only improve when the user explicitly notices a gap and requests changes. Add a post-conversation processor that analyzes skill usage during the completed session — which skills were invoked, which failed or were misapplied, what workarounds the agent resorted to — and surfaces concrete edit suggestions to the user for improving skill definitions. For example: detecting that a workflow required manually chaining references that should be linked, that a CLI flag used in practice is missing from a skill's guidance, or that documented instructions diverged from actual usage patterns. Suggestions are presented for user review and approval, not applied automatically.
 
 ### DLT-081: Workflow state machine for skills
 **Status**: ✗ Defined
 **Depends on**: None
-**Priority**: 3 (Medium)
+**Priority**: 1 (Critical)
 **Complexity**: Hard
 **Description**: Skills that define multi-step workflows (e.g., a morning routine skill that sequences reading a plan, having a conversation, marking activities, and updating a calendar) currently rely entirely on the LLM to remember which steps are done and what comes next. Without explicit state, the agent skips steps, repeats completed ones, or loses its place after context compaction. Introduce a workflow construct that lets skills declare ordered steps with completion conditions, tracks progression across messages, and injects step-specific reminders or continuations into the agent's context — enabling the agent to reliably execute multi-step workflows like deploying a service (build → test → push → verify) or processing a reading list (fetch → summarize → file → notify). Design consideration: workflows could be mapped to a file tree structure (workflows = directories, steps = subdirectories, each containing instructions/prompts + tools + data) where the agent navigates the tree natively — this aligns with how skills already work as folders and makes workflows resilient to model capability changes (a step can be condensed into a single tool call when the model supports it).
 
@@ -423,7 +423,7 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 ### DLT-085: Tracked schema migration system
 **Status**: ✗ Defined
 **Depends on**: None
-**Priority**: 2 (High)
+**Priority**: 3 (Medium)
 **Complexity**: Medium
 **Description**: Replace the current pragma-based migration checks with a tracked migration system that records applied migrations in a dedicated database table. On startup, the system queries already-applied migrations and only executes new ones in order, skipping already-completed migrations entirely. This eliminates redundant schema inspection on every startup and provides a clean, extensible mechanism for adding future schema changes without accumulating pragma checks.
 
@@ -458,7 +458,7 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 ### DLT-094: Delegate work to autonomous long-running agents
 **Status**: ✗ Defined
 **Depends on**: None
-**Priority**: 3 (Medium)
+**Priority**: 2 (High)
 **Complexity**: Hard
 **Description**: Persistent, communicative agents that execute extended work autonomously — unlike background tasks which are fire-and-forget with a single prompt and evaluator loop, these agents maintain ongoing sessions, report progress, ask clarifying questions, and collaborate with the user over time. Think autonomous coworkers rather than one-off jobs. The user delegates a task ("research this topic thoroughly and report back", "refactor this module over the next hour, ask me if you get stuck") and the agent works independently while keeping the user informed and able to course-correct. The user can see intermediate progress, answer agent questions mid-execution, and control the agent's lifecycle (pause, resume, terminate) — all without blocking their main conversation for other interactions.
 
@@ -507,14 +507,14 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 ### DLT-102: Prevent stale cron from firing on create/update
 **Status**: ✗ Defined
 **Depends on**: None
-**Priority**: 2 (High)
+**Priority**: 3 (Medium)
 **Complexity**: Easy
 **Description**: When a cron task is created or updated with a schedule time that has already passed today, the instance generator fires it immediately to "catch up" instead of waiting for the next scheduled occurrence. For example: a task runs at 4 PM, you update it to 8 AM at noon, it fires right away instead of waiting until tomorrow. Add a `since` timestamp field to `task_definitions` that gets set to `now()` on every create and update operation. The instance generator should only create instances for cron matches that fall after the `since` timestamp, ensuring schedule changes never trigger retroactive firings. This addresses a distinct problem from preventing duplicate instances within the same cron period — here the issue is newly-created or recently-updated tasks firing retroactively for past schedule matches.
 
 ### DLT-103: Log and surface silently skipped session tasks
 **Status**: ✗ Defined
 **Depends on**: None
-**Priority**: 2 (High)
+**Priority**: 3 (Medium)
 **Complexity**: Easy
 **Description**: Session-type cron tasks are gated by an idle check — they only fire when the user has been inactive for at least the configured idle window. When the user is active, the session task scheduler silently skips the evaluation with no log entry or feedback. This means tasks like the Sunday planning routine can go weeks without ever firing, with no indication that something is wrong. Add structured logging for every skipped evaluation (task name, reason: user active, next evaluation window), and surface chronically skipped tasks through the task status queries so the user and agent can diagnose why a session task never fires. Scope is limited to logging and surfacing — force-firing and other fallback mechanisms are tracked separately.
 
