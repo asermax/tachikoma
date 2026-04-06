@@ -404,7 +404,7 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 **Depends on**: None
 **Priority**: 3 (Medium)
 **Complexity**: Hard
-**Description**: Skills that define multi-step workflows (e.g., a morning routine skill that sequences reading a plan, having a conversation, marking activities, and updating a calendar) currently rely entirely on the LLM to remember which steps are done and what comes next. Without explicit state, the agent skips steps, repeats completed ones, or loses its place after context compaction. Introduce a workflow construct that lets skills declare ordered steps with completion conditions, tracks progression across messages, and injects step-specific reminders or continuations into the agent's context — enabling the agent to reliably execute multi-step workflows like deploying a service (build → test → push → verify) or processing a reading list (fetch → summarize → file → notify).
+**Description**: Skills that define multi-step workflows (e.g., a morning routine skill that sequences reading a plan, having a conversation, marking activities, and updating a calendar) currently rely entirely on the LLM to remember which steps are done and what comes next. Without explicit state, the agent skips steps, repeats completed ones, or loses its place after context compaction. Introduce a workflow construct that lets skills declare ordered steps with completion conditions, tracks progression across messages, and injects step-specific reminders or continuations into the agent's context — enabling the agent to reliably execute multi-step workflows like deploying a service (build → test → push → verify) or processing a reading list (fetch → summarize → file → notify). Design consideration: workflows could be mapped to a file tree structure (workflows = directories, steps = subdirectories, each containing instructions/prompts + tools + data) where the agent navigates the tree natively — this aligns with how skills already work as folders and makes workflows resilient to model capability changes (a step can be condensed into a single tool call when the model supports it).
 
 ### DLT-082: CLI for querying internal state
 **Status**: ✗ Defined
@@ -573,3 +573,24 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 **Priority**: 4 (Low)
 **Complexity**: Medium
 **Description**: The baseline sensor for the proactive nudge framework, using existing episodic memory data. Polls recent episodic memories with priority weighting for conversations that have open threads, upcoming events mentioned in past chats, or topics that have been discussed multiple times. Produces scored signals (data + relevance score + optional nudge suggestion) that feed into the nudge engine via the sensor framework. This is the first concrete sensor implementation and validates the sensor abstraction. Additional sensors (routine, calendar, time-based, geo-fencing, external events) follow the same pattern and are tracked separately.
+
+### DLT-111: Prevent message loss during response finalization
+**Status**: ✗ Defined
+**Depends on**: None
+**Priority**: 2 (High)
+**Complexity**: Medium
+**Description**: When the user sends a message at the exact moment a previous response is finalizing, the new message can be silently dropped. The coordinator consumes the message from the queue but loses it during the transition between completing the previous turn's post-processing and picking up the next turn. This delta eliminates that timing window so that every consumed message is guaranteed to be processed, even when it arrives during response finalization.
+
+### DLT-112: Buffer background task notifications until conversation is idle
+**Status**: ✗ Defined
+**Depends on**: None
+**Priority**: 3 (Medium)
+**Complexity**: Medium
+**Description**: When a background task completes and triggers a notification while the user is in an active conversation, the notification is currently injected as a steering message into the ongoing exchange instead of being held for later delivery. Notifications should never interrupt or steer the current conversation — they must always be delivered as a separate message turn. Each notification carries a priority level that governs two timing parameters: how long the conversation must be idle before the notification is delivered, and how long the notification can be held before being force-delivered regardless of activity. Higher-priority notifications tolerate shorter idle windows and have shorter hold periods; lower-priority notifications wait longer for natural pauses and can be buffered indefinitely. This ensures urgent results reach the user quickly while routine updates wait for a natural break.
+
+### DLT-113: Fix double 'and' in truncated tool activity summary
+**Status**: ✗ Defined
+**Depends on**: None
+**Priority**: 4 (Low)
+**Complexity**: Easy
+**Description**: When a response uses many tools, the activity summary is truncated to show five items followed by "and more". Currently this produces malformed text like ", and and more" due to the joining logic not accounting for the truncation suffix. Fix the grammar so truncated summaries read naturally.
