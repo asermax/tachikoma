@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v1.6.1 (2026-04-05)
+
+### Bug Fixes
+
+- **adapter**: Detect encoding errors and recover contaminated SDK sessions
+  ([`ee5f5eb`](https://github.com/asermax/tachikoma/commit/ee5f5eb7bb4b7544784cb73c9faf602c03995eff))
+
+- **merge**: Resolve auto-merge conflicts from DLT-084 landing
+  ([`1c29af8`](https://github.com/asermax/tachikoma/commit/1c29af8274fc1fd4196c073a54c27d4ccf5ab3e0))
+
+- **sessions**: Add error flag to session model and exclude errored sessions from resumable
+  candidates
+  ([`4765dfe`](https://github.com/asermax/tachikoma/commit/4765dfef3df3c091a5b7de6da9d32d4f535f83b3))
+
+### Documentation
+
+- **sessions**: Update specs and designs for session error tracking
+  ([`612a343`](https://github.com/asermax/tachikoma/commit/612a343e01d79a5d4beae612be7eb9e8fd426e79))
+
+
 ## v1.6.0 (2026-04-05)
 
 ### Chores
