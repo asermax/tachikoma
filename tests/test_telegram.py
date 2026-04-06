@@ -894,10 +894,10 @@ class TestTelegramToolDisplay:
         result = TELEGRAM_TOOL_DISPLAY["Glob"]({"pattern": "**/*.ts"})
         assert result == "Globbing `**/*.ts`"
 
-    def test_bash_with_description_code_wraps(self) -> None:
-        """Bash with description shows code-wrapped description, no prefix."""
+    def test_bash_with_description_plain_text(self) -> None:
+        """Bash with description shows plain description, no code wrapping."""
         result = TELEGRAM_TOOL_DISPLAY["Bash"]({"description": "install deps"})
-        assert result == "`install deps`"
+        assert result == "install deps"
 
     def test_bash_with_command_only(self) -> None:
         """Bash with command only shows 'Running: ' + code-wrapped command."""
@@ -957,10 +957,10 @@ class TestTelegramToolSummary:
         result = TELEGRAM_TOOL_SUMMARY["Read"]({"file_path": "/src/main.py"})
         assert result == "reading `main.py`"
 
-    def test_bash_description_code_wrapped(self) -> None:
-        """Bash summary code-wraps lowercased description."""
+    def test_bash_description_plain_text(self) -> None:
+        """Bash summary shows lowercased description as plain text."""
         result = TELEGRAM_TOOL_SUMMARY["Bash"]({"description": "Run tests"})
-        assert result == "`run tests`"
+        assert result == "run tests"
 
     def test_agent_no_code_wrap(self) -> None:
         """Agent summary is NOT code-wrapped (same as shared)."""
@@ -1008,8 +1008,8 @@ class TestRendererTelegramFormatting:
         assert "`" not in renderer._tool_line
         assert "research patterns" in renderer._tool_line
 
-    async def test_bash_with_description_code_wraps(self) -> None:
-        """Bash tool line with description shows code-wrapped description."""
+    async def test_bash_with_description_plain_text(self) -> None:
+        """Bash tool line with description shows plain text, no code wrapping."""
         bot = MagicMock()
         bot.send_message = AsyncMock(return_value=MockMessage())
         renderer = ResponseRenderer(bot, chat_id=123)
@@ -1020,7 +1020,8 @@ class TestRendererTelegramFormatting:
         )
         await renderer.handle_tool(activity)
 
-        assert "`install dependencies`" in renderer._tool_line
+        assert "install dependencies" in renderer._tool_line
+        assert "`" not in renderer._tool_line
 
 
 class TestResponseRendererSanitization:

@@ -62,7 +62,7 @@ TELEGRAM_TOOL_DISPLAY: dict[str, Callable[[dict[str, Any]], str]] = {
     "Grep": lambda inp: f"Searching for {code_wrap(inp.get('pattern', '...'))}",
     "Glob": lambda inp: f"Globbing {code_wrap(inp.get('pattern', '...'))}",
     "Bash": lambda inp: (
-        code_wrap(inp["description"])
+        inp["description"]
         if inp.get("description")
         else f"Running: {code_wrap(inp.get('command', '...'))}"
     ),
@@ -91,7 +91,7 @@ TELEGRAM_TOOL_SUMMARY: dict[str, Callable[[dict[str, Any]], str]] = {
         if "pattern" in inp
         else "globbing a pattern"
     ),
-    "Bash": lambda inp: _format_bash_summary(inp, wrapper=code_wrap),
+    "Bash": lambda inp: _format_bash_summary(inp),
     "Edit": lambda inp: (
         f"editing {code_wrap(basename(inp['file_path']))}"
         if "file_path" in inp
