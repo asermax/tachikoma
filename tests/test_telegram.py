@@ -52,6 +52,7 @@ class TestResponseRendererState:
         renderer._tool_activities = [ToolActivity(tool_name="Read", tool_input={})]
         renderer._last_edit_time = 100.0
         renderer._message_count = 5
+        renderer._split_message_ids = [100, 101, 102]
 
         renderer.reset()
 
@@ -60,6 +61,7 @@ class TestResponseRendererState:
         assert renderer._tool_line is None
         assert renderer._tool_activities == []
         assert renderer._last_edit_time == 0.0
+        assert renderer._split_message_ids == []
         # Message count is NOT reset
         assert renderer._message_count == 5
 
@@ -340,6 +342,163 @@ class TestResponseRendererMessageSplitting:
 
         assert bot.send_message.call_count == 1
 
+    async def test_resplit_reuses_existing_messages(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Re-split edits existing tracked messages instead of sending new ones (AC1)."""
+        bot = MagicMock()
+        bot.edit_message_text = AsyncMock()
+        bot.send_message = AsyncMock(side_effect=[
+            MockMessage(message_id=200),
+            MockMessage(message_id=201),
+        ])
+        bot.delete_message = AsyncMock()
+        renderer = ResponseRenderer(bot, chat_id=123)
+
+        # Mock splitting to produce 2 chunks
+        chunk_a = ("Part A", [])
+        chunk_b = ("Part B", [])
+        monkeypatch.setattr(
+            "tachikoma.telegram.convert",
+            lambda _: ("Part A\n\nPart B", []),
+        )
+        monkeypatch.setattr(
+            "tachikoma.telegram.utf16_len",
+            lambda t: 5000,
+        )
+        monkeypatch.setattr(
+            "tachikoma.telegram.split_entities",
+            lambda text, entities, limit: [chunk_a, chunk_b],
+        )
+
+        renderer._current_message_id = 100
+        renderer._buffer = "Part A\n\nPart B"
+
+        # First split: should edit streaming msg (100) + send new (200)
+        await renderer._flush(force=True)
+        assert renderer._split_message_ids == [100, 200]
+
+        # Reset mocks
+        bot.edit_message_text.reset_mock()
+        bot.send_message.reset_mock()
+
+        # Second split (re-split): should edit 100 and 200 in-place
+        renderer._buffer = "Part A updated\n\nPart B updated"
+        monkeypatch.setattr(
+            "tachikoma.telegram.convert",
+            lambda _: ("Part A updated\n\nPart B updated", []),
+        )
+
+        await renderer._flush(force=True)
+
+        # Should edit both tracked messages, not send new ones
+        assert bot.edit_message_text.call_count == 2
+        bot.send_message.assert_not_called()
+        assert renderer._split_message_ids == [100, 200]
+
+    async def test_resplit_deletes_excess_messages(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Re-split producing fewer chunks deletes excess messages (AC2)."""
+        bot = MagicMock()
+        bot.edit_message_text = AsyncMock()
+        bot.delete_message = AsyncMock()
+        renderer = ResponseRenderer(bot, chat_id=123)
+
+        # Simulate state after a 3-message split
+        renderer._current_message_id = 300
+        renderer._split_message_ids = [100, 200, 300]
+        renderer._buffer = "Content"
+
+        # Mock to produce only 2 chunks now
+        monkeypatch.setattr(
+            "tachikoma.telegram.convert",
+            lambda _: ("X" * 5000, []),
+        )
+        monkeypatch.setattr(
+            "tachikoma.telegram.utf16_len",
+            lambda t: 5000,
+        )
+        monkeypatch.setattr(
+            "tachikoma.telegram.split_entities",
+            lambda text, entities, limit: [("Chunk 0", []), ("Chunk 1", [])],
+        )
+
+        await renderer._flush(force=True)
+
+        # Should edit 100 and 200, delete excess 300
+        assert bot.edit_message_text.call_count == 2
+        bot.delete_message.assert_called_once_with(
+            chat_id=123, message_id=300,
+        )
+        assert renderer._split_message_ids == [100, 200]
+
+    async def test_shrink_to_unsplit_deletes_excess(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Content was split but now fits in one message — excess deleted (shrink-to-unsplit)."""
+        bot = MagicMock()
+        bot.edit_message_text = AsyncMock()
+        bot.delete_message = AsyncMock()
+        renderer = ResponseRenderer(bot, chat_id=123)
+
+        # Simulate state after a 3-message split
+        renderer._current_message_id = 300
+        renderer._split_message_ids = [100, 200, 300]
+        renderer._buffer = "Short text"
+
+        # Mock to fit in a single message
+        monkeypatch.setattr(
+            "tachikoma.telegram.convert",
+            lambda _: ("Short text", []),
+        )
+        monkeypatch.setattr(
+            "tachikoma.telegram.utf16_len",
+            lambda t: 100,
+        )
+
+        await renderer._flush(force=True)
+
+        # Should edit first message (100) and delete excess (200, 300)
+        assert bot.edit_message_text.call_count == 1
+        assert bot.delete_message.call_count == 2
+        assert renderer._split_message_ids == []
+        assert renderer._current_message_id == 100
+
+    async def test_edit_failure_continues_gracefully(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Failed edit on tracked split message is logged and skipped (AC5)."""
+        bot = MagicMock()
+        bot.edit_message_text = AsyncMock(
+            side_effect=TelegramAPIError(method="edit_message_text", message="Failed")
+        )
+        bot.send_message = AsyncMock(side_effect=[
+            MockMessage(message_id=200),
+            MockMessage(message_id=201),
+        ])
+        bot.delete_message = AsyncMock()
+        renderer = ResponseRenderer(bot, chat_id=123)
+
+        # Simulate state with 2 tracked split messages
+        renderer._current_message_id = 200
+        renderer._split_message_ids = [100, 200]
+        renderer._buffer = "Updated content"
+
+        # Mock to produce 2 chunks
+        monkeypatch.setattr(
+            "tachikoma.telegram.convert",
+            lambda _: ("Chunk 0\n\nChunk 1", []),
+        )
+        monkeypatch.setattr(
+            "tachikoma.telegram.utf16_len",
+            lambda t: 5000,
+        )
+        monkeypatch.setattr(
+            "tachikoma.telegram.split_entities",
+            lambda text, entities, limit: [("Chunk 0", []), ("Chunk 1", [])],
+        )
+
+        # Should not raise despite edit failures
+        await renderer._flush(force=True)
+
+        # Both edits attempted (and failed), but no crash
+        assert bot.edit_message_text.call_count == 2
+        # IDs should still be tracked (best-effort)
+        assert renderer._split_message_ids == [100, 200]
+
 
 class TestResponseRendererErrorHandling:
     """Tests for handle_error() behavior."""
@@ -552,7 +711,7 @@ class TestResponseRendererNotify:
         bot.delete_message.assert_not_called()
 
     async def test_notify_accepts_duplicate_on_delete_failure(self) -> None:
-        """notify() accepts duplicate message if delete fails."""
+        """notify() retries delete 3 times and accepts duplicate on final failure."""
         bot = MagicMock()
         bot.copy_message = AsyncMock()
         bot.delete_message = AsyncMock(
@@ -565,7 +724,8 @@ class TestResponseRendererNotify:
         await renderer.notify()
 
         bot.copy_message.assert_called_once()
-        bot.delete_message.assert_called_once()
+        # Delete is retried 3 times
+        assert bot.delete_message.call_count == 3
 
 
 class TestTelegramChannelStdinShutdown:

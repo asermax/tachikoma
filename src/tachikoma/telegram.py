@@ -127,6 +127,7 @@ class ResponseRenderer:
         self._tool_activities: list[ToolActivity] = []
         self._last_edit_time: float = 0.0
         self._message_count: int = 0
+        self._split_message_ids: list[int] = []
 
     def reset(self) -> None:
         """Clear all state for a new response.
@@ -138,6 +139,7 @@ class ResponseRenderer:
         self._tool_line = None
         self._tool_activities = []
         self._last_edit_time = 0.0
+        self._split_message_ids = []
         # Note: _message_count is NOT reset - it tracks total messages
         # for the entire response cycle including buffered messages
 
@@ -253,17 +255,23 @@ class ResponseRenderer:
             )
             return  # Skip delete — original is preserved
 
-        # Try delete_message — on failure, accept duplicate
-        try:
-            await self._bot.delete_message(
-                chat_id=self._chat_id,
-                message_id=self._current_message_id,
-            )
-        except TelegramAPIError:
-            _log.warning(
-                "Failed to delete original message after copy: message_id={id} (duplicate visible)",
-                id=self._current_message_id,
-            )
+        # Try delete_message with retries — on final failure, accept duplicate
+        for attempt in range(3):
+            try:
+                await self._bot.delete_message(
+                    chat_id=self._chat_id,
+                    message_id=self._current_message_id,
+                )
+                return  # Success
+            except TelegramAPIError:
+                if attempt < 2:
+                    await asyncio.sleep(0.5)
+                else:
+                    _log.warning(
+                        "Failed to delete original after copy (duplicate visible): "
+                        "message_id={id}",
+                        id=self._current_message_id,
+                    )
 
     async def _flush(self, force: bool = False) -> None:
         """Send/edit the message with current buffer and tool line.
@@ -300,6 +308,27 @@ class ResponseRenderer:
             await self._send_chunks(chunks)
             self._last_edit_time = time.monotonic()
             return
+
+        # Handle shrink-to-unsplit: content was split but now fits
+        if self._split_message_ids:
+            first_id = self._split_message_ids[0]
+            excess_ids = self._split_message_ids[1:]
+            self._split_message_ids = []
+            self._current_message_id = first_id
+
+            # Delete excess tracked messages
+            for old_id in excess_ids:
+                try:
+                    await self._bot.delete_message(
+                        chat_id=self._chat_id,
+                        message_id=old_id,
+                    )
+                except TelegramAPIError:
+                    _log.warning(
+                        "Failed to delete excess split message: id={id}",
+                        id=old_id,
+                    )
+            # Fall through to edit first_id with full content
 
         try:
             if self._current_message_id is None:
@@ -354,11 +383,37 @@ class ResponseRenderer:
         self,
         chunks: list[tuple[str, list]],
     ) -> None:
-        """Send multiple pre-split chunks as separate Telegram messages."""
+        """Send multiple pre-split chunks as separate Telegram messages.
+
+        Tracks split message IDs so re-splits reuse existing messages via
+        edit-in-place instead of creating duplicates. Excess messages from
+        a previous split with more chunks are deleted.
+        """
+        old_ids = self._split_message_ids
+        self._split_message_ids = []
+
         for i, (text, entities) in enumerate(chunks):
-            try:
-                if i == 0 and self._current_message_id is not None:
-                    # Edit existing message with first chunk
+            if i < len(old_ids) and old_ids[i] != -1:
+                # Reuse existing split message — edit in-place
+                try:
+                    await self._bot.edit_message_text(
+                        text=text,
+                        chat_id=self._chat_id,
+                        message_id=old_ids[i],
+                        parse_mode=None,
+                        entities=[e.to_dict() for e in entities],
+                    )
+                except TelegramBadRequest as e:
+                    if "message is not modified" not in str(e):
+                        _log.exception("Failed to edit split message")
+                except TelegramAPIError:
+                    _log.exception("Failed to edit split message")
+
+                self._split_message_ids.append(old_ids[i])
+
+            elif i == 0 and self._current_message_id is not None:
+                # First split ever: edit the streaming message
+                try:
                     await self._bot.edit_message_text(
                         text=text,
                         chat_id=self._chat_id,
@@ -366,11 +421,17 @@ class ResponseRenderer:
                         parse_mode=None,
                         entities=[e.to_dict() for e in entities],
                     )
-                    _log.debug("Edited message: id={id}", id=self._current_message_id)
-                else:
-                    if i > 0:
-                        self._current_message_id = None
+                except TelegramBadRequest as e:
+                    if "message is not modified" not in str(e):
+                        _log.exception("Failed to edit message")
+                except TelegramAPIError:
+                    _log.exception("Failed to edit message")
 
+                self._split_message_ids.append(self._current_message_id)
+
+            else:
+                # Need a new message
+                try:
                     msg = await self._bot.send_message(
                         self._chat_id,
                         text,
@@ -378,22 +439,36 @@ class ResponseRenderer:
                         entities=[e.to_dict() for e in entities],
                         disable_notification=self._push_notifications,
                     )
-                    self._current_message_id = msg.message_id
+                    self._split_message_ids.append(msg.message_id)
                     self._message_count += 1
                     _log.debug(
                         "Sent message: id={id}, count={n}",
-                        id=self._current_message_id,
+                        id=msg.message_id,
                         n=self._message_count,
                     )
+                except TelegramAPIError:
+                    _log.exception("Failed to send split message")
+                    # Append sentinel so indices stay aligned for re-split
+                    self._split_message_ids.append(-1)
 
-            except TelegramBadRequest as e:
-                if "message is not modified" in str(e):
-                    _log.debug("Edit skipped: message content unchanged")
-                else:
-                    _log.exception("Failed to send/edit message")
+        # Update current message to last chunk
+        if self._split_message_ids:
+            self._current_message_id = self._split_message_ids[-1]
 
+        # Delete excess old messages (skip sentinels from failed sends)
+        for old_id in old_ids[len(chunks):]:
+            if old_id == -1:
+                continue
+            try:
+                await self._bot.delete_message(
+                    chat_id=self._chat_id,
+                    message_id=old_id,
+                )
             except TelegramAPIError:
-                _log.exception("Failed to send/edit message")
+                _log.warning(
+                    "Failed to delete excess split message: id={id}",
+                    id=old_id,
+                )
 
 
 class TelegramChannel:
