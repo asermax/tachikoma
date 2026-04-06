@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v1.7.2 (2026-04-06)
+
+### Bug Fixes
+
+- **telegram**: Prevent duplicate messages on split responses
+  ([`1d012d2`](https://github.com/asermax/tachikoma/commit/1d012d2a43c52becb3f805f81764616c9026319e))
+
+### Documentation
+
+- **telegram**: Update spec and design for split message tracking
+  ([`ea20092`](https://github.com/asermax/tachikoma/commit/ea2009273342c1da43f269cfe669486a4680240c))
+
+
 ## v1.7.1 (2026-04-06)
 
 ### Bug Fixes
