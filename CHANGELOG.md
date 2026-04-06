@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v1.7.1 (2026-04-06)
+
+### Bug Fixes
+
+- **telegram**: Render Bash descriptions as plain text
+  ([`ff666c4`](https://github.com/asermax/tachikoma/commit/ff666c43e2e180c342d1c758c1a361130f026017))
+
+### Chores
+
+- Remove zenki submodule
+  ([`66957fe`](https://github.com/asermax/tachikoma/commit/66957fe6c37c994c89ffb36332a3761aad461167))
+
+
 ## v1.7.0 (2026-04-06)
 
 
