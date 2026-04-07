@@ -3269,3 +3269,168 @@ class TestIdlePostProcessingShutdown:
 
             steered.set()
             await task
+
+
+class TestPerMessagePreProcessingIntegration:
+    """Tests for DLT-075: per-message pre-processing pipeline integration."""
+
+    async def test_per_message_pipeline_runs_on_every_message(
+        self,
+        mock_sdk,
+    ) -> None:
+        """AC (R0): Per-message pipeline runs on every send_message() call."""
+        client, _ = mock_sdk
+
+        call_count = 0
+
+        async def counting_run(message, *, existing_entries=None):
+            nonlocal call_count
+            call_count += 1
+            return []
+
+        msg_pre_pipeline = MagicMock()
+        msg_pre_pipeline.run = AsyncMock(side_effect=counting_run)
+
+        active = Session(id="existing", started_at=datetime.now(UTC))
+        registry = _make_mock_registry()
+        registry.get_active_session.side_effect = [None, active, active, active]
+        registry.load_context_entries = AsyncMock(return_value=[])
+
+        client.receive_response.side_effect = [
+            _mock_messages(make_assistant([TextBlock(text="a")]), make_result()),
+            _mock_messages(make_assistant([TextBlock(text="b")]), make_result()),
+        ]
+
+        async with Coordinator(registry=registry, msg_pre_pipeline=msg_pre_pipeline) as coord:
+            _ = await _send(coord, "first")
+            _ = await _send(coord, "second")
+
+        assert call_count == 2
+
+    async def test_per_message_pipeline_runs_after_session_gated_pipeline(
+        self,
+        mock_sdk,
+    ) -> None:
+        """AC: On first message, per-message pipeline runs after session-gated pipeline."""
+        client, _ = mock_sdk
+        client.receive_response.return_value = _mock_messages(
+            make_assistant([TextBlock(text="hi")]),
+            make_result(),
+        )
+
+        call_order: list[str] = []
+
+        async def track_pre_run(message):
+            call_order.append("session_gated")
+            return [ContextResult(tag="memories", content="some memory")]
+
+        async def track_msg_pre_run(message, *, existing_entries=None):
+            call_order.append("per_message")
+            return []
+
+        pre_pipeline = _make_mock_pre_pipeline()
+        pre_pipeline.run = AsyncMock(side_effect=track_pre_run)
+
+        msg_pre_pipeline = MagicMock()
+        msg_pre_pipeline.run = AsyncMock(side_effect=track_msg_pre_run)
+
+        registry = _make_mock_registry(active_session=None)
+
+        async with Coordinator(
+            registry=registry,
+            pre_pipeline=pre_pipeline,
+            msg_pre_pipeline=msg_pre_pipeline,
+        ) as coord:
+            _ = await _send(coord, "hello")
+
+        assert call_order == ["session_gated", "per_message"]
+
+    async def test_new_entries_appended_with_metadata_existing_preserved(
+        self,
+        mock_sdk,
+    ) -> None:
+        """AC (R2, R5): New entries appended with metadata; existing entries preserved."""
+        client, _ = mock_sdk
+        client.receive_response.return_value = _mock_messages(
+            make_assistant([TextBlock(text="hi")]),
+            make_result(),
+        )
+
+        msg_pre_pipeline = MagicMock()
+        msg_pre_pipeline.run = AsyncMock(
+            return_value=[
+                ContextResult(
+                    tag="skills",
+                    content="new skill content",
+                    metadata={"skill_name": "new-skill"},
+                ),
+            ]
+        )
+
+        existing_entry = SessionContextEntry(
+            id=1, session_id="s1", owner="skills",
+            content="existing skill", metadata={"skill_name": "existing-skill"},
+        )
+
+        active = Session(id="existing", started_at=datetime.now(UTC))
+        registry = _make_mock_registry()
+        registry.get_active_session.side_effect = [None, active, active]
+        registry.load_context_entries = AsyncMock(
+            side_effect=[
+                [existing_entry],  # Initial load
+                [  # Re-load after save
+                    existing_entry,
+                    SessionContextEntry(
+                        id=2, session_id="s1", owner="skills",
+                        content="new skill content", metadata={"skill_name": "new-skill"},
+                    ),
+                ],
+            ]
+        )
+
+        async with Coordinator(
+            registry=registry,
+            msg_pre_pipeline=msg_pre_pipeline,
+        ) as coord:
+            _ = await _send(coord, "hello")
+
+        # Verify the new entry was saved with metadata
+        save_calls = registry.save_context_entries.call_args_list
+        found_per_msg_save = False
+        for call in save_calls:
+            args = call[0]
+            entries = args[1]  # second positional arg is the list of tuples
+            for entry_tuple in entries:
+                owner, content, metadata = entry_tuple
+                if owner == "skills" and metadata == {"skill_name": "new-skill"}:
+                    found_per_msg_save = True
+                    break
+        assert found_per_msg_save
+
+    async def test_per_message_pipeline_failure_does_not_crash(
+        self,
+        mock_sdk,
+    ) -> None:
+        """AC (R7): Per-message pipeline failure is logged, send_message continues."""
+        client, _ = mock_sdk
+        client.receive_response.return_value = _mock_messages(
+            make_assistant([TextBlock(text="response")]),
+            make_result(),
+        )
+
+        msg_pre_pipeline = MagicMock()
+        msg_pre_pipeline.run = AsyncMock(side_effect=RuntimeError("Pipeline crashed"))
+
+        registry = _make_mock_registry(active_session=None)
+        registry.load_context_entries = AsyncMock(return_value=[])
+
+        async with Coordinator(
+            registry=registry,
+            msg_pre_pipeline=msg_pre_pipeline,
+        ) as coord:
+            events = await _send(coord, "hello")
+
+        # Message should still be processed
+        text_events = [e for e in events if isinstance(e, TextChunk)]
+        assert len(text_events) == 1
+        assert text_events[0].text == "response"
