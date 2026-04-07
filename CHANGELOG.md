@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v1.9.0 (2026-04-07)
+
+### Documentation
+
+- **planning**: Add DLT-114 timezone env variable delta
+  ([`228d10b`](https://github.com/asermax/tachikoma/commit/228d10b1449382092cbaeacbf7ff1125d2f26459))
+
+- **planning**: Increase DLT-035 priority to Critical
+  ([`9b2f705`](https://github.com/asermax/tachikoma/commit/9b2f7054ea6065d32285d94ed6100d0e730d1187))
+
+
 ## v1.8.0 (2026-04-07)
 
 ### Documentation
