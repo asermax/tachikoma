@@ -152,7 +152,7 @@ Note: `send_message()` is an async generator. The per-message pipeline launch ha
 - Channel ↔ Coordinator: async iterator protocol
 - Coordinator ↔ SessionRegistry (optional): `create_session()` on first message, `update_metadata()` on Result events, `close_session()` on shutdown and on topic shift (see [sessions design](sessions.md))
 - Coordinator ↔ PreProcessingPipeline (optional): `pipeline.run(message)` in `send_message()`, on first message of new session (including after topic shift transition), before `client.query()` (see [pipeline design](pre-processing-pipeline.md))
-- Coordinator ↔ PostProcessingPipeline (optional): `pipeline.run(session)` in `__aexit__` (after session close) and as background task during topic shift transitions. Note: `on_status` callback is called on shutdown — both for direct post-processing (active session) and before awaiting background tasks from prior transitions/idle close (see [pipeline design](post-processing-pipeline.md))
+- Coordinator ↔ PostProcessingPipeline (optional): `pipeline.run(session)` in `__aexit__` (after session close) and as background task during topic shift transitions (see [pipeline design](post-processing-pipeline.md))
 - Coordinator ↔ `detect_boundary` (from `boundary` package): pure function call before processing, accepts optional `candidates: list[SessionCandidate]`, returns `BoundaryResult(continues, resume_session_id)`, errors caught and defaulted to `BoundaryResult(continues=True)` (continuation). Skipped when no session, no summary, or no cwd (see [boundary detection design](boundary-detection.md))
 - Coordinator ↔ `MessagePostProcessingPipeline` (optional): `run(session, text, response_text)` as background `asyncio.Task` after each response, reference stored as `_pending_msg_task` (see [boundary detection design](boundary-detection.md))
 - Coordinator ↔ MCP servers (optional): `mcp_servers` parameter passed to `ClaudeAgentOptions.mcp_servers` in `_build_options()` — used by task subsystem for task CRUD tools
@@ -317,7 +317,7 @@ The `Result` event serves as a turn boundary. Channels can detect it to reset th
 11. Creates PreProcessingPipeline, registers MemoryContextProvider(agent_defaults), ProjectsContextProvider(workspace_path=workspace_path), and SkillsContextProvider(agent_defaults, registry=skill_registry)
 12. Creates MessagePostProcessingPipeline, registers SummaryProcessor with registry and agent_defaults
 12a. Creates task MCP tools server via `create_task_tools_server(task_repository, ZoneInfo(settings.tasks.timezone))`
-13. Creates Coordinator with allowed_tools, disallowed_tools, model, agent_defaults, session_registry, foundational_context, pipeline, pre_pipeline, msg_pipeline, session_resume_window=settings.agent.session_resume_window, permission_mode="bypassPermissions", on_status callback (for channel display), mcp_servers={"task-tools": task_tools_server}, timezone=settings.tasks.timezone
+13. Creates Coordinator with allowed_tools, disallowed_tools, model, agent_defaults, session_registry, foundational_context, pipeline, pre_pipeline, msg_pipeline, session_resume_window=settings.agent.session_resume_window, permission_mode="bypassPermissions", mcp_servers={"task-tools": task_tools_server}, timezone=settings.tasks.timezone
 14. Enters coordinator async context (no SDK client connection — clients are created per-message)
 15. If any SDK error occurs during the first message → catch, log + print to stderr, exit
 15a. Starts task async loops as `asyncio.Task`s: instance_generator, session_task_scheduler, background_task_runner — all receiving bus, coordinator, task_repository, and task settings
@@ -335,8 +335,8 @@ The `Result` event serves as a turn boundary. Channels can detect it to reset th
 2. Coordinator __aexit__ cancels idle close loop (prevents race with shutdown close)
 3. Awaits any pending per-message task (logs errors, doesn't propagate)
 4. Captures active session (if any), then closes it via registry (errors logged, not propagated)
-5. If captured session has a valid SDK session ID and a pipeline is registered, coordinator calls on_status callback then triggers post-processing pipeline (errors in both callback and pipeline logged, not propagated)
-6. If background session post-processing tasks exist (from prior topic shifts or idle close), coordinator logs task count, calls on_status callback, then awaits all tasks via asyncio.gather(return_exceptions=True), logs errors
+5. If captured session has a valid SDK session ID and a pipeline is registered, coordinator triggers post-processing pipeline (errors logged, not propagated)
+6. If background session post-processing tasks exist (from prior topic shifts or idle close), coordinator logs task count, then awaits all tasks via asyncio.gather(return_exceptions=True), logs errors
 7. No SDK disconnect step — per-message clients are already disposed after each exchange
 8. finally block:
    a. Cancel task async loops (instance generator, session task scheduler, background task runner)
@@ -531,6 +531,5 @@ The `Result` event serves as a turn boundary. Channels can detect it to reset th
 - The adapter pattern used here (SDK types → domain types) may become a project-wide pattern if repeated in future features that integrate external services
 - `ClaudeSDKClient.query()` returns `None` — messages are retrieved via `receive_response()` which yields `AsyncIterator[Message]` and stops at `ResultMessage` (per SDK docs, preferred over `receive_messages()` which requires manual `break`)
 - The `Message` union type includes `StreamEvent` alongside the main message types — the adapter filters it along with other non-relevant types
-- The `on_status` callback is a lightweight injection point for channels to display post-processing progress. The coordinator has no knowledge of rendering — the callback keeps rendering concerns in the channel layer.
 - The coordinator's `_build_options()` accepts a pre-built `system_prompt_append` string from `build_system_prompt(entries, timezone=...)`. It no longer assembles context inline — the database is the canonical source of context entries, and `build_system_prompt()` (in `context/assembly.py`) handles assembly from the loaded entries. The preamble is rendered dynamically via `render_system_preamble(timezone)` from `SYSTEM_PREAMBLE_TEMPLATE`.
 - Logging configuration suppresses noisy third-party loggers (`sqlalchemy.engine`, `aiosqlite`, `aiogram`, `markdown_it`, `claude_agent_sdk`) to WARNING level. Per-session log rotation renames the previous session's log file on startup. `logger.remove()` is called at the start of `main()` to prevent console leaks before the logging bootstrap hook runs.
