@@ -8,13 +8,13 @@ session changes.
 """
 
 from datetime import timedelta
-from pathlib import Path
 
 from loguru import logger
 
 from tachikoma.post_processing import PostProcessor
 from tachikoma.sessions.model import Session
 from tachikoma.workflows.repository import WorkflowStateRepository
+from tachikoma.workflows.tools import _delete_scratchpad
 
 _log = logger.bind(component="workflow_cleanup")
 
@@ -31,11 +31,9 @@ class StaleWorkflowCleanupProcessor(PostProcessor):
     def __init__(
         self,
         repository: WorkflowStateRepository,
-        workspace_path: Path,
         threshold: timedelta = DEFAULT_STALE_THRESHOLD,
     ) -> None:
         self._repository = repository
-        self._workspace_path = workspace_path
         self._threshold = threshold
 
     async def process(self, session: Session) -> None:
@@ -54,11 +52,7 @@ class StaleWorkflowCleanupProcessor(PostProcessor):
             try:
                 deleted = await self._repository.soft_delete(state.id)
                 if deleted:
-                    # Remove scratchpad file
-                    scratchpad = Path(state.scratchpad_path)
-                    if scratchpad.exists():
-                        scratchpad.unlink()
-
+                    _delete_scratchpad(state.scratchpad_path)
                     cleaned += 1
             except Exception as exc:
                 _log.warning(

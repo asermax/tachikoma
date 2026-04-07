@@ -4,6 +4,7 @@ All callers receive frozen dataclasses — SQLAlchemy types never leak out
 of this module.
 """
 
+import json
 from datetime import UTC, datetime, timedelta
 
 from loguru import logger
@@ -14,8 +15,6 @@ from tachikoma.workflows.errors import WorkflowRepositoryError
 from tachikoma.workflows.model import (
     WorkflowState,
     WorkflowStateRecord,
-    _serialize_definition_snapshot,
-    _serialize_step_states,
 )
 
 _log = logger.bind(component="workflows")
@@ -42,7 +41,6 @@ class WorkflowStateRepository:
         Raises WorkflowRepositoryError if an active state already exists.
         """
         try:
-            # Check for duplicate active state
             existing = await self.get_active(state.skill_name, state.workflow_name)
             if existing is not None:
                 raise WorkflowRepositoryError(
@@ -56,8 +54,8 @@ class WorkflowStateRepository:
                 skill_name=state.skill_name,
                 workflow_name=state.workflow_name,
                 current_step=state.current_step,
-                step_states=_serialize_step_states(state.step_states),
-                definition_snapshot=_serialize_definition_snapshot(state.definition_snapshot),
+                step_states=json.dumps(state.step_states),
+                definition_snapshot=json.dumps(state.definition_snapshot),
                 scratchpad_path=state.scratchpad_path,
                 deleted_at=state.deleted_at,
                 created_at=state.created_at or datetime.now(UTC),
@@ -143,10 +141,8 @@ class WorkflowStateRepository:
                     return None
 
                 for key, value in fields.items():
-                    if key == "step_states":
-                        setattr(record, key, _serialize_step_states(value))
-                    elif key == "definition_snapshot":
-                        setattr(record, key, _serialize_definition_snapshot(value))
+                    if key in ("step_states", "definition_snapshot"):
+                        setattr(record, key, json.dumps(value))
                     else:
                         setattr(record, key, value)
 

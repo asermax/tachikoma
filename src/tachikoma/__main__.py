@@ -150,7 +150,7 @@ async def run(
     pipeline.register(CoreContextProcessor(agent_defaults))
     pipeline.register(ProjectsProcessor(agent_defaults), phase=PRE_FINALIZE_PHASE)
     pipeline.register(
-        StaleWorkflowCleanupProcessor(workflow_repository, settings.workspace.path),
+        StaleWorkflowCleanupProcessor(workflow_repository),
         phase=PRE_FINALIZE_PHASE,
     )
     pipeline.register(GitProcessor(agent_defaults), phase=FINALIZE_PHASE)

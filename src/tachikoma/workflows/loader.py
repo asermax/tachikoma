@@ -54,7 +54,6 @@ def load_workflows(skill_dir: Path, skill_name: str) -> dict[str, WorkflowDefini
         return {}
 
     for item in items:
-        # Only process directories
         if not item.is_dir():
             continue
 
@@ -93,7 +92,6 @@ def _load_workflow(
         )
         return None
 
-    # Discover step directories (subdirectories) and sort alphabetically (R17)
     step_dirs = sorted(
         [item for item in items if item.is_dir()],
         key=lambda p: p.name,
@@ -107,7 +105,6 @@ def _load_workflow(
         if step_def is not None:
             steps.append(step_def)
 
-    # Create workflow even if no valid steps (start_workflow will error at runtime)
     workflow_def = WorkflowDefinition(
         skill_name=skill_name,
         workflow_name=workflow_name,
@@ -151,7 +148,6 @@ def _load_step(
         )
         return None
 
-    # Parse frontmatter using python-frontmatter (following pattern in registry.py:199-208)
     try:
         post = frontmatter.load(str(instructions_path))
     except Exception as exc:
@@ -165,7 +161,6 @@ def _load_step(
         )
         return None
 
-    # Extract and validate step metadata
     title = post.metadata.get("title", "")
 
     if not title or not isinstance(title, str):
@@ -177,7 +172,6 @@ def _load_step(
         )
         return None
 
-    # Extract skippable (default False)
     skippable = post.metadata.get("skippable", False)
 
     if not isinstance(skippable, bool):
@@ -189,10 +183,8 @@ def _load_step(
         )
         return None
 
-    # Extract extensible properties (all other frontmatter fields)
     properties = {k: v for k, v in post.metadata.items() if k not in ("title", "skippable")}
 
-    # Validate optional references/ and scripts/ subdirectories
     references_path = step_dir / "references"
     if not references_path.exists() or not references_path.is_dir():
         references_path = None

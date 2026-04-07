@@ -21,6 +21,11 @@ from tachikoma.db_utils import ensure_utc
 
 StepState = Literal["pending", "started", "completed", "skipped"]
 
+STEP_PENDING: StepState = "pending"
+STEP_STARTED: StepState = "started"
+STEP_COMPLETED: StepState = "completed"
+STEP_SKIPPED: StepState = "skipped"
+
 
 @dataclass(frozen=True)
 class WorkflowState:
@@ -39,32 +44,6 @@ class WorkflowState:
     deleted_at: datetime | None
     created_at: datetime
     updated_at: datetime
-
-
-# ---------------------------------------------------------------------------
-# Helper functions for JSON serialization/deserialization
-# ---------------------------------------------------------------------------
-
-
-def _serialize_step_states(step_states: dict[str, StepState]) -> str:
-    """Serialize step states dict to JSON string."""
-    return json.dumps(step_states)
-
-
-def _deserialize_step_states(json_str: str) -> dict[str, StepState]:
-    """Deserialize step states from JSON string."""
-    data = json.loads(json_str)
-    return dict(data)
-
-
-def _serialize_definition_snapshot(definition_snapshot: list[dict]) -> str:
-    """Serialize definition snapshot to JSON string."""
-    return json.dumps(definition_snapshot)
-
-
-def _deserialize_definition_snapshot(json_str: str) -> list[dict]:
-    """Deserialize definition snapshot from JSON string."""
-    return json.loads(json_str)
 
 
 # ---------------------------------------------------------------------------
@@ -95,6 +74,7 @@ class WorkflowStateRecord(Base):
     __table_args__ = (
         Index("ix_workflow_states_skill_name", "skill_name"),
         Index("ix_workflow_states_workflow_name", "workflow_name"),
+        Index("ix_workflow_states_active_lookup", "skill_name", "workflow_name"),
     )
 
     def to_domain(self) -> WorkflowState:
@@ -104,8 +84,8 @@ class WorkflowStateRecord(Base):
             skill_name=self.skill_name,
             workflow_name=self.workflow_name,
             current_step=self.current_step,
-            step_states=_deserialize_step_states(self.step_states),
-            definition_snapshot=_deserialize_definition_snapshot(self.definition_snapshot),
+            step_states=dict(json.loads(self.step_states)),
+            definition_snapshot=json.loads(self.definition_snapshot),
             scratchpad_path=self.scratchpad_path,
             deleted_at=ensure_utc(self.deleted_at),
             created_at=ensure_utc(self.created_at),  # type: ignore[arg-type]

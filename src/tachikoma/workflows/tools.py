@@ -22,7 +22,14 @@ from pydantic import BaseModel, ValidationError
 from tachikoma.skills.registry import SkillRegistry
 from tachikoma.workflows.definition import StepDefinition
 from tachikoma.workflows.errors import WorkflowRepositoryError
-from tachikoma.workflows.model import StepState, WorkflowState
+from tachikoma.workflows.model import (
+    STEP_COMPLETED,
+    STEP_PENDING,
+    STEP_SKIPPED,
+    STEP_STARTED,
+    StepState,
+    WorkflowState,
+)
 from tachikoma.workflows.repository import WorkflowStateRepository
 
 _log = logger.bind(component="workflow_tools")
@@ -62,6 +69,32 @@ class ListActiveWorkflowsArgs(BaseModel):
 # ---------------------------------------------------------------------------
 
 
+def _error_response(message: str) -> dict:
+    return {"is_error": True, "content": [{"type": "text", "text": message}]}
+
+
+def _repo_error_response(exc: WorkflowRepositoryError, base_message: str) -> dict:
+    cause = f" Cause: {exc.__cause__}" if exc.__cause__ else ""
+    return _error_response(f"{base_message}{cause}")
+
+
+def _validate_args(args: dict, model: type[BaseModel]):
+    try:
+        return model.model_validate(args), None
+    except ValidationError as exc:
+        return None, _error_response(f"Invalid arguments: {exc}")
+
+
+def _delete_scratchpad(scratchpad_path: str) -> None:
+    path = Path(scratchpad_path)
+    if path.exists():
+        path.unlink()
+
+
+def _not_found_error(workflow_id: str) -> dict:
+    return _error_response(f"Workflow '{workflow_id}' not found or no longer active.")
+
+
 def _step_to_snapshot(step: StepDefinition) -> dict:
     """Convert a StepDefinition to a snapshot dict for storage."""
     return {
@@ -79,7 +112,7 @@ def _find_next_pending_step(
     """Find the next pending step in definition order."""
     for step_def in definition_snapshot:
         step_id = step_def["id"]
-        if step_states.get(step_id) == "pending":
+        if step_states.get(step_id) == STEP_PENDING:
             return step_id
 
     return None
@@ -139,27 +172,27 @@ def validate_transition(
 
     current_state = step_states.get(step_id)
 
-    if current_state in ("completed", "skipped"):
+    if current_state in (STEP_COMPLETED, STEP_SKIPPED):
         return (
             f"Step '{step_id}' is already {current_state}. "
             "Cannot change a completed or skipped step."
         )
 
     if action == "start":
-        if current_state != "pending":
+        if current_state != STEP_PENDING:
             return f"Step '{step_id}' is already {current_state}. Can only start a pending step."
 
     elif action == "complete":
-        if current_state != "started":
+        if current_state != STEP_STARTED:
             return (
-                f"Step '{step_id}' is {current_state or 'pending'}. "
+                f"Step '{step_id}' is {current_state or STEP_PENDING}. "
                 "Must start a step before completing it."
             )
 
     elif action == "skip":
         if not step_def.get("skippable", False):
             return f"Step '{step_id}' is not skippable. Only skippable steps can be skipped."
-        if current_state != "pending":
+        if current_state != STEP_PENDING:
             return f"Step '{step_id}' is {current_state}. Can only skip a pending step."
 
     return None
@@ -179,7 +212,6 @@ async def handle_start_workflow(
 ) -> dict:
     """Handle start_workflow: create a new workflow instance."""
 
-    # Look up workflow definition
     workflow_def = registry.get_workflow(skill_name, workflow_name)
 
     if workflow_def is None:
@@ -196,7 +228,6 @@ async def handle_start_workflow(
             ],
         }
 
-    # Validate workflow has steps
     if not workflow_def.steps:
         return {
             "is_error": True,
@@ -211,7 +242,6 @@ async def handle_start_workflow(
             ],
         }
 
-    # Check for existing active workflow (duplicate prevention)
     existing = await repository.get_active(skill_name, workflow_name)
     if existing is not None:
         return {
@@ -228,21 +258,17 @@ async def handle_start_workflow(
             ],
         }
 
-    # Create workflow state
     workflow_id = str(uuid4())
     now = datetime.now(UTC)
 
-    # Create scratchpad directory and file
     scratchpad_dir = workspace_path / ".tachikoma" / "scratchpads"
     scratchpad_dir.mkdir(parents=True, exist_ok=True)
     scratchpad_path = scratchpad_dir / f"workflow-{workflow_id}.md"
     scratchpad_path.write_text(f"# Workflow: {workflow_name}\n\nWorkflow ID: {workflow_id}\n")
 
-    # Build definition snapshot and initial step states
     definition_snapshot = [_step_to_snapshot(step) for step in workflow_def.steps]
-    step_states: dict[str, StepState] = {step.id: "pending" for step in workflow_def.steps}
+    step_states: dict[str, StepState] = {step.id: STEP_PENDING for step in workflow_def.steps}
 
-    # Create state record
     state = WorkflowState(
         id=workflow_id,
         skill_name=skill_name,
@@ -260,13 +286,8 @@ async def handle_start_workflow(
         await repository.create(state)
     except WorkflowRepositoryError as exc:
         scratchpad_path.unlink(missing_ok=True)
-        cause = f" Cause: {exc.__cause__}" if exc.__cause__ else ""
-        return {
-            "is_error": True,
-            "content": [{"type": "text", "text": f"Failed to create workflow state.{cause}"}],
-        }
+        return _repo_error_response(exc, "Failed to create workflow state.")
 
-    # Build guidance text
     step_lines = []
     for i, step in enumerate(workflow_def.steps, 1):
         skip_marker = " (skippable)" if step.skippable else ""
@@ -303,43 +324,28 @@ async def handle_update_workflow_state(
 ) -> dict:
     """Handle update_workflow_state: transition a step's state."""
 
-    # Get current state
     state = await repository.get(workflow_id)
 
     if state is None:
-        return {
-            "is_error": True,
-            "content": [
-                {
-                    "type": "text",
-                    "text": f"Workflow '{workflow_id}' not found or no longer active.",
-                }
-            ],
-        }
+        return _not_found_error(workflow_id)
 
-    # Validate transition
     error = validate_transition(state.step_states, step, action, state.definition_snapshot)
     if error is not None:
-        return {
-            "is_error": True,
-            "content": [{"type": "text", "text": error}],
-        }
+        return _error_response(error)
 
-    # Apply transition
     new_step_states = dict(state.step_states)
     new_current_step: str | None = None
 
     if action == "start":
-        new_step_states[step] = "started"
+        new_step_states[step] = STEP_STARTED
         new_current_step = step
     elif action == "complete":
-        new_step_states[step] = "completed"
+        new_step_states[step] = STEP_COMPLETED
         new_current_step = _find_next_pending_step(new_step_states, state.definition_snapshot)
     elif action == "skip":
-        new_step_states[step] = "skipped"
+        new_step_states[step] = STEP_SKIPPED
         new_current_step = _find_next_pending_step(new_step_states, state.definition_snapshot)
 
-    # Update state in DB
     try:
         updated = await repository.update(
             workflow_id,
@@ -347,29 +353,16 @@ async def handle_update_workflow_state(
             current_step=new_current_step,
         )
     except WorkflowRepositoryError as exc:
-        cause = f" Cause: {exc.__cause__}" if exc.__cause__ else ""
-        return {
-            "is_error": True,
-            "content": [{"type": "text", "text": f"Failed to update workflow state.{cause}"}],
-        }
+        return _repo_error_response(exc, "Failed to update workflow state.")
 
     if updated is None:
-        return {
-            "is_error": True,
-            "content": [
-                {
-                    "type": "text",
-                    "text": f"Workflow '{workflow_id}' not found during update.",
-                }
-            ],
-        }
+        return _error_response(f"Workflow '{workflow_id}' not found during update.")
 
-    # Check if workflow is complete (all steps completed or skipped)
-    all_done = all(s in ("completed", "skipped") for s in new_step_states.values())
+    all_done = all(s in (STEP_COMPLETED, STEP_SKIPPED) for s in new_step_states.values())
 
     if all_done:
-        completed = sum(1 for s in new_step_states.values() if s == "completed")
-        skipped = sum(1 for s in new_step_states.values() if s == "skipped")
+        completed = sum(1 for s in new_step_states.values() if s == STEP_COMPLETED)
+        skipped = sum(1 for s in new_step_states.values() if s == STEP_SKIPPED)
 
         return {
             "content": [
@@ -385,7 +378,6 @@ async def handle_update_workflow_state(
             ],
         }
 
-    # For start action, return the started step's instructions
     if action == "start":
         step_info = _get_step_from_snapshot(state.definition_snapshot, step)
         instructions = _read_step_instructions(step_info)
@@ -401,7 +393,6 @@ async def handle_update_workflow_state(
 
         return {"content": [{"type": "text", "text": step_text}]}
 
-    # For complete/skip, return next step's instructions
     if new_current_step:
         next_info = _get_step_from_snapshot(state.definition_snapshot, new_current_step)
         next_instructions = _read_step_instructions(next_info)
@@ -431,17 +422,8 @@ async def handle_get_workflow_state(
     state = await repository.get(workflow_id)
 
     if state is None:
-        return {
-            "is_error": True,
-            "content": [
-                {
-                    "type": "text",
-                    "text": f"Workflow '{workflow_id}' not found or no longer active.",
-                }
-            ],
-        }
+        return _not_found_error(workflow_id)
 
-    # Build steps display from definition snapshot
     steps_display = []
     for step_def in state.definition_snapshot:
         step_id = step_def["id"]
@@ -482,34 +464,14 @@ async def handle_end_workflow(
     state = await repository.get(workflow_id)
 
     if state is None:
-        return {
-            "is_error": True,
-            "content": [
-                {
-                    "type": "text",
-                    "text": f"Workflow '{workflow_id}' not found or no longer active.",
-                }
-            ],
-        }
+        return _not_found_error(workflow_id)
 
-    # Soft-delete the state
     deleted = await repository.soft_delete(workflow_id)
 
     if not deleted:
-        return {
-            "is_error": True,
-            "content": [
-                {
-                    "type": "text",
-                    "text": f"Failed to end workflow '{workflow_id}'.",
-                }
-            ],
-        }
+        return _error_response(f"Failed to end workflow '{workflow_id}'.")
 
-    # Delete scratchpad file
-    scratchpad_path = Path(state.scratchpad_path)
-    if scratchpad_path.exists():
-        scratchpad_path.unlink()
+    _delete_scratchpad(state.scratchpad_path)
 
     action_label = "completed" if action == "complete" else "aborted"
 
@@ -531,11 +493,7 @@ async def handle_list_active_workflows(
     try:
         active = await repository.list_active()
     except WorkflowRepositoryError as exc:
-        cause = f" Cause: {exc.__cause__}" if exc.__cause__ else ""
-        return {
-            "is_error": True,
-            "content": [{"type": "text", "text": f"Failed to list active workflows.{cause}"}],
-        }
+        return _repo_error_response(exc, "Failed to list active workflows.")
 
     if not active:
         return {"content": [{"type": "text", "text": "No active workflows."}]}
@@ -586,13 +544,9 @@ def create_workflow_tools_server(
         StartWorkflowArgs.model_json_schema(),
     )
     async def start_workflow(args: dict) -> dict:
-        try:
-            parsed = StartWorkflowArgs.model_validate(args)
-        except ValidationError as exc:
-            return {
-                "is_error": True,
-                "content": [{"type": "text", "text": f"Invalid arguments: {exc}"}],
-            }
+        parsed, err = _validate_args(args, StartWorkflowArgs)
+        if err:
+            return err
 
         return await handle_start_workflow(
             parsed.skill_name,
@@ -616,13 +570,9 @@ def create_workflow_tools_server(
         UpdateWorkflowStateArgs.model_json_schema(),
     )
     async def update_workflow_state(args: dict) -> dict:
-        try:
-            parsed = UpdateWorkflowStateArgs.model_validate(args)
-        except ValidationError as exc:
-            return {
-                "is_error": True,
-                "content": [{"type": "text", "text": f"Invalid arguments: {exc}"}],
-            }
+        parsed, err = _validate_args(args, UpdateWorkflowStateArgs)
+        if err:
+            return err
 
         return await handle_update_workflow_state(
             parsed.workflow_id,
@@ -642,13 +592,9 @@ def create_workflow_tools_server(
         GetWorkflowStateArgs.model_json_schema(),
     )
     async def get_workflow_state(args: dict) -> dict:
-        try:
-            parsed = GetWorkflowStateArgs.model_validate(args)
-        except ValidationError as exc:
-            return {
-                "is_error": True,
-                "content": [{"type": "text", "text": f"Invalid arguments: {exc}"}],
-            }
+        parsed, err = _validate_args(args, GetWorkflowStateArgs)
+        if err:
+            return err
 
         return await handle_get_workflow_state(parsed.workflow_id, repository)
 
@@ -664,13 +610,9 @@ def create_workflow_tools_server(
         EndWorkflowArgs.model_json_schema(),
     )
     async def end_workflow(args: dict) -> dict:
-        try:
-            parsed = EndWorkflowArgs.model_validate(args)
-        except ValidationError as exc:
-            return {
-                "is_error": True,
-                "content": [{"type": "text", "text": f"Invalid arguments: {exc}"}],
-            }
+        parsed, err = _validate_args(args, EndWorkflowArgs)
+        if err:
+            return err
 
         return await handle_end_workflow(
             parsed.workflow_id,
