@@ -543,9 +543,10 @@ async def handle_list_active_workflows(
     lines = ["## Active Workflows\n"]
     for wf in active:
         current = wf.current_step or "none"
+        started = wf.created_at.strftime("%Y-%m-%d %H:%M UTC")
         lines.append(
             f"- **{wf.workflow_name}** (skill: `{wf.skill_name}`) "
-            f"— ID: `{wf.id}`, current step: `{current}`"
+            f"— ID: `{wf.id}`, current step: `{current}`, started: {started}"
         )
 
     return {"content": [{"type": "text", "text": "\n".join(lines)}]}
