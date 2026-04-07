@@ -179,3 +179,56 @@ class TestSessionContextEntry:
 
         # Content is preserved exactly
         assert entry.content == original_content
+
+
+class TestSessionContextEntryMetadata:
+    """Tests for metadata field on SessionContextEntry (DLT-075)."""
+
+    def test_metadata_defaults_to_none(self) -> None:
+        """AC: metadata field defaults to None when not provided."""
+        entry = SessionContextEntry(
+            id=1,
+            session_id="s1",
+            owner="skills",
+            content="content",
+        )
+
+        assert entry.metadata is None
+
+    def test_metadata_round_trips_with_dict(self) -> None:
+        """AC: metadata dict is preserved exactly."""
+        meta = {"skill_name": "calendar"}
+        entry = SessionContextEntry(
+            id=1,
+            session_id="s1",
+            owner="skills",
+            content="skill content",
+            metadata=meta,
+        )
+
+        assert entry.metadata == {"skill_name": "calendar"}
+
+    def test_metadata_can_hold_arbitrary_dict(self) -> None:
+        """AC: metadata is not limited to skill_name — any dict works."""
+        meta = {"skill_name": "search", "version": 2, "tags": ["a", "b"]}
+        entry = SessionContextEntry(
+            id=1,
+            session_id="s1",
+            owner="skills",
+            content="content",
+            metadata=meta,
+        )
+
+        assert entry.metadata["tags"] == ["a", "b"]
+
+    def test_explicit_none_metadata(self) -> None:
+        """AC: Explicitly passing metadata=None is valid."""
+        entry = SessionContextEntry(
+            id=1,
+            session_id="s1",
+            owner="foundational",
+            content="soul content",
+            metadata=None,
+        )
+
+        assert entry.metadata is None

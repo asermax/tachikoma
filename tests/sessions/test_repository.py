@@ -254,8 +254,8 @@ class TestRepositoryContextEntries:
         entries = await repo.save_context_entries(
             "ctx-test-1",
             [
-                ("foundational", "<soul>Content</soul>"),
-                ("memories", "<memories>User likes Python</memories>"),
+                ("foundational", "<soul>Content</soul>", None),
+                ("memories", "<memories>User likes Python</memories>", None),
             ],
         )
 
@@ -286,9 +286,9 @@ class TestRepositoryContextEntries:
         await repo.save_context_entries(
             "ctx-test-3",
             [
-                ("foundational", "First entry"),
-                ("memories", "Second entry"),
-                ("skills", "Third entry"),
+                ("foundational", "First entry", None),
+                ("memories", "Second entry", None),
+                ("skills", "Third entry", None),
             ],
         )
 
@@ -328,11 +328,11 @@ class TestRepositoryContextEntries:
 
         await repo.save_context_entries(
             "session-1",
-            [("owner-a", "Content for session 1")],
+            [("owner-a", "Content for session 1", None)],
         )
         await repo.save_context_entries(
             "session-2",
-            [("owner-b", "Content for session 2")],
+            [("owner-b", "Content for session 2", None)],
         )
 
         loaded1 = await repo.load_context_entries("session-1")
@@ -357,9 +357,79 @@ User prefers:
 
         await repo.save_context_entries(
             "ctx-test-5",
-            [("memories", original_content)],
+            [("memories", original_content, None)],
         )
 
         loaded = await repo.load_context_entries("ctx-test-5")
 
         assert loaded[0].content == original_content
+
+    async def test_metadata_round_trips_through_db(self, repo: SessionRepository) -> None:
+        """AC: metadata dict survives save → load cycle (DLT-075)."""
+        session = _make_session("ctx-meta-1")
+        await repo.create(session)
+
+        await repo.save_context_entries(
+            "ctx-meta-1",
+            [("skills", "skill content", {"skill_name": "calendar"})],
+        )
+
+        loaded = await repo.load_context_entries("ctx-meta-1")
+
+        assert len(loaded) == 1
+        assert loaded[0].metadata == {"skill_name": "calendar"}
+
+    async def test_none_metadata_round_trips_through_db(self, repo: SessionRepository) -> None:
+        """AC: None metadata survives save → load cycle (DLT-075)."""
+        session = _make_session("ctx-meta-2")
+        await repo.create(session)
+
+        await repo.save_context_entries(
+            "ctx-meta-2",
+            [("memories", "memory content", None)],
+        )
+
+        loaded = await repo.load_context_entries("ctx-meta-2")
+
+        assert len(loaded) == 1
+        assert loaded[0].metadata is None
+
+    async def test_mixed_metadata_entries(self, repo: SessionRepository) -> None:
+        """AC: Entries with and without metadata coexist correctly (DLT-075)."""
+        session = _make_session("ctx-meta-3")
+        await repo.create(session)
+
+        await repo.save_context_entries(
+            "ctx-meta-3",
+            [
+                ("foundational", "soul content", None),
+                ("skills", "calendar content", {"skill_name": "calendar"}),
+                ("skills", "search content", {"skill_name": "search"}),
+                ("memories", "memory content", None),
+            ],
+        )
+
+        loaded = await repo.load_context_entries("ctx-meta-3")
+
+        assert len(loaded) == 4
+        assert loaded[0].metadata is None
+        assert loaded[1].metadata == {"skill_name": "calendar"}
+        assert loaded[2].metadata == {"skill_name": "search"}
+        assert loaded[3].metadata is None
+
+    async def test_new_tuple_shape_accepted(self, repo: SessionRepository) -> None:
+        """AC: save_context_entries accepts 3-tuples (owner, content, metadata)."""
+        session = _make_session("ctx-tuple-1")
+        await repo.create(session)
+
+        entries = await repo.save_context_entries(
+            "ctx-tuple-1",
+            [
+                ("skills", "content", {"skill_name": "test"}),
+                ("memories", "other", None),
+            ],
+        )
+
+        assert len(entries) == 2
+        assert entries[0].metadata == {"skill_name": "test"}
+        assert entries[1].metadata is None

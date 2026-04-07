@@ -12,3 +12,4 @@
 | [ADR-008](ADR-008-system-prompt-composition.md) | System Prompt Composition via Append | Accepted | 2026-03-13 |
 | [ADR-009](ADR-009-event-bus.md) | General-Purpose Event Bus via bubus | Accepted | 2026-03-22 |
 | [ADR-010](ADR-010-semantic-versioning.md) | Semantic Versioning via python-semantic-release | Accepted | 2026-03-29 |
+| [ADR-011](ADR-011-structured-metadata-on-context-entries.md) | Structured Metadata on Context Entries | Accepted | 2026-04-07 |
