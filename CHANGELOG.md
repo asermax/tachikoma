@@ -7,6 +7,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v1.8.0 (2026-04-07)
+
+### Documentation
+
+- Remove on_status references from architecture docs
+  ([`4fff5a2`](https://github.com/asermax/tachikoma/commit/4fff5a25fdea0d70203c126fbebd05797d628fa9))
+
+- **planning**: Add DLT-111, DLT-112, DLT-113 and update DLT-081
+  ([`2f9b38b`](https://github.com/asermax/tachikoma/commit/2f9b38b2b39e6017cd67a15e4896163b38055334))
+
+- **planning**: Remove DLT-090 (already implemented)
+  ([`9f6d46b`](https://github.com/asermax/tachikoma/commit/9f6d46ba73e2c03f07b85b0725e8eab39a4aa461))
+
+- **planning**: Reprioritize deltas around workflows and usability
+  ([`aa42a42`](https://github.com/asermax/tachikoma/commit/aa42a425a1b1f9dc2cce784b7d331438684c108a))
+
+### Features
+
+- **tasks**: Add get_task tool and remove prompt truncation from list_tasks
+  ([`02c5951`](https://github.com/asermax/tachikoma/commit/02c595144810024fb08466e90d631c191bd639e2))
+
+### Refactoring
+
+- **coordinator**: Remove on_status callback and processing memories text
+  ([`017a198`](https://github.com/asermax/tachikoma/commit/017a1983b5064c9e09626f4509c5446ae3c04df8))
+
+
 ## v1.7.2 (2026-04-06)
 
 ### Bug Fixes
