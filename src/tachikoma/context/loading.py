@@ -246,21 +246,21 @@ SKILL.md content.
 
 You have MCP tools to manage workflows during conversations:
 
-- **start_workflow** — Begin a workflow execution. Parameters: `workflow_id` (namespaced ID \
-like "skill-name/workflow-name"), `initial_context` (optional JSON data for the first step). \
-Returns a workflow execution ID and the first step's instructions.
-- **update_workflow_state** — Save progress after completing a step. Parameters: \
-`workflow_execution_id`, `updates` (JSON data to merge into the workflow state). Call this \
-before advancing to the next step to checkpoint your progress.
-- **get_workflow_state** — Retrieve the current workflow state. Parameters: \
-`workflow_execution_id`. Returns the current step index, workflow state data, and \
-execution metadata. Use this after context loss to understand where you left off.
-- **end_workflow** — Complete or terminate a workflow. Parameters: `workflow_execution_id`, \
-`status` ("completed", "failed", or "cancelled"), `result` (optional summary). Always call \
-this when you finish or abandon a workflow.
-- **list_active_workflows** — List all in-flight workflow executions. Returns workflow IDs, \
-names, current steps, and start times. Use this after context loss to discover workflows you \
-were working on.
+- **start_workflow** — Begin a workflow execution. Parameters: `skill_name` (str, name of the \
+skill containing the workflow), `workflow_name` (str, name of the workflow to start). Returns \
+a workflow ID, step list, scratchpad path, and guidance for progressing through the workflow.
+- **update_workflow_state** — Transition a workflow step's state. Parameters: `workflow_id` \
+(str, the workflow instance ID), `step` (str, the step identifier), `action` ("start", \
+"complete", or "skip"). Validates the transition and returns step instructions on start.
+- **get_workflow_state** — Retrieve the current workflow state. Parameters: `workflow_id` \
+(str, the workflow instance ID). Returns full state including all step statuses. Use this \
+after context loss to understand where you left off.
+- **end_workflow** — Complete or abort a workflow. Parameters: `workflow_id` (str, the \
+workflow instance ID), `action` ("complete" or "abort"). Soft-deletes the workflow state \
+and removes the scratchpad file. Always call this when you finish or abandon a workflow.
+- **list_active_workflows** — List all in-flight workflow executions. No parameters required. \
+Returns workflow IDs, names, current steps. Use this after context loss to discover workflows \
+you were working on.
 
 ## Recovery After Context Loss
 
