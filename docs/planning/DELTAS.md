@@ -129,7 +129,7 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 ### DLT-035: Receive images and audio from Telegram
 **Status**: ✗ Defined
 **Depends on**: None
-**Priority**: 3 (Medium)
+**Priority**: 1 (Critical)
 **Complexity**: Medium
 **Description**: Accept image and audio messages from the Telegram channel and forward them to the agent for processing. Currently the Telegram handler only accepts text messages and silently ignores all other content types. This delta adds support for photos, voice messages, and audio files, forwarding them to the agent as multimodal input for processing.
 
@@ -580,3 +580,10 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 **Priority**: 4 (Low)
 **Complexity**: Easy
 **Description**: When a response uses many tools, the activity summary is truncated to show five items followed by "and more". Currently this produces malformed text like ", and and more" due to the joining logic not accounting for the truncation suffix. Fix the grammar so truncated summaries read naturally.
+
+### DLT-114: Set TZ environment variable for agent subprocesses
+**Status**: ✗ Defined
+**Depends on**: None
+**Priority**: 1 (Critical)
+**Complexity**: Easy
+**Description**: The user's configured timezone is currently used for cron scheduling and system prompt display, but the `TZ` environment variable is not set for SDK agent instances. This means shell commands run by the agent (e.g., `date`) use the system's default timezone rather than the user's configured one. Automatically set `TZ` in the agent environment from the configured timezone setting, so all subprocess date/time operations respect the user's timezone without requiring manual `[agent.env]` configuration.

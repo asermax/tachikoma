@@ -10,7 +10,7 @@ held in memory.
 
 import asyncio
 import contextlib
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterator
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import TracebackType
@@ -121,7 +121,6 @@ class Coordinator:
         msg_pre_pipeline: MessagePreProcessingPipeline | None = None,
         skill_registry: SkillRegistry | None = None,
         permission_mode: PermissionMode | None = None,
-        on_status: Callable[[str], None] | None = None,
         session_resume_window: int = 86400,
         session_idle_timeout: int = 900,
         mcp_servers: dict[str, McpSdkServerConfig] | None = None,
@@ -163,7 +162,6 @@ class Coordinator:
         self._msg_pipeline = msg_pipeline
         self._msg_pre_pipeline = msg_pre_pipeline
         self._skill_registry = skill_registry
-        self._on_status = on_status
         self._message_buffer: asyncio.Queue[str] = asyncio.Queue()
 
         # Pending per-message post-processing task
@@ -226,12 +224,6 @@ class Coordinator:
                 count=len(self._background_tasks),
             )
 
-            if self._on_status is not None:
-                try:
-                    self._on_status("Processing memories...")
-                except Exception as exc:
-                    _log.exception("Status callback failed: err={err}", err=str(exc))
-
             results = await asyncio.gather(*self._background_tasks, return_exceptions=True)
             for i, result in enumerate(results):
                 if isinstance(result, Exception):
@@ -249,12 +241,6 @@ class Coordinator:
             and active.sdk_session_id is not None
             and self._pipeline.needs_processing(active, self._last_message_time)
         ):
-            if self._on_status is not None:
-                try:
-                    self._on_status("Processing memories...")
-                except Exception as exc:
-                    _log.exception("Status callback failed: err={err}", err=str(exc))
-
             try:
                 await self._pipeline.run(active)
             except Exception as exc:

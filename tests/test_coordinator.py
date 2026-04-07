@@ -778,59 +778,6 @@ class TestCoordinatorPostProcessing:
 
         pipeline.run.assert_not_awaited()
 
-    async def test_calls_on_status_before_pipeline_run(self, mock_sdk) -> None:
-        """AC4: Status callback is called before pipeline runs."""
-        active = Session(
-            id="s7",
-            started_at=datetime.now(UTC),
-            sdk_session_id="sdk-status",
-        )
-        registry = _make_mock_registry(active_session=active)
-        pipeline = _make_mock_pipeline()
-
-        call_order: list[str] = []
-        on_status = MagicMock(side_effect=lambda msg: call_order.append("status"))
-        pipeline.run.side_effect = AsyncMock(side_effect=lambda s: call_order.append("pipeline"))
-
-        async with Coordinator(
-            registry=registry,
-            pipeline=pipeline,
-            on_status=on_status,
-        ):
-            pass
-
-        on_status.assert_called_once_with("Processing memories...")
-        assert call_order == ["status", "pipeline"]
-
-    async def test_on_status_not_called_without_pipeline(self, mock_sdk) -> None:
-        """AC: Status callback not called when no pipeline is registered."""
-        on_status = MagicMock()
-
-        async with Coordinator(on_status=on_status):
-            pass
-
-        on_status.assert_not_called()
-
-    async def test_on_status_not_called_without_sdk_session_id(self, mock_sdk) -> None:
-        """AC: Status callback not called when session has no sdk_session_id."""
-        active = Session(
-            id="s8",
-            started_at=datetime.now(UTC),
-            sdk_session_id=None,
-        )
-        registry = _make_mock_registry(active_session=active)
-        pipeline = _make_mock_pipeline()
-        on_status = MagicMock()
-
-        async with Coordinator(
-            registry=registry,
-            pipeline=pipeline,
-            on_status=on_status,
-        ):
-            pass
-
-        on_status.assert_not_called()
-
 
 class TestCoordinatorMessageBuffer:
     """Tests for message buffer mechanism replacing steer()."""
@@ -2514,54 +2461,6 @@ class TestCoordinatorShutdownWithBoundaryDetection:
         ) as coord:
             _ = await _send(coord, "new topic")
 
-    async def test_background_shutdown_calls_on_status(
-        self,
-        mock_sdk,
-        mocker,
-    ) -> None:
-        """AC1: on_status is called before gathering background tasks on shutdown."""
-        client, _ = mock_sdk
-        client.receive_response.return_value = _mock_messages(
-            make_assistant([TextBlock(text="new topic")]),
-            make_result(),
-        )
-
-        active = Session(
-            id="s1",
-            started_at=datetime.now(UTC),
-            summary="Summary",
-            sdk_session_id="sdk-old",
-        )
-        registry = _make_mock_registry(active_session=active)
-        registry.get_active_session.side_effect = [active, None, None]
-
-        task_completed = asyncio.Event()
-
-        async def slow_pipeline(session):
-            await asyncio.sleep(0.05)
-            task_completed.set()
-
-        pipeline = MagicMock()
-        pipeline.run = AsyncMock(side_effect=slow_pipeline)
-
-        on_status = MagicMock()
-
-        mocker.patch(
-            "tachikoma.coordinator.detect_boundary",
-            return_value=BoundaryResult(continues=False),
-        )
-
-        async with Coordinator(
-            registry=registry,
-            agent_defaults=AgentDefaults(cwd=Path("/workspace")),
-            pipeline=pipeline,
-            on_status=on_status,
-        ) as coord:
-            _ = await _send(coord, "new topic")
-
-        on_status.assert_called_with("Processing memories...")
-        assert task_completed.is_set()
-
     async def test_background_shutdown_logs_task_count(
         self,
         mock_sdk,
@@ -2609,12 +2508,12 @@ class TestCoordinatorShutdownWithBoundaryDetection:
             count=1,
         )
 
-    async def test_background_shutdown_catches_status_exception(
+    async def test_background_shutdown_awaits_despite_pipeline_failure(
         self,
         mock_sdk,
         mocker,
     ) -> None:
-        """AC4: on_status exception is caught; background tasks still awaited."""
+        """AC4: background tasks still awaited even if a pipeline task fails."""
         client, _ = mock_sdk
         client.receive_response.return_value = _mock_messages(
             make_assistant([TextBlock(text="new topic")]),
@@ -2639,19 +2538,15 @@ class TestCoordinatorShutdownWithBoundaryDetection:
         pipeline = MagicMock()
         pipeline.run = AsyncMock(side_effect=slow_pipeline)
 
-        on_status = MagicMock(side_effect=RuntimeError("status broke"))
-
         mocker.patch(
             "tachikoma.coordinator.detect_boundary",
             return_value=BoundaryResult(continues=False),
         )
 
-        # Should not raise despite on_status failure
         async with Coordinator(
             registry=registry,
             agent_defaults=AgentDefaults(cwd=Path("/workspace")),
             pipeline=pipeline,
-            on_status=on_status,
         ) as coord:
             _ = await _send(coord, "new topic")
 
