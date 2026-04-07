@@ -32,6 +32,10 @@ from tachikoma.boundary import BoundaryResult, SessionCandidate, detect_boundary
 from tachikoma.context.assembly import build_system_prompt
 from tachikoma.events import AgentEvent, Error, Result, Status, TextChunk
 from tachikoma.message_post_processing import MessagePostProcessingPipeline
+from tachikoma.per_message_pre_processing import (
+    MessagePreProcessingPipeline,
+    derive_agents_from_entries,
+)
 from tachikoma.post_processing import PostProcessingPipeline
 from tachikoma.pre_processing import (
     McpServerConfig,
@@ -39,6 +43,7 @@ from tachikoma.pre_processing import (
 )
 from tachikoma.sessions.model import Session, SessionContextEntry
 from tachikoma.sessions.registry import SessionRegistry
+from tachikoma.skills.registry import SkillRegistry
 
 _log = logger.bind(component="coordinator")
 
@@ -115,9 +120,10 @@ class Coordinator:
         pipeline: PostProcessingPipeline | None = None,
         pre_pipeline: PreProcessingPipeline | None = None,
         msg_pipeline: MessagePostProcessingPipeline | None = None,
+        msg_pre_pipeline: MessagePreProcessingPipeline | None = None,
+        skill_registry: SkillRegistry | None = None,
         permission_mode: PermissionMode | None = None,
         on_status: Callable[[str], None] | None = None,
-        agents: dict[str, AgentDefinition] | None = None,
         session_resume_window: int = 86400,
         session_idle_timeout: int = 900,
         mcp_servers: dict[str, McpSdkServerConfig] | None = None,
@@ -131,7 +137,6 @@ class Coordinator:
         self._cwd = self._agent_defaults.cwd
         self._foundational_context = foundational_context
         self._permission_mode = permission_mode
-        self._agents = agents
         self._base_mcp_servers: dict[str, McpSdkServerConfig] = mcp_servers or {}
         self._timezone = timezone
 
@@ -158,6 +163,8 @@ class Coordinator:
         self._pipeline = pipeline
         self._pre_pipeline = pre_pipeline
         self._msg_pipeline = msg_pipeline
+        self._msg_pre_pipeline = msg_pre_pipeline
+        self._skill_registry = skill_registry
         self._on_status = on_status
         self._message_buffer: asyncio.Queue[str] = asyncio.Queue()
 
@@ -268,7 +275,8 @@ class Coordinator:
         return self._last_message_time
 
     def _build_options(
-        self, *, resume: str | None = None, system_prompt_append: str | None = None
+        self, *, resume: str | None = None, system_prompt_append: str | None = None,
+        agents: dict[str, AgentDefinition] | None = None,
     ) -> ClaudeAgentOptions:
         """Build ClaudeAgentOptions for a single message exchange.
 
@@ -278,6 +286,7 @@ class Coordinator:
         Args:
             resume: SDK session ID to resume, or None for fresh session.
             system_prompt_append: Assembled system prompt content from DB entries.
+            agents: Agent definitions derived from context entries + registry.
 
         Returns:
             ClaudeAgentOptions configured for this message exchange.
@@ -301,7 +310,7 @@ class Coordinator:
             env=self._agent_defaults.env,
             system_prompt=sdk_system_prompt,
             permission_mode=self._permission_mode,
-            agents=self._agents,
+            agents=agents,
             resume=resume,
             mcp_servers=all_mcp_servers,
         )
@@ -356,13 +365,14 @@ class Coordinator:
                 # Session tracking failures are logged but never crash the conversation
                 _log.exception("Failed to create session: err={err}", err=str(exc))
 
-        # Signal "Thinking..." when boundary detection or pre-processing will run
+        # Signal "Thinking..." when boundary detection or pipelines will run
         will_detect_boundary = (
             active is not None and active.summary is not None and self._cwd is not None
         )
         will_preprocess = is_new_session and self._pre_pipeline is not None
+        will_msg_preprocess = self._msg_pre_pipeline is not None
 
-        if will_detect_boundary or will_preprocess:
+        if will_detect_boundary or will_preprocess or will_msg_preprocess:
             yield Status(message="Thinking...")
 
         # Boundary detection: check if the message continues the current topic
@@ -428,9 +438,12 @@ class Coordinator:
             and self._registry is not None
             and active is not None
         ):
-            await self._registry.save_context_entries(active.id, self._foundational_context)
+            entries: list[tuple[str, str, dict | None]] = [
+                (owner, content, None) for owner, content in self._foundational_context
+            ]
+            await self._registry.save_context_entries(active.id, entries)
 
-        # Run pre-processing pipeline on first message of new session
+        # Run session-gated pre-processing pipeline on first message of new session
         if is_new_session and self._pre_pipeline is not None:
             try:
                 results = await self._pre_pipeline.run(text)
@@ -444,22 +457,19 @@ class Coordinator:
 
                     # Save provider entries to DB for system prompt assembly
                     if self._registry is not None and active is not None:
-                        entries = [(r.tag, r.content) for r in results if r.content]
-                        if entries:
-                            await self._registry.save_context_entries(active.id, entries)
+                        entries_to_save = [
+                            (r.tag, r.content, r.metadata) for r in results if r.content
+                        ]
+                        if entries_to_save:
+                            await self._registry.save_context_entries(active.id, entries_to_save)
 
-                    combined_agents: dict[str, AgentDefinition] = {}
-                    for r in results:
-                        if r.agents is not None:
-                            combined_agents.update(r.agents)
-                    self._agents = combined_agents if combined_agents else None
             except Exception as exc:
                 _log.exception("Pre-processing failed: err={err}", err=str(exc))
 
         # Determine whether to resume the existing SDK session
         resume_id = self._sdk_session_id if not is_new_session else None
 
-        # Build system prompt from persisted entries
+        # Load context entries from DB
         entries: list[SessionContextEntry] = []
         if self._registry is not None and active is not None:
             try:
@@ -471,10 +481,55 @@ class Coordinator:
                     err=str(exc),
                 )
 
+        # Run per-message pre-processing pipeline on every message
+        if self._msg_pre_pipeline is not None and active is not None:
+            try:
+                pp_results = await self._msg_pre_pipeline.run(text, existing_entries=entries)
+                if pp_results and self._registry is not None:
+                    # Save new entries one by one for robustness
+                    for pp_entry in pp_results:
+                        if pp_entry.content:
+                            try:
+                                await self._registry.save_context_entries(
+                                    active.id,
+                                    [(pp_entry.tag, pp_entry.content, pp_entry.metadata)],
+                                )
+                            except Exception as exc:
+                                _log.exception(
+                                    "Failed to save per-message entry: err={err}",
+                                    err=str(exc),
+                                )
+
+                    # Re-load entries to include newly saved ones
+                    try:
+                        entries = await self._registry.load_context_entries(active.id)
+                    except Exception as exc:
+                        _log.exception(
+                            "Failed to reload entries after per-message pipeline: err={err}",
+                            err=str(exc),
+                        )
+
+            except Exception as exc:
+                _log.exception(
+                    "Per-message pre-processing failed: err={err}",
+                    err=str(exc),
+                )
+
+        # Derive agents from entries + registry
+        agents: dict[str, AgentDefinition] | None = None
+        if self._skill_registry is not None:
+            derived = derive_agents_from_entries(entries, self._skill_registry)
+            agents = derived if derived else None
+
+        # Build system prompt from persisted entries
         system_prompt_append = build_system_prompt(entries, timezone=self._timezone)
 
         # Build options and create a fresh client for this exchange
-        options = self._build_options(resume=resume_id, system_prompt_append=system_prompt_append)
+        options = self._build_options(
+            resume=resume_id,
+            system_prompt_append=system_prompt_append,
+            agents=agents,
+        )
         response_chunks: list[str] = []
 
         client = ClaudeSDKClient(options)
@@ -612,7 +667,6 @@ class Coordinator:
     def _clear_session_state(self) -> None:
         """Reset coordinator state after a session close."""
         self._sdk_session_id = None
-        self._agents = None
         self._mcp_servers = {}
 
     async def _handle_transition(
@@ -687,7 +741,7 @@ the user explicitly refers back to it.
 {previous_session.summary}"""
                 await self._registry.save_context_entries(
                     new_session.id,
-                    [("previous-summary", summary_text)],
+                    [("previous-summary", summary_text, None)],
                 )
             except Exception as exc:
                 _log.exception(
@@ -733,7 +787,7 @@ providing context for what the user has been doing in the meantime.
 {joined}"""
                 await self._registry.save_context_entries(
                     resumed_session.id,
-                    [("bridging-context", bridging_text)],
+                    [("bridging-context", bridging_text, None)],
                 )
                 _log.debug(
                     "Bridging context persisted: session_count={n}",

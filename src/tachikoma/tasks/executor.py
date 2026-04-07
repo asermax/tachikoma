@@ -32,6 +32,7 @@ from tachikoma.projects.context_provider import ProjectsContextProvider
 from tachikoma.projects.processor import ProjectsProcessor
 from tachikoma.sessions.model import Session
 from tachikoma.sessions.registry import SessionRegistry
+from tachikoma.per_message_pre_processing import MessagePreProcessingPipeline
 from tachikoma.skills.context_provider import SkillsContextProvider
 from tachikoma.tasks.model import TaskDefinition, TaskInstance
 from tachikoma.tasks.repository import TaskRepository
@@ -412,27 +413,36 @@ class BackgroundTaskExecutor:
             PreprocessingResult with enriched prompt, MCP servers, and agents.
         """
         try:
+            # Session-gated pipeline for memory and projects
             pipeline = PreProcessingPipeline()
             pipeline.register(MemoryContextProvider(self._agent_defaults))
             pipeline.register(ProjectsContextProvider(workspace_path=self._cwd))
-            pipeline.register(SkillsContextProvider(self._agent_defaults, self._skill_registry))
 
             results = await pipeline.run(prompt)
 
-            if not results:
+            # Per-message pipeline for skills (single-shot for task execution)
+            skill_results: list[ContextResult] = []
+            if self._skill_registry is not None:
+                skill_pipeline = MessagePreProcessingPipeline()
+                skill_pipeline.register(SkillsContextProvider(self._agent_defaults, self._skill_registry))
+                skill_results = await skill_pipeline.run(prompt)
+
+            all_results = (results or []) + skill_results
+
+            if not all_results:
                 return _PreprocessingResult(prompt=prompt)
 
             # Merge MCP servers and agents from all results (coordinator pattern)
             merged_servers: dict[str, McpServerConfig] = {}
             merged_agents: dict[str, AgentDefinition] = {}
 
-            for r in results:
+            for r in all_results:
                 if r.mcp_servers:
                     merged_servers.update(r.mcp_servers)
                 if r.agents:
                     merged_agents.update(r.agents)
 
-            enriched_prompt = assemble_context(results, prompt)
+            enriched_prompt = assemble_context(all_results, prompt)
 
             return _PreprocessingResult(
                 prompt=enriched_prompt,
