@@ -44,8 +44,6 @@ from tachikoma.tasks.repository import TaskRepository
 from tachikoma.tasks.scheduler import get_timezone
 
 if TYPE_CHECKING:
-    from claude_agent_sdk.types import AgentDefinition
-
     from tachikoma.skills.registry import SkillRegistry
 
 
@@ -53,13 +51,12 @@ if TYPE_CHECKING:
 class _PreprocessingResult:
     """Result from background task pre-processing.
 
-    Holds the enriched prompt text plus structured data (MCP servers,
-    agent definitions) extracted from context providers.
+    Holds the enriched prompt text plus MCP server configurations
+    extracted from context providers.
     """
 
     prompt: str
     mcp_servers: dict[str, McpServerConfig] = field(default_factory=dict)
-    agents: "dict[str, AgentDefinition] | None" = None
 
 
 _log = logger.bind(component="task_executor")
@@ -300,7 +297,6 @@ class BackgroundTaskExecutor:
                 ),
                 permission_mode="bypassPermissions",
                 mcp_servers=preprocessing_result.mcp_servers,
-                agents=preprocessing_result.agents,
             )
 
             # Execute with evaluator loop
@@ -407,25 +403,22 @@ class BackgroundTaskExecutor:
     async def _run_preprocessing(self, prompt: str) -> _PreprocessingResult:
         """Run pre-processing pipeline for context injection.
 
-        Registers all three context providers (memory, projects, skills) and
-        extracts MCP servers and agents from results alongside the enriched
-        prompt text.
+        Registers context providers (memory, projects, skills) and
+        extracts MCP servers from results alongside the enriched prompt text.
 
         Args:
             prompt: The original task prompt
 
         Returns:
-            PreprocessingResult with enriched prompt, MCP servers, and agents.
+            PreprocessingResult with enriched prompt and MCP servers.
         """
         try:
-            # Session-gated pipeline for memory and projects
             pipeline = PreProcessingPipeline()
             pipeline.register(MemoryContextProvider(self._agent_defaults))
             pipeline.register(ProjectsContextProvider(workspace_path=self._cwd))
 
             results = await pipeline.run(prompt)
 
-            # Per-message pipeline for skills (single-shot for task execution)
             skill_results: list[ContextResult] = []
             if self._skill_registry is not None:
                 skill_pipeline = MessagePreProcessingPipeline()
@@ -439,22 +432,17 @@ class BackgroundTaskExecutor:
             if not all_results:
                 return _PreprocessingResult(prompt=prompt)
 
-            # Merge MCP servers and agents from all results (coordinator pattern)
             merged_servers: dict[str, McpServerConfig] = {}
-            merged_agents: dict[str, AgentDefinition] = {}
 
             for r in all_results:
                 if r.mcp_servers:
                     merged_servers.update(r.mcp_servers)
-                if r.agents:
-                    merged_agents.update(r.agents)
 
             enriched_prompt = assemble_context(all_results, prompt)
 
             return _PreprocessingResult(
                 prompt=enriched_prompt,
                 mcp_servers=merged_servers,
-                agents=merged_agents if merged_agents else None,
             )
 
         except Exception as exc:
