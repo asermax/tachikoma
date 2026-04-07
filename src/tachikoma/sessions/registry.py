@@ -319,7 +319,9 @@ class SessionRegistry:
     # Context entries
     # ------------------------------------------------------------------
 
-    async def save_context_entries(self, session_id: str, entries: list[tuple[str, str]]) -> None:
+    async def save_context_entries(
+        self, session_id: str, entries: list[tuple[str, str, dict | None]]
+    ) -> None:
         """Save context entries for a session.
 
         Best-effort persistence: failures are logged but not raised.
@@ -327,7 +329,7 @@ class SessionRegistry:
 
         Args:
             session_id: The session to save entries for.
-            entries: List of (owner, content) tuples to persist.
+            entries: List of (owner, content, metadata) tuples to persist.
         """
         if not entries:
             return

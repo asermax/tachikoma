@@ -54,6 +54,7 @@ class ContextResult:
     content: str
     mcp_servers: dict[str, McpServerConfig] | None = None
     agents: "dict[str, AgentDefinition] | None" = None
+    metadata: dict | None = None
 
     def __post_init__(self) -> None:
         """Validate that tag is a valid XML tag name."""

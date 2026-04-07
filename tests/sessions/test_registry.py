@@ -368,13 +368,13 @@ class TestSessionRegistryContextEntries:
         # Method returns None (best-effort save)
         result = await registry.save_context_entries(
             "s1",
-            [("memories", "User prefers dark mode")],
+            [("memories", "User prefers dark mode", None)],
         )
 
         assert result is None
         mock_repo.save_context_entries.assert_awaited_once_with(
             "s1",
-            [("memories", "User prefers dark mode")],
+            [("memories", "User prefers dark mode", None)],
         )
 
     async def test_save_context_entries_logs_on_failure_but_doesnt_raise(
@@ -384,7 +384,7 @@ class TestSessionRegistryContextEntries:
         mock_repo.save_context_entries = AsyncMock(side_effect=Exception("DB error"))
 
         # Should not raise - best-effort save
-        await registry.save_context_entries("s1", [("memories", "test")])
+        await registry.save_context_entries("s1", [("memories", "test", None)])
 
         mock_repo.save_context_entries.assert_awaited_once()
 

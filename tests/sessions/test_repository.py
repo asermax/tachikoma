@@ -254,8 +254,8 @@ class TestRepositoryContextEntries:
         entries = await repo.save_context_entries(
             "ctx-test-1",
             [
-                ("foundational", "<soul>Content</soul>"),
-                ("memories", "<memories>User likes Python</memories>"),
+                ("foundational", "<soul>Content</soul>", None),
+                ("memories", "<memories>User likes Python</memories>", None),
             ],
         )
 
@@ -286,9 +286,9 @@ class TestRepositoryContextEntries:
         await repo.save_context_entries(
             "ctx-test-3",
             [
-                ("foundational", "First entry"),
-                ("memories", "Second entry"),
-                ("skills", "Third entry"),
+                ("foundational", "First entry", None),
+                ("memories", "Second entry", None),
+                ("skills", "Third entry", None),
             ],
         )
 
@@ -328,11 +328,11 @@ class TestRepositoryContextEntries:
 
         await repo.save_context_entries(
             "session-1",
-            [("owner-a", "Content for session 1")],
+            [("owner-a", "Content for session 1", None)],
         )
         await repo.save_context_entries(
             "session-2",
-            [("owner-b", "Content for session 2")],
+            [("owner-b", "Content for session 2", None)],
         )
 
         loaded1 = await repo.load_context_entries("session-1")
@@ -357,7 +357,7 @@ User prefers:
 
         await repo.save_context_entries(
             "ctx-test-5",
-            [("memories", original_content)],
+            [("memories", original_content, None)],
         )
 
         loaded = await repo.load_context_entries("ctx-test-5")

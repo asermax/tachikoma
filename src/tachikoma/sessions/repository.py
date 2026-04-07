@@ -4,6 +4,7 @@ All callers receive Session dataclasses — SQLAlchemy types never leak out
 of this module.
 """
 
+import json
 from datetime import datetime, timedelta
 
 from loguru import logger
@@ -220,7 +221,7 @@ class SessionRepository:
     # ------------------------------------------------------------------
 
     async def save_context_entries(
-        self, session_id: str, entries: list[tuple[str, str]]
+        self, session_id: str, entries: list[tuple[str, str, dict | None]]
     ) -> list[SessionContextEntry]:
         """Persist context entries for a session.
 
@@ -229,7 +230,7 @@ class SessionRepository:
 
         Args:
             session_id: The session to associate entries with.
-            entries: List of (owner, content) tuples.
+            entries: List of (owner, content, metadata) tuples.
 
         Returns:
             List of persisted SessionContextEntry instances with their ids.
@@ -246,8 +247,9 @@ class SessionRepository:
                     session_id=session_id,
                     owner=owner,
                     content=content,
+                    entry_metadata=json.dumps(meta) if meta is not None else None,
                 )
-                for owner, content in entries
+                for owner, content, meta in entries
             ]
 
             async with self._session_factory() as db:
