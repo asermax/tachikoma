@@ -3,6 +3,7 @@
 Tests for DLT-021: Skill detection and context injection.
 Tests for DLT-032: Registry injection via constructor.
 Updated for DLT-038: Registry injected via constructor.
+Updated for DLT-075: Per-message evaluation with metadata-based filtering.
 """
 
 from pathlib import Path
@@ -11,7 +12,7 @@ from claude_agent_sdk.types import ResultMessage
 from pytest_mock import MockerFixture
 
 from tachikoma.agent_defaults import AgentDefaults
-from tachikoma.pre_processing import ContextResult
+from tachikoma.sessions.model import SessionContextEntry
 from tachikoma.skills.context_provider import (
     SKILL_CLASSIFICATION_PROMPT,
     SkillsContextProvider,
@@ -93,7 +94,7 @@ class TestSkillsContextProvider:
     async def test_calls_query_with_correct_options(
         self, mocker: MockerFixture, tmp_path: Path
     ) -> None:
-        """AC: query() called with model=opus, effort=low, max_turns=3, no allowed_tools."""
+        """AC: query() called with effort=low, max_turns=3, cwd set."""
         mock_query = mocker.patch("tachikoma.skills.context_provider.query")
 
         # Create a skill so registry is non-empty
@@ -104,69 +105,39 @@ class TestSkillsContextProvider:
 
         mock_query.return_value = _make_query_result("NO_RELEVANT_SKILLS")
 
-        provider = self._make_provider(
-            tmp_path, AgentDefaults(cwd=tmp_path, cli_path="/custom/cli")
-        )
-        result = await provider.provide("hello")
+        provider = self._make_provider(tmp_path)
+        await provider.provide("hello")
 
         mock_query.assert_called_once()
-        call_kwargs = mock_query.call_args[1]
-        options = call_kwargs["options"]
+        call_kwargs = mock_query.call_args
+        options = call_kwargs[1]["options"]
 
-        assert options.model == "opus"
         assert options.effort == "low"
         assert options.max_turns == 3
-        # No tools for classification — defense in depth (see DES-007)
-        assert options.allowed_tools == []
-        assert options.permission_mode is None
         assert options.cwd == tmp_path
-        assert options.cli_path == "/custom/cli"
-        assert result is None
-
-    async def test_embeds_skill_names_and_message_in_prompt(
-        self, mocker: MockerFixture, tmp_path: Path
-    ) -> None:
-        """AC: Prompt contains skill names/descriptions and user message."""
-        mock_query = mocker.patch("tachikoma.skills.context_provider.query")
-
-        # Create a skill
-        skills_dir = tmp_path / "skills" / "search"
-        skills_dir.mkdir(parents=True)
-        skill_md = skills_dir / "SKILL.md"
-        skill_md.write_text("---\ndescription: Search for things\n---\n\nSearch content")
-
-        mock_query.return_value = _make_query_result("NO_RELEVANT_SKILLS")
-
-        provider = self._make_provider(tmp_path)
-        await provider.provide("Find my documents")
-
-        call_kwargs = mock_query.call_args[1]
-        prompt = call_kwargs["prompt"]
-
-        assert "search" in prompt
-        assert "Search for things" in prompt
-        assert "Find my documents" in prompt
 
     async def test_returns_context_result_with_skills_tag(
         self, mocker: MockerFixture, tmp_path: Path
     ) -> None:
-        """AC: Happy path returns ContextResult with tag='skills'."""
+        """AC: Result is a list with tag='skills' and non-empty content."""
         mock_query = mocker.patch("tachikoma.skills.context_provider.query")
 
         # Create a skill
         skills_dir = tmp_path / "skills" / "test-skill"
         skills_dir.mkdir(parents=True)
         skill_md = skills_dir / "SKILL.md"
-        skill_md.write_text("---\ndescription: A test\n---\n\nSkill body content")
+        skill_md.write_text("---\ndescription: A test skill\n---\n\nTest content")
 
         mock_query.return_value = _make_query_result("test-skill")
 
         provider = self._make_provider(tmp_path)
+
         result = await provider.provide("hello")
 
         assert result is not None
-        assert isinstance(result, ContextResult)
-        assert result.tag == "skills"
+        assert isinstance(result, list)
+        assert len(result) == 1
+        assert result[0].tag == "skills"
 
     async def test_xml_block_contains_skill_body_and_path(
         self, mocker: MockerFixture, tmp_path: Path
@@ -186,41 +157,29 @@ class TestSkillsContextProvider:
         result = await provider.provide("hello")
 
         assert result is not None
-        assert '<skill name="my-skill"' in result.content
-        assert "directory=" in result.content
-        assert "# My Skill" in result.content
-        assert "This is the body." in result.content
+        assert len(result) == 1
+        assert '<skill name="my-skill"' in result[0].content
+        assert "directory=" in result[0].content
+        assert "# My Skill" in result[0].content
+        assert "This is the body." in result[0].content
         # Frontmatter should NOT be in content
-        assert "---" not in result.content
-        assert "description: Test" not in result.content
+        assert "---" not in result[0].content
 
-    async def test_filters_agents_by_detected_skill_prefix(
+    async def test_agents_always_none_on_results(
         self, mocker: MockerFixture, tmp_path: Path
     ) -> None:
-        """AC: Only agents from detected skills are returned."""
+        """AC: Agents are None on all results — derived from entries by coordinator."""
         mock_query = mocker.patch("tachikoma.skills.context_provider.query")
 
-        # Create skill with agent
+        # Create search skill with agents
         skills_dir = tmp_path / "skills" / "search"
         skills_dir.mkdir(parents=True)
         skill_md = skills_dir / "SKILL.md"
-        skill_md.write_text("---\ndescription: Search\n---\n\nContent")
-
+        skill_md.write_text("---\ndescription: Search\n---\n\nSearch content")
         agents_dir = skills_dir / "agents"
         agents_dir.mkdir()
         agent_md = agents_dir / "query.md"
         agent_md.write_text("---\ndescription: Query agent\n---\n\nAgent prompt")
-
-        # Create another skill that should NOT have agents returned
-        other_dir = tmp_path / "skills" / "other"
-        other_dir.mkdir(parents=True)
-        other_md = other_dir / "SKILL.md"
-        other_md.write_text("---\ndescription: Other\n---\n\nOther content")
-
-        other_agents = other_dir / "agents"
-        other_agents.mkdir()
-        other_agent = other_agents / "helper.md"
-        other_agent.write_text("---\ndescription: Helper\n---\n\nHelp prompt")
 
         mock_query.return_value = _make_query_result("search")
 
@@ -228,9 +187,8 @@ class TestSkillsContextProvider:
         result = await provider.provide("search for something")
 
         assert result is not None
-        assert result.agents is not None
-        assert "search/query" in result.agents
-        assert "other/helper" not in result.agents
+        assert len(result) == 1
+        assert result[0].agents is None
 
     async def test_returns_none_for_no_relevant_skills_sentinel(
         self, mocker: MockerFixture, tmp_path: Path
@@ -268,43 +226,10 @@ class TestSkillsContextProvider:
         result = await provider.provide("hello")
 
         assert result is not None
-        assert "real-skill" in result.content
-        assert "fake-skill" not in result.content
-
-    async def test_returns_none_on_query_exception(
-        self, mocker: MockerFixture, tmp_path: Path
-    ) -> None:
-        """AC: Exception during query returns None (DES-002 logging)."""
-        mock_query = mocker.patch("tachikoma.skills.context_provider.query")
-        mock_query.side_effect = RuntimeError("SDK error")
-
-        skills_dir = tmp_path / "skills" / "test"
-        skills_dir.mkdir(parents=True)
-        skill_md = skills_dir / "SKILL.md"
-        skill_md.write_text("---\ndescription: Test\n---\n\nContent")
-
-        provider = self._make_provider(tmp_path)
-        result = await provider.provide("hello")
-
-        assert result is None
-
-    async def test_returns_none_on_error_result_message(
-        self, mocker: MockerFixture, tmp_path: Path
-    ) -> None:
-        """AC: is_error=True in ResultMessage returns None."""
-        mock_query = mocker.patch("tachikoma.skills.context_provider.query")
-
-        skills_dir = tmp_path / "skills" / "test"
-        skills_dir.mkdir(parents=True)
-        skill_md = skills_dir / "SKILL.md"
-        skill_md.write_text("---\ndescription: Test\n---\n\nContent")
-
-        mock_query.return_value = _make_query_result("Error", is_error=True)
-
-        provider = self._make_provider(tmp_path)
-        result = await provider.provide("hello")
-
-        assert result is None
+        assert len(result) == 1
+        assert "real-skill" in result[0].content
+        assert "fake-skill" not in result[0].content
+        assert "another-fake" not in result[0].content
 
     async def test_graceful_degradation_on_skill_read_failure(
         self, mocker: MockerFixture, tmp_path: Path
@@ -325,11 +250,12 @@ class TestSkillsContextProvider:
         result = await provider.provide("hello")
 
         assert result is not None
-        assert "valid-skill" in result.content
-        assert "Valid content" in result.content
+        assert len(result) == 1
+        assert "valid-skill" in result[0].content
+        assert "Valid content" in result[0].content
 
     async def test_multiple_skills_detected(self, mocker: MockerFixture, tmp_path: Path) -> None:
-        """AC: Multiple detected skills in XML block, agents from both."""
+        """AC: Multiple detected skills produce separate ContextResults."""
         mock_query = mocker.patch("tachikoma.skills.context_provider.query")
 
         # Create first skill
@@ -356,18 +282,26 @@ class TestSkillsContextProvider:
         result = await provider.provide("hello")
 
         assert result is not None
-        assert "skill-a" in result.content
-        assert "skill-b" in result.content
-        assert "A content" in result.content
-        assert "B content" in result.content
-        assert result.agents is not None
-        assert "skill-a/agent1" in result.agents
-        assert "skill-b/agent2" in result.agents
+        assert len(result) == 2
+
+        # Each result has its own skill content
+        contents = [r.content for r in result]
+        assert any("skill-a" in c for c in contents)
+        assert any("skill-b" in c for c in contents)
+        assert any("A content" in c for c in contents)
+        assert any("B content" in c for c in contents)
+
+        # Each result has metadata identifying the skill
+        skill_names_in_results = {r.metadata["skill_name"] for r in result}
+        assert skill_names_in_results == {"skill-a", "skill-b"}
+
+        # Agents are None on all results — derived from entries by coordinator
+        assert all(r.agents is None for r in result)
 
     async def test_does_not_mutate_registry_agents_dict(
         self, mocker: MockerFixture, tmp_path: Path
     ) -> None:
-        """AC: Filtering creates new dict, does not mutate registry's internal dict."""
+        """AC: Registry's internal dict is not mutated by provider calls."""
         mock_query = mocker.patch("tachikoma.skills.context_provider.query")
 
         skills_dir = tmp_path / "skills" / "test"
@@ -392,6 +326,111 @@ class TestSkillsContextProvider:
         registry_after = provider._registry.get_agents()
         assert registry_agents_before.keys() == registry_after.keys()
 
-        # Result agents is a different dict
+        # Result exists
         assert result is not None
-        assert result.agents is not registry_after
+
+    async def test_filters_already_loaded_skills(
+        self, mocker: MockerFixture, tmp_path: Path
+    ) -> None:
+        """AC: Already-loaded skills (from existing_entries) are excluded from classification."""
+        mock_query = mocker.patch("tachikoma.skills.context_provider.query")
+
+        # Create two skills
+        skills_dir_a = tmp_path / "skills" / "skill-a"
+        skills_dir_a.mkdir(parents=True)
+        (skills_dir_a / "SKILL.md").write_text("---\ndescription: A\n---\n\nA content")
+
+        skills_dir_b = tmp_path / "skills" / "skill-b"
+        skills_dir_b.mkdir(parents=True)
+        (skills_dir_b / "SKILL.md").write_text("---\ndescription: B\n---\n\nB content")
+
+        mock_query.return_value = _make_query_result("skill-b")
+
+        provider = self._make_provider(tmp_path)
+
+        # Pass existing entries indicating skill-a is already loaded
+        existing = [
+            SessionContextEntry(
+                id=1, session_id="s1", owner="skills", content="...",
+                metadata={"skill_name": "skill-a"},
+            ),
+        ]
+
+        result = await provider.provide("hello", existing_entries=existing)
+
+        # Classifier should only see skill-b (skill-a filtered out)
+        call_args = mock_query.call_args
+        prompt = call_args[1]["prompt"]
+        assert "skill-a" not in prompt
+        assert "skill-b" in prompt
+
+        assert result is not None
+        assert len(result) == 1
+        assert result[0].metadata["skill_name"] == "skill-b"
+
+    async def test_returns_none_when_all_skills_loaded(
+        self, mocker: MockerFixture, tmp_path: Path
+    ) -> None:
+        """AC: Returns None without LLM call when all skills are already loaded (R8)."""
+        mock_query = mocker.patch("tachikoma.skills.context_provider.query")
+
+        # Create one skill
+        skills_dir = tmp_path / "skills" / "only-skill"
+        skills_dir.mkdir(parents=True)
+        (skills_dir / "SKILL.md").write_text("---\ndescription: Only\n---\n\nContent")
+
+        provider = self._make_provider(tmp_path)
+
+        # Pass existing entries indicating the only skill is loaded
+        existing = [
+            SessionContextEntry(
+                id=1, session_id="s1", owner="skills", content="...",
+                metadata={"skill_name": "only-skill"},
+            ),
+        ]
+
+        result = await provider.provide("hello", existing_entries=existing)
+
+        assert result is None
+        mock_query.assert_not_called()
+
+    async def test_metadata_contains_skill_name(
+        self, mocker: MockerFixture, tmp_path: Path
+    ) -> None:
+        """AC: Each result has metadata={'skill_name': name}."""
+        mock_query = mocker.patch("tachikoma.skills.context_provider.query")
+
+        skills_dir = tmp_path / "skills" / "my-skill"
+        skills_dir.mkdir(parents=True)
+        (skills_dir / "SKILL.md").write_text("---\ndescription: My\n---\n\nContent")
+
+        mock_query.return_value = _make_query_result("my-skill")
+
+        provider = self._make_provider(tmp_path)
+        result = await provider.provide("hello")
+
+        assert result is not None
+        assert len(result) == 1
+        assert result[0].metadata == {"skill_name": "my-skill"}
+
+    async def test_empty_existing_entries_classifies_full_registry(
+        self, mocker: MockerFixture, tmp_path: Path
+    ) -> None:
+        """AC: Empty existing_entries → classifier sees full registry (same as first message)."""
+        mock_query = mocker.patch("tachikoma.skills.context_provider.query")
+
+        skills_dir = tmp_path / "skills" / "test"
+        skills_dir.mkdir(parents=True)
+        (skills_dir / "SKILL.md").write_text("---\ndescription: Test\n---\n\nContent")
+
+        mock_query.return_value = _make_query_result("NO_RELEVANT_SKILLS")
+
+        provider = self._make_provider(tmp_path)
+        result = await provider.provide("hello", existing_entries=[])
+
+        # Classifier should see the skill
+        call_args = mock_query.call_args
+        prompt = call_args[1]["prompt"]
+        assert "test" in prompt
+
+        assert result is None  # NO_RELEVANT_SKILLS

@@ -1,16 +1,19 @@
-"""Skills context provider for pre-processing pipeline.
+"""Skills context provider for per-message pre-processing pipeline.
 
 Uses an Opus agent to classify which skills are relevant to the
-current user message, then injects the matched skills' content
-and agent definitions.
+current user message, then injects the matched skills' content.
+Runs on every message, classifying only against skills not already
+in context (identified via entry metadata).
 """
 
 from claude_agent_sdk import ClaudeAgentOptions, query
-from claude_agent_sdk.types import AgentDefinition, ResultMessage
+from claude_agent_sdk.types import ResultMessage
 from loguru import logger
 
 from tachikoma.agent_defaults import AgentDefaults
+from tachikoma.per_message_pre_processing import extract_skill_names
 from tachikoma.pre_processing import ContextProvider, ContextResult
+from tachikoma.sessions.model import SessionContextEntry
 from tachikoma.skills.registry import SkillRegistry
 
 _log = logger.bind(component="skills_context")
@@ -50,29 +53,44 @@ Return the relevant skill names (one per line), or NO_RELEVANT_SKILLS if none ap
 
 
 class SkillsContextProvider(ContextProvider):
-    """Context provider that detects and loads relevant skills.
+    """Context provider that detects and loads relevant skills per-message.
 
     Uses an Opus agent with low effort to classify which skills are
-    relevant to the current user message. Returns a ContextResult
-    with the "skills" tag containing skill content and their agents.
+    relevant to the current user message. Runs on every message, classifying
+    only against skills not already in context (identified via entry metadata).
 
-    The registry is injected via constructor (shared from bootstrap extras)
-    and is refreshed before each provide() call to pick up runtime changes.
+    Returns one ContextResult per detected skill, each with metadata identifying
+    the skill name. Agents are not included — they are derived from entries by
+    the coordinator.
     """
 
     def __init__(self, agent_defaults: AgentDefaults, registry: SkillRegistry) -> None:
         self._agent_defaults = agent_defaults
         self._registry = registry
 
-    async def provide(self, message: str) -> ContextResult | None:
+    async def provide(
+        self, message: str, *, existing_entries: list[SessionContextEntry] | None = None
+    ) -> list[ContextResult] | None:
         self._registry.refresh()
 
         # R10: No-op when no skills exist in registry
         if not self._registry.skills:
             return None
 
+        # R1: Filter out already-loaded skills (identified via entry metadata)
+        loaded_names = extract_skill_names(existing_entries or [])
+        unloaded_skills = {
+            name: skill
+            for name, skill in self._registry.skills.items()
+            if name not in loaded_names
+        }
+
+        # R8: Skip classification entirely when no unloaded skills remain
+        if not unloaded_skills:
+            return None
+
         skills_list = "\n".join(
-            f"- **{name}**: {skill.description}" for name, skill in self._registry.skills.items()
+            f"- **{name}**: {skill.description}" for name, skill in unloaded_skills.items()
         )
         prompt = SKILL_CLASSIFICATION_PROMPT.format(
             skills=skills_list,
@@ -140,25 +158,21 @@ class SkillsContextProvider(ContextProvider):
         if not detected_names:
             return None
 
-        skill_blocks: list[str] = []
-        filtered_agents: dict[str, AgentDefinition] = {}
+        # S5: One entry per skill — each detected skill gets its own ContextResult
+        results: list[ContextResult] = []
 
         for skill_name in detected_names:
             skill = self._registry.skills[skill_name]
-
             skill_block = (
                 f'<skill name="{skill_name}" directory="{skill.path}">\n{skill.body}\n</skill>'
             )
-            skill_blocks.append(skill_block)
-            filtered_agents.update(self._registry.get_agents_for_skill(skill_name))
 
-        if not skill_blocks:
-            return None
+            results.append(
+                ContextResult(
+                    tag="skills",
+                    content=skill_block,
+                    metadata={"skill_name": skill_name},
+                )
+            )
 
-        xml_content = "\n\n".join(skill_blocks)
-
-        return ContextResult(
-            tag="skills",
-            content=xml_content,
-            agents=filtered_agents if filtered_agents else None,
-        )
+        return results
