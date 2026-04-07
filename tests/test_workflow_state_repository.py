@@ -4,6 +4,7 @@ Uses in-memory SQLite with real async SQLAlchemy sessions for integration-style 
 """
 
 import asyncio
+import json
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -14,10 +15,6 @@ from tachikoma.workflows.model import (
     StepState,
     WorkflowState,
     WorkflowStateRecord,
-    _deserialize_definition_snapshot,
-    _deserialize_step_states,
-    _serialize_definition_snapshot,
-    _serialize_step_states,
 )
 from tachikoma.workflows.repository import WorkflowStateRepository
 
@@ -86,8 +83,8 @@ def test_step_states_serialization_round_trip():
         "step4": "skipped",
     }
 
-    serialized = _serialize_step_states(original)
-    deserialized = _deserialize_step_states(serialized)
+    serialized = json.dumps(original)
+    deserialized = dict(json.loads(serialized))
 
     assert deserialized == original
 
@@ -100,8 +97,8 @@ def test_definition_snapshot_serialization_round_trip():
         {"name": "step3", "description": "Third step", "tool": "tool3"},
     ]
 
-    serialized = _serialize_definition_snapshot(original)
-    deserialized = _deserialize_definition_snapshot(serialized)
+    serialized = json.dumps(original)
+    deserialized = json.loads(serialized)
 
     assert deserialized == original
 
@@ -118,8 +115,8 @@ def test_workflow_state_record_to_domain(sample_workflow_state):
         skill_name=sample_workflow_state.skill_name,
         workflow_name=sample_workflow_state.workflow_name,
         current_step=sample_workflow_state.current_step,
-        step_states=_serialize_step_states(sample_workflow_state.step_states),
-        definition_snapshot=_serialize_definition_snapshot(
+        step_states=json.dumps(sample_workflow_state.step_states),
+        definition_snapshot=json.dumps(
             sample_workflow_state.definition_snapshot
         ),
         scratchpad_path=sample_workflow_state.scratchpad_path,

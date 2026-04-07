@@ -69,7 +69,7 @@ class TestStaleWorkflowCleanup:
         state = _make_state("stale-wf", updated_at=old_time)
         await repository.create(state)
 
-        processor = StaleWorkflowCleanupProcessor(repository, tmp_path)
+        processor = StaleWorkflowCleanupProcessor(repository)
         await processor.process(_make_session())
 
         # Verify soft-deleted
@@ -80,7 +80,7 @@ class TestStaleWorkflowCleanup:
         state = _make_state("fresh-wf", updated_at=datetime.now(UTC))
         await repository.create(state)
 
-        processor = StaleWorkflowCleanupProcessor(repository, tmp_path)
+        processor = StaleWorkflowCleanupProcessor(repository)
         await processor.process(_make_session())
 
         # Verify still active
@@ -106,7 +106,7 @@ class TestStaleWorkflowCleanup:
         )
         await repository.create(state)
 
-        processor = StaleWorkflowCleanupProcessor(repository, tmp_path)
+        processor = StaleWorkflowCleanupProcessor(repository)
         await processor.process(_make_session())
 
         assert not scratchpad.exists()
@@ -119,23 +119,22 @@ class TestStaleWorkflowCleanup:
         await repository.create(state)
 
         # Default threshold (24h) should preserve it
-        processor_24h = StaleWorkflowCleanupProcessor(repository, tmp_path)
+        processor_24h = StaleWorkflowCleanupProcessor(repository)
         await processor_24h.process(_make_session())
         assert await repository.get("two-hour-wf") is not None
 
         # 1h threshold should clean it
         processor_1h = StaleWorkflowCleanupProcessor(
             repository,
-            tmp_path,
             threshold=timedelta(hours=1),
         )
         await processor_1h.process(_make_session())
         assert await repository.get("two-hour-wf") is None
 
     @pytest.mark.asyncio
-    async def test_no_stale_workflows(self, repository, tmp_path):
+    async def test_no_stale_workflows(self, repository):
         # No workflows at all
-        processor = StaleWorkflowCleanupProcessor(repository, tmp_path)
+        processor = StaleWorkflowCleanupProcessor(repository)
         await processor.process(_make_session())  # Should not raise
 
     @pytest.mark.asyncio
@@ -152,7 +151,7 @@ class TestStaleWorkflowCleanup:
         await repository.create(stale_state)
         await repository.create(fresh_state)
 
-        processor = StaleWorkflowCleanupProcessor(repository, tmp_path)
+        processor = StaleWorkflowCleanupProcessor(repository)
         await processor.process(_make_session())
 
         assert await repository.get("stale-1") is None
