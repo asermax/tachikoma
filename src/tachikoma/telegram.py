@@ -87,9 +87,7 @@ TELEGRAM_TOOL_SUMMARY: dict[str, Callable[[dict[str, Any]], str]] = {
         else "searching for a pattern"
     ),
     "Glob": lambda inp: (
-        f"globbing {code_wrap(inp['pattern'])}"
-        if "pattern" in inp
-        else "globbing a pattern"
+        f"globbing {code_wrap(inp['pattern'])}" if "pattern" in inp else "globbing a pattern"
     ),
     "Bash": lambda inp: _format_bash_summary(inp),
     "Edit": lambda inp: (
@@ -174,7 +172,8 @@ class ResponseRenderer:
 
             prefix = "\n" if self._buffer else ""
             summary = summarize_tool_activity(
-                self._tool_activities, summary_map=TELEGRAM_TOOL_SUMMARY,
+                self._tool_activities,
+                summary_map=TELEGRAM_TOOL_SUMMARY,
             )
             self._buffer += f"{prefix}*🔧 {summary}*\n\n"
             self._tool_activities = []  # Clear — each transition gets independent summary
@@ -224,7 +223,8 @@ class ResponseRenderer:
 
             prefix = "\n" if self._buffer else ""
             summary = summarize_tool_activity(
-                self._tool_activities, summary_map=TELEGRAM_TOOL_SUMMARY,
+                self._tool_activities,
+                summary_map=TELEGRAM_TOOL_SUMMARY,
             )
             self._buffer += f"{prefix}*🔧 {summary}*\n"
             self._tool_activities = []
@@ -268,8 +268,7 @@ class ResponseRenderer:
                     await asyncio.sleep(0.5)
                 else:
                     _log.warning(
-                        "Failed to delete original after copy (duplicate visible): "
-                        "message_id={id}",
+                        "Failed to delete original after copy (duplicate visible): message_id={id}",
                         id=self._current_message_id,
                     )
 
@@ -456,7 +455,7 @@ class ResponseRenderer:
             self._current_message_id = self._split_message_ids[-1]
 
         # Delete excess old messages (skip sentinels from failed sends)
-        for old_id in old_ids[len(chunks):]:
+        for old_id in old_ids[len(chunks) :]:
             if old_id == -1:
                 continue
             try:

@@ -9,9 +9,7 @@ from tachikoma.context.loading import render_system_preamble
 from tachikoma.sessions.model import SessionContextEntry
 
 
-def build_system_prompt(
-    entries: list[SessionContextEntry], *, timezone: str
-) -> str:
+def build_system_prompt(entries: list[SessionContextEntry], *, timezone: str) -> str:
     """Build system prompt append string from persisted context entries.
 
     This is a pure function that:

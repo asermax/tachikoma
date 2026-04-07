@@ -37,7 +37,7 @@ def _detect_system_timezone() -> str:
         marker = "zoneinfo/"
         idx = target_str.find(marker)
         if idx != -1:
-            return target_str[idx + len(marker):]
+            return target_str[idx + len(marker) :]
     except Exception:
         pass
 

@@ -277,8 +277,7 @@ class BackgroundTaskExecutor:
             tz = get_timezone(self._settings)
             now = datetime.now(tz)
             datetime_line = (
-                f"Current date and time: "
-                f"{now.strftime('%A, %B %d, %Y at %H:%M:%S')} {tz.key}\n"
+                f"Current date and time: {now.strftime('%A, %B %d, %Y at %H:%M:%S')} {tz.key}\n"
             )
             system_prompt_text = datetime_line + "\n" + BACKGROUND_TASK_SYSTEM_PROMPT
 
