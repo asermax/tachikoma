@@ -2,6 +2,7 @@
 
 Provides MCP tools for managing task definitions:
 - list_tasks: List all task definitions
+- get_task: Get full details for a specific task definition
 - create_task: Create a new task definition
 - update_task: Update an existing task definition
 - delete_task: Delete a task definition
@@ -52,6 +53,10 @@ class UpdateTaskArgs(BaseModel):
 
 
 class DeleteTaskArgs(BaseModel):
+    task_id: str
+
+
+class GetTaskArgs(BaseModel):
     task_id: str
 
 
@@ -114,7 +119,6 @@ def create_task_tools_server(
                 )
                 lines.append(f"- [{d.id}] **{d.name}** [{d.task_type}] {status}")
                 lines.append(f"  Schedule: {schedule_desc}{last_fired}")
-                lines.append(f"  Prompt: {d.prompt[:100]}{'...' if len(d.prompt) > 100 else ''}")
                 lines.append("")
 
             return {
@@ -126,6 +130,72 @@ def create_task_tools_server(
             return {"is_error": True, "content": [{"type": "text", "text": f"{exc}{cause}"}]}
         except Exception as exc:
             _log.exception("Unexpected error listing tasks: {err}", err=str(exc))
+            return {
+                "is_error": True,
+                "content": [{"type": "text", "text": f"Unexpected error: {exc}"}],
+            }
+
+    @tool(
+        "get_task",
+        "Get full details for a specific task definition.\n"
+        "\n"
+        "Parameters:\n"
+        "- task_id (str, required): ID of the task to inspect (get IDs from list_tasks)\n"
+        "\n"
+        "Returns the task's complete details including the full prompt.",
+        GetTaskArgs.model_json_schema(),
+    )
+    async def get_task(args: dict) -> dict:
+        """Get full details for a single task definition."""
+        try:
+            parsed = GetTaskArgs.model_validate(args)
+        except ValidationError as exc:
+            return {
+                "is_error": True,
+                "content": [{"type": "text", "text": f"Invalid arguments: {exc}"}],
+            }
+
+        try:
+            d = await repository.get_definition(parsed.task_id)
+
+            if d is None:
+                return {
+                    "is_error": True,
+                    "content": [{"type": "text", "text": f"Task '{parsed.task_id}' not found."}],
+                }
+
+            status = "✓ enabled" if d.enabled else "✗ disabled"
+            schedule_desc = _format_schedule(d.schedule, timezone)
+            last_fired = (
+                f"{d.last_fired_at.strftime('%Y-%m-%d %H:%M')}"
+                if d.last_fired_at
+                else "never"
+            )
+
+            created_str = (
+                d.created_at.strftime("%Y-%m-%d %H:%M") if d.created_at else "unknown"
+            )
+
+            lines = [
+                f"# {d.name}\n",
+                f"- ID: {d.id}",
+                f"- Type: {d.task_type}",
+                f"- Status: {status}",
+                f"- Schedule: {schedule_desc}",
+                f"- Last run: {last_fired}",
+                f"- Created: {created_str}",
+                f"\n## Prompt\n\n{d.prompt}",
+            ]
+
+            return {
+                "content": [{"type": "text", "text": "\n".join(lines)}],
+            }
+
+        except TaskRepositoryError as exc:
+            cause = f" Cause: {exc.__cause__}" if exc.__cause__ else ""
+            return {"is_error": True, "content": [{"type": "text", "text": f"{exc}{cause}"}]}
+        except Exception as exc:
+            _log.exception("Unexpected error getting task: {err}", err=str(exc))
             return {
                 "is_error": True,
                 "content": [{"type": "text", "text": f"Unexpected error: {exc}"}],
@@ -378,7 +448,7 @@ def create_task_tools_server(
 
     return create_sdk_mcp_server(
         name="task-tools",
-        tools=[list_tasks, create_task, update_task, delete_task],
+        tools=[list_tasks, get_task, create_task, update_task, delete_task],
     )
 
 

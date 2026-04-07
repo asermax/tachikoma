@@ -210,8 +210,10 @@ You have MCP tools to manage tasks during conversations:
 follow when the task fires). Background tasks can send notifications to the user during \
 execution via the `send_notification` tool. Failures are automatically notified.
 - **list_tasks** — List task definitions. Shows active tasks by default; pass `archived=true` to \
-see disabled tasks. Each entry includes the task ID (needed for update_task and delete_task), \
-name, type, schedule, and status.
+see disabled tasks. Each entry includes the task ID (needed for get_task, update_task, and \
+delete_task), name, type, schedule, and status. For full details including the prompt, use get_task.
+- **get_task** — Get full details for a specific task definition by ID, including the complete \
+prompt. Get task IDs from list_tasks.
 - **update_task** — Modify an existing task by ID. Updatable fields: `name`, `schedule`, \
 `task_type` ("session" or "background"), `prompt`, `enabled`. Only provided fields \
 are changed. Get task IDs from list_tasks.
