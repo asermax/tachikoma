@@ -582,7 +582,7 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 **Description**: When a response uses many tools, the activity summary is truncated to show five items followed by "and more". Currently this produces malformed text like ", and and more" due to the joining logic not accounting for the truncation suffix. Fix the grammar so truncated summaries read naturally.
 
 ### DLT-114: Set TZ environment variable for agent subprocesses
-**Status**: ⧗ Spec
+**Status**: ✓ Spec
 **Depends on**: None
 **Priority**: 1 (Critical)
 **Complexity**: Easy
