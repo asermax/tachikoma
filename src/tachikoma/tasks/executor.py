@@ -26,13 +26,18 @@ from tachikoma.notifications import (
     create_notification_server,
     dispatch_notification,
 )
+from tachikoma.per_message_pre_processing import MessagePreProcessingPipeline
 from tachikoma.post_processing import PRE_FINALIZE_PHASE, PostProcessingPipeline
-from tachikoma.pre_processing import McpServerConfig, PreProcessingPipeline, assemble_context
+from tachikoma.pre_processing import (
+    ContextResult,
+    McpServerConfig,
+    PreProcessingPipeline,
+    assemble_context,
+)
 from tachikoma.projects.context_provider import ProjectsContextProvider
 from tachikoma.projects.processor import ProjectsProcessor
 from tachikoma.sessions.model import Session
 from tachikoma.sessions.registry import SessionRegistry
-from tachikoma.per_message_pre_processing import MessagePreProcessingPipeline
 from tachikoma.skills.context_provider import SkillsContextProvider
 from tachikoma.tasks.model import TaskDefinition, TaskInstance
 from tachikoma.tasks.repository import TaskRepository
@@ -424,7 +429,9 @@ class BackgroundTaskExecutor:
             skill_results: list[ContextResult] = []
             if self._skill_registry is not None:
                 skill_pipeline = MessagePreProcessingPipeline()
-                skill_pipeline.register(SkillsContextProvider(self._agent_defaults, self._skill_registry))
+                skill_pipeline.register(
+                    SkillsContextProvider(self._agent_defaults, self._skill_registry)
+                )
                 skill_results = await skill_pipeline.run(prompt)
 
             all_results = (results or []) + skill_results

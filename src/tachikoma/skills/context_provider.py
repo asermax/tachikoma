@@ -11,8 +11,8 @@ from claude_agent_sdk.types import ResultMessage
 from loguru import logger
 
 from tachikoma.agent_defaults import AgentDefaults
-from tachikoma.per_message_pre_processing import extract_skill_names
-from tachikoma.pre_processing import ContextProvider, ContextResult
+from tachikoma.per_message_pre_processing import MessageContextProvider, extract_skill_names
+from tachikoma.pre_processing import ContextResult
 from tachikoma.sessions.model import SessionContextEntry
 from tachikoma.skills.registry import SkillRegistry
 
@@ -52,7 +52,7 @@ Return the relevant skill names (one per line), or NO_RELEVANT_SKILLS if none ap
 """
 
 
-class SkillsContextProvider(ContextProvider):
+class SkillsContextProvider(MessageContextProvider):
     """Context provider that detects and loads relevant skills per-message.
 
     Uses an Opus agent with low effort to classify which skills are
