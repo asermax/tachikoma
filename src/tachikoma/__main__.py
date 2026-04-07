@@ -14,7 +14,6 @@ from bubus import EventBus
 from claude_agent_sdk import CLIConnectionError, CLINotFoundError, ProcessError
 from cyclopts import App
 from loguru import logger
-from rich.console import Console
 
 from tachikoma.agent_defaults import AgentDefaults, merge_env
 from tachikoma.bootstrap import Bootstrap, BootstrapError
@@ -157,8 +156,6 @@ async def run(
 
     task_tools = create_task_tools_server(task_repository, ZoneInfo(settings.tasks.timezone))
 
-    console = Console()
-
     scheduler_tasks: list[asyncio.Task[None]] = []
 
     try:
@@ -173,7 +170,6 @@ async def run(
             pre_pipeline=pre_pipeline,
             msg_pipeline=msg_pipeline,
             permission_mode="bypassPermissions",
-            on_status=lambda msg: console.print(msg, style="dim italic grey50"),
             session_resume_window=settings.agent.session_resume_window,
             session_idle_timeout=settings.agent.session_idle_timeout,
             mcp_servers={"task-tools": task_tools},
