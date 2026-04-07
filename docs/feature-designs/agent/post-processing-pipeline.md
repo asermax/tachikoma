@@ -23,6 +23,7 @@ After a conversation ends, various post-processing tasks need to run — memory 
 - Coordinator (`core-architecture`): triggers `pipeline.run(session)` on session close
 - Memory processors (`memory-extraction`): register in `main` phase
 - Projects processor (`project-management`): registers in `pre_finalize` phase
+- Stale workflow cleanup processor (`workflows/workflow-state-machine`): registers in `pre_finalize` phase
 - Git processor (`workspace-version-tracking`): registers in `finalize` phase
 
 ## Design Overview
@@ -249,6 +250,13 @@ erDiagram
 **Given**: A processor is registered with `phase="cleanup"` (invalid)
 **When**: `register()` is called
 **Then**: `ValueError` raised immediately listing valid phases.
+
+### Scenario: Stale workflow cleanup during session close
+
+**Given**: An active workflow with `updated_at` older than 24 hours, and a `StaleWorkflowCleanupProcessor` registered in `pre_finalize` phase
+**When**: The post-processing pipeline runs during session close
+**Then**: The cleanup processor soft-deletes the stale workflow record and deletes its scratchpad file, committed atomically with the session's git commit
+**Rationale**: Stale cleanup piggybacks on existing post-processing lifecycle, running in `pre_finalize` to ensure cleanup is committed before the git commit in `finalize`.
 
 ## Notes
 

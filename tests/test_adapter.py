@@ -201,7 +201,6 @@ class TestSanitizeText:
         assert sanitize_text(text) == text
 
 
-
 class TestAdaptWithSanitization:
     def test_surrogates_stripped_in_text_chunk(self) -> None:
         msg = make_assistant([TextBlock(text="Clean\ud83eText")])
@@ -250,9 +249,12 @@ class TestAdaptWithSanitization:
 
 class TestIsEncodingError:
     def test_detects_surrogates_not_allowed(self) -> None:
-        assert is_encoding_error(
-            "'utf-8' codec can't encode character '\\ud83e': surrogates not allowed",
-        ) is True
+        assert (
+            is_encoding_error(
+                "'utf-8' codec can't encode character '\\ud83e': surrogates not allowed",
+            )
+            is True
+        )
 
     def test_detects_codec_cant_encode(self) -> None:
         assert is_encoding_error("codec can't encode character '\\ud800'") is True

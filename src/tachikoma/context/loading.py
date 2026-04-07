@@ -220,6 +220,63 @@ are changed. Get task IDs from list_tasks.
 - **delete_task** — Remove a task permanently by ID. For non-destructive disabling, use \
 update_task with `enabled=false` instead. Get task IDs from list_tasks.
 
+# Workflows
+
+You have a workflow system that lets skills define ordered multi-step processes for complex \
+tasks — planning with validation checkpoints, step-by-step execution with state tracking, and \
+resumable progress after interruptions.
+
+## What Workflows Are
+
+Workflows are optional sub-structures within skills. A skill may offer zero, one, or many \
+workflows depending on its purpose. Each workflow is a named sequence of steps that must be \
+executed in order, with state persisted between steps.
+
+## How to Discover Workflows
+
+Workflows are not automatically detected — you must read a skill's SKILL.md body to see which \
+workflows it offers. Well-designed skills document their workflows in the SKILL.md, including:
+- Workflow names and when to use each
+- Step descriptions and what each step accomplishes
+- How workflows relate to the skill's overall purpose
+
+When you need to perform a multi-step process (e.g., planning a feature, refactoring code, \
+onboarding to a project), check if a relevant skill has a workflow for it by reading its \
+SKILL.md content.
+
+## Workflow Tools
+
+You have MCP tools to manage workflows during conversations:
+
+- **start_workflow** — Begin a workflow execution. Parameters: `skill_name` (str, name of the \
+skill containing the workflow), `workflow_name` (str, name of the workflow to start). Returns \
+a workflow ID, step list, scratchpad path, and guidance for progressing through the workflow.
+- **update_workflow_state** — Transition a workflow step's state. Parameters: `workflow_id` \
+(str, the workflow instance ID), `step` (str, the step identifier), `action` ("start", \
+"complete", or "skip"). Validates the transition and returns step instructions on start.
+- **get_workflow_state** — Retrieve the current workflow state. Parameters: `workflow_id` \
+(str, the workflow instance ID). Returns full state including all step statuses. Use this \
+after context loss to understand where you left off.
+- **end_workflow** — Complete or abort a workflow. Parameters: `workflow_id` (str, the \
+workflow instance ID), `action` ("complete" or "abort"). Soft-deletes the workflow state \
+and removes the scratchpad file. Always call this when you finish or abandon a workflow.
+- **list_active_workflows** — List all in-flight workflow executions. No parameters required. \
+Returns workflow IDs, names, current steps. Use this after context loss to discover workflows \
+you were working on.
+
+## Recovery After Context Loss
+
+If you lose track of an active workflow (e.g., after a context restart), recover by:
+1. Call **list_active_workflows** to discover in-flight workflows
+2. Call **get_workflow_state** for each relevant workflow to see where you left off
+3. Resume from the current step — the workflow state preserves all progress
+
+## Authoring Workflows
+
+You can create new workflows by adding them to skills under the `workflows/` subdirectory. See \
+the **workflow-authoring-guide** skill for detailed instructions on workflow structure, step \
+design, and best practices. Access it anytime you need to create or modify a workflow.
+
 # Context Documents
 
 The following sections contain your current foundational context, wrapped in XML tags."""
@@ -287,7 +344,6 @@ def load_foundational_context(workspace_path: Path) -> list[tuple[str, str]]:
         entries.append((tag, content))
 
     return entries
-
 
 
 async def context_hook(ctx: BootstrapContext) -> None:
