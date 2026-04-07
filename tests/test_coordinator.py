@@ -336,7 +336,7 @@ def _make_mock_registry(active_session=None):
     registry.update_metadata = AsyncMock()
     registry.get_recent_closed = AsyncMock(return_value=[])
     registry.reopen_session = AsyncMock(return_value=None)
-    registry.save_context_entries = AsyncMock(return_value=None)
+    registry.save_context_entries = AsyncMock(return_value=[])
     registry.load_context_entries = AsyncMock(return_value=[])
     registry.mark_processed = AsyncMock()
     registry.get_by_time_range = AsyncMock(return_value=[])
@@ -2694,18 +2694,14 @@ class TestCoordinatorPipelineAgents:
         )
 
         registry = _make_mock_registry(active_session=None)
-        # After per-message pipeline saves, load returns the skill entry
-        registry.load_context_entries = AsyncMock(
-            side_effect=[
-                [],  # Initial load (before per-message pipeline)
-                [  # Re-load after per-message pipeline saves
-                    SessionContextEntry(
-                        id=1, session_id="s1", owner="skills",
-                        content="skill content", metadata={"skill_name": "skills"},
-                    ),
-                ],
-            ]
+        registry.load_context_entries = AsyncMock(return_value=[])
+
+        # save_context_entries returns the persisted entries with IDs
+        saved_skill_entry = SessionContextEntry(
+            id=1, session_id="s1", owner="skills",
+            content="skill content", metadata={"skill_name": "skills"},
         )
+        registry.save_context_entries = AsyncMock(return_value=[saved_skill_entry])
 
         async with Coordinator(
             registry=registry,
@@ -3375,18 +3371,13 @@ class TestPerMessagePreProcessingIntegration:
         active = Session(id="existing", started_at=datetime.now(UTC))
         registry = _make_mock_registry()
         registry.get_active_session.side_effect = [None, active, active]
-        registry.load_context_entries = AsyncMock(
-            side_effect=[
-                [existing_entry],  # Initial load
-                [  # Re-load after save
-                    existing_entry,
-                    SessionContextEntry(
-                        id=2, session_id="s1", owner="skills",
-                        content="new skill content", metadata={"skill_name": "new-skill"},
-                    ),
-                ],
-            ]
+        registry.load_context_entries = AsyncMock(return_value=[existing_entry])
+
+        new_saved_entry = SessionContextEntry(
+            id=2, session_id="s1", owner="skills",
+            content="new skill content", metadata={"skill_name": "new-skill"},
         )
+        registry.save_context_entries = AsyncMock(return_value=[new_saved_entry])
 
         async with Coordinator(
             registry=registry,

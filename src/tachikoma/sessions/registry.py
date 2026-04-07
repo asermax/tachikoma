@@ -321,7 +321,7 @@ class SessionRegistry:
 
     async def save_context_entries(
         self, session_id: str, entries: list[tuple[str, str, dict | None]]
-    ) -> None:
+    ) -> list[SessionContextEntry]:
         """Save context entries for a session.
 
         Best-effort persistence: failures are logged but not raised.
@@ -330,24 +330,28 @@ class SessionRegistry:
         Args:
             session_id: The session to save entries for.
             entries: List of (owner, content, metadata) tuples to persist.
+
+        Returns:
+            List of persisted SessionContextEntry instances, or empty list on failure.
         """
         if not entries:
-            return
+            return []
 
         try:
-            await self._repository.save_context_entries(session_id, entries)
+            saved = await self._repository.save_context_entries(session_id, entries)
             _log.debug(
                 "Context entries saved: session_id={id} count={count}",
                 id=session_id,
                 count=len(entries),
             )
+            return saved
         except Exception as exc:
-            # Best-effort: log but don't raise per R7
             _log.warning(
                 "Failed to save context entries (best-effort): session_id={id} err={err}",
                 id=session_id,
                 err=str(exc),
             )
+            return []
 
     async def load_context_entries(self, session_id: str) -> list[SessionContextEntry]:
         """Load all context entries for a session.

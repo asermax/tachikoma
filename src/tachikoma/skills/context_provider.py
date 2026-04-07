@@ -6,14 +6,20 @@ Runs on every message, classifying only against skills not already
 in context (identified via entry metadata).
 """
 
+from typing import TYPE_CHECKING
+
 from claude_agent_sdk import ClaudeAgentOptions, query
 from claude_agent_sdk.types import ResultMessage
 from loguru import logger
 
 from tachikoma.agent_defaults import AgentDefaults
-from tachikoma.per_message_pre_processing import MessageContextProvider, extract_skill_names
+from tachikoma.per_message_pre_processing import MessageContextProvider
 from tachikoma.pre_processing import ContextResult
 from tachikoma.sessions.model import SessionContextEntry
+
+if TYPE_CHECKING:
+    from claude_agent_sdk.types import AgentDefinition
+
 from tachikoma.skills.registry import SkillRegistry
 
 _log = logger.bind(component="skills_context")
@@ -73,11 +79,9 @@ class SkillsContextProvider(MessageContextProvider):
     ) -> list[ContextResult] | None:
         self._registry.refresh()
 
-        # R10: No-op when no skills exist in registry
         if not self._registry.skills:
             return None
 
-        # R1: Filter out already-loaded skills (identified via entry metadata)
         loaded_names = extract_skill_names(existing_entries or [])
         unloaded_skills = {
             name: skill
@@ -85,7 +89,7 @@ class SkillsContextProvider(MessageContextProvider):
             if name not in loaded_names
         }
 
-        # R8: Skip classification entirely when no unloaded skills remain
+        # Skip classification when no unloaded skills remain
         if not unloaded_skills:
             return None
 
@@ -135,7 +139,6 @@ class SkillsContextProvider(MessageContextProvider):
                                 name.strip() for name in result_text.split("\n") if name.strip()
                             ]
 
-                            # R2: discard unrecognized names
                             valid_names = [
                                 name for name in raw_names if name in self._registry.skills
                             ]
@@ -158,7 +161,6 @@ class SkillsContextProvider(MessageContextProvider):
         if not detected_names:
             return None
 
-        # S5: One entry per skill — each detected skill gets its own ContextResult
         results: list[ContextResult] = []
 
         for skill_name in detected_names:
@@ -169,10 +171,71 @@ class SkillsContextProvider(MessageContextProvider):
 
             results.append(
                 ContextResult(
-                    tag="skills",
+                    tag=SKILLS_OWNER,
                     content=skill_block,
-                    metadata={"skill_name": skill_name},
+                    metadata={SKILL_NAME_META_KEY: skill_name},
                 )
             )
 
         return results
+
+
+SKILLS_OWNER = "skills"
+SKILL_NAME_META_KEY = "skill_name"
+
+
+def extract_skill_names(entries: list[SessionContextEntry]) -> set[str]:
+    """Extract loaded skill names from context entry metadata.
+
+    Reads metadata["skill_name"] from entries where owner="skills" and metadata
+    is not None. Gracefully handles entries without metadata.
+
+    Args:
+        entries: List of session context entries to inspect.
+
+    Returns:
+        Set of skill names found in entry metadata.
+    """
+    names: set[str] = set()
+
+    for entry in entries:
+        if entry.owner != SKILLS_OWNER or entry.metadata is None:
+            continue
+
+        skill_name = entry.metadata.get(SKILL_NAME_META_KEY)
+        if skill_name is not None:
+            names.add(skill_name)
+
+    return names
+
+
+def derive_agents_from_entries(
+    entries: list[SessionContextEntry], registry: SkillRegistry
+) -> dict[str, "AgentDefinition"]:
+    """Derive agent definitions from context entries and the skill registry.
+
+    Extracts skill names from entries, then looks up agents for each skill
+    from the registry. Silently skips names not in the registry (deleted skills)
+    with a debug log.
+
+    Args:
+        entries: List of session context entries to extract skill names from.
+        registry: The skill registry to look up agent definitions.
+
+    Returns:
+        Dictionary mapping namespaced agent names to AgentDefinition instances.
+    """
+    agents: dict[str, AgentDefinition] = {}
+    skill_names = extract_skill_names(entries)
+
+    for name in skill_names:
+        skill_agents = registry.get_agents_for_skill(name)
+        if skill_agents:
+            agents.update(skill_agents)
+        else:
+            _log.debug(
+                "Skill not found in registry (may have been deleted): name={name}",
+                name=name,
+            )
+
+    return agents

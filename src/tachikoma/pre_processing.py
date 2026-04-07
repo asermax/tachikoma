@@ -92,7 +92,7 @@ class PreProcessingPipeline:
 
         pipeline = PreProcessingPipeline()
         pipeline.register(MemoryContextProvider(cwd))
-        pipeline.register(SkillsContextProvider(cwd))
+        pipeline.register(ProjectsContextProvider(workspace_path=cwd))
         results = await pipeline.run(message)
 
     Individual provider failures are logged but don't prevent other

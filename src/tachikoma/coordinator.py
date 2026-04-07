@@ -32,10 +32,7 @@ from tachikoma.boundary import BoundaryResult, SessionCandidate, detect_boundary
 from tachikoma.context.assembly import build_system_prompt
 from tachikoma.events import AgentEvent, Error, Result, Status, TextChunk
 from tachikoma.message_post_processing import MessagePostProcessingPipeline
-from tachikoma.per_message_pre_processing import (
-    MessagePreProcessingPipeline,
-    derive_agents_from_entries,
-)
+from tachikoma.per_message_pre_processing import MessagePreProcessingPipeline
 from tachikoma.post_processing import PostProcessingPipeline
 from tachikoma.pre_processing import (
     McpServerConfig,
@@ -43,6 +40,7 @@ from tachikoma.pre_processing import (
 )
 from tachikoma.sessions.model import Session, SessionContextEntry
 from tachikoma.sessions.registry import SessionRegistry
+from tachikoma.skills.context_provider import derive_agents_from_entries
 from tachikoma.skills.registry import SkillRegistry
 
 _log = logger.bind(component="coordinator")
@@ -469,7 +467,6 @@ class Coordinator:
         # Determine whether to resume the existing SDK session
         resume_id = self._sdk_session_id if not is_new_session else None
 
-        # Load context entries from DB
         entries: list[SessionContextEntry] = []
         if self._registry is not None and active is not None:
             try:
@@ -481,33 +478,27 @@ class Coordinator:
                     err=str(exc),
                 )
 
-        # Run per-message pre-processing pipeline on every message
         if self._msg_pre_pipeline is not None and active is not None:
             try:
                 pp_results = await self._msg_pre_pipeline.run(text, existing_entries=entries)
                 if pp_results and self._registry is not None:
-                    # Save new entries one by one for robustness
-                    for pp_entry in pp_results:
-                        if pp_entry.content:
-                            try:
-                                await self._registry.save_context_entries(
-                                    active.id,
-                                    [(pp_entry.tag, pp_entry.content, pp_entry.metadata)],
-                                )
-                            except Exception as exc:
-                                _log.exception(
-                                    "Failed to save per-message entry: err={err}",
-                                    err=str(exc),
-                                )
+                    pp_tuples = [
+                        (r.tag, r.content, r.metadata)
+                        for r in pp_results
+                        if r.content
+                    ]
 
-                    # Re-load entries to include newly saved ones
-                    try:
-                        entries = await self._registry.load_context_entries(active.id)
-                    except Exception as exc:
-                        _log.exception(
-                            "Failed to reload entries after per-message pipeline: err={err}",
-                            err=str(exc),
-                        )
+                    if pp_tuples:
+                        try:
+                            saved = await self._registry.save_context_entries(
+                                active.id, pp_tuples,
+                            )
+                            entries.extend(saved)
+                        except Exception as exc:
+                            _log.exception(
+                                "Failed to save per-message entries: err={err}",
+                                err=str(exc),
+                            )
 
             except Exception as exc:
                 _log.exception(
@@ -515,13 +506,11 @@ class Coordinator:
                     err=str(exc),
                 )
 
-        # Derive agents from entries + registry
         agents: dict[str, AgentDefinition] | None = None
         if self._skill_registry is not None:
             derived = derive_agents_from_entries(entries, self._skill_registry)
             agents = derived if derived else None
 
-        # Build system prompt from persisted entries
         system_prompt_append = build_system_prompt(entries, timezone=self._timezone)
 
         # Build options and create a fresh client for this exchange

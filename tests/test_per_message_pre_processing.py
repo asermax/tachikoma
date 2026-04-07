@@ -1,7 +1,4 @@
-"""Tests for per-message pre-processing pipeline.
-
-Tests for DLT-075: Per-message skill re-evaluation.
-"""
+"""Tests for per-message pre-processing pipeline."""
 
 from unittest.mock import AsyncMock, MagicMock
 
@@ -10,11 +7,13 @@ from claude_agent_sdk.types import AgentDefinition
 from tachikoma.per_message_pre_processing import (
     MessageContextProvider,
     MessagePreProcessingPipeline,
-    derive_agents_from_entries,
-    extract_skill_names,
 )
 from tachikoma.pre_processing import ContextResult
 from tachikoma.sessions.model import SessionContextEntry
+from tachikoma.skills.context_provider import (
+    derive_agents_from_entries,
+    extract_skill_names,
+)
 
 
 def _make_entry(

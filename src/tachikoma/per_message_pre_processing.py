@@ -10,17 +10,10 @@ determine what's already loaded and avoid redundant work.
 
 import asyncio
 from abc import ABC, abstractmethod
-from typing import TYPE_CHECKING
 
 from loguru import logger
 
 from tachikoma.pre_processing import ContextResult
-
-if TYPE_CHECKING:
-    from claude_agent_sdk.types import AgentDefinition
-
-    from tachikoma.skills.registry import SkillRegistry
-
 from tachikoma.sessions.model import SessionContextEntry
 
 _log = logger.bind(component="per_message_pre_processing")
@@ -123,60 +116,3 @@ class MessagePreProcessingPipeline:
 
             _log.info("Pipeline completed: results={count}", count=len(successful))
             return successful
-
-
-def extract_skill_names(entries: list[SessionContextEntry]) -> set[str]:
-    """Extract loaded skill names from context entry metadata.
-
-    Reads metadata["skill_name"] from entries where owner="skills" and metadata
-    is not None. Gracefully handles entries without metadata.
-
-    Args:
-        entries: List of session context entries to inspect.
-
-    Returns:
-        Set of skill names found in entry metadata.
-    """
-    names: set[str] = set()
-
-    for entry in entries:
-        if entry.owner != "skills" or entry.metadata is None:
-            continue
-
-        skill_name = entry.metadata.get("skill_name")
-        if skill_name is not None:
-            names.add(skill_name)
-
-    return names
-
-
-def derive_agents_from_entries(
-    entries: list[SessionContextEntry], registry: "SkillRegistry"
-) -> dict[str, "AgentDefinition"]:
-    """Derive agent definitions from context entries and the skill registry.
-
-    Extracts skill names from entries, then looks up agents for each skill
-    from the registry. Silently skips names not in the registry (deleted skills)
-    with a debug log.
-
-    Args:
-        entries: List of session context entries to extract skill names from.
-        registry: The skill registry to look up agent definitions.
-
-    Returns:
-        Dictionary mapping namespaced agent names to AgentDefinition instances.
-    """
-    agents: dict[str, AgentDefinition] = {}
-    skill_names = extract_skill_names(entries)
-
-    for name in skill_names:
-        skill_agents = registry.get_agents_for_skill(name)
-        if skill_agents:
-            agents.update(skill_agents)
-        else:
-            _log.debug(
-                "Skill not found in registry (may have been deleted): name={name}",
-                name=name,
-            )
-
-    return agents
