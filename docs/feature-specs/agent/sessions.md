@@ -38,6 +38,7 @@ A persistent registry of conversation sessions that tracks when conversations st
 | R19 | Before reopening a session, validate that the session's `started_at` is within the configured max age — reject stale sessions |
 | R20 | `get_recent_closed()` filters returned sessions at two levels: repository-level (non-null `sdk_session_id`, non-null `summary`, within time window) and registry-level (valid transcript file on local filesystem, `started_at` within configured max age) |
 | R21 | When the SDK returns a UTF-8 encoding error (e.g. surrogates in its internal transcript), mark the session as errored — this excludes it from resumable candidates and makes the error recoverable |
+| R22 | Context entries support an optional metadata field (JSON dict) for structured data that varies by entry type — existing entries without metadata continue to work normally |
 
 ## Behaviors
 
@@ -160,6 +161,16 @@ Each session can have associated context entries that capture what context was i
 - Given a context entry fails to save, then the error is logged and the conversation continues
 - Given a new session created after a topic shift, then entries may include owners such as: soul, user, agents, previous-summary, memories, projects, skills
 - Given a resumed session with bridging context, then a bridging-context entry is added alongside the session's original entries
+
+### Context Entry Metadata (R22)
+
+Context entries can carry optional structured metadata for provider-specific data. The metadata field is a nullable JSON dictionary — different entry types use it for different purposes.
+
+**Acceptance Criteria**:
+- Given a context entry with metadata, when it is persisted, then the metadata dict is serialized and stored
+- Given a context entry with metadata, when it is loaded, then the metadata dict is deserialized and available on the entry
+- Given a context entry without metadata, when it is loaded, then the metadata field is None
+- Given existing context entries without metadata, when the schema is migrated, then those entries remain valid with metadata=None
 
 ### Error Marking (R21)
 

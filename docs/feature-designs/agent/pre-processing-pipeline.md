@@ -25,7 +25,7 @@ Before the coordinator processes a user message, context providers need to run i
 - Coordinator (`core-architecture`): calls `pipeline.run(message)` on first message of new session; persists successful results as context entries to the database (owner=result.tag, content=result.content) for system prompt assembly. The `assemble_context()` function is used by the background task executor (`tasks/executor.py`) which does not use database persistence.
 - Memory context provider (`memory-context-retrieval`): registers as the first provider (see [memory context retrieval design](../memory/memory-context-retrieval.md))
 - Projects context provider (`project-management`): registers alongside other providers, returns both text context and MCP server configurations (see [project-management design](project-management.md))
-- Skills context provider (`skills`): registers alongside other providers, classifies and injects relevant skills (see [skills design](skills.md))
+- Skills context provider (`skills`): registers in the per-message pre-processing pipeline (not the session-gated pipeline), classifies and injects relevant skills on every message (see [skills design](skills.md))
 
 ## Design Overview
 
@@ -55,7 +55,8 @@ A `PreProcessingPipeline` manages registered `ContextProvider` instances. Provid
 
 | Layer/Component | Responsibility | Key Decisions |
 |-----------------|----------------|---------------|
-| `src/tachikoma/pre_processing.py` | `ContextProvider` ABC (interface only), `ContextResult` dataclass (with `__post_init__` tag validation via regex, optional `agents` field for structured data), `PreProcessingPipeline` class (parallel execution with error isolation), `assemble_context()` standalone function | Mirrors `post_processing.py` pattern — mechanism separate from domain; assembly function is a pure standalone helper; no serialization lock needed (unlike post-processing) because the pipeline is stateless; `agents` field uses a specific named property (not generic extras) for type safety |
+| `src/tachikoma/pre_processing.py` | `ContextProvider` ABC (interface only), `ContextResult` dataclass (with `__post_init__` tag validation via regex, optional `agents` field for structured data, optional `metadata` field for structured data passage), `PreProcessingPipeline` class (parallel execution with error isolation), `assemble_context()` standalone function | Mirrors `post_processing.py` pattern — mechanism separate from domain; assembly function is a pure standalone helper; no serialization lock needed (unlike post-processing) because the pipeline is stateless; `agents` field uses a specific named property (not generic extras) for type safety |
+| `src/tachikoma/per_message_pre_processing.py` | `MessageContextProvider` ABC (standalone, not extending ContextProvider), `MessagePreProcessingPipeline` class (parallel execution with error isolation, internal lock) | Mirrors `message_post_processing.py` pattern; runs on every message (not session-gated); providers receive existing entries; has internal lock for concurrent invocation safety |
 
 ### Cross-Layer Contracts
 
@@ -85,7 +86,7 @@ sequenceDiagram
 ### Shared Logic
 
 - **`ContextProvider` ABC** (`pre_processing.py`): shared interface between all context providers. Defines only the `provide()` contract.
-- **`ContextResult` dataclass** (`pre_processing.py`): shared return type for all providers. Tag name validated via regex to ensure valid XML tag format (starts with letter/underscore, contains only alphanumeric, hyphens, underscores). Optional `mcp_servers` field allows providers to pass MCP server configurations to the coordinator alongside text context. Optional `agents` field allows providers to return agent definitions alongside text context.
+- **`ContextResult` dataclass** (`pre_processing.py`): shared return type for all providers. Tag name validated via regex to ensure valid XML tag format. Optional `mcp_servers` field allows providers to pass MCP server configurations. Optional `agents` field allows providers to return agent definitions. Optional `metadata` field (JSON dict) allows providers to pass structured data that the coordinator persists alongside the entry without interpretation — used by the skills provider to store skill names.
 - **`assemble_context()` function** (`pre_processing.py`): standalone helper for wrapping results in XML tags and prepending to message.
 
 ## Modeling
@@ -103,9 +104,19 @@ ContextResult (dataclass)
 ├── tag: str                                           (validated: non-empty + valid XML tag name via regex)
 ├── content: str                                       (provider's output text)
 ├── mcp_servers: dict[str, McpServerConfig] | None     (optional MCP server configs for coordinator)
-└── agents: dict[str, AgentDefinition] | None = None   (optional structured data for agent definitions)
+├── agents: dict[str, AgentDefinition] | None = None   (optional structured data for agent definitions)
+└── metadata: dict | None = None                       (optional structured metadata for provider-specific data)
 
 assemble_context(results: list[ContextResult], message: str) → str  (standalone, handles text only)
+
+MessagePreProcessingPipeline                           [runs on every message, not session-gated]
+├── _providers: list[MessageContextProvider]
+├── _lock: asyncio.Lock                                (serializes concurrent invocations)
+├── register(provider: MessageContextProvider) → None
+└── run(message: str, *, existing_entries: list[SessionContextEntry] | None) → list[ContextResult]
+
+MessageContextProvider (ABC)                            [standalone, not extending ContextProvider]
+└── provide(message: str, *, existing_entries: list[SessionContextEntry] | None) → list[ContextResult] | None
 ```
 
 ```mermaid
@@ -113,7 +124,8 @@ erDiagram
     PreProcessingPipeline ||--o{ ContextProvider : "registers"
     ContextProvider ||--o| ContextResult : "returns"
     ContextResult ||--o| AgentDefinitions : "optionally carries"
-    Coordinator ||--o| PreProcessingPipeline : "optionally triggers"
+    Coordinator ||--o| PreProcessingPipeline : "optionally triggers (session-gated)"
+    Coordinator ||--o| MessagePreProcessingPipeline : "optionally triggers (per-message)"
 ```
 
 ## Data Flow
@@ -205,6 +217,28 @@ erDiagram
 - Pro: Catches malformed tags at construction, not at assembly time
 - Pro: Clear error messages for invalid tags
 
+### Per-Message Pipeline as Session-Gated Counterpart
+
+**Choice**: Create `MessagePreProcessingPipeline` as a separate pipeline that runs on every message (not just the first message of a new session), with its own `MessageContextProvider` ABC that accepts existing context entries.
+**Why**: Some providers need per-message evaluation (e.g., skills re-classification as topics evolve). Rather than modifying the session-gated pipeline to support both modes, a separate pipeline with its own ABC keeps the contracts clear. The two ABCs are separate because their signatures are incompatible — `ContextProvider.provide()` returns `ContextResult | None` while `MessageContextProvider.provide()` returns `list[ContextResult] | None` and accepts `existing_entries`.
+
+**Consequences**:
+- Pro: Session-gated pipeline unchanged for memory and projects
+- Pro: Per-message providers receive existing entries for filtering
+- Pro: DLT-076 (memory re-evaluation) can register in per-message pipeline without coordinator changes
+- Con: Two separate ABCs (acceptable — they serve different pipeline types)
+
+### ContextResult Metadata Field
+
+**Choice**: Add `metadata: dict | None = None` to `ContextResult` for structured data passage. The coordinator persists metadata alongside the entry without interpreting it.
+**Why**: The skills provider needs to identify which skill each entry represents. Rather than parsing content format (fragile, couples identification to rendering), a structured metadata field provides a clean, type-safe way to carry provider-specific data. The field is extensible — future entry types can use it for different purposes.
+
+**Consequences**:
+- Pro: Structured identification without content parsing
+- Pro: Extensible for future entry types
+- Pro: Coordinator passes metadata through without interpretation
+- Con: Requires DB schema change (nullable TEXT column)
+
 ## System Behavior
 
 ### Scenario: Normal parallel execution
@@ -239,5 +273,6 @@ erDiagram
 
 ## Notes
 
-- The pipeline supports both text context and structured data (via the `mcp_servers` and `agents` fields on `ContextResult`). The coordinator persists text context as session context entries to the database and assembles them into the system prompt via `build_system_prompt()`. The `assemble_context()` function is retained for the background task executor path, which does not use database persistence. The coordinator extracts and merges both `mcp_servers` and `agents` from all results per-session, stores them, and passes them to `ClaudeAgentOptions` in `_build_options()`.
-- Unlike post-processing, the pre-processing pipeline has no concurrency control. This is deliberate — the pipeline is stateless, and concurrent first-messages are prevented by the session registry.
+- The pipeline supports both text context and structured data (via the `mcp_servers`, `agents`, and `metadata` fields on `ContextResult`). The coordinator persists text context as session context entries to the database and assembles them into the system prompt via `build_system_prompt()`. The `assemble_context()` function is retained for the background task executor path, which does not use database persistence. The coordinator extracts and merges `mcp_servers` from all results per-session and passes them to `ClaudeAgentOptions` in `_build_options()`. Agent definitions are derived from context entries + skill registry (not from pipeline results directly).
+- Unlike the session-gated pre-processing pipeline, the per-message pipeline has an internal lock for concurrent invocation safety. The session-gated pipeline has no lock because it is stateless and concurrent first-messages are prevented by the session registry.
+- The `MessageContextProvider` ABC is standalone (not extending `ContextProvider`) because the signatures are incompatible: `ContextProvider.provide()` returns `ContextResult | None` while `MessageContextProvider.provide()` returns `list[ContextResult] | None` and accepts `existing_entries`.

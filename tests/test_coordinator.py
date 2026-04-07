@@ -30,6 +30,7 @@ from tachikoma.events import Error, Result, TextChunk, ToolActivity
 from tachikoma.pre_processing import ContextResult
 from tachikoma.sessions.errors import SessionRepositoryError
 from tachikoma.sessions.model import Session, SessionContextEntry
+from tachikoma.skills.registry import SkillRegistry
 
 
 async def _mock_messages(*messages):
@@ -335,7 +336,7 @@ def _make_mock_registry(active_session=None):
     registry.update_metadata = AsyncMock()
     registry.get_recent_closed = AsyncMock(return_value=[])
     registry.reopen_session = AsyncMock(return_value=None)
-    registry.save_context_entries = AsyncMock(return_value=None)
+    registry.save_context_entries = AsyncMock(return_value=[])
     registry.load_context_entries = AsyncMock(return_value=[])
     registry.mark_processed = AsyncMock()
     registry.get_by_time_range = AsyncMock(return_value=[])
@@ -498,13 +499,13 @@ class TestCoordinatorSystemPrompt:
         async with Coordinator(registry=registry, foundational_context=foundational) as coord:
             _ = await _send(coord, "hello")
 
-        # Foundational context should be saved to DB
+        # Foundational context should be saved to DB (3-tuples: owner, content, metadata)
         registry.save_context_entries.assert_awaited()
         # Verify the foundational entries were saved
         call_args = registry.save_context_entries.call_args_list[0]
         entries = call_args[0][1]
-        # Entries should include our foundational content
-        owners = [owner for owner, _content in entries]
+        # Entries should include our foundational content (with None metadata)
+        owners = [owner for owner, _content, _metadata in entries]
         assert "soul" in owners
         assert "user" in owners
 
@@ -777,59 +778,6 @@ class TestCoordinatorPostProcessing:
 
         pipeline.run.assert_not_awaited()
 
-    async def test_calls_on_status_before_pipeline_run(self, mock_sdk) -> None:
-        """AC4: Status callback is called before pipeline runs."""
-        active = Session(
-            id="s7",
-            started_at=datetime.now(UTC),
-            sdk_session_id="sdk-status",
-        )
-        registry = _make_mock_registry(active_session=active)
-        pipeline = _make_mock_pipeline()
-
-        call_order: list[str] = []
-        on_status = MagicMock(side_effect=lambda msg: call_order.append("status"))
-        pipeline.run.side_effect = AsyncMock(side_effect=lambda s: call_order.append("pipeline"))
-
-        async with Coordinator(
-            registry=registry,
-            pipeline=pipeline,
-            on_status=on_status,
-        ):
-            pass
-
-        on_status.assert_called_once_with("Processing memories...")
-        assert call_order == ["status", "pipeline"]
-
-    async def test_on_status_not_called_without_pipeline(self, mock_sdk) -> None:
-        """AC: Status callback not called when no pipeline is registered."""
-        on_status = MagicMock()
-
-        async with Coordinator(on_status=on_status):
-            pass
-
-        on_status.assert_not_called()
-
-    async def test_on_status_not_called_without_sdk_session_id(self, mock_sdk) -> None:
-        """AC: Status callback not called when session has no sdk_session_id."""
-        active = Session(
-            id="s8",
-            started_at=datetime.now(UTC),
-            sdk_session_id=None,
-        )
-        registry = _make_mock_registry(active_session=active)
-        pipeline = _make_mock_pipeline()
-        on_status = MagicMock()
-
-        async with Coordinator(
-            registry=registry,
-            pipeline=pipeline,
-            on_status=on_status,
-        ):
-            pass
-
-        on_status.assert_not_called()
-
 
 class TestCoordinatorMessageBuffer:
     """Tests for message buffer mechanism replacing steer()."""
@@ -907,11 +855,32 @@ class TestCoordinatorMessageBuffer:
         assert len(result_events) == 1
 
 
-class TestCoordinatorAgents:
-    """Tests for DLT-003: sub-agent delegation via agents parameter."""
+def _make_mock_skill_registry(agents: dict[str, AgentDefinition]) -> MagicMock:
+    """Create a mock SkillRegistry that returns the given agents for skills.
 
-    async def test_passes_agents_to_sdk_options(self, mock_sdk) -> None:
-        """AC: Given agents dict -> ClaudeAgentOptions.agents is set."""
+    Expects agent keys in the form "skill-name/agent-name" so it can extract
+    the skill name and respond to get_agents_for_skill() calls.
+    """
+    registry = MagicMock(spec=SkillRegistry)
+
+    # Build a mapping of skill_name -> agents for that skill
+    skills_map: dict[str, dict[str, AgentDefinition]] = {}
+    for ns, agent_def in agents.items():
+        skill_name = ns.split("/")[0]
+        skills_map.setdefault(skill_name, {})[ns] = agent_def
+
+    def get_agents_for_skill(skill_name: str) -> dict[str, AgentDefinition]:
+        return skills_map.get(skill_name, {})
+
+    registry.get_agents_for_skill = MagicMock(side_effect=get_agents_for_skill)
+    return registry
+
+
+class TestCoordinatorAgents:
+    """Tests for DLT-003: sub-agent delegation derived from skill_registry + context entries."""
+
+    async def test_derives_agents_from_entries_and_registry(self, mock_sdk) -> None:
+        """AC: Agents are derived from DB entries with skill metadata + skill_registry."""
         client, mock_cls = mock_sdk
         client.receive_response.return_value = _mock_messages(
             make_assistant([TextBlock(text="hi")]),
@@ -924,15 +893,30 @@ class TestCoordinatorAgents:
                 prompt="Extract episodic memories from conversations.",
             ),
         }
+        skill_registry = _make_mock_skill_registry(agents)
 
-        async with Coordinator(agents=agents) as coord:
+        # Mock DB to return entries with skill metadata
+        registry = _make_mock_registry(active_session=None)
+        registry.load_context_entries = AsyncMock(
+            return_value=[
+                SessionContextEntry(
+                    id=1,
+                    session_id="s1",
+                    owner="skills",
+                    content="Memory skill content",
+                    metadata={"skill_name": "memory"},
+                ),
+            ]
+        )
+
+        async with Coordinator(registry=registry, skill_registry=skill_registry) as coord:
             _ = await _send(coord, "hello")
 
         options = mock_cls.call_args[0][0]
         assert options.agents == agents
 
-    async def test_no_agents_when_none_provided(self, mock_sdk) -> None:
-        """AC: Given agents=None -> ClaudeAgentOptions.agents is None."""
+    async def test_no_agents_when_no_skill_registry(self, mock_sdk) -> None:
+        """AC: Given skill_registry=None -> ClaudeAgentOptions.agents is None."""
         client, mock_cls = mock_sdk
         client.receive_response.return_value = _mock_messages(
             make_assistant([TextBlock(text="hi")]),
@@ -960,8 +944,18 @@ class TestCoordinatorAgents:
                 tools=["Read", "Glob", "Grep"],
             ),
         }
+        skill_registry = _make_mock_skill_registry(agents)
+        registry = _make_mock_registry(active_session=None)
+        registry.load_context_entries = AsyncMock(
+            return_value=[
+                SessionContextEntry(
+                    id=1, session_id="s1", owner="skills",
+                    content="Search skill", metadata={"skill_name": "search"},
+                ),
+            ]
+        )
 
-        async with Coordinator(agents=agents) as coord:
+        async with Coordinator(registry=registry, skill_registry=skill_registry) as coord:
             _ = await _send(coord, "hello")
 
         options = mock_cls.call_args[0][0]
@@ -982,15 +976,25 @@ class TestCoordinatorAgents:
                 model="opus",
             ),
         }
+        skill_registry = _make_mock_skill_registry(agents)
+        registry = _make_mock_registry(active_session=None)
+        registry.load_context_entries = AsyncMock(
+            return_value=[
+                SessionContextEntry(
+                    id=1, session_id="s1", owner="skills",
+                    content="Analysis skill", metadata={"skill_name": "analysis"},
+                ),
+            ]
+        )
 
-        async with Coordinator(agents=agents) as coord:
+        async with Coordinator(registry=registry, skill_registry=skill_registry) as coord:
             _ = await _send(coord, "hello")
 
         options = mock_cls.call_args[0][0]
         assert options.agents["analysis/deep"].model == "opus"
 
     async def test_agents_does_not_break_send_message(self, mock_sdk) -> None:
-        """AC: Given agents are provided -> existing coordinator behavior still works."""
+        """AC: Given skill_registry is provided -> existing coordinator behavior still works."""
         client, _ = mock_sdk
         client.receive_response.return_value = _mock_messages(
             make_assistant([TextBlock(text="Hello!")]),
@@ -1003,8 +1007,18 @@ class TestCoordinatorAgents:
                 prompt="A test agent.",
             ),
         }
+        skill_registry = _make_mock_skill_registry(agents)
+        registry = _make_mock_registry(active_session=None)
+        registry.load_context_entries = AsyncMock(
+            return_value=[
+                SessionContextEntry(
+                    id=1, session_id="s1", owner="skills",
+                    content="Test skill", metadata={"skill_name": "test"},
+                ),
+            ]
+        )
 
-        async with Coordinator(agents=agents) as coord:
+        async with Coordinator(registry=registry, skill_registry=skill_registry) as coord:
             events = await _send(coord, "hi")
 
         text_events = [e for e in events if isinstance(e, TextChunk)]
@@ -1012,7 +1026,7 @@ class TestCoordinatorAgents:
         assert text_events[0].text == "Hello!"
 
     async def test_agents_preserved_across_messages(self, mock_sdk) -> None:
-        """AC: agents are preserved across multiple send_message() calls."""
+        """AC: Agents are derived from persisted entries across multiple send_message() calls."""
         client, mock_cls = mock_sdk
 
         agents = {
@@ -1021,17 +1035,30 @@ class TestCoordinatorAgents:
                 prompt="A test agent.",
             ),
         }
+        skill_registry = _make_mock_skill_registry(agents)
+
+        active = Session(id="existing", started_at=datetime.now(UTC))
+        registry = _make_mock_registry()
+        registry.get_active_session.side_effect = [None, active, active, active]
+        registry.load_context_entries = AsyncMock(
+            return_value=[
+                SessionContextEntry(
+                    id=1, session_id="s1", owner="skills",
+                    content="Test skill", metadata={"skill_name": "test"},
+                ),
+            ]
+        )
 
         client.receive_response.side_effect = [
             _mock_messages(make_assistant([TextBlock(text="a")]), make_result()),
             _mock_messages(make_assistant([TextBlock(text="b")]), make_result()),
         ]
 
-        async with Coordinator(agents=agents) as coord:
+        async with Coordinator(registry=registry, skill_registry=skill_registry) as coord:
             _ = await _send(coord, "first")
             _ = await _send(coord, "second")
 
-        # Both calls should have agents in options
+        # Both calls should have agents in options (derived from entries)
         for call in mock_cls.call_args_list:
             options = call[0][0]
             assert options.agents == agents
@@ -1069,11 +1096,11 @@ class TestCoordinatorPreProcessing:
 
         pre_pipeline.run.assert_awaited_once_with("hello")
 
-        # Verify pre-processing results were saved to DB
+        # Verify pre-processing results were saved to DB (3-tuples: owner, content, metadata)
         found_memories = False
         for call in registry.save_context_entries.call_args_list:
             entries = call[0][1]
-            for owner, content in entries:
+            for owner, content, _metadata in entries:
                 if owner == "memories":
                     found_memories = True
                     assert "Some memories" in content
@@ -1800,13 +1827,14 @@ class TestSessionTransition:
             # After transition, previous summary should be persisted via save_context_entries
             registry.save_context_entries.assert_awaited_once()
             call_args = registry.save_context_entries.call_args
-            # Check entries contain the previous-summary entry
+            # Check entries contain the previous-summary entry (3-tuple)
             entries = call_args[0][1]
             assert len(entries) == 1
-            owner, content = entries[0]
+            owner, content, metadata = entries[0]
             assert owner == "previous-summary"
             assert "# Previous Conversation" in content
             assert "User was discussing Python" in content
+            assert metadata is None
 
     async def test_creates_new_session_after_transition(
         self,
@@ -2037,11 +2065,11 @@ class TestBuildOptions:
         ) as coord:
             _ = await _send(coord, "new topic")
 
-        # Previous summary should be persisted via save_context_entries
+        # Previous summary should be persisted via save_context_entries (3-tuples)
         found_previous_summary = False
         for call in registry.save_context_entries.call_args_list:
             entries = call[0][1]
-            for owner, content in entries:
+            for owner, content, _metadata in entries:
                 if owner == "previous-summary":
                     found_previous_summary = True
                     assert "Python testing frameworks" in content
@@ -2433,54 +2461,6 @@ class TestCoordinatorShutdownWithBoundaryDetection:
         ) as coord:
             _ = await _send(coord, "new topic")
 
-    async def test_background_shutdown_calls_on_status(
-        self,
-        mock_sdk,
-        mocker,
-    ) -> None:
-        """AC1: on_status is called before gathering background tasks on shutdown."""
-        client, _ = mock_sdk
-        client.receive_response.return_value = _mock_messages(
-            make_assistant([TextBlock(text="new topic")]),
-            make_result(),
-        )
-
-        active = Session(
-            id="s1",
-            started_at=datetime.now(UTC),
-            summary="Summary",
-            sdk_session_id="sdk-old",
-        )
-        registry = _make_mock_registry(active_session=active)
-        registry.get_active_session.side_effect = [active, None, None]
-
-        task_completed = asyncio.Event()
-
-        async def slow_pipeline(session):
-            await asyncio.sleep(0.05)
-            task_completed.set()
-
-        pipeline = MagicMock()
-        pipeline.run = AsyncMock(side_effect=slow_pipeline)
-
-        on_status = MagicMock()
-
-        mocker.patch(
-            "tachikoma.coordinator.detect_boundary",
-            return_value=BoundaryResult(continues=False),
-        )
-
-        async with Coordinator(
-            registry=registry,
-            agent_defaults=AgentDefaults(cwd=Path("/workspace")),
-            pipeline=pipeline,
-            on_status=on_status,
-        ) as coord:
-            _ = await _send(coord, "new topic")
-
-        on_status.assert_called_with("Processing memories...")
-        assert task_completed.is_set()
-
     async def test_background_shutdown_logs_task_count(
         self,
         mock_sdk,
@@ -2528,12 +2508,12 @@ class TestCoordinatorShutdownWithBoundaryDetection:
             count=1,
         )
 
-    async def test_background_shutdown_catches_status_exception(
+    async def test_background_shutdown_awaits_despite_pipeline_failure(
         self,
         mock_sdk,
         mocker,
     ) -> None:
-        """AC4: on_status exception is caught; background tasks still awaited."""
+        """AC4: background tasks still awaited even if a pipeline task fails."""
         client, _ = mock_sdk
         client.receive_response.return_value = _mock_messages(
             make_assistant([TextBlock(text="new topic")]),
@@ -2558,19 +2538,15 @@ class TestCoordinatorShutdownWithBoundaryDetection:
         pipeline = MagicMock()
         pipeline.run = AsyncMock(side_effect=slow_pipeline)
 
-        on_status = MagicMock(side_effect=RuntimeError("status broke"))
-
         mocker.patch(
             "tachikoma.coordinator.detect_boundary",
             return_value=BoundaryResult(continues=False),
         )
 
-        # Should not raise despite on_status failure
         async with Coordinator(
             registry=registry,
             agent_defaults=AgentDefaults(cwd=Path("/workspace")),
             pipeline=pipeline,
-            on_status=on_status,
         ) as coord:
             _ = await _send(coord, "new topic")
 
@@ -2579,13 +2555,13 @@ class TestCoordinatorShutdownWithBoundaryDetection:
 
 
 class TestCoordinatorPipelineAgents:
-    """Tests for DLT-021: agent extraction from pre-processing pipeline results."""
+    """Tests for DLT-021: agent derivation from per-message pipeline + skill registry."""
 
-    async def test_agents_from_pipeline_passed_to_sdk(
+    async def test_agents_derived_from_per_message_pipeline_entries(
         self,
         mock_sdk,
     ) -> None:
-        """AC: Agents from ContextResult are passed to SDK options."""
+        """AC: Per-message pipeline results with skill metadata are saved and agents derived."""
         client, mock_cls = mock_sdk
         client.receive_response.return_value = _mock_messages(
             make_assistant([TextBlock(text="hi")]),
@@ -2598,13 +2574,35 @@ class TestCoordinatorPipelineAgents:
                 prompt="A test prompt",
             ),
         }
-        pre_pipeline = _make_mock_pre_pipeline()
-        pre_pipeline.run.return_value = [
-            ContextResult(tag="skills", content="skill content", agents=agents),
-        ]
-        registry = _make_mock_registry(active_session=None)
+        skill_registry = _make_mock_skill_registry(agents)
 
-        async with Coordinator(registry=registry, pre_pipeline=pre_pipeline) as coord:
+        # Per-message pipeline returns a skill entry with metadata
+        msg_pre_pipeline = MagicMock()
+        msg_pre_pipeline.run = AsyncMock(
+            return_value=[
+                ContextResult(
+                    tag="skills",
+                    content="skill content",
+                    metadata={"skill_name": "skills"},
+                ),
+            ]
+        )
+
+        registry = _make_mock_registry(active_session=None)
+        registry.load_context_entries = AsyncMock(return_value=[])
+
+        # save_context_entries returns the persisted entries with IDs
+        saved_skill_entry = SessionContextEntry(
+            id=1, session_id="s1", owner="skills",
+            content="skill content", metadata={"skill_name": "skills"},
+        )
+        registry.save_context_entries = AsyncMock(return_value=[saved_skill_entry])
+
+        async with Coordinator(
+            registry=registry,
+            skill_registry=skill_registry,
+            msg_pre_pipeline=msg_pre_pipeline,
+        ) as coord:
             _ = await _send(coord, "hello")
 
         options = mock_cls.call_args[0][0]
@@ -2614,7 +2612,7 @@ class TestCoordinatorPipelineAgents:
         self,
         mock_sdk,
     ) -> None:
-        """AC: Agents from first message persist across subsequent messages."""
+        """AC: Agents derived from entries persist across subsequent messages."""
         client, mock_cls = mock_sdk
         agents = {
             "skills/test/agent": AgentDefinition(
@@ -2622,39 +2620,41 @@ class TestCoordinatorPipelineAgents:
                 prompt="A test prompt",
             ),
         }
+        skill_registry = _make_mock_skill_registry(agents)
+
+        skill_entry = SessionContextEntry(
+            id=1, session_id="s1", owner="skills",
+            content="skill content", metadata={"skill_name": "skills"},
+        )
 
         active = Session(id="existing", started_at=datetime.now(UTC))
         registry = _make_mock_registry()
         registry.get_active_session.side_effect = [None, active, active, active]
-
-        pre_pipeline = _make_mock_pre_pipeline()
-        pre_pipeline.run.return_value = [
-            ContextResult(tag="skills", content="skill content", agents=agents),
-        ]
+        registry.load_context_entries = AsyncMock(return_value=[skill_entry])
 
         client.receive_response.side_effect = [
             _mock_messages(make_assistant([TextBlock(text="a")]), make_result()),
             _mock_messages(make_assistant([TextBlock(text="b")]), make_result()),
         ]
 
-        async with Coordinator(registry=registry, pre_pipeline=pre_pipeline) as coord:
+        async with Coordinator(
+            registry=registry,
+            skill_registry=skill_registry,
+        ) as coord:
             _ = await _send(coord, "first")
             _ = await _send(coord, "second")
 
-        # Both calls should have agents in options
+        # Both calls should have agents in options (derived from entries)
         for call in mock_cls.call_args_list:
             options = call[0][0]
             assert options.agents == agents
-
-        # Pre-processing should only run once (first message)
-        assert pre_pipeline.run.await_count == 1
 
     async def test_agents_cleared_on_session_transition(
         self,
         mock_sdk,
         mocker,
     ) -> None:
-        """AC: Agents are cleared after topic shift and re-populated from new detection."""
+        """AC: Agents from old session are not carried over after topic shift."""
         client, mock_cls = mock_sdk
         client.receive_response.side_effect = [
             _mock_messages(make_assistant([TextBlock(text="A")]), make_result()),
@@ -2662,13 +2662,13 @@ class TestCoordinatorPipelineAgents:
         ]
 
         agents_before = {
-            "skills/before/agent": AgentDefinition(
+            "before/agent": AgentDefinition(
                 description="Before agent",
                 prompt="Before",
             ),
         }
         agents_after = {
-            "skills/after/agent": AgentDefinition(
+            "after/agent": AgentDefinition(
                 description="After agent",
                 prompt="After",
             ),
@@ -2680,13 +2680,36 @@ class TestCoordinatorPipelineAgents:
             summary="User is discussing topic A",
             sdk_session_id="sdk-old",
         )
+        new_session = Session(id="new-session", started_at=datetime.now(UTC))
         registry = _make_mock_registry(active_session=active)
-
-        pre_pipeline = _make_mock_pre_pipeline()
-        pre_pipeline.run.side_effect = [
-            [ContextResult(tag="skills", content="before", agents=agents_before)],
-            [ContextResult(tag="skills", content="after", agents=agents_after)],
+        registry.create_session = AsyncMock(return_value=new_session)
+        registry.get_active_session.side_effect = [
+            active, new_session, new_session,  # First message
+            new_session, new_session,  # Second message
+            new_session,  # __aexit__
         ]
+
+        # Use a single skill registry that has both skills
+        all_agents = {**agents_before, **agents_after}
+        skill_registry = _make_mock_skill_registry(all_agents)
+
+        # First load returns old session's skill entry, second returns new session's
+        registry.load_context_entries = AsyncMock(
+            side_effect=[
+                [  # First message: old session entries
+                    SessionContextEntry(
+                        id=1, session_id="s1", owner="skills",
+                        content="before", metadata={"skill_name": "before"},
+                    ),
+                ],
+                [  # Second message: new session entries
+                    SessionContextEntry(
+                        id=2, session_id="new-session", owner="skills",
+                        content="after", metadata={"skill_name": "after"},
+                    ),
+                ],
+            ]
+        )
 
         mocker.patch(
             "tachikoma.coordinator.detect_boundary",
@@ -2695,12 +2718,10 @@ class TestCoordinatorPipelineAgents:
 
         async with Coordinator(
             registry=registry,
-            pre_pipeline=pre_pipeline,
+            skill_registry=skill_registry,
             agent_defaults=AgentDefaults(cwd=Path("/ws")),
         ) as coord:
             _ = await _send(coord, "first")
-
-            # Update pipeline for second call with new agents
             _ = await _send(coord, "new topic")
 
         # First call should have agents_before, second should have agents_after
@@ -2710,34 +2731,35 @@ class TestCoordinatorPipelineAgents:
         assert options1.agents == agents_before
         assert options2.agents == agents_after
 
-    async def test_no_agents_when_no_providers_return_agents(
+    async def test_no_agents_when_no_skill_entries(
         self,
         mock_sdk,
     ) -> None:
-        """AC: When no providers return agents, self._agents remains None."""
+        """AC: When no skill entries are in DB, agents is None."""
         client, mock_cls = mock_sdk
         client.receive_response.return_value = _mock_messages(
             make_assistant([TextBlock(text="hi")]),
             make_result(),
         )
 
-        pre_pipeline = _make_mock_pre_pipeline()
-        pre_pipeline.run.return_value = [
-            ContextResult(tag="memories", content="some memories"),  # No agents
-        ]
+        skill_registry = _make_mock_skill_registry({
+            "skills/test/agent": AgentDefinition(description="Test", prompt="Test"),
+        })
         registry = _make_mock_registry(active_session=None)
+        # No skill entries in DB
+        registry.load_context_entries = AsyncMock(return_value=[])
 
-        async with Coordinator(registry=registry, pre_pipeline=pre_pipeline) as coord:
+        async with Coordinator(registry=registry, skill_registry=skill_registry) as coord:
             _ = await _send(coord, "hello")
 
         options = mock_cls.call_args[0][0]
         assert options.agents is None
 
-    async def test_multiple_providers_agents_merged(
+    async def test_multiple_skills_agents_merged(
         self,
         mock_sdk,
     ) -> None:
-        """AC: Multiple providers returning agents are merged correctly."""
+        """AC: Agents from multiple skills in entries are merged correctly."""
         client, mock_cls = mock_sdk
         client.receive_response.return_value = _mock_messages(
             make_assistant([TextBlock(text="hi")]),
@@ -2745,32 +2767,41 @@ class TestCoordinatorPipelineAgents:
         )
 
         agents1 = {
-            "skills/a/agent": AgentDefinition(
+            "skill-a/agent": AgentDefinition(
                 description="A agent",
                 prompt="A",
             ),
         }
         agents2 = {
-            "skills/b/agent": AgentDefinition(
+            "skill-b/agent": AgentDefinition(
                 description="B agent",
                 prompt="B",
             ),
         }
+        all_agents = {**agents1, **agents2}
+        skill_registry = _make_mock_skill_registry(all_agents)
 
-        pre_pipeline = _make_mock_pre_pipeline()
-        pre_pipeline.run.return_value = [
-            ContextResult(tag="skills", content="a", agents=agents1),
-            ContextResult(tag="more-skills", content="b", agents=agents2),
-        ]
         registry = _make_mock_registry(active_session=None)
+        registry.load_context_entries = AsyncMock(
+            return_value=[
+                SessionContextEntry(
+                    id=1, session_id="s1", owner="skills",
+                    content="a", metadata={"skill_name": "skill-a"},
+                ),
+                SessionContextEntry(
+                    id=2, session_id="s1", owner="skills",
+                    content="b", metadata={"skill_name": "skill-b"},
+                ),
+            ]
+        )
 
-        async with Coordinator(registry=registry, pre_pipeline=pre_pipeline) as coord:
+        async with Coordinator(registry=registry, skill_registry=skill_registry) as coord:
             _ = await _send(coord, "hello")
 
         options = mock_cls.call_args[0][0]
         assert options.agents is not None
-        assert "skills/a/agent" in options.agents
-        assert "skills/b/agent" in options.agents
+        assert "skill-a/agent" in options.agents
+        assert "skill-b/agent" in options.agents
 
 
 class TestIdlePostProcessingConfig:
@@ -2862,7 +2893,7 @@ class TestIdlePostProcess:
         registry.close_session.assert_not_awaited()
 
     async def test_preserves_sdk_state(self, mock_sdk) -> None:
-        """AC: _idle_post_process preserves _sdk_session_id, _agents, _mcp_servers."""
+        """AC: _idle_post_process preserves _sdk_session_id, _mcp_servers."""
         active = Session(
             id="s3",
             started_at=datetime.now(UTC),
@@ -2873,14 +2904,12 @@ class TestIdlePostProcess:
 
         coord = Coordinator(registry=registry, pipeline=pipeline)
         coord._sdk_session_id = "old-sdk"
-        coord._agents = {"test/agent": AgentDefinition(description="test", prompt="Test prompt")}
         coord._mcp_servers = {"test-server": MagicMock()}
         coord._last_message_time = datetime.now(UTC) - timedelta(seconds=1000)
 
         await coord._idle_post_process()
 
         assert coord._sdk_session_id == "old-sdk"
-        assert coord._agents is not None
         assert "test-server" in coord._mcp_servers
 
     async def test_skips_when_no_sdk_session(self, mock_sdk) -> None:
@@ -3131,3 +3160,163 @@ class TestIdlePostProcessingShutdown:
 
             steered.set()
             await task
+
+
+class TestPerMessagePreProcessingIntegration:
+    """Tests for DLT-075: per-message pre-processing pipeline integration."""
+
+    async def test_per_message_pipeline_runs_on_every_message(
+        self,
+        mock_sdk,
+    ) -> None:
+        """AC (R0): Per-message pipeline runs on every send_message() call."""
+        client, _ = mock_sdk
+
+        call_count = 0
+
+        async def counting_run(message, *, existing_entries=None):
+            nonlocal call_count
+            call_count += 1
+            return []
+
+        msg_pre_pipeline = MagicMock()
+        msg_pre_pipeline.run = AsyncMock(side_effect=counting_run)
+
+        active = Session(id="existing", started_at=datetime.now(UTC))
+        registry = _make_mock_registry()
+        registry.get_active_session.side_effect = [None, active, active, active]
+        registry.load_context_entries = AsyncMock(return_value=[])
+
+        client.receive_response.side_effect = [
+            _mock_messages(make_assistant([TextBlock(text="a")]), make_result()),
+            _mock_messages(make_assistant([TextBlock(text="b")]), make_result()),
+        ]
+
+        async with Coordinator(registry=registry, msg_pre_pipeline=msg_pre_pipeline) as coord:
+            _ = await _send(coord, "first")
+            _ = await _send(coord, "second")
+
+        assert call_count == 2
+
+    async def test_per_message_pipeline_runs_after_session_gated_pipeline(
+        self,
+        mock_sdk,
+    ) -> None:
+        """AC: On first message, per-message pipeline runs after session-gated pipeline."""
+        client, _ = mock_sdk
+        client.receive_response.return_value = _mock_messages(
+            make_assistant([TextBlock(text="hi")]),
+            make_result(),
+        )
+
+        call_order: list[str] = []
+
+        async def track_pre_run(message):
+            call_order.append("session_gated")
+            return [ContextResult(tag="memories", content="some memory")]
+
+        async def track_msg_pre_run(message, *, existing_entries=None):
+            call_order.append("per_message")
+            return []
+
+        pre_pipeline = _make_mock_pre_pipeline()
+        pre_pipeline.run = AsyncMock(side_effect=track_pre_run)
+
+        msg_pre_pipeline = MagicMock()
+        msg_pre_pipeline.run = AsyncMock(side_effect=track_msg_pre_run)
+
+        registry = _make_mock_registry(active_session=None)
+
+        async with Coordinator(
+            registry=registry,
+            pre_pipeline=pre_pipeline,
+            msg_pre_pipeline=msg_pre_pipeline,
+        ) as coord:
+            _ = await _send(coord, "hello")
+
+        assert call_order == ["session_gated", "per_message"]
+
+    async def test_new_entries_appended_with_metadata_existing_preserved(
+        self,
+        mock_sdk,
+    ) -> None:
+        """AC (R2, R5): New entries appended with metadata; existing entries preserved."""
+        client, _ = mock_sdk
+        client.receive_response.return_value = _mock_messages(
+            make_assistant([TextBlock(text="hi")]),
+            make_result(),
+        )
+
+        msg_pre_pipeline = MagicMock()
+        msg_pre_pipeline.run = AsyncMock(
+            return_value=[
+                ContextResult(
+                    tag="skills",
+                    content="new skill content",
+                    metadata={"skill_name": "new-skill"},
+                ),
+            ]
+        )
+
+        existing_entry = SessionContextEntry(
+            id=1, session_id="s1", owner="skills",
+            content="existing skill", metadata={"skill_name": "existing-skill"},
+        )
+
+        active = Session(id="existing", started_at=datetime.now(UTC))
+        registry = _make_mock_registry()
+        registry.get_active_session.side_effect = [None, active, active]
+        registry.load_context_entries = AsyncMock(return_value=[existing_entry])
+
+        new_saved_entry = SessionContextEntry(
+            id=2, session_id="s1", owner="skills",
+            content="new skill content", metadata={"skill_name": "new-skill"},
+        )
+        registry.save_context_entries = AsyncMock(return_value=[new_saved_entry])
+
+        async with Coordinator(
+            registry=registry,
+            msg_pre_pipeline=msg_pre_pipeline,
+        ) as coord:
+            _ = await _send(coord, "hello")
+
+        # Verify the new entry was saved with metadata
+        save_calls = registry.save_context_entries.call_args_list
+        found_per_msg_save = False
+        for call in save_calls:
+            args = call[0]
+            entries = args[1]  # second positional arg is the list of tuples
+            for entry_tuple in entries:
+                owner, content, metadata = entry_tuple
+                if owner == "skills" and metadata == {"skill_name": "new-skill"}:
+                    found_per_msg_save = True
+                    break
+        assert found_per_msg_save
+
+    async def test_per_message_pipeline_failure_does_not_crash(
+        self,
+        mock_sdk,
+    ) -> None:
+        """AC (R7): Per-message pipeline failure is logged, send_message continues."""
+        client, _ = mock_sdk
+        client.receive_response.return_value = _mock_messages(
+            make_assistant([TextBlock(text="response")]),
+            make_result(),
+        )
+
+        msg_pre_pipeline = MagicMock()
+        msg_pre_pipeline.run = AsyncMock(side_effect=RuntimeError("Pipeline crashed"))
+
+        registry = _make_mock_registry(active_session=None)
+        registry.load_context_entries = AsyncMock(return_value=[])
+
+        async with Coordinator(
+            registry=registry,
+            msg_pre_pipeline=msg_pre_pipeline,
+        ) as coord:
+            events = await _send(coord, "hello")
+
+        # Message should still be processed
+        text_events = [e for e in events if isinstance(e, TextChunk)]
+        assert len(text_events) == 1
+        assert text_events[0].text == "response"

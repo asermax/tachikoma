@@ -101,11 +101,8 @@ After a session closes, the coordinator triggers a registered post-processing pi
 - Given no pipeline is registered, when a session closes, then shutdown proceeds directly
 - Given a pipeline is already running from a previous session close, when another session close triggers the pipeline, then the new run is serialized (awaits the previous one before starting)
 - Given a session closes mid-conversation due to a topic shift, when the session has a valid SDK session ID and a pipeline is registered, then the pipeline runs asynchronously as a background task (not blocking the new session)
-- Given background post-processing tasks are running from previous topic shifts, when the coordinator shuts down, then it emits a status notification and awaits all background tasks before exiting
+- Given background post-processing tasks are running from previous topic shifts, when the coordinator shuts down, then it awaits all background tasks before exiting
 - Given a background post-processing task fails, when the error occurs, then it is logged without affecting the active conversation or other background tasks
-- Given a session closes with a valid SDK session ID and a pipeline is registered, when post-processing starts, then a status notification is emitted before the pipeline runs
-- Given an on_status callback is registered but no pipeline is registered, when the coordinator exits, then the status callback is not called
-- Given an on_status callback is registered but the session has no SDK session ID, when the coordinator exits, then the status callback is not called
 - Given a main-phase processor fails during pipeline execution, when the finalize phase begins, then the finalize-phase processors still run (error isolation applies across phases)
 - Given a post-processing processor forks the conversation, when the forked session is created, then it has `permission_mode="bypassPermissions"` to operate without user confirmation
 

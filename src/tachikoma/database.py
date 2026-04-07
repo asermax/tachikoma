@@ -186,6 +186,21 @@ class Database:
                 await conn.execute(text("ALTER TABLE sessions ADD COLUMN error BOOLEAN DEFAULT 0"))
                 _log.info("Schema migration: added 'error' column to sessions table")
 
+            # Check if metadata column exists on session_context_entries table
+            result = await conn.execute(
+                text(
+                    "SELECT * FROM pragma_table_info('session_context_entries')"
+                    " WHERE name='metadata'"
+                )
+            )
+            if result.fetchone() is None:
+                await conn.execute(
+                    text("ALTER TABLE session_context_entries ADD COLUMN metadata TEXT")
+                )
+                _log.info(
+                    "Schema migration: added 'metadata' column to session_context_entries table"
+                )
+
         _log.debug("Schema migrations completed: db_path={path}", path=self._db_path)
 
     async def close(self) -> None:

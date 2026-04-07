@@ -395,6 +395,64 @@ class TestUpdateTaskType:
         assert updated.task_type == "session"
 
 
+class TestGetTask:
+    """S4: get_task returns full details for a single task."""
+
+    @pytest.mark.asyncio
+    async def test_get_task_returns_full_prompt(self, repo: TaskRepository) -> None:
+        """AC: get_task returns the complete prompt without truncation."""
+        long_prompt = "A" * 200
+        await repo.create_definition(
+            _make_definition(definition_id="abc-123", prompt=long_prompt)
+        )
+
+        call_tool = _call_tool(repo)
+        result = await call_tool("get_task", {"task_id": "abc-123"})
+
+        assert result.get("is_error") is not True
+        text = result["content"][0]["text"]
+        assert long_prompt in text
+
+    @pytest.mark.asyncio
+    async def test_get_task_includes_all_fields(self, repo: TaskRepository) -> None:
+        """AC: get_task returns ID, name, type, status, schedule, prompt, timestamps."""
+        await repo.create_definition(
+            _make_definition(definition_id="xyz-789", name="My Task")
+        )
+
+        call_tool = _call_tool(repo)
+        result = await call_tool("get_task", {"task_id": "xyz-789"})
+
+        text = result["content"][0]["text"]
+        assert "xyz-789" in text
+        assert "My Task" in text
+        assert "session" in text
+        assert "enabled" in text
+        assert "Prompt" in text
+
+    @pytest.mark.asyncio
+    async def test_get_task_not_found(self, repo: TaskRepository) -> None:
+        """AC: get_task returns error for unknown task ID."""
+        call_tool = _call_tool(repo)
+        result = await call_tool("get_task", {"task_id": "nonexistent"})
+
+        assert "not found" in result["content"][0]["text"]
+
+    @pytest.mark.asyncio
+    async def test_list_tasks_omits_prompt(self, repo: TaskRepository) -> None:
+        """AC: list_tasks no longer shows the prompt."""
+        await repo.create_definition(
+            _make_definition(definition_id="p-test", prompt="Secret prompt content")
+        )
+
+        call_tool = _call_tool(repo)
+        result = await call_tool("list_tasks", {})
+
+        text = result["content"][0]["text"]
+        assert "[p-test]" in text
+        assert "Secret prompt content" not in text
+
+
 class TestErrorHandling:
     """S3: Error handling with TaskRepositoryError surfacing.
 

@@ -129,7 +129,7 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 ### DLT-035: Receive images and audio from Telegram
 **Status**: ✗ Defined
 **Depends on**: None
-**Priority**: 3 (Medium)
+**Priority**: 1 (Critical)
 **Complexity**: Medium
 **Description**: Accept image and audio messages from the Telegram channel and forward them to the agent for processing. Currently the Telegram handler only accepts text messages and silently ignores all other content types. This delta adds support for photos, voice messages, and audio files, forwarding them to the agent as multimodal input for processing.
 
@@ -364,13 +364,6 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 **Complexity**: Medium
 **Description**: Claude Code uses "skills" internally for its plugin-provided slash-command capabilities, and Tachikoma also uses "skills" for its own sub-agent packages. When both systems share the same term, the agent conflates them — attempting to invoke a Tachikoma skill via the Claude Code Skill tool, or ignoring a Claude Code skill because it assumes it belongs to Tachikoma's registry. This leads to incorrect tool routing and missed capabilities. Rename Tachikoma's skill subsystem to a distinct term (e.g., "modules", "packages", or "capabilities") across the codebase, configuration, and internal references, and add internal disambiguation logic so the agent reliably distinguishes between the two systems without relying on external guidance files.
 
-### DLT-075: Re-evaluate skill context per message
-**Status**: ✗ Defined
-**Depends on**: None
-**Priority**: 1 (Critical)
-**Complexity**: Medium
-**Description**: The skills context provider currently runs only on the first message of a new session — its output is persisted and reused for all subsequent messages in that session. When a conversation shifts topic mid-session (e.g., the user starts discussing routines after talking about a reading list), newly relevant skills are never loaded because the classification was based on the first message alone. Re-evaluate skill relevance on each message so follow-up messages can trigger loading of additional skills that match the evolving conversation context.
-
 ### DLT-076: Re-evaluate memory context per message
 **Status**: ✗ Defined
 **Depends on**: None
@@ -580,3 +573,10 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 **Priority**: 4 (Low)
 **Complexity**: Easy
 **Description**: When a response uses many tools, the activity summary is truncated to show five items followed by "and more". Currently this produces malformed text like ", and and more" due to the joining logic not accounting for the truncation suffix. Fix the grammar so truncated summaries read naturally.
+
+### DLT-114: Set TZ environment variable for agent subprocesses
+**Status**: ✗ Defined
+**Depends on**: None
+**Priority**: 1 (Critical)
+**Complexity**: Easy
+**Description**: The user's configured timezone is currently used for cron scheduling and system prompt display, but the `TZ` environment variable is not set for SDK agent instances. This means shell commands run by the agent (e.g., `date`) use the system's default timezone rather than the user's configured one. Automatically set `TZ` in the agent environment from the configured timezone setting, so all subprocess date/time operations respect the user's timezone without requiring manual `[agent.env]` configuration.

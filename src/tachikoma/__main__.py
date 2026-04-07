@@ -14,7 +14,6 @@ from bubus import EventBus
 from claude_agent_sdk import CLIConnectionError, CLINotFoundError, ProcessError
 from cyclopts import App
 from loguru import logger
-from rich.console import Console
 
 from tachikoma.agent_defaults import AgentDefaults, merge_env
 from tachikoma.bootstrap import Bootstrap, BootstrapError
@@ -33,6 +32,7 @@ from tachikoma.memory import (
     memory_hook,
 )
 from tachikoma.message_post_processing import MessagePostProcessingPipeline
+from tachikoma.per_message_pre_processing import MessagePreProcessingPipeline
 from tachikoma.post_processing import FINALIZE_PHASE, PRE_FINALIZE_PHASE, PostProcessingPipeline
 from tachikoma.pre_processing import PreProcessingPipeline
 from tachikoma.projects import ProjectsContextProvider, ProjectsProcessor, projects_hook
@@ -116,8 +116,8 @@ async def run(
     workflow_repository: WorkflowStateRepository = bootstrap.extras["workflow_repository"]
     bus = EventBus()
 
-    # Skills provider will be registered in pre-processing pipeline
-    # (agents are now detected per-session via SkillsContextProvider)
+    # Skills provider registered in per-message pre-processing pipeline
+    # (skills are re-evaluated on every message for evolving context)
     _log.info(
         "Startup complete: workspace={ws}, log_level={level}, channel={ch}",
         ws=settings.workspace.path,
@@ -155,11 +155,14 @@ async def run(
     )
     pipeline.register(GitProcessor(agent_defaults), phase=FINALIZE_PHASE)
 
-    # Create and configure the pre-processing pipeline
+    # Create and configure the pre-processing pipeline (session-gated: memory, projects)
     pre_pipeline = PreProcessingPipeline()
     pre_pipeline.register(MemoryContextProvider(agent_defaults))
     pre_pipeline.register(ProjectsContextProvider(workspace_path=settings.workspace.path))
-    pre_pipeline.register(SkillsContextProvider(agent_defaults, skill_registry))
+
+    # Create and configure the per-message pre-processing pipeline (skills)
+    msg_pre_pipeline = MessagePreProcessingPipeline()
+    msg_pre_pipeline.register(SkillsContextProvider(agent_defaults, skill_registry))
 
     # Create and configure the per-message post-processing pipeline
     msg_pipeline = MessagePostProcessingPipeline()
@@ -171,8 +174,6 @@ async def run(
         skill_registry,
         settings.workspace.path,
     )
-
-    console = Console()
 
     scheduler_tasks: list[asyncio.Task[None]] = []
 
@@ -187,8 +188,9 @@ async def run(
             pipeline=pipeline,
             pre_pipeline=pre_pipeline,
             msg_pipeline=msg_pipeline,
+            msg_pre_pipeline=msg_pre_pipeline,
+            skill_registry=skill_registry,
             permission_mode="bypassPermissions",
-            on_status=lambda msg: console.print(msg, style="dim italic grey50"),
             session_resume_window=settings.agent.session_resume_window,
             session_idle_timeout=settings.agent.session_idle_timeout,
             mcp_servers={"task-tools": task_tools, "workflow-tools": workflow_tools},

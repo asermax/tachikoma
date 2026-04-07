@@ -4,6 +4,7 @@ Keeps the ORM model (SessionRecord) internal to the persistence layer.
 Callers work exclusively with the frozen Session dataclass.
 """
 
+import json
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Literal
@@ -78,6 +79,7 @@ class SessionContextEntry:
     session_id: str
     owner: str
     content: str
+    metadata: dict | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -167,14 +169,20 @@ class SessionContextEntryRecord(Base):
     session_id: Mapped[str] = mapped_column(ForeignKey("sessions.id"))
     owner: Mapped[str] = mapped_column()
     content: Mapped[str] = mapped_column()
+    entry_metadata: Mapped[str | None] = mapped_column("metadata", default=None)
 
     __table_args__ = (Index("ix_session_context_entries_session_id", "session_id"),)
 
     def to_domain(self) -> SessionContextEntry:
         """Convert ORM record to domain dataclass."""
+        meta = None
+        if self.entry_metadata is not None:
+            meta = json.loads(self.entry_metadata)
+
         return SessionContextEntry(
             id=self.id,
             session_id=self.session_id,
             owner=self.owner,
             content=self.content,
+            metadata=meta,
         )
