@@ -81,6 +81,11 @@ Seven-component architecture: a bootstrap hook creates the directory structure a
 │  │  ├── custom-skill/                               │      │
 │  │  │   ├── SKILL.md                                │      │
 │  │  │   └── agents/*.md                             │      │
+│  │  └── workflow-authoring-guide/                      │      │
+│  │      ├── SKILL.md                                  │      │
+│  │      └── references/step-design.md                 │      │
+│  │  (skills may also contain workflows/ — see          │      │
+│  │   workflow-state-machine design)                    │      │
 │  └──────────────────────────────────────────────────┘      │
 └────────────────────────────────────────────────────────────┘
 ```
@@ -92,7 +97,7 @@ Seven-component architecture: a bootstrap hook creates the directory structure a
 | Layer/Component | Responsibility | Key Decisions |
 |-----------------|----------------|---------------|
 | `src/tachikoma/skills/__init__.py` | Re-exports `SkillRegistry`, `Skill`, `SkillsChanged`, `SkillsContextProvider`, `skills_hook`, `watch_skills` | Package module for the skills subsystem |
-| `src/tachikoma/skills/registry.py` | `SkillRegistry` class: discovers skills from multiple sources, loads agents, builds agents dict, stores skill body and path; refreshes all sources on dirty flag via swap-on-success; `Skill` dataclass for metadata (name from folder, description, version, body, path) | Uses `python-frontmatter` for parsing; constructs `AgentDefinition` directly; multi-source with last-wins precedence; `mark_dirty()` for external callers, `refresh()` for dirty-check-and-rescan |
+| `src/tachikoma/skills/registry.py` | `SkillRegistry` class: discovers skills from multiple sources, loads agents, builds agents dict, stores skill body and path; discovers workflow definitions within skills and exposes via `get_workflow()` and `workflows` property; refreshes all sources on dirty flag via swap-on-success; `Skill` dataclass for metadata (name from folder, description, version, body, path) | Uses `python-frontmatter` for parsing; constructs `AgentDefinition` directly; multi-source with last-wins precedence; `mark_dirty()` for external callers, `refresh()` for dirty-check-and-rescan; workflow definitions stored in `_workflows` dict keyed by (skill_name, workflow_name) |
 | `src/tachikoma/skills/context_provider.py` | `SkillsContextProvider(ContextProvider)`: receives `SkillRegistry` via constructor injection, refreshes registry before classification, classifies relevant skills via standalone `query()` with Opus low effort (DES-007), reads skill body from registry's pre-loaded `Skill.body`, assembles `<skills>` XML block, returns detected agents via `ContextResult.agents` | Receives registry and `AgentDefaults` via constructor injection (shared from bootstrap extras); no tools for classification agent (pure reasoning); fully consumes query() generator (DES-005); `get_agents_for_skill()` on registry for agent filtering |
 | `src/tachikoma/skills/hooks.py` | `skills_hook` bootstrap callback: creates `workspace/skills/` directory, resolves built-in skills path, creates `SkillRegistry` with both sources, stores in `ctx.extras["skill_registry"]` | Follows DES-003 pattern; built-in path via `Path(__file__).parent / "builtin"`; graceful fallback if built-in missing |
 | `src/tachikoma/skills/watcher.py` | `watch_skills()` async function: monitors skills directory, marks registry dirty, dispatches `SkillsChanged` events; top-level exception handler prevents silent task death | Uses `watchfiles.awatch()` with 5s debounce and 2s rust_timeout; relies on watchfiles' default filtering behavior (hidden files, `__pycache__` excluded) |
@@ -199,13 +204,16 @@ SkillRegistry
 ├── __init__(skill_sources: list[Path])  # scans each source; last-wins on name collision
 ├── _agents: dict[str, AgentDefinition]
 ├── _skills: dict[str, Skill]
+├── _workflows: dict[tuple[str, str], WorkflowDefinition]  (keyed by skill_name, workflow_name)
 ├── _dirty: bool                         (set by watcher, cleared by refresh)
 ├── _skill_sources: list[Path]           (stored for reuse during refresh)
 ├── mark_dirty() → None                 (external API for watcher)
 ├── refresh() → None                    (check dirty, re-discover all sources if needed)
 ├── get_agents() → dict[str, AgentDefinition]
 ├── get_agents_for_skill(skill_name: str) → dict[str, AgentDefinition]
-└── skills (property) → dict[str, Skill]
+├── get_workflow(skill_name: str, workflow_name: str) → WorkflowDefinition | None
+├── skills (property) → dict[str, Skill]
+└── workflows (property) → dict[tuple[str, str], WorkflowDefinition]
 
 SkillsContextProvider(ContextProvider)
 ├── _agent_defaults: AgentDefaults
@@ -490,3 +498,4 @@ SkillsChanged(BaseEvent[None])
 - The classification prompt design is an implementation detail — it embeds all skill names + descriptions and the user message, asking which skills are relevant.
 - The `NO_RELEVANT_SKILLS` sentinel pattern (consistent with `MemoryContextProvider`'s `NO_RELEVANT_MEMORIES`) distinguishes "classified and found nothing" from "agent error."
 - `watchfiles` is a project dependency (added to `pyproject.toml`), maintained by the pydantic team (Samuel Colvin) and used by `uvicorn` for auto-reload.
+- Workflow definitions are discovered alongside skills during registry loading. The `workflows/` directory is optional — skills without workflows incur no overhead. See [workflow state machine design](../workflows/workflow-state-machine.md) for the full workflow subsystem.

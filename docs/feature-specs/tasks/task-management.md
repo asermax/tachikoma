@@ -6,6 +6,8 @@
 
 Persistent task definitions with cron-like scheduling, automatic instance generation, and MCP tools for the agent to manage tasks during conversations. Task definitions describe what the agent should do and when; task instances represent individual executions generated from those definitions.
 
+Note: The workflow subsystem provides a separate set of MCP tools (`start_workflow`, `update_workflow_state`, etc.) registered as the "workflow-tools" server for managing multi-step skill processes. Task tools manage cron-scheduled definitions; workflow tools manage ordered step sequences within skills. See [workflows](../workflows/workflow-state-machine.md).
+
 ## User Stories
 
 - As a user, I want to ask Tachikoma to do something on a schedule so that it proactively reminds me, processes information, and follows up without me having to manually trigger every action
