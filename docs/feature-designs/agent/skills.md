@@ -7,7 +7,7 @@
 
 ## Purpose
 
-This document explains the design rationale for the skill system: how skills are structured, discovered, registered, detected per-session, and integrated with the coordinator to enable targeted sub-agent delegation via the SDK.
+This document explains the design rationale for the skill system: how skills are structured, discovered, registered, detected per-message, and integrated with the coordinator to enable targeted sub-agent delegation via the SDK.
 
 ## Problem Context
 
@@ -20,38 +20,39 @@ The coordinator needs to make specialized sub-agents available to the SDK's orch
 - Skills must be refreshable at runtime when files change on disk, without restart
 - Invalid or missing skills/agents should not crash the system
 - Detection failures must never block messages — same error contract as other pre-processing providers
-- Detected agents persist for the session lifetime; cleared on topic shift
+- Skills are detected and accumulated per-message within a session — newly detected skills are appended as context entries; the agent set is re-derived on each message from all accumulated entries
 
 **Interactions:**
 - Bootstrap process creates the skills directory and shared registry (via skills hook, see [workspace-bootstrap](workspace-bootstrap.md))
 - Skill registry discovers all skills and agents at startup, with on-demand refresh when marked dirty
 - Filesystem watcher monitors the skills directory and marks the registry dirty when changes occur
 - Event bus (ADR-009) carries SkillsChanged events for future consumers (e.g., context invalidation)
-- Skills context provider classifies relevance per-session via the pre-processing pipeline (see [pre-processing-pipeline](pre-processing-pipeline.md))
-- Coordinator extracts detected agents from pipeline results and passes to SDK (see [core-architecture](core-architecture.md))
+- Skills context provider classifies relevance per-message via the per-message pre-processing pipeline (see [pre-processing-pipeline](pre-processing-pipeline.md))
+- Coordinator derives agents from context entries and the skill registry, passing them to SDK (see [core-architecture](core-architecture.md))
 - SDK's internal orchestrator uses detected agents for delegation decisions
 
 ## Design Overview
 
-Seven-component architecture: a bootstrap hook creates the directory structure and shared registry, the skill registry discovers and loads all skills and agents at startup from multiple sources (with runtime refresh support), a filesystem watcher monitors the skills directory for changes and marks the registry dirty, a skills context provider (receiving the registry via injection) classifies relevance per-session (refreshing the registry first), the coordinator extracts detected agents from pipeline results, and the system prompt preamble provides awareness-level skill context independent of per-session detection.
+Eight-component architecture: a bootstrap hook creates the directory structure and shared registry, the skill registry discovers and loads all skills and agents at startup from multiple sources (with runtime refresh support), a filesystem watcher monitors the skills directory for changes and marks the registry dirty, a per-message pre-processing pipeline runs on every message, a skills context provider (receiving the registry via injection) classifies relevance per-message considering only skills not already in context (refreshing the registry first), the coordinator derives agents from context entries and the skill registry, and the system prompt preamble provides awareness-level skill context independent of per-message detection.
 
 ```
 ┌────────────────────────────────────────────────────────────┐
 │              Coordinator Layer                              │
 │  ┌──────────────────────────────────────────────────┐      │
 │  │  Coordinator                                     │      │
-│  │  - Extracts detected agents from pipeline        │      │
-│  │  - Stores agents per-session                     │      │
+│  │  - Derives agents from entries + registry        │      │
+│  │  - Re-derives on each message (accumulates)      │      │
 │  │  - Passes agents to ClaudeAgentOptions           │      │
 │  └────┬─────────────────────────────────────────────┘      │
 ├───────┼────────────────────────────────────────────────────┤
 │       ▼                                                    │
 │  ┌──────────────────────────────────────────────────┐      │
-│  │  SkillsContextProvider (PreProcessing)           │      │
+│  │  SkillsContextProvider (PerMessagePreProcessing)  │      │
 │  │  - Refreshes registry before classification      │      │
+│  │  - Filters to unloaded skills only               │      │
 │  │  - Classifies relevance via LLM                  │      │
-│  │  - Injects <skills> XML context block            │      │
-│  │  - Returns detected agents on ContextResult      │      │
+│  │  - One entry per skill, with metadata            │      │
+│  │  - Returns content only (no agents)              │      │
 │  │  - Receives SkillRegistry via injection          │      │
 │  └────┬─────────────────────────────────────────────┘      │
 ├───────┼────────────────────────────────────────────────────┤
@@ -93,17 +94,18 @@ Seven-component architecture: a bootstrap hook creates the directory structure a
 |-----------------|----------------|---------------|
 | `src/tachikoma/skills/__init__.py` | Re-exports `SkillRegistry`, `Skill`, `SkillsChanged`, `SkillsContextProvider`, `skills_hook`, `watch_skills` | Package module for the skills subsystem |
 | `src/tachikoma/skills/registry.py` | `SkillRegistry` class: discovers skills from multiple sources, loads agents, builds agents dict, stores skill body and path; refreshes all sources on dirty flag via swap-on-success; `Skill` dataclass for metadata (name from folder, description, version, body, path) | Uses `python-frontmatter` for parsing; constructs `AgentDefinition` directly; multi-source with last-wins precedence; `mark_dirty()` for external callers, `refresh()` for dirty-check-and-rescan |
-| `src/tachikoma/skills/context_provider.py` | `SkillsContextProvider(ContextProvider)`: receives `SkillRegistry` via constructor injection, refreshes registry before classification, classifies relevant skills via standalone `query()` with Opus low effort (DES-007), reads skill body from registry's pre-loaded `Skill.body`, assembles `<skills>` XML block, returns detected agents via `ContextResult.agents` | Receives registry and `AgentDefaults` via constructor injection (shared from bootstrap extras); no tools for classification agent (pure reasoning); fully consumes query() generator (DES-005); `get_agents_for_skill()` on registry for agent filtering |
+| `src/tachikoma/skills/context_provider.py` | `SkillsContextProvider(MessageContextProvider)`: extends standalone MessageContextProvider ABC (not ContextProvider — signatures are incompatible), receives `SkillRegistry` via constructor injection, refreshes registry before classification, classifies only unloaded skills via standalone `query()` with Opus low effort (DES-007), reads skill body from registry's pre-loaded `Skill.body`, returns one ContextResult per detected skill with metadata identifying skill name, agents=None. Also contains `extract_skill_names()` and `derive_agents_from_entries()` helpers | Receives registry and `AgentDefaults` via constructor injection; no tools for classification agent (pure reasoning); fully consumes query() generator (DES-005); `extract_skill_names()` reads skill names from entry metadata for filtering; `derive_agents_from_entries()` derives agents for the coordinator |
 | `src/tachikoma/skills/hooks.py` | `skills_hook` bootstrap callback: creates `workspace/skills/` directory, resolves built-in skills path, creates `SkillRegistry` with both sources, stores in `ctx.extras["skill_registry"]` | Follows DES-003 pattern; built-in path via `Path(__file__).parent / "builtin"`; graceful fallback if built-in missing |
 | `src/tachikoma/skills/watcher.py` | `watch_skills()` async function: monitors skills directory, marks registry dirty, dispatches `SkillsChanged` events; top-level exception handler prevents silent task death | Uses `watchfiles.awatch()` with 5s debounce and 2s rust_timeout; relies on watchfiles' default filtering behavior (hidden files, `__pycache__` excluded) |
 | `src/tachikoma/skills/events.py` | `SkillsChanged(BaseEvent[None])`: typed event for skill change notification | Follows bubus event pattern (ADR-009); no payload — signals "something changed" |
-| `src/tachikoma/context/loading.py` (`SYSTEM_PREAMBLE`) | Awareness-level skills documentation in the system prompt preamble: skills exist in `skills/` directory, auto-detected per session, can create/manage, distinct from Claude Code's native skills and slash commands. Structural details (SKILL.md format, agents/, YAML fields) are covered by the built-in authoring guide skill | Part of the `SYSTEM_PREAMBLE` constant; loaded once at startup; independent of per-session detection; follows ADR-008 append pattern |
+| `src/tachikoma/context/loading.py` (`SYSTEM_PREAMBLE`) | Awareness-level skills documentation in the system prompt preamble: skills exist in `skills/` directory, auto-detected per session, can create/manage, distinct from Claude Code's native skills and slash commands. Structural details (SKILL.md format, agents/, YAML fields) are covered by the built-in authoring guide skill | Part of the `SYSTEM_PREAMBLE` constant; loaded once at startup; independent of per-message detection; follows ADR-008 append pattern |
+| `src/tachikoma/per_message_pre_processing.py` | `MessageContextProvider` ABC (standalone, not extending ContextProvider) + `MessagePreProcessingPipeline` class (parallel execution with error isolation). Providers receive existing context entries enabling filtering of already-loaded data | New file mirroring `message_post_processing.py` pattern; pipeline runs on every message (not session-gated); has internal lock for concurrent invocation safety |
 
 ### Cross-Layer Contracts
 
-**Bootstrap → Registry → Provider → Pipeline → Coordinator contract:**
+**Bootstrap → Registry → Provider → Per-Message Pipeline → Coordinator contract:**
 
-The skills hook creates the registry during bootstrap and exposes it via extras. The provider receives the registry via injection, refreshes it, classifies relevance, assembles skill content, and returns detected agents on `ContextResult`. The coordinator extracts agents from pipeline results and stores them per-session.
+The skills hook creates the registry during bootstrap and exposes it via extras. The provider receives the registry via injection, refreshes it, classifies only unloaded skills, assembles one result per skill with metadata, and returns content only (no agents). The coordinator derives agents from all accumulated context entries and the skill registry.
 
 ```
 skills_hook(ctx)
@@ -119,23 +121,26 @@ skills_hook(ctx)
 __main__.py (after bootstrap.run())
     │
     ├── skill_registry = bootstrap.extras["skill_registry"]
-    └── SkillsContextProvider(agent_defaults, skill_registry)
+    ├── SkillsContextProvider(agent_defaults, skill_registry)
+    └── msg_pre_pipeline.register(SkillsContextProvider)
 
-SkillsContextProvider.provide(message)
+SkillsContextProvider.provide(message, existing_entries=entries)
     │
     ├── Calls registry.refresh() (dirty check → re-scan all sources if needed)
-    ├── Loads skill names + descriptions from registry.skills
+    ├── Extracts loaded skill names from entries metadata
+    ├── Filters registry to unloaded skills only
+    ├── If no unloaded skills → return None (skip, no LLM call)
     ├── Classifies via query() [Opus low effort, DES-007]
-    ├── Reads skill.body from registry (pre-loaded or refreshed)
-    ├── Filters agents via registry.get_agents_for_skill()
-    └── Returns ContextResult(tag="skills", content=XML, agents=filtered_dict)
+    ├── For each detected skill:
+    │   └── ContextResult(tag="skills", content=XML, metadata={"skill_name": name})
+    └── Returns list[ContextResult] (agents=None on all)
         │
-        └── Pipeline collects results → Coordinator extracts agents
+        └── Per-message pipeline collects results
                 │
                 ▼
-        Coordinator._agents = merged agents from results
+        Coordinator saves new entries, derives agents from all entries + registry
                 │
-                └── ClaudeAgentOptions(agents=self._agents)
+                └── ClaudeAgentOptions(agents=derived_agents)
 ```
 
 **Watcher → Registry → EventBus contract:**
@@ -155,10 +160,10 @@ watch_skills(skills_path, registry, bus)
 - __main__.py ↔ extras: reads `"skill_registry"` after bootstrap; passes to provider constructor
 - SkillsContextProvider ↔ SkillRegistry: injected dependency; provider reads `skills` property and calls `get_agents_for_skill()`
 - SkillRegistry ↔ filesystem: scans each source path (built-in + workspace) for skill directories; reads `SKILL.md` and agent markdown files
-- SkillsContextProvider ↔ Pipeline: registers via `pipeline.register(provider)`; `provide(message)` called in parallel with memory provider
+- SkillsContextProvider ↔ Per-Message Pipeline: registers via `msg_pre_pipeline.register(provider)`; `provide(message, existing_entries=entries)` called on every message
 - SkillsContextProvider ↔ SkillRegistry: shared — registry received via constructor from bootstrap extras; `refresh()` called before `skills` property access
 - SkillsContextProvider ↔ SDK: standalone `query()` call for classification (no tools, low effort, DES-007)
-- Pipeline ↔ Coordinator: `pipeline.run()` returns `list[ContextResult]`; coordinator reads both `content` (text) and `agents` (structured) from results
+- Per-Message Pipeline ↔ Coordinator: `pipeline.run(message, existing_entries=entries)` returns `list[ContextResult]`; coordinator saves new entries and derives agents from all entries + registry
 - Watcher ↔ Registry: `mark_dirty()` — write-only, no return value
 - Watcher ↔ EventBus: `await bus.dispatch(SkillsChanged())` — awaited dispatch, no return value used
 - `__main__.py` ↔ Watcher: task creation/cancellation via `asyncio.create_task` / `task.cancel()`
@@ -207,11 +212,21 @@ SkillRegistry
 ├── get_agents_for_skill(skill_name: str) → dict[str, AgentDefinition]
 └── skills (property) → dict[str, Skill]
 
-SkillsContextProvider(ContextProvider)
+SkillsContextProvider(MessageContextProvider)   [standalone ABC, not extending ContextProvider]
 ├── _agent_defaults: AgentDefaults
 ├── _registry: SkillRegistry     (injected via constructor from bootstrap extras)
-└── provide(message: str) → ContextResult | None
-    └── calls registry.refresh() at start
+└── provide(message, *, existing_entries) → list[ContextResult] | None
+    ├── Extract loaded skill names from entries metadata
+    ├── Filter registry to unloaded skills only
+    ├── Skip if no unloaded skills → return None
+    ├── Classify via query() (DES-007)
+    └── Return one ContextResult per skill, each with metadata={"skill_name": name}, agents=None
+
+extract_skill_names(entries) → set[str]
+└── Reads metadata["skill_name"] from entries where owner="skills"
+
+derive_agents_from_entries(entries, registry) → dict[str, AgentDefinition]
+└── Extracts skill names from entries, looks up agents from registry per skill
 
 SkillsChanged(BaseEvent[None])
 └── (no fields — signals "skills changed on disk")
@@ -260,15 +275,16 @@ SkillsChanged(BaseEvent[None])
 2. __main__.py retrieves skill_registry from bootstrap.extras["skill_registry"]
 3. __main__.py creates SkillsContextProvider(agent_defaults, skill_registry)
    → Provider receives registry (does not create its own)
-4. __main__.py registers SkillsContextProvider in pre-processing pipeline
+4. __main__.py registers SkillsContextProvider in per-message pre-processing pipeline (not session-gated)
 5. __main__.py creates watcher task:
    asyncio.create_task(watch_skills(skills_path, skill_registry, bus), name="skills_watcher")
-6. Coordinator created without agents parameter
-7. Detection happens per-session via pre-processing pipeline:
+6. __main__.py passes skill_registry and msg_pre_pipeline to Coordinator constructor
+7. Detection happens per-message via per-message pipeline:
    → Provider calls registry.refresh() first (dirty check → re-scan all sources)
-   → Provider classifies relevance via LLM
-   → Coordinator extracts detected agents from pipeline results
-   → SDK sees only relevant agents for the session
+   → Provider extracts loaded skill names from existing entries metadata
+   → Provider filters to unloaded skills only, classifies relevance via LLM
+   → New entries saved with metadata, agents derived from all entries + registry
+   → SDK sees accumulated agents from all detected skills
 ```
 
 ### Skill Change Detection and Refresh
@@ -284,8 +300,8 @@ SkillsChanged(BaseEvent[None])
    ├── registry.mark_dirty()          → sets _dirty = True
    └── bus.dispatch(SkillsChanged())  → notifies subscribers
 
-4. Next new session starts, coordinator calls pre-processing pipeline
-   └── SkillsContextProvider.provide(message)
+4. Next per-message evaluation, coordinator calls per-message pipeline
+   └── SkillsContextProvider.provide(message, existing_entries=entries)
        ├── registry.refresh()
        │   ├── _dirty is True → proceed
        │   ├── Save references: old_agents, old_skills
@@ -342,19 +358,20 @@ SkillsChanged(BaseEvent[None])
 - Pro: Negligible memory cost
 - Con: Slightly more data in memory than strictly needed for current functionality
 
-### Per-Session Agent Detection via Pre-Processing Pipeline
+### Per-Message Agent Detection via Per-Message Pipeline
 
-**Choice**: Agents are detected per-session based on message context via the skills context provider in the pre-processing pipeline, rather than loading all agents at startup.
-**Why**: Loading all agents at startup wastes context and degrades delegation quality when irrelevant agents compete for attention. Per-session detection ensures only relevant agents are available, improving both precision and context efficiency.
+**Choice**: Agents are detected per-message based on message context via the skills context provider in the per-message pre-processing pipeline. Skills accumulate within a session — only unloaded skills are classified on each message.
+**Why**: Per-session detection locks skills to the first message, missing newly relevant skills as the conversation topic evolves. Per-message detection with accumulation ensures skills are detected as they become relevant, while filtering already-loaded skills prevents redundant LLM calls.
 **Alternatives Considered**:
-- All agents at startup (previous approach): Simpler but wastes context on irrelevant agents
-- Dynamic agent loading mid-session: Complex, SDK doesn't support mid-session agent updates
+- All agents at startup: Wastes context on irrelevant agents
+- Per-session detection (previous approach): Simpler but misses skills that become relevant mid-session
+- Per-message detection replacing all skills: Would lose previously relevant skills
 
 **Consequences**:
-- Pro: Only relevant agents loaded — no context waste
-- Pro: Detection is session-scoped — persists across messages within a session
-- Pro: Topic shifts trigger re-detection for the new context
-- Con: Adds LLM call per new session for classification (mitigated by Opus low effort)
+- Pro: Skills detected as they become relevant during conversation
+- Pro: Only unloaded skills classified — no redundant LLM calls
+- Pro: Topic shifts trigger fresh classification (session boundary clears entries)
+- Con: LLM call on every message until all skills are loaded (mitigated by skip when all loaded)
 
 ### Registry Created by Bootstrap Hook with Provider Injection
 
@@ -417,13 +434,86 @@ SkillsChanged(BaseEvent[None])
 - Pro: Operator sees what went wrong (diagnostic logging)
 - Con: Silent skipping could hide typos (mitigated by explicit warning logs)
 
+### Per-Message Pipeline over Direct Coordinator Call
+
+**Choice**: Create `MessagePreProcessingPipeline` mirroring the existing `MessagePostProcessingPipeline`, rather than having the coordinator call the skills provider directly.
+**Why**: The project already has a paired pipeline pattern — `MessagePostProcessingPipeline` runs per-message post-response. Creating the pre-response counterpart keeps the architecture symmetric. It also makes DLT-076 (memory re-evaluation) a simple registration away rather than requiring coordinator changes.
+
+**Consequences**:
+- Pro: Architectural consistency with `MessagePostProcessingPipeline`
+- Pro: DLT-076 becomes a registration, not a coordinator change
+- Pro: Pipeline handles parallel execution and error isolation automatically
+- Con: New file + new ABC (minimal overhead)
+
+### SkillsContextProvider Returns Content Only (No Agents)
+
+**Choice**: `SkillsContextProvider.provide()` returns `ContextResult` with content populated but agents=None. The coordinator derives agents from entries + registry independently.
+**Why**: Since entries are the source of truth, the agents field on ContextResult would be redundant — the coordinator already re-derives agents from all entries after saving new ones. Having the provider also populate agents creates a dual source of truth that could diverge.
+
+**Consequences**:
+- Pro: Single source of truth for agents (entries + registry)
+- Pro: Provider becomes simpler — only responsible for skill content
+- Con: ContextResult.agents field unused for skills (acceptable — field is optional)
+
+### One Entry per Skill with Metadata
+
+**Choice**: Each detected skill is persisted as a separate context entry with metadata={`skill_name`: name}, rather than combining all detected skills into a single entry per classification run.
+**Why**: One entry per skill makes individual skill tracking clean — each entry has its own metadata, making it trivial to identify which skills are loaded. It also produces cleaner system prompt assembly and makes future features like skill-specific invalidation straightforward.
+
+**Consequences**:
+- Pro: Clean metadata per skill (one name per entry)
+- Pro: Easier skill-specific queries and future invalidation
+- Pro: System prompt has natural separation per skill
+- Con: More entries per session (negligible — typically <10 skills)
+
+### Entries as Single Source of Truth
+
+**Choice**: Derive both loaded skill names and agents from context entries. Remove `self._agents` as independent coordinator state.
+**Why**: Context entries are already the source of truth — they persist across messages, survive session resume, and are already loaded for system prompt assembly. Maintaining separate state creates a synchronization risk.
+
+**Consequences**:
+- Pro: Zero new coordinator state fields
+- Pro: Naturally consistent — entries and agents always agree
+- Pro: Session resume works automatically (entries are persisted)
+- Con: Agent derivation requires registry access on every message (negligible — dict lookup)
+
+### Registry Lookup Failure for Deleted Skills
+
+**Choice**: When deriving agents, skill names in entries that don't exist in the registry (skill was deleted from filesystem) are silently skipped with a debug log.
+**Why**: Skills can be deleted at runtime via the filesystem watcher. The entry persists (historical context), but the registry no longer has the skill. Including the deleted skill's agents would fail anyway, and logging at debug level avoids noisy warnings for a benign condition.
+
+**Consequences**:
+- Pro: Handles runtime skill deletion gracefully
+- Pro: Entry content still includes the skill description (readable by the agent as context)
+- Con: Agent loses access to deleted skill's agents (correct behavior)
+
+### Standalone MessageContextProvider ABC
+
+**Choice**: `MessageContextProvider` is a standalone ABC rather than extending the existing `ContextProvider`. The signatures are incompatible — `ContextProvider.provide()` returns `ContextResult | None` while `MessageContextProvider.provide()` returns `list[ContextResult] | None` and accepts `existing_entries`.
+**Why**: Extending ContextProvider with an incompatible return type would violate the Liskov Substitution Principle. Making MessageContextProvider standalone keeps both contracts clear — providers are registered in one pipeline type or the other, not both.
+
+**Consequences**:
+- Pro: No inheritance mismatch or LSP violation
+- Pro: Each ABC has a clear, focused contract
+- Con: Two separate ABCs for context providers (acceptable — they serve different pipeline types)
+
+### Skills Provider Moves Entirely to Per-Message Pipeline
+
+**Choice**: `SkillsContextProvider` is removed from the session-gated `PreProcessingPipeline` and registered only in the `MessagePreProcessingPipeline`.
+**Why**: Running skills in both pipelines would cause double classification on the first message (session-gated + per-message both running). Moving it entirely avoids this. On the first message, the per-message pipeline runs with empty entries, producing the same result as the previous session-gated behavior.
+
+**Consequences**:
+- Pro: No double classification on first message
+- Pro: Skills evaluation always goes through the same code path (unified process)
+- Con: Session-gated pipeline no longer includes skills (memory and projects only)
+
 ## System Behavior
 
 ### Invariants
 
 1. **Agent Uniqueness by Namespace**: Each agent has a unique namespace key (skill-name/agent-name). Skill names are folder names (unique by filesystem constraint) and agent names are filename stems (unique within a skill).
 
-2. **Session Stability**: Once agents are detected and loaded for a session, the set of available agents does not change for the session duration. Detection runs on the first message of each new session (including after topic shift transitions).
+2. **Session Stability**: Skills accumulate per-message within a session — newly detected skills are appended as context entries. The agent set is re-derived on each message from all accumulated entries. Existing entries are never modified or removed. Detection runs on every message, classifying only unloaded skills.
 
 3. **Graceful Degradation**: Invalid skills or agents do not cause the system to fail. Registry returns whatever agents it successfully loaded.
 
@@ -448,12 +538,26 @@ SkillsChanged(BaseEvent[None])
 **Then**: Valid skills load normally. Invalid skills are logged as warnings and skipped. The coordinator starts with the agents from valid skills only.
 **Rationale**: Graceful degradation — one bad skill shouldn't prevent others from loading.
 
-### Scenario: Skill detection on new session
+### Scenario: Skill detection on new session (first message)
 
 **Given**: Skills exist in the registry and a user sends a message matching one or more skills
-**When**: Pre-processing runs on new session
-**Then**: Provider classifies skills, detects matches, reads body from registry, injects `<skills>` XML block, returns agents for matched skills. Coordinator stores agents for the session. SDK sees only relevant agents.
-**Rationale**: Core detection path — targeted skill loading reduces context waste.
+**When**: Per-message pipeline runs with empty entries (first message of session)
+**Then**: Provider classifies full registry, detects matches, reads body from registry, returns one ContextResult per skill with metadata. Entries saved. Agents derived from entries + registry.
+**Rationale**: Core detection path — same unified process as subsequent messages, just with empty existing entries.
+
+### Scenario: Subsequent message — new skill relevant
+
+**Given**: An active session with skills A and B in context entries
+**When**: A message relevant to skill C arrives
+**Then**: Provider extracts {A, B} from entries, classifies against registry minus {A, B}, detects C. New entry for C appended. Agents re-derived to include C's agents alongside A and B.
+**Rationale**: Incremental classification — only unloaded skills considered.
+
+### Scenario: All skills loaded — skip evaluation
+
+**Given**: An active session where all registry skills are already in context entries
+**When**: A new message arrives
+**Then**: Provider finds no unloaded skills and returns None immediately (no LLM call). No new entries saved. Existing agents unchanged.
+**Rationale**: Skip when no unloaded skills remain — zero latency overhead.
 
 ### Scenario: No relevant skills detected
 
@@ -473,8 +577,8 @@ SkillsChanged(BaseEvent[None])
 
 **Given**: A skill is added, modified, or deleted while the application is running
 **When**: The filesystem watcher detects the change (after 5s debounce), marks the registry dirty, and dispatches a SkillsChanged event
-**Then**: The next new session's `provide()` call triggers a registry refresh, discovering the updated skills. The current session is unaffected (session stability invariant).
-**Rationale**: Runtime refresh enables skill authoring without restart while preserving session stability through the existing `is_new_session` guard.
+**Then**: The next per-message evaluation's `provide()` call triggers a registry refresh, discovering the updated skills. The current session's accumulated entries remain, but newly discovered skills become available for classification on the next message.
+**Rationale**: Runtime refresh enables skill authoring without restart while allowing new skills to be detected mid-session through the per-message evaluation.
 
 ### Scenario: Watcher encounters an error
 
@@ -490,3 +594,6 @@ SkillsChanged(BaseEvent[None])
 - The classification prompt design is an implementation detail — it embeds all skill names + descriptions and the user message, asking which skills are relevant.
 - The `NO_RELEVANT_SKILLS` sentinel pattern (consistent with `MemoryContextProvider`'s `NO_RELEVANT_MEMORIES`) distinguishes "classified and found nothing" from "agent error."
 - `watchfiles` is a project dependency (added to `pyproject.toml`), maintained by the pydantic team (Samuel Colvin) and used by `uvicorn` for auto-reload.
+- `MessageContextProvider` is a standalone ABC (not extending `ContextProvider`) because the return types are incompatible — `ContextResult | None` vs `list[ContextResult] | None`. See Key Decisions for rationale.
+- `extract_skill_names()` and `derive_agents_from_entries()` live in `skills/context_provider.py` for cohesion with the skills module that owns the skill-related logic, rather than in the per-message pipeline module.
+- DLT-076 (memory re-evaluation) can reuse the per-message pipeline by registering a memory provider — no coordinator changes needed.

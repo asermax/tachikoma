@@ -4,7 +4,7 @@
 
 ## Overview
 
-The skill system provides a structured way to organize, detect, and delegate specialized sub-agents. Skills are directory-based packages containing YAML-formatted agent definitions. A skill registry discovers all skills at startup, with on-demand refresh when marked dirty by a filesystem watcher. On each new session, a skills context provider classifies which skills are relevant to the user's message, injects their content as context, and loads only the matched skills' agents into the SDK for delegation. Detection persists for the session — subsequent messages use the same detected skills without re-running classification.
+The skill system provides a structured way to organize, detect, and delegate specialized sub-agents. Skills are directory-based packages containing YAML-formatted agent definitions. A skill registry discovers all skills at startup, with on-demand refresh when marked dirty by a filesystem watcher. On each message, a skills context provider classifies which skills are relevant to the user's message, considering only skills not already in context. Newly detected skills are appended as separate context entries with metadata identifying the skill name. Agents are derived from loaded skill entries and the skill registry on each message. Skills accumulate within a session — existing skills are never removed.
 
 ## User Stories
 
@@ -22,13 +22,13 @@ The skill system provides a structured way to organize, detect, and delegate spe
 | R2 | Agent definition loading from markdown files with YAML metadata |
 | R3 | Agent namespacing to prevent collisions |
 | R4 | Relevant agents loaded per-session based on detection results and passed to SDK for delegation |
-| R5 | Session-lifetime agent persistence |
+| R5 | Agents available to the session accumulate as new skills are detected |
 | R6 | Tool scoping via agent definition metadata |
 | R7 | Bootstrap hook creates skills directory and shared registry with multiple sources, exposes via extras |
 | R8 | Graceful error handling for invalid skills/agents |
 | R9 | Skill detection via LLM: classify relevance using skill names, descriptions, and user message |
 | R10 | Inject matched skill content (body without frontmatter) and directory path as `<skills>` XML context block |
-| R11 | Detected skills persist for the session; on topic shift (new session), detection runs again |
+| R11 | Skills accumulate per-message within a session — newly detected skills are appended as context entries; on topic shift (new session), all accumulated skills are cleared and classification runs fresh |
 | R12 | Detection quality: balance precision (don't waste context on irrelevant skills) with recall (don't miss applicable skills) |
 | R13 | When no skills exist in the registry, provider is a no-op (no context, no agents, no LLM call) |
 | R14 | Graceful error handling for detection — failures never block the message; message proceeds with no skills/agents |
@@ -42,6 +42,10 @@ The skill system provides a structured way to organize, detect, and delegate spe
 | R22 | Burst changes during skill authoring coalesced into a single refresh via debounce |
 | R23 | SkillsChanged event emitted via event bus when skill changes are detected |
 | R24 | Watcher lifecycle managed through bootstrap (start) and graceful shutdown |
+| R25 | Per-message skill re-evaluation — provider runs on every message, classifying skills not already in context |
+| R26 | Registry filtering — classification only considers skills not already loaded (identified via entry metadata), preventing duplicates and reducing classifier input size |
+| R27 | One context entry per detected skill, each with metadata identifying the skill name |
+| R28 | Skip classification entirely when no unloaded skills remain in the registry (no LLM call, no latency) |
 
 ## Behaviors
 
@@ -88,14 +92,14 @@ The skill registry discovers all skills and agents at startup from multiple sour
 - Given no changes have occurred since the last refresh, when the provider triggers a refresh, then the registry skips the re-scan
 - Given the re-scan itself fails (e.g., permission error), then the registry retains its previous valid state, logs the error, and remains marked dirty for retry on the next refresh
 
-### Coordinator Integration (R4, R11)
+### Coordinator Integration (R4, R5, R11)
 
-The coordinator receives detected agents from the pre-processing pipeline per-session and passes them to the SDK.
+The coordinator derives agents from context entries and the skill registry on each message, accumulating newly detected skills' agents alongside previously loaded ones.
 
 **Acceptance Criteria**:
-- Given the pre-processing pipeline returns results containing agent definitions, when the coordinator processes them, then the detected agents are passed to `ClaudeAgentOptions.agents` for the session
-- Given agents are loaded for a session, when subsequent messages arrive in the same session, then the same agents remain available without re-detection
-- Given a new session starts after a topic shift, when skill detection runs again, then agents are re-detected based on the new message context
+- Given the coordinator derives agents from context entries and the skill registry, when per-message evaluation detects new skills, then agents from newly detected skills are accumulated alongside previously loaded ones
+- Given a new session starts after a topic shift, when the session starts, then agents are derived from the fresh classification results only
+- Given a skill is deleted from the registry after being loaded into a session, when agents are derived from entries, then the deleted skill's agents are silently excluded from the session
 
 ### Tool Scoping (R6)
 
@@ -127,7 +131,7 @@ Invalid skills and agents are gracefully skipped with diagnostic logging.
 
 ### Filesystem Watching (R21, R22, R23, R24)
 
-A filesystem watcher monitors `workspace/skills/` for changes and marks the registry for refresh. Changes are coalesced via debounce to prevent redundant refreshes during skill authoring. Mid-session stability is preserved by the existing session detection behavior (R11) — refresh only affects the next session's classification.
+A filesystem watcher monitors `workspace/skills/` for changes and marks the registry for refresh. Changes are coalesced via debounce to prevent redundant refreshes during skill authoring. Mid-session stability is preserved by the accumulation model (R11) — refresh only affects classification of unloaded skills on subsequent messages.
 
 **Acceptance Criteria**:
 - Given the application starts, when the watcher task begins, then it monitors the skills directory for file additions, modifications, and deletions
@@ -137,22 +141,24 @@ A filesystem watcher monitors `workspace/skills/` for changes and marks the regi
 - Given the skills directory does not exist at watcher start, then the watcher logs a warning and does not start
 - Given the watcher encounters an unexpected error (e.g., OS watch limit exhausted), then it logs the error and stops gracefully, leaving the registry with its last known state
 
-### Skill Detection (R9, R12, R13)
+### Skill Detection (R9, R12, R13, R25, R26, R28)
 
-On the first message of a new session, the skills context provider classifies which skills are relevant to the user's message.
+On each message, the skills context provider classifies which skills are relevant to the user's message, considering only skills not already in context. Classification uses the same unified process for both initial and subsequent evaluations.
 
 **Acceptance Criteria**:
-- Given skills exist in the registry and a new session starts, when the first message arrives, then the skills context provider classifies relevance using LLM-based analysis with all skill names and descriptions
+- Given skills exist in the registry and an active session has skills A and B loaded, when a message relevant to skill C arrives, then skill C is classified, loaded, and appended to context
 - Given the classification completes, when the response is parsed, then unrecognized skill names are discarded
 - Given no skills exist in the registry, when the provider runs, then it returns immediately with no context and no agents (no LLM call made)
+- Given all skills in the registry are already in context, when a new message arrives, then classification is skipped entirely (no LLM call)
+- Given the classification code path, when comparing initial evaluation vs subsequent evaluation, then the same classification process is used (unified)
 
-### Skill Content Injection (R10)
+### Skill Content Injection (R10, R27)
 
-Detected skills' content is injected as a `<skills>` XML context block.
+Detected skills' content is injected as individual `<skills>` XML context blocks, one per detected skill, each with metadata identifying the skill name.
 
 **Acceptance Criteria**:
-- Given skills are detected as relevant, when the provider assembles the result, then it returns a `<skills>` XML context block containing each matched skill's content body (markdown without YAML frontmatter) and its directory path
-- Given multiple skills are detected, when the context block is assembled, then each skill's content is clearly delineated with its name and directory path
+- Given skills are detected as relevant, when the provider assembles results, then each detected skill is returned as a separate context entry with a `<skills>` XML block containing the skill's content body and directory path, and metadata with the skill name
+- Given multiple skills are detected, when results are persisted, then separate context entries are appended for each
 - Given no skills are detected as relevant, when the provider completes, then it returns no text context and no agent definitions
 
 ### Detection Error Handling (R14)

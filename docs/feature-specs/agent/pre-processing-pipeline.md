@@ -6,6 +6,8 @@
 
 A reusable, pluggable pipeline that runs registered context providers in parallel when invoked. Each provider returns a named, XML-tagged context block. The coordinator persists successful results as session context entries and assembles them into the system prompt from the database. A standalone `assemble_context()` function assembles results into XML-tagged blocks prepended to a message, used by the background task executor which does not use database persistence. The pipeline is domain-agnostic — it knows nothing about what providers do. It is stateless and has no serialization lock (unlike the post-processing pipeline, which serializes concurrent invocations).
 
+In addition to the session-gated pipeline (which runs on the first message of a new session), a per-message pipeline (`MessagePreProcessingPipeline`) runs on every message. Per-message providers receive the session's existing context entries and return results that are appended as new entries. This enables providers like the skills context provider to re-evaluate relevance as the conversation topic evolves, classifying only skills not already in context. Both pipelines use the same parallel execution with error isolation pattern.
+
 ## User Stories
 
 - As a developer, I want a reusable pre-processing pipeline so that any context provider can register without coupling to other providers or the coordinator
@@ -23,6 +25,8 @@ A reusable, pluggable pipeline that runs registered context providers in paralle
 | R5 | Pipeline extensible — adding a new context provider requires only implementing the ABC and registering it; no changes to pipeline or coordinator code |
 | R6 | Context providers can return tool capabilities (MCP servers) alongside text context, enabling the pipeline to pass capability requirements to the coordinator for session configuration |
 | R7 | Context results can optionally carry agent definitions alongside text context, enabling providers to return agents that the coordinator loads for the session. Backward compatible for providers that don't set it |
+| R8 | Per-message pipeline runs registered MessageContextProvider instances on every message (not just first message of session), receiving the session's existing context entries |
+| R9 | Context results can optionally carry structured metadata (JSON dict) for provider-specific data that the coordinator persists alongside the entry without interpretation |
 
 ## Behaviors
 
@@ -75,3 +79,22 @@ Context results can optionally carry agent definitions that the coordinator extr
 - Given a provider sets the agents field on its `ContextResult`, when the pipeline collects results, then the agents are available on the result object for the coordinator to extract
 - Given a provider does not set agents (defaults to None), when the pipeline runs, then it continues to work unchanged — backward compatible
 - Given multiple providers return results, when the coordinator processes them, then it extracts and merges agent definitions from all results
+
+### Per-Message Pipeline (R8)
+
+A second pipeline variant runs on every message (not just the first message of a new session). Providers receive the session's existing context entries, enabling them to determine what's already loaded and avoid redundant work.
+
+**Acceptance Criteria**:
+- Given per-message providers are registered, when the pipeline runs, then all providers execute concurrently with error isolation (same pattern as session-gated pipeline)
+- Given a per-message provider receives existing context entries, when it determines no new context is needed, then it returns None and no new entries are created
+- Given the per-message pipeline runs after the session-gated pipeline on the first message, when both have results, then results from both are persisted
+- Given the per-message pipeline runs on a subsequent message, when new context is detected, then results are appended as additional context entries alongside existing ones
+
+### Structured Metadata (R9)
+
+Context results can carry structured metadata that the coordinator persists alongside the entry without interpretation.
+
+**Acceptance Criteria**:
+- Given a provider sets metadata on its ContextResult, when the coordinator persists the result, then the metadata is stored with the context entry
+- Given a provider does not set metadata (defaults to None), when the result is persisted, then the entry has no metadata — backward compatible
+- Given the skills provider returns one result per detected skill, when each result has metadata identifying the skill name, then the coordinator persists it without interpreting the content
