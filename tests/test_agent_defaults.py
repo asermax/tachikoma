@@ -47,27 +47,7 @@ class TestMergeEnv:
 
         assert result["TZ"] == "UTC"
 
-    def test_auto_injected_no_collision_error(self) -> None:
-        # Auto-injected TZ + user TZ should NOT raise (auto-injected is overridable)
-        result = merge_env(
-            {"TZ": "UTC"},
-            auto_injected={"TZ": "America/Buenos_Aires"},
-        )
-
-        assert result["TZ"] == "UTC"
-
     def test_auto_injected_with_hardcoded_key_no_error(self) -> None:
-        # Auto-injected key matching a hardcoded key should NOT raise
-        # (auto-injected bypasses collision check; hardcoded wins in merge)
-        result = merge_env(
-            {},
-            auto_injected={"CLAUDE_CODE_DISABLE_AUTO_MEMORY": "0"},
-        )
-
-        assert result["CLAUDE_CODE_DISABLE_AUTO_MEMORY"] == "1"
-
-    def test_auto_injected_shadowed_by_hardcoded(self) -> None:
-        # Hardcoded always wins over auto-injected (defense in depth)
         result = merge_env(
             {},
             auto_injected={"CLAUDE_CODE_DISABLE_AUTO_MEMORY": "0"},
