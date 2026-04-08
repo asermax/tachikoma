@@ -188,7 +188,7 @@ analysis, or maintenance routines.
 
 Your configured timezone is **{timezone}**. To get the current date and time at any point, run:
 
-    TZ='{timezone}' date '+%A, %B %d, %Y at %H:%M:%S %Z (%z)'
+    date '+%A, %B %d, %Y at %H:%M:%S %Z (%z)'
 
 ## Scheduling
 
