@@ -145,14 +145,14 @@ async def run(
     pipeline.register(ProjectsProcessor(agent_defaults), phase=PRE_FINALIZE_PHASE)
     pipeline.register(GitProcessor(agent_defaults), phase=FINALIZE_PHASE)
 
-    # Create and configure the pre-processing pipeline (session-gated: memory, projects)
+    # Create and configure the pre-processing pipeline (session-gated: projects)
     pre_pipeline = PreProcessingPipeline()
-    pre_pipeline.register(MemoryContextProvider(agent_defaults))
     pre_pipeline.register(ProjectsContextProvider(workspace_path=settings.workspace.path))
 
-    # Create and configure the per-message pre-processing pipeline (skills)
+    # Create and configure the per-message pre-processing pipeline (skills, memory)
     msg_pre_pipeline = MessagePreProcessingPipeline()
     msg_pre_pipeline.register(SkillsContextProvider(agent_defaults, skill_registry))
+    msg_pre_pipeline.register(MemoryContextProvider(agent_defaults))
 
     # Create and configure the per-message post-processing pipeline
     msg_pipeline = MessagePostProcessingPipeline()

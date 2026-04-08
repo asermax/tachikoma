@@ -466,7 +466,11 @@ class Coordinator:
 
         if self._msg_pre_pipeline is not None and active is not None:
             try:
-                pp_results = await self._msg_pre_pipeline.run(text, existing_entries=entries)
+                pp_results = await self._msg_pre_pipeline.run(
+                    text,
+                    existing_entries=entries,
+                    sdk_session_id=self._sdk_session_id,
+                )
                 if pp_results and self._registry is not None:
                     pp_tuples = [
                         (r.tag, r.content, r.metadata)
