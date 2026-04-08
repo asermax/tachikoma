@@ -364,13 +364,6 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 **Complexity**: Medium
 **Description**: Claude Code uses "skills" internally for its plugin-provided slash-command capabilities, and Tachikoma also uses "skills" for its own sub-agent packages. When both systems share the same term, the agent conflates them — attempting to invoke a Tachikoma skill via the Claude Code Skill tool, or ignoring a Claude Code skill because it assumes it belongs to Tachikoma's registry. This leads to incorrect tool routing and missed capabilities. Rename Tachikoma's skill subsystem to a distinct term (e.g., "modules", "packages", or "capabilities") across the codebase, configuration, and internal references, and add internal disambiguation logic so the agent reliably distinguishes between the two systems without relying on external guidance files.
 
-### DLT-076: Re-evaluate memory context per message
-**Status**: ✓ Implementation
-**Depends on**: None
-**Priority**: 1 (Critical)
-**Complexity**: Medium
-**Description**: The memory context provider currently runs only on the first message of a new session — its output is persisted and reused for all subsequent messages in that session. When the conversation topic evolves, the initially retrieved memories may no longer be the most relevant, and memories that would be highly relevant to follow-up messages are never injected. Re-evaluate memory relevance on each message so the agent always has the most pertinent memories for the current point in the conversation.
-
 ### DLT-077: Route settings requests to correct config system
 **Status**: ✗ Defined
 **Depends on**: None
