@@ -299,15 +299,18 @@ async def handle_start_workflow(
         f"Workflow started: **{workflow_name}**\n\n"
         f"## Steps\n\n{steps_text}\n\n"
         f"## Getting Started\n\n"
-        f"1. Use TodoWrite to create tasks for each step above\n"
-        f"2. Save your workflow ID (`{workflow_id}`) to your scratchpad file at "
-        f"`{scratchpad_path}` for recovery if context is lost\n"
-        f'3. Call `update_workflow_state` with `workflow_id="{workflow_id}", '
-        f'step="<step_id>", action="start"` to begin a step\n\n'
+        f'1. Call `update_workflow_state` with `workflow_id="{workflow_id}", '
+        f'step="<step_id>", action="start"` to begin the first step\n'
+        f"2. Use TodoWrite to create tasks for each step above\n"
+        f"3. Read the scratchpad file at `{scratchpad_path}` first, then use Edit "
+        f"to update it with your workflow ID (`{workflow_id}`) and progress notes\n\n"
         f"## Progressing\n\n"
-        f'- Use `action="start"` to begin a step (returns its instructions)\n'
-        f'- Use `action="complete"` to finish a started step\n'
-        f'- Use `action="skip"` to skip a skippable step\n\n'
+        f'- Use `action="start"` to begin the first step (returns its instructions)\n'
+        f'- Use `action="complete"` to finish a started step — this **auto-starts** '
+        f"the next step and returns its instructions (no separate start call needed)\n"
+        f'- Use `action="skip"` to skip a skippable step — also auto-starts the next step\n'
+        f"- When the last step is completed, the workflow is **auto-finalized** "
+        f"(no need to call `end_workflow`)\n\n"
         f"## Recovery\n\n"
         f"If you lose context, call `list_active_workflows()` to find your "
         f"workflow, then `get_workflow_state()` to resume."
@@ -346,6 +349,11 @@ async def handle_update_workflow_state(
         new_step_states[step] = STEP_SKIPPED
         new_current_step = _find_next_pending_step(new_step_states, state.definition_snapshot)
 
+    # Auto-start next step on complete/skip (bypasses validate_transition —
+    # _find_next_pending_step guarantees the step is pending)
+    if action in ("complete", "skip") and new_current_step is not None:
+        new_step_states[new_current_step] = STEP_STARTED
+
     try:
         updated = await repository.update(
             workflow_id,
@@ -360,19 +368,21 @@ async def handle_update_workflow_state(
 
     all_done = all(s in (STEP_COMPLETED, STEP_SKIPPED) for s in new_step_states.values())
 
+    # Auto-finalize: soft-delete and clean up scratchpad on completion
     if all_done:
         completed = sum(1 for s in new_step_states.values() if s == STEP_COMPLETED)
         skipped = sum(1 for s in new_step_states.values() if s == STEP_SKIPPED)
+
+        await repository.soft_delete(workflow_id)
+        _delete_scratchpad(state.scratchpad_path)
 
         return {
             "content": [
                 {
                     "type": "text",
                     "text": (
-                        f"Workflow **{state.workflow_name}** is complete! "
-                        f"All steps finished ({completed} completed, {skipped} skipped).\n\n"
-                        f'Call `end_workflow` with `workflow_id="{workflow_id}"` '
-                        f'and `action="complete"` to finalize.'
+                        f"Workflow **{state.workflow_name}** complete and finalized! "
+                        f"All steps finished ({completed} completed, {skipped} skipped)."
                     ),
                 }
             ],
@@ -393,13 +403,15 @@ async def handle_update_workflow_state(
 
         return {"content": [{"type": "text", "text": step_text}]}
 
+    # complete/skip with a next step — it's already auto-started
     if new_current_step:
         next_info = _get_step_from_snapshot(state.definition_snapshot, new_current_step)
         next_instructions = _read_step_instructions(next_info)
         next_path = next_info.get("path", "")
 
         next_text = (
-            f"Step `{step}` {action}d. Next step: **{next_info['title']}** (`{new_current_step}`)."
+            f"Step `{step}` {action}d. "
+            f"Next step **{next_info['title']}** (`{new_current_step}`) started."
         )
 
         if next_instructions:
@@ -565,8 +577,10 @@ def create_workflow_tools_server(
         "- step (str, required): The step identifier (directory name)\n"
         "- action (str, required): 'start', 'complete', or 'skip'\n"
         "\n"
-        "Validates the transition and returns step instructions on start. "
-        "Detects workflow completion when all steps are done.",
+        "Validates the transition and returns step instructions. "
+        "Completing or skipping a step auto-starts the next pending step "
+        "and returns its instructions. When all steps are done, the workflow "
+        "is auto-finalized (cleaned up).",
         UpdateWorkflowStateArgs.model_json_schema(),
     )
     async def update_workflow_state(args: dict) -> dict:
@@ -606,6 +620,8 @@ def create_workflow_tools_server(
         "- workflow_id (str, required): The workflow instance ID\n"
         "- action (str, required): 'complete' or 'abort'\n"
         "\n"
+        "Primarily used to abort a workflow in progress. Normal completion "
+        "is handled automatically when the last step is completed. "
         "Soft-deletes the workflow state and removes the scratchpad file.",
         EndWorkflowArgs.model_json_schema(),
     )

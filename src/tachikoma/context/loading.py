@@ -253,13 +253,16 @@ skill containing the workflow), `workflow_name` (str, name of the workflow to st
 a workflow ID, step list, scratchpad path, and guidance for progressing through the workflow.
 - **update_workflow_state** — Transition a workflow step's state. Parameters: `workflow_id` \
 (str, the workflow instance ID), `step` (str, the step identifier), `action` ("start", \
-"complete", or "skip"). Validates the transition and returns step instructions on start.
+"complete", or "skip"). Completing or skipping a step **auto-starts** the next pending step \
+and returns its instructions. When all steps are done, the workflow is **auto-finalized** \
+(cleaned up automatically).
 - **get_workflow_state** — Retrieve the current workflow state. Parameters: `workflow_id` \
 (str, the workflow instance ID). Returns full state including all step statuses. Use this \
 after context loss to understand where you left off.
-- **end_workflow** — Complete or abort a workflow. Parameters: `workflow_id` (str, the \
+- **end_workflow** — Abort a workflow in progress. Parameters: `workflow_id` (str, the \
 workflow instance ID), `action` ("complete" or "abort"). Soft-deletes the workflow state \
-and removes the scratchpad file. Always call this when you finish or abandon a workflow.
+and removes the scratchpad file. Only needed to cancel a workflow — normal completion \
+is automatic.
 - **list_active_workflows** — List all in-flight workflow executions. No parameters required. \
 Returns workflow IDs, names, current steps. Use this after context loss to discover workflows \
 you were working on.

@@ -90,6 +90,7 @@ def _make_state(
     workflow_name: str = "test-workflow",
     step_states: dict | None = None,
     definition_snapshot: list[dict] | None = None,
+    scratchpad_path: str | None = None,
 ) -> WorkflowState:
     """Create a test WorkflowState."""
     if definition_snapshot is None:
@@ -107,6 +108,9 @@ def _make_state(
     if step_states is None:
         step_states = {"01-plan": "pending", "02-execute": "pending", "03-review": "pending"}
 
+    if scratchpad_path is None:
+        scratchpad_path = f"/tmp/scratchpad-workflow-{workflow_id}.md"
+
     now = datetime.now(UTC)
 
     return WorkflowState(
@@ -116,7 +120,7 @@ def _make_state(
         current_step=None,
         step_states=step_states,
         definition_snapshot=definition_snapshot,
-        scratchpad_path=f"/tmp/scratchpad-workflow-{workflow_id}.md",
+        scratchpad_path=scratchpad_path,
         deleted_at=None,
         created_at=now,
         updated_at=now,
@@ -443,11 +447,13 @@ class TestUpdateWorkflowState:
 
         assert result.get("is_error") is None
         text = result["content"][0]["text"]
-        assert "02-execute" in text  # Next step mentioned
+        assert "02-execute" in text
+        assert "started" in text.lower()
 
-        # Verify state
+        # Verify state: next step auto-started
         updated = await repository.get(state.id)
         assert updated.step_states["01-plan"] == "completed"
+        assert updated.step_states["02-execute"] == "started"
         assert updated.current_step == "02-execute"
 
     @pytest.mark.asyncio
@@ -485,6 +491,12 @@ class TestUpdateWorkflowState:
 
         assert result.get("is_error") is None
         assert "03-review" in result["content"][0]["text"]
+
+        # Verify state: next step auto-started
+        updated = await repository.get(state.id)
+        assert updated.step_states["02-execute"] == "skipped"
+        assert updated.step_states["03-review"] == "started"
+        assert updated.current_step == "03-review"
 
     @pytest.mark.asyncio
     async def test_skip_non_skippable_rejected(self, repository, tmp_path):
@@ -541,7 +553,7 @@ class TestUpdateWorkflowState:
         assert "not found" in result["content"][0]["text"]
 
     @pytest.mark.asyncio
-    async def test_workflow_completion_detected(self, repository, tmp_path):
+    async def test_workflow_completion_auto_finalizes(self, repository, tmp_path):
         state = _make_state(
             step_states={
                 "01-plan": "completed",
@@ -559,8 +571,51 @@ class TestUpdateWorkflowState:
         )
 
         assert result.get("is_error") is None
-        assert "complete" in result["content"][0]["text"].lower()
-        assert "end_workflow" in result["content"][0]["text"]
+        text = result["content"][0]["text"]
+        assert "complete" in text.lower()
+        assert "finalized" in text.lower()
+        assert "end_workflow" not in text
+
+        # Verify auto-finalized: workflow is soft-deleted
+        assert await repository.get(state.id) is None
+
+    @pytest.mark.asyncio
+    async def test_complete_last_step_auto_finalizes_with_scratchpad(self, repository, tmp_path):
+        # Create a scratchpad file on disk
+        scratchpad = tmp_path / "scratchpad-auto-finalize.md"
+        scratchpad.write_text("# Workflow test\n\nWorkflow ID: test-wf-id\n")
+
+        # Two-step workflow: first done, second in progress
+        state = _make_state(
+            step_states={"01-plan": "completed", "02-execute": "started"},
+            definition_snapshot=[
+                {"id": "01-plan", "title": "Plan", "skippable": False, "path": "/fake/01-plan"},
+                {
+                    "id": "02-execute",
+                    "title": "Execute",
+                    "skippable": False,
+                    "path": "/fake/02-execute",
+                },
+            ],
+            scratchpad_path=str(scratchpad),
+        )
+        await repository.create(state)
+
+        result = await handle_update_workflow_state(
+            state.id,
+            "02-execute",
+            "complete",
+            repository,
+        )
+
+        assert result.get("is_error") is None
+        text = result["content"][0]["text"]
+        assert "finalized" in text.lower()
+        assert "end_workflow" not in text
+
+        # Verify soft-deleted and scratchpad cleaned up
+        assert await repository.get(state.id) is None
+        assert not scratchpad.exists()
 
     @pytest.mark.asyncio
     async def test_completed_step_rejects_update(self, repository, tmp_path):

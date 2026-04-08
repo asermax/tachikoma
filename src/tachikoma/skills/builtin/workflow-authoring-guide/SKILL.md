@@ -199,15 +199,17 @@ Use `scripts/` for executable code that the step should run:
 
 When the agent executes a workflow:
 
-1. **Start**: `start_workflow(workflow_id, initial_context)` returns the first step's instructions
-2. **Execute**: The agent performs the step's actions, producing outputs
-3. **Checkpoint**: `update_workflow_state(workflow_execution_id, updates)` saves progress
-4. **Advance**: Move to the next step (steps are ordered by directory name)
-5. **Complete**: After the final step, `end_workflow(workflow_execution_id, status="completed")`
+1. **Start**: `start_workflow(skill_name, workflow_name)` creates the workflow and returns the step list
+2. **First step**: `update_workflow_state(workflow_id, step, action="start")` begins the first step and returns its instructions
+3. **Execute**: The agent performs the step's actions, producing outputs
+4. **Advance**: `update_workflow_state(workflow_id, step, action="complete")` marks the step done, **auto-starts** the next step, and returns its instructions — no separate `start` call needed
+5. **Finalize**: When the last step is completed, the workflow is **auto-finalized** (state cleaned up automatically)
+
+To abort a workflow early, use `end_workflow(workflow_id, action="abort")`.
 
 If context is lost during execution:
 - `list_active_workflows()` shows in-flight workflows
-- `get_workflow_state(workflow_execution_id)` recovers current step and state data
+- `get_workflow_state(workflow_id)` recovers current step and state data
 - Resume from the current step
 
 ## Example Workflow
