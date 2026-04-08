@@ -101,17 +101,16 @@ class SkillsContextProvider(MessageContextProvider):
             message=message,
         )
 
-        # Defense in depth for tool-less agents (see DES-007 "Disabling Tools"):
-        # 1. Default permission mode — headless query() has no can_use_tool callback,
+        # Tool-less agent (see DES-007 "Disabling Tools"):
+        # 1. tools=[] — sets an empty base tool set (passes --tools "" to CLI).
+        # 2. Default permission mode — headless query() has no can_use_tool callback,
         #    so any tool permission request raises an exception.
-        # 2. allowed_tools=[] — documents intent. Currently a no-op due to an SDK bug
-        #    (empty list is falsy, so --allowedTools is never passed to CLI).
-        # 3. max_turns=3 — hard limit prevents runaway execution.
+        # 3. max_turns=10 — hard limit prevents runaway execution.
         options = ClaudeAgentOptions(
             model=self._agent_defaults.model,
             effort="low",
-            max_turns=3,
-            allowed_tools=[],
+            max_turns=10,
+            tools=[],
             cwd=self._agent_defaults.cwd,
             cli_path=self._agent_defaults.cli_path,
             env=self._agent_defaults.env,
