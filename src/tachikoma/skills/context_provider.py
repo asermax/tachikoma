@@ -75,7 +75,11 @@ class SkillsContextProvider(MessageContextProvider):
         self._registry = registry
 
     async def provide(
-        self, message: str, *, existing_entries: list[SessionContextEntry] | None = None
+        self,
+        message: str,
+        *,
+        existing_entries: list[SessionContextEntry] | None = None,
+        sdk_session_id: str | None = None,
     ) -> list[ContextResult] | None:
         self._registry.refresh()
 

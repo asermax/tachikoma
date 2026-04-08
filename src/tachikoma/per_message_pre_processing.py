@@ -29,13 +29,19 @@ class MessageContextProvider(ABC):
 
     @abstractmethod
     async def provide(
-        self, message: str, *, existing_entries: list[SessionContextEntry] | None = None
+        self,
+        message: str,
+        *,
+        existing_entries: list[SessionContextEntry] | None = None,
+        sdk_session_id: str | None = None,
     ) -> list[ContextResult] | None:
         """Provide context relevant to the user message.
 
         Args:
             message: The user's message text.
             existing_entries: The session's current context entries.
+            sdk_session_id: The current SDK session ID, if available.
+                Providers can use this to fork the session for conversation context.
 
         Returns:
             A list of ContextResult instances, or None if no relevant context.
@@ -69,7 +75,11 @@ class MessagePreProcessingPipeline:
         self._providers.append(provider)
 
     async def run(
-        self, message: str, *, existing_entries: list[SessionContextEntry] | None = None
+        self,
+        message: str,
+        *,
+        existing_entries: list[SessionContextEntry] | None = None,
+        sdk_session_id: str | None = None,
     ) -> list[ContextResult]:
         """Run all registered providers in parallel.
 
@@ -80,6 +90,7 @@ class MessagePreProcessingPipeline:
         Args:
             message: The user's message text.
             existing_entries: The session's current context entries.
+            sdk_session_id: The current SDK session ID, if available.
 
         Returns:
             List of successful, non-None ContextResult instances (flattened from lists).
@@ -94,7 +105,14 @@ class MessagePreProcessingPipeline:
             _log.info("Pipeline started: providers={names}", names=names)
 
             results = await asyncio.gather(
-                *[p.provide(message, existing_entries=entries) for p in self._providers],
+                *[
+                    p.provide(
+                        message,
+                        existing_entries=entries,
+                        sdk_session_id=sdk_session_id,
+                    )
+                    for p in self._providers
+                ],
                 return_exceptions=True,
             )
 
