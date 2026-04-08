@@ -10,6 +10,7 @@ from pytest_mock import MockerFixture
 
 from tachikoma.agent_defaults import AgentDefaults
 from tachikoma.memory.context_provider import (
+    _NO_RELEVANT_MEMORIES,
     MEMORIES_OWNER,
     MEMORY_PATH_META_KEY,
     MEMORY_SEARCH_PROMPT,
@@ -115,7 +116,7 @@ class TestMemoryContextProvider:
     ) -> None:
         """AC: When sdk_session_id is None, query() is called without fork/resume."""
         mock_query = mocker.patch("tachikoma.memory.context_provider.query")
-        mock_query.return_value = _make_query_result("NO_RELEVANT_MEMORIES")
+        mock_query.return_value = _make_query_result(_NO_RELEVANT_MEMORIES)
 
         provider = MemoryContextProvider(AgentDefaults(cwd=tmp_path))
         await provider.provide("Hello")
@@ -132,7 +133,7 @@ class TestMemoryContextProvider:
     ) -> None:
         """AC: When sdk_session_id provided, options include fork_session=True and resume=id."""
         mock_query = mocker.patch("tachikoma.memory.context_provider.query")
-        mock_query.return_value = _make_query_result("NO_RELEVANT_MEMORIES")
+        mock_query.return_value = _make_query_result(_NO_RELEVANT_MEMORIES)
 
         provider = MemoryContextProvider(AgentDefaults(cwd=tmp_path))
         await provider.provide("Hello", sdk_session_id="session-123")
@@ -229,7 +230,7 @@ class TestMemoryContextProvider:
     ) -> None:
         """AC: Agent returns NO_RELEVANT_MEMORIES → provider returns None."""
         mock_query = mocker.patch("tachikoma.memory.context_provider.query")
-        mock_query.return_value = _make_query_result("NO_RELEVANT_MEMORIES")
+        mock_query.return_value = _make_query_result(_NO_RELEVANT_MEMORIES)
 
         provider = MemoryContextProvider(AgentDefaults(cwd=tmp_path))
         result = await provider.provide("What's the weather?")
@@ -287,7 +288,7 @@ class TestMemoryContextProvider:
     ) -> None:
         """AC: query() called with correct model, effort, max_turns, allowed_tools, cwd."""
         mock_query = mocker.patch("tachikoma.memory.context_provider.query")
-        mock_query.return_value = _make_query_result("NO_RELEVANT_MEMORIES")
+        mock_query.return_value = _make_query_result(_NO_RELEVANT_MEMORIES)
 
         provider = MemoryContextProvider(AgentDefaults(cwd=tmp_path))
         await provider.provide("What restaurant did I like?")

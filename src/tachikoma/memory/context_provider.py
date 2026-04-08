@@ -22,6 +22,7 @@ _log = logger.bind(component="memory_context")
 
 MEMORIES_OWNER = "memories"
 MEMORY_PATH_META_KEY = "memory_path"
+_NO_RELEVANT_MEMORIES = "NO_RELEVANT_MEMORIES"
 
 MEMORY_SEARCH_PROMPT = """\
 You are a memory search agent. Your task is to search the \
@@ -131,31 +132,18 @@ class MemoryContextProvider(MessageContextProvider):
 
         prompt = MEMORY_SEARCH_PROMPT.format(message=message)
 
-        # Build options — fork session when SDK session ID is available
-        if sdk_session_id is not None:
-            options = ClaudeAgentOptions(
-                model=self._agent_defaults.model,
-                effort="low",
-                max_turns=8,
-                allowed_tools=["Read", "Glob", "Grep"],
-                permission_mode="bypassPermissions",
-                cwd=self._agent_defaults.cwd,
-                cli_path=self._agent_defaults.cli_path,
-                env=self._agent_defaults.env,
-                resume=sdk_session_id,
-                fork_session=True,
-            )
-        else:
-            options = ClaudeAgentOptions(
-                model=self._agent_defaults.model,
-                effort="low",
-                max_turns=8,
-                allowed_tools=["Read", "Glob", "Grep"],
-                permission_mode="bypassPermissions",
-                cwd=self._agent_defaults.cwd,
-                cli_path=self._agent_defaults.cli_path,
-                env=self._agent_defaults.env,
-            )
+        options = ClaudeAgentOptions(
+            model=self._agent_defaults.model,
+            effort="low",
+            max_turns=8,
+            allowed_tools=["Read", "Glob", "Grep"],
+            permission_mode="bypassPermissions",
+            cwd=self._agent_defaults.cwd,
+            cli_path=self._agent_defaults.cli_path,
+            env=self._agent_defaults.env,
+            resume=sdk_session_id if sdk_session_id is not None else None,
+            fork_session=sdk_session_id is not None,
+        )
 
         # Fully consume the query() generator per DES-005 — no early
         # return/break inside the async for loop.
@@ -172,7 +160,7 @@ class MemoryContextProvider(MessageContextProvider):
                     elif sdk_message.result is not None:
                         stripped = sdk_message.result.strip()
 
-                        if stripped == "NO_RELEVANT_MEMORIES":
+                        if stripped == _NO_RELEVANT_MEMORIES:
                             _log.debug("No relevant memories found for message")
                         else:
                             raw_paths = [
@@ -193,8 +181,6 @@ class MemoryContextProvider(MessageContextProvider):
         if not raw_paths:
             return None
 
-        # Path validation: resolve each path against workspace root and
-        # reject any path not within memories/ directory
         workspace = self._agent_defaults.cwd.resolve()
         memories_root = (workspace / "memories").resolve()
 
@@ -203,7 +189,7 @@ class MemoryContextProvider(MessageContextProvider):
         for raw_path in raw_paths:
             resolved = (workspace / raw_path).resolve()
 
-            if not str(resolved).startswith(str(memories_root)):
+            if not resolved.is_relative_to(memories_root):
                 _log.warning(
                     "Memory path outside memories/ rejected: path={path}",
                     path=raw_path,
@@ -218,7 +204,6 @@ class MemoryContextProvider(MessageContextProvider):
         if not validated_paths:
             return None
 
-        # Read each validated file and create per-file ContextResult
         results: list[ContextResult] = []
 
         for path in validated_paths:
