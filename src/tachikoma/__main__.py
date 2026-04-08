@@ -48,6 +48,10 @@ from tachikoma.tasks import (
 )
 from tachikoma.tasks.hooks import tasks_hook
 from tachikoma.telegram import TelegramChannel, telegram_hook
+from tachikoma.workflows.cleanup import StaleWorkflowCleanupProcessor
+from tachikoma.workflows.hooks import workflows_hook
+from tachikoma.workflows.repository import WorkflowStateRepository
+from tachikoma.workflows.tools import create_workflow_tools_server
 from tachikoma.workspace import workspace_hook
 
 _log = logger.bind(component="main")
@@ -92,6 +96,7 @@ async def run(
     bootstrap.register("memory", memory_hook)
     bootstrap.register("sessions", session_recovery_hook)
     bootstrap.register("tasks", tasks_hook)
+    bootstrap.register("workflows", workflows_hook)
     bootstrap.register("telegram", telegram_hook)
 
     try:
@@ -108,6 +113,7 @@ async def run(
     registry = bootstrap.extras["session_registry"]
     task_repository: TaskRepository = bootstrap.extras["task_repository"]
     skill_registry: SkillRegistry = bootstrap.extras["skill_registry"]
+    workflow_repository: WorkflowStateRepository = bootstrap.extras["workflow_repository"]
     bus = EventBus()
 
     _log.info(
@@ -120,9 +126,12 @@ async def run(
     # Get the foundational context from the context hook (if available)
     foundational_context = bootstrap.extras.get("foundational_context")
 
-    # Build AgentDefaults: merge hardcoded env with config env (collision = error)
+    # Build AgentDefaults: merge auto-injected, config, and hardcoded env
     try:
-        merged_env = merge_env(settings.agent.env)
+        merged_env = merge_env(
+            settings.agent.env,
+            auto_injected={"TZ": settings.tasks.timezone},
+        )
     except ValueError as e:
         print(f"Configuration error: {e}", file=sys.stderr)
         sys.exit(1)
@@ -141,6 +150,10 @@ async def run(
     pipeline.register(PreferencesProcessor(agent_defaults))
     pipeline.register(CoreContextProcessor(agent_defaults))
     pipeline.register(ProjectsProcessor(agent_defaults), phase=PRE_FINALIZE_PHASE)
+    pipeline.register(
+        StaleWorkflowCleanupProcessor(workflow_repository),
+        phase=PRE_FINALIZE_PHASE,
+    )
     pipeline.register(GitProcessor(agent_defaults), phase=FINALIZE_PHASE)
 
     # Create and configure the pre-processing pipeline (session-gated: projects)
@@ -157,6 +170,11 @@ async def run(
     msg_pipeline.register(SummaryProcessor(registry=registry, agent_defaults=agent_defaults))
 
     task_tools = create_task_tools_server(task_repository, ZoneInfo(settings.tasks.timezone))
+    workflow_tools = create_workflow_tools_server(
+        workflow_repository,
+        skill_registry,
+        settings.workspace.path,
+    )
 
     scheduler_tasks: list[asyncio.Task[None]] = []
 
@@ -176,7 +194,7 @@ async def run(
             permission_mode="bypassPermissions",
             session_resume_window=settings.agent.session_resume_window,
             session_idle_timeout=settings.agent.session_idle_timeout,
-            mcp_servers={"task-tools": task_tools},
+            mcp_servers={"task-tools": task_tools, "workflow-tools": workflow_tools},
             timezone=settings.tasks.timezone,
         ) as coordinator:
             scheduler_tasks.append(

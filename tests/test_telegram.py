@@ -346,10 +346,12 @@ class TestResponseRendererMessageSplitting:
         """Re-split edits existing tracked messages instead of sending new ones (AC1)."""
         bot = MagicMock()
         bot.edit_message_text = AsyncMock()
-        bot.send_message = AsyncMock(side_effect=[
-            MockMessage(message_id=200),
-            MockMessage(message_id=201),
-        ])
+        bot.send_message = AsyncMock(
+            side_effect=[
+                MockMessage(message_id=200),
+                MockMessage(message_id=201),
+            ]
+        )
         bot.delete_message = AsyncMock()
         renderer = ResponseRenderer(bot, chat_id=123)
 
@@ -425,7 +427,8 @@ class TestResponseRendererMessageSplitting:
         # Should edit 100 and 200, delete excess 300
         assert bot.edit_message_text.call_count == 2
         bot.delete_message.assert_called_once_with(
-            chat_id=123, message_id=300,
+            chat_id=123,
+            message_id=300,
         )
         assert renderer._split_message_ids == [100, 200]
 
@@ -465,10 +468,12 @@ class TestResponseRendererMessageSplitting:
         bot.edit_message_text = AsyncMock(
             side_effect=TelegramAPIError(method="edit_message_text", message="Failed")
         )
-        bot.send_message = AsyncMock(side_effect=[
-            MockMessage(message_id=200),
-            MockMessage(message_id=201),
-        ])
+        bot.send_message = AsyncMock(
+            side_effect=[
+                MockMessage(message_id=200),
+                MockMessage(message_id=201),
+            ]
+        )
         bot.delete_message = AsyncMock()
         renderer = ResponseRenderer(bot, chat_id=123)
 

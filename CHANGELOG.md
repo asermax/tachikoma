@@ -7,6 +7,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v1.12.0 (2026-04-08)
+
+
+## v1.11.1 (2026-04-08)
+
+### Bug Fixes
+
+- **skills**: Check skill existence instead of agent presence in derive_agents_from_entries
+  ([`e85e256`](https://github.com/asermax/tachikoma/commit/e85e2565e5eec56e81a5b7e3007b860916ec4966))
+
+
+## v1.11.0 (2026-04-08)
+
+### Bug Fixes
+
+- **boundary**: Disable tools via empty base tool set and increase max_turns
+  ([`d78052f`](https://github.com/asermax/tachikoma/commit/d78052ffc27d82e935d5eb7de64bf62c3b4793d9))
+
+### Documentation
+
+- **boundary**: Update DES-007 and feature designs for tools=[] pattern
+  ([`e4c5766`](https://github.com/asermax/tachikoma/commit/e4c57668b04b6839378cee2afaf14a6a558ac171))
+
+- **planning**: Add DLT-121 git-friendly database storage
+  ([`330379b`](https://github.com/asermax/tachikoma/commit/330379b61c35d96405ee09c4e7948b123a8c6949))
+
+- **planning**: Reprioritize deltas and add DLT-115 through DLT-120
+  ([`2935e99`](https://github.com/asermax/tachikoma/commit/2935e999d0ec1ce9524954437b171c638dd6e0c6))
+
+- **workflows**: Update feature specs and designs for auto-start/auto-finalize
+  ([`ae712ca`](https://github.com/asermax/tachikoma/commit/ae712cadf0bacb519284d5afe001d4c6e9770fb0))
+
+### Features
+
+- **workflows**: Auto-start next step and auto-finalize workflow on completion
+  ([`7bbac0b`](https://github.com/asermax/tachikoma/commit/7bbac0b163c0a7b933d77026ae12e197a6265501))
+
+
+## v1.10.0 (2026-04-07)
+
+
 ## v1.9.0 (2026-04-07)
 
 ### Documentation

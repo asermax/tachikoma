@@ -113,7 +113,8 @@ class TestSkillsContextProvider:
         options = call_kwargs[1]["options"]
 
         assert options.effort == "low"
-        assert options.max_turns == 3
+        assert options.tools == []
+        assert options.max_turns == 10
         assert options.cwd == tmp_path
 
     async def test_returns_context_result_with_skills_tag(

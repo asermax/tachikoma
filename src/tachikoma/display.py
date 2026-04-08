@@ -16,9 +16,7 @@ TOOL_DISPLAY: dict[str, Callable[[dict[str, Any]], str]] = {
     "Grep": lambda inp: f"Searching for '{inp.get('pattern', '...')}'",
     "Glob": lambda inp: f"Globbing {inp.get('pattern', '...')}",
     "Bash": lambda inp: (
-        inp["description"]
-        if inp.get("description")
-        else f"Running: {inp.get('command', '...')}"
+        inp["description"] if inp.get("description") else f"Running: {inp.get('command', '...')}"
     ),
     "Edit": lambda inp: f"Editing {inp.get('file_path', '...')}",
     "Write": lambda inp: f"Writing {inp.get('file_path', '...')}",

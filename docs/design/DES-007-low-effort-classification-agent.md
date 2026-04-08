@@ -55,8 +55,8 @@ async def _classify(self, message: str) -> str | None:
     options = ClaudeAgentOptions(
         model="opus",
         effort="low",
-        max_turns=3,
-        allowed_tools=[],
+        max_turns=10,
+        tools=[],
         cwd=self._cwd,
         cli_path=self._cli_path,
     )
@@ -74,7 +74,7 @@ async def _classify(self, message: str) -> str | None:
     return result
 ```
 
-**Why**: Uses the standard invariant core (Opus low effort, full generator consumption, sentinel pattern, graceful error handling) with the tool-less agent pattern (default permission mode, `allowed_tools=[]`, `max_turns=3`). See "Disabling Tools" section for rationale.
+**Why**: Uses the standard invariant core (Opus low effort, full generator consumption, sentinel pattern, graceful error handling) with the tool-less agent pattern (empty base tool set via `tools=[]`, default permission mode, `max_turns=10`). See "Disabling Tools" section for rationale.
 
 ### Don't Do This
 
@@ -83,7 +83,7 @@ async def _classify(self, message: str) -> str | None:
 options = ClaudeAgentOptions(
     model="sonnet",
     effort="high",
-    max_turns=10,
+    max_turns=50,
 )
 ```
 
@@ -148,21 +148,19 @@ options = ClaudeAgentOptions(
 
 ## Disabling Tools
 
-Agents that should not use tools require defense in depth to prevent rogue execution. This is critical because the `allowed_tools` parameter has an SDK bug where an empty list `[]` is treated as falsy and never passed to the CLI — so `allowed_tools=[]` alone does not restrict tools.
-
 **For agents that need tools** (e.g., memory context provider):
 - `permission_mode="bypassPermissions"` — tools must execute without interactive approval
 - `allowed_tools=["Read", "Glob", "Grep"]` — explicit tool allowlist
 - `max_turns=8` — generous limit for multi-step tool use
 
 **For agents that should NOT use tools** (e.g., boundary detection, summarization, skill classification):
+- `tools=[]` — sets an empty base tool set (passes `--tools ""` to the CLI, removing all tools)
 - Omit `permission_mode` (default mode) — headless `query()` calls have no `can_use_tool` callback, so any tool permission request raises an exception
-- `allowed_tools=[]` — documents intent; will also enforce once the SDK bug is fixed
-- `max_turns=3` — hard limit prevents runaway execution as an additional safeguard
+- `max_turns=10` — hard limit prevents runaway execution as an additional safeguard
 
-The three layers work independently: default permission mode denies tools at the permission level, `allowed_tools=[]` will deny at the allowlist level (once fixed), and `max_turns=3` caps execution regardless.
+**Note**: Do not use `allowed_tools=[]` to disable tools — the SDK treats empty lists as falsy and never passes `--allowedTools` to the CLI. Use `tools=[]` instead, which correctly passes `--tools ""`.
 
-**Implementation**: All tool-less call sites use the same inline pattern with the defense-in-depth comment referencing this section. See `boundary/detector.py`, `boundary/summary.py`, and `skills/context_provider.py` for examples.
+**Implementation**: All tool-less call sites use the same inline pattern with a comment referencing this section. See `boundary/detector.py`, `boundary/summary.py`, and `skills/context_provider.py` for examples.
 
 ## Exceptions
 

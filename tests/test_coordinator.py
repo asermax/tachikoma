@@ -873,6 +873,7 @@ def _make_mock_skill_registry(agents: dict[str, AgentDefinition]) -> MagicMock:
         return skills_map.get(skill_name, {})
 
     registry.get_agents_for_skill = MagicMock(side_effect=get_agents_for_skill)
+    registry.skills = {name: MagicMock() for name in skills_map}
     return registry
 
 

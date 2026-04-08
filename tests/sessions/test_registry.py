@@ -611,9 +611,7 @@ class TestCandidateFiltering:
 
         assert len(results) == 0
 
-    async def test_excludes_sessions_outside_max_age(
-        self, mock_repo, tmp_path: Path
-    ) -> None:
+    async def test_excludes_sessions_outside_max_age(self, mock_repo, tmp_path: Path) -> None:
         """AC: Sessions with started_at older than max_session_age are excluded."""
         now = _utcnow()
         window = timedelta(hours=48)
@@ -636,9 +634,7 @@ class TestCandidateFiltering:
 
         assert len(results) == 0
 
-    async def test_includes_valid_sessions(
-        self, mock_repo, tmp_path: Path
-    ) -> None:
+    async def test_includes_valid_sessions(self, mock_repo, tmp_path: Path) -> None:
         """AC: Sessions passing all filters are included."""
         now = _utcnow()
         window = timedelta(hours=24)
@@ -662,9 +658,7 @@ class TestCandidateFiltering:
         assert len(results) == 1
         assert results[0].id == "s1"
 
-    async def test_filters_mixed_sessions(
-        self, mock_repo, tmp_path: Path
-    ) -> None:
+    async def test_filters_mixed_sessions(self, mock_repo, tmp_path: Path) -> None:
         """AC: Only valid sessions pass all filters; invalid ones are excluded."""
         now = _utcnow()
         window = timedelta(hours=48)

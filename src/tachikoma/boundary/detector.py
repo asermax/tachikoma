@@ -84,21 +84,20 @@ async def detect_boundary(
         Propagates: SDK errors from the query() call. The coordinator handles
             error wrapping with fail-open behavior.
     """
-    # Defense in depth for tool-less agents (see DES-007 "Disabling Tools"):
-    # 1. Default permission mode — headless query() has no can_use_tool callback,
+    # Tool-less agent (see DES-007 "Disabling Tools"):
+    # 1. tools=[] — sets an empty base tool set (passes --tools "" to CLI).
+    # 2. Default permission mode — headless query() has no can_use_tool callback,
     #    so any tool permission request raises an exception.
-    # 2. allowed_tools=[] — documents intent. Currently a no-op due to an SDK bug
-    #    (empty list is falsy, so --allowedTools is never passed to CLI).
-    # 3. max_turns=3 — hard limit prevents runaway execution.
+    # 3. max_turns=10 — hard limit prevents runaway execution.
     options = ClaudeAgentOptions(
         model=agent_defaults.model,
         effort="low",
-        max_turns=3,
+        max_turns=10,
+        tools=[],
         cwd=agent_defaults.cwd,
         cli_path=agent_defaults.cli_path,
         env=agent_defaults.env,
         system_prompt=BOUNDARY_DETECTION_SYSTEM_PROMPT,
-        allowed_tools=[],
         output_format={
             "type": "json_schema",
             "schema": {
