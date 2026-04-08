@@ -182,7 +182,9 @@ class TestMessagePreProcessingPipeline:
 
         await pipeline.run("hello", existing_entries=entries)
 
-        provider.provide.assert_called_once_with("hello", existing_entries=entries)
+        provider.provide.assert_called_once_with(
+            "hello", existing_entries=entries, sdk_session_id=None,
+        )
 
     async def test_parallel_execution(self) -> None:
         """AC: Multiple providers run in parallel and results are flattened."""
@@ -248,4 +250,33 @@ class TestMessagePreProcessingPipeline:
 
         await pipeline.run("hello")
 
-        provider.provide.assert_called_once_with("hello", existing_entries=[])
+        provider.provide.assert_called_once_with(
+            "hello", existing_entries=[], sdk_session_id=None,
+        )
+
+    async def test_passes_sdk_session_id_to_provider(self) -> None:
+        """AC: sdk_session_id is passed through to providers."""
+        provider = AsyncMock(spec=MessageContextProvider)
+        provider.provide.return_value = None
+
+        pipeline = MessagePreProcessingPipeline()
+        pipeline.register(provider)
+
+        await pipeline.run("hello", sdk_session_id="test-session-123")
+
+        provider.provide.assert_called_once_with(
+            "hello", existing_entries=[], sdk_session_id="test-session-123",
+        )
+
+    async def test_default_sdk_session_id_is_none(self) -> None:
+        """AC: When sdk_session_id not passed, provider gets None."""
+        provider = AsyncMock(spec=MessageContextProvider)
+        provider.provide.return_value = None
+
+        pipeline = MessagePreProcessingPipeline()
+        pipeline.register(provider)
+
+        await pipeline.run("hello")
+
+        _, kwargs = provider.provide.call_args
+        assert kwargs["sdk_session_id"] is None
