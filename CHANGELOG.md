@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v1.13.0 (2026-04-08)
+
+### Documentation
+
+- **planning**: Elevate DLT-098 priority to Critical
+  ([`d6a8de4`](https://github.com/asermax/tachikoma/commit/d6a8de4df94a4625734420ab47fb6d8276d62909))
+
+
 ## v1.12.0 (2026-04-08)
 
 
