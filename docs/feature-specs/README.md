@@ -12,3 +12,4 @@ System capabilities organized by domain.
 | [memory](memory/) | Automatic memory extraction from conversations |
 | [distribution](distribution/) | Package building, versioning, and publishing |
 | [tasks](tasks/) | Proactive task scheduling and execution |
+| [workflows](workflows/) | Multi-step workflow state machine within skills |

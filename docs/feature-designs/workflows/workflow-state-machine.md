@@ -123,8 +123,8 @@ list_active_workflows()
 
 **Transition validation rules** (enforced by `update_workflow_state`):
 - `start`: step must be `pending`; marks as `started`; returns step_path + instructions
-- `complete`: step must be `started` (not `pending` — must start before completing); marks as `completed`; advances to next pending step
-- `skip`: step must be `skippable: true` in frontmatter AND `pending`; marks as `skipped`; advances to next pending step
+- `complete`: step must be `started` (not `pending` — must start before completing); marks as `completed`; **auto-starts** next pending step (internal transition, bypasses validate_transition since `_find_next_pending_step` guarantees the step is pending) and returns its instructions; if no next step, **auto-finalizes** the workflow (soft-delete + scratchpad cleanup)
+- `skip`: step must be `skippable: true` in frontmatter AND `pending`; marks as `skipped`; **auto-starts** next pending step and returns its instructions; if no next step, auto-finalizes
 - Any action on a completed/skipped step: error with explanation
 - All actions update `updated_at` on the workflow state record
 
@@ -133,8 +133,8 @@ list_active_workflows()
 - MCP tools call workflow state repository for all DB operations
 - Stale cleanup runs as post-processor in `pre_finalize` phase, before GitProcessor in `finalize`
 - System preamble static text added to preamble template
-- `start_workflow` guidance instructs agent to persist workflow ID in scratchpad file
-- `end_workflow` soft-deletes workflow (sets `deleted_at`) and deletes associated scratchpad file
+- `start_workflow` guidance instructs agent to Read the scratchpad file first, then Edit to update it
+- `end_workflow` primarily for aborting workflows — normal completion is handled by auto-finalize
 - Workflow MCP tools registered alongside task MCP tools in coordinator's `mcp_servers` dict
 - DB errors surface as MCP tool errors via `{"is_error": true, ...}` (consistent with task tools pattern)
 
@@ -187,19 +187,20 @@ WorkflowState (database — table: `workflow_states`):
    -> Loader parses workflow definition from skill directory
    -> Creates WorkflowState record in DB (with definition snapshot, scratchpad_path)
    -> Returns step list + scratchpad_path + agent guidance (TodoWrite, scratchpad)
-4. Agent persists workflow ID and progress notes in scratchpad file at scratchpad_path
+4. Agent reads scratchpad file, then edits it to persist workflow ID and progress notes
 5. Agent creates TodoWrite tasks for steps
-6. Agent calls update_workflow_state(id, step, "start")
-   -> Validates step exists and is next in order
+6. Agent calls update_workflow_state(id, first_step, "start")
+   -> Validates step exists and is pending
    -> Updates step_states in DB
    -> Returns step_path + instructions content (instructions.md body)
 7. Agent executes step, using step_path to navigate references/ and scripts/ as needed
 8. Agent calls update_workflow_state(id, step, "complete")
-   -> Marks step completed, advances to next step
-   -> Returns next step_path + instructions (or completion message)
-9. Repeat 6-8 until all steps done
-10. Agent calls end_workflow(id, "complete") -> DB record soft-deleted, scratchpad file deleted
+   -> Marks step completed, auto-starts next pending step, returns its instructions
+9. Repeat 7-8 until all steps done
+10. On last step completion, workflow is auto-finalized (DB record soft-deleted, scratchpad file deleted)
 ```
+
+To abort mid-workflow: `end_workflow(id, "abort")` at any point.
 
 ### Recovery flow (context loss)
 
@@ -304,12 +305,23 @@ WorkflowState (database — table: `workflow_states`):
 
 ### start_workflow guidance as tunable prompt engineering
 
-**Choice**: The `start_workflow` tool constructs a guidance string that instructs the agent to use TodoWrite, persist the workflow ID in a scratchpad file, and call `update_workflow_state` to progress
+**Choice**: The `start_workflow` tool constructs a guidance string that instructs the agent to use TodoWrite, persist the workflow ID in a scratchpad file (Read first, then Edit to update), and call `update_workflow_state` to progress
 **Why**: This guidance is the primary mechanism for agent task tracking and scratchpad usage. The quality of this guidance directly affects workflow reliability and must be treated as a tunable parameter refined based on agent behavior.
 
 **Consequences**:
 - Pro: Guidance adapts as agent behavior is observed in practice
 - Pro: No additional infrastructure needed
+
+### Auto-start and auto-finalize on complete/skip
+
+**Choice**: Completing or skipping a step automatically starts the next pending step. When all steps are done, the workflow is automatically finalized (soft-deleted, scratchpad cleaned up).
+**Why**: Observed during first real-world usage: the agent had to call `start` after every `complete` (redundant) and `end_workflow` after the last step (felt like double-closing). Auto-start and auto-finalize eliminate these friction points, making the workflow progression naturally linear: `start` first step → `complete` (auto-starts next) → `complete` (auto-starts next) → `complete` (auto-finalizes).
+
+**Consequences**:
+- Pro: Agent only needs one tool call per step instead of two (no separate `start` after `complete`)
+- Pro: No redundant `end_workflow` call for normal completion
+- Pro: `end_workflow` remains available for aborting mid-workflow
+- Con: Auto-start bypasses `validate_transition` (safe: `_find_next_pending_step` guarantees the step is pending)
 
 ## System Behavior
 

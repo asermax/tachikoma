@@ -22,9 +22,9 @@ A workflow construct within skills that maps multi-step processes to directory t
 | R1 | MCP tools manage the full lifecycle (start, update state, query state, end) — the tools are the state machine boundary |
 | R2 | Workflow state persisted in a database table |
 | R3 | `start_workflow` creates state with unique ID, returns overview (step list, guidance to create tasks, how to update state) |
-| R4 | `update_workflow_state` validates transitions, returns step instructions on start/complete/skip |
+| R4 | `update_workflow_state` validates transitions, returns step instructions. Completing or skipping a step auto-starts the next pending step. When all steps are done, the workflow is auto-finalized (state cleaned up automatically) |
 | R5 | Step instructions.md has frontmatter with title and extensible properties (e.g., skippable) enforced by transition validation |
-| R6 | `end_workflow` completes or aborts, cleans up state |
+| R6 | `end_workflow` aborts a workflow in progress, cleans up state. Normal completion is handled automatically via auto-finalize |
 | R7 | Agent decides which workflow to start based on SKILL.md content and user intent |
 | R8 | Agent uses SDK Task tools (TodoWrite) to track step progress, prompted by start_workflow output (voluntary — agent follows guidance, not enforced) |
 | R9 | Agent maintains scratchpad notes during workflow (prompting-based, not MCP tool) |
@@ -78,8 +78,8 @@ The agent discovers workflows by reading a skill's SKILL.md content, which descr
 
 **Acceptance Criteria**:
 - Given a workflow ID and step identifier with action "start", when `update_workflow_state` is called, then the step is marked as started and the step's instructions (plus references/scripts paths) are returned as the tool result
-- Given a workflow ID and step identifier with action "complete", when `update_workflow_state` is called, then the step is marked completed; if a next step exists, its instructions are returned; if it was the last step, the result indicates the workflow is complete
-- Given a workflow ID and step identifier with action "skip", when `update_workflow_state` is called and the step is marked skippable, then the step is marked skipped and state advances past it
+- Given a workflow ID and step identifier with action "complete", when `update_workflow_state` is called, then the step is marked completed; if a next pending step exists, it is **auto-started** (transitioned to `started`) and its instructions are returned; if it was the last step, the workflow is **auto-finalized** (soft-deleted, scratchpad removed) and the result confirms completion
+- Given a workflow ID and step identifier with action "skip", when `update_workflow_state` is called and the step is marked skippable, then the step is marked skipped; if a next pending step exists, it is auto-started and its instructions are returned
 - Given a workflow ID and step identifier with action "skip", when `update_workflow_state` is called and the step is NOT marked skippable, then the transition is rejected with an explanation
 - Given a workflow where the current step is not yet started, when "complete" is called on it, then the tool returns an error (must start before completing)
 - Given an invalid workflow ID, when `update_workflow_state` is called, then the tool returns an error indicating the workflow is not active
@@ -96,8 +96,8 @@ The agent discovers workflows by reading a skill's SKILL.md content, which descr
 ### MCP Tools — end_workflow (R6)
 
 **Acceptance Criteria**:
-- Given a workflow ID, when `end_workflow` is called with action "complete", then the workflow state is soft-deleted from the database
-- Given a workflow ID, when `end_workflow` is called with action "abort", then the workflow state is soft-deleted from the database
+- Given a workflow ID, when `end_workflow` is called with action "abort", then the workflow state is soft-deleted from the database and the scratchpad file is removed
+- Given a workflow ID, when `end_workflow` is called with action "complete", then the workflow state is soft-deleted from the database (also valid, but normal completion is handled via auto-finalize)
 - Given an invalid workflow ID, when `end_workflow` is called, then the tool returns an error
 - Given a completed or already-ended workflow, when any workflow tool is called with its ID, then the tool returns an error indicating the workflow no longer exists
 
@@ -126,7 +126,7 @@ The agent discovers workflows by reading a skill's SKILL.md content, which descr
 ### Agent Scratchpad (R9)
 
 **Acceptance Criteria**:
-- Given a workflow is active, when the start_workflow output includes scratchpad guidance, then the agent is instructed to maintain notes in a designated file location within the workspace
+- Given a workflow is active, when the start_workflow output includes scratchpad guidance, then the agent is instructed to Read the scratchpad file first, then use Edit to update it with progress notes
 - Given the scratchpad instructions, when the agent transitions between steps, then it is prompted to review and update its scratchpad
 - Given the scratchpad is a file in the workspace, when context compaction occurs, then the agent can read the scratchpad file to recover its notes
 
