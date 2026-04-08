@@ -228,13 +228,14 @@ def derive_agents_from_entries(
     skill_names = extract_skill_names(entries)
 
     for name in skill_names:
-        skill_agents = registry.get_agents_for_skill(name)
-        if skill_agents:
-            agents.update(skill_agents)
-        else:
+        if name not in registry.skills:
             _log.debug(
                 "Skill not found in registry (may have been deleted): name={name}",
                 name=name,
             )
+            continue
+
+        skill_agents = registry.get_agents_for_skill(name)
+        agents.update(skill_agents)
 
     return agents
