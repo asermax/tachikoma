@@ -29,7 +29,6 @@ from tachikoma.notifications import (
 from tachikoma.per_message_pre_processing import MessagePreProcessingPipeline
 from tachikoma.post_processing import PRE_FINALIZE_PHASE, PostProcessingPipeline
 from tachikoma.pre_processing import (
-    ContextResult,
     McpServerConfig,
     PreProcessingPipeline,
     assemble_context,
@@ -418,7 +417,6 @@ class BackgroundTaskExecutor:
 
             results = await pipeline.run(prompt)
 
-            per_message_results: list[ContextResult] = []
             msg_pipeline = MessagePreProcessingPipeline()
             msg_pipeline.register(MemoryContextProvider(self._agent_defaults))
 

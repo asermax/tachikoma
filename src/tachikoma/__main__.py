@@ -110,8 +110,6 @@ async def run(
     skill_registry: SkillRegistry = bootstrap.extras["skill_registry"]
     bus = EventBus()
 
-    # Skills provider registered in per-message pre-processing pipeline
-    # (skills are re-evaluated on every message for evolving context)
     _log.info(
         "Startup complete: workspace={ws}, log_level={level}, channel={ch}",
         ws=settings.workspace.path,
