@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v1.11.1 (2026-04-08)
+
+### Bug Fixes
+
+- **skills**: Check skill existence instead of agent presence in derive_agents_from_entries
+  ([`e85e256`](https://github.com/asermax/tachikoma/commit/e85e2565e5eec56e81a5b7e3007b860916ec4966))
+
+
 ## v1.11.0 (2026-04-08)
 
 ### Bug Fixes
