@@ -581,9 +581,3 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 **Complexity**: Easy
 **Description**: When a response uses many tools, the activity summary is truncated to show five items followed by "and more". Currently this produces malformed text like ", and and more" due to the joining logic not accounting for the truncation suffix. Fix the grammar so truncated summaries read naturally.
 
-### DLT-114: Set TZ environment variable for agent subprocesses
-**Status**: ✓ Implementation
-**Depends on**: None
-**Priority**: 1 (Critical)
-**Complexity**: Easy
-**Description**: The user's configured timezone is currently used for cron scheduling and system prompt display, but the `TZ` environment variable is not set for SDK agent instances. This means shell commands run by the agent (e.g., `date`) use the system's default timezone rather than the user's configured one. Automatically set `TZ` in the agent environment from the configured timezone setting, so all subprocess date/time operations respect the user's timezone without requiring manual `[agent.env]` configuration.
