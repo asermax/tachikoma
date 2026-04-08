@@ -31,6 +31,14 @@ from tachikoma.config import TelegramSettings
 from tachikoma.coordinator import Coordinator
 from tachikoma.display import _format_bash_summary, format_tool_name, summarize_tool_activity
 from tachikoma.events import Error, Result, Status, TextChunk, ToolActivity
+from tachikoma.media import (
+    MEDIA_TEMP_DIR,
+    MediaTooLargeError,
+    build_description,
+    download_media,
+    generate_media_filename,
+    resolve_media,
+)
 from tachikoma.notifications import Notification
 from tachikoma.tasks.events import SessionTaskReady
 
@@ -505,6 +513,13 @@ class TelegramChannel:
         # Register message handler
         self._router.message(F.text)(self._handle_message)
 
+        # Register media handler (catch-all for all supported media types)
+        self._router.message(
+            F.photo | F.voice | F.audio
+            | F.document | F.sticker | F.video
+            | F.video_note | F.animation,
+        )(self._handle_media)
+
         # Include router in dispatcher
         self._dispatcher.include_router(self._router)
 
@@ -601,6 +616,49 @@ class TelegramChannel:
 
         if self._is_processing:
             _log.debug("Buffered mid-stream message")
+            return
+
+        await self._process_through_coordinator()
+
+    async def _handle_media(self, message: Message) -> None:
+        """Handle an incoming media message from the authorized user."""
+        result = resolve_media(message)
+        if result is None:
+            _log.debug("Ignoring unresolvable media message")
+            return
+
+        media_obj, descriptor = result
+        filename = generate_media_filename(descriptor, media_obj)
+        dest_path = MEDIA_TEMP_DIR / filename
+
+        # Download with error handling
+        try:
+            await download_media(self._bot, media_obj, dest_path)
+        except MediaTooLargeError as e:
+            _log.warning("Media file too large: size={size}", size=e.file_size)
+            await self._bot.send_message(
+                self._settings.authorized_chat_id,
+                str(e),
+            )
+            return
+        except TelegramAPIError:
+            _log.exception("Failed to download media file")
+            await self._bot.send_message(
+                self._settings.authorized_chat_id,
+                "Failed to download the file. Please try again.",
+            )
+            return
+
+        # Build description and enqueue
+        metadata_lines = descriptor.build_metadata(media_obj)
+        description = build_description(
+            descriptor.label, metadata_lines, dest_path, message.caption,
+        )
+
+        self._coordinator.enqueue(description)
+
+        if self._is_processing:
+            _log.debug("Buffered mid-stream media message")
             return
 
         await self._process_through_coordinator()
