@@ -2,7 +2,7 @@
 
 ## Overview
 
-Automatic memory extraction from conversations and retrieval of relevant memories for context enrichment. After a conversation ends, the system analyzes the exchange and persists learnings as structured markdown files — episodic summaries, user facts, and preferences. Before a new conversation begins, stored memories are searched for context relevant to the user's message, enabling the assistant to reference past interactions naturally.
+Automatic memory extraction from conversations and retrieval of relevant memories for context enrichment. After a conversation ends, the system analyzes the exchange and persists learnings as structured markdown files — episodic summaries, user facts, and preferences. On every message, stored memories are searched for context relevant to the user's message, using session forking when conversation context is available to make informed relevance decisions.
 
 ## Sub-Capabilities
 

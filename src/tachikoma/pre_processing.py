@@ -91,7 +91,6 @@ class PreProcessingPipeline:
     Usage::
 
         pipeline = PreProcessingPipeline()
-        pipeline.register(MemoryContextProvider(cwd))
         pipeline.register(ProjectsContextProvider(workspace_path=cwd))
         results = await pipeline.run(message)
 

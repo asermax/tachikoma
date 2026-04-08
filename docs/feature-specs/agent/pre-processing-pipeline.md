@@ -27,6 +27,7 @@ In addition to the session-gated pipeline (which runs on the first message of a 
 | R7 | Context results can optionally carry agent definitions alongside text context, enabling providers to return agents that the coordinator loads for the session. Backward compatible for providers that don't set it |
 | R8 | Per-message pipeline runs registered MessageContextProvider instances on every message (not just first message of session), receiving the session's existing context entries |
 | R9 | Context results can optionally carry structured metadata (JSON dict) for provider-specific data that the coordinator persists alongside the entry without interpretation |
+| R10 | Per-message pipeline passes SDK session ID to providers, enabling session forking for providers that need conversation context |
 
 ## Behaviors
 
@@ -80,15 +81,16 @@ Context results can optionally carry agent definitions that the coordinator extr
 - Given a provider does not set agents (defaults to None), when the pipeline runs, then it continues to work unchanged — backward compatible
 - Given multiple providers return results, when the coordinator processes them, then it extracts and merges agent definitions from all results
 
-### Per-Message Pipeline (R8)
+### Per-Message Pipeline (R8, R10)
 
-A second pipeline variant runs on every message (not just the first message of a new session). Providers receive the session's existing context entries, enabling them to determine what's already loaded and avoid redundant work.
+A second pipeline variant runs on every message (not just the first message of a new session). Providers receive the session's existing context entries, enabling them to determine what's already loaded and avoid redundant work. The pipeline also passes the SDK session ID, enabling providers to fork the session for conversation context.
 
 **Acceptance Criteria**:
 - Given per-message providers are registered, when the pipeline runs, then all providers execute concurrently with error isolation (same pattern as session-gated pipeline)
 - Given a per-message provider receives existing context entries, when it determines no new context is needed, then it returns None and no new entries are created
 - Given the per-message pipeline runs after the session-gated pipeline on the first message, when both have results, then results from both are persisted
 - Given the per-message pipeline runs on a subsequent message, when new context is detected, then results are appended as additional context entries alongside existing ones
+- Given the per-message pipeline runs with an SDK session ID, when it calls providers, then the sdk_session_id is passed through to each provider
 
 ### Structured Metadata (R9)
 
