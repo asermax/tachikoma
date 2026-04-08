@@ -24,6 +24,7 @@ from tachikoma.coordinator import Coordinator
 from tachikoma.database import Database, database_hook
 from tachikoma.git import GitProcessor, git_hook
 from tachikoma.logging import logging_hook
+from tachikoma.media import media_hook
 from tachikoma.memory import (
     EpisodicProcessor,
     FactsProcessor,
@@ -92,6 +93,7 @@ async def run(
     bootstrap.register("memory", memory_hook)
     bootstrap.register("sessions", session_recovery_hook)
     bootstrap.register("tasks", tasks_hook)
+    bootstrap.register("media", media_hook)
     bootstrap.register("telegram", telegram_hook)
 
     try:
