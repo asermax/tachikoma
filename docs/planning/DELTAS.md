@@ -465,7 +465,7 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 ### DLT-098: Capture SDK stderr on error for debugging
 **Status**: ✗ Defined
 **Depends on**: None
-**Priority**: 2 (High)
+**Priority**: 1 (Critical)
 **Complexity**: Easy
 **Description**: Capture stderr output from the Claude Agent SDK CLI subprocess and attach it to error logs when SDK calls fail. Currently, stderr from the SDK process is not captured — when an exception occurs (CLIConnectionError, ProcessError, or any sub-agent failure), the error message lacks any context about what the CLI process reported on stderr, making diagnosis difficult. This delta adds stderr capture to the agent defaults layer (shared across all SDK call sites) and includes the captured stderr in error logs when an exception is raised, preserving the fail-open error handling policy while giving operators the diagnostic context needed to debug SDK failures.
 
