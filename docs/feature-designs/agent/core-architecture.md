@@ -155,7 +155,7 @@ Note: `send_message()` is an async generator. The per-message pipeline launch ha
 - Coordinator ↔ PostProcessingPipeline (optional): `pipeline.run(session)` in `__aexit__` (after session close) and as background task during topic shift transitions (see [pipeline design](post-processing-pipeline.md))
 - Coordinator ↔ `detect_boundary` (from `boundary` package): pure function call before processing, accepts optional `candidates: list[SessionCandidate]`, returns `BoundaryResult(continues, resume_session_id)`, errors caught and defaulted to `BoundaryResult(continues=True)` (continuation). Skipped when no session, no summary, or no cwd (see [boundary detection design](boundary-detection.md))
 - Coordinator ↔ `MessagePostProcessingPipeline` (optional): `run(session, text, response_text)` as background `asyncio.Task` after each response, reference stored as `_pending_msg_task` (see [boundary detection design](boundary-detection.md))
-- Coordinator ↔ MCP servers (optional): `mcp_servers` parameter passed to `ClaudeAgentOptions.mcp_servers` in `_build_options()` — used by task subsystem for task CRUD tools
+- Coordinator ↔ MCP servers (optional): `mcp_servers` parameter passed to `ClaudeAgentOptions.mcp_servers` in `_build_options()` — used by task subsystem for task CRUD tools and workflow subsystem for workflow lifecycle tools (see [workflows design](../workflows/workflow-state-machine.md))
 - Coordinator ↔ Task subsystem: `last_message_time` property read by session task scheduler for idle gating
 - `__main__.py` ↔ EventBus: created in `__main__.py`, passed to channels and task async loops; `bus.stop()` called on shutdown
 
@@ -305,11 +305,11 @@ The `Result` event serves as a turn boundary. Channels can detect it to reset th
 1. Entry point invoked (console script via [project.scripts] or python -m), cyclopts dispatches to run() subcommand (with --channel flag) or default_command() (bare invocation, delegates to run())
 2. Creates SettingsManager (loads configuration, see configuration/config-system design)
 3. Applies CLI overrides via update_root() + reload() (runtime-only, no file write)
-4. Creates Bootstrap, registers hooks: workspace, logging, git, projects, skills, context, memory, session recovery, tasks, telegram
-5. Runs bootstrap — hooks execute in registration order (workspace creation, logging configuration, git init, projects dir creation + submodule sync, skills directory + registry creation, core context init, memory directory creation, session DB init + crash recovery, task DB init + crash recovery, telegram validation)
+4. Creates Bootstrap, registers hooks: workspace, logging, git, projects, skills, context, memory, session recovery, tasks, workflows, telegram
+5. Runs bootstrap — hooks execute in registration order (workspace creation, logging configuration, git init, projects dir creation + submodule sync, skills directory + registry creation, core context init, memory directory creation, session DB init + crash recovery, task DB init + crash recovery, workflow repository creation, telegram validation)
 6. If bootstrap fails → catch BootstrapError, log + print to stderr, exit (if logging hook itself failed, log may not reach file)
 7. Reads final settings from SettingsManager
-8. Retrieves session repository, registry, foundational_context, task_repository, and skill_registry from bootstrap extras
+8. Retrieves session repository, registry, foundational_context, task_repository, skill_registry, and workflow_repository from bootstrap extras
 8a. Creates EventBus instance
 8b. Builds AgentDefaults: merge_env(settings.agent.env, auto_injected={"TZ": settings.tasks.timezone}) merges auto-injected, config, and hardcoded env (config/hardcoded collision = startup error; auto-injected is silently overridable), creates AgentDefaults(cwd=workspace_path, cli_path=settings.agent.cli_path, env=merged_env, model=settings.agent.sub_agent_model)
 9. Creates SkillsContextProvider(agent_defaults, registry=skill_registry) — provider receives registry via constructor injection
@@ -317,7 +317,8 @@ The `Result` event serves as a turn boundary. Channels can detect it to reset th
 11. Creates PreProcessingPipeline, registers MemoryContextProvider(agent_defaults), ProjectsContextProvider(workspace_path=workspace_path), and SkillsContextProvider(agent_defaults, registry=skill_registry)
 12. Creates MessagePostProcessingPipeline, registers SummaryProcessor with registry and agent_defaults
 12a. Creates task MCP tools server via `create_task_tools_server(task_repository, ZoneInfo(settings.tasks.timezone))`
-13. Creates Coordinator with allowed_tools, disallowed_tools, model, agent_defaults, session_registry, foundational_context, pipeline, pre_pipeline, msg_pipeline, session_resume_window=settings.agent.session_resume_window, permission_mode="bypassPermissions", mcp_servers={"task-tools": task_tools_server}, timezone=settings.tasks.timezone
+12b. Creates workflow MCP tools server via `create_workflow_tools_server(workflow_repository, skill_registry, workspace_path)` and registers StaleWorkflowCleanupProcessor in post-processing pipeline pre_finalize phase
+13. Creates Coordinator with allowed_tools, disallowed_tools, model, agent_defaults, session_registry, foundational_context, pipeline, pre_pipeline, msg_pipeline, session_resume_window=settings.agent.session_resume_window, permission_mode="bypassPermissions", mcp_servers={"task-tools": task_tools_server, "workflow-tools": workflow_tools_server}, timezone=settings.tasks.timezone
 14. Enters coordinator async context (no SDK client connection — clients are created per-message)
 15. If any SDK error occurs during the first message → catch, log + print to stderr, exit
 15a. Starts task async loops as `asyncio.Task`s: instance_generator, session_task_scheduler, background_task_runner — all receiving bus, coordinator, task_repository, and task settings

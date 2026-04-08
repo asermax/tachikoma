@@ -115,7 +115,7 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 ### DLT-031: Granular processing status messages
 **Status**: ✗ Defined
 **Depends on**: None
-**Priority**: 4 (Low)
+**Priority**: 2 (High)
 **Complexity**: Medium
 **Description**: Replace the single hardcoded "Thinking..." status message with granular, component-driven status updates during pre-processing and post-processing. Each pipeline component (context providers, post-processors, boundary detection) reports what it is currently doing via a status callback, and the coordinator forwards these as Status events to the active channel. This gives users real-time visibility into what the assistant is doing behind the scenes (e.g., "Searching memories...", "Detecting topic shift...", "Extracting memories...") instead of a generic indicator.
 
@@ -392,13 +392,6 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 **Complexity**: Hard
 **Description**: Skills currently only improve when the user explicitly notices a gap and requests changes. Add a post-conversation processor that analyzes skill usage during the completed session — which skills were invoked, which failed or were misapplied, what workarounds the agent resorted to — and surfaces concrete edit suggestions to the user for improving skill definitions. For example: detecting that a workflow required manually chaining references that should be linked, that a CLI flag used in practice is missing from a skill's guidance, or that documented instructions diverged from actual usage patterns. Suggestions are presented for user review and approval, not applied automatically.
 
-### DLT-081: Workflow state machine for skills
-**Status**: ✗ Defined
-**Depends on**: None
-**Priority**: 1 (Critical)
-**Complexity**: Hard
-**Description**: Skills that define multi-step workflows (e.g., a morning routine skill that sequences reading a plan, having a conversation, marking activities, and updating a calendar) currently rely entirely on the LLM to remember which steps are done and what comes next. Without explicit state, the agent skips steps, repeats completed ones, or loses its place after context compaction. Introduce a workflow construct that lets skills declare ordered steps with completion conditions, tracks progression across messages, and injects step-specific reminders or continuations into the agent's context — enabling the agent to reliably execute multi-step workflows like deploying a service (build → test → push → verify) or processing a reading list (fetch → summarize → file → notify). Design consideration: workflows could be mapped to a file tree structure (workflows = directories, steps = subdirectories, each containing instructions/prompts + tools + data) where the agent navigates the tree natively — this aligns with how skills already work as folders and makes workflows resilient to model capability changes (a step can be condensed into a single tool call when the model supports it).
-
 ### DLT-082: CLI for querying internal state
 **Status**: ✗ Defined
 **Depends on**: None
@@ -472,7 +465,7 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 ### DLT-098: Capture SDK stderr on error for debugging
 **Status**: ✗ Defined
 **Depends on**: None
-**Priority**: 3 (Medium)
+**Priority**: 2 (High)
 **Complexity**: Easy
 **Description**: Capture stderr output from the Claude Agent SDK CLI subprocess and attach it to error logs when SDK calls fail. Currently, stderr from the SDK process is not captured — when an exception occurs (CLIConnectionError, ProcessError, or any sub-agent failure), the error message lacks any context about what the CLI process reported on stderr, making diagnosis difficult. This delta adds stderr capture to the agent defaults layer (shared across all SDK call sites) and includes the captured stderr in error logs when an exception is raised, preserving the fail-open error handling policy while giving operators the diagnostic context needed to debug SDK failures.
 
@@ -486,7 +479,7 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 ### DLT-099: Archive conversation transcripts to project workspace
 **Status**: ✗ Defined
 **Depends on**: None
-**Priority**: 3 (Medium)
+**Priority**: 2 (High)
 **Complexity**: Medium
 **Description**: Ensure conversation transcripts are archived to the project workspace for durability and accessibility independent of SDK storage internals. Currently transcripts are stored only in the SDK's standard location (`~/.claude/projects/<sanitized-cwd>/<session-id>.jsonl`), making them dependent on SDK behavior and inaccessible for project-local operations. On session close, copy the transcript file from the SDK location to a `.tachikoma/transcripts/` directory within the project workspace. The session model already tracks transcript paths — this delta adds the copy-on-close hook and ensures transcripts survive SDK storage changes. Lifecycle management (retention, cleanup) is a separate concern to be addressed independently.
 
@@ -514,7 +507,7 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 ### DLT-104: Auto-cleanup of completed one-shot tasks
 **Status**: ✗ Defined
 **Depends on**: None
-**Priority**: 3 (Medium)
+**Priority**: 2 (High)
 **Complexity**: Easy
 **Description**: One-shot tasks (reading list nudges, reminders) accumulate in the database after they fire and auto-disable — 14 accumulated in just two weeks of usage. The task system should automatically delete completed one-shot task definitions after a configurable retention period (default 24-48 hours). Only one-shot tasks whose instances have all reached terminal status (completed or failed) are eligible for cleanup. Recurring cron tasks are excluded from this cleanup regardless of instance status. The cleanup runs as part of the existing instance generator polling loop, checking for expired one-shot definitions on each evaluation cycle.
 
@@ -570,14 +563,69 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 ### DLT-112: Buffer background task notifications until conversation is idle
 **Status**: ✗ Defined
 **Depends on**: None
-**Priority**: 3 (Medium)
+**Priority**: 2 (High)
 **Complexity**: Medium
 **Description**: When a background task completes and triggers a notification while the user is in an active conversation, the notification is currently injected as a steering message into the ongoing exchange instead of being held for later delivery. Notifications should never interrupt or steer the current conversation — they must always be delivered as a separate message turn. Each notification carries a priority level that governs two timing parameters: how long the conversation must be idle before the notification is delivered, and how long the notification can be held before being force-delivered regardless of activity. Higher-priority notifications tolerate shorter idle windows and have shorter hold periods; lower-priority notifications wait longer for natural pauses and can be buffered indefinitely. This ensures urgent results reach the user quickly while routine updates wait for a natural break.
 
 ### DLT-113: Fix double 'and' in truncated tool activity summary
 **Status**: ✗ Defined
 **Depends on**: None
-**Priority**: 4 (Low)
+**Priority**: 2 (High)
 **Complexity**: Easy
 **Description**: When a response uses many tools, the activity summary is truncated to show five items followed by "and more". Currently this produces malformed text like ", and and more" due to the joining logic not accounting for the truncation suffix. Fix the grammar so truncated summaries read naturally.
 
+### DLT-114: Set TZ environment variable for agent subprocesses
+**Status**: ✗ Defined
+**Depends on**: None
+**Priority**: 1 (Critical)
+**Complexity**: Easy
+**Description**: The user's configured timezone is currently used for cron scheduling and system prompt display, but the `TZ` environment variable is not set for SDK agent instances. This means shell commands run by the agent (e.g., `date`) use the system's default timezone rather than the user's configured one. Automatically set `TZ` in the agent environment from the configured timezone setting, so all subprocess date/time operations respect the user's timezone without requiring manual `[agent.env]` configuration.
+
+### DLT-115: Run and monitor detached shell commands
+**Status**: ✗ Defined
+**Depends on**: None
+**Priority**: 2 (High)
+**Complexity**: Hard
+**Description**: Users need Tachikoma to dispatch OS-level commands (e.g., starting a Zenki worker on a VPS) that run independently of the current conversation and outlive the session. This delta adds MCP tools for starting a detached shell command, recording its PID and log path in the database, querying whether it is still running, reading its stdout/stderr output, and sending termination signals. The spawned process runs with no SDK involvement — unlike autonomous agent delegation which maintains ongoing Claude sessions, this targets standalone shell commands where Tachikoma acts as a lightweight process supervisor. The tools give the agent (and by extension the user) visibility into commands that would otherwise require SSH access to check on.
+
+### DLT-116: Provide workflow tools to background tasks
+**Status**: ✗ Defined
+**Depends on**: None
+**Priority**: 3 (Medium)
+**Complexity**: Easy
+**Description**: Background tasks currently receive memory, projects, skills context, and a notification tool, but have no access to workflow management tools. This means a background task cannot start, advance, or complete a workflow — limiting scheduled automation to single-prompt fire-and-forget work. Attach the workflow tools MCP server to background task executions so the agent can operate on workflows during scheduled or autonomous runs.
+
+### DLT-117: Attach specific skills to task definitions
+**Status**: ✗ Defined
+**Depends on**: None
+**Priority**: 3 (Medium)
+**Complexity**: Medium
+**Description**: Task definitions currently rely on LLM-based skill classification at execution time to determine which skills are relevant. This is unreliable for tasks that always need specific skills — the classifier might not select the right skills for a terse task prompt. Add an optional list of skill names to the task definition model. When a task executes, the named skills are loaded unconditionally into the context before the classification step runs, ensuring the agent always has the domain knowledge the task requires. The task creation and update MCP tools expose this field so the agent can attach skills when defining tasks.
+
+### DLT-118: Declare dependencies between skills
+**Status**: ✗ Defined
+**Depends on**: None
+**Priority**: 3 (Medium)
+**Complexity**: Medium
+**Description**: Skills are currently loaded independently — when the classifier selects a skill, only that skill's content is injected. Some skills implicitly depend on concepts or tools defined in other skills (e.g., a domain skill that assumes the workflow authoring guide is available). Add a `depends_on` field to the SKILL.md frontmatter that lists skill names this skill requires. When a skill is selected (by classification, task attachment, or workflow step binding), the registry resolves its dependency chain and ensures all required skills are loaded into context. Circular dependencies are detected and reported as warnings.
+
+### DLT-119: Declare required skills for workflow steps
+**Status**: ✗ Defined
+**Depends on**: DLT-118
+**Priority**: 3 (Medium)
+**Complexity**: Easy
+**Description**: Workflow steps are self-contained instruction bundles with no mechanism to declare which skills the agent needs to execute them. A step that involves git operations, API calls, or domain-specific knowledge relies on the skill classifier to infer this from the step instructions — which may fail for terse or technical steps. Allow workflow step authors to explicitly declare the skills required for a step. When the workflow engine activates a step, the declared skills and their transitive dependencies (via the skill dependency system) are loaded unconditionally into the agent's context, bypassing classification.
+
+### DLT-120: Pause background tasks to request user input
+**Status**: ✗ Defined
+**Depends on**: None
+**Priority**: 3 (Medium)
+**Complexity**: Hard
+**Description**: Background tasks currently run to completion or failure in a single uninterrupted evaluator loop — there is no way for a task to pause mid-execution and ask the user a question. This delta adds a "waiting" state to the task lifecycle where the evaluator can suspend execution and send a notification requesting user input. When the user responds, the input is injected as the next turn in the suspended task's SDK session and execution resumes. This enables simple multi-step background work (e.g., "research this and ask me before proceeding") without requiring persistent agent sessions, progress reporting, or full lifecycle control.
+
+### DLT-121: Git-friendly database storage for workspace versioning
+**Status**: ✗ Defined
+**Depends on**: None
+**Priority**: 2 (High)
+**Complexity**: Medium
+**Description**: The SQLite database file is committed to the workspace git repository on every session close, but as a binary file it produces opaque diffs that bloat the git history over time — each commit stores a full copy of the database rather than meaningful deltas. Replace the current storage approach with one that produces human-readable, diffable representations of the database state so that changes are trackable in git history with the same fidelity as memory files and context documents. Approaches to evaluate during speccing include replacing SQLite with a git-native database like Dolt, exporting SQLite tables to diffable text formats (SQL dumps, sorted CSV/TSV via tools like sqlite-diffable) alongside or instead of the binary file, or other mechanisms that preserve queryable database access while making commits meaningful. The chosen approach must support the existing async query patterns used throughout the codebase.

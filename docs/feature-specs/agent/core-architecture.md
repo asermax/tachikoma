@@ -219,6 +219,7 @@ The coordinator accepts an optional mapping of named MCP server configurations a
 **Acceptance Criteria**:
 - Given the coordinator is created with `mcp_servers`, when `_build_options()` constructs per-message options, then the MCP servers are included in `ClaudeAgentOptions.mcp_servers`
 - Given the coordinator is created without `mcp_servers` (None), when `_build_options()` runs, then no MCP servers are passed to the SDK
+- Given the coordinator is created with both task-tools and workflow-tools MCP servers, when `_build_options()` runs, then both servers are available to the agent (see [task management](../../tasks/task-management.md) and [workflows](../../workflows/workflow-state-machine.md))
 
 ### Last Message Time Tracking (R16)
 

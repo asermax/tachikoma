@@ -95,6 +95,7 @@ class TestDeriveAgentsFromEntries:
             return agents_map.get(name, {})
 
         registry.get_agents_for_skill = get_agents_for_skill
+        registry.skills = {name: MagicMock() for name in agents_map}
         return registry
 
     def test_empty_entries_returns_empty_dict(self) -> None:
