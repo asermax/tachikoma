@@ -622,3 +622,10 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 **Priority**: 3 (Medium)
 **Complexity**: Hard
 **Description**: Background tasks currently run to completion or failure in a single uninterrupted evaluator loop — there is no way for a task to pause mid-execution and ask the user a question. This delta adds a "waiting" state to the task lifecycle where the evaluator can suspend execution and send a notification requesting user input. When the user responds, the input is injected as the next turn in the suspended task's SDK session and execution resumes. This enables simple multi-step background work (e.g., "research this and ask me before proceeding") without requiring persistent agent sessions, progress reporting, or full lifecycle control.
+
+### DLT-121: Git-friendly database storage for workspace versioning
+**Status**: ✗ Defined
+**Depends on**: None
+**Priority**: 2 (High)
+**Complexity**: Medium
+**Description**: The SQLite database file is committed to the workspace git repository on every session close, but as a binary file it produces opaque diffs that bloat the git history over time — each commit stores a full copy of the database rather than meaningful deltas. Replace the current storage approach with one that produces human-readable, diffable representations of the database state so that changes are trackable in git history with the same fidelity as memory files and context documents. Approaches to evaluate during speccing include replacing SQLite with a git-native database like Dolt, exporting SQLite tables to diffable text formats (SQL dumps, sorted CSV/TSV via tools like sqlite-diffable) alongside or instead of the binary file, or other mechanisms that preserve queryable database access while making commits meaningful. The chosen approach must support the existing async query patterns used throughout the codebase.
