@@ -122,9 +122,12 @@ async def run(
     # Get the foundational context from the context hook (if available)
     foundational_context = bootstrap.extras.get("foundational_context")
 
-    # Build AgentDefaults: merge hardcoded env with config env (collision = error)
+    # Build AgentDefaults: merge auto-injected, config, and hardcoded env
     try:
-        merged_env = merge_env(settings.agent.env)
+        merged_env = merge_env(
+            settings.agent.env,
+            auto_injected={"TZ": settings.tasks.timezone},
+        )
     except ValueError as e:
         print(f"Configuration error: {e}", file=sys.stderr)
         sys.exit(1)
