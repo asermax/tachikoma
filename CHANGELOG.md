@@ -7,6 +7,85 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v1.14.0 (2026-04-09)
+
+### Bug Fixes
+
+- **channels**: Add deferred annotation evaluation for TYPE_CHECKING imports
+  ([`dcd6b91`](https://github.com/asermax/tachikoma/commit/dcd6b91603b90e0ba54648d97249d4729f4b4180))
+
+- **tests**: Update TestHandleMedia for refactored TelegramChannel constructor
+  ([`c63e722`](https://github.com/asermax/tachikoma/commit/c63e722807b165baa1d7b136f38f04417f6d81f6))
+
+### Code Style
+
+- Apply ruff formatting across codebase
+  ([`38698cd`](https://github.com/asermax/tachikoma/commit/38698cdd7b5b328eaeecd0576847820c9139bbfe))
+
+### Documentation
+
+- Mark DLT-063 implementation as complete
+  ([`7b880b0`](https://github.com/asermax/tachikoma/commit/7b880b065b159884edd210088aac8ed3e13e4cd0))
+
+- Reconcile DLT-063 into feature designs
+  ([`33a9f7a`](https://github.com/asermax/tachikoma/commit/33a9f7accf2055b4e91ead62aece7d57493fa95d))
+
+- Remove DLT-063 delta working files
+  ([`141b8c5`](https://github.com/asermax/tachikoma/commit/141b8c5e2592f2d823f6a392af2acef964c27743))
+
+- **planning**: Add DLT-063 implementation plan
+  ([`4bcc73d`](https://github.com/asermax/tachikoma/commit/4bcc73dee87370c7042c7409d668bc24ee2fcd88))
+
+- **planning**: Add DLT-063 spec and design
+  ([`3cd95a1`](https://github.com/asermax/tachikoma/commit/3cd95a13b4727cb8c85cffd1c333ae787811995a))
+
+- **planning**: Advance DLT-063 status to plan phase
+  ([`68d046c`](https://github.com/asermax/tachikoma/commit/68d046ce496deb0b926990390e4f76282b1b3146))
+
+- **planning**: Mark DLT-063 design as approved
+  ([`add070f`](https://github.com/asermax/tachikoma/commit/add070f621183df187307a9537c1b37198319f66))
+
+- **planning**: Mark DLT-063 design as complete
+  ([`5151a91`](https://github.com/asermax/tachikoma/commit/5151a913b632ac185f0e6adc32d1683a53a52b4f))
+
+- **planning**: Mark DLT-063 plan as approved
+  ([`81bdb5b`](https://github.com/asermax/tachikoma/commit/81bdb5bc3d99cce52b41ad95e821b59ef1245245))
+
+- **planning**: Mark DLT-063 spec as complete
+  ([`8a6994c`](https://github.com/asermax/tachikoma/commit/8a6994c9ab709b424e4bf1fde23bb7842f51ac90))
+
+- **planning**: Update DLT-063 design with detailed implementation approach
+  ([`2a2160d`](https://github.com/asermax/tachikoma/commit/2a2160da7af43a9589d18b52cf0e3775647b2a3c))
+
+- **planning**: Update DLT-063 spec with design feedback
+  ([`747dc85`](https://github.com/asermax/tachikoma/commit/747dc8516780c20a1359f4242dbf1e19a4ef4ee0))
+
+- **planning**: Update DLT-063 status to spec
+  ([`0aaeafd`](https://github.com/asermax/tachikoma/commit/0aaeafdced94ec8a92350bfc9830e5f3875183ad))
+
+- **skills**: Fix step numbering and diagram alignment after merge
+  ([`1780e3f`](https://github.com/asermax/tachikoma/commit/1780e3f1deb875d9d5c8a18411e02a22e7efcc17))
+
+### Features
+
+- **channels**: Wire channel capabilities into startup flow
+  ([`39c1d68`](https://github.com/asermax/tachikoma/commit/39c1d683457ae8af5d7263e8d915205a0fb22e0b))
+
+- **coordinator**: Add cold-start session resumption on fresh startup
+  ([`7c36204`](https://github.com/asermax/tachikoma/commit/7c3620489b91912a4c06b10c541880cafc45651c))
+
+### Refactoring
+
+- **channels**: Extract Channel protocol and implement in REPL
+  ([`12accb7`](https://github.com/asermax/tachikoma/commit/12accb70ca96da2eb35f5b02af25aabba22fa830))
+
+- **channels**: Replace coordinator assert guards with property
+  ([`aa5c3ba`](https://github.com/asermax/tachikoma/commit/aa5c3babd29a0d67880a232ed9a2f818135f8e1a))
+
+- **telegram**: Promote telegram module to package
+  ([`99cd414`](https://github.com/asermax/tachikoma/commit/99cd4148b3904525d61a5dc5ea1960df4674971f))
+
+
 ## v1.13.1 (2026-04-09)
 
 ### Bug Fixes
