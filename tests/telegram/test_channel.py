@@ -3,6 +3,7 @@
 Tests for DLT-002: Send and receive messages via Telegram.
 """
 
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -346,10 +347,12 @@ class TestResponseRendererMessageSplitting:
         """Re-split edits existing tracked messages instead of sending new ones (AC1)."""
         bot = MagicMock()
         bot.edit_message_text = AsyncMock()
-        bot.send_message = AsyncMock(side_effect=[
-            MockMessage(message_id=200),
-            MockMessage(message_id=201),
-        ])
+        bot.send_message = AsyncMock(
+            side_effect=[
+                MockMessage(message_id=200),
+                MockMessage(message_id=201),
+            ]
+        )
         bot.delete_message = AsyncMock()
         renderer = ResponseRenderer(bot, chat_id=123)
 
@@ -425,7 +428,8 @@ class TestResponseRendererMessageSplitting:
         # Should edit 100 and 200, delete excess 300
         assert bot.edit_message_text.call_count == 2
         bot.delete_message.assert_called_once_with(
-            chat_id=123, message_id=300,
+            chat_id=123,
+            message_id=300,
         )
         assert renderer._split_message_ids == [100, 200]
 
@@ -465,10 +469,12 @@ class TestResponseRendererMessageSplitting:
         bot.edit_message_text = AsyncMock(
             side_effect=TelegramAPIError(method="edit_message_text", message="Failed")
         )
-        bot.send_message = AsyncMock(side_effect=[
-            MockMessage(message_id=200),
-            MockMessage(message_id=201),
-        ])
+        bot.send_message = AsyncMock(
+            side_effect=[
+                MockMessage(message_id=200),
+                MockMessage(message_id=201),
+            ]
+        )
         bot.delete_message = AsyncMock()
         renderer = ResponseRenderer(bot, chat_id=123)
 
@@ -733,12 +739,11 @@ class TestTelegramChannelStdinShutdown:
 
     def _make_channel(self) -> TelegramChannel:
         """Build a TelegramChannel with mocked dependencies."""
-        coordinator = MagicMock()
         settings = MagicMock()
         settings.bot_token = "123456:ABCdef"
         settings.authorized_chat_id = 123
 
-        channel = TelegramChannel(coordinator, settings)
+        channel = TelegramChannel(settings, workspace_path=Path("/tmp/test-workspace"))
 
         # Replace dispatcher and bot with mocks
         channel._dispatcher = MagicMock()
@@ -781,7 +786,7 @@ class TestTelegramChannelStdinShutdown:
         loop.remove_reader = MagicMock()
 
         with patch("asyncio.get_running_loop", return_value=loop):
-            await channel.run()
+            await channel.run(MagicMock())
 
         # Simulate 'q' keypress via the captured callback
         assert captured_callback is not None
@@ -821,7 +826,7 @@ class TestTelegramChannelStdinShutdown:
         loop.remove_reader = MagicMock()
 
         with patch("asyncio.get_running_loop", return_value=loop):
-            await channel.run()
+            await channel.run(MagicMock())
 
         assert captured_callback is not None
         mock_sys.stdin.read.return_value = "Q"
@@ -860,7 +865,7 @@ class TestTelegramChannelStdinShutdown:
         loop.remove_reader = MagicMock()
 
         with patch("asyncio.get_running_loop", return_value=loop):
-            await channel.run()
+            await channel.run(MagicMock())
 
         assert captured_callback is not None
         mock_sys.stdin.read.return_value = "x"
@@ -889,7 +894,7 @@ class TestTelegramChannelStdinShutdown:
         loop.remove_reader = MagicMock()
 
         with patch("asyncio.get_running_loop", return_value=loop):
-            await channel.run()
+            await channel.run(MagicMock())
 
         loop.add_reader.assert_not_called()
         mock_termios.tcgetattr.assert_not_called()
@@ -920,7 +925,7 @@ class TestTelegramChannelStdinShutdown:
         loop.add_reader = MagicMock()
 
         with patch("asyncio.get_running_loop", return_value=loop):
-            await channel.run()
+            await channel.run(MagicMock())
 
         # Terminal settings restored
         mock_termios.tcsetattr.assert_called_once_with(0, 1, original_attrs)
@@ -958,7 +963,7 @@ class TestTelegramChannelStdinShutdown:
         loop.remove_reader = MagicMock()
 
         with patch("asyncio.get_running_loop", return_value=loop):
-            await channel.run()
+            await channel.run(MagicMock())
 
         assert captured_callback is not None
         mock_sys.stdin.read.return_value = ""
@@ -1237,7 +1242,8 @@ class TestResponseRendererSanitization:
         settings.push_notifications = False
 
         with patch("tachikoma.telegram.Bot"):
-            channel = TelegramChannel(coordinator, settings)
+            channel = TelegramChannel(settings, workspace_path=Path("/tmp/test-workspace"))
+            channel._coordinator = coordinator
         channel._bot = bot
 
         # Mock coordinator to raise exception with surrogate
