@@ -121,28 +121,14 @@ def _animation_metadata(media: Any) -> list[str]:
 # --- Extension resolvers ---
 
 
-def _photo_extension(_: Any) -> str:
-    return ".jpg"
-
-
-def _voice_extension(_: Any) -> str:
-    return ".ogg"
-
-
-def _audio_extension(media: Any) -> str:
-    if media.file_name:
-        ext = Path(media.file_name).suffix
+def _extension_from_filename(media: Any, fallback: str) -> str:
+    """Extract file extension from media's file_name, or return fallback."""
+    file_name = getattr(media, "file_name", None)
+    if file_name:
+        ext = Path(file_name).suffix
         if ext:
             return ext
-    return ".mp3"
-
-
-def _document_extension(media: Any) -> str:
-    if media.file_name:
-        ext = Path(media.file_name).suffix
-        if ext:
-            return ext
-    return ""
+    return fallback
 
 
 def _sticker_extension(media: Any) -> str:
@@ -151,22 +137,6 @@ def _sticker_extension(media: Any) -> str:
     if media.is_video:
         return ".webm"
     return ".webp"
-
-
-def _video_extension(media: Any) -> str:
-    if media.file_name:
-        ext = Path(media.file_name).suffix
-        if ext:
-            return ext
-    return ".mp4"
-
-
-def _video_note_extension(_: Any) -> str:
-    return ".mp4"
-
-
-def _animation_extension(_: Any) -> str:
-    return ".mp4"
 
 
 # --- Descriptor table ---
@@ -179,7 +149,7 @@ MEDIA_DESCRIPTORS: list[MediaDescriptor] = [
     MediaDescriptor(
         field_name="animation",
         accessor=lambda msg: msg.animation,
-        resolve_extension=_animation_extension,
+        resolve_extension=lambda _: ".mp4",
         label="Animation",
         build_metadata=_animation_metadata,
     ),
@@ -193,42 +163,42 @@ MEDIA_DESCRIPTORS: list[MediaDescriptor] = [
     MediaDescriptor(
         field_name="video_note",
         accessor=lambda msg: msg.video_note,
-        resolve_extension=_video_note_extension,
+        resolve_extension=lambda _: ".mp4",
         label="Video note",
         build_metadata=_video_note_metadata,
     ),
     MediaDescriptor(
         field_name="photo",
         accessor=lambda msg: msg.photo[-1] if msg.photo else None,
-        resolve_extension=_photo_extension,
+        resolve_extension=lambda _: ".jpg",
         label="Photo",
         build_metadata=_photo_metadata,
     ),
     MediaDescriptor(
         field_name="voice",
         accessor=lambda msg: msg.voice,
-        resolve_extension=_voice_extension,
+        resolve_extension=lambda _: ".ogg",
         label="Voice message",
         build_metadata=_voice_metadata,
     ),
     MediaDescriptor(
         field_name="video",
         accessor=lambda msg: msg.video,
-        resolve_extension=_video_extension,
+        resolve_extension=lambda m: _extension_from_filename(m, ".mp4"),
         label="Video",
         build_metadata=_video_metadata,
     ),
     MediaDescriptor(
         field_name="audio",
         accessor=lambda msg: msg.audio,
-        resolve_extension=_audio_extension,
+        resolve_extension=lambda m: _extension_from_filename(m, ".mp3"),
         label="Audio file",
         build_metadata=_audio_metadata,
     ),
     MediaDescriptor(
         field_name="document",
         accessor=lambda msg: msg.document,
-        resolve_extension=_document_extension,
+        resolve_extension=lambda m: _extension_from_filename(m, ""),
         label="Document",
         build_metadata=_document_metadata,
     ),
