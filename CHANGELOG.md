@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v1.14.1 (2026-04-09)
+
+### Bug Fixes
+
+- **telegram**: Edit existing status message on consecutive Status events
+  ([`92889fc`](https://github.com/asermax/tachikoma/commit/92889fc452389183b2b73c14682490bf16baa4d0))
+
+### Chores
+
+- **deltas**: Add DLT-122 evaluate alternatives to Claude Agent SDK
+  ([`bdb05f8`](https://github.com/asermax/tachikoma/commit/bdb05f8d18d1901b17a965e65fb37d7c41eac918))
+
+### Documentation
+
+- Update README and VISION to reflect current project state
+  ([`0037175`](https://github.com/asermax/tachikoma/commit/003717579b6939067659f63a4f37e18af0efdb17))
+
+
 ## v1.14.0 (2026-04-09)
 
 ### Bug Fixes
