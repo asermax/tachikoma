@@ -1274,7 +1274,10 @@ class TestHandleMedia:
         settings.authorized_chat_id = 123
         settings.push_notifications = False
 
-        channel = TelegramChannel(coordinator, settings)
+        with patch("tachikoma.telegram.Bot"):
+            channel = TelegramChannel(settings, workspace_path=Path("/tmp/test-workspace"))
+            channel._TelegramChannel__coordinator = coordinator
+
         channel._bot = MagicMock()
         return channel
 
