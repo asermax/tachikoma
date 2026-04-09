@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v1.13.1 (2026-04-09)
+
+### Bug Fixes
+
+- **coordinator**: Pass system prompt via tempfile to eliminate ARG_MAX constraint
+  ([`4c4baf8`](https://github.com/asermax/tachikoma/commit/4c4baf8d25508737233cc9148e06f7ae86ea9e9a))
+
+- **memory**: Extract snippets from episodic memories to prevent ARG_MAX overflow
+  ([`6c00c6b`](https://github.com/asermax/tachikoma/commit/6c00c6b581419d1397b63a7c160d13c6876c64eb))
+
+### Chores
+
+- **planning**: Remove already-implemented DLT-114 from delta inventory
+  ([`69b7e52`](https://github.com/asermax/tachikoma/commit/69b7e521002a60c1db882fd39a22163ab213ed37))
+
+### Documentation
+
+- **memory**: Update feature docs for snippet extraction and tempfile transport
+  ([`71909bd`](https://github.com/asermax/tachikoma/commit/71909bdfbc16220d4d136db81ef5c6697ae17e7c))
+
+
 ## v1.13.0 (2026-04-08)
 
 ### Documentation
