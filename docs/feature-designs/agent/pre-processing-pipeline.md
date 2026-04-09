@@ -23,7 +23,7 @@ Before the coordinator processes a user message, context providers need to run i
 
 **Interactions:**
 - Coordinator (`core-architecture`): calls `pipeline.run(message)` on first message of new session; persists successful results as context entries to the database (owner=result.tag, content=result.content) for system prompt assembly. The `assemble_context()` function is used by the background task executor (`tasks/executor.py`) which does not use database persistence.
-- Memory context provider (`memory-context-retrieval`): registers as the first provider (see [memory context retrieval design](../memory/memory-context-retrieval.md))
+- Memory context provider (`memory-context-retrieval`): registers in the per-message pre-processing pipeline (not the session-gated pipeline), searches memories on every message using session forking when available (see [memory context retrieval design](../memory/memory-context-retrieval.md))
 - Projects context provider (`project-management`): registers alongside other providers, returns both text context and MCP server configurations (see [project-management design](project-management.md))
 - Skills context provider (`skills`): registers in the per-message pre-processing pipeline (not the session-gated pipeline), classifies and injects relevant skills on every message (see [skills design](skills.md))
 
@@ -56,7 +56,7 @@ A `PreProcessingPipeline` manages registered `ContextProvider` instances. Provid
 | Layer/Component | Responsibility | Key Decisions |
 |-----------------|----------------|---------------|
 | `src/tachikoma/pre_processing.py` | `ContextProvider` ABC (interface only), `ContextResult` dataclass (with `__post_init__` tag validation via regex, optional `agents` field for structured data, optional `metadata` field for structured data passage), `PreProcessingPipeline` class (parallel execution with error isolation), `assemble_context()` standalone function | Mirrors `post_processing.py` pattern — mechanism separate from domain; assembly function is a pure standalone helper; no serialization lock needed (unlike post-processing) because the pipeline is stateless; `agents` field uses a specific named property (not generic extras) for type safety |
-| `src/tachikoma/per_message_pre_processing.py` | `MessageContextProvider` ABC (standalone, not extending ContextProvider), `MessagePreProcessingPipeline` class (parallel execution with error isolation, internal lock) | Mirrors `message_post_processing.py` pattern; runs on every message (not session-gated); providers receive existing entries; has internal lock for concurrent invocation safety |
+| `src/tachikoma/per_message_pre_processing.py` | `MessageContextProvider` ABC (standalone, not extending ContextProvider), `MessagePreProcessingPipeline` class (parallel execution with error isolation, internal lock) | Mirrors `message_post_processing.py` pattern; runs on every message (not session-gated); providers receive existing entries and SDK session ID; extended with `sdk_session_id: str | None = None` keyword arg on both `provide()` and `run()`, following the same pass-through pattern as the existing `existing_entries` parameter; has internal lock for concurrent invocation safety |
 
 ### Cross-Layer Contracts
 
@@ -113,10 +113,10 @@ MessagePreProcessingPipeline                           [runs on every message, n
 ├── _providers: list[MessageContextProvider]
 ├── _lock: asyncio.Lock                                (serializes concurrent invocations)
 ├── register(provider: MessageContextProvider) → None
-└── run(message: str, *, existing_entries: list[SessionContextEntry] | None) → list[ContextResult]
+└── run(message: str, *, existing_entries: list[SessionContextEntry] | None, sdk_session_id: str | None) → list[ContextResult]
 
 MessageContextProvider (ABC)                            [standalone, not extending ContextProvider]
-└── provide(message: str, *, existing_entries: list[SessionContextEntry] | None) → list[ContextResult] | None
+└── provide(message: str, *, existing_entries: list[SessionContextEntry] | None, sdk_session_id: str | None) → list[ContextResult] | None
 ```
 
 ```mermaid
@@ -136,6 +136,7 @@ erDiagram
 1. pipeline.run(message) is called
 2. If no providers registered → return empty list immediately
 3. Run all providers via asyncio.gather(return_exceptions=True)
+   Each provider receives: message, existing_entries, sdk_session_id
 4. Iterate results:
    - Exceptions logged per DES-002: "Provider failed: provider={name} err={err}"
    - None results filtered out
@@ -219,13 +220,13 @@ erDiagram
 
 ### Per-Message Pipeline as Session-Gated Counterpart
 
-**Choice**: Create `MessagePreProcessingPipeline` as a separate pipeline that runs on every message (not just the first message of a new session), with its own `MessageContextProvider` ABC that accepts existing context entries.
-**Why**: Some providers need per-message evaluation (e.g., skills re-classification as topics evolve). Rather than modifying the session-gated pipeline to support both modes, a separate pipeline with its own ABC keeps the contracts clear. The two ABCs are separate because their signatures are incompatible — `ContextProvider.provide()` returns `ContextResult | None` while `MessageContextProvider.provide()` returns `list[ContextResult] | None` and accepts `existing_entries`.
+**Choice**: Create `MessagePreProcessingPipeline` as a separate pipeline that runs on every message (not just the first message of a new session), with its own `MessageContextProvider` ABC that accepts existing context entries and the SDK session ID.
+**Why**: Some providers need per-message evaluation (e.g., skills re-classification as topics evolve). Rather than modifying the session-gated pipeline to support both modes, a separate pipeline with its own ABC keeps the contracts clear. The two ABCs are separate because their signatures are incompatible — `ContextProvider.provide()` returns `ContextResult | None` while `MessageContextProvider.provide()` returns `list[ContextResult] | None` and accepts `existing_entries`. The `sdk_session_id` parameter enables providers to fork the coordinator's session for conversation context (e.g., the memory provider determines if new topics are introduced), following the same pass-through pattern as `existing_entries`.
 
 **Consequences**:
-- Pro: Session-gated pipeline unchanged for memory and projects
-- Pro: Per-message providers receive existing entries for filtering
-- Pro: DLT-076 (memory re-evaluation) can register in per-message pipeline without coordinator changes
+- Pro: Session-gated pipeline unchanged for projects
+- Pro: Per-message providers receive existing entries for filtering and SDK session ID for forking
+- Pro: Memory provider can register in per-message pipeline without coordinator changes beyond the call site
 - Con: Two separate ABCs (acceptable — they serve different pipeline types)
 
 ### ContextResult Metadata Field

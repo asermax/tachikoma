@@ -38,6 +38,7 @@ from tachikoma.pre_processing import (
     McpServerConfig,
     PreProcessingPipeline,
 )
+from tachikoma.sdk_transport import FilePromptTransport
 from tachikoma.sessions.model import Session, SessionContextEntry
 from tachikoma.sessions.registry import SessionRegistry
 from tachikoma.skills.context_provider import derive_agents_from_entries
@@ -469,7 +470,11 @@ class Coordinator:
 
         if self._msg_pre_pipeline is not None and active is not None:
             try:
-                pp_results = await self._msg_pre_pipeline.run(text, existing_entries=entries)
+                pp_results = await self._msg_pre_pipeline.run(
+                    text,
+                    existing_entries=entries,
+                    sdk_session_id=self._sdk_session_id,
+                )
                 if pp_results and self._registry is not None:
                     pp_tuples = [(r.tag, r.content, r.metadata) for r in pp_results if r.content]
 
@@ -507,12 +512,12 @@ class Coordinator:
         )
         response_chunks: list[str] = []
 
-        client = ClaudeSDKClient(options)
+        message_source = _message_source(text, self._message_buffer)
+        transport = FilePromptTransport(prompt=message_source, options=options)
+        client = ClaudeSDKClient(options, transport=transport)
 
         try:
-            await client.connect(
-                _message_source(text, self._message_buffer),
-            )
+            await client.connect(message_source)
             self._client = client
 
             async for sdk_message in client.receive_response():

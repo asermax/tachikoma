@@ -19,6 +19,9 @@ import frontmatter
 from claude_agent_sdk.types import AgentDefinition
 from loguru import logger
 
+from tachikoma.workflows.definition import WorkflowDefinition
+from tachikoma.workflows.loader import load_workflows
+
 # Valid model values for AgentDefinition
 ModelType = Literal["sonnet", "opus", "haiku", "inherit"] | None
 
@@ -70,6 +73,7 @@ class SkillRegistry:
     def __init__(self, skill_sources: list[Path]) -> None:
         self._agents: dict[str, AgentDefinition] = {}
         self._skills: dict[str, Skill] = {}
+        self._workflows: dict[tuple[str, str], WorkflowDefinition] = {}
         self._dirty: bool = False
         self._skill_sources = skill_sources
 
@@ -107,6 +111,27 @@ class SkillRegistry:
         """
         return self._skills
 
+    @property
+    def workflows(self) -> dict[tuple[str, str], WorkflowDefinition]:
+        """Return all discovered workflow definitions.
+
+        Returns:
+            Dictionary mapping (skill_name, workflow_name) tuple to WorkflowDefinition.
+        """
+        return self._workflows
+
+    def get_workflow(self, skill_name: str, workflow_name: str) -> WorkflowDefinition | None:
+        """Return a specific workflow definition.
+
+        Args:
+            skill_name: The skill name.
+            workflow_name: The workflow name.
+
+        Returns:
+            WorkflowDefinition if found, None otherwise.
+        """
+        return self._workflows.get((skill_name, workflow_name))
+
     def mark_dirty(self) -> None:
         """Mark the registry as needing refresh.
 
@@ -138,10 +163,12 @@ class SkillRegistry:
         # Save old references for potential restore
         old_agents = self._agents
         old_skills = self._skills
+        old_workflows = self._workflows
 
         # Assign fresh dicts for _discover() to populate
         self._agents = {}
         self._skills = {}
+        self._workflows = {}
 
         try:
             for source in self._skill_sources:
@@ -157,6 +184,7 @@ class SkillRegistry:
             )
             self._agents = old_agents
             self._skills = old_skills
+            self._workflows = old_workflows
             # _dirty remains True for next retry
 
     def _discover(self, skills_path: Path) -> None:
@@ -244,6 +272,10 @@ class SkillRegistry:
             for ns in [k for k in self._agents if k.startswith(prefix)]:
                 del self._agents[ns]
 
+            # Clear previous workflow entries for this skill
+            for key in [k for k in self._workflows if k[0] == name]:
+                del self._workflows[key]
+
             _log.debug("Replacing skill from earlier source: name={name}", name=name)
 
         self._skills[name] = skill
@@ -253,6 +285,12 @@ class SkillRegistry:
             name=name,
             desc=description[:50] + "..." if len(description) > 50 else description,
         )
+
+        # Load workflows if workflows/ directory exists
+        workflows = load_workflows(skill_dir, name)
+
+        for workflow_name, workflow_def in workflows.items():
+            self._workflows[(name, workflow_name)] = workflow_def
 
         # Load agents if agents/ directory exists
         agents_dir = skill_dir / "agents"

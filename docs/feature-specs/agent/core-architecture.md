@@ -123,12 +123,15 @@ Specific tools can be unconditionally blocked via a configurable list. This prev
 
 ### Auto-Memory Disabled and Configurable Env (R8)
 
-Claude Code's built-in auto-memory feature is disabled so that Tachikoma's own memory system (context files + post-processing extraction) is the sole memory mechanism. Additionally, users can pass custom environment variables to all SDK sessions via the `[agent.env]` config section. Hardcoded defaults (like `CLAUDE_CODE_DISABLE_AUTO_MEMORY=1`) cannot be overridden via config — collisions raise a startup error.
+Claude Code's built-in auto-memory feature is disabled so that Tachikoma's own memory system (context files + post-processing extraction) is the sole memory mechanism. Users can pass custom environment variables to all SDK sessions via the `[agent.env]` config section. The environment has two categories of automatic defaults: **hardcoded defaults** (like `CLAUDE_CODE_DISABLE_AUTO_MEMORY=1`) which cannot be overridden — collisions raise a startup error; and **auto-injected defaults** (like `TZ` from the configured timezone) which are silently overridable by user env. The system prompt date command does not include a `TZ=` prefix since the environment handles timezone.
 
 **Acceptance Criteria**:
 - Given the coordinator is created, then `ClaudeAgentOptions.env` includes `CLAUDE_CODE_DISABLE_AUTO_MEMORY=1`
-- Given `[agent.env]` contains custom values, when any SDK session is created (coordinator, sub-agents, post-processors), then `ClaudeAgentOptions.env` includes both the hardcoded defaults and the custom values
+- Given `[agent.env]` contains custom values, when any SDK session is created (coordinator, sub-agents, post-processors), then `ClaudeAgentOptions.env` includes auto-injected defaults, hardcoded defaults, and the custom values
 - Given `[agent.env]` contains a key that collides with a hardcoded default, when the application starts, then it exits with a clear error
+- Given a configured timezone, when the agent environment is constructed, then `TZ` is set to the configured IANA timezone string
+- Given a user sets `TZ` in `[agent.env]`, when the agent environment is constructed, then the user's value wins and no error is raised (auto-injected defaults are silently overridable)
+- Given the system prompt is rendered, when the date command is displayed, then it does not include a `TZ=` prefix (timezone is in the subprocess environment)
 
 ### Foundational Context (R9)
 
@@ -216,6 +219,7 @@ The coordinator accepts an optional mapping of named MCP server configurations a
 **Acceptance Criteria**:
 - Given the coordinator is created with `mcp_servers`, when `_build_options()` constructs per-message options, then the MCP servers are included in `ClaudeAgentOptions.mcp_servers`
 - Given the coordinator is created without `mcp_servers` (None), when `_build_options()` runs, then no MCP servers are passed to the SDK
+- Given the coordinator is created with both task-tools and workflow-tools MCP servers, when `_build_options()` runs, then both servers are available to the agent (see [task management](../../tasks/task-management.md) and [workflows](../../workflows/workflow-state-machine.md))
 
 ### Last Message Time Tracking (R16)
 

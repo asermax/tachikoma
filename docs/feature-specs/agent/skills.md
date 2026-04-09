@@ -46,10 +46,13 @@ The skill system provides a structured way to organize, detect, and delegate spe
 | R26 | Registry filtering — classification only considers skills not already loaded (identified via entry metadata), preventing duplicates and reducing classifier input size |
 | R27 | One context entry per detected skill, each with metadata identifying the skill name |
 | R28 | Skip classification entirely when no unloaded skills remain in the registry (no LLM call, no latency) |
+| R29 | Skills can optionally contain a `workflows/` folder with multiple workflow definitions, each as a subdirectory of ordered steps |
+| R30 | Skill registry discovers workflow definitions alongside skills and exposes them for lookup |
+| R31 | Built-in `workflow-authoring-guide` skill ships with the package |
 
 ## Behaviors
 
-### Skill Organization (R0)
+### Skill Organization (R0, R29)
 
 Skills are directory-based packages in `workspace/skills/`. Each skill contains:
 - `SKILL.md`: Metadata file with description and version (YAML frontmatter); the skill name is derived from the folder name
@@ -62,6 +65,7 @@ Agent definitions are individual markdown files with YAML frontmatter containing
 - Given a skill directory, when it contains a SKILL.md file with valid YAML frontmatter, then the skill is recognized as valid
 - Given a skill, when agents/ subdirectory exists, then .md files within it are loaded as agent definitions
 - Given a skill with no agents/ subdirectory, when loaded, then the skill is valid (agents are optional)
+- Given a skill directory, when it contains a `workflows/` subdirectory, then each subdirectory within is recognized as a workflow definition (see [workflows](../workflows/workflow-state-machine.md))
 
 ### Preamble Awareness (R15)
 
@@ -91,6 +95,7 @@ The skill registry discovers all skills and agents at startup from multiple sour
 - Given skills have changed on disk and the registry is marked dirty, when the provider triggers a refresh, then the registry re-discovers all sources reflecting additions, modifications, and deletions
 - Given no changes have occurred since the last refresh, when the provider triggers a refresh, then the registry skips the re-scan
 - Given the re-scan itself fails (e.g., permission error), then the registry retains its previous valid state, logs the error, and remains marked dirty for retry on the next refresh
+- Given a skill with a `workflows/` subdirectory, when the registry loads the skill, then workflow definitions are discovered and available via `get_workflow(skill_name, workflow_name)` (R30)
 
 ### Coordinator Integration (R4, R5, R11)
 
@@ -119,6 +124,7 @@ A bootstrap hook creates the skills directory if missing and creates the shared 
 - Given the hook runs, when it completes, then `ctx.extras["skill_registry"]` contains a fully initialized SkillRegistry shared between provider and watcher
 - Given the built-in directory exists, when the hook runs, then it's included in the registry's sources
 - Given the built-in directory doesn't exist, when the hook runs, then a warning is logged and the registry only contains workspace skills
+- Given the built-in directory exists, when the hook runs, then `workflow-authoring-guide` is loaded as a built-in skill (R31)
 
 ### Error Handling (R8)
 
@@ -173,3 +179,4 @@ Detection failures are handled gracefully without blocking the message.
 
 - Custom MCP tools per-agent
 - Skill-level markdown instructions
+- Workflow state management (see [workflows](../workflows/workflow-state-machine.md))

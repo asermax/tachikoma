@@ -2,11 +2,11 @@
 
 **Scope**: Project-wide
 **Date**: 2026-03-21
-**Last Updated**: 2026-03-22
+**Last Updated**: 2026-04-08
 
 ## Pattern
 
-Pre-processing context providers that need to classify or search before returning context should use a standalone `query()` call with `model="opus"` and `effort="low"`. This is the pre-processing counterpart to DES-004 (which covers post-processing via `fork_and_consume()`).
+Pre-processing context providers that need to classify or search before returning context should use a standalone `query()` call with `model="opus"` and `effort="low"`. When conversation context is needed for informed decisions, the forking variant adds `fork_session=True` + `resume=sdk_session_id` so the agent sees the full conversation transcript. This is the pre-processing counterpart to DES-004 (which covers post-processing via `fork_and_consume()`).
 
 ## Rationale
 
@@ -27,6 +27,7 @@ Codifying the invariant core ensures consistency across providers while document
 
 **Variable parts** (differ per provider):
 - Tool access and permission mode (see "Disabling Tools" section below)
+- Session forking (see "Forking Variant" section below)
 - Prompt content and result parsing logic
 - Sentinel string value
 
@@ -54,8 +55,8 @@ async def _classify(self, message: str) -> str | None:
     options = ClaudeAgentOptions(
         model="opus",
         effort="low",
-        max_turns=3,
-        allowed_tools=[],
+        max_turns=10,
+        tools=[],
         cwd=self._cwd,
         cli_path=self._cli_path,
     )
@@ -73,7 +74,7 @@ async def _classify(self, message: str) -> str | None:
     return result
 ```
 
-**Why**: Uses the standard invariant core (Opus low effort, full generator consumption, sentinel pattern, graceful error handling) with the tool-less agent pattern (default permission mode, `allowed_tools=[]`, `max_turns=3`). See "Disabling Tools" section for rationale.
+**Why**: Uses the standard invariant core (Opus low effort, full generator consumption, sentinel pattern, graceful error handling) with the tool-less agent pattern (empty base tool set via `tools=[]`, default permission mode, `max_turns=10`). See "Disabling Tools" section for rationale.
 
 ### Don't Do This
 
@@ -82,7 +83,7 @@ async def _classify(self, message: str) -> str | None:
 options = ClaudeAgentOptions(
     model="sonnet",
     effort="high",
-    max_turns=10,
+    max_turns=50,
 )
 ```
 
@@ -101,9 +102,51 @@ return None
 
 **Why**: Without a sentinel, the provider can't distinguish "classified and found nothing" from "agent error or unparseable response." The sentinel enables different logging and handling for each case.
 
-## Disabling Tools
+## Forking Variant
 
-Agents that should not use tools require defense in depth to prevent rogue execution. This is critical because the `allowed_tools` parameter has an SDK bug where an empty list `[]` is treated as falsy and never passed to the CLI — so `allowed_tools=[]` alone does not restrict tools.
+When a classification agent needs conversation context to make informed decisions, it can fork the coordinator's session instead of running standalone. This gives the agent access to the full conversation transcript, enabling it to determine whether the current message introduces new topics or continues existing ones.
+
+**When to use forking**:
+- The agent's classification depends on what has already been discussed (e.g., "does this message introduce a topic not already covered?")
+- The agent should skip work when the conversation context already suffices (e.g., returning a sentinel because "the conversation already covers what's needed")
+
+**When to use standalone** (default):
+- The agent classifies based solely on the current message (e.g., "which of these items match this message?")
+- No conversation context is needed for the decision
+
+**Configuration differences from standalone**:
+
+```python
+# Forking variant — conditional based on session ID availability
+options = ClaudeAgentOptions(
+    model=agent_defaults.model,        # Opus via AgentDefaults
+    effort="low",
+    max_turns=8,                        # More turns — agent may search files
+    allowed_tools=["Read", "Glob", "Grep"],
+    permission_mode="bypassPermissions",
+    cwd=agent_defaults.cwd,
+    cli_path=agent_defaults.cli_path,
+    env=agent_defaults.env,
+    # Fork-specific options:
+    resume=sdk_session_id,             # Resume the coordinator's session
+    fork_session=True,                  # Fork so the main session is unaffected
+)
+```
+
+**Key differences from standalone DES-007**:
+- `fork_session=True` + `resume=sdk_session_id` — forks the session for read-only conversation context
+- `sdk_session_id` may be `None` (first message) — the provider must handle the fallback to standalone gracefully
+- `env=agent_defaults.env` — env is passed through for consistency with the forked session
+
+**Key differences from post-processing forking (DES-004)**:
+- DES-004 takes a `Session` object and requires `sdk_session_id` (raises if missing) — it always runs after session close
+- DES-007 forking takes `sdk_session_id` as a string and handles the `None` case gracefully — it runs on every message including the first
+- DES-004 uses shared helpers (`fork_and_consume`, `fork_and_capture`) — DES-007 forking is inline because the provider needs custom model/effort/tools settings and result parsing
+- DES-004 agents have full tool access — DES-007 forking agents use restricted tool sets
+
+**Implementation**: See `memory/context_provider.py` for the first instance of this variant.
+
+## Disabling Tools
 
 **For agents that need tools** (e.g., memory context provider):
 - `permission_mode="bypassPermissions"` — tools must execute without interactive approval
@@ -111,27 +154,28 @@ Agents that should not use tools require defense in depth to prevent rogue execu
 - `max_turns=8` — generous limit for multi-step tool use
 
 **For agents that should NOT use tools** (e.g., boundary detection, summarization, skill classification):
+- `tools=[]` — sets an empty base tool set (passes `--tools ""` to the CLI, removing all tools)
 - Omit `permission_mode` (default mode) — headless `query()` calls have no `can_use_tool` callback, so any tool permission request raises an exception
-- `allowed_tools=[]` — documents intent; will also enforce once the SDK bug is fixed
-- `max_turns=3` — hard limit prevents runaway execution as an additional safeguard
+- `max_turns=10` — hard limit prevents runaway execution as an additional safeguard
 
-The three layers work independently: default permission mode denies tools at the permission level, `allowed_tools=[]` will deny at the allowlist level (once fixed), and `max_turns=3` caps execution regardless.
+**Note**: Do not use `allowed_tools=[]` to disable tools — the SDK treats empty lists as falsy and never passes `--allowedTools` to the CLI. Use `tools=[]` instead, which correctly passes `--tools ""`.
 
-**Implementation**: All tool-less call sites use the same inline pattern with the defense-in-depth comment referencing this section. See `boundary/detector.py`, `boundary/summary.py`, and `skills/context_provider.py` for examples.
+**Implementation**: All tool-less call sites use the same inline pattern with a comment referencing this section. See `boundary/detector.py`, `boundary/summary.py`, and `skills/context_provider.py` for examples.
 
 ## Exceptions
 
 - If a provider needs higher effort (e.g., complex multi-step reasoning), it should document why in its design and may use `effort="medium"` or higher.
 - If a provider needs a different model (e.g., for cost reasons on a high-frequency path), it should document the tradeoff.
 - Post-processing tasks that fork from an existing session should use DES-004 instead.
+- Forking adds overhead per message — only use when conversation context genuinely improves classification quality.
 
 ---
 
 ## Related
 
-- See also: [DES-004](DES-004-prompt-driven-forked-processor.md) - Post-processing counterpart (uses `fork_and_consume()` on existing sessions)
+- See also: [DES-004](DES-004-prompt-driven-forked-processor.md) - Post-processing counterpart (uses `fork_and_consume()` on existing sessions). DES-007's forking variant adapts DES-004's fork pattern for pre-processing.
 - See also: [DES-005](DES-005-sdk-query-generator-consumption.md) - Generator consumption requirement for standalone `query()`
 - See also: [DES-002](DES-002-logging-conventions.md) - Logging conventions for error handling
-- Related feature: [../feature-designs/memory/memory-context-retrieval.md](../feature-designs/memory/memory-context-retrieval.md) - Memory context provider (first instance)
-- Related feature: [../feature-designs/agent/skills.md](../feature-designs/agent/skills.md) - Skills context provider (second instance)
+- Related feature: [../feature-designs/memory/memory-context-retrieval.md](../feature-designs/memory/memory-context-retrieval.md) - Memory context provider (first instance, uses forking variant)
+- Related feature: [../feature-designs/agent/skills.md](../feature-designs/agent/skills.md) - Skills context provider (second instance, uses standalone variant)
 - Related feature: [../feature-designs/agent/boundary-detection.md](../feature-designs/agent/boundary-detection.md) - Boundary detector uses same standalone `query()` with Opus low effort pattern (not a context provider, but same technical approach)

@@ -355,3 +355,4 @@ stateDiagram-v2
 - `cronsim` is used for cron expression evaluation (lightweight, timezone-aware)
 - Task `type` is copied from definition to instance at creation time to enable direct queries without joins
 - Background task notifications are agent-driven — the executor registers a `send_notification` MCP tool per background task execution (via DES-006 factory), and the agent calls it to deliver messages; failure notifications are automatic via the shared `dispatch_notification()` from `tachikoma.notifications`
+- Task MCP tools ("task-tools" server) and workflow MCP tools ("workflow-tools" server) are distinct systems registered independently in the coordinator's `mcp_servers`. Task tools manage cron-scheduled definitions; workflow tools manage ordered step sequences within skills. See [workflows design](../workflows/workflow-state-machine.md).

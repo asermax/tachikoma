@@ -82,6 +82,11 @@ Eight-component architecture: a bootstrap hook creates the directory structure a
 │  │  ├── custom-skill/                               │      │
 │  │  │   ├── SKILL.md                                │      │
 │  │  │   └── agents/*.md                             │      │
+│  │  └── workflow-authoring-guide/                      │      │
+│  │      ├── SKILL.md                                  │      │
+│  │      └── references/step-design.md                 │      │
+│  │  (skills may also contain workflows/ — see          │      │
+│  │   workflow-state-machine design)                    │      │
 │  │  Channel: (via get_skill_sources() + add_source) │      │
 │  │  ├── src/tachikoma/telegram/skill/               │      │
 │  │  │   └── SKILL.md                                │      │
@@ -96,7 +101,7 @@ Eight-component architecture: a bootstrap hook creates the directory structure a
 | Layer/Component | Responsibility | Key Decisions |
 |-----------------|----------------|---------------|
 | `src/tachikoma/skills/__init__.py` | Re-exports `SkillRegistry`, `Skill`, `SkillsChanged`, `SkillsContextProvider`, `skills_hook`, `watch_skills` | Package module for the skills subsystem |
-| `src/tachikoma/skills/registry.py` | `SkillRegistry` class: discovers skills from multiple sources, loads agents, builds agents dict, stores skill body and path; refreshes all sources on dirty flag via swap-on-success; `add_source(path)` registers and discovers additional sources post-construction (used by channels to contribute skills during startup); `Skill` dataclass for metadata (name from folder, description, version, body, path) | Uses `python-frontmatter` for parsing; constructs `AgentDefinition` directly; multi-source with last-wins precedence; `mark_dirty()` for external callers, `refresh()` for dirty-check-and-rescan; `add_source()` appends to `_skill_sources` and calls `_discover()` immediately |
+| `src/tachikoma/skills/registry.py` | `SkillRegistry` class: discovers skills from multiple sources, loads agents, builds agents dict, stores skill body and path; discovers workflow definitions within skills and exposes via `get_workflow()` and `workflows` property; refreshes all sources on dirty flag via swap-on-success; `add_source(path)` registers and discovers additional sources post-construction (used by channels to contribute skills during startup); `Skill` dataclass for metadata (name from folder, description, version, body, path) | Uses `python-frontmatter` for parsing; constructs `AgentDefinition` directly; multi-source with last-wins precedence; `mark_dirty()` for external callers, `refresh()` for dirty-check-and-rescan; `add_source()` appends to `_skill_sources` and calls `_discover()` immediately; workflow definitions stored in `_workflows` dict keyed by (skill_name, workflow_name) |
 | `src/tachikoma/skills/context_provider.py` | `SkillsContextProvider(MessageContextProvider)`: extends standalone MessageContextProvider ABC (not ContextProvider — signatures are incompatible), receives `SkillRegistry` via constructor injection, refreshes registry before classification, classifies only unloaded skills via standalone `query()` with Opus low effort (DES-007), reads skill body from registry's pre-loaded `Skill.body`, returns one ContextResult per detected skill with metadata identifying skill name, agents=None. Also contains `extract_skill_names()` and `derive_agents_from_entries()` helpers | Receives registry and `AgentDefaults` via constructor injection; no tools for classification agent (pure reasoning); fully consumes query() generator (DES-005); `extract_skill_names()` reads skill names from entry metadata for filtering; `derive_agents_from_entries()` derives agents for the coordinator |
 | `src/tachikoma/skills/hooks.py` | `skills_hook` bootstrap callback: creates `workspace/skills/` directory, resolves built-in skills path, creates `SkillRegistry` with both sources, stores in `ctx.extras["skill_registry"]` | Follows DES-003 pattern; built-in path via `Path(__file__).parent / "builtin"`; graceful fallback if built-in missing |
 | `src/tachikoma/skills/watcher.py` | `watch_skills()` async function: monitors skills directory, marks registry dirty, dispatches `SkillsChanged` events; top-level exception handler prevents silent task death | Uses `watchfiles.awatch()` with 5s debounce and 2s rust_timeout; relies on watchfiles' default filtering behavior (hidden files, `__pycache__` excluded) |
@@ -208,6 +213,7 @@ SkillRegistry
 ├── __init__(skill_sources: list[Path])  # scans each source; last-wins on name collision
 ├── _agents: dict[str, AgentDefinition]
 ├── _skills: dict[str, Skill]
+├── _workflows: dict[tuple[str, str], WorkflowDefinition]  (keyed by skill_name, workflow_name)
 ├── _dirty: bool                         (set by watcher, cleared by refresh)
 ├── _skill_sources: list[Path]           (stored for reuse during refresh)
 ├── add_source(path: Path) → None       (appends to _skill_sources, discovers immediately; used by channels)
@@ -215,7 +221,9 @@ SkillRegistry
 ├── refresh() → None                    (check dirty, re-discover all sources if needed)
 ├── get_agents() → dict[str, AgentDefinition]
 ├── get_agents_for_skill(skill_name: str) → dict[str, AgentDefinition]
-└── skills (property) → dict[str, Skill]
+├── get_workflow(skill_name: str, workflow_name: str) → WorkflowDefinition | None
+├── skills (property) → dict[str, Skill]
+└── workflows (property) → dict[tuple[str, str], WorkflowDefinition]
 
 SkillsContextProvider(MessageContextProvider)   [standalone ABC, not extending ContextProvider]
 ├── _agent_defaults: AgentDefaults
@@ -615,6 +623,7 @@ SkillsChanged(BaseEvent[None])
 - The classification prompt design is an implementation detail — it embeds all skill names + descriptions and the user message, asking which skills are relevant.
 - The `NO_RELEVANT_SKILLS` sentinel pattern (consistent with `MemoryContextProvider`'s `NO_RELEVANT_MEMORIES`) distinguishes "classified and found nothing" from "agent error."
 - `watchfiles` is a project dependency (added to `pyproject.toml`), maintained by the pydantic team (Samuel Colvin) and used by `uvicorn` for auto-reload.
+- Workflow definitions are discovered alongside skills during registry loading. The `workflows/` directory is optional — skills without workflows incur no overhead. See [workflow state machine design](../workflows/workflow-state-machine.md) for the full workflow subsystem.
 - `MessageContextProvider` is a standalone ABC (not extending `ContextProvider`) because the return types are incompatible — `ContextResult | None` vs `list[ContextResult] | None`. See Key Decisions for rationale.
 - `extract_skill_names()` and `derive_agents_from_entries()` live in `skills/context_provider.py` for cohesion with the skills module that owns the skill-related logic, rather than in the per-message pipeline module.
 - DLT-076 (memory re-evaluation) can reuse the per-message pipeline by registering a memory provider — no coordinator changes needed.

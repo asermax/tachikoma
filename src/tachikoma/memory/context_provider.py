@@ -1,25 +1,50 @@
-"""Memory context provider for pre-processing pipeline.
+"""Memory context provider for per-message pre-processing pipeline.
 
 Uses an Opus agent to search stored memories for context relevant
-to the current user message.
+to the current user message. Runs on every message, using session
+forking when conversation context is available to make informed
+relevance decisions.
+
+Returns one ContextResult per relevant memory file, with metadata
+identifying the file path for deduplication. Episodic memories
+are returned as agent-extracted snippets; facts and preferences
+are loaded in full.
 """
+
+import re
+from dataclasses import dataclass
 
 from claude_agent_sdk import ClaudeAgentOptions, query
 from claude_agent_sdk.types import ResultMessage
 from loguru import logger
 
 from tachikoma.agent_defaults import AgentDefaults
-from tachikoma.pre_processing import ContextProvider, ContextResult
+from tachikoma.per_message_pre_processing import MessageContextProvider
+from tachikoma.pre_processing import ContextResult
+from tachikoma.sessions.model import SessionContextEntry
 
 _log = logger.bind(component="memory_context")
 
-MEMORY_SEARCH_PROMPT = """You are a memory search agent. Your task is to search the \
+MEMORIES_OWNER = "memories"
+MEMORY_PATH_META_KEY = "memory_path"
+_NO_RELEVANT_MEMORIES = "NO_RELEVANT_MEMORIES"
+
+MEMORY_SEARCH_PROMPT = """\
+You are a memory search agent. Your task is to search the \
 workspace's stored memories and find information relevant to the user's current message.
 
-## Instructions
+## Conversation Context
+
+If you can see previous conversation messages above this prompt, use them \
+to evaluate whether the latest message introduces topics not already covered \
+by the conversation. If the existing conversation context already covers what's \
+needed, respond with NO_RELEVANT_MEMORIES. If no previous messages are visible, \
+search based solely on the user's message below.
+
+## Search Strategy
 
 1. Search the following directories for relevant memories:
-   - `memories/episodic/` — Date-stamped conversation summaries
+   - `memories/episodic/` — Date-stamped conversation summaries (can be very large)
    - `memories/facts/` — Factual information (topic-named files)
    - `memories/preferences/` — User preferences (topic-named files)
 
@@ -28,63 +53,165 @@ workspace's stored memories and find information relevant to the user's current 
    - Then, use Grep to narrow by keywords/topics from the user's message
    - Finally, use Read to verify relevance of promising candidates
 
-3. Return a ranked list of the most relevant memory files (up to 10):
-   - Each entry should include the file path and a short summary
-   - Rank by relevance to the user's current message
-   - Focus on files that would help the main agent respond better
+## Output Format
 
-4. If you find relevant memories, format your response as:
-   ```markdown
-   ## Relevant Memories
+Return each relevant memory as an XML `<memory>` element with a `path` attribute. \
+Paths must be relative to the workspace root.
 
-   1. **memories/episodic/2026-03-13.md** — Brief summary of what's in this file
-   2. **memories/facts/restaurants.md** — Information about restaurants the user likes
-   ...
+For **facts and preferences** files (under `memories/facts/` or \
+`memories/preferences/`), return a self-closing tag — the full file will be loaded:
 
-   **Instructions for the main agent**: Read the files above if you need more detail \
-about any of these memories.
-   ```
+    <memory path="memories/facts/restaurants.md" />
 
-5. If no relevant memories are found (including when the directories are empty), \
-respond with exactly: `NO_RELEVANT_MEMORIES`
+For **episodic** files (under `memories/episodic/`), extract ONLY the relevant \
+section(s) from the file and include them as the element body. Episodic files \
+can be very large, so including only the relevant snippet is critical:
+
+    <memory path="memories/episodic/2026-04-06.md">
+    ## Relevant Section Title
+    Relevant excerpt from the episodic memory...
+    </memory>
+
+Do not include any text outside of `<memory>` elements (except the no-search sentinel).
+
+## No-Search Sentinel
+
+If no relevant memories are found — or if you determine the existing \
+conversation context already covers what's needed — respond with exactly: \
+`NO_RELEVANT_MEMORIES`
 
 ## User's Message
 
 {message}
-
----
-
-Search the memories and return relevant files, or respond with NO_RELEVANT_MEMORIES \
-if nothing relevant is found.
 """
 
 
-class MemoryContextProvider(ContextProvider):
+@dataclass
+class ParsedMemoryEntry:
+    """A single memory entry parsed from the search agent's output."""
+
+    path: str
+    snippet: str | None  # None = load full file; str = use this snippet
+
+
+_SELF_CLOSING_RE = re.compile(r'<memory\s+path="([^"]+)"\s*/>')
+_OPEN_TAG_RE = re.compile(r'<memory\s+path="([^"]+)"\s*>')
+_CLOSE_TAG_RE = re.compile(r"</memory>")
+
+
+def parse_memory_entries(raw_output: str) -> list[ParsedMemoryEntry]:
+    """Parse structured memory entries from the search agent's output.
+
+    Handles two forms:
+    - Self-closing: ``<memory path="..." />`` -> full file load
+    - Open/close: ``<memory path="...">snippet</memory>`` -> snippet extraction
+
+    Malformed entries (unclosed tags) are logged and skipped.
+
+    Returns:
+        List of parsed entries. Empty list if none found.
+    """
+    entries: list[ParsedMemoryEntry] = []
+
+    for match in _SELF_CLOSING_RE.finditer(raw_output):
+        entries.append(ParsedMemoryEntry(path=match.group(1), snippet=None))
+
+    # Remove self-closing tags so they don't interfere with open/close parsing
+    remaining = _SELF_CLOSING_RE.sub("", raw_output)
+
+    pos = 0
+
+    while pos < len(remaining):
+        open_match = _OPEN_TAG_RE.search(remaining, pos)
+
+        if open_match is None:
+            break
+
+        close_match = _CLOSE_TAG_RE.search(remaining, open_match.end())
+
+        if close_match is None:
+            _log.warning(
+                "Unclosed <memory> tag, skipping: path={path}",
+                path=open_match.group(1),
+            )
+            break
+
+        path = open_match.group(1)
+        snippet = remaining[open_match.end() : close_match.start()].strip()
+
+        entries.append(
+            ParsedMemoryEntry(path=path, snippet=snippet if snippet else None),
+        )
+
+        pos = close_match.end()
+
+    return entries
+
+
+def extract_memory_paths(entries: list[SessionContextEntry]) -> set[str]:
+    """Extract loaded memory paths from context entry metadata.
+
+    Reads metadata["memory_path"] from entries where owner="memories" and metadata
+    is not None. Gracefully handles entries without metadata.
+
+    Args:
+        entries: List of session context entries to inspect.
+
+    Returns:
+        Set of memory file paths found in entry metadata.
+    """
+    paths: set[str] = set()
+
+    for entry in entries:
+        if entry.owner != MEMORIES_OWNER or entry.metadata is None:
+            continue
+
+        memory_path = entry.metadata.get(MEMORY_PATH_META_KEY)
+        if memory_path is not None:
+            paths.add(memory_path)
+
+    return paths
+
+
+class MemoryContextProvider(MessageContextProvider):
     """Context provider that searches stored memories for relevant context.
 
     Uses an Opus agent with low effort and file search tools to find
-    memories relevant to the current user message. Returns a ContextResult
-    with the "memories" tag containing a ranked list of relevant files.
+    memories relevant to the current user message. Forks the current
+    SDK session when available so the search agent has full conversation
+    context for informed relevance decisions.
+
+    Returns one ContextResult per relevant memory file, each with
+    metadata identifying the file path for deduplication.
     """
 
     def __init__(self, agent_defaults: AgentDefaults) -> None:
         """Initialize the provider.
 
         Args:
-            agent_defaults: Common SDK options (cwd, cli_path, env).
+            agent_defaults: Common SDK options (cwd, cli_path, env, model).
         """
         self._agent_defaults = agent_defaults
 
-    async def provide(self, message: str) -> ContextResult | None:
+    async def provide(
+        self,
+        message: str,
+        *,
+        existing_entries: list[SessionContextEntry] | None = None,
+        sdk_session_id: str | None = None,
+    ) -> list[ContextResult] | None:
         """Search memories for context relevant to the message.
 
         Args:
             message: The user's message text.
+            existing_entries: The session's current context entries.
+            sdk_session_id: The current SDK session ID for forking.
 
         Returns:
-            ContextResult with relevant memories, or None if no relevant
-            memories found or an error occurred.
+            List of ContextResult instances (one per memory file), or None.
         """
+        loaded_paths = extract_memory_paths(existing_entries or [])
+
         prompt = MEMORY_SEARCH_PROMPT.format(message=message)
 
         options = ClaudeAgentOptions(
@@ -96,10 +223,13 @@ class MemoryContextProvider(ContextProvider):
             cwd=self._agent_defaults.cwd,
             cli_path=self._agent_defaults.cli_path,
             env=self._agent_defaults.env,
+            resume=sdk_session_id if sdk_session_id is not None else None,
+            fork_session=sdk_session_id is not None,
         )
 
-        # Fully consume the query() generator to ensure proper SDK cleanup.
-        result: ContextResult | None = None
+        # Fully consume the query() generator per DES-005 — no early
+        # return/break inside the async for loop.
+        parsed_entries: list[ParsedMemoryEntry] = []
 
         try:
             async for sdk_message in query(prompt=prompt, options=options):
@@ -112,16 +242,71 @@ class MemoryContextProvider(ContextProvider):
                     elif sdk_message.result is not None:
                         stripped = sdk_message.result.strip()
 
-                        if stripped == "NO_RELEVANT_MEMORIES":
+                        if stripped == _NO_RELEVANT_MEMORIES:
                             _log.debug("No relevant memories found for message")
                         else:
-                            result = ContextResult(tag="memories", content=sdk_message.result)
-                            _log.debug("Memory context provided")
+                            parsed_entries = parse_memory_entries(stripped)
+                            _log.debug(
+                                "Memory search returned entries: count={count}",
+                                count=len(parsed_entries),
+                            )
 
         except Exception as exc:
             _log.exception(
                 "Memory search agent failed: err={err}",
                 err=str(exc),
             )
+            return None
 
-        return result
+        if not parsed_entries:
+            return None
+
+        workspace = self._agent_defaults.cwd.resolve()
+        memories_root = (workspace / "memories").resolve()
+
+        validated: list[ParsedMemoryEntry] = []
+
+        for entry in parsed_entries:
+            resolved = (workspace / entry.path).resolve()
+
+            if not resolved.is_relative_to(memories_root):
+                _log.warning(
+                    "Memory path outside memories/ rejected: path={path}",
+                    path=entry.path,
+                )
+                continue
+
+            if entry.path in loaded_paths:
+                continue
+
+            validated.append(entry)
+
+        if not validated:
+            return None
+
+        results: list[ContextResult] = []
+
+        for entry in validated:
+            if entry.snippet is not None:
+                content = f"[Source: {entry.path}]\n\n{entry.snippet}"
+            else:
+                file_path = workspace / entry.path
+
+                try:
+                    content = file_path.read_text()
+                except FileNotFoundError:
+                    _log.warning(
+                        "Memory file deleted between search and read: path={path}",
+                        path=entry.path,
+                    )
+                    continue
+
+            results.append(
+                ContextResult(
+                    tag=MEMORIES_OWNER,
+                    content=content,
+                    metadata={MEMORY_PATH_META_KEY: entry.path},
+                )
+            )
+
+        return results if results else None
