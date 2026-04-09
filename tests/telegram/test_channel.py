@@ -1261,3 +1261,177 @@ class TestResponseRendererSanitization:
         sent_text = error_calls[0][0][1]
         clean = sent_text.encode("utf-8", errors="surrogatepass")
         assert "\ud83e" not in clean.decode("utf-8", errors="ignore")
+
+
+class TestHandleMedia:
+    """Tests for _handle_media handler in TelegramChannel."""
+
+    def _make_channel(self) -> TelegramChannel:
+        """Build a TelegramChannel with mocked dependencies."""
+        coordinator = MagicMock()
+        settings = MagicMock()
+        settings.bot_token = "123456:ABCdef"
+        settings.authorized_chat_id = 123
+        settings.push_notifications = False
+
+        with patch("tachikoma.telegram.Bot"):
+            channel = TelegramChannel(settings, workspace_path=Path("/tmp/test-workspace"))
+            channel._TelegramChannel__coordinator = coordinator
+
+        channel._bot = MagicMock()
+        return channel
+
+    def _make_media_message(self, **fields: MagicMock) -> MagicMock:
+        """Create a mock message with media fields."""
+        msg = MagicMock()
+        msg.photo = None
+        msg.voice = None
+        msg.audio = None
+        msg.document = None
+        msg.sticker = None
+        msg.video = None
+        msg.video_note = None
+        msg.animation = None
+        msg.caption = None
+        for field, value in fields.items():
+            setattr(msg, field, value)
+        return msg
+
+    async def test_photo_happy_path(self) -> None:
+        """Photo message downloads, describes, and enqueues."""
+        channel = self._make_channel()
+        channel._bot.download = AsyncMock(return_value=None)
+
+        # Create photo media mock
+        photo = MagicMock()
+        photo.file_id = "photo_123"
+        photo.width = 1280
+        photo.height = 720
+        photo.file_size = 250_000
+        photo.file_name = None
+
+        msg = self._make_media_message(photo=[photo])
+        msg.caption = "Check this out"
+
+        channel._is_processing = False
+        channel._process_through_coordinator = AsyncMock()
+
+        await channel._handle_media(msg)
+
+        # Should have enqueued a description
+        enqueued_text = channel._coordinator.enqueue.call_args[0][0]
+        assert "Photo" in enqueued_text
+        assert "1280 × 720" in enqueued_text
+        assert "/tmp/tachikoma-media/" in enqueued_text
+        assert 'The user said: "Check this out"' in enqueued_text
+
+        # Should have called process_through_coordinator
+        channel._process_through_coordinator.assert_called_once()
+
+    async def test_no_caption(self) -> None:
+        """Media without caption omits caption line."""
+        channel = self._make_channel()
+        channel._bot.download = AsyncMock(return_value=None)
+
+        voice = MagicMock()
+        voice.file_id = "voice_123"
+        voice.duration = 12
+        voice.mime_type = "audio/ogg"
+        voice.file_size = 50_000
+        voice.file_name = None
+
+        msg = self._make_media_message(voice=voice)
+        msg.caption = None
+
+        channel._is_processing = False
+        channel._process_through_coordinator = AsyncMock()
+
+        await channel._handle_media(msg)
+
+        enqueued_text = channel._coordinator.enqueue.call_args[0][0]
+        assert "Voice message" in enqueued_text
+        assert "The user said" not in enqueued_text
+
+    async def test_file_too_large(self) -> None:
+        """File too large sends error message, does not enqueue."""
+        channel = self._make_channel()
+        channel._bot.send_message = AsyncMock(return_value=MockMessage())
+
+        photo = MagicMock()
+        photo.file_id = "big_photo"
+        photo.width = 4000
+        photo.height = 3000
+        photo.file_size = 25 * 1024 * 1024  # 25 MB
+        photo.file_name = None
+
+        msg = self._make_media_message(photo=[photo])
+
+        await channel._handle_media(msg)
+
+        # Error message sent to user
+        channel._bot.send_message.assert_called_once()
+        sent_text = channel._bot.send_message.call_args[0][1]
+        assert "too large" in sent_text
+
+        # Nothing enqueued
+        channel._coordinator.enqueue.assert_not_called()
+
+    async def test_download_failure(self) -> None:
+        """Download failure sends error message, does not enqueue."""
+        channel = self._make_channel()
+        channel._bot.download = AsyncMock(
+            side_effect=TelegramAPIError(method="download", message="fail"),
+        )
+        channel._bot.send_message = AsyncMock(return_value=MockMessage())
+
+        photo = MagicMock()
+        photo.file_id = "photo_123"
+        photo.width = 1280
+        photo.height = 720
+        photo.file_size = 250_000
+        photo.file_name = None
+
+        msg = self._make_media_message(photo=[photo])
+
+        await channel._handle_media(msg)
+
+        # Error message sent
+        channel._bot.send_message.assert_called_once()
+        sent_text = channel._bot.send_message.call_args[0][1]
+        assert "Failed to download" in sent_text
+
+        # Nothing enqueued
+        channel._coordinator.enqueue.assert_not_called()
+
+    async def test_mid_stream_buffering(self) -> None:
+        """Media arriving mid-stream enqueues but doesn't process."""
+        channel = self._make_channel()
+        channel._bot.download = AsyncMock(return_value=None)
+
+        photo = MagicMock()
+        photo.file_id = "photo_123"
+        photo.width = 1280
+        photo.height = 720
+        photo.file_size = 250_000
+        photo.file_name = None
+
+        msg = self._make_media_message(photo=[photo])
+        channel._is_processing = True
+        channel._process_through_coordinator = AsyncMock()
+
+        await channel._handle_media(msg)
+
+        # Enqueued
+        channel._coordinator.enqueue.assert_called_once()
+
+        # But process_through_coordinator NOT called
+        channel._process_through_coordinator.assert_not_called()
+
+    async def test_unresolvable_media_ignored(self) -> None:
+        """Message with no resolvable media is silently ignored."""
+        channel = self._make_channel()
+        msg = self._make_media_message()  # No media fields set
+
+        await channel._handle_media(msg)
+
+        channel._coordinator.enqueue.assert_not_called()

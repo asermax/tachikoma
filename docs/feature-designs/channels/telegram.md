@@ -45,6 +45,13 @@ The Telegram channel follows the same pattern as the REPL: a `TelegramChannel` c
 │  │    Repl      │  │  TelegramChannel                     │   │
 │  │  (existing)  │  │  ┌─────────────────────────────────┐ │   │
 │  │              │  │  │ aiogram Bot + Dispatcher + Router│ │   │
+│  │              │  │  │ _handle_message (F.text)         │ │   │
+│  │              │  │  │ _handle_media (F.photo|F.voice..)│ │   │
+│  │              │  │  └────────────────┬────────────────┘ │   │
+│  │              │  │                   │ delegates to      │   │
+│  │              │  │  ┌────────────────▼────────────────┐ │   │
+│  │              │  │  │ media.py                        │ │   │
+│  │              │  │  │ resolve/download/describe media  │ │   │
 │  │              │  │  └─────────────────────────────────┘ │   │
 │  │              │  │  ┌─────────────────────────────────┐ │   │
 │  │              │  │  │ ResponseRenderer                │ │   │
@@ -77,8 +84,9 @@ The key components:
 
 | Layer/Component | Responsibility | Key Decisions |
 |-----------------|----------------|---------------|
-| `src/tachikoma/__main__.py` | Cyclopts `App` entry point: `run()` subcommand with `--channel` flag (also the default for bare invocation); creates `SettingsManager`, applies CLI overrides, runs bootstrap, dispatches to channel | Replaces bare `asyncio.run(main())` with cyclopts; `cli()` wrapper as `[project.scripts]` entry point; integrates with SettingsManager + Bootstrap |
-| `src/tachikoma/telegram.py` | `TelegramChannel` class + `ResponseRenderer` class + `telegram_hook` function. Subscribes to `SessionTaskReady` and `Notification` (from `tachikoma.notifications`) events via `bus.on()` at construction. Shared `_process_through_coordinator()` method handles both user messages and session task delivery. `_handle_notification()` sends notifications directly as Telegram messages with severity emoji prefix. Channel-specific formatter maps (`TELEGRAM_TOOL_DISPLAY`, `TELEGRAM_TOOL_SUMMARY`) with `code_wrap()` utility for inline code wrapping of dynamic tool arguments (file paths, patterns, commands — but not Bash descriptions, which are plain text) | High cohesion between channel control flow and response rendering; event bus subscriptions at construction |
+| `src/tachikoma/__main__.py` | Cyclopts `App` entry point: `run()` subcommand with `--channel` flag (also the default for bare invocation); creates `SettingsManager`, applies CLI overrides, runs bootstrap, dispatches to channel. Registers `media_hook` in bootstrap sequence (after `tasks`, before `telegram`) | Replaces bare `asyncio.run(main())` with cyclopts; `cli()` wrapper as `[project.scripts]` entry point; integrates with SettingsManager + Bootstrap |
+| `src/tachikoma/telegram.py` | `TelegramChannel` class + `ResponseRenderer` class + `telegram_hook` function. Subscribes to `SessionTaskReady` and `Notification` (from `tachikoma.notifications`) events via `bus.on()` at construction. Shared `_process_through_coordinator()` method handles both user messages and session task delivery. `_handle_media` catch-all handler delegates to `media.py` functions for descriptor resolution, download, and description building. `_handle_notification()` sends notifications directly as Telegram messages with severity emoji prefix. Channel-specific formatter maps (`TELEGRAM_TOOL_DISPLAY`, `TELEGRAM_TOOL_SUMMARY`) with `code_wrap()` utility for inline code wrapping of dynamic tool arguments (file paths, patterns, commands — but not Bash descriptions, which are plain text) | High cohesion between channel control flow and response rendering; event bus subscriptions at construction |
+| `src/tachikoma/media.py` | Media descriptor table (`MEDIA_DESCRIPTORS`), `resolve_media()`, `download_media()`, `build_description()`, `generate_media_filename()`, `MediaTooLargeError`, `media_hook` bootstrap function. Constants: `MEDIA_TEMP_DIR`, `TELEGRAM_MAX_FILE_SIZE`, `MEDIA_CLEANUP_DAYS` | High cohesion between all media-related logic; bootstrap hook follows DES-003; descriptor table driven by ordered sequence for priority resolution |
 | `src/tachikoma/coordinator.py` | Existing + `enqueue()` method, `_message_buffer` queue, `has_pending_messages` property, and `_message_source()` async generator passed to `client.connect()` | Message buffer replaces steer/pending-steers pattern |
 | `src/tachikoma/config.py` | `TelegramSettings` model added to `Settings` | Extends existing config; optional section (`None` when not configured) |
 | `src/tachikoma/display.py` | `TOOL_DISPLAY` map for live tool status formatting (present-progressive, Bash prefers description over command); `TOOL_SUMMARY` map and `summarize_tool_activity()` for post-hoc tool activity summaries (present-progressive matching active style); `summarize_tool_activity()` accepts optional `summary_map` parameter for channel-specific formatters; `format_tool_name()` for formatting MCP tool names into human-readable labels in fallback paths | Shared base formatters used directly by REPL; Telegram uses channel-specific formatter maps via `summary_map` parameter |
@@ -142,12 +150,49 @@ sequenceDiagram
     Note over Coord,SDK: _message_source() generator feeds buffered<br/>messages to client.connect() within the same session,<br/>or channel drains remaining as new sessions
 ```
 
+#### Media message flow
+
+```mermaid
+sequenceDiagram
+    actor User
+    participant TG as Telegram API
+    participant Channel as TelegramChannel
+    participant Media as media.py
+    participant Coord as Coordinator
+
+    User->>TG: sends photo/voice/etc
+    TG->>Channel: aiogram dispatches _handle_media
+    Channel->>Media: resolve_media(message)
+    Media-->>Channel: (media_object, descriptor)
+
+    Channel->>Media: generate_media_filename(descriptor, media_obj)
+    Media-->>Channel: filename
+    Note over Channel: dest_path = MEDIA_TEMP_DIR / filename
+
+    Channel->>Media: download_media(bot, media_obj, dest_path)
+    alt file too large (>20 MB)
+        Media-->>Channel: MediaTooLargeError
+        Channel->>TG: send error message to user
+    else download fails
+        Media-->>Channel: TelegramAPIError
+        Channel->>TG: send error message to user
+    else download succeeds
+        Media-->>Channel: dest_path
+        Channel->>Media: build_description(label, metadata, path, caption)
+        Media-->>Channel: description text
+        Channel->>Coord: enqueue(description)
+        Channel->>Channel: _process_through_coordinator()
+    end
+```
+
 **Integration Points:**
 - Channel ↔ Coordinator: `send_message()` (async iterator), `enqueue()` (sync buffer write), `has_pending_messages` (drain check)
 - Channel ↔ aiogram: `Router` handler receives `Message`, `Bot` sends/edits messages
+- Channel ↔ `media.py`: function calls — `resolve_media()` for descriptor lookup, `download_media()` for file download, `build_description()` for text composition, `generate_media_filename()` for unique file naming
 - Renderer ↔ telegramify-markdown: converts accumulated markdown to `(text, entities)` tuples on each edit cycle
 - `__main__.py` ↔ SettingsManager: CLI overrides applied via `update_root()` + `reload()` (runtime-only)
 - `telegram_hook` ↔ Bootstrap: follows DES-003 pattern (defined in telegram module, registered in __main__.py, self-skips when channel != "telegram")
+- `media_hook` ↔ Bootstrap: follows DES-003 pattern (defined in media module, registered in __main__.py)
 - Channel ↔ Event bus: subscribes to `SessionTaskReady` (session task delivery) and `Notification` from `tachikoma.notifications` (direct notification display) via `bus.on()` at construction (see ADR-009)
 
 ## Modeling
@@ -501,6 +546,27 @@ The `Result` event serves as a turn boundary signal. The channel finalizes the c
 **When**: An unexpected exception occurs during processing
 **Then**: `notify()` is called on the renderer to trigger push notification for the partial text. The exception error message is sent silently (since push was already triggered). The user receives the push notification and sees the error message.
 
+### Scenario: Media message received (photo with caption)
+
+**Given**: The bot is running and the authorized user sends a photo with caption "What's in this image?"
+**When**: The aiogram router dispatches to `_handle_media`
+**Then**: The handler resolves the photo descriptor, downloads the largest size to `/tmp/tachikoma-media/{id}.jpg`, builds a natural-language description with dimensions, file size, file path, and caption, then enqueues it. The agent receives the description and can use its Read tool to view the image.
+**Rationale**: The media proxy pattern converts media to text+file path, fitting the agent's existing text-based interface.
+
+### Scenario: Media file exceeds 20 MB
+
+**Given**: A user sends a large video file where `file_size` metadata indicates 35 MB
+**When**: The handler's `download_media()` call pre-checks `file_size`
+**Then**: `MediaTooLargeError` is raised. The handler sends an error message to the user. No download is attempted. The conversation remains usable.
+**Rationale**: Fail-fast with metadata check avoids a wasted network round-trip.
+
+### Scenario: Unsupported message type
+
+**Given**: A user sends a contact, location, or poll
+**When**: The message arrives
+**Then**: Neither `F.text` nor the media filter (`F.photo | F.voice | ...`) matches. The message is silently dropped by aiogram's router.
+**Rationale**: The filter composition explicitly lists supported types — everything else is naturally excluded.
+
 ### Scenario: Agent sends a photo during conversation
 
 **Given**: The agent is processing a conversation and has generated an image file
@@ -548,3 +614,6 @@ The `Result` event serves as a turn boundary signal. The channel finalizes the c
 - Polling backoff uses aiogram's `BackoffConfig` dataclass: `BackoffConfig(min_delay=1, max_delay=60, factor=2, jitter=0.1)` — not a plain dict
 - The `ResponseRenderer` exposes a `handle_status()` method for rendering `Status` events as transient italic messages in Telegram. The status message is replaced when the first content event arrives.
 - The `q` keypress shutdown uses `tty.setcbreak()` + `loop.add_reader()` to monitor stdin character-by-character without blocking. Guarded by `sys.stdin.isatty()` to skip in non-TTY environments. EOF on stdin removes the reader to prevent busy-loop spin.
+- `media.py` provides the media descriptor table, download, description building, file naming, and bootstrap hook. The descriptor table is an ordered sequence — resolution iterates in order and returns the first match. Ordering matters because aiogram populates multiple fields for some message types (e.g., animation sets both `message.animation` and `message.document`). More specific types appear before generic ones: animation → sticker → video_note → photo → voice → video → audio → document.
+- `media_hook` follows DES-003 (subsystem bootstrap hooks): defined in the media module, registered in __main__.py. Creates `/tmp/tachikoma-media` on startup and deletes files older than 30 days.
+- The `_handle_media` handler uses the same `enqueue()` + `_process_through_coordinator()` pattern as `_handle_message`, ensuring consistent buffering behavior for both text and media messages.
