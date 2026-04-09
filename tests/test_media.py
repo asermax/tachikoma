@@ -6,10 +6,11 @@ Tests for DLT-035: Telegram media support.
 import os
 import time
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from aiogram.exceptions import TelegramAPIError
+from pytest_mock import MockerFixture
 
 from tachikoma.media import (
     MEDIA_DESCRIPTORS,
@@ -383,6 +384,15 @@ class TestMetadataBuilders:
         assert "12 seconds" in lines[0]
         assert "audio/ogg" in lines[1]
 
+    def test_voice_metadata_no_mime_type(self) -> None:
+        """Voice metadata omits MIME type when None."""
+        descriptor = MEDIA_DESCRIPTORS[4]  # voice
+        media = _make_voice(duration=8, mime_type=None)
+        lines = descriptor.build_metadata(media)
+
+        assert len(lines) == 1
+        assert "8 seconds" in lines[0]
+
     def test_audio_metadata_full(self) -> None:
         """Audio metadata includes title, performer, duration."""
         descriptor = MEDIA_DESCRIPTORS[6]  # audio
@@ -575,38 +585,41 @@ class TestFormatFileSize:
 
 
 class TestMediaHook:
-    async def test_creates_directory_when_missing(self, tmp_path: Path) -> None:
+    async def test_creates_directory_when_missing(
+        self, tmp_path: Path, mocker: MockerFixture,
+    ) -> None:
         """Hook creates media temp directory when it doesn't exist."""
         media_dir = tmp_path / "media"
         ctx = MagicMock()
 
-        with patch("tachikoma.media.MEDIA_TEMP_DIR", media_dir):
-            await media_hook(ctx)
+        mocker.patch("tachikoma.media.MEDIA_TEMP_DIR", media_dir)
+        await media_hook(ctx)
 
         assert media_dir.exists()
         assert media_dir.is_dir()
 
-    async def test_deletes_old_files(self, tmp_path: Path) -> None:
+    async def test_deletes_old_files(
+        self, tmp_path: Path, mocker: MockerFixture,
+    ) -> None:
         """Hook deletes files older than MEDIA_CLEANUP_DAYS."""
         media_dir = tmp_path / "media"
         media_dir.mkdir()
 
         old_file = media_dir / "old.jpg"
         old_file.write_text("old")
-        # Set mtime to 45 days ago
         old_time = time.time() - (45 * 24 * 60 * 60)
-        old_file.touch()
-
         os.utime(old_file, (old_time, old_time))
 
         ctx = MagicMock()
 
-        with patch("tachikoma.media.MEDIA_TEMP_DIR", media_dir):
-            await media_hook(ctx)
+        mocker.patch("tachikoma.media.MEDIA_TEMP_DIR", media_dir)
+        await media_hook(ctx)
 
         assert not old_file.exists()
 
-    async def test_preserves_new_files(self, tmp_path: Path) -> None:
+    async def test_preserves_new_files(
+        self, tmp_path: Path, mocker: MockerFixture,
+    ) -> None:
         """Hook preserves files newer than MEDIA_CLEANUP_DAYS."""
         media_dir = tmp_path / "media"
         media_dir.mkdir()
@@ -616,25 +629,29 @@ class TestMediaHook:
 
         ctx = MagicMock()
 
-        with patch("tachikoma.media.MEDIA_TEMP_DIR", media_dir):
-            await media_hook(ctx)
+        mocker.patch("tachikoma.media.MEDIA_TEMP_DIR", media_dir)
+        await media_hook(ctx)
 
         assert new_file.exists()
 
-    async def test_idempotent_empty_dir(self, tmp_path: Path) -> None:
+    async def test_idempotent_empty_dir(
+        self, tmp_path: Path, mocker: MockerFixture,
+    ) -> None:
         """Hook is idempotent on existing empty directory."""
         media_dir = tmp_path / "media"
         media_dir.mkdir()
 
         ctx = MagicMock()
 
-        with patch("tachikoma.media.MEDIA_TEMP_DIR", media_dir):
-            await media_hook(ctx)
-            await media_hook(ctx)
+        mocker.patch("tachikoma.media.MEDIA_TEMP_DIR", media_dir)
+        await media_hook(ctx)
+        await media_hook(ctx)
 
         assert media_dir.exists()
 
-    async def test_deletion_failure_logged_not_fatal(self, tmp_path: Path) -> None:
+    async def test_deletion_failure_logged_not_fatal(
+        self, tmp_path: Path, mocker: MockerFixture,
+    ) -> None:
         """Deletion failure is logged but doesn't abort hook."""
         media_dir = tmp_path / "media"
         media_dir.mkdir()
@@ -646,11 +663,9 @@ class TestMediaHook:
 
         ctx = MagicMock()
 
-        with (
-            patch("tachikoma.media.MEDIA_TEMP_DIR", media_dir),
-            patch.object(Path, "unlink", side_effect=OSError("permission denied")),
-        ):
-            await media_hook(ctx)
+        mocker.patch("tachikoma.media.MEDIA_TEMP_DIR", media_dir)
+        mocker.patch.object(Path, "unlink", side_effect=OSError("permission denied"))
+        await media_hook(ctx)
 
         # File still exists (unlink failed)
         assert old_file.exists()
