@@ -46,6 +46,8 @@ from tachikoma.skills.registry import SkillRegistry
 
 _log = logger.bind(component="coordinator")
 
+_COLD_START_SUMMARY = "No active conversation."
+
 
 def _user_message(content: str) -> dict[str, Any]:
     """Build an SDK user message dict from text content."""
@@ -337,10 +339,16 @@ class Coordinator:
         # Create a session if this is the first message in a new conversation
         active = None
         is_new_session = False
+        cold_start_resumed = False
 
         if self._registry is not None:
             try:
                 active = await self._registry.get_active_session()
+
+                if active is None:
+                    yield Status(message="Thinking...")
+                    active = await self._attempt_cold_start_resume(text)
+                    cold_start_resumed = active is not None
 
                 if active is None:
                     active = await self._registry.create_session()
@@ -352,7 +360,10 @@ class Coordinator:
 
         # Signal "Thinking..." when boundary detection or pipelines will run
         will_detect_boundary = (
-            active is not None and active.summary is not None and self._cwd is not None
+            active is not None
+            and active.summary is not None
+            and self._cwd is not None
+            and not cold_start_resumed
         )
         will_preprocess = is_new_session and self._pre_pipeline is not None
         will_msg_preprocess = self._msg_pre_pipeline is not None
@@ -366,23 +377,7 @@ class Coordinator:
             assert self._registry is not None
 
             try:
-                # Query recent closed sessions as candidates for resumption
-                candidates: list[SessionCandidate] | None = None
-                if self._registry is not None:
-                    try:
-                        now = datetime.now(UTC)
-                        window = timedelta(seconds=self._session_resume_window)
-                        recent = await self._registry.get_recent_closed(before=now, window=window)
-                        candidates = [
-                            SessionCandidate(id=s.id, summary=s.summary)
-                            for s in recent
-                            if s.summary is not None
-                        ]
-                    except Exception as exc:
-                        _log.exception(
-                            "Failed to query resume candidates: err={err}",
-                            err=str(exc),
-                        )
+                candidates = await self._query_resume_candidates()
 
                 result: BoundaryResult = await detect_boundary(
                     text,
@@ -597,6 +592,78 @@ class Coordinator:
                     "Failed to mark session as errored: err={err}",
                     err=str(exc),
                 )
+
+    async def _attempt_cold_start_resume(self, message: str) -> Session | None:
+        """Try to match a cold-start message against recent closed sessions.
+
+        On fresh startup with no active session, queries recent closed sessions
+        and uses boundary detection with a sentinel summary to check if the
+        message matches a previous conversation. Returns the reopened Session
+        if a match is found, or None to fall back to creating a new session.
+
+        Fail-open: any error returns None.
+        """
+        if self._registry is None:
+            return None
+
+        try:
+            now = datetime.now(UTC)
+            window = timedelta(seconds=self._session_resume_window)
+            recent_sessions = await self._registry.get_recent_closed(before=now, window=window)
+
+            candidates = [
+                SessionCandidate(id=s.id, summary=s.summary)
+                for s in recent_sessions
+                if s.summary is not None
+            ]
+
+            if not candidates:
+                return None
+
+            result = await detect_boundary(
+                message,
+                _COLD_START_SUMMARY,
+                self._agent_defaults,
+                candidates=candidates,
+            )
+
+            if result.resume_session_id is None:
+                return None
+
+            # Capture the matched session's ended_at before reopen clears it
+            matched = next(
+                (s for s in recent_sessions if s.id == result.resume_session_id),
+                None,
+            )
+            previous_ended_at = matched.ended_at if matched and matched.ended_at else now
+
+            reopened = await self._registry.reopen_session(result.resume_session_id)
+
+            if reopened is None:
+                return None
+
+            self._sdk_session_id = reopened.sdk_session_id
+
+            await self._registry.record_resumption(
+                session_id=reopened.id,
+                previous_ended_at=previous_ended_at,
+            )
+
+            await self._persist_bridging_context(reopened, previous_ended_at)
+
+            _log.info(
+                "Cold start resume: session_id={id} sdk_session_id={sdk}",
+                id=reopened.id,
+                sdk=self._sdk_session_id,
+            )
+            return reopened
+
+        except Exception as exc:
+            _log.exception(
+                "Cold start resume failed, falling back to new session: err={err}",
+                err=str(exc),
+            )
+            return None
 
     async def _query_resume_candidates(self) -> list[SessionCandidate] | None:
         """Query recent closed sessions and build candidate list for matching.
