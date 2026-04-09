@@ -82,6 +82,9 @@ Eight-component architecture: a bootstrap hook creates the directory structure a
 │  │  ├── custom-skill/                               │      │
 │  │  │   ├── SKILL.md                                │      │
 │  │  │   └── agents/*.md                             │      │
+│  │  Channel: (via get_skill_sources() + add_source) │      │
+│  │  ├── src/tachikoma/telegram/skill/               │      │
+│  │  │   └── SKILL.md                                │      │
 │  └──────────────────────────────────────────────────┘      │
 └────────────────────────────────────────────────────────────┘
 ```
@@ -93,7 +96,7 @@ Eight-component architecture: a bootstrap hook creates the directory structure a
 | Layer/Component | Responsibility | Key Decisions |
 |-----------------|----------------|---------------|
 | `src/tachikoma/skills/__init__.py` | Re-exports `SkillRegistry`, `Skill`, `SkillsChanged`, `SkillsContextProvider`, `skills_hook`, `watch_skills` | Package module for the skills subsystem |
-| `src/tachikoma/skills/registry.py` | `SkillRegistry` class: discovers skills from multiple sources, loads agents, builds agents dict, stores skill body and path; refreshes all sources on dirty flag via swap-on-success; `Skill` dataclass for metadata (name from folder, description, version, body, path) | Uses `python-frontmatter` for parsing; constructs `AgentDefinition` directly; multi-source with last-wins precedence; `mark_dirty()` for external callers, `refresh()` for dirty-check-and-rescan |
+| `src/tachikoma/skills/registry.py` | `SkillRegistry` class: discovers skills from multiple sources, loads agents, builds agents dict, stores skill body and path; refreshes all sources on dirty flag via swap-on-success; `add_source(path)` registers and discovers additional sources post-construction (used by channels to contribute skills during startup); `Skill` dataclass for metadata (name from folder, description, version, body, path) | Uses `python-frontmatter` for parsing; constructs `AgentDefinition` directly; multi-source with last-wins precedence; `mark_dirty()` for external callers, `refresh()` for dirty-check-and-rescan; `add_source()` appends to `_skill_sources` and calls `_discover()` immediately |
 | `src/tachikoma/skills/context_provider.py` | `SkillsContextProvider(MessageContextProvider)`: extends standalone MessageContextProvider ABC (not ContextProvider — signatures are incompatible), receives `SkillRegistry` via constructor injection, refreshes registry before classification, classifies only unloaded skills via standalone `query()` with Opus low effort (DES-007), reads skill body from registry's pre-loaded `Skill.body`, returns one ContextResult per detected skill with metadata identifying skill name, agents=None. Also contains `extract_skill_names()` and `derive_agents_from_entries()` helpers | Receives registry and `AgentDefaults` via constructor injection; no tools for classification agent (pure reasoning); fully consumes query() generator (DES-005); `extract_skill_names()` reads skill names from entry metadata for filtering; `derive_agents_from_entries()` derives agents for the coordinator |
 | `src/tachikoma/skills/hooks.py` | `skills_hook` bootstrap callback: creates `workspace/skills/` directory, resolves built-in skills path, creates `SkillRegistry` with both sources, stores in `ctx.extras["skill_registry"]` | Follows DES-003 pattern; built-in path via `Path(__file__).parent / "builtin"`; graceful fallback if built-in missing |
 | `src/tachikoma/skills/watcher.py` | `watch_skills()` async function: monitors skills directory, marks registry dirty, dispatches `SkillsChanged` events; top-level exception handler prevents silent task death | Uses `watchfiles.awatch()` with 5s debounce and 2s rust_timeout; relies on watchfiles' default filtering behavior (hidden files, `__pycache__` excluded) |
@@ -159,7 +162,8 @@ watch_skills(skills_path, registry, bus)
 - skills_hook ↔ Bootstrap: registered as standard hook (DES-003); creates `SkillRegistry`, writes `"skill_registry"` to extras
 - __main__.py ↔ extras: reads `"skill_registry"` after bootstrap; passes to provider constructor
 - SkillsContextProvider ↔ SkillRegistry: injected dependency; provider reads `skills` property and calls `get_agents_for_skill()`
-- SkillRegistry ↔ filesystem: scans each source path (built-in + workspace) for skill directories; reads `SKILL.md` and agent markdown files
+- Channel → SkillRegistry: `channel.get_skill_sources()` returns paths; `__main__.py` calls `registry.add_source(path)` for each — startup-time, one-directional integration
+- SkillRegistry ↔ filesystem: scans each source path (built-in + workspace + channel-provided) for skill directories; reads `SKILL.md` and agent markdown files
 - SkillsContextProvider ↔ Per-Message Pipeline: registers via `msg_pre_pipeline.register(provider)`; `provide(message, existing_entries=entries)` called on every message
 - SkillsContextProvider ↔ SkillRegistry: shared — registry received via constructor from bootstrap extras; `refresh()` called before `skills` property access
 - SkillsContextProvider ↔ SDK: standalone `query()` call for classification (no tools, low effort, DES-007)
@@ -206,6 +210,7 @@ SkillRegistry
 ├── _skills: dict[str, Skill]
 ├── _dirty: bool                         (set by watcher, cleared by refresh)
 ├── _skill_sources: list[Path]           (stored for reuse during refresh)
+├── add_source(path: Path) → None       (appends to _skill_sources, discovers immediately; used by channels)
 ├── mark_dirty() → None                 (external API for watcher)
 ├── refresh() → None                    (check dirty, re-discover all sources if needed)
 ├── get_agents() → dict[str, AgentDefinition]
@@ -276,9 +281,14 @@ SkillsChanged(BaseEvent[None])
 3. __main__.py creates SkillsContextProvider(agent_defaults, skill_registry)
    → Provider receives registry (does not create its own)
 4. __main__.py registers SkillsContextProvider in per-message pre-processing pipeline (not session-gated)
-5. __main__.py creates watcher task:
+5. __main__.py creates channel, then registers channel-provided skill sources:
+   for path in channel.get_skill_sources():
+       skill_registry.add_source(path)
+   → Skills from channel sources discovered immediately (e.g., Telegram's send_file skill)
+   → Channel sources included in subsequent refresh() scans (last-wins precedence)
+6. __main__.py creates watcher task:
    asyncio.create_task(watch_skills(skills_path, skill_registry, bus), name="skills_watcher")
-6. __main__.py passes skill_registry and msg_pre_pipeline to Coordinator constructor
+7. __main__.py passes skill_registry and msg_pre_pipeline to Coordinator constructor
 7. Detection happens per-message via per-message pipeline:
    → Provider calls registry.refresh() first (dirty check → re-scan all sources)
    → Provider extracts loaded skill names from existing entries metadata
@@ -496,6 +506,17 @@ SkillsChanged(BaseEvent[None])
 - Pro: No inheritance mismatch or LSP violation
 - Pro: Each ABC has a clear, focused contract
 - Con: Two separate ABCs for context providers (acceptable — they serve different pipeline types)
+
+### SkillRegistry.add_source() for Post-Construction Sources
+
+**Choice**: Add an `add_source(path)` method to `SkillRegistry` that appends to `_skill_sources` and immediately discovers skills from the new path.
+**Why**: The skill registry is created during bootstrap before the channel exists. Channels need to contribute skill sources after bootstrap. Rather than restructuring the bootstrap order, adding a method to accept additional sources post-construction is minimal and follows the existing multi-source pattern.
+**Alternatives Considered**: Restructure bootstrap to include channel (over-engineering), pass channel skill paths to bootstrap hook via extras (couples bootstrap to channel selection logic)
+
+**Consequences**:
+- Pro: Clean extension point — any subsystem can add sources post-construction
+- Pro: Maintains last-wins precedence — channel skills added last, can override built-in/workspace
+- Note: Channel sources are not watched by the filesystem watcher (acceptable — they're package resources, not user-editable)
 
 ### Skills Provider Moves Entirely to Per-Message Pipeline
 

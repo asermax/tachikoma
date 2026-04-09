@@ -20,7 +20,7 @@ The agent needs a developer-facing interactive terminal as its first communicati
 
 ## Design Overview
 
-Two classes with separated concerns: `Repl` owns the input loop and control flow, `Renderer` owns event rendering via `rich` Console. Both live in `src/tachikoma/repl.py` due to high cohesion.
+`Repl` implements the `Channel` protocol with inherited defaults — `get_mcp_servers()` returns `{}` and `get_skill_sources()` returns `[]`, so the REPL provides no additional tools or skills. Two classes with separated concerns: `Repl` owns the input loop and control flow, `Renderer` owns event rendering via `rich` Console. Both live in `src/tachikoma/repl.py` due to high cohesion.
 
 The REPL uses `prompt_toolkit` for async input with persistent file history. The history file path is `/tmp/tachikoma_repl_history`.
 
@@ -30,7 +30,7 @@ The REPL uses `prompt_toolkit` for async input with persistent file history. The
 
 | Layer/Component | Responsibility | Key Decisions |
 |-----------------|----------------|---------------|
-| `Repl` | Input loop, control flow, exit conditions, interrupt handling. Optionally accepts `bus: EventBus` at construction and subscribes to `SessionTaskReady` (queued to `asyncio.Queue`, drained before each input prompt via `_process_queued_tasks()`) and `Notification` from `tachikoma.notifications` (printed directly via `_handle_notification()`). | Owns `PromptSession` with `multiline=True`, custom `KeyBindings` (Enter submits via `validate_and_handle()`, Escape+Enter inserts newline), `prompt_continuation="  "`, `FileHistory` (at `/tmp/tachikoma_repl_history`), and empty-input `Validator` |
+| `Repl(Channel)` | Implements Channel protocol with inherited defaults (no tools, no skills). Constructor takes `history_path` and optional `bus` — no coordinator (received in `run()`). Event bus subscriptions (`SessionTaskReady`, `Notification`) deferred to `run()` to ensure coordinator is set before handlers fire. Input loop, control flow, exit conditions, interrupt handling. | Owns `PromptSession` with `multiline=True`, custom `KeyBindings` (Enter submits via `validate_and_handle()`, Escape+Enter inserts newline), `prompt_continuation="  "`, `FileHistory` (at `/tmp/tachikoma_repl_history`), and empty-input `Validator`; `__coordinator` private field + `_coordinator` property (same pattern as TelegramChannel) |
 | `Renderer` | Event rendering via rich Console | Owns two Console instances (stdout, stderr). `render()` returns bool: `True` to continue, `False` to exit |
 
 ### Event Rendering
@@ -115,3 +115,4 @@ The REPL uses `prompt_toolkit` for async input with persistent file history. The
 - Input history is persisted via `prompt_toolkit`'s `FileHistory` at `/tmp/tachikoma_repl_history`, providing history across REPL sessions within the same system boot
 - Ctrl+C always exits the REPL regardless of state (during streaming or at prompt). Use Ctrl+U to clear the current input line without exiting.
 - The `Renderer.render()` return value (`bool`) provides the control flow signal: `True` means continue consuming events, `False` means exit the REPL (on non-recoverable errors)
+- `Repl` implements the `Channel` protocol — inherits default no-op `get_mcp_servers()` and `get_skill_sources()` from `Channel`. The coordinator is received in `run()`, not at construction. Event bus subscriptions are deferred to `run()` for consistency with the Channel lifecycle (same pattern as `TelegramChannel`)

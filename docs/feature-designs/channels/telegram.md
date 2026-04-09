@@ -397,6 +397,30 @@ The `Result` event serves as a turn boundary signal. The channel finalizes the c
 - Pro: Simpler code — one split mechanism instead of two (pre-conversion + fallback)
 - Con: Always calls `convert()` even on long text (lightweight, not a bottleneck)
 
+### Channel protocol for capability declaration
+
+**Choice**: `TelegramChannel` implements the `Channel` protocol (`@runtime_checkable Protocol` with explicit subclassing for defaults). Overrides `get_mcp_servers()` to provide the `send_file` tool server and `get_skill_sources()` to provide the skill directory. Receives coordinator in `run()`, not at construction.
+**Why**: Channels are the natural owner of channel-specific capabilities. The protocol makes this explicit and extensible — any future channel can provide tools and skills through the same interface. Creating the channel before the coordinator enables capability extraction during startup without circular dependencies.
+**Alternatives Considered**: Ad-hoc factory functions per channel, separate ChannelCapabilities object, ABC
+
+**Consequences**:
+- Pro: Generic, extensible — REPL or future channels can provide tools/skills the same way
+- Pro: Clean lifecycle — channel is created, queried, then started
+- Pro: No new abstraction — capabilities live on the channel object
+- Con: Constructor signature change (coordinator moves to `run()`)
+
+### Skill-based context injection for send_file instructions
+
+**Choice**: Ship `send_file` usage instructions as a built-in skill within the telegram package (`telegram/skill/SKILL.md`), loaded via `get_skill_sources()` and the standard skill detection pipeline.
+**Why**: The skills system already handles conditional context injection — skills are classified per-message and only loaded when relevant. This means the agent only sees `send_file` instructions when the Telegram channel is active (skill is registered) and the conversation involves file-sending topics (skill is classified as relevant).
+**Alternatives Considered**: Hardcode in foundational context (always present, even in REPL), conditional foundational context entry (bypasses skill system)
+
+**Consequences**:
+- Pro: Context-efficient — only loaded when relevant
+- Pro: Follows existing patterns — built-in skills already ship from source code
+- Pro: Channel-scoped — absent when channel doesn't provide it
+- Con: Depends on LLM classification accuracy (mitigated by clear skill description)
+
 ## System Behavior
 
 ### Scenario: Token validation success
@@ -477,13 +501,48 @@ The `Result` event serves as a turn boundary signal. The channel finalizes the c
 **When**: An unexpected exception occurs during processing
 **Then**: `notify()` is called on the renderer to trigger push notification for the partial text. The exception error message is sent silently (since push was already triggered). The user receives the push notification and sees the error message.
 
+### Scenario: Agent sends a photo during conversation
+
+**Given**: The agent is processing a conversation and has generated an image file
+**When**: The agent calls `send_file` with the image path and a caption
+**Then**: The tool validates the file exists and is within the workspace, detects it as a photo from the extension, calls `bot.send_photo(chat_id, FSInputFile(path), caption=caption)`, the photo appears in the Telegram chat immediately, and the tool returns a success confirmation to the agent.
+
+### Scenario: File not found
+
+**Given**: The agent calls `send_file` with a path to a file that doesn't exist
+**When**: The tool validates the path
+**Then**: The tool returns `is_error: True` with message "File not found: {path}". The agent can inform the user or try an alternative.
+
+### Scenario: File outside workspace
+
+**Given**: The agent calls `send_file` with a path like `/etc/passwd`
+**When**: The tool validates the resolved path against the workspace boundary
+**Then**: The tool returns `is_error: True` with message "File must be within the workspace: {path}". Path traversal via `..` components is blocked by `Path.resolve()` + `is_relative_to()`.
+
+### Scenario: Telegram API rejects file
+
+**Given**: The agent calls `send_file` with a valid file exceeding platform limits
+**When**: The Telegram API returns an error (e.g., 50MB general limit, 10MB photo limit)
+**Then**: The `TelegramAPIError` is caught and returned as `is_error: True` with the API error message. No retry.
+
+### Scenario: REPL channel — no send_file tool
+
+**Given**: The agent is running with the REPL channel
+**When**: The agent processes messages
+**Then**: The REPL's `get_mcp_servers()` returns `{}` and `get_skill_sources()` returns `[]`. The `send_file` tool is not registered and the skill is not available.
+
 ## Notes
 
 - aiogram 3.x docs: https://docs.aiogram.dev/en/dev/
 - telegramify-markdown: https://github.com/sudoskys/telegramify-markdown — key APIs: `convert()` for `(text, entities)`, `split_entities()` for chunking
 - cyclopts: https://cyclopts.readthedocs.io/en/stable/
-- The `ResponseRenderer` in `telegram.py` follows the same pattern as `Renderer` in `repl.py` — both consume `AgentEvent`s and render them to their respective outputs
-- `telegram_hook` follows DES-003 (subsystem bootstrap hooks): defined in the telegram module, registered in __main__.py, self-skips when `settings.channel != "telegram"`
+- The telegram module was promoted from a flat file (`telegram.py`) to a package (`telegram/__init__.py` + `telegram/tools.py` + `telegram/skill/SKILL.md`). All existing import paths (`from tachikoma.telegram import ...`) are preserved via package `__init__` re-exports
+- The `ResponseRenderer` in `telegram/__init__.py` follows the same pattern as `Renderer` in `repl.py` — both consume `AgentEvent`s and render them to their respective outputs
+- Both `TelegramChannel` and `Repl` use a `__coordinator` private field + `_coordinator` property pattern: the private field is `None` until `run()` is called, and the property asserts non-None to provide safe access. Event bus subscriptions are deferred to `run()` to prevent handlers from firing before the coordinator is set
+- `telegram_hook` follows DES-003 (subsystem bootstrap hooks): defined in the telegram package, registered in __main__.py, self-skips when `settings.channel != "telegram"`
+- The `send_file` tool server in `telegram/tools.py` follows DES-006 (SDK MCP tool server factory): factory function with closure-captured state (bot, chat_id, workspace_path), extracted `handle_send_file()` handler for testability, Pydantic `SendFileArgs` model for arg validation
+- Telegram caption limit: 1024 characters (enforced via Pydantic `max_length` on `SendFileArgs.caption`)
+- `FSInputFile` from aiogram streams files without loading them into memory — handles files up to 50MB without memory pressure
 - `_message_buffer` is an `asyncio.Queue` — safe under asyncio's cooperative concurrency and supports sync `put_nowait()` via `enqueue()`
 - `display.py` provides `TOOL_DISPLAY` (live status lines) and `TOOL_SUMMARY`/`summarize_tool_activity()` (post-hoc summaries); REPL uses these directly, while Telegram uses channel-specific formatter maps (`TELEGRAM_TOOL_DISPLAY`, `TELEGRAM_TOOL_SUMMARY`) that wrap dynamic arguments (paths, patterns, commands) in inline code to prevent markdown misinterpretation — Bash descriptions are rendered as plain text since they are natural language
 - Polling backoff uses aiogram's `BackoffConfig` dataclass: `BackoffConfig(min_delay=1, max_delay=60, factor=2, jitter=0.1)` — not a plain dict
