@@ -78,7 +78,7 @@ class Repl(Channel):
         history_path: Path,
         bus: EventBus | None = None,
     ) -> None:
-        self._coordinator: Coordinator | None = None
+        self.__coordinator: Coordinator | None = None
         self._renderer = Renderer()
         self._bus = bus
         self._task_queue: asyncio.Queue[SessionTaskReady | Notification] = asyncio.Queue()
@@ -105,13 +105,18 @@ class Repl(Channel):
             ),
         )
 
+    @property
+    def _coordinator(self) -> Coordinator:
+        assert self.__coordinator is not None, "run() must be called before processing messages"
+        return self.__coordinator
+
     async def run(self, coordinator: Coordinator) -> None:
         """Run the REPL input loop until the user exits.
 
         Between user inputs, the loop checks for queued session tasks
         from the event bus and processes them.
         """
-        self._coordinator = coordinator
+        self.__coordinator = coordinator
 
         # Subscribe to task events — deferred to run() so coordinator is set
         if self._bus is not None:
@@ -136,13 +141,11 @@ class Repl(Channel):
             _log.debug("Message received: length={n}", n=len(text))
 
             try:
-                assert self._coordinator is not None  # Set in run()
                 self._coordinator.enqueue(text)
                 async for event in self._coordinator.send_message():
                     if not self._renderer.render(event):
                         return
             except KeyboardInterrupt:
-                assert self._coordinator is not None  # Set in run()
                 await self._coordinator.interrupt()
                 break
 
@@ -168,7 +171,6 @@ class Repl(Channel):
         Returns False if the REPL should exit.
         """
         try:
-            assert self._coordinator is not None  # Set in run()
             self._coordinator.enqueue(prompt)
             async for ev in self._coordinator.send_message():
                 if not self._renderer.render(ev):

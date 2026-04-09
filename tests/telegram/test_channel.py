@@ -1243,7 +1243,7 @@ class TestResponseRendererSanitization:
 
         with patch("tachikoma.telegram.Bot"):
             channel = TelegramChannel(settings, workspace_path=Path("/tmp/test-workspace"))
-            channel._coordinator = coordinator
+            channel._TelegramChannel__coordinator = coordinator
         channel._bot = bot
 
         # Mock coordinator to raise exception with surrogate

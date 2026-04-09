@@ -495,7 +495,7 @@ class TelegramChannel(Channel):
         workspace_path: Path,
         bus: EventBus | None = None,
     ) -> None:
-        self._coordinator: Coordinator | None = None
+        self.__coordinator: Coordinator | None = None
         self._settings = settings
         self._workspace_path = workspace_path
         self._bot = Bot(token=settings.bot_token)
@@ -517,6 +517,11 @@ class TelegramChannel(Channel):
         # Register shutdown hook
         self._dispatcher.shutdown.register(self._on_shutdown)
 
+    @property
+    def _coordinator(self) -> Coordinator:
+        assert self.__coordinator is not None, "run() must be called before processing messages"
+        return self.__coordinator
+
     def get_mcp_servers(self) -> dict[str, McpSdkServerConfig]:
         server = create_send_file_server(
             self._bot, self._settings.authorized_chat_id, self._workspace_path
@@ -534,7 +539,7 @@ class TelegramChannel(Channel):
         polling stops gracefully without cancelling the task — this allows the
         Coordinator's post-processing pipeline to run on shutdown.
         """
-        self._coordinator = coordinator
+        self.__coordinator = coordinator
 
         # Subscribe to task events — deferred to run() so coordinator is set
         if self._bus is not None:
@@ -612,8 +617,6 @@ class TelegramChannel(Channel):
             _log.debug("Ignoring empty or non-text message")
             return
 
-        assert self._coordinator is not None  # Set in run() before polling starts
-
         text = message.text.strip()
         self._coordinator.enqueue(text)
 
@@ -645,8 +648,6 @@ class TelegramChannel(Channel):
             preview=instance.prompt[:50] if instance.prompt else "",
         )
 
-        assert self._coordinator is not None  # Set in run() before event bus subscriptions
-
         self._coordinator.enqueue(instance.prompt)
 
         if self._is_processing:
@@ -676,7 +677,6 @@ class TelegramChannel(Channel):
         )
 
         try:
-            assert self._coordinator is not None  # Set in run() before any handler fires
             async with ChatActionSender(bot=self._bot, chat_id=chat_id, action="typing"):
                 while self._coordinator.has_pending_messages:
                     async for event in self._coordinator.send_message():
@@ -730,8 +730,6 @@ class TelegramChannel(Channel):
             severity=event.severity,
             source=event.source_id,
         )
-
-        assert self._coordinator is not None  # Set in run() before event bus subscriptions
 
         self._coordinator.enqueue(event.prompt)
 
