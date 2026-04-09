@@ -7,46 +7,50 @@
 
 ## Purpose
 
-This document explains the design rationale for the memory context provider: how it searches stored memories using an agent-based approach, and how it integrates with the pre-processing pipeline.
+This document explains the design rationale for the memory context provider: how it searches stored memories using an agent-based approach on every message, how it uses session forking for conversation context on subsequent messages, and how it integrates with the per-message pre-processing pipeline.
 
-For the pre-processing pipeline infrastructure that the memory context provider plugs into, see the [pre-processing pipeline design](../agent/pre-processing-pipeline.md).
+For the pre-processing pipeline infrastructure, see the [pre-processing pipeline design](../agent/pre-processing-pipeline.md).
 
 ## Problem Context
 
-Conversations are enriched when the agent knows about past interactions, user facts, and preferences. The memory context provider searches stored memories and returns relevant pointers so the main agent can reference them naturally. This is the retrieval counterpart to memory extraction — extraction stores memories after conversations, retrieval injects them before.
+Conversations are enriched when the agent knows about past interactions, user facts, and preferences. The memory context provider searches stored memories and returns relevant content so the main agent can reference them naturally. This is the retrieval counterpart to memory extraction — extraction stores memories after conversations, retrieval injects them before.
 
 **Constraints:**
 - Memory retrieval uses the existing file-based memory storage (episodic, facts, preferences)
-- The provider must be domain-agnostic from the pipeline's perspective — it implements the `ContextProvider` ABC
+- The provider must be domain-agnostic from the pipeline's perspective — it implements the `MessageContextProvider` ABC
 - Provider failures must never block the conversation
 - The workspace directory (`cwd`) is the root from which the agent navigates to discover the memory directory structure
+- The SDK session ID is only available after the first response completes — the first message always operates without conversation context
 
 **Interactions:**
-- Pre-processing pipeline (`pre-processing-pipeline`): memory provider registers as a context provider
+- Per-message pre-processing pipeline (`per-message-pre-processing`): memory provider registers as a `MessageContextProvider`
+- Coordinator (`core-architecture`): triggers the per-message pipeline on every message, passes SDK session ID through
 - Memory extraction (`memory-extraction`): provides the stored memories that this provider searches
-- Coordinator (`core-architecture`): triggers the pipeline on first message of new session
 
 ## Design Overview
 
-A `MemoryContextProvider` implements the `ContextProvider` ABC and uses a standalone `query()` call with an Opus agent to search stored memories.
+A `MemoryContextProvider` implements the `MessageContextProvider` ABC and uses a `query()` call with an Opus agent to search stored memories. On subsequent messages (when an SDK session ID is available), the provider forks the session to give the search agent full conversation context for informed relevance decisions — adapting DES-004's fork pattern for pre-processing. On the first message (no session ID yet), it falls back to a standalone query following DES-007.
+
+The agent returns relevant memory file paths in XML `<memory>` elements. For facts/preferences, it returns self-closing tags and the provider reads the full file. For episodic files (which can be very large), the agent extracts the relevant snippet inline and the provider uses it directly with a `[Source: path]` reference. The provider filters out paths already present in `existing_entries` (via `memory_path` metadata), and returns one `ContextResult` per new memory.
 
 ```
 ┌──────────────────────────────────────────────────────────────────┐
 │                    MemoryContextProvider                          │
-│                    (src/tachikoma/memory/context_provider.py)     │
+│                    (MessageContextProvider)                       │
 │                                                                  │
-│  provide(message):                                               │
-│    query(prompt, options=ClaudeAgentOptions(                     │
-│      model="opus", effort="low",                                │
-│      allowed_tools=["Read", "Glob", "Grep"],                    │
-│      max_turns=8, cwd=workspace_path,                           │
-│      permission_mode="bypassPermissions"                         │
-│    ))                                                            │
-│    → ContextResult(tag="memories", content=...)  or None         │
+│  provide(message, existing_entries, sdk_session_id):             │
+│    1. Extract loaded memory paths from existing_entries metadata │
+│    2. Build search prompt with user message                      │
+│    3. If sdk_session_id → query(fork_session=True, resume=id)   │
+│       Else → query(standalone, no fork)                         │
+│    4. Parse XML <memory> elements from agent response            │
+│    5. Validate paths are within memories/                        │
+│    6. Filter out already-loaded paths                            │
+│    7. For snippets: use snippet + [Source: path] header          │
+│       For self-closing: read full file from disk                 │
+│    → list[ContextResult]  or  None                              │
 └──────────────────────────────────────────────────────────────────┘
 ```
-
-The provider builds a search prompt embedding the user's message, runs the agent, and extracts the result from `ResultMessage`. If the agent finds relevant memories, it returns a `ContextResult`; if not (or on error), it returns `None`.
 
 ## Components
 
@@ -54,162 +58,210 @@ The provider builds a search prompt embedding the user's message, runs the agent
 
 | Layer/Component | Responsibility | Key Decisions |
 |-----------------|----------------|---------------|
-| `src/tachikoma/memory/context_provider.py` | `MemoryContextProvider(ContextProvider)` — uses standalone `query()` with Opus agent and search tools to find relevant memories. Accepts `cli_path` parameter. `MEMORY_SEARCH_PROMPT` constant co-located with provider. Extracts result from `ResultMessage`. Fully consumes the query() generator (DES-005). | Opus with `effort="low"` for better relevance assessment at controlled cost; `max_turns=8` as safety net; prompt uses Glob→Grep→Read narrowing strategy; `cwd` is workspace root so agent can navigate to discover memory structure |
+| `src/tachikoma/memory/context_provider.py` | `MemoryContextProvider(MessageContextProvider)` — forks session when SDK session ID available, parses XML `<memory>` elements from agent response, handles snippets (episodic) vs full-file reads (facts/preferences), creates per-file `ContextResult` entries with metadata. `ParsedMemoryEntry` dataclass and `parse_memory_entries()` function for XML parsing. Constants: `MEMORIES_OWNER`, `MEMORY_PATH_META_KEY`, `_NO_RELEVANT_MEMORIES`. Helper: `extract_memory_paths()`. `MEMORY_SEARCH_PROMPT` constant co-located with provider. | Agent returns XML elements with optional snippet content; self-closing = full file load, open/close = snippet extraction; uses `memory_path` metadata key per ADR-011; single adaptive prompt handles both forked and standalone modes |
 
 ### Cross-Layer Contracts
 
 ```mermaid
 sequenceDiagram
-    participant Pipeline as PreProcessingPipeline
-    participant Provider as MemoryContextProvider
+    participant Coordinator
+    participant Pipeline as MessagePreProcessingPipeline
+    participant Memory as MemoryContextProvider
     participant SDK as query()
     participant FS as Memory Files
 
-    Pipeline->>Provider: provide(message)
-    Provider->>Provider: build search prompt
-    Provider->>SDK: query(prompt, options)
+    Coordinator->>Pipeline: run(message, existing_entries, sdk_session_id)
+    Pipeline->>Memory: provide(message, existing_entries, sdk_session_id)
+    Memory->>Memory: extract loaded paths from existing_entries
+    Memory->>Memory: build search prompt
+    alt sdk_session_id available (subsequent message)
+        Memory->>SDK: query(prompt, resume=id, fork_session=True)
+    else first message (no session ID)
+        Memory->>SDK: query(prompt, standalone)
+    end
     SDK->>FS: agent searches memories/
-    SDK-->>Provider: ResultMessage
-    Provider-->>Pipeline: ContextResult or None
+    SDK-->>Memory: ResultMessage (file paths)
+    Memory->>Memory: validate paths, filter duplicates
+    Memory->>FS: read each new file
+    Memory-->>Pipeline: list[ContextResult] or None
+    Pipeline-->>Coordinator: list[ContextResult]
 ```
 
 **Integration Points:**
-- Provider ↔ Pipeline: registers via `pipeline.register(provider)`; `provide(message)` called in parallel during pipeline `run()`
-- Provider ↔ SDK: standalone `query()` call (independent of coordinator's `ClaudeSDKClient`)
-- Agent ↔ Workspace: agent searches `memories/episodic/`, `memories/facts/`, `memories/preferences/` via Read/Glob/Grep tools
+- Coordinator ↔ Pipeline: `msg_pre_pipeline.run(message, existing_entries=entries, sdk_session_id=self._sdk_session_id)`
+- Pipeline ↔ Providers: `provide(message, existing_entries=entries, sdk_session_id=sdk_session_id)` — passed through to all providers
+- Memory provider ↔ SDK: `query(prompt, resume=id, fork_session=True, ...)` for subsequent messages; standalone `query()` for first message
+- Memory provider ↔ Filesystem: `Path.read_text()` to read memory files after agent identifies relevant paths
 
 **Error contract:**
-- If agent query fails or raises an exception, provider catches it, logs per DES-002, and returns None
-- If agent returns an error result (`ResultMessage.is_error`), provider logs warning and returns None
-- If agent exhausts max_turns without producing a result, provider returns None
+- If `query()` fails (SDK error, fork failure, expired session) → catch, log per DES-002, return None
+- If agent returns error (`ResultMessage.is_error`) → log warning, return None
+- If agent exhausts `max_turns` → return None
+- If file read fails (FileNotFoundError) → skip that file, log warning, continue with remaining files
+
+### Shared Logic
+
+- **`MEMORY_PATH_META_KEY = "memory_path"`** — constant for metadata key, used for both writing metadata on new entries and reading metadata from existing entries (deduplication)
+- **`MEMORIES_OWNER = "memories"`** — constant for the entry owner tag
+- **`extract_memory_paths(entries)`** — helper function extracting loaded memory paths from `existing_entries` metadata. Filters by `entry.owner == MEMORIES_OWNER` and reads `metadata["memory_path"]`. Mirrors `extract_skill_names()` in the skills provider.
 
 ## Modeling
 
 ```
-MemoryContextProvider(ContextProvider)
-├── _cwd: Path           (workspace directory — agent navigates from here to discover memories/)
-├── _cli_path: str | None  (optional Claude CLI binary path)
-└── provide(message: str) → ContextResult | None
+MemoryContextProvider(MessageContextProvider)
+├── _agent_defaults: AgentDefaults     (cwd, cli_path, env, model)
+└── provide(message, existing_entries, sdk_session_id) → list[ContextResult] | None
 
-MEMORY_SEARCH_PROMPT: str  (module-level constant, embeds {message} placeholder)
+MEMORY_SEARCH_PROMPT: str              (module-level constant, embeds {message})
+MEMORIES_OWNER: str = "memories"
+MEMORY_PATH_META_KEY: str = "memory_path"
+
+extract_memory_paths(entries: list[SessionContextEntry]) → set[str]
+└── Filters by owner == MEMORIES_OWNER, reads metadata[MEMORY_PATH_META_KEY]
 ```
-
-For the `PreProcessingPipeline`, `ContextProvider` ABC, and `ContextResult` models, see the [pipeline design](../agent/pre-processing-pipeline.md).
 
 ## Data Flow
 
-### Memory provider flow
+### Memory provider flow (per message)
 
 ```
-1. provider.provide(message) is called
-2. Builds search prompt by embedding user message into MEMORY_SEARCH_PROMPT
-3. Creates ClaudeAgentOptions(model="opus", effort="low", max_turns=8,
-   allowed_tools=["Read", "Glob", "Grep"],
-   permission_mode="bypassPermissions", cwd=self._cwd, cli_path=self._cli_path)
-4. Calls query(prompt=prompt, options=options)
-5. Async iterates over the returned generator:
+1. provider.provide(message, existing_entries, sdk_session_id) is called
+2. Extract loaded memory paths: extract_memory_paths(existing_entries)
+3. Build search prompt by embedding user message into MEMORY_SEARCH_PROMPT
+4. Branch on sdk_session_id:
+   a. If available → ClaudeAgentOptions(resume=sdk_session_id, fork_session=True,
+      model=agent_defaults.model, effort="low", max_turns=8,
+      allowed_tools=["Read", "Glob", "Grep"],
+      permission_mode="bypassPermissions", cwd=agent_defaults.cwd)
+   b. If None → ClaudeAgentOptions(model=agent_defaults.model, effort="low",
+      max_turns=8, allowed_tools=["Read", "Glob", "Grep"],
+      permission_mode="bypassPermissions", cwd=agent_defaults.cwd)
+5. Call query(prompt=prompt, options=options)
+6. Fully consume the query() generator per DES-007 (which requires DES-005):
    - On ResultMessage:
-     a. If is_error → log warning, return None
-     b. If result contains "NO_RELEVANT_MEMORIES" sentinel → return None
-     c. If result has content → return ContextResult(tag="memories", content=result)
-6. If loop completes without a valid result → return None
-7. If any exception → catch, log per DES-002, return None
+     a. If is_error → log warning
+     b. If result == "NO_RELEVANT_MEMORIES" → no paths
+     c. If result has content → parse XML <memory> elements via parse_memory_entries()
+7. Validate paths: resolve each against workspace root, reject any outside memories/
+8. Filter out paths already in loaded_paths set
+9. For each new entry:
+   a. If snippet provided → use snippet with [Source: path] header
+   b. If self-closing (no snippet) → read full file via Path.read_text()
+   c. Create ContextResult(tag="memories", content=content,
+      metadata={"memory_path": path})
+10. Return list of ContextResults, or None if empty
+11. If any exception → catch, log per DES-002, return None
 ```
 
 ## Key Decisions
 
-### Opus with low effort for memory search
+### Session forking for conversation context
 
-**Choice**: Use `model="opus"` with `effort="low"` for the memory search agent.
-**Why**: Opus provides better reasoning for assessing memory relevance — distinguishing between superficially related and genuinely relevant memories requires judgment that benefits from a stronger model. The `effort="low"` setting keeps cost and latency reasonable.
-
-**Consequences**:
-- Pro: Better relevance assessment — fewer irrelevant memories injected, fewer relevant ones missed
-- Pro: `effort="low"` controls cost and latency
-- Con: Higher per-call cost than lighter models, even with low effort
-
-### Read/Glob/Grep only (no Agent tool)
-
-**Choice**: Give the memory search agent only `["Read", "Glob", "Grep"]` tools.
-**Why**: The Agent tool would add a full additional agent invocation (~2× cost, significant latency) with no retrieval benefit. Read, Glob, and Grep are the actual search tools needed. Consistent with existing standalone agent pattern (git processor).
+**Choice**: Fork the coordinator's SDK session (`fork_session=True` + `resume=sdk_session_id`) when available so the search agent has full conversation context. This is the first pre-processing provider to use the fork pattern previously established for post-processing (DES-004), adapting it for conversation-context-aware retrieval rather than file modification.
+**Why**: Without conversation context, the search agent can only evaluate relevance based on the single message. With context, it can determine whether the latest message introduces new topics or continues existing ones, enabling the agent-driven search decision.
 
 **Consequences**:
-- Pro: Lower cost and latency
-- Pro: Simpler execution — no recursive agent spawning
-- Pro: Consistent with existing standalone agent pattern
+- Pro: Informed relevance assessment on follow-up messages
+- Pro: Agent can decide "already covered" and skip unnecessary search
+- Con: Fork overhead on each message (acceptable — fork is lightweight and `effort="low"`)
 
-### Free-form markdown output (not structured JSON)
+### XML output format with snippet extraction for episodic memories
 
-**Choice**: Memory provider returns free-form markdown text, not structured JSON.
-**Why**: The consumer is the main coordinator agent (an LLM), not parsing code. Consistent with existing `<soul>`, `<user>`, `<agents>` convention where context blocks contain markdown inside XML tags. Structured output adds retry overhead if the agent produces invalid JSON.
-
-**Consequences**:
-- Pro: Consistent with existing context block convention
-- Pro: No parsing/validation overhead
-- Con: Content is opaque to code — can't programmatically inspect which memories were retrieved
-
-### NO_RELEVANT_MEMORIES sentinel
-
-**Choice**: The agent prompt instructs returning exactly `NO_RELEVANT_MEMORIES` when no relevant memories are found.
-**Why**: Allows the provider to distinguish "searched and found nothing" from "agent error" — the former returns None cleanly, the latter is caught as an exception.
+**Choice**: The memory search agent returns XML `<memory>` elements. Self-closing tags (`<memory path="..." />`) signal full-file load (facts/preferences). Open/close tags with body content (`<memory path="...">snippet</memory>`) carry agent-extracted snippets (episodic). The provider uses `parse_memory_entries()` to parse both forms.
+**Why**: Episodic memory files can grow very large (20-34KB each), and loading their full content into the system prompt CLI argument caused `[Errno 7] Argument list too long` (ARG_MAX overflow). The agent already reads files to assess relevance, so extracting the relevant snippet is natural. Facts and preferences files remain small and topically focused, so full-file loading is appropriate for them.
 
 **Consequences**:
-- Pro: Clean distinction between "no results" and "error"
-- Pro: Provider can log differently for each case
+- Pro: Episodic memory contribution to system prompt reduced from ~92KB to ~5-15KB (6-18x reduction)
+- Pro: Eliminates ARG_MAX overflow from memory context
+- Pro: Agent provides only the relevant information, improving main agent context quality
+- Pro: `[Source: path]` header allows the main agent to read more if the snippet is insufficient
+- Con: Agent must produce well-formed XML (mitigated by graceful parsing with fallback)
+- Con: Snippet quality depends on the agent's extraction judgment
 
-### Workspace root as cwd
+### Single adaptive prompt
 
-**Choice**: `MemoryContextProvider.__init__` takes `cwd: Path` pointing to the workspace root, not the specific `memories/` subdirectory.
-**Why**: The Opus agent navigates from the workspace root, which allows it to discover the memory directory structure via Glob. This is consistent with how other agents (memory extraction processors, git processor) receive the workspace path.
-
-**Consequences**:
-- Pro: Consistent with existing agent patterns
-- Pro: Agent can discover directory structure naturally
-
-### No per-provider timeout
-
-**Choice**: Do not add `asyncio.wait_for()` timeouts around the provider.
-**Why**: The `max_turns=8` limit on the Opus agent already bounds execution. Adding explicit timeouts introduces complexity without clear benefit when `max_turns` is set.
+**Choice**: One prompt template handles both forked (with conversation context) and standalone (first message) modes.
+**Why**: When forked, the agent sees the full conversation transcript. When standalone, there's no prior transcript. A single prompt with conditional guidance handles both cases.
 
 **Consequences**:
-- Pro: Simpler implementation
-- Pro: `max_turns` provides an equivalent bound
+- Pro: Single prompt to maintain
+- Pro: Graceful degradation — same behavior whether context is present or not
+
+### memory_path metadata key
+
+**Choice**: Use `{"memory_path": "<relative-path>"}` as the metadata on each memory `ContextResult`, following ADR-011.
+**Why**: Mirrors `{"skill_name": "name"}` from the skills provider. Enables deduplication by matching metadata in `existing_entries`.
+
+**Consequences**:
+- Pro: Consistent with ADR-011 and skills provider pattern
+- Pro: Stable identifier for exact deduplication
+
+### Path validation for agent-returned file paths
+
+**Choice**: Resolve each returned path against the workspace root and reject any path not within `memories/`.
+**Why**: The agent could return arbitrary paths. Without validation, the provider would read and inject arbitrary file content into the main agent's context.
+
+**Consequences**:
+- Pro: Prevents content injection from outside the memory directory
+- Pro: Consistent with skills provider's validation pattern
+
+### Preserved model and tool configuration
+
+**Choice**: Keep `model=agent_defaults.model`, `effort="low"`, `max_turns=8`, `allowed_tools=["Read", "Glob", "Grep"]`, `permission_mode="bypassPermissions"` from the previous implementation.
+**Why**: These settings are well-tuned for the memory search use case. The addition of `fork_session` doesn't change tool needs or reasoning requirements.
+
+**Consequences**:
+- Pro: No regression in search quality
+- Pro: No additional cost beyond fork overhead
 
 ## System Behavior
 
-### Scenario: Relevant memories exist
+### Scenario: First message of session (no SDK session ID)
 
-**Given**: Memories are stored in `memories/` directories
-**When**: The user sends a message related to stored memories
-**Then**: The memory provider searches memories, finds relevant files, returns a ranked list as `ContextResult(tag="memories", content=...)`. The pipeline assembles it into `<memories>...</memories>` XML.
+**Given**: A new session with no SDK session ID yet
+**When**: The memory provider runs on the first message
+**Then**: Provider calls `query()` without fork/resume (standalone). Agent searches memories based on the message alone. Provider reads relevant files, creates per-file entries.
 
-### Scenario: No relevant memories
+### Scenario: Follow-up message introduces new topic
 
-**Given**: Memories exist but none are relevant to the current message
-**When**: The memory provider runs
-**Then**: The agent searches but finds no relevant files. It responds with `NO_RELEVANT_MEMORIES`. The provider returns None.
+**Given**: A session with an existing SDK session ID, memory entries already loaded for the initial topic
+**When**: A subsequent message introduces a new topic
+**Then**: Provider forks the session. Agent sees conversation context, searches memories, returns relevant file paths. Provider filters out already-loaded paths, reads new files, returns new entries.
 
-### Scenario: Empty memories directory
+### Scenario: Follow-up message continues same topic
 
-**Given**: No memory files exist yet (new installation)
-**When**: The memory provider runs
-**Then**: The agent's Glob finds no files. It returns `NO_RELEVANT_MEMORIES`. The provider returns None, no error.
+**Given**: A session with conversation context, relevant memories already loaded
+**When**: A follow-up message continues the same topic
+**Then**: Provider forks the session. Agent sees context, determines no new memories needed, returns `NO_RELEVANT_MEMORIES`. Provider returns None.
 
-### Scenario: Memory provider fails
+### Scenario: Memory already loaded (deduplication)
 
-**Given**: The memory provider raises an exception (e.g., SDK connection error)
-**When**: The pipeline runs the provider
-**Then**: The exception is caught and logged. The message proceeds unmodified. Other providers (if any) complete normally.
+**Given**: Memory file already in `existing_entries` (metadata `{"memory_path": "..."}`)
+**When**: Agent returns that path as relevant
+**Then**: Provider filters it out during deduplication.
+
+### Scenario: Fork failure
+
+**Given**: The SDK session has expired or become invalid
+**When**: The provider attempts to fork
+**Then**: `query()` raises an exception. Provider catches it, logs, returns None. Conversation proceeds unaffected.
 
 ### Scenario: Agent exhausts max_turns
 
 **Given**: The memory search agent uses all 8 turns without producing a ResultMessage
 **When**: The async iterator completes
-**Then**: The provider returns None. The message proceeds unmodified.
+**Then**: Provider returns None.
+
+### Scenario: Memory file deleted between search and read
+
+**Given**: Agent identifies a relevant file
+**When**: Provider attempts to read it but it has been deleted
+**Then**: Provider logs warning, skips that file, continues with remaining files.
 
 ## Notes
 
-- The memory search agent's prompt strategy: Glob to discover → Grep to narrow → Read to verify → return ranked list.
-- The `max_turns=8` limit is generous for a typical search flow (1 Glob + 1-2 Grep + 1-3 Read + 1 response = 4-7 turns).
-- The provider fully consumes the `query()` generator (no early `return` or `break` inside `async for`). This follows DES-005 — preventing orphaned SDK resources from busy-looping the event loop.
-- DLT-009 (embedding-based semantic search) could replace or augment the agent-based search in the future. The `ContextProvider` ABC means the memory provider can be swapped without touching the pipeline.
+- The forked session's new ID is not stored — it's a throwaway branch for the search agent's context. The coordinator's main session is never modified by the fork.
+- On first message, the provider behavior is functionally equivalent to the previous implementation but produces per-file entries instead of a single markdown block.
+- The `extract_memory_paths()` helper mirrors `extract_skill_names()` in the skills provider — both read metadata from `existing_entries` for deduplication.
+- DLT-009 (embedding-based semantic search) could replace or augment the agent-based search. The `MessageContextProvider` ABC means the memory provider can be swapped without touching the pipeline.
+- The coordinator uses `FilePromptTransport` (`src/tachikoma/sdk_transport.py`) — a `SubprocessCLITransport` subclass that writes the system prompt to a tempfile and passes `--append-system-prompt-file` instead of `--append-system-prompt`. This eliminates the ARG_MAX constraint entirely as a defensive measure complementing snippet extraction. The transport imports the SDK's internal `SubprocessCLITransport` (pinned to SDK v0.1.48); verify compatibility on SDK upgrades.

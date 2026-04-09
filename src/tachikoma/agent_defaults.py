@@ -28,14 +28,23 @@ class AgentDefaults:
     model: str = "opus"
 
 
-def merge_env(config_env: dict[str, str]) -> dict[str, str]:
-    """Merge user-provided env with hardcoded defaults, rejecting collisions.
+def merge_env(
+    config_env: dict[str, str],
+    *,
+    auto_injected: dict[str, str] | None = None,
+) -> dict[str, str]:
+    """Merge user-provided env with auto-injected and hardcoded defaults.
+
+    Layering order (highest priority wins): hardcoded > config_env > auto_injected.
+    Auto-injected defaults are silently overridable by the user via config_env.
+    Hardcoded defaults reject collisions with config_env (startup error).
 
     Args:
         config_env: Environment variables from the ``[agent.env]`` config section.
+        auto_injected: Overridable defaults injected from runtime config (e.g. TZ).
 
     Returns:
-        Merged dict with hardcoded defaults and config values.
+        Merged dict with all layers applied.
 
     Raises:
         ValueError: If config_env contains keys that collide with hardcoded defaults.
@@ -46,4 +55,4 @@ def merge_env(config_env: dict[str, str]) -> dict[str, str]:
         keys = ", ".join(sorted(collisions))
         raise ValueError(f"[agent.env] contains reserved keys: {keys}")
 
-    return {**HARDCODED_ENV, **config_env}
+    return {**(auto_injected or {}), **config_env, **HARDCODED_ENV}

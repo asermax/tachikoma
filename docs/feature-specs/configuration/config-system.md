@@ -101,6 +101,7 @@ The `[tasks]` section configures task scheduler parameters. Unlike `[telegram]`,
 - Given a config file with no `[tasks]` section, when loaded, then `settings.tasks` is populated with default values: `idle_window=300`, `check_interval=300`, `max_iterations=10`, `max_concurrent_background=3`, `timezone` auto-detects the system's IANA timezone key (e.g. `America/Buenos_Aires`) when not explicitly configured
 - Given a config file with a `[tasks]` section specifying custom values, when loaded, then those values override the defaults
 - Given a config file with `tasks.timezone` set to an invalid value (e.g. `"Fake/Timezone"`), when the application starts, then it exits with a clear validation error
+- Given the configured timezone value, when the agent environment is constructed, then `TZ` is set to that value in the subprocess environment (auto-injected as overridable default; see core-architecture R8)
 
 ### CLI Override (R8)
 

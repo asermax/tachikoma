@@ -29,7 +29,6 @@ from tachikoma.notifications import (
 from tachikoma.per_message_pre_processing import MessagePreProcessingPipeline
 from tachikoma.post_processing import PRE_FINALIZE_PHASE, PostProcessingPipeline
 from tachikoma.pre_processing import (
-    ContextResult,
     McpServerConfig,
     PreProcessingPipeline,
     assemble_context,
@@ -280,8 +279,7 @@ class BackgroundTaskExecutor:
             tz = get_timezone(self._settings)
             now = datetime.now(tz)
             datetime_line = (
-                f"Current date and time: "
-                f"{now.strftime('%A, %B %d, %Y at %H:%M:%S')} {tz.key}\n"
+                f"Current date and time: {now.strftime('%A, %B %d, %Y at %H:%M:%S')} {tz.key}\n"
             )
             system_prompt_text = datetime_line + "\n" + BACKGROUND_TASK_SYSTEM_PROMPT
 
@@ -414,20 +412,21 @@ class BackgroundTaskExecutor:
         """
         try:
             pipeline = PreProcessingPipeline()
-            pipeline.register(MemoryContextProvider(self._agent_defaults))
             pipeline.register(ProjectsContextProvider(workspace_path=self._cwd))
 
             results = await pipeline.run(prompt)
 
-            skill_results: list[ContextResult] = []
+            msg_pipeline = MessagePreProcessingPipeline()
+            msg_pipeline.register(MemoryContextProvider(self._agent_defaults))
+
             if self._skill_registry is not None:
-                skill_pipeline = MessagePreProcessingPipeline()
-                skill_pipeline.register(
+                msg_pipeline.register(
                     SkillsContextProvider(self._agent_defaults, self._skill_registry)
                 )
-                skill_results = await skill_pipeline.run(prompt)
 
-            all_results = (results or []) + skill_results
+            per_message_results = await msg_pipeline.run(prompt)
+
+            all_results = (results or []) + per_message_results
 
             if not all_results:
                 return _PreprocessingResult(prompt=prompt)

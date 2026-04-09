@@ -172,35 +172,35 @@ class TestRendering:
 class TestReplControlFlow:
     async def test_exits_on_eof(self, tmp_path: Path, mocker) -> None:
         coordinator = MagicMock()
-        repl = Repl(coordinator, history_path=tmp_path / "repl_history")
+        repl = Repl(history_path=tmp_path / "repl_history")
 
         mocker.patch.object(repl._session, "prompt_async", side_effect=EOFError)
 
-        await repl.run()
+        await repl.run(coordinator)
 
     async def test_exits_on_keyboard_interrupt_at_prompt(self, tmp_path: Path, mocker) -> None:
         coordinator = MagicMock()
-        repl = Repl(coordinator, history_path=tmp_path / "repl_history")
+        repl = Repl(history_path=tmp_path / "repl_history")
 
         mocker.patch.object(repl._session, "prompt_async", side_effect=KeyboardInterrupt)
 
-        await repl.run()
+        await repl.run(coordinator)
 
     async def test_exits_on_exit_command(self, tmp_path: Path, mocker) -> None:
         coordinator = MagicMock()
-        repl = Repl(coordinator, history_path=tmp_path / "repl_history")
+        repl = Repl(history_path=tmp_path / "repl_history")
 
         mocker.patch.object(repl._session, "prompt_async", side_effect=["exit"])
 
-        await repl.run()
+        await repl.run(coordinator)
 
     async def test_exits_on_quit_command(self, tmp_path: Path, mocker) -> None:
         coordinator = MagicMock()
-        repl = Repl(coordinator, history_path=tmp_path / "repl_history")
+        repl = Repl(history_path=tmp_path / "repl_history")
 
         mocker.patch.object(repl._session, "prompt_async", side_effect=["quit"])
 
-        await repl.run()
+        await repl.run(coordinator)
 
     async def test_interrupts_and_exits_on_ctrl_c_during_stream(
         self,
@@ -216,10 +216,10 @@ class TestReplControlFlow:
 
         coordinator.send_message = MagicMock(side_effect=_raise_on_iter)
 
-        repl = Repl(coordinator, history_path=tmp_path / "repl_history")
+        repl = Repl(history_path=tmp_path / "repl_history")
         mocker.patch.object(repl._session, "prompt_async", side_effect=["hello", EOFError])
 
-        await repl.run()
+        await repl.run(coordinator)
 
         coordinator.interrupt.assert_awaited_once()
 
@@ -231,10 +231,10 @@ class TestReplControlFlow:
 
         coordinator.send_message = MagicMock(side_effect=_fatal_stream)
 
-        repl = Repl(coordinator, history_path=tmp_path / "repl_history")
+        repl = Repl(history_path=tmp_path / "repl_history")
         mocker.patch.object(repl._session, "prompt_async", side_effect=["hello", EOFError])
 
-        await repl.run()
+        await repl.run(coordinator)
 
     async def test_continues_on_recoverable_error(self, tmp_path: Path, mocker) -> None:
         coordinator = MagicMock()
@@ -252,14 +252,14 @@ class TestReplControlFlow:
 
         coordinator.send_message = MagicMock(side_effect=_stream)
 
-        repl = Repl(coordinator, history_path=tmp_path / "repl_history")
+        repl = Repl(history_path=tmp_path / "repl_history")
         mocker.patch.object(
             repl._session,
             "prompt_async",
             side_effect=["first", "second", EOFError],
         )
 
-        await repl.run()
+        await repl.run(coordinator)
 
         assert call_count == 2
 
@@ -274,14 +274,14 @@ class TestReplMultilineInput:
 
         coordinator.send_message = MagicMock(side_effect=_stream)
 
-        repl = Repl(coordinator, history_path=tmp_path / "repl_history")
+        repl = Repl(history_path=tmp_path / "repl_history")
         mocker.patch.object(
             repl._session,
             "prompt_async",
             side_effect=["line1\nline2\nline3", EOFError],
         )
 
-        await repl.run()
+        await repl.run(coordinator)
 
         coordinator.enqueue.assert_called_once_with("line1\nline2\nline3")
 

@@ -113,7 +113,8 @@ class TestSkillsContextProvider:
         options = call_kwargs[1]["options"]
 
         assert options.effort == "low"
-        assert options.max_turns == 3
+        assert options.tools == []
+        assert options.max_turns == 10
         assert options.cwd == tmp_path
 
     async def test_returns_context_result_with_skills_tag(
@@ -351,7 +352,10 @@ class TestSkillsContextProvider:
         # Pass existing entries indicating skill-a is already loaded
         existing = [
             SessionContextEntry(
-                id=1, session_id="s1", owner="skills", content="...",
+                id=1,
+                session_id="s1",
+                owner="skills",
+                content="...",
                 metadata={"skill_name": "skill-a"},
             ),
         ]
@@ -384,7 +388,10 @@ class TestSkillsContextProvider:
         # Pass existing entries indicating the only skill is loaded
         existing = [
             SessionContextEntry(
-                id=1, session_id="s1", owner="skills", content="...",
+                id=1,
+                session_id="s1",
+                owner="skills",
+                content="...",
                 metadata={"skill_name": "only-skill"},
             ),
         ]

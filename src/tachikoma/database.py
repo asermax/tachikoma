@@ -87,6 +87,7 @@ class Database:
 
         import tachikoma.sessions.model  # noqa: F401, PLC0415
         import tachikoma.tasks.model  # noqa: F401, PLC0415
+        import tachikoma.workflows.model  # noqa: F401, PLC0415
 
         async with self._engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)

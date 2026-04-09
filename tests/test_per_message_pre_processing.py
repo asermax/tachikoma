@@ -95,6 +95,7 @@ class TestDeriveAgentsFromEntries:
             return agents_map.get(name, {})
 
         registry.get_agents_for_skill = get_agents_for_skill
+        registry.skills = {name: MagicMock() for name in agents_map}
         return registry
 
     def test_empty_entries_returns_empty_dict(self) -> None:
@@ -106,9 +107,11 @@ class TestDeriveAgentsFromEntries:
         """AC: Agents derived from skill names in entries + registry lookup."""
         agent_def = AgentDefinition(description="Test", prompt="prompt")
 
-        registry = self._make_mock_registry({
-            "skill-a": {"skill-a/agent1": agent_def},
-        })
+        registry = self._make_mock_registry(
+            {
+                "skill-a": {"skill-a/agent1": agent_def},
+            }
+        )
 
         entries = [_make_entry(metadata={"skill_name": "skill-a"})]
         result = derive_agents_from_entries(entries, registry)
@@ -130,10 +133,12 @@ class TestDeriveAgentsFromEntries:
         agent_a = AgentDefinition(description="A", prompt="a")
         agent_b = AgentDefinition(description="B", prompt="b")
 
-        registry = self._make_mock_registry({
-            "skill-a": {"skill-a/agent1": agent_a},
-            "skill-b": {"skill-b/agent2": agent_b},
-        })
+        registry = self._make_mock_registry(
+            {
+                "skill-a": {"skill-a/agent1": agent_a},
+                "skill-b": {"skill-b/agent2": agent_b},
+            }
+        )
 
         entries = [
             _make_entry(metadata={"skill_name": "skill-a"}),
@@ -182,7 +187,9 @@ class TestMessagePreProcessingPipeline:
 
         await pipeline.run("hello", existing_entries=entries)
 
-        provider.provide.assert_called_once_with("hello", existing_entries=entries)
+        provider.provide.assert_called_once_with(
+            "hello", existing_entries=entries, sdk_session_id=None,
+        )
 
     async def test_parallel_execution(self) -> None:
         """AC: Multiple providers run in parallel and results are flattened."""
@@ -248,4 +255,33 @@ class TestMessagePreProcessingPipeline:
 
         await pipeline.run("hello")
 
-        provider.provide.assert_called_once_with("hello", existing_entries=[])
+        provider.provide.assert_called_once_with(
+            "hello", existing_entries=[], sdk_session_id=None,
+        )
+
+    async def test_passes_sdk_session_id_to_provider(self) -> None:
+        """AC: sdk_session_id is passed through to providers."""
+        provider = AsyncMock(spec=MessageContextProvider)
+        provider.provide.return_value = None
+
+        pipeline = MessagePreProcessingPipeline()
+        pipeline.register(provider)
+
+        await pipeline.run("hello", sdk_session_id="test-session-123")
+
+        provider.provide.assert_called_once_with(
+            "hello", existing_entries=[], sdk_session_id="test-session-123",
+        )
+
+    async def test_default_sdk_session_id_is_none(self) -> None:
+        """AC: When sdk_session_id not passed, provider gets None."""
+        provider = AsyncMock(spec=MessageContextProvider)
+        provider.provide.return_value = None
+
+        pipeline = MessagePreProcessingPipeline()
+        pipeline.register(provider)
+
+        await pipeline.run("hello")
+
+        _, kwargs = provider.provide.call_args
+        assert kwargs["sdk_session_id"] is None

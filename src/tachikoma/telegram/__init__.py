@@ -14,7 +14,8 @@ import time
 import tty
 from collections.abc import Awaitable, Callable
 from os.path import basename
-from typing import Any
+from pathlib import Path
+from typing import TYPE_CHECKING, Any
 
 from aiogram import Bot, Dispatcher, F, Router
 from aiogram.dispatcher.dispatcher import BackoffConfig
@@ -22,13 +23,14 @@ from aiogram.exceptions import TelegramAPIError, TelegramBadRequest, TelegramRet
 from aiogram.types import Message
 from aiogram.utils.chat_action import ChatActionSender
 from bubus import EventBus
+from claude_agent_sdk.types import McpSdkServerConfig
 from loguru import logger
 from telegramify_markdown import convert, split_entities, utf16_len
 
 from tachikoma.adapter import sanitize_text
 from tachikoma.bootstrap import BootstrapContext, BootstrapError
+from tachikoma.channel import Channel
 from tachikoma.config import TelegramSettings
-from tachikoma.coordinator import Coordinator
 from tachikoma.display import _format_bash_summary, format_tool_name, summarize_tool_activity
 from tachikoma.events import Error, Result, Status, TextChunk, ToolActivity
 from tachikoma.media import (
@@ -41,6 +43,10 @@ from tachikoma.media import (
 )
 from tachikoma.notifications import Notification
 from tachikoma.tasks.events import SessionTaskReady
+from tachikoma.telegram.tools import create_send_file_server
+
+if TYPE_CHECKING:
+    from tachikoma.coordinator import Coordinator
 
 _log = logger.bind(component="telegram")
 
@@ -95,9 +101,7 @@ TELEGRAM_TOOL_SUMMARY: dict[str, Callable[[dict[str, Any]], str]] = {
         else "searching for a pattern"
     ),
     "Glob": lambda inp: (
-        f"globbing {code_wrap(inp['pattern'])}"
-        if "pattern" in inp
-        else "globbing a pattern"
+        f"globbing {code_wrap(inp['pattern'])}" if "pattern" in inp else "globbing a pattern"
     ),
     "Bash": lambda inp: _format_bash_summary(inp),
     "Edit": lambda inp: (
@@ -182,7 +186,8 @@ class ResponseRenderer:
 
             prefix = "\n" if self._buffer else ""
             summary = summarize_tool_activity(
-                self._tool_activities, summary_map=TELEGRAM_TOOL_SUMMARY,
+                self._tool_activities,
+                summary_map=TELEGRAM_TOOL_SUMMARY,
             )
             self._buffer += f"{prefix}*🔧 {summary}*\n\n"
             self._tool_activities = []  # Clear — each transition gets independent summary
@@ -232,7 +237,8 @@ class ResponseRenderer:
 
             prefix = "\n" if self._buffer else ""
             summary = summarize_tool_activity(
-                self._tool_activities, summary_map=TELEGRAM_TOOL_SUMMARY,
+                self._tool_activities,
+                summary_map=TELEGRAM_TOOL_SUMMARY,
             )
             self._buffer += f"{prefix}*🔧 {summary}*\n"
             self._tool_activities = []
@@ -276,8 +282,7 @@ class ResponseRenderer:
                     await asyncio.sleep(0.5)
                 else:
                     _log.warning(
-                        "Failed to delete original after copy (duplicate visible): "
-                        "message_id={id}",
+                        "Failed to delete original after copy (duplicate visible): message_id={id}",
                         id=self._current_message_id,
                     )
 
@@ -464,7 +469,7 @@ class ResponseRenderer:
             self._current_message_id = self._split_message_ids[-1]
 
         # Delete excess old messages (skip sentinels from failed sends)
-        for old_id in old_ids[len(chunks):]:
+        for old_id in old_ids[len(chunks) :]:
             if old_id == -1:
                 continue
             try:
@@ -479,7 +484,7 @@ class ResponseRenderer:
                 )
 
 
-class TelegramChannel:
+class TelegramChannel(Channel):
     """Telegram bot channel that receives messages and renders agent responses.
 
     The channel uses aiogram for long polling and message handling.
@@ -494,12 +499,13 @@ class TelegramChannel:
 
     def __init__(
         self,
-        coordinator: Coordinator,
         settings: TelegramSettings,
+        workspace_path: Path,
         bus: EventBus | None = None,
     ) -> None:
-        self._coordinator = coordinator
+        self.__coordinator: Coordinator | None = None
         self._settings = settings
+        self._workspace_path = workspace_path
         self._bot = Bot(token=settings.bot_token)
         self._dispatcher = Dispatcher()
         self._router = Router()
@@ -526,12 +532,21 @@ class TelegramChannel:
         # Register shutdown hook
         self._dispatcher.shutdown.register(self._on_shutdown)
 
-        # Subscribe to task events if bus is provided
-        if self._bus is not None:
-            self._bus.on(SessionTaskReady, self._handle_session_task)
-            self._bus.on(Notification, self._handle_notification)
+    @property
+    def _coordinator(self) -> Coordinator:
+        assert self.__coordinator is not None, "run() must be called before processing messages"
+        return self.__coordinator
 
-    async def run(self) -> None:
+    def get_mcp_servers(self) -> dict[str, McpSdkServerConfig]:
+        server = create_send_file_server(
+            self._bot, self._settings.authorized_chat_id, self._workspace_path
+        )
+        return {"send-file": server}
+
+    def get_skill_sources(self) -> list[Path]:
+        return [Path(__file__).parent / "skill"]
+
+    async def run(self, coordinator: Coordinator) -> None:
         """Start the bot and begin polling for messages.
 
         This method blocks until the bot is stopped (via signal, 'q' keypress,
@@ -539,6 +554,12 @@ class TelegramChannel:
         polling stops gracefully without cancelling the task — this allows the
         Coordinator's post-processing pipeline to run on shutdown.
         """
+        self.__coordinator = coordinator
+
+        # Subscribe to task events — deferred to run() so coordinator is set
+        if self._bus is not None:
+            self._bus.on(SessionTaskReady, self._handle_session_task)
+            self._bus.on(Notification, self._handle_notification)
         _log.info(
             "Starting Telegram bot for chat {chat_id}",
             chat_id=self._settings.authorized_chat_id,

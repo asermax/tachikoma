@@ -402,9 +402,7 @@ class TestGetTask:
     async def test_get_task_returns_full_prompt(self, repo: TaskRepository) -> None:
         """AC: get_task returns the complete prompt without truncation."""
         long_prompt = "A" * 200
-        await repo.create_definition(
-            _make_definition(definition_id="abc-123", prompt=long_prompt)
-        )
+        await repo.create_definition(_make_definition(definition_id="abc-123", prompt=long_prompt))
 
         call_tool = _call_tool(repo)
         result = await call_tool("get_task", {"task_id": "abc-123"})
@@ -416,9 +414,7 @@ class TestGetTask:
     @pytest.mark.asyncio
     async def test_get_task_includes_all_fields(self, repo: TaskRepository) -> None:
         """AC: get_task returns ID, name, type, status, schedule, prompt, timestamps."""
-        await repo.create_definition(
-            _make_definition(definition_id="xyz-789", name="My Task")
-        )
+        await repo.create_definition(_make_definition(definition_id="xyz-789", name="My Task"))
 
         call_tool = _call_tool(repo)
         result = await call_tool("get_task", {"task_id": "xyz-789"})

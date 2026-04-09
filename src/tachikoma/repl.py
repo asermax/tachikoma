@@ -2,6 +2,7 @@
 
 import asyncio
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from bubus import EventBus
 from loguru import logger
@@ -12,11 +13,14 @@ from prompt_toolkit.validation import Validator
 from rich.console import Console
 from rich.markdown import Markdown
 
-from tachikoma.coordinator import Coordinator
+from tachikoma.channel import Channel
 from tachikoma.display import TOOL_DISPLAY, format_tool_name
 from tachikoma.events import AgentEvent, Error, Result, Status, TextChunk, ToolActivity
 from tachikoma.notifications import Notification
 from tachikoma.tasks.events import SessionTaskReady
+
+if TYPE_CHECKING:
+    from tachikoma.coordinator import Coordinator
 
 _log = logger.bind(component="repl")
 
@@ -61,7 +65,7 @@ class Renderer:
         return True
 
 
-class Repl:
+class Repl(Channel):
     """Terminal REPL that sends user input through the coordinator.
 
     When an event bus is provided, the REPL subscribes to:
@@ -71,11 +75,10 @@ class Repl:
 
     def __init__(
         self,
-        coordinator: Coordinator,
         history_path: Path,
         bus: EventBus | None = None,
     ) -> None:
-        self._coordinator = coordinator
+        self.__coordinator: Coordinator | None = None
         self._renderer = Renderer()
         self._bus = bus
         self._task_queue: asyncio.Queue[SessionTaskReady | Notification] = asyncio.Queue()
@@ -102,17 +105,23 @@ class Repl:
             ),
         )
 
-        # Subscribe to task events if bus is provided
-        if self._bus is not None:
-            self._bus.on(SessionTaskReady, self._handle_session_task)
-            self._bus.on(Notification, self._handle_notification)
+    @property
+    def _coordinator(self) -> Coordinator:
+        assert self.__coordinator is not None, "run() must be called before processing messages"
+        return self.__coordinator
 
-    async def run(self) -> None:
+    async def run(self, coordinator: Coordinator) -> None:
         """Run the REPL input loop until the user exits.
 
         Between user inputs, the loop checks for queued session tasks
         from the event bus and processes them.
         """
+        self.__coordinator = coordinator
+
+        # Subscribe to task events — deferred to run() so coordinator is set
+        if self._bus is not None:
+            self._bus.on(SessionTaskReady, self._handle_session_task)
+            self._bus.on(Notification, self._handle_notification)
         _log.debug("REPL started")
 
         while True:

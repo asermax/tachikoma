@@ -11,3 +11,4 @@ Implementation approaches organized by domain. Each design corresponds to a feat
 | [configuration](configuration/) | Application configuration management |
 | [memory](memory/) | Automatic memory extraction from conversations |
 | [tasks](tasks/) | Proactive task scheduling and execution |
+| [workflows](workflows/) | Multi-step workflow state machine within skills |
