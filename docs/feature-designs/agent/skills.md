@@ -82,11 +82,11 @@ Eight-component architecture: a bootstrap hook creates the directory structure a
 │  │  ├── custom-skill/                               │      │
 │  │  │   ├── SKILL.md                                │      │
 │  │  │   └── agents/*.md                             │      │
-│  │  └── workflow-authoring-guide/                      │      │
-│  │      ├── SKILL.md                                  │      │
-│  │      └── references/step-design.md                 │      │
-│  │  (skills may also contain workflows/ — see          │      │
-│  │   workflow-state-machine design)                    │      │
+│  │  └── workflow-authoring-guide/                    │      │
+│  │      ├── SKILL.md                                │      │
+│  │      └── references/step-design.md               │      │
+│  │  (skills may also contain workflows/ — see       │      │
+│  │   workflow-state-machine design)                  │      │
 │  │  Channel: (via get_skill_sources() + add_source) │      │
 │  │  ├── src/tachikoma/telegram/skill/               │      │
 │  │  │   └── SKILL.md                                │      │
@@ -297,7 +297,7 @@ SkillsChanged(BaseEvent[None])
 6. __main__.py creates watcher task:
    asyncio.create_task(watch_skills(skills_path, skill_registry, bus), name="skills_watcher")
 7. __main__.py passes skill_registry and msg_pre_pipeline to Coordinator constructor
-7. Detection happens per-message via per-message pipeline:
+8. Detection happens per-message via per-message pipeline:
    → Provider calls registry.refresh() first (dirty check → re-scan all sources)
    → Provider extracts loaded skill names from existing entries metadata
    → Provider filters to unloaded skills only, classifies relevance via LLM
