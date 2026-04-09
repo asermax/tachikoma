@@ -6,12 +6,14 @@ A proactive personal assistant built on [Claude Agent SDK](https://github.com/an
 
 Unlike traditional AI assistants that are stateless and reactive, Tachikoma maintains persistent memory across conversations, extracts learnings automatically, and processes background tasks during idle time — all accessible through a simple chat interface.
 
-**Key capabilities (planned):**
+**Key capabilities:**
 
 - **Contextual conversations** — past interactions inform future ones through automatic memory retrieval
 - **Memory extraction** — learns facts, preferences, and patterns from conversations without explicit user action
-- **Proactive task processing** — queues and executes background tasks during idle time
-- **Delegation architecture** — coordinator agent delegates specialized requests to focused sub-agents
+- **Proactive task processing** — queues and executes background tasks during idle time, delivering results as notifications
+- **Skills with hot-reload** — domain-specific skill packages detected by LLM classification, with filesystem watching for instant availability
+- **Workflow engine** — directory-based workflow definitions with step tracking, MCP tools for lifecycle management, and database persistence
+- **Telegram media support** — images, audio, voice, documents, stickers, video, and animations received and processed from Telegram
 
 ## Requirements
 
@@ -21,7 +23,7 @@ Unlike traditional AI assistants that are stateless and reactive, Tachikoma main
 ## Installation
 
 ```bash
-uv tool install tachikoma
+uv tool install tachikoma-agent
 ```
 
 ### Prerequisites
@@ -51,7 +53,7 @@ On first run, Tachikoma auto-generates its configuration file at `~/.config/tach
 ### Upgrading
 
 ```bash
-uv tool upgrade tachikoma
+uv tool upgrade tachikoma-agent
 ```
 
 ## Development
@@ -87,7 +89,7 @@ just check
 
 ## Status
 
-Early development (v0.1.0). See [VISION.md](docs/planning/VISION.md) for the full project vision and [DELTAS.md](docs/planning/DELTAS.md) for the feature inventory.
+Active development (v1.13.1). See [VISION.md](docs/planning/VISION.md) for the full project vision and [DELTAS.md](docs/planning/DELTAS.md) for the feature inventory.
 
 ## License
 
