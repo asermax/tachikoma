@@ -88,9 +88,7 @@ class SkillsContextProvider(MessageContextProvider):
 
         loaded_names = extract_skill_names(existing_entries or [])
         unloaded_skills = {
-            name: skill
-            for name, skill in self._registry.skills.items()
-            if name not in loaded_names
+            name: skill for name, skill in self._registry.skills.items() if name not in loaded_names
         }
 
         # Skip classification when no unloaded skills remain

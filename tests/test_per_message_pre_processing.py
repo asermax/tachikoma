@@ -107,9 +107,11 @@ class TestDeriveAgentsFromEntries:
         """AC: Agents derived from skill names in entries + registry lookup."""
         agent_def = AgentDefinition(description="Test", prompt="prompt")
 
-        registry = self._make_mock_registry({
-            "skill-a": {"skill-a/agent1": agent_def},
-        })
+        registry = self._make_mock_registry(
+            {
+                "skill-a": {"skill-a/agent1": agent_def},
+            }
+        )
 
         entries = [_make_entry(metadata={"skill_name": "skill-a"})]
         result = derive_agents_from_entries(entries, registry)
@@ -131,10 +133,12 @@ class TestDeriveAgentsFromEntries:
         agent_a = AgentDefinition(description="A", prompt="a")
         agent_b = AgentDefinition(description="B", prompt="b")
 
-        registry = self._make_mock_registry({
-            "skill-a": {"skill-a/agent1": agent_a},
-            "skill-b": {"skill-b/agent2": agent_b},
-        })
+        registry = self._make_mock_registry(
+            {
+                "skill-a": {"skill-a/agent1": agent_a},
+                "skill-b": {"skill-b/agent2": agent_b},
+            }
+        )
 
         entries = [
             _make_entry(metadata={"skill_name": "skill-a"}),

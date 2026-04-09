@@ -950,8 +950,11 @@ class TestCoordinatorAgents:
         registry.load_context_entries = AsyncMock(
             return_value=[
                 SessionContextEntry(
-                    id=1, session_id="s1", owner="skills",
-                    content="Search skill", metadata={"skill_name": "search"},
+                    id=1,
+                    session_id="s1",
+                    owner="skills",
+                    content="Search skill",
+                    metadata={"skill_name": "search"},
                 ),
             ]
         )
@@ -982,8 +985,11 @@ class TestCoordinatorAgents:
         registry.load_context_entries = AsyncMock(
             return_value=[
                 SessionContextEntry(
-                    id=1, session_id="s1", owner="skills",
-                    content="Analysis skill", metadata={"skill_name": "analysis"},
+                    id=1,
+                    session_id="s1",
+                    owner="skills",
+                    content="Analysis skill",
+                    metadata={"skill_name": "analysis"},
                 ),
             ]
         )
@@ -1013,8 +1019,11 @@ class TestCoordinatorAgents:
         registry.load_context_entries = AsyncMock(
             return_value=[
                 SessionContextEntry(
-                    id=1, session_id="s1", owner="skills",
-                    content="Test skill", metadata={"skill_name": "test"},
+                    id=1,
+                    session_id="s1",
+                    owner="skills",
+                    content="Test skill",
+                    metadata={"skill_name": "test"},
                 ),
             ]
         )
@@ -1044,8 +1053,11 @@ class TestCoordinatorAgents:
         registry.load_context_entries = AsyncMock(
             return_value=[
                 SessionContextEntry(
-                    id=1, session_id="s1", owner="skills",
-                    content="Test skill", metadata={"skill_name": "test"},
+                    id=1,
+                    session_id="s1",
+                    owner="skills",
+                    content="Test skill",
+                    metadata={"skill_name": "test"},
                 ),
             ]
         )
@@ -2594,8 +2606,11 @@ class TestCoordinatorPipelineAgents:
 
         # save_context_entries returns the persisted entries with IDs
         saved_skill_entry = SessionContextEntry(
-            id=1, session_id="s1", owner="skills",
-            content="skill content", metadata={"skill_name": "skills"},
+            id=1,
+            session_id="s1",
+            owner="skills",
+            content="skill content",
+            metadata={"skill_name": "skills"},
         )
         registry.save_context_entries = AsyncMock(return_value=[saved_skill_entry])
 
@@ -2624,8 +2639,11 @@ class TestCoordinatorPipelineAgents:
         skill_registry = _make_mock_skill_registry(agents)
 
         skill_entry = SessionContextEntry(
-            id=1, session_id="s1", owner="skills",
-            content="skill content", metadata={"skill_name": "skills"},
+            id=1,
+            session_id="s1",
+            owner="skills",
+            content="skill content",
+            metadata={"skill_name": "skills"},
         )
 
         active = Session(id="existing", started_at=datetime.now(UTC))
@@ -2685,8 +2703,11 @@ class TestCoordinatorPipelineAgents:
         registry = _make_mock_registry(active_session=active)
         registry.create_session = AsyncMock(return_value=new_session)
         registry.get_active_session.side_effect = [
-            active, new_session, new_session,  # First message
-            new_session, new_session,  # Second message
+            active,
+            new_session,
+            new_session,  # First message
+            new_session,
+            new_session,  # Second message
             new_session,  # __aexit__
         ]
 
@@ -2699,14 +2720,20 @@ class TestCoordinatorPipelineAgents:
             side_effect=[
                 [  # First message: old session entries
                     SessionContextEntry(
-                        id=1, session_id="s1", owner="skills",
-                        content="before", metadata={"skill_name": "before"},
+                        id=1,
+                        session_id="s1",
+                        owner="skills",
+                        content="before",
+                        metadata={"skill_name": "before"},
                     ),
                 ],
                 [  # Second message: new session entries
                     SessionContextEntry(
-                        id=2, session_id="new-session", owner="skills",
-                        content="after", metadata={"skill_name": "after"},
+                        id=2,
+                        session_id="new-session",
+                        owner="skills",
+                        content="after",
+                        metadata={"skill_name": "after"},
                     ),
                 ],
             ]
@@ -2743,9 +2770,11 @@ class TestCoordinatorPipelineAgents:
             make_result(),
         )
 
-        skill_registry = _make_mock_skill_registry({
-            "skills/test/agent": AgentDefinition(description="Test", prompt="Test"),
-        })
+        skill_registry = _make_mock_skill_registry(
+            {
+                "skills/test/agent": AgentDefinition(description="Test", prompt="Test"),
+            }
+        )
         registry = _make_mock_registry(active_session=None)
         # No skill entries in DB
         registry.load_context_entries = AsyncMock(return_value=[])
@@ -2786,12 +2815,18 @@ class TestCoordinatorPipelineAgents:
         registry.load_context_entries = AsyncMock(
             return_value=[
                 SessionContextEntry(
-                    id=1, session_id="s1", owner="skills",
-                    content="a", metadata={"skill_name": "skill-a"},
+                    id=1,
+                    session_id="s1",
+                    owner="skills",
+                    content="a",
+                    metadata={"skill_name": "skill-a"},
                 ),
                 SessionContextEntry(
-                    id=2, session_id="s1", owner="skills",
-                    content="b", metadata={"skill_name": "skill-b"},
+                    id=2,
+                    session_id="s1",
+                    owner="skills",
+                    content="b",
+                    metadata={"skill_name": "skill-b"},
                 ),
             ]
         )
@@ -3260,8 +3295,11 @@ class TestPerMessagePreProcessingIntegration:
         )
 
         existing_entry = SessionContextEntry(
-            id=1, session_id="s1", owner="skills",
-            content="existing skill", metadata={"skill_name": "existing-skill"},
+            id=1,
+            session_id="s1",
+            owner="skills",
+            content="existing skill",
+            metadata={"skill_name": "existing-skill"},
         )
 
         active = Session(id="existing", started_at=datetime.now(UTC))
@@ -3270,8 +3308,11 @@ class TestPerMessagePreProcessingIntegration:
         registry.load_context_entries = AsyncMock(return_value=[existing_entry])
 
         new_saved_entry = SessionContextEntry(
-            id=2, session_id="s1", owner="skills",
-            content="new skill content", metadata={"skill_name": "new-skill"},
+            id=2,
+            session_id="s1",
+            owner="skills",
+            content="new skill content",
+            metadata={"skill_name": "new-skill"},
         )
         registry.save_context_entries = AsyncMock(return_value=[new_saved_entry])
 

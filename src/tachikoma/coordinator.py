@@ -262,7 +262,10 @@ class Coordinator:
         return self._last_message_time
 
     def _build_options(
-        self, *, resume: str | None = None, system_prompt_append: str | None = None,
+        self,
+        *,
+        resume: str | None = None,
+        system_prompt_append: str | None = None,
         agents: dict[str, AgentDefinition] | None = None,
     ) -> ClaudeAgentOptions:
         """Build ClaudeAgentOptions for a single message exchange.
@@ -468,16 +471,13 @@ class Coordinator:
                     sdk_session_id=self._sdk_session_id,
                 )
                 if pp_results and self._registry is not None:
-                    pp_tuples = [
-                        (r.tag, r.content, r.metadata)
-                        for r in pp_results
-                        if r.content
-                    ]
+                    pp_tuples = [(r.tag, r.content, r.metadata) for r in pp_results if r.content]
 
                     if pp_tuples:
                         try:
                             saved = await self._registry.save_context_entries(
-                                active.id, pp_tuples,
+                                active.id,
+                                pp_tuples,
                             )
                             entries.extend(saved)
                         except Exception as exc:

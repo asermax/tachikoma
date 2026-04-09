@@ -784,3 +784,54 @@ class TestRegistryRefresh:
         assert registry.skills == {}
         assert registry.get_agents() == {}
         assert registry._dirty is False  # Successful refresh (empty is success)
+
+
+class TestAddSource:
+    """Tests for SkillRegistry.add_source() (DLT-063)."""
+
+    def test_add_source_discovers_skills(self, tmp_path: Path) -> None:
+        """add_source() discovers skills from the new path immediately."""
+        initial_dir = tmp_path / "initial"
+        initial_dir.mkdir()
+        new_dir = tmp_path / "added"
+        new_dir.mkdir()
+
+        registry = SkillRegistry([initial_dir])
+        assert registry.skills == {}
+
+        create_skill(new_dir, "added-skill", "Added via add_source")
+
+        registry.add_source(new_dir)
+
+        assert "added-skill" in registry.skills
+        assert registry.skills["added-skill"].description == "Added via add_source"
+
+    def test_add_source_included_in_refresh(self, tmp_path: Path) -> None:
+        """Added source is included in subsequent refresh() calls."""
+        initial_dir = tmp_path / "initial"
+        initial_dir.mkdir()
+        added_dir = tmp_path / "added"
+        added_dir.mkdir()
+
+        create_skill(added_dir, "refreshed-skill", "Before refresh")
+
+        registry = SkillRegistry([initial_dir])
+        registry.add_source(added_dir)
+        assert "refreshed-skill" in registry.skills
+
+        registry.mark_dirty()
+        registry.refresh()
+
+        assert "refreshed-skill" in registry.skills
+
+    def test_add_source_nonexistent_path_no_error(self, tmp_path: Path) -> None:
+        """add_source() with non-existent path does not raise."""
+        initial_dir = tmp_path / "initial"
+        initial_dir.mkdir()
+
+        registry = SkillRegistry([initial_dir])
+
+        # Should not raise
+        registry.add_source(tmp_path / "nonexistent")
+
+        assert registry.skills == {}
