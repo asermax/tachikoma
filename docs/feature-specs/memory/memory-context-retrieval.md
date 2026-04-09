@@ -38,11 +38,12 @@ The provider searches stored memories by exploring the memory directories using 
 
 ### Per-File Context Entries (R2)
 
-Results are returned as one context entry per relevant memory file, each with the "memories" tag and metadata identifying the file path. The provider reads the file directly from disk.
+Results are returned as one context entry per relevant memory file, each with the "memories" tag and metadata identifying the file path. For facts and preferences files, the provider reads the full file from disk. For episodic files (which can be very large), the search agent extracts only the relevant snippet, and the entry includes a source path reference so the main agent can read more if needed.
 
 **Acceptance Criteria**:
 - Given the memory provider finds N relevant memories, when it returns results, then it produces N individual context entries, each with tag "memories" and metadata `{"memory_path": "<path>"}`
-- Given each context entry, then it contains the full file content of the memory file
+- Given a facts or preferences memory file, then the context entry contains the full file content
+- Given an episodic memory file, then the context entry contains the agent-extracted relevant snippet with a `[Source: path]` header referencing the original file
 
 ### No Relevant Memories (R3)
 

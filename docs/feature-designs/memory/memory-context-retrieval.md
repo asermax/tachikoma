@@ -31,7 +31,7 @@ Conversations are enriched when the agent knows about past interactions, user fa
 
 A `MemoryContextProvider` implements the `MessageContextProvider` ABC and uses a `query()` call with an Opus agent to search stored memories. On subsequent messages (when an SDK session ID is available), the provider forks the session to give the search agent full conversation context for informed relevance decisions — adapting DES-004's fork pattern for pre-processing. On the first message (no session ID yet), it falls back to a standalone query following DES-007.
 
-The agent returns relevant memory file paths. The provider reads each file, filters out paths already present in `existing_entries` (via `memory_path` metadata), and returns one `ContextResult` per new memory file.
+The agent returns relevant memory file paths in XML `<memory>` elements. For facts/preferences, it returns self-closing tags and the provider reads the full file. For episodic files (which can be very large), the agent extracts the relevant snippet inline and the provider uses it directly with a `[Source: path]` reference. The provider filters out paths already present in `existing_entries` (via `memory_path` metadata), and returns one `ContextResult` per new memory.
 
 ```
 ┌──────────────────────────────────────────────────────────────────┐
@@ -43,10 +43,11 @@ The agent returns relevant memory file paths. The provider reads each file, filt
 │    2. Build search prompt with user message                      │
 │    3. If sdk_session_id → query(fork_session=True, resume=id)   │
 │       Else → query(standalone, no fork)                         │
-│    4. Parse file paths from agent response                       │
+│    4. Parse XML <memory> elements from agent response            │
 │    5. Validate paths are within memories/                        │
 │    6. Filter out already-loaded paths                            │
-│    7. Read each file, create ContextResult per file              │
+│    7. For snippets: use snippet + [Source: path] header          │
+│       For self-closing: read full file from disk                 │
 │    → list[ContextResult]  or  None                              │
 └──────────────────────────────────────────────────────────────────┘
 ```
@@ -57,7 +58,7 @@ The agent returns relevant memory file paths. The provider reads each file, filt
 
 | Layer/Component | Responsibility | Key Decisions |
 |-----------------|----------------|---------------|
-| `src/tachikoma/memory/context_provider.py` | `MemoryContextProvider(MessageContextProvider)` — forks session when SDK session ID available, parses file paths from agent response, reads files, creates per-file `ContextResult` entries with metadata. Constants: `MEMORIES_OWNER`, `MEMORY_PATH_META_KEY`, `_NO_RELEVANT_MEMORIES`. Helper: `extract_memory_paths()`. `MEMORY_SEARCH_PROMPT` constant co-located with provider. | Agent returns paths (classification), provider reads files (assembly) — mirrors skills provider pattern; uses `memory_path` metadata key per ADR-011; single adaptive prompt handles both forked and standalone modes |
+| `src/tachikoma/memory/context_provider.py` | `MemoryContextProvider(MessageContextProvider)` — forks session when SDK session ID available, parses XML `<memory>` elements from agent response, handles snippets (episodic) vs full-file reads (facts/preferences), creates per-file `ContextResult` entries with metadata. `ParsedMemoryEntry` dataclass and `parse_memory_entries()` function for XML parsing. Constants: `MEMORIES_OWNER`, `MEMORY_PATH_META_KEY`, `_NO_RELEVANT_MEMORIES`. Helper: `extract_memory_paths()`. `MEMORY_SEARCH_PROMPT` constant co-located with provider. | Agent returns XML elements with optional snippet content; self-closing = full file load, open/close = snippet extraction; uses `memory_path` metadata key per ADR-011; single adaptive prompt handles both forked and standalone modes |
 
 ### Cross-Layer Contracts
 
@@ -140,12 +141,13 @@ extract_memory_paths(entries: list[SessionContextEntry]) → set[str]
    - On ResultMessage:
      a. If is_error → log warning
      b. If result == "NO_RELEVANT_MEMORIES" → no paths
-     c. If result has content → parse file paths (one per line)
+     c. If result has content → parse XML <memory> elements via parse_memory_entries()
 7. Validate paths: resolve each against workspace root, reject any outside memories/
 8. Filter out paths already in loaded_paths set
-9. For each new path:
-   a. Read file content via Path.read_text()
-   b. Create ContextResult(tag="memories", content=content,
+9. For each new entry:
+   a. If snippet provided → use snippet with [Source: path] header
+   b. If self-closing (no snippet) → read full file via Path.read_text()
+   c. Create ContextResult(tag="memories", content=content,
       metadata={"memory_path": path})
 10. Return list of ContextResults, or None if empty
 11. If any exception → catch, log per DES-002, return None
@@ -163,16 +165,18 @@ extract_memory_paths(entries: list[SessionContextEntry]) → set[str]
 - Pro: Agent can decide "already covered" and skip unnecessary search
 - Con: Fork overhead on each message (acceptable — fork is lightweight and `effort="low"`)
 
-### Agent returns file paths, provider reads content
+### XML output format with snippet extraction for episodic memories
 
-**Choice**: The memory search agent returns relevant file paths (one per line). The provider reads each file and assembles `ContextResult` entries.
-**Why**: Separates relevance judgment (agent) from content assembly (provider code). Mirrors the skills provider pattern where the agent classifies names and the provider looks up content from the registry.
+**Choice**: The memory search agent returns XML `<memory>` elements. Self-closing tags (`<memory path="..." />`) signal full-file load (facts/preferences). Open/close tags with body content (`<memory path="...">snippet</memory>`) carry agent-extracted snippets (episodic). The provider uses `parse_memory_entries()` to parse both forms.
+**Why**: Episodic memory files can grow very large (20-34KB each), and loading their full content into the system prompt CLI argument caused `[Errno 7] Argument list too long` (ARG_MAX overflow). The agent already reads files to assess relevance, so extracting the relevant snippet is natural. Facts and preferences files remain small and topically focused, so full-file loading is appropriate for them.
 
 **Consequences**:
-- Pro: Simple, parseable agent output
-- Pro: Provider controls exact content format
-- Pro: Consistent with skills provider pattern
-- Con: Files are read twice (agent reads for relevance, provider reads for content) — negligible for small local files
+- Pro: Episodic memory contribution to system prompt reduced from ~92KB to ~5-15KB (6-18x reduction)
+- Pro: Eliminates ARG_MAX overflow from memory context
+- Pro: Agent provides only the relevant information, improving main agent context quality
+- Pro: `[Source: path]` header allows the main agent to read more if the snippet is insufficient
+- Con: Agent must produce well-formed XML (mitigated by graceful parsing with fallback)
+- Con: Snippet quality depends on the agent's extraction judgment
 
 ### Single adaptive prompt
 
@@ -260,3 +264,4 @@ extract_memory_paths(entries: list[SessionContextEntry]) → set[str]
 - On first message, the provider behavior is functionally equivalent to the previous implementation but produces per-file entries instead of a single markdown block.
 - The `extract_memory_paths()` helper mirrors `extract_skill_names()` in the skills provider — both read metadata from `existing_entries` for deduplication.
 - DLT-009 (embedding-based semantic search) could replace or augment the agent-based search. The `MessageContextProvider` ABC means the memory provider can be swapped without touching the pipeline.
+- The coordinator uses `FilePromptTransport` (`src/tachikoma/sdk_transport.py`) — a `SubprocessCLITransport` subclass that writes the system prompt to a tempfile and passes `--append-system-prompt-file` instead of `--append-system-prompt`. This eliminates the ARG_MAX constraint entirely as a defensive measure complementing snippet extraction. The transport imports the SDK's internal `SubprocessCLITransport` (pinned to SDK v0.1.48); verify compatibility on SDK upgrades.
