@@ -38,6 +38,7 @@ from tachikoma.pre_processing import (
     McpServerConfig,
     PreProcessingPipeline,
 )
+from tachikoma.sdk_transport import FilePromptTransport
 from tachikoma.sessions.model import Session, SessionContextEntry
 from tachikoma.sessions.registry import SessionRegistry
 from tachikoma.skills.context_provider import derive_agents_from_entries
@@ -511,12 +512,12 @@ class Coordinator:
         )
         response_chunks: list[str] = []
 
-        client = ClaudeSDKClient(options)
+        message_source = _message_source(text, self._message_buffer)
+        transport = FilePromptTransport(prompt=message_source, options=options)
+        client = ClaudeSDKClient(options, transport=transport)
 
         try:
-            await client.connect(
-                _message_source(text, self._message_buffer),
-            )
+            await client.connect(message_source)
             self._client = client
 
             async for sdk_message in client.receive_response():
