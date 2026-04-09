@@ -160,6 +160,32 @@ async def run(
 
     task_tools = create_task_tools_server(task_repository, ZoneInfo(settings.tasks.timezone))
 
+    # Create channel before coordinator to extract capabilities
+    if settings.channel == "telegram":
+        if settings.telegram is None:
+            print(
+                "Telegram configuration is required when channel is 'telegram'",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+
+        active_channel = TelegramChannel(
+            settings.telegram, workspace_path=settings.workspace.path, bus=bus
+        )
+    else:
+        active_channel = Repl(
+            history_path=Path("/tmp/tachikoma_repl_history"),
+            bus=bus,
+        )
+
+    # Register channel-provided skills
+    for source_path in active_channel.get_skill_sources():
+        skill_registry.add_source(source_path)
+
+    # Merge channel MCP servers with task tools
+    channel_mcp = active_channel.get_mcp_servers()
+    all_mcp_servers = {"task-tools": task_tools, **channel_mcp}
+
     scheduler_tasks: list[asyncio.Task[None]] = []
 
     try:
@@ -178,7 +204,7 @@ async def run(
             permission_mode="bypassPermissions",
             session_resume_window=settings.agent.session_resume_window,
             session_idle_timeout=settings.agent.session_idle_timeout,
-            mcp_servers={"task-tools": task_tools},
+            mcp_servers=all_mcp_servers,
             timezone=settings.tasks.timezone,
         ) as coordinator:
             scheduler_tasks.append(
@@ -227,25 +253,8 @@ async def run(
 
             _log.info("Task schedulers started: tasks={count}", count=len(scheduler_tasks))
 
-            # Dispatch based on channel setting
-            if settings.channel == "telegram":
-                if settings.telegram is None:
-                    print(
-                        "Telegram configuration is required when channel is 'telegram'",
-                        file=sys.stderr,
-                    )
-                    sys.exit(1)
-
-                telegram_channel = TelegramChannel(coordinator, settings.telegram, bus=bus)
-                await telegram_channel.run()
-            else:
-                # Default: REPL channel
-                repl = Repl(
-                    coordinator,
-                    history_path=Path("/tmp/tachikoma_repl_history"),
-                    bus=bus,
-                )
-                await repl.run()
+            # Start channel with coordinator
+            await active_channel.run(coordinator)
 
     except (CLINotFoundError, CLIConnectionError, ProcessError) as e:
         _log.error("Connection failed: err={err}", err=str(e))

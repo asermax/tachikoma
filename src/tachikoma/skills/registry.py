@@ -115,6 +115,15 @@ class SkillRegistry:
         """
         self._dirty = True
 
+    def add_source(self, path: Path) -> None:
+        """Add a skill source and discover its skills immediately.
+
+        Must be called during startup before message processing begins.
+        Added sources are included in subsequent refresh() scans.
+        """
+        self._skill_sources.append(path)
+        self._discover(path)
+
     def refresh(self) -> None:
         """Re-scan skills directory if dirty, using swap-on-success.
 
