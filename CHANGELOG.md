@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v1.14.2 (2026-04-09)
+
+### Bug Fixes
+
+- **memory**: Harden memory search agent with explicit tools and scope guardrails
+  ([`2e2c091`](https://github.com/asermax/tachikoma/commit/2e2c091f784941a7b7abdbf39dfa55f178338bc2))
+
+
 ## v1.14.1 (2026-04-09)
 
 ### Bug Fixes
