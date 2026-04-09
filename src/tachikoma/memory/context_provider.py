@@ -6,8 +6,13 @@ forking when conversation context is available to make informed
 relevance decisions.
 
 Returns one ContextResult per relevant memory file, with metadata
-identifying the file path for deduplication.
+identifying the file path for deduplication. Episodic memories
+are returned as agent-extracted snippets; facts and preferences
+are loaded in full.
 """
+
+import re
+from dataclasses import dataclass
 
 from claude_agent_sdk import ClaudeAgentOptions, query
 from claude_agent_sdk.types import ResultMessage
@@ -39,7 +44,7 @@ search based solely on the user's message below.
 ## Search Strategy
 
 1. Search the following directories for relevant memories:
-   - `memories/episodic/` — Date-stamped conversation summaries
+   - `memories/episodic/` — Date-stamped conversation summaries (can be very large)
    - `memories/facts/` — Factual information (topic-named files)
    - `memories/preferences/` — User preferences (topic-named files)
 
@@ -50,9 +55,24 @@ search based solely on the user's message below.
 
 ## Output Format
 
-Return ONLY the file paths of relevant memories, one per line.
-Do not include descriptions, summaries, or other text.
-Paths must be relative to the workspace root (e.g., memories/facts/restaurants.md).
+Return each relevant memory as an XML `<memory>` element with a `path` attribute. \
+Paths must be relative to the workspace root.
+
+For **facts and preferences** files (under `memories/facts/` or \
+`memories/preferences/`), return a self-closing tag — the full file will be loaded:
+
+    <memory path="memories/facts/restaurants.md" />
+
+For **episodic** files (under `memories/episodic/`), extract ONLY the relevant \
+section(s) from the file and include them as the element body. Episodic files \
+can be very large, so including only the relevant snippet is critical:
+
+    <memory path="memories/episodic/2026-04-06.md">
+    ## Relevant Section Title
+    Relevant excerpt from the episodic memory...
+    </memory>
+
+Do not include any text outside of `<memory>` elements (except the no-search sentinel).
 
 ## No-Search Sentinel
 
@@ -64,6 +84,68 @@ conversation context already covers what's needed — respond with exactly: \
 
 {message}
 """
+
+
+@dataclass
+class ParsedMemoryEntry:
+    """A single memory entry parsed from the search agent's output."""
+
+    path: str
+    snippet: str | None  # None = load full file; str = use this snippet
+
+
+_SELF_CLOSING_RE = re.compile(r'<memory\s+path="([^"]+)"\s*/>')
+_OPEN_TAG_RE = re.compile(r'<memory\s+path="([^"]+)"\s*>')
+_CLOSE_TAG_RE = re.compile(r"</memory>")
+
+
+def parse_memory_entries(raw_output: str) -> list[ParsedMemoryEntry]:
+    """Parse structured memory entries from the search agent's output.
+
+    Handles two forms:
+    - Self-closing: ``<memory path="..." />`` -> full file load
+    - Open/close: ``<memory path="...">snippet</memory>`` -> snippet extraction
+
+    Malformed entries (unclosed tags) are logged and skipped.
+
+    Returns:
+        List of parsed entries. Empty list if none found.
+    """
+    entries: list[ParsedMemoryEntry] = []
+
+    for match in _SELF_CLOSING_RE.finditer(raw_output):
+        entries.append(ParsedMemoryEntry(path=match.group(1), snippet=None))
+
+    # Remove self-closing tags so they don't interfere with open/close parsing
+    remaining = _SELF_CLOSING_RE.sub("", raw_output)
+
+    pos = 0
+
+    while pos < len(remaining):
+        open_match = _OPEN_TAG_RE.search(remaining, pos)
+
+        if open_match is None:
+            break
+
+        close_match = _CLOSE_TAG_RE.search(remaining, open_match.end())
+
+        if close_match is None:
+            _log.warning(
+                "Unclosed <memory> tag, skipping: path={path}",
+                path=open_match.group(1),
+            )
+            break
+
+        path = open_match.group(1)
+        snippet = remaining[open_match.end() : close_match.start()].strip()
+
+        entries.append(
+            ParsedMemoryEntry(path=path, snippet=snippet if snippet else None),
+        )
+
+        pos = close_match.end()
+
+    return entries
 
 
 def extract_memory_paths(entries: list[SessionContextEntry]) -> set[str]:
@@ -147,7 +229,7 @@ class MemoryContextProvider(MessageContextProvider):
 
         # Fully consume the query() generator per DES-005 — no early
         # return/break inside the async for loop.
-        raw_paths: list[str] = []
+        parsed_entries: list[ParsedMemoryEntry] = []
 
         try:
             async for sdk_message in query(prompt=prompt, options=options):
@@ -163,12 +245,10 @@ class MemoryContextProvider(MessageContextProvider):
                         if stripped == _NO_RELEVANT_MEMORIES:
                             _log.debug("No relevant memories found for message")
                         else:
-                            raw_paths = [
-                                p.strip() for p in stripped.split("\n") if p.strip()
-                            ]
+                            parsed_entries = parse_memory_entries(stripped)
                             _log.debug(
-                                "Memory search returned paths: count={count}",
-                                count=len(raw_paths),
+                                "Memory search returned entries: count={count}",
+                                count=len(parsed_entries),
                             )
 
         except Exception as exc:
@@ -178,51 +258,54 @@ class MemoryContextProvider(MessageContextProvider):
             )
             return None
 
-        if not raw_paths:
+        if not parsed_entries:
             return None
 
         workspace = self._agent_defaults.cwd.resolve()
         memories_root = (workspace / "memories").resolve()
 
-        validated_paths: list[str] = []
+        validated: list[ParsedMemoryEntry] = []
 
-        for raw_path in raw_paths:
-            resolved = (workspace / raw_path).resolve()
+        for entry in parsed_entries:
+            resolved = (workspace / entry.path).resolve()
 
             if not resolved.is_relative_to(memories_root):
                 _log.warning(
                     "Memory path outside memories/ rejected: path={path}",
-                    path=raw_path,
+                    path=entry.path,
                 )
                 continue
 
-            if raw_path in loaded_paths:
+            if entry.path in loaded_paths:
                 continue
 
-            validated_paths.append(raw_path)
+            validated.append(entry)
 
-        if not validated_paths:
+        if not validated:
             return None
 
         results: list[ContextResult] = []
 
-        for path in validated_paths:
-            file_path = workspace / path
+        for entry in validated:
+            if entry.snippet is not None:
+                content = f"[Source: {entry.path}]\n\n{entry.snippet}"
+            else:
+                file_path = workspace / entry.path
 
-            try:
-                content = file_path.read_text()
-            except FileNotFoundError:
-                _log.warning(
-                    "Memory file deleted between search and read: path={path}",
-                    path=path,
-                )
-                continue
+                try:
+                    content = file_path.read_text()
+                except FileNotFoundError:
+                    _log.warning(
+                        "Memory file deleted between search and read: path={path}",
+                        path=entry.path,
+                    )
+                    continue
 
             results.append(
                 ContextResult(
                     tag=MEMORIES_OWNER,
                     content=content,
-                    metadata={MEMORY_PATH_META_KEY: path},
+                    metadata={MEMORY_PATH_META_KEY: entry.path},
                 )
             )
 
