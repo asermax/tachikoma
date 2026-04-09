@@ -165,7 +165,20 @@ class ResponseRenderer:
         """Handle a Status event by sending a transient status message.
 
         The message will be replaced when the first TextChunk or ToolActivity arrives.
+        If a message is already showing, its content is updated in place.
         """
+        if self._current_message_id is not None:
+            try:
+                await self._bot.edit_message_text(
+                    f"_{message}_",
+                    chat_id=self._chat_id,
+                    message_id=self._current_message_id,
+                    parse_mode="Markdown",
+                )
+            except TelegramAPIError:
+                _log.exception("Failed to edit status message")
+            return
+
         try:
             msg = await self._bot.send_message(
                 self._chat_id,

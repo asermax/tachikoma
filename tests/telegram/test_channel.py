@@ -67,6 +67,41 @@ class TestResponseRendererState:
         assert renderer._message_count == 5
 
 
+class TestResponseRendererStatusHandling:
+    """Tests for handle_status() behavior."""
+
+    async def test_consecutive_status_edits_existing_message(self) -> None:
+        """Second Status edits the existing message instead of creating a new one."""
+        bot = MagicMock()
+        bot.send_message = AsyncMock(return_value=MockMessage(message_id=42))
+        bot.edit_message_text = AsyncMock()
+        renderer = ResponseRenderer(bot, chat_id=123)
+
+        await renderer.handle_status("Thinking...")
+        await renderer.handle_status("Processing...")
+
+        bot.send_message.assert_called_once()
+        bot.edit_message_text.assert_called_once_with(
+            "_Processing..._",
+            chat_id=123,
+            message_id=42,
+            parse_mode="Markdown",
+        )
+        assert renderer._current_message_id == 42
+
+    async def test_consecutive_status_does_not_increment_message_count(self) -> None:
+        """Editing an existing status does not increment message count."""
+        bot = MagicMock()
+        bot.send_message = AsyncMock(return_value=MockMessage(message_id=42))
+        bot.edit_message_text = AsyncMock()
+        renderer = ResponseRenderer(bot, chat_id=123)
+
+        await renderer.handle_status("Thinking...")
+        await renderer.handle_status("Processing...")
+
+        assert renderer._message_count == 1
+
+
 class TestResponseRendererTextHandling:
     """Tests for handle_text() behavior."""
 
