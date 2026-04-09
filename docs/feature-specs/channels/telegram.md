@@ -4,13 +4,14 @@
 
 ## Overview
 
-A Telegram bot that receives text messages from a single authorized user, forwards them to the coordinator, and streams responses back as formatted Telegram messages with progressive editing. The production-facing communication channel for interacting with Tachikoma from any Telegram client.
+A Telegram bot that receives text messages and media messages from a single authorized user, forwards them to the coordinator, and streams responses back as formatted Telegram messages with progressive editing. The production-facing communication channel for interacting with Tachikoma from any Telegram client.
 
 ## User Stories
 
 - As a user, I want to interact with Tachikoma through Telegram so that I can send messages and receive responses from my phone or any Telegram client without needing a terminal
 - As a user, I want to see what tools the agent is using while it works so that I understand what is happening during pauses
 - As a user, I want messages I send during an active response to be processed so that I can provide follow-up input without waiting
+- As a user, I want to send images, voice messages, and other media through Telegram so that the agent can see and work with my non-text content
 
 ## Requirements
 
@@ -18,7 +19,7 @@ A Telegram bot that receives text messages from a single authorized user, forwar
 |----|-------------|
 | R0 | Telegram bot that receives user messages and sends coordinator responses back through Telegram |
 | R1 | Bot initialization: connect to Telegram API, validate bot token at startup, handle unreachable API |
-| R2 | Message receiving: accept incoming text messages and forward them to the coordinator; message buffering for mid-stream messages |
+| R2 | Message receiving: accept incoming text messages and media messages (photos, voice, audio, documents, stickers, video, video notes, animations) and forward them to the coordinator; media messages are downloaded to a temp folder and described as text with metadata and file path; message buffering for mid-stream messages |
 | R3 | Response rendering: stream agent response via progressive message edits with correct markdown formatting, splitting at paragraph boundaries before hitting the Telegram message size limit; respect Telegram API rate limits on edits; when push notifications are enabled, send all streaming messages silently and replace the final message via copy+delete to trigger exactly one push notification per response |
 | R4 | Tool activity display: show tool activity as an inline status line within the current response message; each new tool replaces the previous tool line; when text resumes, each tool→text transition inserts a dynamic summary of the tools that ran (e.g., "🔧 Reading 3 files and searching for 'config'") and text continues below it |
 | R5 | User authorization: only process messages from the configured authorized user; silently ignore all others |
@@ -26,7 +27,7 @@ A Telegram bot that receives text messages from a single authorized user, forwar
 | R7 | Graceful shutdown: clean exit on SIGTERM/SIGINT or `q` keypress (when running in a TTY); in-flight responses are sent as-is (partial text delivered) before stopping |
 | R8 | Telegram configuration: bot token and authorized chat ID stored in TOML config `[telegram]` section |
 | R9 | CLI entry point: `tachikoma run --channel` flag selects between REPL (default) and Telegram; bare `tachikoma` defaults to `run`; CLI flags override TOML config values at runtime |
-| R10 | Message validation: silently ignore empty messages and non-text content (photos, stickers, voice, etc.) |
+| R10 | Message validation: silently ignore empty messages and unsupported message types (contacts, locations, polls, venues, dice) |
 | R11 | Error display: surface coordinator errors (recoverable and non-recoverable) as messages in the Telegram chat |
 | R12 | Event bus integration: subscribe to task events for proactive session task delivery and direct notification display |
 
@@ -50,6 +51,16 @@ The bot accepts incoming text messages from the authorized user and forwards the
 - Given the bot is running, when an authorized user sends a text message, then the message text is forwarded to the coordinator via `send_message()`
 - Given the bot is streaming a response to message A, when the user sends message B, then `enqueue()` is called to buffer message B; B is processed by the message source generator within the same session or as a new session after completion
 - Given multiple messages arrive while a response is streaming, when each arrives, then each is enqueued and processed in order
+
+Media messages from the authorized user are downloaded to a dedicated temp folder and forwarded to the coordinator as natural-language text descriptions. The agent receives a text description containing metadata and the saved file path, and can use its existing tools to process the file. Media messages follow the same buffering behavior as text messages.
+
+**Media Acceptance Criteria**:
+- Given the bot is running, when an authorized user sends a supported media message (photo, voice, audio, document, sticker, video, video note, or animation), then the file is downloaded to the temp folder and a text description including metadata and file path is enqueued to the coordinator
+- Given any media type, when the description is constructed, then it follows a consistent structure: media type label, type-specific metadata, the saved file path, and optional caption
+- Given a saved file, when named, then it uses a UUID-based unique name with an appropriate file extension matching its content type
+- Given a media file that exceeds 20 MB (Telegram bot download limit), when the file size is known, then an error message is sent to the user in the chat and no file is saved
+- Given a download fails due to a network or API error, then an error message is sent to the user and the conversation remains usable
+- Given any media message includes a caption, when the description is constructed, then the caption text is included as the user's accompanying message
 
 ### Response Rendering (R3)
 
@@ -148,10 +159,10 @@ The CLI entry point supports channel selection via `tachikoma run --channel`. Ba
 
 ### Message Validation (R10)
 
-Non-text content and empty messages are silently ignored.
+Unsupported content types and empty messages are silently ignored.
 
 **Acceptance Criteria**:
-- Given a non-text message (photo, sticker, voice, etc.) from the authorized user, when received, then it is silently ignored
+- Given an unsupported message type (contact, location, poll, venue, dice) from the authorized user, when received, then it is silently ignored
 - Given an empty or whitespace-only text message, when received, then it is silently ignored
 
 ### Error Display (R11)
@@ -187,12 +198,34 @@ The Telegram channel subscribes to task events via the event bus. Session tasks 
   ----------   ------------
   |            (silently drop)
   |
-  +-----+-----+
+  +-----+-----+-----+
+  |           |     |
+  v           v     v
+  Text Msg   Media  Unsupported
+  --------   -----  -----------
+  |          |      (silently drop)
+  |          v
+  |       Download & Describe
+  |       --------------------
+  |       - download to temp folder
+  |       - build text description
+  |         with metadata + path
+  |       - include caption if any
   |           |
-  v           v
-  Text Msg   Non-text
-  --------   --------
-  |          (silently drop)
+  |     +-----+-----+
+  |     |           |
+  |     v           v
+  |   Success     Error
+  |   -------     -----
+  |   |           - size limit or
+  |   |             download failure
+  |   |           - error message
+  |   |             in chat
+  |   v
+  |   Enqueue Description
+  |   -------------------
+  |   - (same as text
+  |      from here)
   v
   Processing
   ----------
@@ -231,15 +264,17 @@ The Telegram channel subscribes to task events via the event bus. Session tasks 
 
 ### Flow Description
 
-**Entry point**: User sends a message to the Telegram bot from any Telegram client.
+**Entry point**: User sends a message (text or media) to the Telegram bot from any Telegram client.
 
-**Happy path**: The bot receives the message, confirms the sender is authorized, checks it's a non-empty text message, sends a typing indicator, and forwards the text to the coordinator. As the agent processes and responds, the bot progressively edits a single message showing the accumulating text (throttled for rate limits). Tool activity appears as an italicized inline status line within the same message — appended below any text already streamed, separated by a blank line. Each new tool replaces the previous tool line. When text resumes, the tool line is replaced with an italicized dynamic summary (e.g., "*🔧 Reading 3 files and searching for \`config\`*") with blank lines before and after, and new text continues below it. If the response exceeds the message size limit, it splits at the last paragraph boundary and continues in a new message. The final response is delivered as one or more formatted messages. All messages during streaming are sent silently (no push notifications). After the response is finalized, the last message is replaced with a fresh copy to trigger a push notification. The copied message appears after any steering messages the user sent during processing, preserving correct chronological order. Push notifications are enabled by default (`push_notifications = true`).
+**Happy path (text)**: The bot receives the message, confirms the sender is authorized, checks it's a non-empty text message, sends a typing indicator, and forwards the text to the coordinator. As the agent processes and responds, the bot progressively edits a single message showing the accumulating text (throttled for rate limits). Tool activity appears as an italicized inline status line within the same message — appended below any text already streamed, separated by a blank line. Each new tool replaces the previous tool line. When text resumes, the tool line is replaced with an italicized dynamic summary (e.g., "*🔧 Reading 3 files and searching for \`config\`*") with blank lines before and after, and new text continues below it. If the response exceeds the message size limit, it splits at the last paragraph boundary and continues in a new message. The final response is delivered as one or more formatted messages. All messages during streaming are sent silently (no push notifications). After the response is finalized, the last message is replaced with a fresh copy to trigger a push notification. The copied message appears after any steering messages the user sent during processing, preserving correct chronological order. Push notifications are enabled by default (`push_notifications = true`).
 
-**Buffering path**: If the user sends another message while a response is streaming, the channel calls `coordinator.enqueue()` to buffer the message. The message source generator feeds it into the same session, or remaining buffered messages are processed as new full-pipeline sessions after the current one completes. Each buffered message gets its own response message(s) in the chat.
+**Happy path (media)**: The bot receives a supported media message (photo, voice, audio, document, sticker, video, video note, or animation), confirms the sender is authorized, checks the file size is within the 20 MB Telegram bot download limit, downloads the file to the dedicated temp folder with a unique name and appropriate extension, constructs a natural-language text description with relevant metadata and the saved file path (plus caption if present), and enqueues it to the coordinator. From there, processing follows the same path as text messages — the agent receives the description and can use its tools to interact with the file. Multiple media messages arriving during an active response are buffered and processed in order, the same as text messages.
 
-**Decision points**: Authorization check (authorized → process, unauthorized → drop). Message type check (text → process, non-text → drop). Empty check (empty → drop). Message length check (under limit → continue editing, approaching limit → split at paragraph boundary). Error type (recoverable → show error, continue; non-recoverable → show error, log). Push notification check (enabled and message was sent → copy+delete, disabled or no message → no-op, copy fails → preserve original).
+**Buffering path**: If the user sends another message (text or media) while a response is streaming, the channel calls `coordinator.enqueue()` to buffer the message. The message source generator feeds it into the same session, or remaining buffered messages are processed as new full-pipeline sessions after the current one completes. Each buffered message gets its own response message(s) in the chat.
 
-**Exit points**: Response complete (Result event received), recoverable error (error shown, conversation continues), non-recoverable error (error shown, failure logged), unauthorized (silently dropped), non-text or empty (silently dropped).
+**Decision points**: Authorization check (authorized → process, unauthorized → drop). Message type check (text → process text, supported media → download/describe/process, unsupported → drop). Empty check (empty text → drop). File size check (within 20 MB → download, too large → error message). Download result (success → describe and enqueue, failure → error message). Message length check (under limit → continue editing, approaching limit → split at paragraph boundary). Error type (recoverable → show error, continue; non-recoverable → show error, log). Push notification check (enabled and message was sent → copy+delete, disabled or no message → no-op, copy fails → preserve original).
+
+**Exit points**: Response complete (Result event received), recoverable error (error shown, conversation continues), non-recoverable error (error shown, failure logged), media file too large (error message sent, conversation continues), media download failed (error message sent, conversation continues), unauthorized (silently dropped), unsupported message type or empty text (silently dropped).
 
 ## Requires
 
