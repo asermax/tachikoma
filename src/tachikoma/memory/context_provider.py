@@ -53,6 +53,17 @@ search based solely on the user's message below.
    - Then, use Grep to narrow by keywords/topics from the user's message
    - Finally, use Read to verify relevance of promising candidates
 
+## Scope and Efficiency
+
+- **ONLY search files under `memories/`.** Do not read files outside this directory, \
+even if they seem relevant to the conversation. Your job is memory retrieval, \
+not general research.
+- Be efficient: prefer Grep to narrow candidates before using Read. \
+Stop searching once you have enough relevant results or have checked the most \
+promising candidates.
+- Do NOT attempt to answer the user's message or take any action. \
+Return only memory references.
+
 ## Output Format
 
 Return each relevant memory as an XML `<memory>` element with a `path` attribute. \
@@ -218,6 +229,7 @@ class MemoryContextProvider(MessageContextProvider):
             model=self._agent_defaults.model,
             effort="low",
             max_turns=8,
+            tools=["Read", "Glob", "Grep"],
             allowed_tools=["Read", "Glob", "Grep"],
             permission_mode="bypassPermissions",
             cwd=self._agent_defaults.cwd,

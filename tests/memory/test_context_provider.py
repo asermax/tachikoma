@@ -306,6 +306,7 @@ class TestMemoryContextProvider:
         assert options.model == "opus"
         assert options.effort == "low"
         assert options.max_turns == 8
+        assert options.tools == ["Read", "Glob", "Grep"]
         assert options.allowed_tools == ["Read", "Glob", "Grep"]
         assert options.permission_mode == "bypassPermissions"
         assert options.cwd == tmp_path
@@ -371,6 +372,11 @@ class TestMemorySearchPrompt:
     def test_prompt_includes_message_placeholder(self) -> None:
         """AC: Prompt has {message} placeholder for embedding user message."""
         assert "{message}" in MEMORY_SEARCH_PROMPT
+
+    def test_prompt_includes_scope_guardrails(self) -> None:
+        """AC: Prompt enforces memory-only scope and no-action boundaries."""
+        assert "ONLY search files under" in MEMORY_SEARCH_PROMPT
+        assert "Do NOT attempt to answer" in MEMORY_SEARCH_PROMPT
 
     def test_prompt_mentions_already_covered_case(self) -> None:
         """AC: Prompt covers the 'already covered' case in sentinel instruction."""
