@@ -351,7 +351,10 @@ class TestSkillsContextProvider:
         # Pass existing entries indicating skill-a is already loaded
         existing = [
             SessionContextEntry(
-                id=1, session_id="s1", owner="skills", content="...",
+                id=1,
+                session_id="s1",
+                owner="skills",
+                content="...",
                 metadata={"skill_name": "skill-a"},
             ),
         ]
@@ -384,7 +387,10 @@ class TestSkillsContextProvider:
         # Pass existing entries indicating the only skill is loaded
         existing = [
             SessionContextEntry(
-                id=1, session_id="s1", owner="skills", content="...",
+                id=1,
+                session_id="s1",
+                owner="skills",
+                content="...",
                 metadata={"skill_name": "only-skill"},
             ),
         ]

@@ -289,7 +289,6 @@ def load_foundational_context(workspace_path: Path) -> list[tuple[str, str]]:
     return entries
 
 
-
 async def context_hook(ctx: BootstrapContext) -> None:
     """Bootstrap hook: create context directory and default files if missing.
 

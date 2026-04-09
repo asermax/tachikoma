@@ -167,14 +167,10 @@ def create_task_tools_server(
             status = "✓ enabled" if d.enabled else "✗ disabled"
             schedule_desc = _format_schedule(d.schedule, timezone)
             last_fired = (
-                f"{d.last_fired_at.strftime('%Y-%m-%d %H:%M')}"
-                if d.last_fired_at
-                else "never"
+                f"{d.last_fired_at.strftime('%Y-%m-%d %H:%M')}" if d.last_fired_at else "never"
             )
 
-            created_str = (
-                d.created_at.strftime("%Y-%m-%d %H:%M") if d.created_at else "unknown"
-            )
+            created_str = d.created_at.strftime("%Y-%m-%d %H:%M") if d.created_at else "unknown"
 
             lines = [
                 f"# {d.name}\n",
