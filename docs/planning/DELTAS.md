@@ -608,3 +608,80 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 **Priority**: 3 (Medium)
 **Complexity**: Medium
 **Description**: The project has moderate coupling to the Claude Agent SDK — the adapter layer and domain types are well-isolated, but the coordinator, post-processing forking, and background task executor are tightly bound to SDK-specific concepts (session resume, session forking, in-process MCP servers, custom transport). Evaluate alternative agent platforms (e.g., Anthropic's managed agents platform) to determine whether switching would provide meaningful benefits (managed infrastructure, richer session primitives, reduced operational burden) that justify the migration effort. The evaluation should assess feature parity against the SDK capabilities currently used (session resume, session forking, MCP server injection, multi-turn background execution, tool-less classification agents), estimate migration scope and risk, and produce a recommendation with a concrete migration path if switching is warranted. The deliverable is a decision document (ADR), not an implementation.
+
+### DLT-123: Agent reflections memory type
+**Status**: ✗ Defined
+**Depends on**: None
+**Priority**: 3 (Medium)
+**Complexity**: Medium
+**Description**: Add a memory category for the agent's own subjective assessments — what worked, what didn't, patterns it notices about its own behavior and capabilities. Distinct from existing memory types (episodic, facts, preferences) which capture objective user-centric information. Reflections are the agent's self-observations, forming the input layer for automated self-improvement. A new post-processing processor extracts reflections from completed sessions and stores them alongside other memory types. This enables the self-healing skill system and future self-learning capabilities to draw on the agent's accumulated experience rather than starting from scratch each session.
+
+### DLT-124: Add test coverage requirements to skill authoring guide
+**Status**: ✗ Defined
+**Depends on**: None
+**Priority**: 3 (Medium)
+**Complexity**: Easy
+**Description**: The skill authoring guide currently covers directory conventions, agent definitions, and reference files, but says nothing about testing skills that contain executable code (scripts, CLIs, or any programmatic logic). When skills evolve, regressions go unnoticed until they break in production — e.g., the share-markdown mermaid pipeline had multiple bugs that tests would have caught earlier. Update the skill authoring guidance to require test coverage for any skill that includes executable code, with conventions for test file placement, naming, and execution within the skill directory structure.
+
+### DLT-125: Message envelope for typed message routing
+**Status**: ✗ Defined
+**Depends on**: None
+**Priority**: 3 (Medium)
+**Complexity**: Medium
+**Description**: Introduce a message envelope — a wrapper around all messages entering the pipeline that declares the content type and carries type-specific metadata. Plain text messages get a thin wrapper; media messages carry file path, content type, dimensions, generated summaries, and other modality-specific data. The envelope gives preprocessors, boundary detection, context providers, and the agent a consistent way to inspect what kind of content they are handling without channel-specific logic. Each channel adapter wraps its messages in the same envelope format on ingestion, making the pipeline channel-agnostic. This is a foundational change that enables modality-aware processing throughout the system.
+
+### DLT-126: Media preprocessor for content understanding
+**Status**: ✗ Defined
+**Depends on**: DLT-125
+**Priority**: 3 (Medium)
+**Complexity**: Medium
+**Description**: Move content understanding into a dedicated preprocessor that generates a human-readable summary of incoming media files (e.g., "a screenshot of a USDC/ARS exchange rate showing 1 USDC = 1,463.85 ARS"). Currently, media arrives as metadata (file path + caption) with no actual content analysis. The preprocessor reads the media file from the message envelope's attachment metadata, dispatches modality-specific analysis (image description, audio transcription, document parsing), and appends the generated summary to the envelope. Every downstream component — boundary detection, context providers, the agent itself — then has a richer understanding of what the file contains without needing to analyze it independently.
+
+### DLT-127: Immediate background task execution
+**Status**: ✗ Defined
+**Depends on**: None
+**Priority**: 3 (Medium)
+**Complexity**: Easy
+**Description**: Allow firing a background task immediately on demand instead of only through scheduled triggers. Currently tasks can only be created with a cron expression or a future one-shot datetime — there is no way to say "run this task right now." Add an MCP tool or extend existing tools to trigger immediate execution of a task definition, bypassing the scheduler and running the task's prompt through the background task executor directly. Works alongside background task pause/resume — e.g., pause a long-running task, make changes, then re-run it immediately without setting up a new scheduled trigger.
+
+### DLT-128: Surface running detached processes in agent context
+**Status**: ✗ Defined
+**Depends on**: DLT-115
+**Priority**: 4 (Low)
+**Complexity**: Easy
+**Description**: Currently running detached processes should be part of the agent's injected context so the agent is always aware of them and can monitor proactively without having to explicitly check. Add a context provider that queries the detached process registry on each message, surfaces active processes (name, PID, uptime, log path), and injects this information into the agent's pre-processing context. This enables the agent to proactively notice when a process has been running for an unusual duration, has stopped unexpectedly, or is relevant to the current conversation.
+
+### DLT-129: Background pipeline runner
+**Status**: ✗ Defined
+**Depends on**: None
+**Priority**: 5 (Backlog)
+**Complexity**: Hard
+**Description**: A system for defining and executing repeatable multi-step pipelines as a single background process. A pipeline is an ordered sequence of heterogeneous steps — shell commands, background task prompts, notifications, agent handoffs — where each step's output flows as input to the next. Pipelines can be triggered by the main session, a long-running agent, or a scheduled task. This complements the existing background task system (single-prompt fire-and-forget) and autonomous agent delegation (interactive, long-lived sessions) by covering the middle ground: deterministic, sequential workflows that chain different execution modes without requiring an interactive agent to orchestrate each step. Design should consider how pipelines interact with the target system for directing outputs to specific sessions or agents.
+
+### DLT-130: Progress visibility for long-running background tasks
+**Status**: ✗ Defined
+**Depends on**: None
+**Priority**: 2 (High)
+**Complexity**: Medium
+**Description**: Heavy background tasks (reading 9+ files, web research, writing large outputs) can take 6+ hours to complete with no intermediate status. The user has no way to know if a task is still running, stuck, or dead. Add progress tracking to the background task executor: log periodic status updates (e.g., every N minutes or when the agent uses a tool) to a queryable location, expose running task status through the existing MCP tools and CLI, and enforce a configurable timeout threshold — if a task exceeds the limit, fail it with a notification instead of silently burning resources. The goal is that a user can always answer "is this task still running and what is it doing?" without requiring SSH or raw database access.
+
+### DLT-131: Fix MemoryContextProvider crash in background task execution
+**Status**: ✗ Defined
+**Depends on**: None
+**Priority**: 2 (High)
+**Complexity**: Easy
+**Description**: The memory search sub-agent spawned by MemoryContextProvider exhausts its turn limit and returns `error_max_turns`, propagating as a fatal error. This was already fixed in main session execution but the same fix needs to be applied to background task execution — the tools are not correctly configured for the background task environment, causing the sub-agent to spin without making progress. Apply the same tool configuration fix used in main sessions to the background task executor's context provider setup.
+
+### DLT-132: Audit and fix remaining UTC handling in task operations
+**Status**: ✗ Defined
+**Depends on**: None
+**Priority**: 3 (Medium)
+**Complexity**: Easy
+**Description**: Despite the existing cron scheduler timezone fix, the task system still exhibits UTC-related issues in CRUD operations. Evidence: re-scheduling a disabled one-shot task to a local-time datetime fails with "must be in the future" even when the time is minutes ahead locally — the system likely compares against UTC "now." The agent also sometimes reports task schedules in UTC. Audit all datetime handling in task create, update, display, and comparison paths through logs and code to identify where local timezone is not being used consistently, and fix every site to use the configured timezone for all time comparisons and display formatting.
+
+### DLT-133: Defer file delivery to post-response in Telegram
+**Status**: ✗ Defined
+**Depends on**: None
+**Priority**: 3 (Medium)
+**Complexity**: Medium
+**Description**: Files sent via the Telegram `send_file` MCP tool are delivered immediately during agent execution, so the user sees the file before the response message (because the file sends while the response is still being composed). UX would be better if files arrived after the message, like a natural attachment. Defer file sends to a post-response hook that dispatches them after the agent's text response is fully delivered. Tradeoff: deferring means the agent cannot react to delivery failures (retry, notify) because the response is already finalized by the time the file goes out. Either accept this risk or design a post-response feedback mechanism for delivery errors.
