@@ -437,7 +437,7 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 ### DLT-097: Keep local repositories in sync with remotes
 **Status**: ✗ Defined
 **Depends on**: None
-**Priority**: 2 (High)
+**Priority**: 1 (Critical)
 **Complexity**: Medium
 **Description**: The agent must work with current repository state and push changes without conflicts. Currently, the workspace is never pulled from its remote, projects are only synced at startup, and pushes are bare `git push` with no prior fetch — which fails when the remote has moved forward. This delta ensures the agent works with up-to-date state by pulling the workspace and project submodules before processing each message, replaces the direct push in both post-processors with a fetch-rebase-push sequence, and introduces conflict recovery that resolves conflicts by rebasing local commits on top of the remote and pushing the result, rather than aborting.
 
@@ -668,14 +668,14 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 ### DLT-131: Fix MemoryContextProvider crash in background task execution
 **Status**: ✗ Defined
 **Depends on**: None
-**Priority**: 2 (High)
+**Priority**: 1 (Critical)
 **Complexity**: Easy
 **Description**: The memory search sub-agent spawned by MemoryContextProvider exhausts its turn limit and returns `error_max_turns`, propagating as a fatal error. This was already fixed in main session execution but the same fix needs to be applied to background task execution — the tools are not correctly configured for the background task environment, causing the sub-agent to spin without making progress. Apply the same tool configuration fix used in main sessions to the background task executor's context provider setup.
 
 ### DLT-132: Audit and fix remaining UTC handling in task operations
 **Status**: ✗ Defined
 **Depends on**: None
-**Priority**: 3 (Medium)
+**Priority**: 1 (Critical)
 **Complexity**: Easy
 **Description**: Despite the existing cron scheduler timezone fix, the task system still exhibits UTC-related issues in CRUD operations. Evidence: re-scheduling a disabled one-shot task to a local-time datetime fails with "must be in the future" even when the time is minutes ahead locally — the system likely compares against UTC "now." The agent also sometimes reports task schedules in UTC. Audit all datetime handling in task create, update, display, and comparison paths through logs and code to identify where local timezone is not being used consistently, and fix every site to use the configured timezone for all time comparisons and display formatting.
 
