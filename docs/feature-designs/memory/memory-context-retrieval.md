@@ -130,11 +130,11 @@ extract_memory_paths(entries: list[SessionContextEntry]) → set[str]
 3. Build search prompt by embedding user message into MEMORY_SEARCH_PROMPT
 4. Branch on sdk_session_id:
    a. If available → ClaudeAgentOptions(resume=sdk_session_id, fork_session=True,
-      model=agent_defaults.model, effort="low", max_turns=8,
+      model=agent_defaults.model, effort="low", max_turns=12,
       allowed_tools=["Read", "Glob", "Grep"],
       permission_mode="bypassPermissions", cwd=agent_defaults.cwd)
    b. If None → ClaudeAgentOptions(model=agent_defaults.model, effort="low",
-      max_turns=8, allowed_tools=["Read", "Glob", "Grep"],
+      max_turns=12, allowed_tools=["Read", "Glob", "Grep"],
       permission_mode="bypassPermissions", cwd=agent_defaults.cwd)
 5. Call query(prompt=prompt, options=options)
 6. Fully consume the query() generator per DES-007 (which requires DES-005):
@@ -207,8 +207,8 @@ extract_memory_paths(entries: list[SessionContextEntry]) → set[str]
 
 ### Preserved model and tool configuration
 
-**Choice**: Keep `model=agent_defaults.model`, `effort="low"`, `max_turns=8`, `allowed_tools=["Read", "Glob", "Grep"]`, `permission_mode="bypassPermissions"` from the previous implementation.
-**Why**: These settings are well-tuned for the memory search use case. The addition of `fork_session` doesn't change tool needs or reasoning requirements.
+**Choice**: Keep `model=agent_defaults.model`, `effort="low"`, `max_turns=12`, `allowed_tools=["Read", "Glob", "Grep"]`, `permission_mode="bypassPermissions"`. The turn limit was raised from 8 to 12 to reduce intermittent `error_max_turns` failures (~14% failure rate at 8 turns) while keeping the agent bounded.
+**Why**: Successful searches typically complete in 3-7 turns. The previous limit of 8 left insufficient headroom for searches requiring more exploration (e.g., multiple grep passes across memory subdirectories). With `effort="low"`, the cost per additional turn is minimal.
 
 **Consequences**:
 - Pro: No regression in search quality
@@ -248,7 +248,7 @@ extract_memory_paths(entries: list[SessionContextEntry]) → set[str]
 
 ### Scenario: Agent exhausts max_turns
 
-**Given**: The memory search agent uses all 8 turns without producing a ResultMessage
+**Given**: The memory search agent uses all 12 turns without producing a ResultMessage
 **When**: The async iterator completes
 **Then**: Provider returns None.
 
