@@ -665,13 +665,6 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 **Complexity**: Medium
 **Description**: Heavy background tasks (reading 9+ files, web research, writing large outputs) can take 6+ hours to complete with no intermediate status. The user has no way to know if a task is still running, stuck, or dead. Add progress tracking to the background task executor: log periodic status updates (e.g., every N minutes or when the agent uses a tool) to a queryable location, expose running task status through the existing MCP tools and CLI, and enforce a configurable timeout threshold — if a task exceeds the limit, fail it with a notification instead of silently burning resources. The goal is that a user can always answer "is this task still running and what is it doing?" without requiring SSH or raw database access.
 
-### DLT-132: Audit and fix remaining UTC handling in task operations
-**Status**: ✗ Defined
-**Depends on**: None
-**Priority**: 1 (Critical)
-**Complexity**: Easy
-**Description**: Despite the existing cron scheduler timezone fix, the task system still exhibits UTC-related issues in CRUD operations. Evidence: re-scheduling a disabled one-shot task to a local-time datetime fails with "must be in the future" even when the time is minutes ahead locally — the system likely compares against UTC "now." The agent also sometimes reports task schedules in UTC. Audit all datetime handling in task create, update, display, and comparison paths through logs and code to identify where local timezone is not being used consistently, and fix every site to use the configured timezone for all time comparisons and display formatting.
-
 ### DLT-133: Defer file delivery to post-response in Telegram
 **Status**: ✗ Defined
 **Depends on**: None
