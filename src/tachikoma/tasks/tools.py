@@ -113,7 +113,7 @@ def create_task_tools_server(
                 status = "✓ enabled" if d.enabled else "✗ disabled"
                 schedule_desc = _format_schedule(d.schedule, timezone)
                 last_fired = (
-                    f" (last: {d.last_fired_at.strftime('%Y-%m-%d %H:%M')})"
+                    f" (last: {d.last_fired_at.astimezone(timezone).strftime('%Y-%m-%d %H:%M %Z')})"
                     if d.last_fired_at
                     else ""
                 )
@@ -167,10 +167,16 @@ def create_task_tools_server(
             status = "✓ enabled" if d.enabled else "✗ disabled"
             schedule_desc = _format_schedule(d.schedule, timezone)
             last_fired = (
-                f"{d.last_fired_at.strftime('%Y-%m-%d %H:%M')}" if d.last_fired_at else "never"
+                f"{d.last_fired_at.astimezone(timezone).strftime('%Y-%m-%d %H:%M %Z')}"
+                if d.last_fired_at
+                else "never"
             )
 
-            created_str = d.created_at.strftime("%Y-%m-%d %H:%M") if d.created_at else "unknown"
+            created_str = (
+                d.created_at.astimezone(timezone).strftime("%Y-%m-%d %H:%M %Z")
+                if d.created_at
+                else "unknown"
+            )
 
             lines = [
                 f"# {d.name}\n",
@@ -364,7 +370,32 @@ def create_task_tools_server(
                         }
                     ],
                 }
+            # Validate one-shot schedules are in the future (consistent with create_task)
+            if (
+                schedule_config.type == "once"
+                and schedule_config.at is not None
+                and schedule_config.at <= datetime.now(UTC)
+            ):
+                return {
+                    "is_error": True,
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": (
+                                "One-shot schedule datetime must be in the future."
+                                f" Got: {schedule_config.at.isoformat()}"
+                            ),
+                        }
+                    ],
+                }
+
             updates["schedule"] = schedule_config
+
+            # Reset last_fired_at — the old fire time is meaningless for a new schedule.
+            # For one-shot tasks, the instance generator requires last_fired_at=None to fire.
+            # For cron tasks, the anchor logic handles None by falling back to start-of-hour.
+            updates["last_fired_at"] = None
+
         if parsed.prompt is not None:
             updates["prompt"] = parsed.prompt
         if parsed.enabled is not None:
