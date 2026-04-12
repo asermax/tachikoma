@@ -228,7 +228,7 @@ class MemoryContextProvider(MessageContextProvider):
         options = ClaudeAgentOptions(
             model=self._agent_defaults.model,
             effort="low",
-            max_turns=8,
+            max_turns=12,
             tools=["Read", "Glob", "Grep"],
             allowed_tools=["Read", "Glob", "Grep"],
             permission_mode="bypassPermissions",

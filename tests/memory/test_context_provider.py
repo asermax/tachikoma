@@ -305,7 +305,7 @@ class TestMemoryContextProvider:
 
         assert options.model == "opus"
         assert options.effort == "low"
-        assert options.max_turns == 8
+        assert options.max_turns == 12
         assert options.tools == ["Read", "Glob", "Grep"]
         assert options.allowed_tools == ["Read", "Glob", "Grep"]
         assert options.permission_mode == "bypassPermissions"
