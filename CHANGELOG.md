@@ -7,6 +7,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v1.14.3 (2026-04-12)
+
+### Bug Fixes
+
+- **memory**: Increase search agent max_turns from 8 to 12
+  ([`a25be89`](https://github.com/asermax/tachikoma/commit/a25be892c37fadff0e770bcd54c8da22df1bdb45))
+
+- **tasks**: Fix UTC handling in task CRUD operations
+  ([`ddec1ad`](https://github.com/asermax/tachikoma/commit/ddec1add9083697a88a89ada5719e76418c2327a))
+
+### Chores
+
+- **deltas**: Add DLT-123 through DLT-133 from improvements triage
+  ([`28e86b4`](https://github.com/asermax/tachikoma/commit/28e86b4035b4c1d28cd7aa06f2ece8dcd8a222ef))
+
+- **deltas**: Escalate DLT-097, DLT-131, DLT-132 to Critical priority
+  ([`e203a12`](https://github.com/asermax/tachikoma/commit/e203a12c3cc390fe22492b566d53bbdd475add13))
+
+- **deltas**: Remove DLT-131 after reconciliation
+  ([`8e57d8a`](https://github.com/asermax/tachikoma/commit/8e57d8a685e5587b2f010ae87dd4980cc2259650))
+
+- **deltas**: Remove DLT-132 after reconciliation
+  ([`3caf19e`](https://github.com/asermax/tachikoma/commit/3caf19e842afcc5fafbd2d22a2e9fb5aaf98fce7))
+
+- **deltas**: Reorder DLT-134 dependencies alphabetically
+  ([`d6ed2a3`](https://github.com/asermax/tachikoma/commit/d6ed2a3fc9941a6c0e7d7568d9ad4fe38e255e1a))
+
+### Documentation
+
+- **memory**: Reconcile max_turns increase into feature design
+  ([`253462a`](https://github.com/asermax/tachikoma/commit/253462a8d59975acb855d680a608bcbfc898e998))
+
+- **tasks**: Reconcile UTC handling fixes into feature documentation
+  ([`0605736`](https://github.com/asermax/tachikoma/commit/0605736e5172fead1ee26ce9a63450da99b4d7c3))
+
+
 ## v1.14.2 (2026-04-09)
 
 ### Bug Fixes
