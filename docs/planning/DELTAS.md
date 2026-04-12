@@ -678,3 +678,24 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 **Priority**: 3 (Medium)
 **Complexity**: Medium
 **Description**: Background tasks currently hard-fail when they reach their maximum iteration count, even if they are making meaningful progress. This delta allows the assistant to escalate to the user when the iteration limit is reached instead of failing outright. The user is presented with the task's progress and the assistant's latest assessment, and can choose to grant additional iterations or abort. If extended, the task continues from where it left off with a fresh iteration budget. If aborted, the task is failed as today. The iteration limit before escalation is configurable per task definition, falling back to the global default. This prevents premature failure of tasks that are progressing slowly but productively, giving the user control over the cost/completion tradeoff.
+
+### DLT-135: Serialize concurrent notification delivery and user message processing
+**Status**: ✗ Defined
+**Depends on**: DLT-111, DLT-112
+**Priority**: 2 (High)
+**Complexity**: Hard
+**Description**: When a background task notification is delivered at the exact moment a user sends a message, the two can collide at the coordinator's message queue — resulting in one being lost or the notification being silently swallowed. The existing message-loss prevention and notification buffering mechanisms handle their respective timing windows independently, but do not cover the case where both sources attempt to enqueue simultaneously. This delta adds serialization between the notification delivery path and the user message intake so that concurrent arrivals are safely ordered and neither is dropped.
+
+### DLT-136: Fix memory file placement when session works in subdirectory
+**Status**: ✗ Defined
+**Depends on**: None
+**Priority**: 1 (Critical)
+**Complexity**: Medium
+**Description**: When the main conversation session works inside a subdirectory (e.g. an Obsidian vault within the projects folder), post-processing memory extraction agents write `memories/` files to that subdirectory instead of the workspace root. This causes extracted memories to be invisible to the memory context provider in future sessions, silently losing conversation learnings. The likely cause is that Claude Code's fork/resume mechanism inherits the parent session's runtime working directory despite `cwd` being set to the workspace root in fork options. The fix should ensure all prompt-driven processors — not just memory extractors — resolve file paths against the workspace root regardless of what directory the parent session was working in.
+
+### DLT-137: Scope forked agent file writes to per-processor subdirectories
+**Status**: ✗ Defined
+**Depends on**: None
+**Priority**: 1 (Critical)
+**Complexity**: Medium
+**Description**: After the workspace-level sandbox restricts all agents to the workspace directory, forked agents spawned by post-processing processors still have write access to the entire workspace even though each processor only needs access to a specific subdirectory (e.g. a memory extractor only needs the memories directory). This delta adds per-agent path scoping so that each spawned agent's file write operations are confined to its designated working subdirectory within the workspace. The enforcement mechanism should be evaluated during speccing — options include CWD scoping within the fork/query configuration, or configuring SDK permission restrictions that limit file operations to the agent's designated directory. This applies to all agent spawning patterns: prompt-driven processors (fork-and-consume), standalone queries, and any other sub-agent invocation pattern.
