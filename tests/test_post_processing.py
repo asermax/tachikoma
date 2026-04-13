@@ -623,7 +623,7 @@ class TestForkAndConsume:
 
     async def test_model_passed_to_options_when_provided(self, mocker: MockerFixture) -> None:
         """AC: model kwarg is threaded through to ClaudeAgentOptions."""
-        mock_query = mocker.patch("tachikoma.post_processing.query")
+        mock_query = mocker.patch("tachikoma.post_processing.stderr_aware_query")
 
         async def fake_query(*args, **kwargs):
             yield MagicMock()
@@ -646,7 +646,7 @@ class TestForkAndConsume:
         self, mocker: MockerFixture
     ) -> None:
         """AC: Default call (no model kwarg) leaves ClaudeAgentOptions.model at None."""
-        mock_query = mocker.patch("tachikoma.post_processing.query")
+        mock_query = mocker.patch("tachikoma.post_processing.stderr_aware_query")
 
         async def fake_query(*args, **kwargs):
             yield MagicMock()
@@ -827,7 +827,7 @@ class TestForkAndCapture:
 
     async def test_model_passed_to_options_when_provided(self, mocker: MockerFixture) -> None:
         """AC: model kwarg is threaded through to ClaudeAgentOptions."""
-        mock_query = mocker.patch("tachikoma.post_processing.query")
+        mock_query = mocker.patch("tachikoma.post_processing.stderr_aware_query")
 
         async def fake_query(*args, **kwargs):
             yield MagicMock(spec=[])
@@ -850,7 +850,7 @@ class TestForkAndCapture:
         self, mocker: MockerFixture
     ) -> None:
         """AC: Default call (no model kwarg) leaves ClaudeAgentOptions.model at None."""
-        mock_query = mocker.patch("tachikoma.post_processing.query")
+        mock_query = mocker.patch("tachikoma.post_processing.stderr_aware_query")
 
         async def fake_query(*args, **kwargs):
             yield MagicMock(spec=[])
