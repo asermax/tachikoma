@@ -8,7 +8,7 @@
 
 Post-processors that fork the SDK session with a prompt should extend `PromptDrivenProcessor` rather than implementing the full `PostProcessor` interface directly. This base class provides a reusable structure for prompt-driven extraction and update logic.
 
-The pattern: extend `PromptDrivenProcessor`, provide a prompt constant, and call `super().__init__()` with the prompt and an `AgentDefaults` instance. The base class handles storing prompt/agent_defaults and implementing `process()` via `fork_and_consume()`.
+The pattern: extend `PromptDrivenProcessor`, provide a prompt constant, and call `super().__init__()` with the prompt and an `AgentDefaults` instance. The base class handles storing prompt/agent_defaults, replacing `$WORKSPACE` placeholders with the absolute workspace path (see [DES-008](DES-008-workspace-path-placeholder.md)), and implementing `process()` via `fork_and_consume()`.
 
 ## Rationale
 
@@ -111,4 +111,5 @@ When a processor needs pre/post steps around the fork, override `process()` enti
 ## Related
 
 - See also: [DES-002](DES-002-logging-conventions.md) - Logging conventions for processors
+- See also: [DES-008](DES-008-workspace-path-placeholder.md) - `$WORKSPACE` placeholder convention for absolute paths
 - Related feature: [../feature-designs/memory/memory-extraction.md](../feature-designs/memory/memory-extraction.md) - Memory extraction processors

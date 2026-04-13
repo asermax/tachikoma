@@ -9,3 +9,4 @@
 | [DES-005](DES-005-sdk-query-generator-consumption.md) | SDK query() Generator Consumption | Project-wide | 2026-03-16 |
 | [DES-006](DES-006-sdk-mcp-tool-server-factory.md) | SDK MCP Tool Server Factory | Python | 2026-03-21 |
 | [DES-007](DES-007-low-effort-classification-agent.md) | Low-Effort Classification Agent | Project-wide | 2026-03-21 |
+| [DES-008](DES-008-workspace-path-placeholder.md) | Workspace Path Placeholder in Agent Prompts | Project-wide | 2026-04-12 |

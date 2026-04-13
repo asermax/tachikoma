@@ -105,7 +105,7 @@ sequenceDiagram
 ### Shared Logic
 
 - **`PostProcessor` ABC** (`post_processing.py`): shared interface between all processors. Defines only the `process()` contract.
-- **`PromptDrivenProcessor`** (`post_processing.py`): base class for processors that fork the SDK session with a prompt (DES-004). Stores `_prompt`, `_cwd`, and `_cli_path`, implements `process()` via `augment_prompt_for_resumption()` + `fork_and_consume()`. Simple subclasses inherit `process()`; complex subclasses override it for pre/post steps and must call `augment_prompt_for_resumption()` before `fork_and_consume()` to maintain resumption awareness.
+- **`PromptDrivenProcessor`** (`post_processing.py`): base class for processors that fork the SDK session with a prompt (DES-004). Stores `_prompt`, `_cwd`, and `_cli_path`, implements `process()` via `augment_prompt_for_resumption()` + `fork_and_consume()`. At construction time, replaces `$WORKSPACE` placeholders in the prompt with the absolute workspace path (`str(agent_defaults.cwd)`), ensuring forked agents receive absolute file paths regardless of the CLI's session-restored working directory. Simple subclasses inherit `process()`; complex subclasses override it for pre/post steps and must call `augment_prompt_for_resumption()` before `fork_and_consume()` to maintain resumption awareness.
 - **`augment_prompt_for_resumption` function** (`post_processing.py`): standalone helper that appends a resumption boundary instruction to a prompt when `session.last_resumed_at` is set. Used by `PromptDrivenProcessor.process()` automatically; must be called explicitly by subclasses that override `process()`.
 - **`fork_and_consume` function** (`post_processing.py`): standalone helper encapsulating SDK `query()` forking pattern. Accepts optional `mcp_servers` parameter for providing custom in-process MCP tools to the forked agent, optional `cli_path` for the Claude CLI binary path, and optional `system_prompt_append` for injecting context into the forked session's system prompt. Available to processors needing session context.
 - **`fork_and_capture` function** (`post_processing.py`): same as `fork_and_consume` but returns the captured response text instead of discarding it. Used when the caller needs the forked session's output.
@@ -130,7 +130,7 @@ PostProcessor (ABC)
 └── process(session: Session) → None     (abstract)
 
 PromptDrivenProcessor(PostProcessor)                    [DES-004]
-├── _prompt: str
+├── _prompt: str                    ($WORKSPACE replaced with absolute path at __init__)
 ├── _cwd: Path
 ├── _cli_path: str | None
 └── process(session) → augment_prompt_for_resumption(prompt, session) + fork_and_consume(session, augmented_prompt, cwd, cli_path=cli_path)

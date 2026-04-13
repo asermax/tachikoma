@@ -58,7 +58,7 @@ The agent returns relevant memory file paths in XML `<memory>` elements. For fac
 
 | Layer/Component | Responsibility | Key Decisions |
 |-----------------|----------------|---------------|
-| `src/tachikoma/memory/context_provider.py` | `MemoryContextProvider(MessageContextProvider)` — forks session when SDK session ID available, parses XML `<memory>` elements from agent response, handles snippets (episodic) vs full-file reads (facts/preferences), creates per-file `ContextResult` entries with metadata. `ParsedMemoryEntry` dataclass and `parse_memory_entries()` function for XML parsing. Constants: `MEMORIES_OWNER`, `MEMORY_PATH_META_KEY`, `_NO_RELEVANT_MEMORIES`. Helper: `extract_memory_paths()`. `MEMORY_SEARCH_PROMPT` constant co-located with provider. | Agent returns XML elements with optional snippet content; self-closing = full file load, open/close = snippet extraction; uses `memory_path` metadata key per ADR-011; single adaptive prompt handles both forked and standalone modes |
+| `src/tachikoma/memory/context_provider.py` | `MemoryContextProvider(MessageContextProvider)` — forks session when SDK session ID available, parses XML `<memory>` elements from agent response, handles snippets (episodic) vs full-file reads (facts/preferences), creates per-file `ContextResult` entries with metadata. `ParsedMemoryEntry` dataclass and `parse_memory_entries()` function for XML parsing. Constants: `MEMORIES_OWNER`, `MEMORY_PATH_META_KEY`, `_NO_RELEVANT_MEMORIES`. Helper: `extract_memory_paths()`. `MEMORY_SEARCH_PROMPT` constant co-located with provider — uses `$WORKSPACE` placeholders for directory paths, replaced with absolute workspace path at call time. | Agent returns XML elements with optional snippet content; self-closing = full file load, open/close = snippet extraction; uses `memory_path` metadata key per ADR-011; single adaptive prompt handles both forked and standalone modes; `$WORKSPACE` replacement applied before `str.format()` |
 
 ### Cross-Layer Contracts
 
@@ -112,7 +112,7 @@ MemoryContextProvider(MessageContextProvider)
 ├── _agent_defaults: AgentDefaults     (cwd, cli_path, env, model)
 └── provide(message, existing_entries, sdk_session_id) → list[ContextResult] | None
 
-MEMORY_SEARCH_PROMPT: str              (module-level constant, embeds {message})
+MEMORY_SEARCH_PROMPT: str              (module-level constant, embeds {message}; $WORKSPACE replaced at call time)
 MEMORIES_OWNER: str = "memories"
 MEMORY_PATH_META_KEY: str = "memory_path"
 

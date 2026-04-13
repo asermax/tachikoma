@@ -60,7 +60,7 @@ Three **memory processors** extend `PromptDrivenProcessor` (DES-004) and plug in
                                                    context/ files
 ```
 
-Each **memory processor** is a `PromptDrivenProcessor` subclass (DES-004) that provides an extraction prompt. The base class handles forking the SDK session via `fork_and_consume()`. The forked agent has full workspace access and autonomously reads, creates, updates, or deletes memory files — the processor code performs no file I/O.
+Each **memory processor** is a `PromptDrivenProcessor` subclass (DES-004) that provides an extraction prompt. Prompts use `$WORKSPACE` placeholders for file paths (DES-008), which the base class replaces with the absolute workspace path at construction time — ensuring forked agents use absolute paths regardless of the CLI's session-restored working directory. The base class handles forking the SDK session via `fork_and_consume()`. The forked agent has full workspace access and autonomously reads, creates, updates, or deletes memory files — the processor code performs no file I/O.
 
 For the context update processor that also runs in the main phase, see [core-context-updates design](../agent/core-context-updates.md).
 

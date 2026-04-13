@@ -43,7 +43,7 @@ The post-processor runs in the pipeline's **finalize phase**, ensuring all memor
 |-----------------|----------------|---------------|
 | `src/tachikoma/git/__init__.py` | Re-exports: `git_hook`, `GitProcessor` | Clean public API for the git package |
 | `src/tachikoma/git/hooks.py` | `git_hook`: initializes workspace as git repo | Subsystem-owned hook pattern (DES-003); uses `asyncio.create_subprocess_exec` |
-| `src/tachikoma/git/processor.py` | `GitProcessor(PostProcessor)` + `GIT_COMMIT_PROMPT` + `query_and_consume` helper + `_has_remote`/`_push` helpers | Prompt co-located with processor; fresh `query()` (not fork); push helpers local to module |
+| `src/tachikoma/git/processor.py` | `GitProcessor(PostProcessor)` + `GIT_COMMIT_PROMPT` + `query_and_consume` helper + `_has_remote`/`_push` helpers | Prompt co-located with processor; uses `$WORKSPACE` placeholders for directory paths (DES-008), replaced at call site before passing to `query_and_consume`; fresh `query()` (not fork); push helpers local to module |
 
 ### Cross-Layer Contracts
 
