@@ -584,7 +584,7 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 ### DLT-120: Pause background tasks to request user input
 **Status**: ✗ Defined
 **Depends on**: None
-**Priority**: 3 (Medium)
+**Priority**: 2 (High)
 **Complexity**: Hard
 **Description**: Background tasks currently run to completion or failure in a single uninterrupted evaluator loop — there is no way for a task to pause mid-execution and ask the user a question. This delta adds a "waiting" state to the task lifecycle where the evaluator can suspend execution and send a notification requesting user input. When the user responds, the input is injected as the next turn in the suspended task's SDK session and execution resumes. This enables simple multi-step background work (e.g., "research this and ask me before proceeding") without requiring persistent agent sessions, progress reporting, or full lifecycle control.
 
@@ -658,23 +658,24 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 **Complexity**: Medium
 **Description**: Heavy background tasks (reading 9+ files, web research, writing large outputs) can take 6+ hours to complete with no intermediate status. The user has no way to know if a task is still running, stuck, or dead. Add progress tracking to the background task executor: log periodic status updates (e.g., every N minutes or when the agent uses a tool) to a queryable location, expose running task status through the existing MCP tools and CLI, and enforce a configurable timeout threshold — if a task exceeds the limit, fail it with a notification instead of silently burning resources. The goal is that a user can always answer "is this task still running and what is it doing?" without requiring SSH or raw database access.
 
-### DLT-131: Fix MemoryContextProvider crash in background task execution
-**Status**: ✗ Defined
-**Depends on**: None
-**Priority**: 1 (Critical)
-**Complexity**: Easy
-**Description**: The memory search sub-agent spawned by MemoryContextProvider exhausts its turn limit and returns `error_max_turns`, propagating as a fatal error. This was already fixed in main session execution but the same fix needs to be applied to background task execution — the tools are not correctly configured for the background task environment, causing the sub-agent to spin without making progress. Apply the same tool configuration fix used in main sessions to the background task executor's context provider setup.
-
-### DLT-132: Audit and fix remaining UTC handling in task operations
-**Status**: ✗ Defined
-**Depends on**: None
-**Priority**: 1 (Critical)
-**Complexity**: Easy
-**Description**: Despite the existing cron scheduler timezone fix, the task system still exhibits UTC-related issues in CRUD operations. Evidence: re-scheduling a disabled one-shot task to a local-time datetime fails with "must be in the future" even when the time is minutes ahead locally — the system likely compares against UTC "now." The agent also sometimes reports task schedules in UTC. Audit all datetime handling in task create, update, display, and comparison paths through logs and code to identify where local timezone is not being used consistently, and fix every site to use the configured timezone for all time comparisons and display formatting.
-
 ### DLT-133: Defer file delivery to post-response in Telegram
 **Status**: ✗ Defined
 **Depends on**: None
 **Priority**: 3 (Medium)
 **Complexity**: Medium
 **Description**: Files sent via the Telegram `send_file` MCP tool are delivered immediately during agent execution, so the user sees the file before the response message (because the file sends while the response is still being composed). UX would be better if files arrived after the message, like a natural attachment. Defer file sends to a post-response hook that dispatches them after the agent's text response is fully delivered. Tradeoff: deferring means the agent cannot react to delivery failures (retry, notify) because the response is already finalized by the time the file goes out. Either accept this risk or design a post-response feedback mechanism for delivery errors.
+
+### DLT-134: Extend background tasks at iteration limit
+**Status**: ✗ Defined
+**Depends on**: DLT-112, DLT-120
+**Priority**: 3 (Medium)
+**Complexity**: Medium
+**Description**: Background tasks currently hard-fail when they reach their maximum iteration count, even if they are making meaningful progress. This delta allows the assistant to escalate to the user when the iteration limit is reached instead of failing outright. The user is presented with the task's progress and the assistant's latest assessment, and can choose to grant additional iterations or abort. If extended, the task continues from where it left off with a fresh iteration budget. If aborted, the task is failed as today. The iteration limit before escalation is configurable per task definition, falling back to the global default. This prevents premature failure of tasks that are progressing slowly but productively, giving the user control over the cost/completion tradeoff.
+
+### DLT-135: Serialize concurrent notification delivery and user message processing
+**Status**: ✗ Defined
+**Depends on**: DLT-111, DLT-112
+**Priority**: 2 (High)
+**Complexity**: Hard
+**Description**: When a background task notification is delivered at the exact moment a user sends a message, the two can collide at the coordinator's message queue — resulting in one being lost or the notification being silently swallowed. The existing message-loss prevention and notification buffering mechanisms handle their respective timing windows independently, but do not cover the case where both sources attempt to enqueue simultaneously. This delta adds serialization between the notification delivery path and the user message intake so that concurrent arrivals are safely ordered and neither is dropped.
+

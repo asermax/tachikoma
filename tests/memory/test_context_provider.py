@@ -114,7 +114,9 @@ class TestMemoryContextProvider:
     """Tests for MemoryContextProvider."""
 
     async def test_standalone_query_without_session_id(
-        self, mocker: MockerFixture, tmp_path: Path,
+        self,
+        mocker: MockerFixture,
+        tmp_path: Path,
     ) -> None:
         """AC: When sdk_session_id is None, query() is called without fork/resume."""
         mock_query = mocker.patch("tachikoma.memory.context_provider.stderr_aware_query")
@@ -131,7 +133,9 @@ class TestMemoryContextProvider:
         assert options.resume is None
 
     async def test_fork_query_with_session_id(
-        self, mocker: MockerFixture, tmp_path: Path,
+        self,
+        mocker: MockerFixture,
+        tmp_path: Path,
     ) -> None:
         """AC: When sdk_session_id provided, options include fork_session=True and resume=id."""
         mock_query = mocker.patch("tachikoma.memory.context_provider.stderr_aware_query")
@@ -148,7 +152,9 @@ class TestMemoryContextProvider:
         assert options.resume == "session-123"
 
     async def test_returns_per_file_results(
-        self, mocker: MockerFixture, tmp_path: Path,
+        self,
+        mocker: MockerFixture,
+        tmp_path: Path,
     ) -> None:
         """AC: Self-closing tags -> provider reads files -> one ContextResult per file."""
         mock_query = mocker.patch("tachikoma.memory.context_provider.stderr_aware_query")
@@ -179,7 +185,9 @@ class TestMemoryContextProvider:
             assert MEMORY_PATH_META_KEY in r.metadata
 
     async def test_dedup_skips_already_loaded_paths(
-        self, mocker: MockerFixture, tmp_path: Path,
+        self,
+        mocker: MockerFixture,
+        tmp_path: Path,
     ) -> None:
         """AC: Existing entries with memory_path metadata are filtered out."""
         mock_query = mocker.patch("tachikoma.memory.context_provider.stderr_aware_query")
@@ -200,7 +208,8 @@ class TestMemoryContextProvider:
 
         provider = MemoryContextProvider(AgentDefaults(cwd=tmp_path))
         result = await provider.provide(
-            "What hobbies do I have?", existing_entries=existing,
+            "What hobbies do I have?",
+            existing_entries=existing,
         )
 
         assert result is not None
@@ -208,14 +217,15 @@ class TestMemoryContextProvider:
         assert result[0].metadata[MEMORY_PATH_META_KEY] == "memories/facts/hobbies.md"
 
     async def test_path_validation_rejects_outside_memories(
-        self, mocker: MockerFixture, tmp_path: Path,
+        self,
+        mocker: MockerFixture,
+        tmp_path: Path,
     ) -> None:
         """AC: Agent returns path outside memories/ → rejected with warning."""
         mock_query = mocker.patch("tachikoma.memory.context_provider.stderr_aware_query")
 
         mock_query.return_value = _make_query_result(
-            '<memory path="memories/facts/ok.md" />\n'
-            '<memory path="../../etc/passwd" />',
+            '<memory path="memories/facts/ok.md" />\n<memory path="../../etc/passwd" />',
         )
 
         # Create the valid memory file
@@ -231,7 +241,9 @@ class TestMemoryContextProvider:
         assert result[0].metadata[MEMORY_PATH_META_KEY] == "memories/facts/ok.md"
 
     async def test_returns_none_for_sentinel(
-        self, mocker: MockerFixture, tmp_path: Path,
+        self,
+        mocker: MockerFixture,
+        tmp_path: Path,
     ) -> None:
         """AC: Agent returns NO_RELEVANT_MEMORIES → provider returns None."""
         mock_query = mocker.patch("tachikoma.memory.context_provider.stderr_aware_query")
@@ -243,7 +255,9 @@ class TestMemoryContextProvider:
         assert result is None
 
     async def test_returns_none_on_exception(
-        self, mocker: MockerFixture, tmp_path: Path,
+        self,
+        mocker: MockerFixture,
+        tmp_path: Path,
     ) -> None:
         """AC: Returns None when query raises an exception."""
         mock_query = mocker.patch("tachikoma.memory.context_provider.stderr_aware_query")
@@ -255,7 +269,9 @@ class TestMemoryContextProvider:
         assert result is None
 
     async def test_returns_none_on_error_result(
-        self, mocker: MockerFixture, tmp_path: Path,
+        self,
+        mocker: MockerFixture,
+        tmp_path: Path,
     ) -> None:
         """AC: Returns None when ResultMessage has is_error=True."""
         mock_query = mocker.patch("tachikoma.memory.context_provider.stderr_aware_query")
@@ -267,7 +283,9 @@ class TestMemoryContextProvider:
         assert result is None
 
     async def test_skips_deleted_file_gracefully(
-        self, mocker: MockerFixture, tmp_path: Path,
+        self,
+        mocker: MockerFixture,
+        tmp_path: Path,
     ) -> None:
         """AC: File deleted between search and read → skipped gracefully."""
         mock_query = mocker.patch("tachikoma.memory.context_provider.stderr_aware_query")
@@ -290,9 +308,11 @@ class TestMemoryContextProvider:
         assert result[0].metadata[MEMORY_PATH_META_KEY] == "memories/facts/exists.md"
 
     async def test_calls_query_with_correct_options(
-        self, mocker: MockerFixture, tmp_path: Path,
+        self,
+        mocker: MockerFixture,
+        tmp_path: Path,
     ) -> None:
-        """AC: query() called with correct model, effort, max_turns, allowed_tools, cwd."""
+        """AC: query() called with correct model, effort, allowed_tools, cwd."""
         mock_query = mocker.patch("tachikoma.memory.context_provider.stderr_aware_query")
         mock_query.return_value = _make_query_result(_NO_RELEVANT_MEMORIES)
 
@@ -305,14 +325,18 @@ class TestMemoryContextProvider:
 
         assert options.model == "opus"
         assert options.effort == "low"
-        assert options.max_turns == 8
+        assert options.max_turns is None
         assert options.tools == ["Read", "Glob", "Grep"]
         assert options.allowed_tools == ["Read", "Glob", "Grep"]
-        assert options.permission_mode == "bypassPermissions"
+        assert options.permission_mode is None
+        assert options.extra_args == {"permission-mode": "dontAsk"}
+        assert options.settings is not None
         assert options.cwd == tmp_path
 
     async def test_returns_none_when_all_paths_already_loaded(
-        self, mocker: MockerFixture, tmp_path: Path,
+        self,
+        mocker: MockerFixture,
+        tmp_path: Path,
     ) -> None:
         """AC: When all returned paths are already loaded, returns None."""
         mock_query = mocker.patch("tachikoma.memory.context_provider.stderr_aware_query")
@@ -335,7 +359,9 @@ class TestMemoryContextProvider:
         assert result is None
 
     async def test_returns_none_when_none_result(
-        self, mocker: MockerFixture, tmp_path: Path,
+        self,
+        mocker: MockerFixture,
+        tmp_path: Path,
     ) -> None:
         """AC: Returns None when ResultMessage.result is None."""
         mock_query = mocker.patch("tachikoma.memory.context_provider.stderr_aware_query")
@@ -359,7 +385,7 @@ class TestMemorySearchPrompt:
     def test_prompt_instructs_xml_memory_format(self) -> None:
         """AC: Prompt instructs agent to return XML memory elements."""
         assert "<memory" in MEMORY_SEARCH_PROMPT
-        assert 'path=' in MEMORY_SEARCH_PROMPT
+        assert "path=" in MEMORY_SEARCH_PROMPT
 
     def test_prompt_instructs_no_relevant_memories_sentinel(self) -> None:
         """AC: Prompt mentions NO_RELEVANT_MEMORIES sentinel."""
@@ -491,7 +517,9 @@ class TestSnippetBehavior:
     """Tests for snippet vs full-file content in results."""
 
     async def test_episodic_snippet_used_as_content(
-        self, mocker: MockerFixture, tmp_path: Path,
+        self,
+        mocker: MockerFixture,
+        tmp_path: Path,
     ) -> None:
         """AC: Episodic snippet is used directly, not the full file."""
         mock_query = mocker.patch("tachikoma.memory.context_provider.stderr_aware_query")
@@ -516,7 +544,9 @@ class TestSnippetBehavior:
         assert "Very long file" not in result[0].content
 
     async def test_snippet_includes_source_reference(
-        self, mocker: MockerFixture, tmp_path: Path,
+        self,
+        mocker: MockerFixture,
+        tmp_path: Path,
     ) -> None:
         """AC: Snippet content starts with source path reference."""
         mock_query = mocker.patch("tachikoma.memory.context_provider.stderr_aware_query")
@@ -526,9 +556,7 @@ class TestSnippetBehavior:
         (episodic_dir / "2026-04-06.md").write_text("content")
 
         mock_query.return_value = _make_query_result(
-            '<memory path="memories/episodic/2026-04-06.md">\n'
-            "Snippet\n"
-            "</memory>",
+            '<memory path="memories/episodic/2026-04-06.md">\nSnippet\n</memory>',
         )
 
         provider = MemoryContextProvider(AgentDefaults(cwd=tmp_path))
@@ -540,7 +568,9 @@ class TestSnippetBehavior:
         )
 
     async def test_self_closing_reads_full_file(
-        self, mocker: MockerFixture, tmp_path: Path,
+        self,
+        mocker: MockerFixture,
+        tmp_path: Path,
     ) -> None:
         """AC: Self-closing tag causes full file read."""
         mock_query = mocker.patch("tachikoma.memory.context_provider.stderr_aware_query")
@@ -560,7 +590,9 @@ class TestSnippetBehavior:
         assert result[0].content == "Italian places"
 
     async def test_mixed_snippet_and_full_file(
-        self, mocker: MockerFixture, tmp_path: Path,
+        self,
+        mocker: MockerFixture,
+        tmp_path: Path,
     ) -> None:
         """AC: Mix of snippet and full-file entries work together."""
         mock_query = mocker.patch("tachikoma.memory.context_provider.stderr_aware_query")
@@ -587,11 +619,11 @@ class TestSnippetBehavior:
         assert len(result) == 2
 
         facts_entry = next(
-            r for r in result
-            if r.metadata[MEMORY_PATH_META_KEY] == "memories/facts/restaurants.md"
+            r for r in result if r.metadata[MEMORY_PATH_META_KEY] == "memories/facts/restaurants.md"
         )
         episodic_entry = next(
-            r for r in result
+            r
+            for r in result
             if r.metadata[MEMORY_PATH_META_KEY] == "memories/episodic/2026-04-06.md"
         )
 
@@ -600,7 +632,9 @@ class TestSnippetBehavior:
         assert "Long content" not in episodic_entry.content
 
     async def test_malformed_output_returns_none(
-        self, mocker: MockerFixture, tmp_path: Path,
+        self,
+        mocker: MockerFixture,
+        tmp_path: Path,
     ) -> None:
         """AC: Garbled agent response with no valid tags returns None."""
         mock_query = mocker.patch("tachikoma.memory.context_provider.stderr_aware_query")

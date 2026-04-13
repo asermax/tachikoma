@@ -7,7 +7,7 @@ from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from aiogram.exceptions import TelegramAPIError, TelegramRetryAfter
+from aiogram.exceptions import TelegramAPIError, TelegramBadRequest, TelegramRetryAfter
 
 from tachikoma.events import Error, ToolActivity
 from tachikoma.telegram import (
@@ -100,6 +100,31 @@ class TestResponseRendererStatusHandling:
         await renderer.handle_status("Processing...")
 
         assert renderer._message_count == 1
+
+    async def test_identical_status_message_not_modified_is_swallowed(self) -> None:
+        """Telegram "message is not modified" BadRequest is swallowed by handle_status."""
+        bot = MagicMock()
+        bot.send_message = AsyncMock(return_value=MockMessage(message_id=42))
+        bot.edit_message_text = AsyncMock(
+            side_effect=TelegramBadRequest(
+                method=MagicMock(),
+                message=(
+                    "Bad Request: message is not modified: specified new message "
+                    "content and reply markup are exactly the same as a current "
+                    "content and reply markup of the message"
+                ),
+            )
+        )
+        renderer = ResponseRenderer(bot, chat_id=123)
+
+        await renderer.handle_status("Thinking...")
+        # Second call edits with the same text — Telegram rejects, renderer must
+        # swallow the BadRequest instead of raising or logging a traceback.
+        await renderer.handle_status("Thinking...")
+
+        bot.edit_message_text.assert_called_once()
+        # state is unchanged — the status message id is preserved.
+        assert renderer._current_message_id == 42
 
 
 class TestResponseRendererTextHandling:

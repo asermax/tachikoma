@@ -8,7 +8,7 @@ import asyncio
 from loguru import logger
 
 from tachikoma.agent_defaults import AgentDefaults
-from tachikoma.git.processor import query_and_consume
+from tachikoma.git.processor import GIT_ALLOW, GIT_BASH_HOOK, GIT_TOOLS, query_and_consume
 from tachikoma.post_processing import PostProcessor
 from tachikoma.projects.git import is_dirty, list_submodules, push
 from tachikoma.sessions.model import Session
@@ -44,15 +44,24 @@ for ALL changes.
 
 ## Important Constraints
 
-- ONLY use these git commands: `git status`, `git diff`, `git log`, `git add`, `git commit`
+- For git, use only: `git status`, `git diff`, `git log`, `git add`, `git commit`
 - Do NOT use: `git push`, `git branch`, `git checkout`, `git reset`, `git rebase`,
-  `git merge`, `git stash`, or any other commands
+  `git merge`, `git stash`, or any other destructive/history-rewriting commands
+- Read-only inspection commands (`ls`, `find`, `file`, `echo`, `date`, `cat`,
+  `head`, `tail`, `wc`, `stat`) are allowed for understanding project state
 - Never ask for confirmation — just make the commits
 - Commit EVERYTHING that shows up in `git status`
 - If there are no changes, do nothing
 
 Remember: These commits will be pushed to the project's remote. Good commit
-messages help other developers understand the project's history."""
+messages help other developers understand the project's history.
+
+## Permissions
+
+You can read and modify files anywhere in this project. For Bash, `git` \
+commands and read-only inspection commands (`ls`, `find`, `file`, `echo`, \
+`date`, `cat`, `head`, `tail`, `wc`, `stat`) are allowed — other commands \
+will be denied."""
 
 
 class ProjectsProcessor(PostProcessor):
@@ -157,7 +166,13 @@ class ProjectsProcessor(PostProcessor):
             cli_path=self._agent_defaults.cli_path,
             env=self._agent_defaults.env,
         )
-        await query_and_consume(SUBMODULE_COMMIT_PROMPT, submodule_defaults)
+        await query_and_consume(
+            SUBMODULE_COMMIT_PROMPT,
+            submodule_defaults,
+            tools=GIT_TOOLS,
+            allow=GIT_ALLOW,
+            pre_tool_use_hooks=[GIT_BASH_HOOK],
+        )
 
         try:
             await push(submodule_path)

@@ -53,7 +53,7 @@ After all main-phase processors complete (memory extraction writes files), the g
 The Haiku agent inspects the workspace and creates well-organized commits using safe git commands only.
 
 **Acceptance Criteria**:
-- Given the agent is spawned, then it uses only `git status`, `git diff`, `git add`, and `git commit` — no destructive commands
+- Given the agent is spawned, then for git it uses only `git status`, `git diff`, `git add`, and `git commit` — no destructive/history-rewriting commands. The commit agent is additionally allowed a curated set of read-only inspection commands (`ls`, `find`, `file`, `echo`, `date`, `cat`, `head`, `tail`, `wc`, `stat`) to help it understand workspace state before grouping commits; all other bash commands are denied by the `PreToolUse` gate hook
 - Given the agent creates commits, then each commit message is descriptive and reflects the content of the group
 - Given the agent creates commits, then it does not create or switch branches (linear history)
 

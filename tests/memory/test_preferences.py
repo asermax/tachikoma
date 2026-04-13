@@ -12,6 +12,7 @@ from pytest_mock import MockerFixture
 
 from tachikoma.agent_defaults import AgentDefaults
 from tachikoma.memory.preferences import PREFERENCES_PROMPT, PreferencesProcessor
+from tachikoma.post_processing import abs_rule
 from tachikoma.sessions.model import Session
 
 
@@ -39,7 +40,23 @@ class TestPreferencesProcessor:
         processor = PreferencesProcessor(defaults)
         await processor.process(session)
 
-        mock_fork.assert_awaited_once_with(session, PREFERENCES_PROMPT, defaults)
+        expected_prompt = PREFERENCES_PROMPT.replace("$WORKSPACE", str(cwd))
+        scope = cwd / "memories" / "preferences"
+        mock_fork.assert_awaited_once_with(
+            session,
+            expected_prompt,
+            defaults,
+            tools=["Read", "Glob", "Grep", "Edit", "Write"],
+            allow=[
+                abs_rule("Read", scope),
+                "Glob",
+                "Grep",
+                abs_rule("Edit", scope),
+                abs_rule("Write", scope),
+            ],
+            pre_tool_use_hooks=None,
+            model="haiku",
+        )
 
     def test_prompt_references_correct_subdirectory(self) -> None:
         """AC: Prompt mentions the preferences subdirectory path."""

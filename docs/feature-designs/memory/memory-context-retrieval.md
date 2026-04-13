@@ -58,7 +58,7 @@ The agent returns relevant memory file paths in XML `<memory>` elements. For fac
 
 | Layer/Component | Responsibility | Key Decisions |
 |-----------------|----------------|---------------|
-| `src/tachikoma/memory/context_provider.py` | `MemoryContextProvider(MessageContextProvider)` — forks session when SDK session ID available, parses XML `<memory>` elements from agent response, handles snippets (episodic) vs full-file reads (facts/preferences), creates per-file `ContextResult` entries with metadata. `ParsedMemoryEntry` dataclass and `parse_memory_entries()` function for XML parsing. Constants: `MEMORIES_OWNER`, `MEMORY_PATH_META_KEY`, `_NO_RELEVANT_MEMORIES`. Helper: `extract_memory_paths()`. `MEMORY_SEARCH_PROMPT` constant co-located with provider. | Agent returns XML elements with optional snippet content; self-closing = full file load, open/close = snippet extraction; uses `memory_path` metadata key per ADR-011; single adaptive prompt handles both forked and standalone modes |
+| `src/tachikoma/memory/context_provider.py` | `MemoryContextProvider(MessageContextProvider)` — forks session when SDK session ID available, parses XML `<memory>` elements from agent response, handles snippets (episodic) vs full-file reads (facts/preferences), creates per-file `ContextResult` entries with metadata. `ParsedMemoryEntry` dataclass and `parse_memory_entries()` function for XML parsing. Constants: `MEMORIES_OWNER`, `MEMORY_PATH_META_KEY`, `_NO_RELEVANT_MEMORIES`. Helper: `extract_memory_paths()`. `MEMORY_SEARCH_PROMPT` constant co-located with provider — uses `$WORKSPACE` placeholders for directory paths, replaced with absolute workspace path at call time. | Agent returns XML elements with optional snippet content; self-closing = full file load, open/close = snippet extraction; uses `memory_path` metadata key per ADR-011; single adaptive prompt handles both forked and standalone modes; `$WORKSPACE` replacement applied before `str.format()` |
 
 ### Cross-Layer Contracts
 
@@ -96,7 +96,6 @@ sequenceDiagram
 **Error contract:**
 - If `query()` fails (SDK error, fork failure, expired session) → catch, log per DES-002, return None
 - If agent returns error (`ResultMessage.is_error`) → log warning, return None
-- If agent exhausts `max_turns` → return None
 - If file read fails (FileNotFoundError) → skip that file, log warning, continue with remaining files
 
 ### Shared Logic
@@ -112,7 +111,7 @@ MemoryContextProvider(MessageContextProvider)
 ├── _agent_defaults: AgentDefaults     (cwd, cli_path, env, model)
 └── provide(message, existing_entries, sdk_session_id) → list[ContextResult] | None
 
-MEMORY_SEARCH_PROMPT: str              (module-level constant, embeds {message})
+MEMORY_SEARCH_PROMPT: str              (module-level constant, embeds {message}; $WORKSPACE replaced at call time)
 MEMORIES_OWNER: str = "memories"
 MEMORY_PATH_META_KEY: str = "memory_path"
 
@@ -130,11 +129,11 @@ extract_memory_paths(entries: list[SessionContextEntry]) → set[str]
 3. Build search prompt by embedding user message into MEMORY_SEARCH_PROMPT
 4. Branch on sdk_session_id:
    a. If available → ClaudeAgentOptions(resume=sdk_session_id, fork_session=True,
-      model=agent_defaults.model, effort="low", max_turns=8,
+      model=agent_defaults.model, effort="low",
       allowed_tools=["Read", "Glob", "Grep"],
       permission_mode="bypassPermissions", cwd=agent_defaults.cwd)
    b. If None → ClaudeAgentOptions(model=agent_defaults.model, effort="low",
-      max_turns=8, allowed_tools=["Read", "Glob", "Grep"],
+      allowed_tools=["Read", "Glob", "Grep"],
       permission_mode="bypassPermissions", cwd=agent_defaults.cwd)
 5. Call query(prompt=prompt, options=options)
 6. Fully consume the query() generator per DES-007 (which requires DES-005):
@@ -207,12 +206,13 @@ extract_memory_paths(entries: list[SessionContextEntry]) → set[str]
 
 ### Preserved model and tool configuration
 
-**Choice**: Keep `model=agent_defaults.model`, `effort="low"`, `max_turns=8`, `allowed_tools=["Read", "Glob", "Grep"]`, `permission_mode="bypassPermissions"` from the previous implementation.
-**Why**: These settings are well-tuned for the memory search use case. The addition of `fork_session` doesn't change tool needs or reasoning requirements.
+**Choice**: Use `model=agent_defaults.model`, `effort="low"`, `allowed_tools=["Read", "Glob", "Grep"]`, `permission_mode="bypassPermissions"`. No explicit `max_turns` ceiling.
+**Why**: An earlier `max_turns=12` cap was observed producing `error_max_turns` failures on non-Claude model backends (GLM-family models running via Anthropic-compatible proxies occasionally loop through tool calls without emitting a final answer). Removing the cap eliminates it as a failure variable while diagnosing upstream behavior; the SDK's internal safety bounds still protect against unbounded runaway. `effort="low"` keeps per-turn cost minimal.
 
 **Consequences**:
-- Pro: No regression in search quality
-- Pro: No additional cost beyond fork overhead
+- Pro: No spurious `error_max_turns` failures on non-Claude backends
+- Pro: Existing error-isolation (`try/except` + `is_error` branch) still returns None cleanly on any SDK failure
+- Con: Theoretically unbounded turns in pathological cases — mitigated by the SDK's own internal limits and by `effort="low"`
 
 ## System Behavior
 
@@ -246,11 +246,11 @@ extract_memory_paths(entries: list[SessionContextEntry]) → set[str]
 **When**: The provider attempts to fork
 **Then**: `query()` raises an exception. Provider catches it, logs, returns None. Conversation proceeds unaffected.
 
-### Scenario: Agent exhausts max_turns
+### Scenario: Agent returns an error result
 
-**Given**: The memory search agent uses all 8 turns without producing a ResultMessage
-**When**: The async iterator completes
-**Then**: Provider returns None.
+**Given**: The memory search agent returns `ResultMessage(is_error=True)` for any reason (fork failure, upstream rate limit, SDK-internal safety cutoff)
+**When**: The provider processes the ResultMessage
+**Then**: Provider logs a warning and returns None without populating entries.
 
 ### Scenario: Memory file deleted between search and read
 

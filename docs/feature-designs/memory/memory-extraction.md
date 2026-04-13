@@ -60,7 +60,7 @@ Three **memory processors** extend `PromptDrivenProcessor` (DES-004) and plug in
                                                    context/ files
 ```
 
-Each **memory processor** is a `PromptDrivenProcessor` subclass (DES-004) that provides an extraction prompt. The base class handles forking the SDK session via `fork_and_consume()`. The forked agent has full workspace access and autonomously reads, creates, updates, or deletes memory files — the processor code performs no file I/O.
+Each **memory processor** is a `PromptDrivenProcessor` subclass (DES-004) that provides an extraction prompt. Prompts use `$WORKSPACE` placeholders for file paths (DES-008), which the base class replaces with the absolute workspace path at construction time — ensuring forked agents use absolute paths regardless of the CLI's session-restored working directory. The base class handles forking the SDK session via `fork_and_consume()`. The forked agent has full workspace access and autonomously reads, creates, updates, or deletes memory files — the processor code performs no file I/O.
 
 For the context update processor that also runs in the main phase, see [core-context-updates design](../agent/core-context-updates.md).
 
@@ -116,7 +116,7 @@ PreferencesProcessor(PromptDrivenProcessor) [DES-004]
 └── PREFERENCES_PROMPT: str
 ```
 
-Each processor inherits `_prompt`, `_cwd`, and the default `process()` implementation from `PromptDrivenProcessor`. For the base class, `PostProcessingPipeline`, `PostProcessor` ABC, and `fork_and_consume` models, see the [pipeline design](../agent/post-processing-pipeline.md).
+Each processor inherits `_prompt`, `_cwd`, and the default `process()` implementation from `PromptDrivenProcessor`. All three pin `model="haiku"` at construction so their forks run on the cheapest model tier (mechanical extraction doesn't benefit from higher-tier reasoning, and smaller requests are less likely to trip upstream rate limits when the pipeline fires multiple forks concurrently on session close). For the base class, `PostProcessingPipeline`, `PostProcessor` ABC, and `fork_and_consume` models, see the [pipeline design](../agent/post-processing-pipeline.md).
 
 ## Data Flow
 

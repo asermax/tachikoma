@@ -59,7 +59,7 @@ Provider errors are isolated — they never block the conversation.
 
 **Acceptance Criteria**:
 - Given the memory search agent fails (e.g., SDK connection error, fork failure), when the provider catches the error, then it logs the failure and returns None
-- Given the memory search agent exhausts its turn limit without producing a result, when the provider processes the response, then it returns None
+- Given the memory search agent returns an `is_error=True` result for any reason, when the provider processes the response, then it logs a warning and returns None without populating any entries
 
 ### Session Forking (R5)
 

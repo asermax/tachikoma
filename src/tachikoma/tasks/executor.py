@@ -486,7 +486,8 @@ class BackgroundTaskExecutor:
         )
 
         options = ClaudeAgentOptions(
-            model="claude-3-5-haiku-20241022",  # Lightweight model for evaluation
+            model="haiku",  # Lightweight model for evaluation
+            tools=[],
             cwd=self._agent_defaults.cwd,
             cli_path=self._agent_defaults.cli_path,
             env=self._agent_defaults.env,

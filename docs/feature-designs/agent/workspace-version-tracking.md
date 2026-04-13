@@ -43,7 +43,7 @@ The post-processor runs in the pipeline's **finalize phase**, ensuring all memor
 |-----------------|----------------|---------------|
 | `src/tachikoma/git/__init__.py` | Re-exports: `git_hook`, `GitProcessor` | Clean public API for the git package |
 | `src/tachikoma/git/hooks.py` | `git_hook`: initializes workspace as git repo | Subsystem-owned hook pattern (DES-003); uses `asyncio.create_subprocess_exec` |
-| `src/tachikoma/git/processor.py` | `GitProcessor(PostProcessor)` + `GIT_COMMIT_PROMPT` + `query_and_consume` helper + `_has_remote`/`_push` helpers | Prompt co-located with processor; fresh `query()` (not fork); push helpers local to module |
+| `src/tachikoma/git/processor.py` | `GitProcessor(PostProcessor)` + `GIT_COMMIT_PROMPT` + `query_and_consume` helper + `_has_remote`/`_push` helpers | Prompt co-located with processor; uses `$WORKSPACE` placeholders for directory paths (DES-008), replaced at call site before passing to `query_and_consume`; fresh `query()` (not fork); push helpers local to module |
 
 ### Cross-Layer Contracts
 
@@ -270,5 +270,5 @@ query_and_consume(prompt, cwd) → None
 ## Notes
 
 - The git processor establishes a second post-processor pattern: fork-based (memory) vs. fresh-query (git). Future processors can follow either pattern.
-- Agent guardrails (safe git commands only) are enforced via prompt instructions, consistent with memory processors' file scope constraints.
+- Agent guardrails are enforced in two layers: (1) prompt instructions describe the allowed commands (git + a curated set of read-only inspection utilities), and (2) a `PreToolUse` hook built from `make_bash_gate_hook()` (`GIT_BASH_HOOK`) programmatically gates every `Bash` tool call to the allowed prefix list (`git `, `ls `, `find `, `file `, `echo `, `date `, `cat `, `head `, `tail `, `wc `, `stat `). The hook denies non-matching commands with a descriptive reason — this is the actual enforcement, since Claude Code's `dontAsk` allow rules don't reliably enforce Bash prefixes. See [DES-004](../../design/DES-004-prompt-driven-forked-processor.md) for the hook's design.
 - No `.gitignore` is created — all workspace content is tracked by default. Users can add their own if desired.
