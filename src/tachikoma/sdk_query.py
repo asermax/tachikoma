@@ -91,14 +91,14 @@ async def stderr_aware_query(
             transport=transport,
         ):
             yield message
-    except ProcessError:
+    except ProcessError as exc:
         stderr = accumulator.get()
         if stderr is not None:
             _log.error(
                 "SDK query failed: err={err}, stderr={stderr}",
-                err="ProcessError",
+                err=str(exc),
                 stderr=stderr,
             )
         else:
-            _log.error("SDK query failed: err={err}", err="ProcessError")
+            _log.error("SDK query failed: err={err}", err=str(exc))
         raise
