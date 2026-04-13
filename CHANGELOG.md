@@ -7,6 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v1.15.0 (2026-04-13)
+
+### Bug Fixes
+
+- **prompts**: Use absolute workspace paths in agent prompts
+  ([`06e15fc`](https://github.com/asermax/tachikoma/commit/06e15fcd6921aeadd5a3e1a4a963ace4b1a3b25a))
+
+### Chores
+
+- **deltas**: Add DLT-135, DLT-136, DLT-137
+  ([`f93143b`](https://github.com/asermax/tachikoma/commit/f93143b6cf20eca077b236b42425ee9afa80ae75))
+
+### Documentation
+
+- Reconcile DLT-136 workspace path fix
+  ([`4d31336`](https://github.com/asermax/tachikoma/commit/4d3133684b3e459e5b2398e93d46ac78179f0959))
+
+- **permissions**: Reconcile DLT-137 into feature documentation
+  ([`57ce388`](https://github.com/asermax/tachikoma/commit/57ce388e17b585f5c67cea56ec63275b526c8a4c))
+
+### Features
+
+- **permissions**: Add sub-agent permission scoping via dontAsk mode
+  ([`f957dbe`](https://github.com/asermax/tachikoma/commit/f957dbe58e5a46d62e793822f3f5ae4a0b9d861c))
+
+
 ## v1.14.3 (2026-04-12)
 
 ### Bug Fixes
