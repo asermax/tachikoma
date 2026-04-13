@@ -77,6 +77,7 @@ The bot progressively edits a single Telegram message as text chunks arrive, thr
 - Given a TelegramRetryAfter error on edit, when received, then the bot waits the specified duration before the next edit attempt
 - Given the coordinator yields a Status event (e.g., "Thinking..."), when received before the response stream, then a transient italic status message is sent; this message is replaced when the first TextChunk or ToolActivity arrives
 - Given multiple consecutive Status events are yielded (e.g., during cold start resumption), when the second Status arrives while the first is still showing, then the existing message is edited in place instead of creating a new one
+- Given two consecutive Status events carry identical text, when the edit is attempted and Telegram rejects it with `"message is not modified"`, then the bot silently ignores the rejection (debug log only — no stack trace or error visible to the user)
 - Given a response is split into multiple messages, when `_send_chunks()` is called again (during streaming or finalize), then existing split messages are edited in-place with updated content (no stale duplicates left behind)
 - Given a re-split produces fewer chunks than the previous split, when excess messages exist, then they are deleted
 - Given a re-split produces more chunks than the previous split, when additional chunks are needed, then new messages are sent for the additional chunks

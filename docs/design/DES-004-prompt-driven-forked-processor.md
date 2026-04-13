@@ -2,7 +2,7 @@
 
 **Scope**: Project-wide
 **Date**: 2026-03-15
-**Last Updated**: 2026-04-12
+**Last Updated**: 2026-04-13
 
 ## Pattern
 
@@ -46,7 +46,7 @@ Allow rules use Claude Code's permission rule syntax with absolute paths (via `a
 | **Tool-less** | `tools=[]` | None needed | BoundaryDetector, SummaryProcessor |
 | **Read-only** | `Read, Glob, Grep` | Path-scoped Read + unrestricted Glob/Grep | MemoryContextProvider |
 | **Scoped writer** | `Read, Glob, Grep, Edit, Write` | Path-scoped Read/Edit/Write + unrestricted Glob/Grep | Memory processors, CoreContextProcessor |
-| **Git agent** | `Read, Glob, Grep, Bash, Edit, Write` | Unrestricted Read/Glob/Grep/Edit/Write + `Bash(git *)` + PreToolUse hook | GitProcessor, ProjectsProcessor |
+| **Git agent** | `Read, Glob, Grep, Bash, Edit, Write` | Unrestricted Read/Glob/Grep/Edit/Write + `Bash(git *)` + PreToolUse hook gating Bash to `git ` plus a curated set of read-only inspection prefixes (`ls `, `find `, `file `, `echo `, `date `, `cat `, `head `, `tail `, `wc `, `stat `) | GitProcessor, ProjectsProcessor |
 
 ### Infrastructure
 
@@ -77,6 +77,10 @@ The hook inspects the `command` field in the tool input before execution and den
 ### Prompt Permissions Section
 
 Every sub-agent prompt should end with a `## Permissions` section explaining its constraints in plain language. This prevents confusion when tool calls are denied and helps the agent stay within its scope. Only mention what the agent *can* do — don't list tools that aren't available to it.
+
+### Model Selection
+
+When a sub-agent runs a cheap, mechanical task (e.g. grouping files for commit, extracting structured memories from a conversation), pin it to the `haiku` tier via an explicit `model` kwarg rather than letting it inherit the parent session's model. `query_and_consume` (used by `GitProcessor` / `ProjectsProcessor`) and `fork_and_consume` / `fork_and_capture` (used by `PromptDrivenProcessor` subclasses) both accept an optional `model` parameter. When omitted, the fork inherits the parent session's model — reasonable for agents that benefit from the same reasoning power as the main chat (e.g. `CoreContextProcessor`), but expensive when run 3–4 in parallel on session close. The memory extractors (`EpisodicProcessor`, `FactsProcessor`, `PreferencesProcessor`) pin `model="haiku"` at construction; `CoreContextProcessor` intentionally does not.
 
 ## Examples
 

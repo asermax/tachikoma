@@ -96,7 +96,6 @@ sequenceDiagram
 **Error contract:**
 - If `query()` fails (SDK error, fork failure, expired session) → catch, log per DES-002, return None
 - If agent returns error (`ResultMessage.is_error`) → log warning, return None
-- If agent exhausts `max_turns` → return None
 - If file read fails (FileNotFoundError) → skip that file, log warning, continue with remaining files
 
 ### Shared Logic
@@ -130,11 +129,11 @@ extract_memory_paths(entries: list[SessionContextEntry]) → set[str]
 3. Build search prompt by embedding user message into MEMORY_SEARCH_PROMPT
 4. Branch on sdk_session_id:
    a. If available → ClaudeAgentOptions(resume=sdk_session_id, fork_session=True,
-      model=agent_defaults.model, effort="low", max_turns=12,
+      model=agent_defaults.model, effort="low",
       allowed_tools=["Read", "Glob", "Grep"],
       permission_mode="bypassPermissions", cwd=agent_defaults.cwd)
    b. If None → ClaudeAgentOptions(model=agent_defaults.model, effort="low",
-      max_turns=12, allowed_tools=["Read", "Glob", "Grep"],
+      allowed_tools=["Read", "Glob", "Grep"],
       permission_mode="bypassPermissions", cwd=agent_defaults.cwd)
 5. Call query(prompt=prompt, options=options)
 6. Fully consume the query() generator per DES-007 (which requires DES-005):
@@ -207,12 +206,13 @@ extract_memory_paths(entries: list[SessionContextEntry]) → set[str]
 
 ### Preserved model and tool configuration
 
-**Choice**: Keep `model=agent_defaults.model`, `effort="low"`, `max_turns=12`, `allowed_tools=["Read", "Glob", "Grep"]`, `permission_mode="bypassPermissions"`. The turn limit was raised from 8 to 12 to reduce intermittent `error_max_turns` failures (~14% failure rate at 8 turns) while keeping the agent bounded.
-**Why**: Successful searches typically complete in 3-7 turns. The previous limit of 8 left insufficient headroom for searches requiring more exploration (e.g., multiple grep passes across memory subdirectories). With `effort="low"`, the cost per additional turn is minimal.
+**Choice**: Use `model=agent_defaults.model`, `effort="low"`, `allowed_tools=["Read", "Glob", "Grep"]`, `permission_mode="bypassPermissions"`. No explicit `max_turns` ceiling.
+**Why**: An earlier `max_turns=12` cap was observed producing `error_max_turns` failures on non-Claude model backends (GLM-family models running via Anthropic-compatible proxies occasionally loop through tool calls without emitting a final answer). Removing the cap eliminates it as a failure variable while diagnosing upstream behavior; the SDK's internal safety bounds still protect against unbounded runaway. `effort="low"` keeps per-turn cost minimal.
 
 **Consequences**:
-- Pro: No regression in search quality
-- Pro: No additional cost beyond fork overhead
+- Pro: No spurious `error_max_turns` failures on non-Claude backends
+- Pro: Existing error-isolation (`try/except` + `is_error` branch) still returns None cleanly on any SDK failure
+- Con: Theoretically unbounded turns in pathological cases — mitigated by the SDK's own internal limits and by `effort="low"`
 
 ## System Behavior
 
@@ -246,11 +246,11 @@ extract_memory_paths(entries: list[SessionContextEntry]) → set[str]
 **When**: The provider attempts to fork
 **Then**: `query()` raises an exception. Provider catches it, logs, returns None. Conversation proceeds unaffected.
 
-### Scenario: Agent exhausts max_turns
+### Scenario: Agent returns an error result
 
-**Given**: The memory search agent uses all 12 turns without producing a ResultMessage
-**When**: The async iterator completes
-**Then**: Provider returns None.
+**Given**: The memory search agent returns `ResultMessage(is_error=True)` for any reason (fork failure, upstream rate limit, SDK-internal safety cutoff)
+**When**: The provider processes the ResultMessage
+**Then**: Provider logs a warning and returns None without populating entries.
 
 ### Scenario: Memory file deleted between search and read
 
