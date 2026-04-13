@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v1.18.0 (2026-04-13)
+
+### Features
+
+- **git**: Add compound command splitting and cd/pwd to bash gate hook
+  ([`7091e22`](https://github.com/asermax/tachikoma/commit/7091e222189ce8426fb3d5816302129af18528fd))
+
+
 ## v1.17.0 (2026-04-13)
 
 ### Bug Fixes
