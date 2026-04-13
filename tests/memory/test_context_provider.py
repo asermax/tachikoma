@@ -119,7 +119,7 @@ class TestMemoryContextProvider:
         tmp_path: Path,
     ) -> None:
         """AC: When sdk_session_id is None, query() is called without fork/resume."""
-        mock_query = mocker.patch("tachikoma.memory.context_provider.query")
+        mock_query = mocker.patch("tachikoma.memory.context_provider.stderr_aware_query")
         mock_query.return_value = _make_query_result(_NO_RELEVANT_MEMORIES)
 
         provider = MemoryContextProvider(AgentDefaults(cwd=tmp_path))
@@ -138,7 +138,7 @@ class TestMemoryContextProvider:
         tmp_path: Path,
     ) -> None:
         """AC: When sdk_session_id provided, options include fork_session=True and resume=id."""
-        mock_query = mocker.patch("tachikoma.memory.context_provider.query")
+        mock_query = mocker.patch("tachikoma.memory.context_provider.stderr_aware_query")
         mock_query.return_value = _make_query_result(_NO_RELEVANT_MEMORIES)
 
         provider = MemoryContextProvider(AgentDefaults(cwd=tmp_path))
@@ -157,7 +157,7 @@ class TestMemoryContextProvider:
         tmp_path: Path,
     ) -> None:
         """AC: Self-closing tags -> provider reads files -> one ContextResult per file."""
-        mock_query = mocker.patch("tachikoma.memory.context_provider.query")
+        mock_query = mocker.patch("tachikoma.memory.context_provider.stderr_aware_query")
 
         # Create memory files on disk
         memories_dir = tmp_path / "memories" / "facts"
@@ -190,7 +190,7 @@ class TestMemoryContextProvider:
         tmp_path: Path,
     ) -> None:
         """AC: Existing entries with memory_path metadata are filtered out."""
-        mock_query = mocker.patch("tachikoma.memory.context_provider.query")
+        mock_query = mocker.patch("tachikoma.memory.context_provider.stderr_aware_query")
 
         memories_dir = tmp_path / "memories" / "facts"
         memories_dir.mkdir(parents=True)
@@ -222,7 +222,7 @@ class TestMemoryContextProvider:
         tmp_path: Path,
     ) -> None:
         """AC: Agent returns path outside memories/ → rejected with warning."""
-        mock_query = mocker.patch("tachikoma.memory.context_provider.query")
+        mock_query = mocker.patch("tachikoma.memory.context_provider.stderr_aware_query")
 
         mock_query.return_value = _make_query_result(
             '<memory path="memories/facts/ok.md" />\n<memory path="../../etc/passwd" />',
@@ -246,7 +246,7 @@ class TestMemoryContextProvider:
         tmp_path: Path,
     ) -> None:
         """AC: Agent returns NO_RELEVANT_MEMORIES → provider returns None."""
-        mock_query = mocker.patch("tachikoma.memory.context_provider.query")
+        mock_query = mocker.patch("tachikoma.memory.context_provider.stderr_aware_query")
         mock_query.return_value = _make_query_result(_NO_RELEVANT_MEMORIES)
 
         provider = MemoryContextProvider(AgentDefaults(cwd=tmp_path))
@@ -260,7 +260,7 @@ class TestMemoryContextProvider:
         tmp_path: Path,
     ) -> None:
         """AC: Returns None when query raises an exception."""
-        mock_query = mocker.patch("tachikoma.memory.context_provider.query")
+        mock_query = mocker.patch("tachikoma.memory.context_provider.stderr_aware_query")
         mock_query.side_effect = RuntimeError("SDK error")
 
         provider = MemoryContextProvider(AgentDefaults(cwd=tmp_path))
@@ -274,7 +274,7 @@ class TestMemoryContextProvider:
         tmp_path: Path,
     ) -> None:
         """AC: Returns None when ResultMessage has is_error=True."""
-        mock_query = mocker.patch("tachikoma.memory.context_provider.query")
+        mock_query = mocker.patch("tachikoma.memory.context_provider.stderr_aware_query")
         mock_query.return_value = _make_query_result("Error occurred", is_error=True)
 
         provider = MemoryContextProvider(AgentDefaults(cwd=tmp_path))
@@ -288,7 +288,7 @@ class TestMemoryContextProvider:
         tmp_path: Path,
     ) -> None:
         """AC: File deleted between search and read → skipped gracefully."""
-        mock_query = mocker.patch("tachikoma.memory.context_provider.query")
+        mock_query = mocker.patch("tachikoma.memory.context_provider.stderr_aware_query")
 
         # Only create one file, agent returns two paths
         memories_dir = tmp_path / "memories" / "facts"
@@ -313,7 +313,7 @@ class TestMemoryContextProvider:
         tmp_path: Path,
     ) -> None:
         """AC: query() called with correct model, effort, allowed_tools, cwd."""
-        mock_query = mocker.patch("tachikoma.memory.context_provider.query")
+        mock_query = mocker.patch("tachikoma.memory.context_provider.stderr_aware_query")
         mock_query.return_value = _make_query_result(_NO_RELEVANT_MEMORIES)
 
         provider = MemoryContextProvider(AgentDefaults(cwd=tmp_path))
@@ -339,7 +339,7 @@ class TestMemoryContextProvider:
         tmp_path: Path,
     ) -> None:
         """AC: When all returned paths are already loaded, returns None."""
-        mock_query = mocker.patch("tachikoma.memory.context_provider.query")
+        mock_query = mocker.patch("tachikoma.memory.context_provider.stderr_aware_query")
 
         memories_dir = tmp_path / "memories" / "facts"
         memories_dir.mkdir(parents=True)
@@ -364,7 +364,7 @@ class TestMemoryContextProvider:
         tmp_path: Path,
     ) -> None:
         """AC: Returns None when ResultMessage.result is None."""
-        mock_query = mocker.patch("tachikoma.memory.context_provider.query")
+        mock_query = mocker.patch("tachikoma.memory.context_provider.stderr_aware_query")
         mock_query.return_value = _make_query_result(None)
 
         provider = MemoryContextProvider(AgentDefaults(cwd=tmp_path))
@@ -522,7 +522,7 @@ class TestSnippetBehavior:
         tmp_path: Path,
     ) -> None:
         """AC: Episodic snippet is used directly, not the full file."""
-        mock_query = mocker.patch("tachikoma.memory.context_provider.query")
+        mock_query = mocker.patch("tachikoma.memory.context_provider.stderr_aware_query")
 
         episodic_dir = tmp_path / "memories" / "episodic"
         episodic_dir.mkdir(parents=True)
@@ -549,7 +549,7 @@ class TestSnippetBehavior:
         tmp_path: Path,
     ) -> None:
         """AC: Snippet content starts with source path reference."""
-        mock_query = mocker.patch("tachikoma.memory.context_provider.query")
+        mock_query = mocker.patch("tachikoma.memory.context_provider.stderr_aware_query")
 
         episodic_dir = tmp_path / "memories" / "episodic"
         episodic_dir.mkdir(parents=True)
@@ -573,7 +573,7 @@ class TestSnippetBehavior:
         tmp_path: Path,
     ) -> None:
         """AC: Self-closing tag causes full file read."""
-        mock_query = mocker.patch("tachikoma.memory.context_provider.query")
+        mock_query = mocker.patch("tachikoma.memory.context_provider.stderr_aware_query")
 
         facts_dir = tmp_path / "memories" / "facts"
         facts_dir.mkdir(parents=True)
@@ -595,7 +595,7 @@ class TestSnippetBehavior:
         tmp_path: Path,
     ) -> None:
         """AC: Mix of snippet and full-file entries work together."""
-        mock_query = mocker.patch("tachikoma.memory.context_provider.query")
+        mock_query = mocker.patch("tachikoma.memory.context_provider.stderr_aware_query")
 
         facts_dir = tmp_path / "memories" / "facts"
         facts_dir.mkdir(parents=True)
@@ -637,7 +637,7 @@ class TestSnippetBehavior:
         tmp_path: Path,
     ) -> None:
         """AC: Garbled agent response with no valid tags returns None."""
-        mock_query = mocker.patch("tachikoma.memory.context_provider.query")
+        mock_query = mocker.patch("tachikoma.memory.context_provider.stderr_aware_query")
 
         memories_dir = tmp_path / "memories" / "facts"
         memories_dir.mkdir(parents=True)

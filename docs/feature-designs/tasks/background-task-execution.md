@@ -53,7 +53,7 @@ Two components work together: the `BackgroundTaskRunner` (async loop picking up 
 
 | Layer/Component | Responsibility | Key Decisions |
 |-----------------|----------------|---------------|
-| `src/tachikoma/tasks/executor.py` | `background_task_runner()` — async loop picking up pending background instances; `BackgroundTaskExecutor` — manages single task's SDK session lifecycle with evaluator loop; injects current date/time in configured timezone into system prompt; registers notification MCP server per-execution; calls `dispatch_notification()` for automatic failure notifications | Coordinator-like SDK client management; `asyncio.Semaphore` for concurrency; datetime injection via `get_timezone(settings)` + `datetime.now(tz)` prepended to `BACKGROUND_TASK_SYSTEM_PROMPT`; full `PreProcessingPipeline` (memory, projects, skills); separate `PostProcessingPipeline` with `EpisodicProcessor` (main phase) + `ProjectsProcessor` (pre_finalize phase) + `GitProcessor` (finalize phase); notification MCP server via DES-006 factory |
+| `src/tachikoma/tasks/executor.py` | `background_task_runner()` — async loop picking up pending background instances; `BackgroundTaskExecutor` — manages single task's SDK session lifecycle with evaluator loop; injects current date/time in configured timezone into system prompt; registers notification MCP server per-execution; calls `dispatch_notification()` for automatic failure notifications; creates `StderrAccumulator` per execution and passes to `ClaudeAgentOptions(stderr=...)` — on failure, the accumulated stderr is included in the error log entry | Coordinator-like SDK client management; `asyncio.Semaphore` for concurrency; datetime injection via `get_timezone(settings)` + `datetime.now(tz)` prepended to `BACKGROUND_TASK_SYSTEM_PROMPT`; full `PreProcessingPipeline` (memory, projects, skills); separate `PostProcessingPipeline` with `EpisodicProcessor` (main phase) + `ProjectsProcessor` (pre_finalize phase) + `GitProcessor` (finalize phase); notification MCP server via DES-006 factory |
 | `src/tachikoma/notifications.py` | `Notification(BaseEvent[None])` — generic event type; `build_notification_prompt()` — template builder with source, timestamp, content; `dispatch_notification()` — shared dispatch for both agent-driven and failure notifications; `create_notification_server()` — MCP tool factory (DES-006) producing `send_notification` tool for agent-driven notifications | Standalone module outside tasks package for reusability; single dispatch path ensures consistent formatting; per-execution MCP server scopes tool to background sessions only |
 
 ### Cross-Layer Contracts
@@ -133,7 +133,7 @@ sequenceDiagram
 
 **Error contract:**
 - Runner loop errors: logged, continues on next tick
-- Executor errors: instance marked `failed`, `Notification` dispatched via `tachikoma.notifications`
+- Executor errors: instance marked `failed`, error logged with any captured stderr, `Notification` dispatched via `tachikoma.notifications`
 - Post-processing errors: logged, don't affect task completion status
 
 ## Data Flow
@@ -153,7 +153,7 @@ sequenceDiagram
       - Adapted system prompt prepended with current date/time in configured timezone (task context + instructions)
       - Adapted post-processing pipeline (EpisodicProcessor in main phase + ProjectsProcessor in pre_finalize phase + GitProcessor in finalize phase)
       - Task instance prompt
-   e. Executor creates ClaudeSDKClient, calls query(prompt)
+   e. Executor creates `StderrAccumulator`, passes to `ClaudeAgentOptions(stderr=...)`, creates ClaudeSDKClient, calls query(prompt)
    f. Evaluator loop (max_iterations):
       i.   Consume agent response via receive_response() (per DES-005)
       ii.  Evaluator prompt assesses: complete / continue / stuck

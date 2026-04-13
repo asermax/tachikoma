@@ -38,6 +38,7 @@ from tachikoma.pre_processing import (
     McpServerConfig,
     PreProcessingPipeline,
 )
+from tachikoma.sdk_query import StderrAccumulator
 from tachikoma.sdk_transport import FilePromptTransport
 from tachikoma.sessions.model import Session, SessionContextEntry
 from tachikoma.sessions.registry import SessionRegistry
@@ -500,11 +501,13 @@ class Coordinator:
         system_prompt_append = build_system_prompt(entries, timezone=self._timezone)
 
         # Build options and create a fresh client for this exchange
+        stderr_acc = StderrAccumulator()
         options = self._build_options(
             resume=resume_id,
             system_prompt_append=system_prompt_append,
             agents=agents,
         )
+        options.stderr = stderr_acc
         response_chunks: list[str] = []
 
         message_source = _message_source(text, self._message_buffer)
@@ -546,7 +549,15 @@ class Coordinator:
                             )
 
         except (CLIConnectionError, ProcessError) as exc:
-            _log.error("Stream error (recoverable): err={err}", err=str(exc))
+            stderr = stderr_acc.get()
+            if stderr is not None:
+                _log.error(
+                    "Stream error (recoverable): err={err}, stderr={stderr}",
+                    err=str(exc),
+                    stderr=stderr,
+                )
+            else:
+                _log.error("Stream error (recoverable): err={err}", err=str(exc))
             if is_encoding_error(str(exc)):
                 await self._handle_encoding_error(active)
             yield Error(message=sanitize_text(str(exc)), recoverable=True)

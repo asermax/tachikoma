@@ -8,13 +8,14 @@ in context (identified via entry metadata).
 
 from typing import TYPE_CHECKING
 
-from claude_agent_sdk import ClaudeAgentOptions, query
+from claude_agent_sdk import ClaudeAgentOptions
 from claude_agent_sdk.types import ResultMessage
 from loguru import logger
 
 from tachikoma.agent_defaults import AgentDefaults
 from tachikoma.per_message_pre_processing import MessageContextProvider
 from tachikoma.pre_processing import ContextResult
+from tachikoma.sdk_query import stderr_aware_query
 from tachikoma.sessions.model import SessionContextEntry
 
 if TYPE_CHECKING:
@@ -123,7 +124,7 @@ class SkillsContextProvider(MessageContextProvider):
         detected_names: list[str] = []
 
         try:
-            async for sdk_message in query(prompt=prompt, options=options):
+            async for sdk_message in stderr_aware_query(prompt=prompt, options=options):
                 if isinstance(sdk_message, ResultMessage):
                     if sdk_message.is_error:
                         _log.warning(

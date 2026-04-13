@@ -181,12 +181,13 @@ The coordinator receives detected agents from the pre-processing pipeline per-se
 
 ### Error Recovery (R4)
 
-Transient errors keep the conversation usable. Fatal errors signal channels to exit.
+Transient errors keep the conversation usable. Fatal errors signal channels to exit. When SDK subprocess errors occur, stderr output from the subprocess is captured and included in error logs for operator diagnosis.
 
 **Acceptance Criteria**:
 - Given a transient connection error mid-stream, then an error event with `recoverable=True` is produced and the conversation remains usable; partial output remains visible
 - Given an in-stream rate limit or server error, then an error event with `recoverable=True` is produced
 - Given an in-stream authentication or billing error, then an error event with `recoverable=False` is produced
+- Given an SDK subprocess error, when stderr output was produced by the subprocess, then the error log entry includes the captured stderr as a structured field
 
 ### Boundary Detection Gating (R10)
 

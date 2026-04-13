@@ -80,7 +80,7 @@ class TestDetectBoundary:
                 structured_output={"continues_conversation": True, "resume_session_id": None},
             )
 
-        mocker.patch("tachikoma.boundary.detector.query", side_effect=fake_query)
+        mocker.patch("tachikoma.boundary.detector.stderr_aware_query", side_effect=fake_query)
 
         result = await detect_boundary(
             message="Tell me more about that",
@@ -108,7 +108,7 @@ class TestDetectBoundary:
                 structured_output={"continues_conversation": False, "resume_session_id": None},
             )
 
-        mocker.patch("tachikoma.boundary.detector.query", side_effect=fake_query)
+        mocker.patch("tachikoma.boundary.detector.stderr_aware_query", side_effect=fake_query)
 
         result = await detect_boundary(
             message="What should I cook for dinner?",
@@ -139,7 +139,7 @@ class TestDetectBoundary:
                 },
             )
 
-        mocker.patch("tachikoma.boundary.detector.query", side_effect=fake_query)
+        mocker.patch("tachikoma.boundary.detector.stderr_aware_query", side_effect=fake_query)
 
         candidates = [
             SessionCandidate(id="session-123", summary="Discussion about Python debugging"),
@@ -175,7 +175,7 @@ class TestDetectBoundary:
                 },
             )
 
-        mocker.patch("tachikoma.boundary.detector.query", side_effect=fake_query)
+        mocker.patch("tachikoma.boundary.detector.stderr_aware_query", side_effect=fake_query)
 
         candidates = [
             SessionCandidate(id="session-123", summary="Discussion about cooking"),
@@ -208,7 +208,7 @@ class TestDetectBoundary:
                 structured_output={"continues_conversation": True, "resume_session_id": None},
             )
 
-        mocker.patch("tachikoma.boundary.detector.query", side_effect=fake_query)
+        mocker.patch("tachikoma.boundary.detector.stderr_aware_query", side_effect=fake_query)
 
         result = await detect_boundary(
             message="Hello",
@@ -222,7 +222,7 @@ class TestDetectBoundary:
 
     async def test_passes_opus_low_effort_model_to_options(self, mocker: MockerFixture) -> None:
         """AC: Uses Opus model with low effort for fast, reliable classification."""
-        mock_query = mocker.patch("tachikoma.boundary.detector.query")
+        mock_query = mocker.patch("tachikoma.boundary.detector.stderr_aware_query")
 
         async def fake_query_gen(*args, **kwargs):
             yield ResultMessage(
@@ -255,7 +255,7 @@ class TestDetectBoundary:
         self, mocker: MockerFixture
     ) -> None:
         """AC: Uses JSON schema with continues_conversation and resume_session_id."""
-        mock_query = mocker.patch("tachikoma.boundary.detector.query")
+        mock_query = mocker.patch("tachikoma.boundary.detector.stderr_aware_query")
 
         async def fake_query_gen(*args, **kwargs):
             yield ResultMessage(
@@ -292,7 +292,7 @@ class TestDetectBoundary:
             raise RuntimeError("SDK error")
             yield  # make it a generator
 
-        mocker.patch("tachikoma.boundary.detector.query", side_effect=failing_query)
+        mocker.patch("tachikoma.boundary.detector.stderr_aware_query", side_effect=failing_query)
 
         with pytest.raises(RuntimeError, match="SDK error"):
             await detect_boundary(
@@ -319,7 +319,7 @@ class TestDetectBoundary:
                 structured_output=None,
             )
 
-        mocker.patch("tachikoma.boundary.detector.query", side_effect=fake_query)
+        mocker.patch("tachikoma.boundary.detector.stderr_aware_query", side_effect=fake_query)
 
         result = await detect_boundary(
             message="Hello",
@@ -340,7 +340,7 @@ class TestDetectBoundary:
             return
             yield  # make it a generator
 
-        mocker.patch("tachikoma.boundary.detector.query", side_effect=fake_query)
+        mocker.patch("tachikoma.boundary.detector.stderr_aware_query", side_effect=fake_query)
 
         result = await detect_boundary(
             message="Hello",
@@ -353,7 +353,7 @@ class TestDetectBoundary:
 
     async def test_passes_cwd_to_options(self, mocker: MockerFixture) -> None:
         """AC: Working directory is passed to SDK options."""
-        mock_query = mocker.patch("tachikoma.boundary.detector.query")
+        mock_query = mocker.patch("tachikoma.boundary.detector.stderr_aware_query")
 
         async def fake_query_gen(*args, **kwargs):
             yield ResultMessage(
@@ -383,7 +383,7 @@ class TestDetectBoundary:
 
     async def test_uses_no_tools(self, mocker: MockerFixture) -> None:
         """AC: Detection uses no tools for fast inference."""
-        mock_query = mocker.patch("tachikoma.boundary.detector.query")
+        mock_query = mocker.patch("tachikoma.boundary.detector.stderr_aware_query")
 
         async def fake_query_gen(*args, **kwargs):
             yield ResultMessage(
@@ -414,7 +414,7 @@ class TestDetectBoundary:
 
     async def test_includes_candidates_in_prompt_when_provided(self, mocker: MockerFixture) -> None:
         """AC: Candidates are formatted into the user prompt."""
-        mock_query = mocker.patch("tachikoma.boundary.detector.query")
+        mock_query = mocker.patch("tachikoma.boundary.detector.stderr_aware_query")
 
         async def fake_query_gen(*args, **kwargs):
             yield ResultMessage(
@@ -451,7 +451,7 @@ class TestDetectBoundary:
         self, mocker: MockerFixture
     ) -> None:
         """AC: Candidates section is not added when no candidates provided."""
-        mock_query = mocker.patch("tachikoma.boundary.detector.query")
+        mock_query = mocker.patch("tachikoma.boundary.detector.stderr_aware_query")
 
         async def fake_query_gen(*args, **kwargs):
             yield ResultMessage(
@@ -497,7 +497,7 @@ class TestDetectBoundary:
                 },
             )
 
-        mocker.patch("tachikoma.boundary.detector.query", side_effect=fake_query)
+        mocker.patch("tachikoma.boundary.detector.stderr_aware_query", side_effect=fake_query)
 
         result = await detect_boundary(
             message="New topic",

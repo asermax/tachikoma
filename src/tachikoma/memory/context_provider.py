@@ -14,7 +14,7 @@ are loaded in full.
 import re
 from dataclasses import dataclass
 
-from claude_agent_sdk import ClaudeAgentOptions, query
+from claude_agent_sdk import ClaudeAgentOptions
 from claude_agent_sdk.types import ResultMessage
 from loguru import logger
 
@@ -22,6 +22,7 @@ from tachikoma.agent_defaults import AgentDefaults
 from tachikoma.per_message_pre_processing import MessageContextProvider
 from tachikoma.post_processing import abs_rule, build_permissions_settings
 from tachikoma.pre_processing import ContextResult
+from tachikoma.sdk_query import stderr_aware_query
 from tachikoma.sessions.model import SessionContextEntry
 
 _log = logger.bind(component="memory_context")
@@ -258,7 +259,7 @@ class MemoryContextProvider(MessageContextProvider):
         parsed_entries: list[ParsedMemoryEntry] = []
 
         try:
-            async for sdk_message in query(prompt=prompt, options=options):
+            async for sdk_message in stderr_aware_query(prompt=prompt, options=options):
                 if isinstance(sdk_message, ResultMessage):
                     if sdk_message.is_error:
                         _log.warning(

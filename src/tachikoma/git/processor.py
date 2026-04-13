@@ -6,12 +6,13 @@ Spawns a Haiku agent to inspect and commit workspace changes after each session.
 import asyncio
 from pathlib import Path
 
-from claude_agent_sdk import ClaudeAgentOptions, query
+from claude_agent_sdk import ClaudeAgentOptions
 from claude_agent_sdk.types import HookMatcher
 from loguru import logger
 
 from tachikoma.agent_defaults import AgentDefaults
 from tachikoma.post_processing import PostProcessor, build_permissions_settings, make_bash_gate_hook
+from tachikoma.sdk_query import stderr_aware_query
 from tachikoma.sessions.model import Session
 
 _log = logger.bind(component="git")
@@ -131,7 +132,7 @@ async def query_and_consume(
     _log.debug("Spawning query agent")
 
     # Fully consume the async iterator to ensure the agent completes
-    async for _ in query(prompt=prompt, options=options):
+    async for _ in stderr_aware_query(prompt=prompt, options=options):
         pass
 
     _log.debug("Query agent completed")
