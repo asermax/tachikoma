@@ -204,7 +204,7 @@ The notification system uses a standalone `tachikoma.notifications` module (not 
 
 ### Lightweight evaluator model
 
-**Choice**: Use `claude-3-5-haiku-20241022` for the evaluator assessment.
+**Choice**: Use `haiku` for the evaluator assessment.
 **Why**: The evaluator makes a simple structured assessment (complete/continue/stuck) that doesn't require a large model. Using a lightweight model reduces cost and latency for each evaluation turn.
 
 **Consequences**:

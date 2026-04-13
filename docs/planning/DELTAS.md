@@ -686,9 +686,3 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 **Complexity**: Hard
 **Description**: When a background task notification is delivered at the exact moment a user sends a message, the two can collide at the coordinator's message queue — resulting in one being lost or the notification being silently swallowed. The existing message-loss prevention and notification buffering mechanisms handle their respective timing windows independently, but do not cover the case where both sources attempt to enqueue simultaneously. This delta adds serialization between the notification delivery path and the user message intake so that concurrent arrivals are safely ordered and neither is dropped.
 
-### DLT-137: Scope forked agent file writes to per-processor subdirectories
-**Status**: ✗ Defined
-**Depends on**: None
-**Priority**: 1 (Critical)
-**Complexity**: Medium
-**Description**: After the workspace-level sandbox restricts all agents to the workspace directory, forked agents spawned by post-processing processors still have write access to the entire workspace even though each processor only needs access to a specific subdirectory (e.g. a memory extractor only needs the memories directory). This delta adds per-agent path scoping so that each spawned agent's file write operations are confined to its designated working subdirectory within the workspace. The enforcement mechanism should be evaluated during speccing — options include CWD scoping within the fork/query configuration, or configuring SDK permission restrictions that limit file operations to the agent's designated directory. This applies to all agent spawning patterns: prompt-driven processors (fork-and-consume), standalone queries, and any other sub-agent invocation pattern.
