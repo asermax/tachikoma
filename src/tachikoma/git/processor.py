@@ -50,6 +50,7 @@ and create cohesive, well-organized commits for ALL changes.
   `git merge`, `git stash`, or any other destructive/history-rewriting commands
 - Read-only inspection commands (`ls`, `find`, `file`, `echo`, `date`, `cat`,
   `head`, `tail`, `wc`, `stat`) are allowed for understanding workspace state
+- Navigation commands (`cd`, `pwd`) are allowed for moving between directories
 - Never ask for confirmation — just make the commits
 - Commit EVERYTHING that shows up in `git status`, including ephemeral runtime files
   (session data, logs, caches). Anything not in `.gitignore` should be committed.
@@ -64,7 +65,7 @@ messages help understand what changed and when.
 You can read and modify files anywhere in the workspace. For Bash, `git` \
 commands and read-only inspection commands (`ls`, `find`, `file`, `echo`, \
 `date`, `cat`, `head`, `tail`, `wc`, `stat`) are allowed — other commands \
-will be denied."""
+will be denied. Navigation commands (`cd`, `pwd`) are also allowed."""
 
 
 GIT_TOOLS = ["Read", "Glob", "Grep", "Bash", "Edit", "Write"]
@@ -82,6 +83,8 @@ GIT_BASH_HOOK = make_bash_gate_hook(
         "tail ",
         "wc ",
         "stat ",
+        "cd",
+        "pwd",
     ]
 )
 

@@ -7,6 +7,7 @@ other post-conversation handlers.
 
 import asyncio
 import json
+import re
 from abc import ABC, abstractmethod
 from datetime import datetime
 from pathlib import Path
@@ -288,6 +289,11 @@ def abs_rule(tool: str, path: Path) -> str:
     return f"{tool}(//{str(path.resolve())[1:]}/**)"
 
 
+# Regex for splitting compound Bash commands by shell operators.
+# Order matters: && and || (two-char) are tried before | and ; (one-char).
+_COMPOUND_SPLIT_RE = re.compile(r"\s*(?:&&|\|\||[;|])\s*")
+
+
 def make_bash_gate_hook(allowed_prefixes: list[str]) -> HookMatcher:
     """Create a PreToolUse hook that restricts Bash to specific command prefixes.
 
@@ -295,13 +301,35 @@ def make_bash_gate_hook(allowed_prefixes: list[str]) -> HookMatcher:
     by the CLI (known upstream issue). This hook provides programmatic
     enforcement by inspecting the command string before execution.
 
+    Compound commands (joined by ``&&``, ``||``, ``|``, or ``;``) are split
+    and each sub-command is checked independently. If any sub-command does
+    not match an allowed prefix, the entire command is denied.
+
+    The splitting is intentionally simple — it does not parse shell quoting.
+    This is a conservative security tradeoff: commands with shell operators
+    inside quoted strings will be incorrectly split, but this is unlikely
+    in practice for the constrained agents that use this hook.
+
     Args:
         allowed_prefixes: Command prefixes to allow (e.g. ``["git "]``).
-            A command is allowed if it starts with any of these prefixes.
+            Each sub-command must exactly match a command name, or start
+            with a command name followed by a space (for arguments).
 
     Returns:
         A ``HookMatcher`` targeting the Bash tool with one hook callback.
     """
+
+    # Build a single regex from the prefix list: matches exact command name
+    # or command name followed by a space and arguments.
+    # Names are deduplicated and sorted longest-first for correct alternation.
+    unique_names = sorted(
+        {re.escape(p.rstrip()) for p in allowed_prefixes},
+        key=lambda s: len(s),
+        reverse=True,
+    )
+    alts = "|".join(unique_names)
+    pattern = rf"^(?:{alts})($| .*)"
+    _allowed_re = re.compile(pattern)
 
     async def _hook(
         input: HookInput,
@@ -310,24 +338,36 @@ def make_bash_gate_hook(allowed_prefixes: list[str]) -> HookMatcher:
     ) -> HookJSONOutput:
         command = input.get("tool_input", {}).get("command", "")
 
-        for prefix in allowed_prefixes:
-            if command.startswith(prefix):
-                return {}
+        # Split compound commands by shell operators
+        parts = _COMPOUND_SPLIT_RE.split(command)
 
-        _log.warning(
-            "Bash denied by hook: command={cmd} allowed_prefixes={prefixes}",
-            cmd=command[:80],
-            prefixes=allowed_prefixes,
-        )
-        return {
-            "hookSpecificOutput": {
-                "hookEventName": "PreToolUse",
-                "permissionDecision": "deny",
-                "permissionDecisionReason": (
-                    f"Only commands starting with {allowed_prefixes} are allowed"
-                ),
-            },
-        }
+        for part in parts:
+            part = part.strip()
+            if not part:
+                continue
+
+            if _allowed_re.match(part):
+                continue
+
+            _log.warning(
+                "Bash denied by hook: command={cmd} "
+                "denied_part={part} allowed_prefixes={prefixes}",
+                cmd=command[:80],
+                part=part[:80],
+                prefixes=allowed_prefixes,
+            )
+            return {
+                "hookSpecificOutput": {
+                    "hookEventName": "PreToolUse",
+                    "permissionDecision": "deny",
+                    "permissionDecisionReason": (
+                        f"Sub-command '{part}' not in allowed prefixes {allowed_prefixes}"
+                    ),
+                },
+            }
+
+        # All sub-commands passed
+        return {}
 
     return HookMatcher(matcher="Bash", hooks=[_hook])
 

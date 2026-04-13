@@ -72,7 +72,9 @@ await query_and_consume(
 )
 ```
 
-The hook inspects the `command` field in the tool input before execution and denies non-matching commands with a descriptive reason.
+The hook inspects the `command` field in the tool input before execution and denies non-matching commands with a descriptive reason. The hook supports compound commands — commands joined by `&&`, `||`, `|`, or `;` are split and each sub-command is validated independently. If any sub-command fails, the entire command is denied.
+
+The hook compiles the allowed prefixes into a single regex at creation time. A command matches if it exactly equals a prefix, or starts with a prefix followed by a space and arguments (e.g., `"cd"` matches both `cd` and `cd /path`, but not `cdeject`). Prefixes are deduplicated and sorted longest-first to ensure correct regex alternation.
 
 ### Prompt Permissions Section
 
@@ -124,7 +126,11 @@ from tachikoma.post_processing import make_bash_gate_hook
 
 GIT_TOOLS = ["Read", "Glob", "Grep", "Bash", "Edit", "Write"]
 GIT_ALLOW = ["Read", "Glob", "Grep", "Edit", "Write", "Bash(git *)"]
-GIT_BASH_HOOK = make_bash_gate_hook(["git "])
+GIT_BASH_HOOK = make_bash_gate_hook([
+    "git ", "ls ", "find ", "file ", "echo ",
+    "date ", "cat ", "head ", "tail ", "wc ",
+    "stat ", "cd", "pwd",
+])
 
 await query_and_consume(
     prompt, agent_defaults,

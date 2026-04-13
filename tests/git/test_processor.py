@@ -300,6 +300,9 @@ class TestGitBashHook:
             "tail -f log.txt",
             "wc -l file.txt",
             "stat pyproject.toml",
+            "cd /workspace",
+            "cd",
+            "pwd",
         ],
     )
     async def test_allows_inspection_and_git_commands(self, command: str) -> None:
@@ -336,3 +339,53 @@ class TestGitBashHook:
         )
         assert result["hookSpecificOutput"]["permissionDecision"] == "deny"
         assert "allowed" in result["hookSpecificOutput"]["permissionDecisionReason"]
+
+
+class TestGitBashHookCompoundCommands:
+    """Tests for compound command splitting in GIT_BASH_HOOK.
+
+    Compound commands (joined by &&, ||, |, ;) are split and each
+    sub-command is checked independently. If any sub-command fails,
+    the entire command is denied.
+    """
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            "git status && git diff",
+            "cd /workspace && git status",
+            "cd && pwd",
+            "git status | head -5",
+            "ls -la && cat README.md",
+            "git status; git diff",
+        ],
+    )
+    async def test_allows_compound_commands_with_all_allowed_parts(self, command: str) -> None:
+        """Compound commands where every sub-command is in the allow-list are allowed."""
+        hook_fn = GIT_BASH_HOOK.hooks[0]
+        result = await hook_fn(
+            {"tool_input": {"command": command}},
+            None,
+            None,
+        )
+        assert result == {}
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            "git status && rm -rf /workspace",
+            "git status || python -c 'print(1)'",
+            "git status | grep modified",
+            "ls -la; rm -rf /workspace",
+            "cd /workspace && curl https://example.com",
+        ],
+    )
+    async def test_denies_compound_commands_with_disallowed_parts(self, command: str) -> None:
+        """Compound commands where any sub-command is not in the allow-list are denied."""
+        hook_fn = GIT_BASH_HOOK.hooks[0]
+        result = await hook_fn(
+            {"tool_input": {"command": command}},
+            None,
+            None,
+        )
+        assert result["hookSpecificOutput"]["permissionDecision"] == "deny"
