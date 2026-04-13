@@ -312,7 +312,7 @@ class TestMemoryContextProvider:
         mocker: MockerFixture,
         tmp_path: Path,
     ) -> None:
-        """AC: query() called with correct model, effort, max_turns, allowed_tools, cwd."""
+        """AC: query() called with correct model, effort, allowed_tools, cwd."""
         mock_query = mocker.patch("tachikoma.memory.context_provider.query")
         mock_query.return_value = _make_query_result(_NO_RELEVANT_MEMORIES)
 
@@ -325,7 +325,7 @@ class TestMemoryContextProvider:
 
         assert options.model == "opus"
         assert options.effort == "low"
-        assert options.max_turns == 12
+        assert options.max_turns is None
         assert options.tools == ["Read", "Glob", "Grep"]
         assert options.allowed_tools == ["Read", "Glob", "Grep"]
         assert options.permission_mode is None
