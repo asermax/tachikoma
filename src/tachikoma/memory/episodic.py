@@ -68,4 +68,5 @@ class EpisodicProcessor(PromptDrivenProcessor):
                 abs_rule("Edit", scope),
                 abs_rule("Write", scope),
             ],
+            model="haiku",
         )

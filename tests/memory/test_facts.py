@@ -55,6 +55,7 @@ class TestFactsProcessor:
                 abs_rule("Write", scope),
             ],
             pre_tool_use_hooks=None,
+            model="haiku",
         )
 
     def test_prompt_references_correct_subdirectory(self) -> None:

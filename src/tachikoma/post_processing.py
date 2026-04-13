@@ -78,6 +78,7 @@ class PromptDrivenProcessor(PostProcessor):
         tools: list[str] | None = None,
         allow: list[str] | None = None,
         pre_tool_use_hooks: list[HookMatcher] | None = None,
+        model: str | None = None,
     ) -> None:
         """Initialize the processor.
 
@@ -91,6 +92,8 @@ class PromptDrivenProcessor(PostProcessor):
             pre_tool_use_hooks: Optional PreToolUse hook matchers for
                 programmatic enforcement (e.g. Bash command gating via
                 :func:`make_bash_gate_hook`).
+            model: Optional model override for the forked agent. When None
+                (the default), the fork inherits the parent session's model.
         """
         self._prompt = prompt.replace("$WORKSPACE", str(agent_defaults.cwd))
         self._agent_defaults = agent_defaults
@@ -98,6 +101,7 @@ class PromptDrivenProcessor(PostProcessor):
         self._tools = tools
         self._allow = allow
         self._pre_tool_use_hooks = pre_tool_use_hooks
+        self._model = model
 
     async def process(self, session: Session) -> None:
         """Process by forking the SDK session with the configured prompt.
@@ -120,6 +124,7 @@ class PromptDrivenProcessor(PostProcessor):
             tools=self._tools,
             allow=self._allow,
             pre_tool_use_hooks=self._pre_tool_use_hooks,
+            model=self._model,
         )
         _log.info("Processor completed: processor={name}", name=name)
 
@@ -352,6 +357,7 @@ async def fork_and_consume(
     tools: list[str] | None = None,
     allow: list[str] | None = None,
     pre_tool_use_hooks: list[HookMatcher] | None = None,
+    model: str | None = None,
 ) -> None:
     """Fork the SDK session and consume the agent's response.
 
@@ -379,6 +385,10 @@ async def fork_and_consume(
             ``dontAsk`` mode instead of ``bypassPermissions``.
         pre_tool_use_hooks: Optional PreToolUse hook matchers for
             programmatic enforcement (e.g. Bash command gating).
+        model: Optional model override for the forked agent. When None
+            (the default), the fork inherits the parent session's model.
+            Pass a model alias (e.g. ``"haiku"``) to downgrade the fork
+            for cheap mechanical tasks.
 
     Raises:
         RuntimeError: If session has no sdk_session_id.
@@ -396,6 +406,9 @@ async def fork_and_consume(
         resume=session.sdk_session_id,
         fork_session=True,
     )
+
+    if model is not None:
+        options.model = model
 
     if tools is not None and allow is not None:
         options.tools = tools
@@ -432,6 +445,7 @@ async def fork_and_capture(
     tools: list[str] | None = None,
     allow: list[str] | None = None,
     pre_tool_use_hooks: list[HookMatcher] | None = None,
+    model: str | None = None,
 ) -> str:
     """Fork the SDK session and capture the agent's text response.
 
@@ -449,6 +463,8 @@ async def fork_and_capture(
         tools: Optional tool restriction list for the forked agent.
         allow: Optional allow-only permission rules for path scoping.
         pre_tool_use_hooks: Optional PreToolUse hook matchers.
+        model: Optional model override for the forked agent. When None
+            (the default), the fork inherits the parent session's model.
 
     Returns:
         Concatenated text from all content blocks in the response.
@@ -469,6 +485,9 @@ async def fork_and_capture(
         resume=session.sdk_session_id,
         fork_session=True,
     )
+
+    if model is not None:
+        options.model = model
 
     if tools is not None and allow is not None:
         options.tools = tools
