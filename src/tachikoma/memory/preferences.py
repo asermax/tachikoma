@@ -11,7 +11,7 @@ the conversation and extract or update the user's expressed preferences.
 
 ## Instructions
 
-1. First, read the existing files in the `memories/preferences/` directory to
+1. First, read the existing files in the `$WORKSPACE/memories/preferences/` directory to
    see what preferences are already stored.
 
 2. Analyze the conversation for preference-related statements the user made:
@@ -34,7 +34,7 @@ the conversation and extract or update the user's expressed preferences.
    - When appropriate, how strongly the preference is held
 
 5. **Important constraints**:
-   - Only create or modify files within `memories/preferences/`
+   - Only create or modify files within `$WORKSPACE/memories/preferences/`
    - Use descriptive, topic-based filenames (not dates)
    - If no preference-related information emerged from the conversation,
      it is perfectly acceptable to create no files
@@ -48,7 +48,7 @@ preferences. Focus on genuine, stated preferences rather than assumptions."""
 class PreferencesProcessor(PromptDrivenProcessor):
     """Post-processor for extracting preference memories.
 
-    Creates or updates topic-named files in memories/preferences/.
+    Creates or updates topic-named files in $WORKSPACE/memories/preferences/.
     """
 
     def __init__(self, agent_defaults: AgentDefaults) -> None:

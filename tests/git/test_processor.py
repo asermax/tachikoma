@@ -47,8 +47,9 @@ class TestGitProcessor:
         processor = GitProcessor(AgentDefaults(cwd=Path("/workspace")))
         await processor.process(_make_session())
 
+        expected_prompt = GIT_COMMIT_PROMPT.replace("$WORKSPACE", "/workspace")
         mock_query.assert_awaited_once_with(
-            GIT_COMMIT_PROMPT,
+            expected_prompt,
             AgentDefaults(cwd=Path("/workspace")),
         )
 

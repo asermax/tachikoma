@@ -11,7 +11,7 @@ the conversation that just ended and create or update episodic memory files.
 
 ## Instructions
 
-1. First, read the existing files in the `memories/episodic/` directory to see
+1. First, read the existing files in the `$WORKSPACE/memories/episodic/` directory to see
    what summaries already exist.
 
 2. Analyze the conversation for meaningful events, discussions, and activities.
@@ -29,7 +29,7 @@ the conversation that just ended and create or update episodic memory files.
    - Any important context for future reference
 
 5. **Important constraints**:
-   - Only create or modify files within `memories/episodic/`
+   - Only create or modify files within `$WORKSPACE/memories/episodic/`
    - If the conversation was trivial or contained no meaningful information,
      it is perfectly acceptable to create no files
    - Do not create duplicate files for the same date — consolidate entries
@@ -41,7 +41,7 @@ Focus on what would be useful to remember about this conversation in the future.
 class EpisodicProcessor(PromptDrivenProcessor):
     """Post-processor for extracting episodic memories.
 
-    Creates or updates date-stamped summary files in memories/episodic/.
+    Creates or updates date-stamped summary files in $WORKSPACE/memories/episodic/.
     """
 
     def __init__(self, agent_defaults: AgentDefaults) -> None:

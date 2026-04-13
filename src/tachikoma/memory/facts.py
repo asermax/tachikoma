@@ -13,7 +13,7 @@ to remember for future conversations.
 
 ## Instructions
 
-1. First, read the existing files in the `memories/facts/` directory to see
+1. First, read the existing files in the `$WORKSPACE/memories/facts/` directory to see
    what facts are already stored.
 
 2. Analyze the conversation for factual information that should persist. This
@@ -41,7 +41,7 @@ to remember for future conversations.
    - When appropriate, the date the information was learned
 
 5. **Important constraints**:
-   - Only create or modify files within `memories/facts/`
+   - Only create or modify files within `$WORKSPACE/memories/facts/`
    - Use descriptive, topic-based filenames (not dates)
    - If no new factual information emerged from the conversation,
      it is perfectly acceptable to create no files
@@ -55,7 +55,7 @@ Focus on accurate, verified information that will be useful to recall later."""
 class FactsProcessor(PromptDrivenProcessor):
     """Post-processor for extracting factual memories.
 
-    Creates or updates topic-named files in memories/facts/.
+    Creates or updates topic-named files in $WORKSPACE/memories/facts/.
     """
 
     def __init__(self, agent_defaults: AgentDefaults) -> None:

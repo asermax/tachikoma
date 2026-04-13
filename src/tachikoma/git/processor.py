@@ -25,10 +25,10 @@ and create cohesive, well-organized commits for ALL changes.
 2. Run `git diff` to understand what changed in modified files.
 
 3. Group the changes into cohesive sets by subdirectory/purpose:
-   - Changes in `memories/episodic/` → one commit
-   - Changes in `memories/facts/` → one commit
-   - Changes in `memories/preferences/` → one commit
-   - Changes in `context/` (core context files) → one commit
+   - Changes in `$WORKSPACE/memories/episodic/` → one commit
+   - Changes in `$WORKSPACE/memories/facts/` → one commit
+   - Changes in `$WORKSPACE/memories/preferences/` → one commit
+   - Changes in `$WORKSPACE/context/` (core context files) → one commit
    - Other workspace files → group logically
 
 4. For each group, create a commit:
@@ -121,7 +121,8 @@ class GitProcessor(PostProcessor):
         _log.debug("Workspace has uncommitted changes, spawning commit agent")
 
         # Spawn agent to handle commits
-        await query_and_consume(GIT_COMMIT_PROMPT, self._agent_defaults)
+        prompt = GIT_COMMIT_PROMPT.replace("$WORKSPACE", str(self._cwd))
+        await query_and_consume(prompt, self._agent_defaults)
 
         # Push to remote if configured (partial commits are valid and worth pushing)
         has_remote = await _has_remote(self._cwd)

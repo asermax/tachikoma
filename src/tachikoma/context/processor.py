@@ -35,9 +35,9 @@ conversation and update the foundational context files when appropriate.
 ## Your Task
 
 1. **Read all three context files:**
-   - `context/SOUL.md` — Personality traits, tone, and behavioral guidelines
-   - `context/USER.md` — What the assistant knows about the user
-   - `context/AGENTS.md` — Operational instructions and workflow preferences
+   - `$WORKSPACE/context/SOUL.md` — Personality traits, tone, and behavioral guidelines
+   - `$WORKSPACE/context/USER.md` — What the assistant knows about the user
+   - `$WORKSPACE/context/AGENTS.md` — Operational instructions and workflow preferences
 
 2. **Review pending signals:**
 

@@ -72,7 +72,7 @@ class PromptDrivenProcessor(PostProcessor):
             prompt: The prompt to send to the forked agent.
             agent_defaults: Common SDK options (cwd, cli_path, env).
         """
-        self._prompt = prompt
+        self._prompt = prompt.replace("$WORKSPACE", str(agent_defaults.cwd))
         self._agent_defaults = agent_defaults
         self._cwd = agent_defaults.cwd
 
