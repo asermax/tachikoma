@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v1.16.0 (2026-04-13)
+
+### Bug Fixes
+
+- **memory**: Remove max_turns from memory search agent
+  ([`3966170`](https://github.com/asermax/tachikoma/commit/396617077b72c1b09fcb9e11b9e3dbe93d4c6188))
+
+- **telegram**: Silence message-is-not-modified BadRequest on status edits
+  ([`ff2879e`](https://github.com/asermax/tachikoma/commit/ff2879e4520fc326c636c25eadecb1d1674f1c32))
+
+### Documentation
+
+- Reconcile error-diagnosis patch into feature documentation
+  ([`16a85ea`](https://github.com/asermax/tachikoma/commit/16a85ea5429cbc91165524848ebd6ecc2341b3b8))
+
+### Features
+
+- **git**: Expand commit-agent bash gate with read-only inspection commands
+  ([`4a48490`](https://github.com/asermax/tachikoma/commit/4a4849017801e02a0c06b55e7485fffe61ad4d96))
+
+- **post-processing**: Thread optional model kwarg through fork helpers
+  ([`fae8f3e`](https://github.com/asermax/tachikoma/commit/fae8f3e6278b92f76b8602fe2c1ec3d7a7cdd208))
+
+
 ## v1.15.0 (2026-04-13)
 
 ### Bug Fixes
