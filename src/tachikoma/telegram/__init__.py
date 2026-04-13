@@ -175,6 +175,11 @@ class ResponseRenderer:
                     message_id=self._current_message_id,
                     parse_mode="Markdown",
                 )
+            except TelegramBadRequest as e:
+                if "message is not modified" in str(e):
+                    _log.debug("Status edit skipped: message content unchanged")
+                else:
+                    _log.exception("Failed to edit status message")
             except TelegramAPIError:
                 _log.exception("Failed to edit status message")
             return
