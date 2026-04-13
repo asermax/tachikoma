@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v1.17.0 (2026-04-13)
+
+### Bug Fixes
+
+- **tests**: Update mock targets to stderr_aware_query after merge
+  ([`5e48ad6`](https://github.com/asermax/tachikoma/commit/5e48ad692d19c245aa9a684f530a4877b3839278))
+
+
 ## v1.16.0 (2026-04-13)
 
 ### Bug Fixes
