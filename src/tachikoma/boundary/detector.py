@@ -7,7 +7,7 @@ optional session resumption match.
 
 from dataclasses import dataclass
 
-from claude_agent_sdk import ClaudeAgentOptions, query
+from claude_agent_sdk import ClaudeAgentOptions
 from claude_agent_sdk.types import ResultMessage
 from loguru import logger
 
@@ -17,6 +17,7 @@ from tachikoma.boundary.prompts import (
     BOUNDARY_DETECTION_USER_PROMPT,
     CANDIDATES_SECTION_TEMPLATE,
 )
+from tachikoma.sdk_query import stderr_aware_query
 
 _log = logger.bind(component="boundary")
 
@@ -126,7 +127,7 @@ async def detect_boundary(
     result = BoundaryResult(continues=True)
     got_result = False
 
-    async for sdk_message in query(prompt=user_prompt, options=options):
+    async for sdk_message in stderr_aware_query(prompt=user_prompt, options=options):
         if isinstance(sdk_message, ResultMessage):
             got_result = True
 

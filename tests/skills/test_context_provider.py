@@ -78,7 +78,7 @@ class TestSkillsContextProvider:
         self, mocker: MockerFixture, tmp_path: Path
     ) -> None:
         """AC: No LLM call when registry has no skills (R10)."""
-        mock_query = mocker.patch("tachikoma.skills.context_provider.query")
+        mock_query = mocker.patch("tachikoma.skills.context_provider.stderr_aware_query")
 
         # Create skills directory but no skills
         skills_dir = tmp_path / "skills"
@@ -95,7 +95,7 @@ class TestSkillsContextProvider:
         self, mocker: MockerFixture, tmp_path: Path
     ) -> None:
         """AC: query() called with effort=low, max_turns=3, cwd set."""
-        mock_query = mocker.patch("tachikoma.skills.context_provider.query")
+        mock_query = mocker.patch("tachikoma.skills.context_provider.stderr_aware_query")
 
         # Create a skill so registry is non-empty
         skills_dir = tmp_path / "skills" / "test-skill"
@@ -121,7 +121,7 @@ class TestSkillsContextProvider:
         self, mocker: MockerFixture, tmp_path: Path
     ) -> None:
         """AC: Result is a list with tag='skills' and non-empty content."""
-        mock_query = mocker.patch("tachikoma.skills.context_provider.query")
+        mock_query = mocker.patch("tachikoma.skills.context_provider.stderr_aware_query")
 
         # Create a skill
         skills_dir = tmp_path / "skills" / "test-skill"
@@ -144,7 +144,7 @@ class TestSkillsContextProvider:
         self, mocker: MockerFixture, tmp_path: Path
     ) -> None:
         """AC: XML block contains skill body (no frontmatter) and directory path."""
-        mock_query = mocker.patch("tachikoma.skills.context_provider.query")
+        mock_query = mocker.patch("tachikoma.skills.context_provider.stderr_aware_query")
 
         # Create skill with YAML frontmatter
         skills_dir = tmp_path / "skills" / "my-skill"
@@ -170,7 +170,7 @@ class TestSkillsContextProvider:
         self, mocker: MockerFixture, tmp_path: Path
     ) -> None:
         """AC: Agents are None on all results — derived from entries by coordinator."""
-        mock_query = mocker.patch("tachikoma.skills.context_provider.query")
+        mock_query = mocker.patch("tachikoma.skills.context_provider.stderr_aware_query")
 
         # Create search skill with agents
         skills_dir = tmp_path / "skills" / "search"
@@ -195,7 +195,7 @@ class TestSkillsContextProvider:
         self, mocker: MockerFixture, tmp_path: Path
     ) -> None:
         """AC: NO_RELEVANT_SKILLS sentinel returns None."""
-        mock_query = mocker.patch("tachikoma.skills.context_provider.query")
+        mock_query = mocker.patch("tachikoma.skills.context_provider.stderr_aware_query")
 
         skills_dir = tmp_path / "skills" / "test"
         skills_dir.mkdir(parents=True)
@@ -213,7 +213,7 @@ class TestSkillsContextProvider:
         self, mocker: MockerFixture, tmp_path: Path
     ) -> None:
         """AC: Skill names not in registry are discarded."""
-        mock_query = mocker.patch("tachikoma.skills.context_provider.query")
+        mock_query = mocker.patch("tachikoma.skills.context_provider.stderr_aware_query")
 
         skills_dir = tmp_path / "skills" / "real-skill"
         skills_dir.mkdir(parents=True)
@@ -236,7 +236,7 @@ class TestSkillsContextProvider:
         self, mocker: MockerFixture, tmp_path: Path
     ) -> None:
         """AC: When skill body read fails, other skills still work."""
-        mock_query = mocker.patch("tachikoma.skills.context_provider.query")
+        mock_query = mocker.patch("tachikoma.skills.context_provider.stderr_aware_query")
 
         # Create a valid skill
         skills_dir = tmp_path / "skills" / "valid-skill"
@@ -257,7 +257,7 @@ class TestSkillsContextProvider:
 
     async def test_multiple_skills_detected(self, mocker: MockerFixture, tmp_path: Path) -> None:
         """AC: Multiple detected skills produce separate ContextResults."""
-        mock_query = mocker.patch("tachikoma.skills.context_provider.query")
+        mock_query = mocker.patch("tachikoma.skills.context_provider.stderr_aware_query")
 
         # Create first skill
         skills_dir1 = tmp_path / "skills" / "skill-a"
@@ -303,7 +303,7 @@ class TestSkillsContextProvider:
         self, mocker: MockerFixture, tmp_path: Path
     ) -> None:
         """AC: Registry's internal dict is not mutated by provider calls."""
-        mock_query = mocker.patch("tachikoma.skills.context_provider.query")
+        mock_query = mocker.patch("tachikoma.skills.context_provider.stderr_aware_query")
 
         skills_dir = tmp_path / "skills" / "test"
         skills_dir.mkdir(parents=True)
@@ -334,7 +334,7 @@ class TestSkillsContextProvider:
         self, mocker: MockerFixture, tmp_path: Path
     ) -> None:
         """AC: Already-loaded skills (from existing_entries) are excluded from classification."""
-        mock_query = mocker.patch("tachikoma.skills.context_provider.query")
+        mock_query = mocker.patch("tachikoma.skills.context_provider.stderr_aware_query")
 
         # Create two skills
         skills_dir_a = tmp_path / "skills" / "skill-a"
@@ -376,7 +376,7 @@ class TestSkillsContextProvider:
         self, mocker: MockerFixture, tmp_path: Path
     ) -> None:
         """AC: Returns None without LLM call when all skills are already loaded (R8)."""
-        mock_query = mocker.patch("tachikoma.skills.context_provider.query")
+        mock_query = mocker.patch("tachikoma.skills.context_provider.stderr_aware_query")
 
         # Create one skill
         skills_dir = tmp_path / "skills" / "only-skill"
@@ -405,7 +405,7 @@ class TestSkillsContextProvider:
         self, mocker: MockerFixture, tmp_path: Path
     ) -> None:
         """AC: Each result has metadata={'skill_name': name}."""
-        mock_query = mocker.patch("tachikoma.skills.context_provider.query")
+        mock_query = mocker.patch("tachikoma.skills.context_provider.stderr_aware_query")
 
         skills_dir = tmp_path / "skills" / "my-skill"
         skills_dir.mkdir(parents=True)
@@ -424,7 +424,7 @@ class TestSkillsContextProvider:
         self, mocker: MockerFixture, tmp_path: Path
     ) -> None:
         """AC: Empty existing_entries → classifier sees full registry (same as first message)."""
-        mock_query = mocker.patch("tachikoma.skills.context_provider.query")
+        mock_query = mocker.patch("tachikoma.skills.context_provider.stderr_aware_query")
 
         skills_dir = tmp_path / "skills" / "test"
         skills_dir.mkdir(parents=True)

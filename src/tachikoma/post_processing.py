@@ -9,7 +9,7 @@ import asyncio
 from abc import ABC, abstractmethod
 from datetime import datetime
 
-from claude_agent_sdk import ClaudeAgentOptions, query
+from claude_agent_sdk import ClaudeAgentOptions
 from claude_agent_sdk.types import (
     McpHttpServerConfig,
     McpSdkServerConfig,
@@ -21,6 +21,7 @@ from loguru import logger
 
 from tachikoma.adapter import sanitize_text
 from tachikoma.agent_defaults import AgentDefaults
+from tachikoma.sdk_query import stderr_aware_query
 from tachikoma.sessions.model import Session
 from tachikoma.sessions.registry import SessionRegistry
 
@@ -293,7 +294,7 @@ async def fork_and_consume(
         )
 
     # Fully consume the async iterator to ensure the forked session ends cleanly
-    async for _ in query(prompt=prompt, options=options):
+    async for _ in stderr_aware_query(prompt=prompt, options=options):
         pass
 
     _log.debug("Fork completed: sdk_session_id={sid}", sid=session.sdk_session_id[:8])
@@ -350,7 +351,7 @@ async def fork_and_capture(
     # Fully consume the async iterator per DES-005, capturing text content
     chunks: list[str] = []
 
-    async for message in query(prompt=prompt, options=options):
+    async for message in stderr_aware_query(prompt=prompt, options=options):
         content = getattr(message, "content", None)
         if content is not None:
             for block in content:

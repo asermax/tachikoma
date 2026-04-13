@@ -194,7 +194,7 @@ class TestQueryAndConsume:
 
     async def test_calls_query_with_correct_options(self, mocker: MockerFixture) -> None:
         """AC: query_and_consume calls query() with correct options."""
-        mock_query = mocker.patch("tachikoma.git.processor.query")
+        mock_query = mocker.patch("tachikoma.git.processor.stderr_aware_query")
 
         async def fake_query(*args, **kwargs):
             yield MagicMock()
@@ -223,7 +223,7 @@ class TestQueryAndConsume:
                 consume_count += 1
                 yield MagicMock(msg=i)
 
-        mocker.patch("tachikoma.git.processor.query", side_effect=fake_query)
+        mocker.patch("tachikoma.git.processor.stderr_aware_query", side_effect=fake_query)
 
         await query_and_consume("prompt", AgentDefaults(cwd=Path("/workspace")))
 
@@ -236,7 +236,7 @@ class TestQueryAndConsume:
             raise RuntimeError("SDK error")
             yield  # make it a generator
 
-        mocker.patch("tachikoma.git.processor.query", side_effect=failing_query)
+        mocker.patch("tachikoma.git.processor.stderr_aware_query", side_effect=failing_query)
 
         with pytest.raises(RuntimeError, match="SDK error"):
             await query_and_consume("prompt", AgentDefaults(cwd=Path("/workspace")))
