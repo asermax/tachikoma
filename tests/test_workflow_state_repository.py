@@ -116,9 +116,7 @@ def test_workflow_state_record_to_domain(sample_workflow_state):
         workflow_name=sample_workflow_state.workflow_name,
         current_step=sample_workflow_state.current_step,
         step_states=json.dumps(sample_workflow_state.step_states),
-        definition_snapshot=json.dumps(
-            sample_workflow_state.definition_snapshot
-        ),
+        definition_snapshot=json.dumps(sample_workflow_state.definition_snapshot),
         scratchpad_path=sample_workflow_state.scratchpad_path,
         deleted_at=sample_workflow_state.deleted_at,
         created_at=sample_workflow_state.created_at,

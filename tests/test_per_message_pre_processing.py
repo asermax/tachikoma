@@ -188,7 +188,9 @@ class TestMessagePreProcessingPipeline:
         await pipeline.run("hello", existing_entries=entries)
 
         provider.provide.assert_called_once_with(
-            "hello", existing_entries=entries, sdk_session_id=None,
+            "hello",
+            existing_entries=entries,
+            sdk_session_id=None,
         )
 
     async def test_parallel_execution(self) -> None:
@@ -256,7 +258,9 @@ class TestMessagePreProcessingPipeline:
         await pipeline.run("hello")
 
         provider.provide.assert_called_once_with(
-            "hello", existing_entries=[], sdk_session_id=None,
+            "hello",
+            existing_entries=[],
+            sdk_session_id=None,
         )
 
     async def test_passes_sdk_session_id_to_provider(self) -> None:
@@ -270,7 +274,9 @@ class TestMessagePreProcessingPipeline:
         await pipeline.run("hello", sdk_session_id="test-session-123")
 
         provider.provide.assert_called_once_with(
-            "hello", existing_entries=[], sdk_session_id="test-session-123",
+            "hello",
+            existing_entries=[],
+            sdk_session_id="test-session-123",
         )
 
     async def test_default_sdk_session_id_is_none(self) -> None:

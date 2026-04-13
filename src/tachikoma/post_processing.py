@@ -6,11 +6,17 @@ other post-conversation handlers.
 """
 
 import asyncio
+import json
 from abc import ABC, abstractmethod
 from datetime import datetime
+from pathlib import Path
 
 from claude_agent_sdk import ClaudeAgentOptions, query
 from claude_agent_sdk.types import (
+    HookContext,
+    HookInput,
+    HookJSONOutput,
+    HookMatcher,
     McpHttpServerConfig,
     McpSdkServerConfig,
     McpSSEServerConfig,
@@ -65,16 +71,33 @@ class PromptDrivenProcessor(PostProcessor):
     See DES-004 for the pattern documentation.
     """
 
-    def __init__(self, prompt: str, agent_defaults: AgentDefaults) -> None:
+    def __init__(
+        self,
+        prompt: str,
+        agent_defaults: AgentDefaults,
+        tools: list[str] | None = None,
+        allow: list[str] | None = None,
+        pre_tool_use_hooks: list[HookMatcher] | None = None,
+    ) -> None:
         """Initialize the processor.
 
         Args:
             prompt: The prompt to send to the forked agent.
             agent_defaults: Common SDK options (cwd, cli_path, env).
+            tools: Optional tool restriction list for the forked agent.
+            allow: Optional allow-only permission rules for path scoping.
+                When provided (along with tools), the forked agent uses
+                ``dontAsk`` mode instead of ``bypassPermissions``.
+            pre_tool_use_hooks: Optional PreToolUse hook matchers for
+                programmatic enforcement (e.g. Bash command gating via
+                :func:`make_bash_gate_hook`).
         """
         self._prompt = prompt.replace("$WORKSPACE", str(agent_defaults.cwd))
         self._agent_defaults = agent_defaults
         self._cwd = agent_defaults.cwd
+        self._tools = tools
+        self._allow = allow
+        self._pre_tool_use_hooks = pre_tool_use_hooks
 
     async def process(self, session: Session) -> None:
         """Process by forking the SDK session with the configured prompt.
@@ -90,7 +113,14 @@ class PromptDrivenProcessor(PostProcessor):
         _log.info("Processor started: processor={name}", name=name)
 
         prompt = augment_prompt_for_resumption(self._prompt, session)
-        await fork_and_consume(session, prompt, self._agent_defaults)
+        await fork_and_consume(
+            session,
+            prompt,
+            self._agent_defaults,
+            tools=self._tools,
+            allow=self._allow,
+            pre_tool_use_hooks=self._pre_tool_use_hooks,
+        )
         _log.info("Processor completed: processor={name}", name=name)
 
 
@@ -236,6 +266,79 @@ class PostProcessingPipeline:
             self._is_processing = False
 
 
+def abs_rule(tool: str, path: Path) -> str:
+    """Build an absolute-path permission rule.
+
+    Uses the ``//`` prefix (absolute filesystem path) so the rule matches
+    regardless of the CLI's resolved working directory.
+
+    Args:
+        tool: Tool name (e.g. ``"Read"``, ``"Edit"``, ``"Write"``).
+        path: Absolute directory path to allow.
+
+    Returns:
+        Rule string like ``"Write(//home/user/workspace/memories/episodic/**)"``
+    """
+    return f"{tool}(//{str(path.resolve())[1:]}/**)"
+
+
+def make_bash_gate_hook(allowed_prefixes: list[str]) -> HookMatcher:
+    """Create a PreToolUse hook that restricts Bash to specific command prefixes.
+
+    Permission allow rules like ``Bash(git *)`` are not reliably enforced
+    by the CLI (known upstream issue). This hook provides programmatic
+    enforcement by inspecting the command string before execution.
+
+    Args:
+        allowed_prefixes: Command prefixes to allow (e.g. ``["git "]``).
+            A command is allowed if it starts with any of these prefixes.
+
+    Returns:
+        A ``HookMatcher`` targeting the Bash tool with one hook callback.
+    """
+
+    async def _hook(
+        input: HookInput,
+        tool_use_id: str | None,
+        context: HookContext,
+    ) -> HookJSONOutput:
+        command = input.get("tool_input", {}).get("command", "")
+
+        for prefix in allowed_prefixes:
+            if command.startswith(prefix):
+                return {}
+
+        _log.warning(
+            "Bash denied by hook: command={cmd} allowed_prefixes={prefixes}",
+            cmd=command[:80],
+            prefixes=allowed_prefixes,
+        )
+        return {
+            "hookSpecificOutput": {
+                "hookEventName": "PreToolUse",
+                "permissionDecision": "deny",
+                "permissionDecisionReason": (
+                    f"Only commands starting with {allowed_prefixes} are allowed"
+                ),
+            },
+        }
+
+    return HookMatcher(matcher="Bash", hooks=[_hook])
+
+
+def build_permissions_settings(allow: list[str]) -> str:
+    """Build a settings JSON string with allow-only permission rules.
+
+    Args:
+        allow: List of permission allow rules. Use :func:`abs_rule` for
+            path-scoped rules to ensure absolute paths.
+
+    Returns:
+        JSON string suitable for ``ClaudeAgentOptions.settings``.
+    """
+    return json.dumps({"permissions": {"allow": allow}})
+
+
 async def fork_and_consume(
     session: Session,
     prompt: str,
@@ -246,12 +349,19 @@ async def fork_and_consume(
     ]
     | None = None,
     system_prompt_append: str | None = None,
+    tools: list[str] | None = None,
+    allow: list[str] | None = None,
+    pre_tool_use_hooks: list[HookMatcher] | None = None,
 ) -> None:
     """Fork the SDK session and consume the agent's response.
 
     Creates a forked session using the standalone query() function,
     which operates independently of the coordinator's ClaudeSDKClient.
-    The forked agent has full workspace access.
+
+    When ``tools`` and ``allow`` are provided, the forked agent uses
+    ``dontAsk`` permission mode with explicit allow rules instead of
+    ``bypassPermissions``. This restricts the agent to only the
+    specified tools and paths.
 
     Args:
         session: The session to fork (must have sdk_session_id).
@@ -263,6 +373,12 @@ async def fork_and_consume(
         system_prompt_append: Optional text to append to the system prompt.
             When provided, the forked agent receives this context in addition
             to the default Claude Code system prompt.
+        tools: Optional tool restriction list for the forked agent.
+        allow: Optional allow-only permission rules for path scoping.
+            When provided (along with tools), the forked agent uses
+            ``dontAsk`` mode instead of ``bypassPermissions``.
+        pre_tool_use_hooks: Optional PreToolUse hook matchers for
+            programmatic enforcement (e.g. Bash command gating).
 
     Raises:
         RuntimeError: If session has no sdk_session_id.
@@ -279,8 +395,17 @@ async def fork_and_consume(
         env=agent_defaults.env,
         resume=session.sdk_session_id,
         fork_session=True,
-        permission_mode="bypassPermissions",
     )
+
+    if tools is not None and allow is not None:
+        options.tools = tools
+        options.settings = build_permissions_settings(allow)
+        options.extra_args = {"permission-mode": "dontAsk"}
+    else:
+        options.permission_mode = "bypassPermissions"
+
+    if pre_tool_use_hooks is not None:
+        options.hooks = {"PreToolUse": pre_tool_use_hooks}
 
     if mcp_servers is not None:
         options.mcp_servers = mcp_servers
@@ -304,6 +429,9 @@ async def fork_and_capture(
     prompt: str,
     agent_defaults: AgentDefaults,
     system_prompt_append: str | None = None,
+    tools: list[str] | None = None,
+    allow: list[str] | None = None,
+    pre_tool_use_hooks: list[HookMatcher] | None = None,
 ) -> str:
     """Fork the SDK session and capture the agent's text response.
 
@@ -318,6 +446,9 @@ async def fork_and_capture(
         system_prompt_append: Optional text to append to the system prompt.
             When provided, the forked agent receives this context in addition
             to the default Claude Code system prompt.
+        tools: Optional tool restriction list for the forked agent.
+        allow: Optional allow-only permission rules for path scoping.
+        pre_tool_use_hooks: Optional PreToolUse hook matchers.
 
     Returns:
         Concatenated text from all content blocks in the response.
@@ -337,8 +468,17 @@ async def fork_and_capture(
         env=agent_defaults.env,
         resume=session.sdk_session_id,
         fork_session=True,
-        permission_mode="bypassPermissions",
     )
+
+    if tools is not None and allow is not None:
+        options.tools = tools
+        options.settings = build_permissions_settings(allow)
+        options.extra_args = {"permission-mode": "dontAsk"}
+    else:
+        options.permission_mode = "bypassPermissions"
+
+    if pre_tool_use_hooks is not None:
+        options.hooks = {"PreToolUse": pre_tool_use_hooks}
 
     if system_prompt_append is not None:
         options.system_prompt = SystemPromptPreset(

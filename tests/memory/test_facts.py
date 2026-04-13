@@ -12,6 +12,7 @@ from pytest_mock import MockerFixture
 
 from tachikoma.agent_defaults import AgentDefaults
 from tachikoma.memory.facts import FACTS_PROMPT, FactsProcessor
+from tachikoma.post_processing import abs_rule
 from tachikoma.sessions.model import Session
 
 
@@ -40,7 +41,21 @@ class TestFactsProcessor:
         await processor.process(session)
 
         expected_prompt = FACTS_PROMPT.replace("$WORKSPACE", str(cwd))
-        mock_fork.assert_awaited_once_with(session, expected_prompt, defaults)
+        scope = cwd / "memories" / "facts"
+        mock_fork.assert_awaited_once_with(
+            session,
+            expected_prompt,
+            defaults,
+            tools=["Read", "Glob", "Grep", "Edit", "Write"],
+            allow=[
+                abs_rule("Read", scope),
+                "Glob",
+                "Grep",
+                abs_rule("Edit", scope),
+                abs_rule("Write", scope),
+            ],
+            pre_tool_use_hooks=None,
+        )
 
     def test_prompt_references_correct_subdirectory(self) -> None:
         """AC: Prompt mentions the facts subdirectory path."""

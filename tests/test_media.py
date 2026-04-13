@@ -357,8 +357,14 @@ class TestResolveMedia:
         """Verify descriptor table ordering matches design."""
         field_names = [d.field_name for d in MEDIA_DESCRIPTORS]
         assert field_names == [
-            "animation", "sticker", "video_note", "photo",
-            "voice", "video", "audio", "document",
+            "animation",
+            "sticker",
+            "video_note",
+            "photo",
+            "voice",
+            "video",
+            "audio",
+            "document",
         ]
 
 
@@ -586,7 +592,9 @@ class TestFormatFileSize:
 
 class TestMediaHook:
     async def test_creates_directory_when_missing(
-        self, tmp_path: Path, mocker: MockerFixture,
+        self,
+        tmp_path: Path,
+        mocker: MockerFixture,
     ) -> None:
         """Hook creates media temp directory when it doesn't exist."""
         media_dir = tmp_path / "media"
@@ -599,7 +607,9 @@ class TestMediaHook:
         assert media_dir.is_dir()
 
     async def test_deletes_old_files(
-        self, tmp_path: Path, mocker: MockerFixture,
+        self,
+        tmp_path: Path,
+        mocker: MockerFixture,
     ) -> None:
         """Hook deletes files older than MEDIA_CLEANUP_DAYS."""
         media_dir = tmp_path / "media"
@@ -618,7 +628,9 @@ class TestMediaHook:
         assert not old_file.exists()
 
     async def test_preserves_new_files(
-        self, tmp_path: Path, mocker: MockerFixture,
+        self,
+        tmp_path: Path,
+        mocker: MockerFixture,
     ) -> None:
         """Hook preserves files newer than MEDIA_CLEANUP_DAYS."""
         media_dir = tmp_path / "media"
@@ -635,7 +647,9 @@ class TestMediaHook:
         assert new_file.exists()
 
     async def test_idempotent_empty_dir(
-        self, tmp_path: Path, mocker: MockerFixture,
+        self,
+        tmp_path: Path,
+        mocker: MockerFixture,
     ) -> None:
         """Hook is idempotent on existing empty directory."""
         media_dir = tmp_path / "media"
@@ -650,7 +664,9 @@ class TestMediaHook:
         assert media_dir.exists()
 
     async def test_deletion_failure_logged_not_fatal(
-        self, tmp_path: Path, mocker: MockerFixture,
+        self,
+        tmp_path: Path,
+        mocker: MockerFixture,
     ) -> None:
         """Deletion failure is logged but doesn't abort hook."""
         media_dir = tmp_path / "media"

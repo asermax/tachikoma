@@ -567,9 +567,7 @@ class TestUpdateTaskScheduleReset:
         assert updated.enabled is True
 
     @pytest.mark.asyncio
-    async def test_update_enabled_only_preserves_last_fired_at(
-        self, repo: TaskRepository
-    ) -> None:
+    async def test_update_enabled_only_preserves_last_fired_at(self, repo: TaskRepository) -> None:
         """AC3b: Updating only enabled preserves last_fired_at."""
         last_fired = datetime(2026, 4, 1, 18, 0, tzinfo=UTC)
         await repo.create_definition(

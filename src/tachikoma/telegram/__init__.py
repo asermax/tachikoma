@@ -536,9 +536,14 @@ class TelegramChannel(Channel):
 
         # Register media handler (catch-all for all supported media types)
         self._router.message(
-            F.photo | F.voice | F.audio
-            | F.document | F.sticker | F.video
-            | F.video_note | F.animation,
+            F.photo
+            | F.voice
+            | F.audio
+            | F.document
+            | F.sticker
+            | F.video
+            | F.video_note
+            | F.animation,
         )(self._handle_media)
 
         # Include router in dispatcher
@@ -688,7 +693,10 @@ class TelegramChannel(Channel):
         # Build description and enqueue
         metadata_lines = descriptor.build_metadata(media_obj)
         description = build_description(
-            descriptor.label, metadata_lines, dest_path, message.caption,
+            descriptor.label,
+            metadata_lines,
+            dest_path,
+            message.caption,
         )
 
         self._coordinator.enqueue(description)

@@ -804,7 +804,10 @@ class TestPromptDrivenProcessor:
         processor = PromptDrivenProcessor(prompt=prompt, agent_defaults=defaults)
         await processor.process(session)
 
-        mock_fork.assert_awaited_once_with(session, prompt, defaults)
+        mock_fork.assert_awaited_once_with(
+            session, prompt, defaults,
+            tools=None, allow=None, pre_tool_use_hooks=None,
+        )
 
     async def test_simple_subclass_inherits_process(self, mocker: MockerFixture) -> None:
         """AC: Simple subclasses inherit process() and only need a prompt constant."""
@@ -828,6 +831,9 @@ class TestPromptDrivenProcessor:
             session,
             "Simple extraction prompt",
             defaults,
+            tools=None,
+            allow=None,
+            pre_tool_use_hooks=None,
         )
 
     async def test_subclass_can_override_process(self, mocker: MockerFixture) -> None:

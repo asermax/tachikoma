@@ -4,7 +4,7 @@ Extracts date-stamped summaries of conversations from completed sessions.
 """
 
 from tachikoma.agent_defaults import AgentDefaults
-from tachikoma.post_processing import PromptDrivenProcessor
+from tachikoma.post_processing import PromptDrivenProcessor, abs_rule
 
 EPISODIC_PROMPT = """You are a memory extraction agent. Your task is to analyze
 the conversation that just ended and create or update episodic memory files.
@@ -35,7 +35,12 @@ the conversation that just ended and create or update episodic memory files.
    - Do not create duplicate files for the same date — consolidate entries
 
 Remember: These memories help the assistant maintain context across sessions.
-Focus on what would be useful to remember about this conversation in the future."""
+Focus on what would be useful to remember about this conversation in the future.
+
+## Permissions
+
+You can only access files within `$WORKSPACE/memories/episodic/`. Reads, edits, \
+and writes outside this directory will be denied."""
 
 
 class EpisodicProcessor(PromptDrivenProcessor):
@@ -50,4 +55,17 @@ class EpisodicProcessor(PromptDrivenProcessor):
         Args:
             agent_defaults: Common SDK options (cwd, cli_path, env).
         """
-        super().__init__(EPISODIC_PROMPT, agent_defaults)
+        scope = agent_defaults.cwd / "memories" / "episodic"
+
+        super().__init__(
+            EPISODIC_PROMPT,
+            agent_defaults,
+            tools=["Read", "Glob", "Grep", "Edit", "Write"],
+            allow=[
+                abs_rule("Read", scope),
+                "Glob",
+                "Grep",
+                abs_rule("Edit", scope),
+                abs_rule("Write", scope),
+            ],
+        )

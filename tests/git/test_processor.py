@@ -11,7 +11,14 @@ import pytest
 from pytest_mock import MockerFixture
 
 from tachikoma.agent_defaults import AgentDefaults
-from tachikoma.git.processor import GIT_COMMIT_PROMPT, GitProcessor, query_and_consume
+from tachikoma.git.processor import (
+    GIT_ALLOW,
+    GIT_BASH_HOOK,
+    GIT_COMMIT_PROMPT,
+    GIT_TOOLS,
+    GitProcessor,
+    query_and_consume,
+)
 from tachikoma.sessions.model import Session
 
 
@@ -51,6 +58,9 @@ class TestGitProcessor:
         mock_query.assert_awaited_once_with(
             expected_prompt,
             AgentDefaults(cwd=Path("/workspace")),
+            tools=GIT_TOOLS,
+            allow=GIT_ALLOW,
+            pre_tool_use_hooks=[GIT_BASH_HOOK],
         )
 
     async def test_no_op_when_workspace_clean(self, mocker: MockerFixture) -> None:

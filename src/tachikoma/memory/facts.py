@@ -5,7 +5,7 @@ persist for future reference.
 """
 
 from tachikoma.agent_defaults import AgentDefaults
-from tachikoma.post_processing import PromptDrivenProcessor
+from tachikoma.post_processing import PromptDrivenProcessor, abs_rule
 
 FACTS_PROMPT = """You are a memory extraction agent. Your task is to analyze
 the conversation and extract or update factual information that would be useful
@@ -49,7 +49,12 @@ to remember for future conversations.
      what was actually shared or discussed
 
 Remember: These memories help the assistant maintain context across sessions.
-Focus on accurate, verified information that will be useful to recall later."""
+Focus on accurate, verified information that will be useful to recall later.
+
+## Permissions
+
+You can only access files within `$WORKSPACE/memories/facts/`. Reads, edits, \
+and writes outside this directory will be denied."""
 
 
 class FactsProcessor(PromptDrivenProcessor):
@@ -64,4 +69,17 @@ class FactsProcessor(PromptDrivenProcessor):
         Args:
             agent_defaults: Common SDK options (cwd, cli_path, env).
         """
-        super().__init__(FACTS_PROMPT, agent_defaults)
+        scope = agent_defaults.cwd / "memories" / "facts"
+
+        super().__init__(
+            FACTS_PROMPT,
+            agent_defaults,
+            tools=["Read", "Glob", "Grep", "Edit", "Write"],
+            allow=[
+                abs_rule("Read", scope),
+                "Glob",
+                "Grep",
+                abs_rule("Edit", scope),
+                abs_rule("Write", scope),
+            ],
+        )

@@ -20,6 +20,7 @@ from loguru import logger
 
 from tachikoma.agent_defaults import AgentDefaults
 from tachikoma.per_message_pre_processing import MessageContextProvider
+from tachikoma.post_processing import abs_rule, build_permissions_settings
 from tachikoma.pre_processing import ContextResult
 from tachikoma.sessions.model import SessionContextEntry
 
@@ -91,6 +92,11 @@ Do not include any text outside of `<memory>` elements (except the no-search sen
 If no relevant memories are found — or if you determine the existing \
 conversation context already covers what's needed — respond with exactly: \
 `NO_RELEVANT_MEMORIES`
+
+## Permissions
+
+You can only read and search files within `$WORKSPACE/memories/`. Access outside \
+this directory will be denied.
 
 ## User's Message
 
@@ -233,7 +239,14 @@ class MemoryContextProvider(MessageContextProvider):
             max_turns=12,
             tools=["Read", "Glob", "Grep"],
             allowed_tools=["Read", "Glob", "Grep"],
-            permission_mode="bypassPermissions",
+            settings=build_permissions_settings(
+                [
+                    abs_rule("Read", self._agent_defaults.cwd / "memories"),
+                    "Glob",
+                    "Grep",
+                ]
+            ),
+            extra_args={"permission-mode": "dontAsk"},
             cwd=self._agent_defaults.cwd,
             cli_path=self._agent_defaults.cli_path,
             env=self._agent_defaults.env,

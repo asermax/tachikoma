@@ -3505,7 +3505,9 @@ class TestColdStartResume:
         registry.create_session.assert_awaited_once()
 
     async def test_detect_boundary_error_creates_new_session(
-        self, mock_sdk, mocker,
+        self,
+        mock_sdk,
+        mocker,
     ) -> None:
         """AC: Boundary detection error falls back to new session (fail-open)."""
         client, _ = mock_sdk
@@ -3616,7 +3618,9 @@ class TestColdStartResume:
         assert options.resume == "sdk-prev"
 
     async def test_records_resumption_with_original_ended_at(
-        self, mock_sdk, mocker,
+        self,
+        mock_sdk,
+        mocker,
     ) -> None:
         """AC: record_resumption receives the matched session's ended_at."""
         client, _ = mock_sdk

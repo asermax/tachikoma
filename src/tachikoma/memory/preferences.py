@@ -4,7 +4,7 @@ Extracts user preferences from conversations.
 """
 
 from tachikoma.agent_defaults import AgentDefaults
-from tachikoma.post_processing import PromptDrivenProcessor
+from tachikoma.post_processing import PromptDrivenProcessor, abs_rule
 
 PREFERENCES_PROMPT = """You are a memory extraction agent. Your task is to analyze
 the conversation and extract or update the user's expressed preferences.
@@ -42,7 +42,12 @@ the conversation and extract or update the user's expressed preferences.
      actually expressed
 
 Remember: These memories help the assistant tailor its approach to the user's
-preferences. Focus on genuine, stated preferences rather than assumptions."""
+preferences. Focus on genuine, stated preferences rather than assumptions.
+
+## Permissions
+
+You can only access files within `$WORKSPACE/memories/preferences/`. Reads, edits, \
+and writes outside this directory will be denied."""
 
 
 class PreferencesProcessor(PromptDrivenProcessor):
@@ -57,4 +62,17 @@ class PreferencesProcessor(PromptDrivenProcessor):
         Args:
             agent_defaults: Common SDK options (cwd, cli_path, env).
         """
-        super().__init__(PREFERENCES_PROMPT, agent_defaults)
+        scope = agent_defaults.cwd / "memories" / "preferences"
+
+        super().__init__(
+            PREFERENCES_PROMPT,
+            agent_defaults,
+            tools=["Read", "Glob", "Grep", "Edit", "Write"],
+            allow=[
+                abs_rule("Read", scope),
+                "Glob",
+                "Grep",
+                abs_rule("Edit", scope),
+                abs_rule("Write", scope),
+            ],
+        )

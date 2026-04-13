@@ -83,12 +83,7 @@ class TestTelegramSkillContent:
 
     def _skill_path(self) -> Path:
         return (
-            Path(__file__).parent.parent
-            / "src"
-            / "tachikoma"
-            / "telegram"
-            / "skill"
-            / "SKILL.md"
+            Path(__file__).parent.parent / "src" / "tachikoma" / "telegram" / "skill" / "SKILL.md"
         )
 
     def test_skill_md_has_required_frontmatter(self) -> None:

@@ -197,9 +197,7 @@ class TestHandleSendFile:
 
         bot = MagicMock()
         bot.send_photo = AsyncMock(
-            side_effect=TelegramAPIError(
-                method="send_photo", message="File too large"
-            ),
+            side_effect=TelegramAPIError(method="send_photo", message="File too large"),
         )
 
         result = await handle_send_file(str(test_file), None, bot, 123, tmp_path)
