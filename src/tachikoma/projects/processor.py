@@ -44,9 +44,11 @@ for ALL changes.
 
 ## Important Constraints
 
-- ONLY use these git commands: `git status`, `git diff`, `git log`, `git add`, `git commit`
+- For git, use only: `git status`, `git diff`, `git log`, `git add`, `git commit`
 - Do NOT use: `git push`, `git branch`, `git checkout`, `git reset`, `git rebase`,
-  `git merge`, `git stash`, or any other commands
+  `git merge`, `git stash`, or any other destructive/history-rewriting commands
+- Read-only inspection commands (`ls`, `find`, `file`, `echo`, `date`, `cat`,
+  `head`, `tail`, `wc`, `stat`) are allowed for understanding project state
 - Never ask for confirmation — just make the commits
 - Commit EVERYTHING that shows up in `git status`
 - If there are no changes, do nothing
@@ -56,8 +58,10 @@ messages help other developers understand the project's history.
 
 ## Permissions
 
-You can read and modify files anywhere in this project. For Bash, only `git` \
-commands are allowed — other commands will be denied."""
+You can read and modify files anywhere in this project. For Bash, `git` \
+commands and read-only inspection commands (`ls`, `find`, `file`, `echo`, \
+`date`, `cat`, `head`, `tail`, `wc`, `stat`) are allowed — other commands \
+will be denied."""
 
 
 class ProjectsProcessor(PostProcessor):

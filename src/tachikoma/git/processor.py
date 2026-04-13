@@ -44,9 +44,11 @@ and create cohesive, well-organized commits for ALL changes.
 
 ## Important Constraints
 
-- ONLY use these git commands: `git status`, `git diff`, `git add`, `git commit`
+- For git, use only: `git status`, `git diff`, `git add`, `git commit`
 - Do NOT use: `git push`, `git branch`, `git checkout`, `git reset`, `git rebase`,
-  `git merge`, `git stash`, or any other commands
+  `git merge`, `git stash`, or any other destructive/history-rewriting commands
+- Read-only inspection commands (`ls`, `find`, `file`, `echo`, `date`, `cat`,
+  `head`, `tail`, `wc`, `stat`) are allowed for understanding workspace state
 - Never ask for confirmation — just make the commits
 - Commit EVERYTHING that shows up in `git status`, including ephemeral runtime files
   (session data, logs, caches). Anything not in `.gitignore` should be committed.
@@ -58,13 +60,29 @@ messages help understand what changed and when.
 
 ## Permissions
 
-You can read and modify files anywhere in the workspace. For Bash, only `git` \
-commands are allowed — other commands will be denied."""
+You can read and modify files anywhere in the workspace. For Bash, `git` \
+commands and read-only inspection commands (`ls`, `find`, `file`, `echo`, \
+`date`, `cat`, `head`, `tail`, `wc`, `stat`) are allowed — other commands \
+will be denied."""
 
 
 GIT_TOOLS = ["Read", "Glob", "Grep", "Bash", "Edit", "Write"]
 GIT_ALLOW = ["Read", "Glob", "Grep", "Edit", "Write", "Bash(git *)"]
-GIT_BASH_HOOK = make_bash_gate_hook(["git "])
+GIT_BASH_HOOK = make_bash_gate_hook(
+    [
+        "git ",
+        "ls ",
+        "find ",
+        "file ",
+        "echo ",
+        "date ",
+        "cat ",
+        "head ",
+        "tail ",
+        "wc ",
+        "stat ",
+    ]
+)
 
 
 async def query_and_consume(

@@ -280,3 +280,59 @@ class TestGitCommitPrompt:
     def test_includes_all_changes(self) -> None:
         """AC: Prompt instructs to include all non-ignored changes."""
         assert "untracked" in GIT_COMMIT_PROMPT.lower()
+
+
+class TestGitBashHook:
+    """Tests for GIT_BASH_HOOK allow-list."""
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            "git status",
+            "git diff --cached",
+            "ls -la",
+            "find . -name '*.md'",
+            "file /workspace/.tachikoma/tachikoma.db",
+            'echo "---"',
+            "date +%Y-%m-%d",
+            "cat README.md",
+            "head -20 log.txt",
+            "tail -f log.txt",
+            "wc -l file.txt",
+            "stat pyproject.toml",
+        ],
+    )
+    async def test_allows_inspection_and_git_commands(self, command: str) -> None:
+        """Allow-list permits git commands and read-only inspection utilities."""
+        # HookMatcher.hooks is a list of callables; invoke the first one directly
+        hook_fn = GIT_BASH_HOOK.hooks[0]
+        result = await hook_fn(
+            {"tool_input": {"command": command}},
+            None,
+            None,
+        )
+        # Empty dict means allow (no permission override)
+        assert result == {}
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            "rm -rf /workspace",
+            "curl https://example.com",
+            "python -c 'print(1)'",
+            "sh -c 'echo test'",
+            "bash -c 'echo test'",
+            "mkdir newdir",
+            "touch file",
+        ],
+    )
+    async def test_denies_non_git_non_inspection_commands(self, command: str) -> None:
+        """Destructive/arbitrary commands are denied with a reason."""
+        hook_fn = GIT_BASH_HOOK.hooks[0]
+        result = await hook_fn(
+            {"tool_input": {"command": command}},
+            None,
+            None,
+        )
+        assert result["hookSpecificOutput"]["permissionDecision"] == "deny"
+        assert "allowed" in result["hookSpecificOutput"]["permissionDecisionReason"]
