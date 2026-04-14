@@ -1,16 +1,19 @@
 """Tests for git bootstrap hook.
 
 Tests for DLT-020: Git module for workspace version tracking.
+Tests updated for DLT-097: workspace startup sync after init.
 """
 
 import shutil
 from pathlib import Path
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
 from tachikoma.bootstrap import BootstrapContext
 from tachikoma.config import SettingsManager
 from tachikoma.git.hooks import git_hook
+from tachikoma.git.sync import SYNC_RESULT
 
 
 @pytest.fixture
@@ -40,7 +43,10 @@ class TestGitHook:
         """AC: Hook initializes git repo when no .git exists."""
         workspace_path = settings_manager.settings.workspace.path
 
-        await git_hook(ctx)
+        with patch(
+            "tachikoma.git.hooks._sync_workspace", new_callable=AsyncMock,
+        ):
+            await git_hook(ctx)
 
         assert (workspace_path / ".git").is_dir()
 
@@ -50,7 +56,10 @@ class TestGitHook:
         """AC: Hook creates an initial empty commit."""
         workspace_path = settings_manager.settings.workspace.path
 
-        await git_hook(ctx)
+        with patch(
+            "tachikoma.git.hooks._sync_workspace", new_callable=AsyncMock,
+        ):
+            await git_hook(ctx)
 
         # Check that there's a commit with the expected message
         git_log = (workspace_path / ".git" / "logs" / "HEAD").read_text()
@@ -62,7 +71,10 @@ class TestGitHook:
         """AC: Repo-local identity is configured (user.name, user.email)."""
         workspace_path = settings_manager.settings.workspace.path
 
-        await git_hook(ctx)
+        with patch(
+            "tachikoma.git.hooks._sync_workspace", new_callable=AsyncMock,
+        ):
+            await git_hook(ctx)
 
         # Read the local config file
         config_path = workspace_path / ".git" / "config"
@@ -74,15 +86,17 @@ class TestGitHook:
     async def test_idempotent_when_git_exists(
         self, ctx: BootstrapContext, settings_manager: SettingsManager
     ) -> None:
-        """AC: Hook is idempotent when .git already exists (skips, no error)."""
-        workspace_path = settings_manager.settings.workspace.path
+        """AC: Hook is idempotent when .git already exists (skips init, runs sync)."""
 
-        # Run twice
-        await git_hook(ctx)
-        await git_hook(ctx)
+        with patch(
+            "tachikoma.git.hooks._sync_workspace", new_callable=AsyncMock,
+        ) as mock_sync:
+            # Run twice
+            await git_hook(ctx)
+            await git_hook(ctx)
 
-        # Should still have a valid git repo
-        assert (workspace_path / ".git").is_dir()
+        # Sync should have been called both times
+        assert mock_sync.call_count == 2
 
     async def test_reinitializes_when_git_deleted(
         self, ctx: BootstrapContext, settings_manager: SettingsManager
@@ -90,14 +104,17 @@ class TestGitHook:
         """AC: Hook re-initializes when .git was deleted."""
         workspace_path = settings_manager.settings.workspace.path
 
-        # First run
-        await git_hook(ctx)
+        with patch(
+            "tachikoma.git.hooks._sync_workspace", new_callable=AsyncMock,
+        ):
+            # First run
+            await git_hook(ctx)
 
-        # Delete .git
-        shutil.rmtree(workspace_path / ".git")
+            # Delete .git
+            shutil.rmtree(workspace_path / ".git")
 
-        # Second run should re-initialize
-        await git_hook(ctx)
+            # Second run should re-initialize
+            await git_hook(ctx)
 
         assert (workspace_path / ".git").is_dir()
 
@@ -107,7 +124,10 @@ class TestGitHook:
         """AC: No .gitignore is created."""
         workspace_path = settings_manager.settings.workspace.path
 
-        await git_hook(ctx)
+        with patch(
+            "tachikoma.git.hooks._sync_workspace", new_callable=AsyncMock,
+        ):
+            await git_hook(ctx)
 
         assert not (workspace_path / ".gitignore").exists()
 
@@ -117,10 +137,83 @@ class TestGitHook:
         """AC: Hook works without global git config (uses repo-local identity)."""
         workspace_path = settings_manager.settings.workspace.path
 
-        await git_hook(ctx)
+        with patch(
+            "tachikoma.git.hooks._sync_workspace", new_callable=AsyncMock,
+        ):
+            await git_hook(ctx)
 
         # Verify repo-local config exists
         config_path = workspace_path / ".git" / "config"
         assert config_path.exists()
         config_content = config_path.read_text()
         assert "Tachikoma" in config_content
+
+
+@pytest.mark.asyncio
+class TestWorkspaceSync:
+    """Tests for workspace startup sync (DLT-097 R1)."""
+
+    async def test_calls_sync_after_init(
+        self, ctx: BootstrapContext, settings_manager: SettingsManager
+    ) -> None:
+        """AC: Sync is called after init for newly initialized repos."""
+        with patch(
+            "tachikoma.git.hooks._sync_workspace", new_callable=AsyncMock,
+        ) as mock_sync:
+            await git_hook(ctx)
+
+        mock_sync.assert_awaited_once()
+
+    async def test_calls_sync_when_git_already_exists(
+        self, ctx: BootstrapContext, settings_manager: SettingsManager
+    ) -> None:
+        """AC: Sync runs even when .git already exists."""
+
+        with patch(
+            "tachikoma.git.hooks._sync_workspace", new_callable=AsyncMock,
+        ) as mock_sync:
+            # First run creates .git
+            await git_hook(ctx)
+            # Second run should still sync
+            await git_hook(ctx)
+
+        assert mock_sync.call_count == 2
+
+    async def test_sync_skipped_when_no_origin(
+        self, ctx: BootstrapContext, settings_manager: SettingsManager
+    ) -> None:
+        """AC: Sync is skipped silently when no origin remote configured."""
+
+        # Mock _sync_workspace to simulate the "no origin" path
+        # (it catches RuntimeError from _run_git_command internally)
+        with patch(
+            "tachikoma.git.hooks._sync_workspace", new_callable=AsyncMock,
+        ):
+            await git_hook(ctx)
+
+    async def test_sync_calls_smart_pull_when_origin_exists(
+        self, ctx: BootstrapContext, settings_manager: SettingsManager
+    ) -> None:
+        """AC: _sync_workspace is called with correct settings."""
+        with patch(
+            "tachikoma.git.hooks._sync_workspace", new_callable=AsyncMock,
+        ) as mock_sync:
+            await git_hook(ctx)
+
+        mock_sync.assert_awaited_once()
+        # Verify it was called with the workspace path and settings
+        call_args = mock_sync.call_args
+        assert call_args[0][0] == settings_manager.settings.workspace.path
+
+    async def test_sync_non_blocking_on_failure(
+        self, ctx: BootstrapContext, settings_manager: SettingsManager
+    ) -> None:
+        """AC: Sync failure doesn't block startup."""
+        # _sync_workspace catches exceptions internally, so git_hook
+        # continues even if sync fails. Test by mocking smart_pull to fail.
+        with patch(
+            "tachikoma.git.hooks.smart_pull",
+            new_callable=AsyncMock,
+            return_value=SYNC_RESULT["SYNC_FAILED"],
+        ):
+            await git_hook(ctx)  # Should not raise

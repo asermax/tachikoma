@@ -10,6 +10,7 @@ from claude_agent_sdk import ClaudeAgentOptions, query
 from loguru import logger
 
 from tachikoma.agent_defaults import AgentDefaults
+from tachikoma.git.sync import PUSH_RESULT, smart_push
 from tachikoma.post_processing import PostProcessor
 from tachikoma.sessions.model import Session
 
@@ -123,20 +124,20 @@ class GitProcessor(PostProcessor):
         # Spawn agent to handle commits
         await query_and_consume(GIT_COMMIT_PROMPT, self._agent_defaults)
 
-        # Push to remote if configured (partial commits are valid and worth pushing)
-        has_remote = await _has_remote(self._cwd)
-
-        if has_remote:
-            try:
-                await _push(self._cwd)
-                _log.info("Pushed workspace changes")
-            except Exception as e:
-                _log.warning(
-                    "Push failed, changes remain committed locally: err={err}",
-                    err=str(e),
-                )
+        # Push to remote with divergence detection
+        result = await smart_push(self._cwd, "origin", "HEAD", self._agent_defaults)
+        success_results = (
+            PUSH_RESULT["PUSHED"], PUSH_RESULT["REBASE_SUCCEEDED"], PUSH_RESULT["AGENT_RESOLVED"],
+        )
+        if result in success_results:
+            _log.info("Pushed workspace changes: result={result}", result=result)
+        elif result == PUSH_RESULT["NOTHING_TO_PUSH"]:
+            _log.debug("Nothing to push")
         else:
-            _log.debug("No origin remote configured, skipping push")
+            _log.warning(
+                "Push failed, changes remain committed locally: result={result}",
+                result=result,
+            )
 
         # Verify all changes were committed
         still_dirty = await _check_git_status(self._cwd)
@@ -167,57 +168,3 @@ async def _check_git_status(cwd: Path) -> bool:
     stdout, _ = await proc.communicate()
     return bool(stdout.strip())
 
-
-async def _has_remote(cwd: Path) -> bool:
-    """Check if the origin remote is configured.
-
-    Uses ``git remote get-url origin`` which is a local-only check
-    (no network call).
-
-    Args:
-        cwd: The workspace directory.
-
-    Returns:
-        True if origin remote exists, False otherwise.
-    """
-    proc = await asyncio.create_subprocess_exec(
-        "git",
-        "remote",
-        "get-url",
-        "origin",
-        cwd=cwd,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-    )
-
-    await proc.communicate()
-    return proc.returncode == 0
-
-
-async def _push(cwd: Path) -> None:
-    """Push commits to the origin remote.
-
-    Uses ``git push origin HEAD`` to avoid dependence on upstream tracking
-    configuration.
-
-    Args:
-        cwd: The workspace directory.
-
-    Raises:
-        RuntimeError: If the push command fails.
-    """
-    proc = await asyncio.create_subprocess_exec(
-        "git",
-        "push",
-        "origin",
-        "HEAD",
-        cwd=cwd,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-    )
-
-    _, stderr = await proc.communicate()
-
-    if proc.returncode != 0:
-        error_msg = stderr.decode().strip() or f"exit code {proc.returncode}"
-        raise RuntimeError(f"git push failed: {error_msg}")
