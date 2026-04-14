@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v1.21.0 (2026-04-14)
+
+### Documentation
+
+- Add DLT-141 delta for pausing background tasks on user activity
+  ([`7b2fa84`](https://github.com/asermax/tachikoma/commit/7b2fa84b6e194b49d7e7e8c2496a61139fa35cac))
+
+- Add DLT-142 and DLT-143 deltas for session filtering and document review
+  ([`c00a952`](https://github.com/asermax/tachikoma/commit/c00a95207f48b83e3ef8f6bb2a68cfa5863af5bc))
+
+- **sessions**: Update feature documentation for last_exchange filtering
+  ([`4baffda`](https://github.com/asermax/tachikoma/commit/4baffdab130aa8040fcd9ca9183eb69788ba5813))
+
+### Features
+
+- **sessions**: Filter last_exchange to final text response only
+  ([`4a2ccd1`](https://github.com/asermax/tachikoma/commit/4a2ccd1d2084e6edbadc9ff621717f178df769a3))
+
+### Refactoring
+
+- **git**: Deduplicate git helpers and agent defaults construction
+  ([`24e008b`](https://github.com/asermax/tachikoma/commit/24e008b490f8237316e0271aac38b7732a1798c4))
+
+
 ## v1.20.0 (2026-04-14)
 
 ### Refactoring
