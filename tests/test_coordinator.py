@@ -1594,7 +1594,7 @@ class TestBoundaryDetection:
         # Track the order of calls
         call_order: list[str] = []
 
-        async def slow_msg_pipeline(session, user_msg, agent_response):
+        async def slow_msg_pipeline(session, user_msg, agent_response, **kwargs):
             call_order.append("msg_pipeline_start")
             await asyncio.sleep(0.05)
             call_order.append("msg_pipeline_end")
@@ -2344,6 +2344,121 @@ class TestPerMessagePostProcessing:
         agent_response = call_args[0][2]  # Third positional argument
         assert agent_response == "Hello there!"
 
+    async def test_final_text_filters_to_post_tool_text(
+        self,
+        mock_sdk,
+    ) -> None:
+        """AC1/AC5: final_text contains only text after the last tool call."""
+        client, _ = mock_sdk
+        client.receive_response.return_value = _mock_messages(
+            make_assistant([
+                TextBlock(text="Let me check..."),
+                ToolUseBlock(id="t1", name="Read", input={"file_path": "main.py"}),
+            ]),
+            make_assistant([TextBlock(text="Now let me fix...")]),
+            make_assistant([
+                ToolUseBlock(id="t2", name="Edit", input={"file_path": "main.py"}),
+            ]),
+            make_assistant([TextBlock(text="Done! Here's the fix.")]),
+            make_result(),
+        )
+        active = Session(
+            id="s1",
+            started_at=datetime.now(UTC),
+            sdk_session_id="sdk-123",
+        )
+        registry = _make_mock_registry(active_session=active)
+
+        msg_pipeline = MagicMock()
+        msg_pipeline.run = AsyncMock()
+
+        async with Coordinator(
+            registry=registry,
+            agent_defaults=AgentDefaults(cwd=Path("/workspace")),
+            msg_pipeline=msg_pipeline,
+        ) as coord:
+            _ = await _send(coord, "fix this")
+
+        await asyncio.sleep(0.05)
+
+        call_args = msg_pipeline.run.call_args
+        agent_response = call_args[0][2]
+        final_text = call_args[1]["final_text"]
+
+        # Full response includes all text chunks
+        assert "Let me check..." in agent_response
+        assert "Now let me fix..." in agent_response
+        assert "Done! Here's the fix." in agent_response
+        # final_text only includes text after the last tool call
+        assert final_text == "Done! Here's the fix."
+
+    async def test_final_text_is_none_when_no_tool_calls(
+        self,
+        mock_sdk,
+    ) -> None:
+        """AC2: final_text is None when response has no tool calls."""
+        client, _ = mock_sdk
+        client.receive_response.return_value = _mock_messages(
+            make_assistant([TextBlock(text="Simple response")]),
+            make_result(),
+        )
+        active = Session(
+            id="s1",
+            started_at=datetime.now(UTC),
+            sdk_session_id="sdk-123",
+        )
+        registry = _make_mock_registry(active_session=active)
+
+        msg_pipeline = MagicMock()
+        msg_pipeline.run = AsyncMock()
+
+        async with Coordinator(
+            registry=registry,
+            agent_defaults=AgentDefaults(cwd=Path("/workspace")),
+            msg_pipeline=msg_pipeline,
+        ) as coord:
+            _ = await _send(coord, "hello")
+
+        await asyncio.sleep(0.05)
+
+        call_args = msg_pipeline.run.call_args
+        assert call_args[1]["final_text"] is None
+
+    async def test_final_text_is_none_when_response_ends_with_tool(
+        self,
+        mock_sdk,
+    ) -> None:
+        """AC3: final_text is None when response ends with a tool call (no trailing text)."""
+        client, _ = mock_sdk
+        client.receive_response.return_value = _mock_messages(
+            make_assistant([
+                TextBlock(text="Let me check..."),
+                ToolUseBlock(id="t1", name="Read", input={"file_path": "main.py"}),
+            ]),
+            make_result(),
+        )
+        active = Session(
+            id="s1",
+            started_at=datetime.now(UTC),
+            sdk_session_id="sdk-123",
+        )
+        registry = _make_mock_registry(active_session=active)
+
+        msg_pipeline = MagicMock()
+        msg_pipeline.run = AsyncMock()
+
+        async with Coordinator(
+            registry=registry,
+            agent_defaults=AgentDefaults(cwd=Path("/workspace")),
+            msg_pipeline=msg_pipeline,
+        ) as coord:
+            _ = await _send(coord, "check this")
+
+        await asyncio.sleep(0.05)
+
+        call_args = msg_pipeline.run.call_args
+        assert call_args[1]["final_text"] is None
+
     async def test_skips_pipeline_when_no_msg_pipeline(
         self,
         mock_sdk,
@@ -2431,7 +2546,7 @@ class TestCoordinatorShutdownWithBoundaryDetection:
 
         task_completed = asyncio.Event()
 
-        async def slow_pipeline(session, user_msg, agent_response):
+        async def slow_pipeline(session, user_msg, agent_response, **kwargs):
             await asyncio.sleep(0.05)
             task_completed.set()
 

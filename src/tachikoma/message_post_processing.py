@@ -23,13 +23,22 @@ class MessagePostProcessor(ABC):
     """
 
     @abstractmethod
-    async def process(self, session: Session, user_message: str, agent_response: str) -> None:
+    async def process(
+        self,
+        session: Session,
+        user_message: str,
+        agent_response: str,
+        *,
+        final_text: str | None = None,
+    ) -> None:
         """Process a message exchange.
 
         Args:
             session: The active session (may have summary updated by other processors).
             user_message: The user's input text.
-            agent_response: The agent's response text.
+            agent_response: The agent's full response text.
+            final_text: The filtered final text (text after last tool call),
+                or None if no filtering.
         """
         ...
 
@@ -59,7 +68,14 @@ class MessagePostProcessingPipeline:
         """
         self._processors.append(processor)
 
-    async def run(self, session: Session, user_message: str, agent_response: str) -> None:
+    async def run(
+        self,
+        session: Session,
+        user_message: str,
+        agent_response: str,
+        *,
+        final_text: str | None = None,
+    ) -> None:
         """Run all registered processors in parallel.
 
         Acquires an internal lock to serialize concurrent invocations.
@@ -74,7 +90,10 @@ class MessagePostProcessingPipeline:
             _log.info("Pipeline started: processors={names}", names=names)
 
             results = await asyncio.gather(
-                *[p.process(session, user_message, agent_response) for p in self._processors],
+                *[
+                    p.process(session, user_message, agent_response, final_text=final_text)
+                    for p in self._processors
+                ],
                 return_exceptions=True,
             )
 

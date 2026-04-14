@@ -30,7 +30,7 @@ from tachikoma.adapter import adapt, is_encoding_error, sanitize_text
 from tachikoma.agent_defaults import AgentDefaults
 from tachikoma.boundary import BoundaryResult, SessionCandidate, detect_boundary
 from tachikoma.context.assembly import build_system_prompt
-from tachikoma.events import AgentEvent, Error, Result, Status, TextChunk
+from tachikoma.events import AgentEvent, Error, Result, Status, TextChunk, ToolActivity
 from tachikoma.message_post_processing import MessagePostProcessingPipeline
 from tachikoma.per_message_pre_processing import MessagePreProcessingPipeline
 from tachikoma.post_processing import PostProcessingPipeline
@@ -518,6 +518,8 @@ class Coordinator:
         )
         options.stderr = stderr_acc
         response_chunks: list[str] = []
+        final_text_group: list[str] = []
+        had_tool_activity = False
 
         message_source = _message_source(text, self._message_buffer)
         transport = FilePromptTransport(prompt=message_source, options=options)
@@ -533,6 +535,11 @@ class Coordinator:
 
                     if isinstance(event, TextChunk):
                         response_chunks.append(event.text)
+                        final_text_group.append(event.text)
+
+                    if isinstance(event, ToolActivity):
+                        had_tool_activity = True
+                        final_text_group = []
 
                     if isinstance(event, Error) and is_encoding_error(event.message):
                         await self._handle_encoding_error(active)
@@ -581,8 +588,22 @@ class Coordinator:
             current_session = await self._registry.get_active_session()
             if current_session is not None:
                 response_text = "".join(response_chunks)
+
+                # Compute filtered final text: only the text after the last tool call.
+                # When no tools were used, final_text is None (no filtering needed).
+                # When tools were used but no text follows the last one, the join
+                # produces an empty string which becomes None via `or None`.
+                final_text = (
+                    "".join(final_text_group).strip() or None
+                    if had_tool_activity
+                    else None
+                )
+
                 self._pending_msg_task = asyncio.create_task(
-                    self._msg_pipeline.run(current_session, text, response_text)
+                    self._msg_pipeline.run(
+                        current_session, text, response_text,
+                        final_text=final_text,
+                    )
                 )
 
         # Update last message time after response completes

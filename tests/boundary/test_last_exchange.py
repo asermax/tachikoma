@@ -1,6 +1,7 @@
 """Tests for LastExchangeProcessor.
 
 Tests for DLT-096: Include last exchange in session resumption candidates.
+Tests for DLT-142: Filter last exchange to final text response only.
 """
 
 from datetime import UTC, datetime
@@ -70,3 +71,53 @@ class TestLastExchangeProcessor:
 
         with pytest.raises(RuntimeError, match="DB error"):
             await processor.process(session, "Hello", "Response")
+
+    async def test_uses_final_text_when_present(self) -> None:
+        """AC1: final_text is used instead of agent_response when provided."""
+        mock_registry = MagicMock()
+        mock_registry.update_last_exchange = AsyncMock()
+
+        processor = LastExchangeProcessor(mock_registry)
+        session = _make_session()
+
+        await processor.process(
+            session,
+            "Hello",
+            "Let me check...Found it!",
+            final_text="Found it!",
+        )
+
+        mock_registry.update_last_exchange.assert_awaited_once_with(session.id, "Found it!")
+
+    async def test_falls_back_to_full_response_when_final_text_is_none(self) -> None:
+        """AC2: agent_response is used when final_text is None (no tool calls)."""
+        mock_registry = MagicMock()
+        mock_registry.update_last_exchange = AsyncMock()
+
+        processor = LastExchangeProcessor(mock_registry)
+        session = _make_session()
+
+        await processor.process(session, "Hello", "Full response here")
+
+        mock_registry.update_last_exchange.assert_awaited_once_with(
+            session.id, "Full response here",
+        )
+
+    async def test_falls_back_to_full_response_when_final_text_is_empty(self) -> None:
+        """AC3: agent_response is used when final_text is empty (tool call, no trailing text)."""
+        mock_registry = MagicMock()
+        mock_registry.update_last_exchange = AsyncMock()
+
+        processor = LastExchangeProcessor(mock_registry)
+        session = _make_session()
+
+        await processor.process(
+            session,
+            "Hello",
+            "Let me check...Done!",
+            final_text="",
+        )
+
+        mock_registry.update_last_exchange.assert_awaited_once_with(
+            session.id, "Let me check...Done!",
+        )

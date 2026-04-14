@@ -29,22 +29,34 @@ class LastExchangeProcessor(MessagePostProcessor):
         """
         self._registry = registry
 
-    async def process(self, session: Session, user_message: str, agent_response: str) -> None:
+    async def process(
+        self,
+        session: Session,
+        user_message: str,
+        agent_response: str,
+        *,
+        final_text: str | None = None,
+    ) -> None:
         """Store the agent response as the session's last_exchange.
 
-        Skips the update if the response is empty or whitespace-only,
-        preserving any previous value.
+        Uses the filtered final text (text after the last tool call) when
+        available, falling back to the full agent response. Skips the update
+        if the resolved text is empty or whitespace-only, preserving any
+        previous value.
 
         Args:
             session: The active session.
             user_message: The user's input text (unused).
-            agent_response: The agent's response text.
+            agent_response: The agent's full response text.
+            final_text: The filtered text after the last tool call, or None.
         """
-        if not agent_response.strip():
+        text_to_save = final_text or agent_response
+
+        if not text_to_save.strip():
             _log.debug(
                 "Skipping last_exchange update: empty response session_id={id}",
                 id=session.id[:8],
             )
             return
 
-        await self._registry.update_last_exchange(session.id, agent_response)
+        await self._registry.update_last_exchange(session.id, text_to_save)
