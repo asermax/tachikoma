@@ -8,10 +8,11 @@ when naive rebase fails.
 import asyncio
 from pathlib import Path
 
-from claude_agent_sdk import ClaudeAgentOptions, query
+from claude_agent_sdk import ClaudeAgentOptions
 from loguru import logger
 
 from tachikoma.agent_defaults import AgentDefaults
+from tachikoma.sdk_query import stderr_aware_query
 
 _log = logger.bind(component="git.sync")
 
@@ -290,7 +291,7 @@ async def _agent_rebase(cwd: Path, remote_branch: str, agent_defaults: AgentDefa
 
     try:
         # Fully consume the generator per DES-005
-        async for _ in query(prompt=prompt, options=options):
+        async for _ in stderr_aware_query(prompt=prompt, options=options):
             pass
     except Exception as e:
         _log.warning(

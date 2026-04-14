@@ -670,7 +670,7 @@ class TestAgentRebase:
         async def fake_query(*args: object, **kwargs: object):
             yield MagicMock()
 
-        with patch("tachikoma.git.sync.query", side_effect=fake_query):
+        with patch("tachikoma.git.sync.stderr_aware_query", side_effect=fake_query):
             result = await _agent_rebase(repo_path, "origin/main", agent_defaults)
         assert result is True
 
@@ -685,7 +685,7 @@ class TestAgentRebase:
             yield MagicMock()
 
         with (
-            patch("tachikoma.git.sync.query", side_effect=fake_query),
+            patch("tachikoma.git.sync.stderr_aware_query", side_effect=fake_query),
             patch("tachikoma.git.sync._run_git", new_callable=AsyncMock),
         ):
             result = await _agent_rebase(repo_path, "origin/main", agent_defaults)
@@ -703,7 +703,7 @@ class TestAgentRebase:
             yield  # make it a generator
 
         with (
-            patch("tachikoma.git.sync.query", side_effect=failing_query),
+            patch("tachikoma.git.sync.stderr_aware_query", side_effect=failing_query),
             patch("tachikoma.git.sync._run_git", new_callable=AsyncMock),
         ):
             result = await _agent_rebase(repo_path, "origin/main", agent_defaults)
@@ -721,7 +721,7 @@ class TestAgentRebase:
                 consume_count += 1
                 yield MagicMock(msg=i)
 
-        with patch("tachikoma.git.sync.query", side_effect=fake_query):
+        with patch("tachikoma.git.sync.stderr_aware_query", side_effect=fake_query):
             await _agent_rebase(repo_path, "origin/main", agent_defaults)
 
         assert consume_count == 5
