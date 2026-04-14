@@ -51,6 +51,14 @@ SyncResult = str
 """Result of a smart_pull operation."""
 
 
+# Push results that indicate successful push (used by processors for result logging)
+_PUSH_SUCCESS = frozenset({
+    PUSH_RESULT["PUSHED"],
+    PUSH_RESULT["REBASE_SUCCEEDED"],
+    PUSH_RESULT["AGENT_RESOLVED"],
+})
+
+
 # --- Git Subprocess Helpers ---
 
 

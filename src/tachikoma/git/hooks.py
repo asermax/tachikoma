@@ -4,14 +4,13 @@ Initializes the workspace as a git repo on first run (idempotent),
 then syncs with the origin remote if configured.
 """
 
-import asyncio
 from pathlib import Path
 
 from loguru import logger
 
 from tachikoma.agent_defaults import AgentDefaults, merge_env
 from tachikoma.bootstrap import BootstrapContext
-from tachikoma.git.sync import SYNC_RESULT, smart_pull
+from tachikoma.git.sync import SYNC_RESULT, _run_git, smart_pull
 
 _log = logger.bind(component="git")
 
@@ -40,15 +39,10 @@ async def git_hook(ctx: BootstrapContext) -> None:
     if not git_dir.exists():
         _log.info("Initializing git repo: path={path}", path=str(workspace_path))
 
-        # Run git init
-        await _run_git_command(workspace_path, ["init"])
-
-        # Configure repo-local identity
-        await _run_git_command(workspace_path, ["config", "user.name", _COMMITTER_NAME])
-        await _run_git_command(workspace_path, ["config", "user.email", _COMMITTER_EMAIL])
-
-        # Create initial empty commit
-        await _run_git_command(workspace_path, ["commit", "--allow-empty", "-m", "Initial commit"])
+        await _run_git("init", cwd=workspace_path)
+        await _run_git("config", "user.name", _COMMITTER_NAME, cwd=workspace_path)
+        await _run_git("config", "user.email", _COMMITTER_EMAIL, cwd=workspace_path)
+        await _run_git("commit", "--allow-empty", "-m", "Initial commit", cwd=workspace_path)
 
         _log.info("Git repo initialized successfully")
 
@@ -68,7 +62,7 @@ async def _sync_workspace(workspace_path: Path, settings) -> None:
     try:
         # Check if origin remote is configured
         try:
-            await _run_git_command(workspace_path, ["remote", "get-url", "origin"])
+            await _run_git("remote", "get-url", "origin", cwd=workspace_path)
         except RuntimeError:
             _log.debug("No origin remote configured, skipping sync")
             return
@@ -99,28 +93,3 @@ async def _sync_workspace(workspace_path: Path, settings) -> None:
 
     except Exception as e:
         _log.warning("Workspace sync failed: err={err}", err=str(e))
-
-
-async def _run_git_command(cwd: Path, args: list[str]) -> None:
-    """Run a git command and raise on failure.
-
-    Args:
-        cwd: Working directory for the command.
-        args: Git command arguments (e.g., ["init"], ["config", "user.name", "X"]).
-
-    Raises:
-        RuntimeError: If the command returns non-zero exit code.
-    """
-    proc = await asyncio.create_subprocess_exec(
-        "git",
-        *args,
-        cwd=cwd,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-    )
-
-    stdout, stderr = await proc.communicate()
-
-    if proc.returncode != 0:
-        error_msg = stderr.decode().strip() or f"exit code {proc.returncode}"
-        raise RuntimeError(f"git {' '.join(args)} failed: {error_msg}")

@@ -10,7 +10,7 @@ from claude_agent_sdk import ClaudeAgentOptions, query
 from loguru import logger
 
 from tachikoma.agent_defaults import AgentDefaults
-from tachikoma.git.sync import PUSH_RESULT, smart_push
+from tachikoma.git.sync import _PUSH_SUCCESS, PUSH_RESULT, smart_push
 from tachikoma.post_processing import PostProcessor
 from tachikoma.sessions.model import Session
 
@@ -126,10 +126,8 @@ class GitProcessor(PostProcessor):
 
         # Push to remote with divergence detection
         result = await smart_push(self._cwd, "origin", "HEAD", self._agent_defaults)
-        success_results = (
-            PUSH_RESULT["PUSHED"], PUSH_RESULT["REBASE_SUCCEEDED"], PUSH_RESULT["AGENT_RESOLVED"],
-        )
-        if result in success_results:
+
+        if result in _PUSH_SUCCESS:
             _log.info("Pushed workspace changes: result={result}", result=result)
         elif result == PUSH_RESULT["NOTHING_TO_PUSH"]:
             _log.debug("Nothing to push")

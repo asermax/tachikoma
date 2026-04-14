@@ -9,7 +9,7 @@ from loguru import logger
 
 from tachikoma.agent_defaults import AgentDefaults
 from tachikoma.git.processor import query_and_consume
-from tachikoma.git.sync import PUSH_RESULT, smart_push
+from tachikoma.git.sync import _PUSH_SUCCESS, smart_push
 from tachikoma.post_processing import PostProcessor
 from tachikoma.projects.git import is_dirty, list_submodules
 from tachikoma.sessions.model import Session
@@ -161,10 +161,8 @@ class ProjectsProcessor(PostProcessor):
         await query_and_consume(SUBMODULE_COMMIT_PROMPT, submodule_defaults)
 
         result = await smart_push(submodule_path, "origin", "HEAD", submodule_defaults)
-        success_results = (
-            PUSH_RESULT["PUSHED"], PUSH_RESULT["REBASE_SUCCEEDED"], PUSH_RESULT["AGENT_RESOLVED"],
-        )
-        if result in success_results:
+
+        if result in _PUSH_SUCCESS:
             _log.info(
                 "Pushed submodule changes: path={path} result={result}",
                 path=path,
