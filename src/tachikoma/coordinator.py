@@ -50,6 +50,15 @@ _log = logger.bind(component="coordinator")
 _COLD_START_SUMMARY = "No active conversation."
 
 
+def _sessions_to_candidates(sessions: list[Session]) -> list[SessionCandidate]:
+    """Build resumption candidates from sessions with summaries."""
+    return [
+        SessionCandidate(id=s.id, summary=s.summary, last_exchange=s.last_exchange)
+        for s in sessions
+        if s.summary is not None
+    ]
+
+
 def _user_message(content: str) -> dict[str, Any]:
     """Build an SDK user message dict from text content."""
     return {
@@ -385,7 +394,7 @@ class Coordinator:
 
                 result: BoundaryResult = await detect_boundary(
                     text,
-                    active.summary,
+                    active,
                     self._agent_defaults,
                     candidates=candidates,
                 )
@@ -622,18 +631,14 @@ class Coordinator:
             window = timedelta(seconds=self._session_resume_window)
             recent_sessions = await self._registry.get_recent_closed(before=now, window=window)
 
-            candidates = [
-                SessionCandidate(id=s.id, summary=s.summary)
-                for s in recent_sessions
-                if s.summary is not None
-            ]
+            candidates = _sessions_to_candidates(recent_sessions)
 
             if not candidates:
                 return None
 
             result = await detect_boundary(
                 message,
-                _COLD_START_SUMMARY,
+                Session(id="", started_at=datetime.now(UTC), summary=_COLD_START_SUMMARY),
                 self._agent_defaults,
                 candidates=candidates,
             )
@@ -689,11 +694,7 @@ class Coordinator:
                 before=datetime.now(UTC),
                 window=timedelta(seconds=self._session_resume_window),
             )
-            return [
-                SessionCandidate(id=s.id, summary=s.summary)
-                for s in recent
-                if s.summary is not None
-            ]
+            return _sessions_to_candidates(recent)
         except Exception as exc:
             _log.exception(
                 "Failed to query resume candidates: err={err}",

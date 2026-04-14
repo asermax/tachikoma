@@ -50,6 +50,7 @@ class SessionRepository:
                 sdk_session_id=session.sdk_session_id,
                 transcript_path=session.transcript_path,
                 summary=session.summary,
+                last_exchange=session.last_exchange,
                 started_at=session.started_at,
                 ended_at=session.ended_at,
                 last_resumed_at=session.last_resumed_at,

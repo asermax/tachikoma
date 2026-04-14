@@ -441,13 +441,6 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 **Complexity**: Medium
 **Description**: The agent must work with current repository state and push changes without conflicts. Currently, the workspace is never pulled from its remote, projects are only synced at startup, and pushes are bare `git push` with no prior fetch — which fails when the remote has moved forward. This delta ensures the agent works with up-to-date state by pulling the workspace and project submodules before processing each message, replaces the direct push in both post-processors with a fetch-rebase-push sequence, and introduces conflict recovery that resolves conflicts by rebasing local commits on top of the remote and pushing the result, rather than aborting.
 
-### DLT-096: Include last exchange in session resumption candidates
-**Status**: ✗ Defined
-**Depends on**: None
-**Priority**: 3 (Medium)
-**Complexity**: Easy
-**Description**: The boundary detector evaluates whether an incoming message should resume a previous session, but it only receives the candidate sessions' summaries — which are rolling condensations of the full conversation. Including the actual last user message and assistant response from each candidate session would give the routing decision significantly better signal about whether the new message belongs in that session, especially for recent conversations where the summary may not yet capture the latest context.
-
 ### DLT-099: Archive conversation transcripts to project workspace
 **Status**: ✗ Defined
 **Depends on**: None

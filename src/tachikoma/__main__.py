@@ -17,7 +17,7 @@ from loguru import logger
 
 from tachikoma.agent_defaults import AgentDefaults, merge_env
 from tachikoma.bootstrap import Bootstrap, BootstrapError
-from tachikoma.boundary import SummaryProcessor
+from tachikoma.boundary import LastExchangeProcessor, SummaryProcessor
 from tachikoma.config import SettingsManager
 from tachikoma.context import CoreContextProcessor, context_hook
 from tachikoma.coordinator import Coordinator
@@ -170,6 +170,7 @@ async def run(
     # Create and configure the per-message post-processing pipeline
     msg_pipeline = MessagePostProcessingPipeline()
     msg_pipeline.register(SummaryProcessor(registry=registry, agent_defaults=agent_defaults))
+    msg_pipeline.register(LastExchangeProcessor(registry=registry))
 
     task_tools = create_task_tools_server(task_repository, ZoneInfo(settings.tasks.timezone))
     workflow_tools = create_workflow_tools_server(

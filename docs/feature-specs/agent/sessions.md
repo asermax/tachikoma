@@ -17,7 +17,7 @@ A persistent registry of conversation sessions that tracks when conversations st
 | ID | Requirement |
 |----|-------------|
 | R0 | Maintain a persistent registry of conversation sessions with lifecycle tracking |
-| R1 | Each session tracks: unique ID, SDK session ID, transcript path, summary, start timestamp, end timestamp, post-processing timestamp, error flag |
+| R1 | Each session tracks: unique ID, SDK session ID, transcript path, summary, last exchange, start timestamp, end timestamp, post-processing timestamp, error flag |
 | R2 | Create a new session when a conversation starts (first message or boundary detection) |
 | R3 | Close a session when a conversation ends (set end timestamp and final metadata) |
 | R4 | Query sessions by time range |
@@ -39,6 +39,7 @@ A persistent registry of conversation sessions that tracks when conversations st
 | R20 | `get_recent_closed()` filters returned sessions at two levels: repository-level (non-null `sdk_session_id`, non-null `summary`, within time window) and registry-level (valid transcript file on local filesystem, `started_at` within configured max age) |
 | R21 | When the SDK returns a UTF-8 encoding error (e.g. surrogates in its internal transcript), mark the session as errored — this excludes it from resumable candidates and makes the error recoverable |
 | R22 | Context entries support an optional metadata field (JSON dict) for structured data that varies by entry type — existing entries without metadata continue to work normally |
+| R23 | Each session tracks the last assistant response (`last_exchange`), updated by the per-message pipeline after each exchange; nullable — null until first exchange processed |
 
 ## Behaviors
 
@@ -114,6 +115,16 @@ When the per-message pipeline completes, it updates the session's rolling conver
 **Acceptance Criteria**:
 - Given an active session, when the per-message pipeline produces a new summary, then the session's `summary` field is updated and persisted
 - Given the session is a frozen dataclass, when the summary is updated, then the active session reference is refreshed with the updated value
+
+### Last Exchange Update (R23)
+
+After each agent response, the per-message pipeline persists the agent's response text as the session's `last_exchange`.
+
+**Acceptance Criteria**:
+- Given an active session, when the per-message pipeline runs after an agent response, then the agent response text is stored to the session's `last_exchange` field
+- Given an active session, when the agent response is empty or whitespace-only, then `last_exchange` is not updated — the previous value is retained (or null if no prior response)
+- Given a session is closed and later reopened, when it becomes active again, then `last_exchange` retains its previous value from before the session was closed
+- Given the per-message processor fails to persist `last_exchange`, when the error occurs, then it is logged and the conversation continues (consistent with per-message pipeline error isolation)
 
 ### Session Reopening (R11, R14, R18, R19)
 

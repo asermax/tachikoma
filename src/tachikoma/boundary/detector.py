@@ -18,6 +18,7 @@ from tachikoma.boundary.prompts import (
     CANDIDATES_SECTION_TEMPLATE,
 )
 from tachikoma.sdk_query import stderr_aware_query
+from tachikoma.sessions.model import Session
 
 _log = logger.bind(component="boundary")
 
@@ -29,10 +30,12 @@ class SessionCandidate:
     Attributes:
         id: The session ID (used to identify the session for resumption).
         summary: The conversation summary (used for topic matching).
+        last_exchange: The last assistant response (used for recency matching).
     """
 
     id: str
     summary: str
+    last_exchange: str | None = None
 
 
 @dataclass(frozen=True)
@@ -52,7 +55,7 @@ class BoundaryResult:
 
 async def detect_boundary(
     message: str,
-    summary: str,
+    session: Session,
     agent_defaults: AgentDefaults,
     *,
     candidates: list[SessionCandidate] | None = None,
@@ -71,10 +74,10 @@ async def detect_boundary(
 
     Args:
         message: The incoming user message text.
-        summary: The current session's rolling conversation summary.
+        session: The current active session (extracts summary and last_exchange internally).
         agent_defaults: Common SDK options (cwd, cli_path, env).
         candidates: Optional list of candidate sessions for resumption matching.
-            Each candidate has an ID and summary for topic matching.
+            Each candidate has an ID, summary, and optional last_exchange for matching.
 
     Returns:
         BoundaryResult with:
@@ -113,8 +116,18 @@ async def detect_boundary(
         },
     )
 
-    # Build user prompt with optional candidates section
-    user_prompt = BOUNDARY_DETECTION_USER_PROMPT.format(summary=summary, message=message)
+    # Build user prompt with optional last_exchange section and candidates
+    summary = session.summary or ""
+    last_exchange_section = (
+        f"\nLast assistant response:\n{session.last_exchange}\n"
+        if session.last_exchange is not None
+        else ""
+    )
+    user_prompt = BOUNDARY_DETECTION_USER_PROMPT.format(
+        summary=summary,
+        last_exchange_section=last_exchange_section,
+        message=message,
+    )
 
     if candidates:
         candidates_text = CANDIDATES_SECTION_TEMPLATE.format(
@@ -163,7 +176,7 @@ def _format_candidates(candidates: list[SessionCandidate]) -> str:
     """Format candidates list for the prompt.
 
     Args:
-        candidates: List of session candidates with ID and summary.
+        candidates: List of session candidates with ID, summary, and optional last_exchange.
 
     Returns:
         Formatted string with numbered list of candidates.
@@ -172,5 +185,8 @@ def _format_candidates(candidates: list[SessionCandidate]) -> str:
     for i, candidate in enumerate(candidates, start=1):
         lines.append(f"{i}. Session ID: {candidate.id}")
         lines.append(f"   Summary: {candidate.summary}")
+
+        if candidate.last_exchange is not None:
+            lines.append(f"   Last assistant response: {candidate.last_exchange}")
 
     return "\n".join(lines)
