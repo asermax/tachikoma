@@ -700,3 +700,10 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 **Priority**: 3 (Medium)
 **Complexity**: Easy
 **Description**: The `send_file` MCP tool rejects files outside the workspace directory, but generated exports (PDFs, rendered images) are written to `/tmp/` per convention. Users must copy files to the workspace first as a workaround. Relax the path validation to accept absolute paths to temporary and standard system directories while maintaining workspace-relative resolution for unqualified paths.
+
+### DLT-141: Pause background tasks on user activity
+**Status**: ✗ Defined
+**Depends on**: DLT-120
+**Priority**: 3 (Medium)
+**Complexity**: Medium
+**Description**: When a user message arrives at the coordinator during an active background task execution, signal the background task to pause so the main session receives full API attention and the task does not compete for resources. The paused task's SDK session is preserved and execution resumes automatically once the main session returns to idle. This covers the system-initiated pause triggered by user activity — distinct from task-initiated pauses where the background task itself requests user input. The pause mechanism integrates with the existing background task executor's evaluation loop: when a pause signal is received between iterations, the executor suspends the task, records the paused state in the task instance, and releases the semaphore slot. On resume, the executor reacquires a slot and continues from the preserved SDK session.
