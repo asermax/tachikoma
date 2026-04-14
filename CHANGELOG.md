@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v1.19.0 (2026-04-14)
+
+### Documentation
+
+- **deltas**: Add DLT-136 through DLT-140 from improvements triage
+  ([`0bad4e0`](https://github.com/asermax/tachikoma/commit/0bad4e06bd4a5214203e99053df615f4c20718ac))
+
+
 ## v1.18.0 (2026-04-13)
 
 ### Features
