@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v1.20.0 (2026-04-14)
+
+### Refactoring
+
+- **git**: Use stderr_aware_query in sync module for consistent error logging
+  ([`dd13e30`](https://github.com/asermax/tachikoma/commit/dd13e300a3d490d1382de7c84e0c8b48e6271de6))
+
+
 ## v1.19.0 (2026-04-14)
 
 ### Documentation
