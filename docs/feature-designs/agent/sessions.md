@@ -353,6 +353,18 @@ Note: The `needs_processing()` check prevents re-triggering: once `processed_at`
    (same re-fetch-and-replace pattern as update_metadata())
 ```
 
+### Last exchange update (per-message pipeline)
+
+```
+1. LastExchangeProcessor.process(session, user_message, agent_response) called
+2. If agent_response is empty or whitespace-only → skip, log debug
+3. Otherwise: call registry.update_last_exchange(session.id, agent_response)
+4. Registry calls repository.update(id, last_exchange=agent_response)
+5. Registry constructs new Session via dataclasses.replace()
+   (avoids redundant DB re-fetch — all field values are already known)
+6. Registry replaces _active_session with the new frozen Session instance
+```
+
 ### Session reopen (resumption)
 
 ```

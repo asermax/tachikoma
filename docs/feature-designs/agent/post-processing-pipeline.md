@@ -30,7 +30,7 @@ After a conversation ends, various post-processing tasks need to run — memory 
 
 A `PostProcessingPipeline` manages registered `PostProcessor` instances across sequential phases. Processors declare their phase at registration (defaulting to `main` for backward compatibility). The pipeline runs phases in order — `main → pre_finalize → finalize` — with processors within each phase executing in parallel via `asyncio.gather`.
 
-A parallel concept — the `MessagePostProcessingPipeline` — follows a similar structural pattern (processor ABC, serialized execution, error isolation) but as a separate implementation with a distinct per-message processor interface. Unlike this pipeline, it has no phased execution. See [boundary detection design](boundary-detection.md) for details.
+A parallel concept — the `MessagePostProcessingPipeline` — follows a similar structural pattern (processor ABC, serialized execution, error isolation) but as a separate implementation with a distinct per-message processor interface. Unlike this pipeline, it has no phased execution. Registered per-message processors include `SummaryProcessor` (rolling conversation summary via LLM) and `LastExchangeProcessor` (persists the last assistant response as a direct field update). See [boundary detection design](boundary-detection.md) for details.
 
 ```
 ┌───────────────────────────────────────────────────────────┐
