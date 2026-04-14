@@ -39,7 +39,7 @@ A persistent registry of conversation sessions that tracks when conversations st
 | R20 | `get_recent_closed()` filters returned sessions at two levels: repository-level (non-null `sdk_session_id`, non-null `summary`, within time window) and registry-level (valid transcript file on local filesystem, `started_at` within configured max age) |
 | R21 | When the SDK returns a UTF-8 encoding error (e.g. surrogates in its internal transcript), mark the session as errored — this excludes it from resumable candidates and makes the error recoverable |
 | R22 | Context entries support an optional metadata field (JSON dict) for structured data that varies by entry type — existing entries without metadata continue to work normally |
-| R23 | Each session tracks the last assistant response (`last_exchange`), updated by the per-message pipeline after each exchange; nullable — null until first exchange processed |
+| R23 | Each session tracks the last assistant response (`last_exchange`), updated by the per-message pipeline after each exchange; nullable — null until first exchange processed; filters to text after the last tool call when tools are used; falls back to full response when no text follows the last tool call |
 
 ## Behaviors
 
@@ -118,10 +118,12 @@ When the per-message pipeline completes, it updates the session's rolling conver
 
 ### Last Exchange Update (R23)
 
-After each agent response, the per-message pipeline persists the agent's response text as the session's `last_exchange`.
+After each agent response, the per-message pipeline persists the agent's response text as the session's `last_exchange`. When the response contains tool calls interspersed with text, only the text segment following the final tool call is stored — intermediate planning text (e.g., "Let me check...", "Now let me fix...") is filtered out to improve boundary detection signal quality.
 
 **Acceptance Criteria**:
-- Given an active session, when the per-message pipeline runs after an agent response, then the agent response text is stored to the session's `last_exchange` field
+- Given an active session, when the per-message pipeline runs after an agent response with tool calls, then only the text after the last tool call is stored to the session's `last_exchange` field
+- Given an active session, when the per-message pipeline runs after an agent response with no tool calls, then the full response text is stored to `last_exchange` (no filtering applied)
+- Given an active session, when the agent response ends with a tool call and no trailing text, then the full response text is stored to `last_exchange` (noisy signal preferred over no signal for boundary detection)
 - Given an active session, when the agent response is empty or whitespace-only, then `last_exchange` is not updated — the previous value is retained (or null if no prior response)
 - Given a session is closed and later reopened, when it becomes active again, then `last_exchange` retains its previous value from before the session was closed
 - Given the per-message processor fails to persist `last_exchange`, when the error occurs, then it is logged and the conversation continues (consistent with per-message pipeline error isolation)

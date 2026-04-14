@@ -356,13 +356,29 @@ Note: The `needs_processing()` check prevents re-triggering: once `processed_at`
 ### Last exchange update (per-message pipeline)
 
 ```
-1. LastExchangeProcessor.process(session, user_message, agent_response) called
-2. If agent_response is empty or whitespace-only → skip, log debug
-3. Otherwise: call registry.update_last_exchange(session.id, agent_response)
-4. Registry calls repository.update(id, last_exchange=agent_response)
-5. Registry constructs new Session via dataclasses.replace()
+Coordinator response loop (filtering):
+1. response_chunks: list[str] = []         — accumulates ALL TextChunk text
+   final_text_group: list[str] = []        — accumulates text, resets on ToolActivity
+   had_tool_activity: bool = False
+
+2. For each event in adapt(sdk_message):
+   - TextChunk → append to both response_chunks and final_text_group
+   - ToolActivity → set had_tool_activity=True, reset final_text_group=[]
+
+3. After response loop:
+   - agent_response = "".join(response_chunks)  — full text for SummaryProcessor
+   - final_text = "".join(final_text_group).strip() or None (only if had_tool_activity)
+   - Pipeline.run(session, user_message, agent_response, final_text=final_text)
+
+Processor:
+4. LastExchangeProcessor.process(session, user_message, agent_response, final_text=...)
+5. text_to_save = final_text or agent_response  — prefer filtered text, fall back to full
+6. If text_to_save is empty or whitespace-only → skip, log debug
+7. Otherwise: call registry.update_last_exchange(session.id, text_to_save)
+8. Registry calls repository.update(id, last_exchange=text_to_save)
+9. Registry constructs new Session via dataclasses.replace()
    (avoids redundant DB re-fetch — all field values are already known)
-6. Registry replaces _active_session with the new frozen Session instance
+10. Registry replaces _active_session with the new frozen Session instance
 ```
 
 ### Session reopen (resumption)

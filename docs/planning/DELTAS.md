@@ -434,7 +434,6 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 **Complexity**: Medium
 **Description**: Developers need to debug failed background tasks and understand execution history, but task instances currently record only status, timestamps, and a free-text result — with no link to the SDK session that ran, no transcript reference, and no structured error context. This delta enriches the task instance model and execution flow with traceability data: recording the SDK session ID and transcript path for each background execution, capturing structured error context (error type, message, tool calls leading to failure) on failure using the error classification from the structured error handling subsystem, and computing execution duration as a first-class field. These fields enable querying past executions by session, inspecting failure artifacts, and displaying execution metrics without manual timestamp arithmetic. The scope is limited to the tasks subsystem — background jobs are not interactive conversations, but they still require an audit trail linking execution to its artifacts and outcomes.
 
-
 ### DLT-099: Archive conversation transcripts to project workspace
 **Status**: ✗ Defined
 **Depends on**: None
@@ -707,13 +706,6 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 **Priority**: 3 (Medium)
 **Complexity**: Medium
 **Description**: When a user message arrives at the coordinator during an active background task execution, signal the background task to pause so the main session receives full API attention and the task does not compete for resources. The paused task's SDK session is preserved and execution resumes automatically once the main session returns to idle. This covers the system-initiated pause triggered by user activity — distinct from task-initiated pauses where the background task itself requests user input. The pause mechanism integrates with the existing background task executor's evaluation loop: when a pause signal is received between iterations, the executor suspends the task, records the paused state in the task instance, and releases the semaphore slot. On resume, the executor reacquires a slot and continues from the preserved SDK session.
-
-### DLT-142: Filter last exchange to final text response only
-**Status**: ✗ Defined
-**Depends on**: None
-**Priority**: 2 (High)
-**Complexity**: Easy
-**Description**: The `last_exchange` session field currently captures all TextChunk events concatenated together — including intermediate planning text the agent emits between tool calls (e.g., "Let me create the project folder...Now let me link it from...Created the project at..."). This produces noisy, low-quality content for session routing decisions. The field should only save the final substantive text response — the actual message the user sees as the assistant's answer — filtering out intermediate bridging text emitted during tool execution chains. Filtering should happen at save time in the LastExchangeProcessor, keeping only the last TextChunk from a multi-chunk response (or a heuristic to select the most substantive one).
 
 ### DLT-143: Collaborative document review
 **Status**: ✗ Defined
