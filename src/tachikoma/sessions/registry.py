@@ -131,6 +131,28 @@ class SessionRegistry:
             len=len(summary),
         )
 
+    async def update_last_exchange(self, session_id: str, last_exchange: str) -> None:
+        """Update the last assistant response on a session.
+
+        Re-fetches the session after update to replace the frozen dataclass
+        reference with the new last_exchange value.
+
+        Args:
+            session_id: The ID of the session to update.
+            last_exchange: The last assistant response text.
+        """
+        await self._repository.update(session_id, last_exchange=last_exchange)
+
+        # Update in-memory active session reference with new last_exchange
+        if self._active_session is not None and self._active_session.id == session_id:
+            self._active_session = await self._repository.get_by_id(session_id)
+
+        _log.debug(
+            "Session last_exchange updated: session_id={id} last_exchange_length={len}",
+            id=session_id,
+            len=len(last_exchange),
+        )
+
     async def mark_processed(self, session_id: str) -> None:
         """Mark a session as post-processed by setting processed_at.
 

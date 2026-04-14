@@ -30,6 +30,7 @@ class Session:
     sdk_session_id: str | None = None
     transcript_path: str | None = None
     summary: str | None = None
+    last_exchange: str | None = None
     ended_at: datetime | None = None
     last_resumed_at: datetime | None = None
     processed_at: datetime | None = None
@@ -100,6 +101,7 @@ class SessionRecord(Base):
     sdk_session_id: Mapped[str | None] = mapped_column(default=None)
     transcript_path: Mapped[str | None] = mapped_column(default=None)
     summary: Mapped[str | None] = mapped_column(default=None)
+    last_exchange: Mapped[str | None] = mapped_column(default=None)
     # DateTime(timezone=True) ensures SQLite stores ISO strings with UTC offset
     # so datetimes round-trip with their tzinfo intact.
     started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
@@ -121,6 +123,7 @@ class SessionRecord(Base):
             sdk_session_id=self.sdk_session_id,
             transcript_path=self.transcript_path,
             summary=self.summary,
+            last_exchange=self.last_exchange,
             started_at=ensure_utc(self.started_at),  # type: ignore[arg-type]
             ended_at=ensure_utc(self.ended_at),
             last_resumed_at=ensure_utc(self.last_resumed_at),
