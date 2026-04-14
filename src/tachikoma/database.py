@@ -186,7 +186,7 @@ class Database:
                 await conn.execute(text("ALTER TABLE sessions ADD COLUMN error BOOLEAN DEFAULT 0"))
                 _log.info("Schema migration: added 'error' column to sessions table")
 
-            # Check if last_exchange column exists on sessions table (added in DLT-096)
+            # Check if last_exchange column exists on sessions table
             result = await conn.execute(
                 text("SELECT * FROM pragma_table_info('sessions') WHERE name='last_exchange'")
             )
