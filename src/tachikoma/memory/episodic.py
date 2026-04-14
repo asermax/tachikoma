@@ -4,14 +4,14 @@ Extracts date-stamped summaries of conversations from completed sessions.
 """
 
 from tachikoma.agent_defaults import AgentDefaults
-from tachikoma.post_processing import PromptDrivenProcessor
+from tachikoma.post_processing import PromptDrivenProcessor, abs_rule
 
 EPISODIC_PROMPT = """You are a memory extraction agent. Your task is to analyze
 the conversation that just ended and create or update episodic memory files.
 
 ## Instructions
 
-1. First, read the existing files in the `memories/episodic/` directory to see
+1. First, read the existing files in the `$WORKSPACE/memories/episodic/` directory to see
    what summaries already exist.
 
 2. Analyze the conversation for meaningful events, discussions, and activities.
@@ -29,19 +29,24 @@ the conversation that just ended and create or update episodic memory files.
    - Any important context for future reference
 
 5. **Important constraints**:
-   - Only create or modify files within `memories/episodic/`
+   - Only create or modify files within `$WORKSPACE/memories/episodic/`
    - If the conversation was trivial or contained no meaningful information,
      it is perfectly acceptable to create no files
    - Do not create duplicate files for the same date — consolidate entries
 
 Remember: These memories help the assistant maintain context across sessions.
-Focus on what would be useful to remember about this conversation in the future."""
+Focus on what would be useful to remember about this conversation in the future.
+
+## Permissions
+
+You can only access files within `$WORKSPACE/memories/episodic/`. Reads, edits, \
+and writes outside this directory will be denied."""
 
 
 class EpisodicProcessor(PromptDrivenProcessor):
     """Post-processor for extracting episodic memories.
 
-    Creates or updates date-stamped summary files in memories/episodic/.
+    Creates or updates date-stamped summary files in $WORKSPACE/memories/episodic/.
     """
 
     def __init__(self, agent_defaults: AgentDefaults) -> None:
@@ -50,4 +55,18 @@ class EpisodicProcessor(PromptDrivenProcessor):
         Args:
             agent_defaults: Common SDK options (cwd, cli_path, env).
         """
-        super().__init__(EPISODIC_PROMPT, agent_defaults)
+        scope = agent_defaults.cwd / "memories" / "episodic"
+
+        super().__init__(
+            EPISODIC_PROMPT,
+            agent_defaults,
+            tools=["Read", "Glob", "Grep", "Edit", "Write"],
+            allow=[
+                abs_rule("Read", scope),
+                "Glob",
+                "Grep",
+                abs_rule("Edit", scope),
+                abs_rule("Write", scope),
+            ],
+            model="haiku",
+        )

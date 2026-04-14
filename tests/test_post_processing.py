@@ -469,7 +469,7 @@ class TestForkAndConsume:
 
     async def test_calls_query_with_fork_options(self, mocker: MockerFixture) -> None:
         """AC: query() called with correct prompt, resume, fork_session, cwd."""
-        mock_query = mocker.patch("tachikoma.post_processing.query")
+        mock_query = mocker.patch("tachikoma.post_processing.stderr_aware_query")
 
         async def fake_query(*args, **kwargs):
             yield MagicMock()
@@ -502,7 +502,7 @@ class TestForkAndConsume:
                 consume_count += 1
                 yield MagicMock(msg=i)
 
-        mocker.patch("tachikoma.post_processing.query", side_effect=fake_query)
+        mocker.patch("tachikoma.post_processing.stderr_aware_query", side_effect=fake_query)
 
         session = _make_session(sdk_session_id="sdk-test")
         await fork_and_consume(session, "prompt", AgentDefaults(cwd=Path("/workspace")))
@@ -516,7 +516,7 @@ class TestForkAndConsume:
             raise RuntimeError("SDK error")
             yield  # make it a generator
 
-        mocker.patch("tachikoma.post_processing.query", side_effect=failing_query)
+        mocker.patch("tachikoma.post_processing.stderr_aware_query", side_effect=failing_query)
 
         session = _make_session(sdk_session_id="sdk-test")
 
@@ -532,7 +532,7 @@ class TestForkAndConsume:
 
     async def test_mcp_servers_passed_to_query_options(self, mocker: MockerFixture) -> None:
         """AC: mcp_servers parameter is passed through to ClaudeAgentOptions."""
-        mock_query = mocker.patch("tachikoma.post_processing.query")
+        mock_query = mocker.patch("tachikoma.post_processing.stderr_aware_query")
 
         async def fake_query(*args, **kwargs):
             yield MagicMock()
@@ -553,7 +553,7 @@ class TestForkAndConsume:
 
     async def test_mcp_servers_default_none_not_passed(self, mocker: MockerFixture) -> None:
         """AC: When mcp_servers is None (default), options use SDK default (empty dict)."""
-        mock_query = mocker.patch("tachikoma.post_processing.query")
+        mock_query = mocker.patch("tachikoma.post_processing.stderr_aware_query")
 
         async def fake_query(*args, **kwargs):
             yield MagicMock()
@@ -573,7 +573,7 @@ class TestForkAndConsume:
         self, mocker: MockerFixture
     ) -> None:
         """AC: system_prompt_append param sets SystemPromptPreset on options (DLT-041)."""
-        mock_query = mocker.patch("tachikoma.post_processing.query")
+        mock_query = mocker.patch("tachikoma.post_processing.stderr_aware_query")
 
         async def fake_query(*args, **kwargs):
             yield MagicMock()
@@ -600,7 +600,7 @@ class TestForkAndConsume:
 
     async def test_system_prompt_append_none_no_system_prompt(self, mocker: MockerFixture) -> None:
         """AC: system_prompt_append=None (default) leaves system_prompt unset (DLT-041)."""
-        mock_query = mocker.patch("tachikoma.post_processing.query")
+        mock_query = mocker.patch("tachikoma.post_processing.stderr_aware_query")
 
         async def fake_query(*args, **kwargs):
             yield MagicMock()
@@ -621,6 +621,45 @@ class TestForkAndConsume:
         options = call_kwargs[1]["options"]
         assert options.system_prompt is None
 
+    async def test_model_passed_to_options_when_provided(self, mocker: MockerFixture) -> None:
+        """AC: model kwarg is threaded through to ClaudeAgentOptions."""
+        mock_query = mocker.patch("tachikoma.post_processing.stderr_aware_query")
+
+        async def fake_query(*args, **kwargs):
+            yield MagicMock()
+
+        mock_query.return_value = fake_query()
+
+        session = _make_session(sdk_session_id="sdk-test-123")
+
+        await fork_and_consume(
+            session,
+            "prompt",
+            AgentDefaults(cwd=Path("/workspace")),
+            model="haiku",
+        )
+
+        options = mock_query.call_args[1]["options"]
+        assert options.model == "haiku"
+
+    async def test_model_default_none_leaves_options_model_unset(
+        self, mocker: MockerFixture
+    ) -> None:
+        """AC: Default call (no model kwarg) leaves ClaudeAgentOptions.model at None."""
+        mock_query = mocker.patch("tachikoma.post_processing.stderr_aware_query")
+
+        async def fake_query(*args, **kwargs):
+            yield MagicMock()
+
+        mock_query.return_value = fake_query()
+
+        session = _make_session(sdk_session_id="sdk-test-123")
+
+        await fork_and_consume(session, "prompt", AgentDefaults(cwd=Path("/workspace")))
+
+        options = mock_query.call_args[1]["options"]
+        assert options.model is None
+
 
 class TestForkAndCapture:
     """Tests for fork_and_capture helper."""
@@ -637,7 +676,7 @@ class TestForkAndCapture:
             yield msg1
             yield msg2
 
-        mocker.patch("tachikoma.post_processing.query", side_effect=fake_query)
+        mocker.patch("tachikoma.post_processing.stderr_aware_query", side_effect=fake_query)
 
         session = _make_session(sdk_session_id="sdk-test-123")
         result = await fork_and_capture(
@@ -655,7 +694,7 @@ class TestForkAndCapture:
         async def fake_query(*args, **kwargs):
             yield msg
 
-        mocker.patch("tachikoma.post_processing.query", side_effect=fake_query)
+        mocker.patch("tachikoma.post_processing.stderr_aware_query", side_effect=fake_query)
 
         session = _make_session(sdk_session_id="sdk-test-123")
         result = await fork_and_capture(
@@ -676,7 +715,7 @@ class TestForkAndCapture:
                 consume_count += 1
                 yield MagicMock(spec=[])
 
-        mocker.patch("tachikoma.post_processing.query", side_effect=fake_query)
+        mocker.patch("tachikoma.post_processing.stderr_aware_query", side_effect=fake_query)
 
         session = _make_session(sdk_session_id="sdk-test")
         await fork_and_capture(session, "prompt", AgentDefaults(cwd=Path("/workspace")))
@@ -685,7 +724,7 @@ class TestForkAndCapture:
 
     async def test_calls_query_with_fork_options(self, mocker: MockerFixture) -> None:
         """AC: query() called with correct resume, fork_session, cwd."""
-        mock_query = mocker.patch("tachikoma.post_processing.query")
+        mock_query = mocker.patch("tachikoma.post_processing.stderr_aware_query")
 
         async def fake_query(*args, **kwargs):
             yield MagicMock(spec=[])
@@ -723,7 +762,7 @@ class TestForkAndCapture:
             raise RuntimeError("SDK error")
             yield  # make it a generator
 
-        mocker.patch("tachikoma.post_processing.query", side_effect=failing_query)
+        mocker.patch("tachikoma.post_processing.stderr_aware_query", side_effect=failing_query)
 
         session = _make_session(sdk_session_id="sdk-test")
 
@@ -734,7 +773,7 @@ class TestForkAndCapture:
         self, mocker: MockerFixture
     ) -> None:
         """AC: system_prompt_append param sets SystemPromptPreset on options (DLT-041)."""
-        mock_query = mocker.patch("tachikoma.post_processing.query")
+        mock_query = mocker.patch("tachikoma.post_processing.stderr_aware_query")
 
         async def fake_query(*args, **kwargs):
             msg = MagicMock()
@@ -763,7 +802,7 @@ class TestForkAndCapture:
 
     async def test_system_prompt_append_none_no_system_prompt(self, mocker: MockerFixture) -> None:
         """AC: system_prompt_append=None (default) leaves system_prompt unset (DLT-041)."""
-        mock_query = mocker.patch("tachikoma.post_processing.query")
+        mock_query = mocker.patch("tachikoma.post_processing.stderr_aware_query")
 
         async def fake_query(*args, **kwargs):
             msg = MagicMock()
@@ -786,6 +825,45 @@ class TestForkAndCapture:
         options = call_kwargs[1]["options"]
         assert options.system_prompt is None
 
+    async def test_model_passed_to_options_when_provided(self, mocker: MockerFixture) -> None:
+        """AC: model kwarg is threaded through to ClaudeAgentOptions."""
+        mock_query = mocker.patch("tachikoma.post_processing.stderr_aware_query")
+
+        async def fake_query(*args, **kwargs):
+            yield MagicMock(spec=[])
+
+        mock_query.return_value = fake_query()
+
+        session = _make_session(sdk_session_id="sdk-test-123")
+
+        await fork_and_capture(
+            session,
+            "prompt",
+            AgentDefaults(cwd=Path("/workspace")),
+            model="haiku",
+        )
+
+        options = mock_query.call_args[1]["options"]
+        assert options.model == "haiku"
+
+    async def test_model_default_none_leaves_options_model_unset(
+        self, mocker: MockerFixture
+    ) -> None:
+        """AC: Default call (no model kwarg) leaves ClaudeAgentOptions.model at None."""
+        mock_query = mocker.patch("tachikoma.post_processing.stderr_aware_query")
+
+        async def fake_query(*args, **kwargs):
+            yield MagicMock(spec=[])
+
+        mock_query.return_value = fake_query()
+
+        session = _make_session(sdk_session_id="sdk-test-123")
+
+        await fork_and_capture(session, "prompt", AgentDefaults(cwd=Path("/workspace")))
+
+        options = mock_query.call_args[1]["options"]
+        assert options.model is None
+
 
 class TestPromptDrivenProcessor:
     """Tests for PromptDrivenProcessor base class."""
@@ -804,7 +882,10 @@ class TestPromptDrivenProcessor:
         processor = PromptDrivenProcessor(prompt=prompt, agent_defaults=defaults)
         await processor.process(session)
 
-        mock_fork.assert_awaited_once_with(session, prompt, defaults)
+        mock_fork.assert_awaited_once_with(
+            session, prompt, defaults,
+            tools=None, allow=None, pre_tool_use_hooks=None, model=None,
+        )
 
     async def test_simple_subclass_inherits_process(self, mocker: MockerFixture) -> None:
         """AC: Simple subclasses inherit process() and only need a prompt constant."""
@@ -828,6 +909,10 @@ class TestPromptDrivenProcessor:
             session,
             "Simple extraction prompt",
             defaults,
+            tools=None,
+            allow=None,
+            pre_tool_use_hooks=None,
+            model=None,
         )
 
     async def test_subclass_can_override_process(self, mocker: MockerFixture) -> None:
@@ -876,3 +961,23 @@ class TestPromptDrivenProcessor:
 
         with pytest.raises(RuntimeError, match="SDK error"):
             await processor.process(session)
+
+    async def test_model_threaded_through_to_fork_and_consume(
+        self, mocker: MockerFixture
+    ) -> None:
+        """AC: model kwarg on __init__ is threaded through to fork_and_consume."""
+        mock_fork = mocker.patch(
+            "tachikoma.post_processing.fork_and_consume", new_callable=AsyncMock
+        )
+        session = _make_session()
+        defaults = AgentDefaults(cwd=Path("/workspace"))
+
+        processor = PromptDrivenProcessor(
+            prompt="Test prompt", agent_defaults=defaults, model="haiku"
+        )
+        await processor.process(session)
+
+        mock_fork.assert_awaited_once_with(
+            session, "Test prompt", defaults,
+            tools=None, allow=None, pre_tool_use_hooks=None, model="haiku",
+        )

@@ -4,7 +4,7 @@ Generates and updates concise rolling summaries after each agent response.
 Uses standalone Opus query with low effort for fast, cost-effective summarization.
 """
 
-from claude_agent_sdk import ClaudeAgentOptions, query
+from claude_agent_sdk import ClaudeAgentOptions
 from claude_agent_sdk.types import AssistantMessage, TextBlock
 from loguru import logger
 
@@ -12,6 +12,7 @@ from tachikoma.adapter import sanitize_text
 from tachikoma.agent_defaults import AgentDefaults
 from tachikoma.boundary.prompts import SUMMARY_SYSTEM_PROMPT, SUMMARY_USER_PROMPT
 from tachikoma.message_post_processing import MessagePostProcessor
+from tachikoma.sdk_query import stderr_aware_query
 from tachikoma.sessions.model import Session
 from tachikoma.sessions.registry import SessionRegistry
 
@@ -76,7 +77,7 @@ class SummaryProcessor(MessagePostProcessor):
 
         # Collect response text from the assistant
         response_text = ""
-        async for sdk_message in query(prompt=user_prompt, options=options):
+        async for sdk_message in stderr_aware_query(prompt=user_prompt, options=options):
             if isinstance(sdk_message, AssistantMessage):
                 for block in sdk_message.content:
                     if isinstance(block, TextBlock):

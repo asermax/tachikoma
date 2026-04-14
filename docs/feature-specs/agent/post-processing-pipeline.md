@@ -27,6 +27,7 @@ A parallel concept — the `MessagePostProcessingPipeline` — follows a similar
 | R7 | Resumption-aware processing: processors receive session `last_resumed_at` and augment fork prompts to avoid re-extracting already-processed content |
 | R8 | Pipeline tracks processing state: a transient `is_processing` flag prevents concurrent re-entry, and `mark_processed` is called on the session registry after all phases complete |
 | R9 | Pipeline exposes `needs_processing(session, last_message_time)` to determine whether processing is needed (returns False when already processing or already processed since last message) |
+| R10 | Sub-agents spawned by fork/query helpers declare explicit tool restrictions and allow-only permission rules via `dontAsk` mode; each processor defines the exact tools and paths its agent needs (DES-004) |
 
 ## Behaviors
 
@@ -96,3 +97,12 @@ The pipeline tracks whether it is currently executing and marks the session as p
 - Given `session.processed_at >= last_message_time`, when `needs_processing` is checked, then it returns False
 - Given `session.processed_at < last_message_time`, when `needs_processing` is checked, then it returns True
 - Given the pipeline finishes, when `is_processing` is checked, then it returns False (cleared in finally)
+
+### Permission-Scoped Agents (R10)
+
+Sub-agents spawned by processors declare explicit tool restrictions and allow-only permission rules. The `dontAsk` permission mode auto-denies any tool call not in the allow list.
+
+**Acceptance Criteria**:
+- Given a processor configured with tools and allow rules, when `fork_and_consume` constructs the agent options, then `dontAsk` mode and the allow rules are set instead of `bypassPermissions`
+- Given a processor configured with allow rules restricting Edit/Write to a specific path, when its forked agent writes within that path, then the write succeeds
+- Given a processor configured with allow rules restricting Edit/Write to a specific path, when its forked agent writes outside that path, then the write is auto-denied

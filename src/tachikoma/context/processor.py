@@ -21,6 +21,7 @@ from tachikoma.context.tools import (
 )
 from tachikoma.post_processing import (
     PromptDrivenProcessor,
+    abs_rule,
     augment_prompt_for_resumption,
     fork_and_consume,
 )
@@ -35,9 +36,9 @@ conversation and update the foundational context files when appropriate.
 ## Your Task
 
 1. **Read all three context files:**
-   - `context/SOUL.md` — Personality traits, tone, and behavioral guidelines
-   - `context/USER.md` — What the assistant knows about the user
-   - `context/AGENTS.md` — Operational instructions and workflow preferences
+   - `$WORKSPACE/context/SOUL.md` — Personality traits, tone, and behavioral guidelines
+   - `$WORKSPACE/context/USER.md` — What the assistant knows about the user
+   - `$WORKSPACE/context/AGENTS.md` — Operational instructions and workflow preferences
 
 2. **Review pending signals:**
 
@@ -122,7 +123,12 @@ Action: Call `remove_pending_signal` with indices [2] to clean up the stale sign
 
 These files shape the assistant's identity and behavior across all sessions. \
 Updates should be deliberate and evidence-based. When in doubt, stage the signal \
-for future recurrence detection rather than making premature changes."""
+for future recurrence detection rather than making premature changes.
+
+## Permissions
+
+You can only access files within `context/`. Reads, edits, and writes outside \
+this directory will be denied."""
 
 
 def _read_pending_signals_snapshot(data_dir: Path) -> list[tuple[str, str]]:
@@ -196,7 +202,22 @@ class CoreContextProcessor(PromptDrivenProcessor):
         Args:
             agent_defaults: Common SDK options (cwd, cli_path, env).
         """
-        super().__init__(CONTEXT_UPDATE_PROMPT, agent_defaults)
+        scope = agent_defaults.cwd / CONTEXT_DIR_NAME
+
+        super().__init__(
+            CONTEXT_UPDATE_PROMPT,
+            agent_defaults,
+            tools=["Read", "Glob", "Grep", "Edit", "Write"],
+            allow=[
+                abs_rule("Read", scope),
+                "Glob",
+                "Grep",
+                abs_rule("Edit", scope),
+                abs_rule("Write", scope),
+                "mcp__pending-signals__add_pending_signal",
+                "mcp__pending-signals__remove_pending_signal",
+            ],
+        )
         self._data_dir = agent_defaults.cwd / ".tachikoma"
 
     async def process(self, session: Session) -> None:
@@ -246,6 +267,8 @@ class CoreContextProcessor(PromptDrivenProcessor):
             prompt,
             self._agent_defaults,
             mcp_servers={"pending-signals": pending_signals_server},
+            tools=self._tools,
+            allow=self._allow,
         )
 
         # Post-step: Compare mtimes and log changes

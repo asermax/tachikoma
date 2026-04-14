@@ -38,7 +38,7 @@ The task management subsystem lives in `src/tachikoma/tasks/` as a self-containe
 | `src/tachikoma/tasks/__init__.py` | Public API re-exports | Clean package interface |
 | `src/tachikoma/tasks/model.py` | `TaskDefinition` and `TaskInstance` frozen dataclasses (domain types); `TaskDefinitionRecord` and `TaskInstanceRecord` ORM models; `TaskStatus` and `TaskType` constant maps; `ScheduleConfig` type | Domain types frozen; ORM models internal to persistence; schedule stored as JSON column; `from_json` recovers legacy bare ISO datetime strings as one-shot schedules; all parse failures raise `ValueError` (never bare `JSONDecodeError` or `KeyError`) |
 | `src/tachikoma/tasks/repository.py` | `TaskRepository` — async SQLAlchemy CRUD for definitions and instances; `list_enabled_definitions()` and `list_disabled_definitions()` for filtered queries; `_to_domains_with_isolation()` for per-record error isolation with auto-disable; crash recovery (mark running as failed) | Receives shared `async_sessionmaker` from `Database`; follows ADR-007 pattern; list methods auto-disable corrupted definitions instead of failing the entire query |
-| `src/tachikoma/tasks/tools.py` | `create_task_tools_server(repository, timezone)` — MCP server factory receiving `ZoneInfo` at construction; `_parse_schedule(schedule, tz)` stamps naive datetimes with configured timezone, preserves aware as-is; `_format_schedule(schedule, tz)` converts display to configured timezone; `list_tasks` (defaults to enabled-only, `archived` parameter for disabled; output includes task ID for referencing in other tools, prompts excluded for compact output), `get_task` (returns full details including complete prompt for a single task by ID), `create_task`, `update_task` (supports `task_type` changes via `Literal` validation), `delete_task` with `cronsim` validation; Pydantic `BaseModel` classes (`ListTasksArgs`, `GetTaskArgs`, `CreateTaskArgs`, `UpdateTaskArgs`, `DeleteTaskArgs`) for arg validation and type coercion; enriched `@tool()` descriptions with parameter documentation including timezone-aware schedule formats | Factory receives `ZoneInfo`, passes to `_parse_schedule` and `_format_schedule` via closures; uses `replace(tzinfo=tz)` for naive, `astimezone(tz)` for display; list/detail pattern: `list_tasks` is compact (no prompt), `get_task` returns full details; `UpdateTaskArgs.task_type` uses `Literal["session", "background"]` for automatic validation; `TaskRepositoryError`-specific error handling surfaces root causes via `__cause__`; follows DES-006 |
+| `src/tachikoma/tasks/tools.py` | `create_task_tools_server(repository, timezone)` — MCP server factory receiving `ZoneInfo` at construction; `_parse_schedule(schedule, tz)` stamps naive datetimes with configured timezone, preserves aware as-is; `_format_schedule(schedule, tz)` converts display to configured timezone; `list_tasks` (defaults to enabled-only, `archived` parameter for disabled; output includes task ID for referencing in other tools, prompts excluded for compact output; `last_fired_at` converted to configured timezone), `get_task` (returns full details including complete prompt for a single task by ID; `last_fired_at` and `created_at` converted to configured timezone), `create_task`, `update_task` (supports `task_type` changes via `Literal` validation; resets `last_fired_at` on schedule change to enable one-shot re-scheduling; validates one-shot schedules are in the future consistent with `create_task`), `delete_task` with `cronsim` validation; Pydantic `BaseModel` classes (`ListTasksArgs`, `GetTaskArgs`, `CreateTaskArgs`, `UpdateTaskArgs`, `DeleteTaskArgs`) for arg validation and type coercion; enriched `@tool()` descriptions with parameter documentation including timezone-aware schedule formats | Factory receives `ZoneInfo`, passes to `_parse_schedule` and `_format_schedule` via closures; uses `replace(tzinfo=tz)` for naive, `astimezone(tz)` for display; all displayed timestamps (schedules, `last_fired_at`, `created_at`) converted to configured timezone; list/detail pattern: `list_tasks` is compact (no prompt), `get_task` returns full details; `update_task` resets `last_fired_at` when schedule changes (the old fire time is meaningless for a new schedule; for one-shot tasks, the instance generator requires `last_fired_at=None` to fire; for cron tasks, the anchor logic handles `None` by falling back to start-of-hour); `UpdateTaskArgs.task_type` uses `Literal["session", "background"]` for automatic validation; `TaskRepositoryError`-specific error handling surfaces root causes via `__cause__`; follows DES-006 |
 | `src/tachikoma/tasks/hooks.py` | `tasks_hook` — bootstrap hook (DES-003): retrieves shared `Database` from extras, creates repository, runs crash recovery; stores `task_repository` in `bootstrap.extras` | Subsystem-owned hook; runs after `database_hook` |
 | `src/tachikoma/tasks/scheduler.py` | `instance_generator()` — async loop with strict cron firing and period-aware dedup; `_create_pending_instance()` helper for instance creation and logging; `get_timezone(settings)` — returns `ZoneInfo` from pre-validated settings string (shared utility used by scheduler, preamble rendering, and executor) | Plain async function started as `asyncio.Task`; `get_timezone` has no fallback logic — validation happens at config load |
 | `src/tachikoma/database.py` | Shared `Database` class with `Base(DeclarativeBase)`, `AsyncEngine`, `async_sessionmaker`; `database_hook` bootstrap hook | All ORM models share one `Base`; single engine for all subsystems |
@@ -209,7 +209,8 @@ stateDiagram-v2
 3. If archived: calls repository.list_disabled_definitions()
    If not archived: calls repository.list_enabled_definitions()
 4. Formats one-shot schedules via _format_schedule(schedule, tz): converts to configured timezone via astimezone(tz)
-5. Returns compact formatted list with task ID, name, type, schedule, and status per entry (prompts excluded)
+5. Formats last_fired_at via astimezone(tz): converts from UTC to configured timezone for display
+6. Returns compact formatted list with task ID, name, type, schedule, and status per entry (prompts excluded)
    Or "No active/archived tasks found." if empty
 ```
 
@@ -219,7 +220,7 @@ stateDiagram-v2
 1. Agent calls get_task with a task_id (obtained from list_tasks)
 2. Tool calls repository.get_definition(task_id)
 3. If not found: returns error "Task '<id>' not found."
-4. Formats full details: name, ID, type, status, schedule, timestamps, and complete prompt
+4. Formats full details: name, ID, type, status, schedule, timestamps (last_fired_at and created_at converted to configured timezone via astimezone(tz)), and complete prompt
 5. Returns formatted detail view
 ```
 
@@ -295,6 +296,16 @@ stateDiagram-v2
 **Choice**: Store the cron match time in `scheduled_for` and check for existing instances matching that time and a non-failed status.
 **Why**: Using the cron match time as a period identifier enables deduplication across instance status changes (e.g., a completed instance still blocks a duplicate). The previous approach only checked pending/running, allowing duplicates after completion within the same period.
 
+### Schedule update resets `last_fired_at`
+
+**Choice**: When `update_task` changes the schedule, reset `last_fired_at` to `None`. When only `enabled` changes (no new schedule), leave `last_fired_at` untouched.
+**Why**: The instance generator checks `definition.last_fired_at is None` as a guard for one-shot task firing. Without resetting, a re-enabled one-shot with a new schedule would never fire because `last_fired_at` was still set from the previous execution. The reset applies to all schedule types — for cron tasks, the anchor logic handles `None` by falling back to start-of-hour. Leaving `last_fired_at` untouched when only `enabled` changes prevents a stale one-shot schedule from re-firing.
+
+**Consequences**:
+- Pro: Re-scheduling disabled one-shot tasks works correctly
+- Pro: Cron schedule changes get a fresh anchor point
+- Pro: Re-enabling without schedule change is safe (stale schedules don't fire)
+
 ### Corrupted definition auto-disable
 
 **Choice**: When a repository list method encounters a record with an unparseable schedule, log a warning and disable the definition rather than failing the entire query.
@@ -343,6 +354,18 @@ stateDiagram-v2
 **Given**: The application crashed while tasks were running
 **When**: The bootstrap hook runs
 **Then**: All previously-running instances are marked as `failed`.
+
+### Scenario: Re-scheduling a disabled one-shot task
+
+**Given**: A disabled one-shot task definition with `last_fired_at` set (it has fired previously)
+**When**: The agent calls `update_task` with a new schedule and `enabled=true`
+**Then**: `last_fired_at` is reset to `None` (because the schedule changed), the definition is re-enabled, and the instance generator will create a new pending instance when the new schedule fires.
+
+### Scenario: Re-enabling a one-shot without new schedule
+
+**Given**: A disabled one-shot task definition with `last_fired_at` set
+**When**: The agent calls `update_task` with only `enabled=true` (no new schedule)
+**Then**: `last_fired_at` remains set, the definition is re-enabled, but the instance generator will not fire it (the `last_fired_at is None` guard prevents stale one-shot schedules from firing).
 
 ### Scenario: Corrupted definition auto-disable
 

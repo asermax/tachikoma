@@ -43,7 +43,7 @@ The post-processor runs in the pipeline's **finalize phase**, ensuring all memor
 |-----------------|----------------|---------------|
 | `src/tachikoma/git/__init__.py` | Re-exports: `git_hook`, `GitProcessor`, sync utilities | Clean public API for the git package |
 | `src/tachikoma/git/hooks.py` | `git_hook`: initializes workspace as git repo + syncs with origin | Subsystem-owned hook pattern (DES-003); delegates sync to `smart_pull` from sync module |
-| `src/tachikoma/git/processor.py` | `GitProcessor(PostProcessor)` + `GIT_COMMIT_PROMPT` + `query_and_consume` helper | Prompt co-located with processor; fresh `query()` (not fork); delegates push to `smart_push` from sync module |
+| `src/tachikoma/git/processor.py` | `GitProcessor(PostProcessor)` + `GIT_COMMIT_PROMPT` + `query_and_consume` helper | Prompt co-located with processor; uses `$WORKSPACE` placeholders for directory paths (DES-008), replaced at call site before passing to `query_and_consume`; fresh `query()` (not fork); delegates push to `smart_push` from sync module |
 | `src/tachikoma/git/sync.py` | Shared sync utilities: `detect_divergence()`, `smart_push()`, `smart_pull()`, conflict resolution | Two-tier rebase (naive then agent); filesystem-based success detection; result enums |
 
 ### Cross-Layer Contracts
@@ -304,6 +304,6 @@ git/sync.py (stateless functions)
 ## Notes
 
 - The git processor establishes a second post-processor pattern: fork-based (memory) vs. fresh-query (git). Future processors can follow either pattern.
-- Agent guardrails (safe git commands only) are enforced via prompt instructions, consistent with memory processors' file scope constraints.
+- Agent guardrails are enforced in two layers: (1) prompt instructions describe the allowed commands (git + a curated set of read-only inspection and navigation utilities), and (2) a `PreToolUse` hook built from `make_bash_gate_hook()` (`GIT_BASH_HOOK`) programmatically gates every `Bash` tool call to the allowed prefix list (`git`, `ls`, `find`, `file`, `echo`, `date`, `cat`, `head`, `tail`, `wc`, `stat`, `cd`, `pwd`). The hook compiles these into a single regex that matches exact command names or command names followed by a space and arguments — preventing partial matches (e.g., `cd` matches `cd /path` but not `cdeject`). Compound commands (joined by `&&`, `||`, `|`, or `;`) are split before validation; each sub-command must pass independently, or the entire command is denied. See [DES-004](../../design/DES-004-prompt-driven-forked-processor.md) for the hook's design.
 - No `.gitignore` is created — all workspace content is tracked by default. Users can add their own if desired.
 - Known consolidation opportunities: `_run_git`/`_run_git_capture` duplicated between `git/sync.py` and `projects/git.py`; `_check_git_status` in processor.py vs `_has_uncommitted_changes` in sync.py are functionally identical; `AgentDefaults` construction from settings duplicated in both hooks (only 2 call sites).

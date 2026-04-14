@@ -434,19 +434,6 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 **Complexity**: Medium
 **Description**: Developers need to debug failed background tasks and understand execution history, but task instances currently record only status, timestamps, and a free-text result — with no link to the SDK session that ran, no transcript reference, and no structured error context. This delta enriches the task instance model and execution flow with traceability data: recording the SDK session ID and transcript path for each background execution, capturing structured error context (error type, message, tool calls leading to failure) on failure using the error classification from the structured error handling subsystem, and computing execution duration as a first-class field. These fields enable querying past executions by session, inspecting failure artifacts, and displaying execution metrics without manual timestamp arithmetic. The scope is limited to the tasks subsystem — background jobs are not interactive conversations, but they still require an audit trail linking execution to its artifacts and outcomes.
 
-### DLT-098: Capture SDK stderr on error for debugging
-**Status**: ✗ Defined
-**Depends on**: None
-**Priority**: 1 (Critical)
-**Complexity**: Easy
-**Description**: Capture stderr output from the Claude Agent SDK CLI subprocess and attach it to error logs when SDK calls fail. Currently, stderr from the SDK process is not captured — when an exception occurs (CLIConnectionError, ProcessError, or any sub-agent failure), the error message lacks any context about what the CLI process reported on stderr, making diagnosis difficult. This delta adds stderr capture to the agent defaults layer (shared across all SDK call sites) and includes the captured stderr in error logs when an exception is raised, preserving the fail-open error handling policy while giving operators the diagnostic context needed to debug SDK failures.
-
-### DLT-096: Include last exchange in session resumption candidates
-**Status**: ✗ Defined
-**Depends on**: None
-**Priority**: 3 (Medium)
-**Complexity**: Easy
-**Description**: The boundary detector evaluates whether an incoming message should resume a previous session, but it only receives the candidate sessions' summaries — which are rolling condensations of the full conversation. Including the actual last user message and assistant response from each candidate session would give the routing decision significantly better signal about whether the new message belongs in that session, especially for recent conversations where the summary may not yet capture the latest context.
 
 ### DLT-099: Archive conversation transcripts to project workspace
 **Status**: ✗ Defined
@@ -584,7 +571,7 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 ### DLT-120: Pause background tasks to request user input
 **Status**: ✗ Defined
 **Depends on**: None
-**Priority**: 3 (Medium)
+**Priority**: 2 (High)
 **Complexity**: Hard
 **Description**: Background tasks currently run to completion or failure in a single uninterrupted evaluator loop — there is no way for a task to pause mid-execution and ask the user a question. This delta adds a "waiting" state to the task lifecycle where the evaluator can suspend execution and send a notification requesting user input. When the user responds, the input is injected as the next turn in the suspended task's SDK session and execution resumes. This enables simple multi-step background work (e.g., "research this and ask me before proceeding") without requiring persistent agent sessions, progress reporting, or full lifecycle control.
 
@@ -658,23 +645,58 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 **Complexity**: Medium
 **Description**: Heavy background tasks (reading 9+ files, web research, writing large outputs) can take 6+ hours to complete with no intermediate status. The user has no way to know if a task is still running, stuck, or dead. Add progress tracking to the background task executor: log periodic status updates (e.g., every N minutes or when the agent uses a tool) to a queryable location, expose running task status through the existing MCP tools and CLI, and enforce a configurable timeout threshold — if a task exceeds the limit, fail it with a notification instead of silently burning resources. The goal is that a user can always answer "is this task still running and what is it doing?" without requiring SSH or raw database access.
 
-### DLT-131: Fix MemoryContextProvider crash in background task execution
-**Status**: ✗ Defined
-**Depends on**: None
-**Priority**: 1 (Critical)
-**Complexity**: Easy
-**Description**: The memory search sub-agent spawned by MemoryContextProvider exhausts its turn limit and returns `error_max_turns`, propagating as a fatal error. This was already fixed in main session execution but the same fix needs to be applied to background task execution — the tools are not correctly configured for the background task environment, causing the sub-agent to spin without making progress. Apply the same tool configuration fix used in main sessions to the background task executor's context provider setup.
-
-### DLT-132: Audit and fix remaining UTC handling in task operations
-**Status**: ✗ Defined
-**Depends on**: None
-**Priority**: 1 (Critical)
-**Complexity**: Easy
-**Description**: Despite the existing cron scheduler timezone fix, the task system still exhibits UTC-related issues in CRUD operations. Evidence: re-scheduling a disabled one-shot task to a local-time datetime fails with "must be in the future" even when the time is minutes ahead locally — the system likely compares against UTC "now." The agent also sometimes reports task schedules in UTC. Audit all datetime handling in task create, update, display, and comparison paths through logs and code to identify where local timezone is not being used consistently, and fix every site to use the configured timezone for all time comparisons and display formatting.
-
 ### DLT-133: Defer file delivery to post-response in Telegram
 **Status**: ✗ Defined
 **Depends on**: None
 **Priority**: 3 (Medium)
 **Complexity**: Medium
 **Description**: Files sent via the Telegram `send_file` MCP tool are delivered immediately during agent execution, so the user sees the file before the response message (because the file sends while the response is still being composed). UX would be better if files arrived after the message, like a natural attachment. Defer file sends to a post-response hook that dispatches them after the agent's text response is fully delivered. Tradeoff: deferring means the agent cannot react to delivery failures (retry, notify) because the response is already finalized by the time the file goes out. Either accept this risk or design a post-response feedback mechanism for delivery errors.
+
+### DLT-134: Extend background tasks at iteration limit
+**Status**: ✗ Defined
+**Depends on**: DLT-112, DLT-120
+**Priority**: 3 (Medium)
+**Complexity**: Medium
+**Description**: Background tasks currently hard-fail when they reach their maximum iteration count, even if they are making meaningful progress. This delta allows the assistant to escalate to the user when the iteration limit is reached instead of failing outright. The user is presented with the task's progress and the assistant's latest assessment, and can choose to grant additional iterations or abort. If extended, the task continues from where it left off with a fresh iteration budget. If aborted, the task is failed as today. The iteration limit before escalation is configurable per task definition, falling back to the global default. This prevents premature failure of tasks that are progressing slowly but productively, giving the user control over the cost/completion tradeoff.
+
+### DLT-135: Serialize concurrent notification delivery and user message processing
+**Status**: ✗ Defined
+**Depends on**: DLT-111, DLT-112
+**Priority**: 2 (High)
+**Complexity**: Hard
+**Description**: When a background task notification is delivered at the exact moment a user sends a message, the two can collide at the coordinator's message queue — resulting in one being lost or the notification being silently swallowed. The existing message-loss prevention and notification buffering mechanisms handle their respective timing windows independently, but do not cover the case where both sources attempt to enqueue simultaneously. This delta adds serialization between the notification delivery path and the user message intake so that concurrent arrivals are safely ordered and neither is dropped.
+
+### DLT-136: Document `.tachikoma/config/` as the standard location for skill and script configuration
+**Status**: ✗ Defined
+**Depends on**: None
+**Priority**: 3 (Medium)
+**Complexity**: Easy
+**Description**: The `.tachikoma/config/` directory is the established location for storing configuration files consumed by skills and scripts, using a per-skill subdirectory pattern (`.tachikoma/config/<skill-name>/config.toml`). This convention is not documented anywhere, so new skills and scripts don't follow it consistently. Document the `.tachikoma/config/` directory as the standard configuration location, including the subdirectory pattern, loading conventions, and integration with the skill authoring guide.
+
+### DLT-137: API rate limit detection and retry with backoff
+**Status**: ✗ Defined
+**Depends on**: None
+**Priority**: 2 (High)
+**Complexity**: Medium
+**Description**: When the API returns 429 rate limit errors, the system has no code-level retry mechanism. The executor passes raw errors to the evaluator, which gets stuck saying "continue" until max iterations are hit. Add rate limit detection at the API call level with exponential backoff retry, applied uniformly across background task execution, pre/post processing sub-agents, and session tasks.
+
+### DLT-138: Stagger parallel API-consuming pipeline operations
+**Status**: ✗ Defined
+**Depends on**: DLT-137
+**Priority**: 3 (Medium)
+**Complexity**: Medium
+**Description**: Pre-processing and post-processing pipelines spawn multiple sub-agents concurrently via `asyncio.gather()`, creating burst API load that triggers rate limits even with retry logic in place. This delta adds configurable concurrency control between sub-agent spawns within these pipelines — for example, using a semaphore or staggered dispatch — to reduce burst API usage. This complements the reactive retry mechanism by preventing unnecessary rate limit hits and reducing total API cost. Specific sequencing strategies (e.g., whether memory search waits for skill classification) should be evaluated during speccing.
+
+### DLT-139: Fix task evaluator to judge completion, not output quality
+**Status**: ✗ Defined
+**Depends on**: None
+**Priority**: 2 (High)
+**Complexity**: Easy
+**Description**: The task completion evaluator prompt currently asks the model to assess whether the output matches its expectation of a "good" result, causing false negatives when the task completed correctly but the content wasn't what the evaluator expected. Reframe the evaluator prompt to focus on whether the agent encountered a blocking error, finished its workflow steps, or asked a clarifying question (which is valid, not a failure) — not whether the content is "correct."
+
+### DLT-140: Allow send_file to accept paths outside the workspace
+**Status**: ✗ Defined
+**Depends on**: None
+**Priority**: 3 (Medium)
+**Complexity**: Easy
+**Description**: The `send_file` MCP tool rejects files outside the workspace directory, but generated exports (PDFs, rendered images) are written to `/tmp/` per convention. Users must copy files to the workspace first as a workaround. Relax the path validation to accept absolute paths to temporary and standard system directories while maintaining workspace-relative resolution for unqualified paths.

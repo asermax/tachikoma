@@ -44,12 +44,15 @@ The agent manages task definitions through MCP tools exposed during conversation
 - Given the agent calls `create_task` with an invalid cron expression, then the tool returns a clear error message
 - Given the agent calls `create_task` without a required field (name, schedule, type, or prompt), then the tool returns a clear error identifying the missing field
 - Given the agent calls `create_task` with a type value other than "session" or "background", then the tool returns a clear error
-- Given the agent calls `list_tasks` with no arguments, then it receives only enabled task definitions with their task ID, current status, type, schedule (one-shot times displayed in the configured timezone), and last_fired_at information. Prompts are not included — use `get_task` for full details
+- Given the agent calls `list_tasks` with no arguments, then it receives only enabled task definitions with their task ID, current status, type, schedule (one-shot times displayed in the configured timezone), and last_fired_at information (displayed in the configured timezone). Prompts are not included — use `get_task` for full details
 - Given the agent calls `list_tasks` with `archived=true`, then it receives only disabled task definitions
 - Given the agent calls `list_tasks` and no matching definitions exist (no enabled tasks by default, or no disabled tasks when archived), then a clear "no tasks found" message is returned
-- Given the agent calls `get_task` with a valid task ID, then it receives full details including the complete prompt, schedule, status, and timestamps
+- Given the agent calls `get_task` with a valid task ID, then it receives full details including the complete prompt, schedule, status, and timestamps (all displayed in the configured timezone)
 - Given the agent calls `get_task` with an unknown task ID, then a clear "not found" error is returned
 - Given the agent calls `update_task` with a modified schedule, prompt, task_type, or other updatable field, then the definition is updated and future instances use the new configuration
+- Given the agent calls `update_task` with a modified schedule, then `last_fired_at` is reset to null so the instance generator treats the definition as fresh — enabling re-scheduling of disabled one-shot tasks
+- Given the agent calls `update_task` with `enabled=true` but no new schedule, then `last_fired_at` is preserved — re-enabling without a new schedule does not cause a stale one-shot schedule to fire
+- Given the agent calls `update_task` with a one-shot schedule in the past, then the tool returns a clear error (consistent with `create_task`)
 - Given the agent calls `delete_task`, then the definition is removed and no further instances are generated
 
 ### Instance Generation (R2, R4, R5, R6)

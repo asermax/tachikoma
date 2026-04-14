@@ -38,6 +38,7 @@ from tachikoma.pre_processing import (
     McpServerConfig,
     PreProcessingPipeline,
 )
+from tachikoma.sdk_query import StderrAccumulator
 from tachikoma.sdk_transport import FilePromptTransport
 from tachikoma.sessions.model import Session, SessionContextEntry
 from tachikoma.sessions.registry import SessionRegistry
@@ -47,6 +48,15 @@ from tachikoma.skills.registry import SkillRegistry
 _log = logger.bind(component="coordinator")
 
 _COLD_START_SUMMARY = "No active conversation."
+
+
+def _sessions_to_candidates(sessions: list[Session]) -> list[SessionCandidate]:
+    """Build resumption candidates from sessions with summaries."""
+    return [
+        SessionCandidate(id=s.id, summary=s.summary, last_exchange=s.last_exchange)
+        for s in sessions
+        if s.summary is not None
+    ]
 
 
 def _user_message(content: str) -> dict[str, Any]:
@@ -384,7 +394,7 @@ class Coordinator:
 
                 result: BoundaryResult = await detect_boundary(
                     text,
-                    active.summary,
+                    active,
                     self._agent_defaults,
                     candidates=candidates,
                 )
@@ -500,11 +510,13 @@ class Coordinator:
         system_prompt_append = build_system_prompt(entries, timezone=self._timezone)
 
         # Build options and create a fresh client for this exchange
+        stderr_acc = StderrAccumulator()
         options = self._build_options(
             resume=resume_id,
             system_prompt_append=system_prompt_append,
             agents=agents,
         )
+        options.stderr = stderr_acc
         response_chunks: list[str] = []
 
         message_source = _message_source(text, self._message_buffer)
@@ -546,7 +558,15 @@ class Coordinator:
                             )
 
         except (CLIConnectionError, ProcessError) as exc:
-            _log.error("Stream error (recoverable): err={err}", err=str(exc))
+            stderr = stderr_acc.get()
+            if stderr is not None:
+                _log.error(
+                    "Stream error (recoverable): err={err}, stderr={stderr}",
+                    err=str(exc),
+                    stderr=stderr,
+                )
+            else:
+                _log.error("Stream error (recoverable): err={err}", err=str(exc))
             if is_encoding_error(str(exc)):
                 await self._handle_encoding_error(active)
             yield Error(message=sanitize_text(str(exc)), recoverable=True)
@@ -611,18 +631,14 @@ class Coordinator:
             window = timedelta(seconds=self._session_resume_window)
             recent_sessions = await self._registry.get_recent_closed(before=now, window=window)
 
-            candidates = [
-                SessionCandidate(id=s.id, summary=s.summary)
-                for s in recent_sessions
-                if s.summary is not None
-            ]
+            candidates = _sessions_to_candidates(recent_sessions)
 
             if not candidates:
                 return None
 
             result = await detect_boundary(
                 message,
-                _COLD_START_SUMMARY,
+                Session(id="", started_at=datetime.now(UTC), summary=_COLD_START_SUMMARY),
                 self._agent_defaults,
                 candidates=candidates,
             )
@@ -678,11 +694,7 @@ class Coordinator:
                 before=datetime.now(UTC),
                 window=timedelta(seconds=self._session_resume_window),
             )
-            return [
-                SessionCandidate(id=s.id, summary=s.summary)
-                for s in recent
-                if s.summary is not None
-            ]
+            return _sessions_to_candidates(recent)
         except Exception as exc:
             _log.exception(
                 "Failed to query resume candidates: err={err}",

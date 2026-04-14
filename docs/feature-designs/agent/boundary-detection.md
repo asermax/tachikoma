@@ -62,18 +62,20 @@ Three new mechanisms layer onto the existing coordinator:
 
 | Layer/Component | Responsibility | Key Decisions |
 |-----------------|----------------|---------------|
-| `src/tachikoma/boundary/__init__.py` | Re-exports public API: `detect_boundary`, `BoundaryResult`, `SessionCandidate`, `SummaryProcessor` | New package for boundary detection |
-| `src/tachikoma/boundary/detector.py` | `detect_boundary(message, summary, cwd, *, candidates=None, cli_path=None)` — standalone `query()` with Opus low effort, JSON schema output, returns `BoundaryResult(continues, resume_session_id)`. Uses tool-less agent pattern: `tools=[]`, default permission mode, `max_turns=10` (DES-007 "Disabling Tools"). Accepts optional `candidates: list[SessionCandidate]` for session matching. `cwd` is passed from the coordinator's `self._cwd`. Fully consumes the query() generator (DES-005). Includes structured logging for results and warnings. Validates `resume_session_id` (sanitizes empty strings and non-string values to None). | Independent of coordinator; pure function + SDK call |
-| `src/tachikoma/boundary/prompts.py` | Prompt templates for boundary detection (including session matching instructions) and summary generation. Includes `CANDIDATES_SECTION_TEMPLATE` for formatting candidate sessions into the user prompt. | Separated for easy iteration and testing |
-| `src/tachikoma/boundary/summary.py` | `SummaryProcessor` — `MessagePostProcessor` that calls standalone `query()` with Opus low effort to update the rolling summary. Accepts `cli_path` parameter. Logs a warning on empty responses. Fully consumes the query() generator (DES-005). | Uses incremental pattern: previous summary + latest exchange → updated summary |
+| `src/tachikoma/boundary/__init__.py` | Re-exports public API: `detect_boundary`, `BoundaryResult`, `SessionCandidate`, `SummaryProcessor`, `LastExchangeProcessor` | New package for boundary detection |
+| `src/tachikoma/boundary/detector.py` | `detect_boundary(message, session, agent_defaults, *, candidates=None)` — standalone `query()` with Opus low effort, JSON schema output, returns `BoundaryResult(continues, resume_session_id)`. Uses tool-less agent pattern: `tools=[]`, default permission mode, `max_turns=10` (DES-007 "Disabling Tools"). Accepts full `Session` object (extracts `summary` and `last_exchange` internally). Accepts optional `candidates: list[SessionCandidate]` for session matching. Fully consumes the query() generator (DES-005). Includes structured logging for results and warnings. Validates `resume_session_id` (sanitizes empty strings and non-string values to None). | Independent of coordinator; pure function + SDK call |
+| `src/tachikoma/boundary/prompts.py` | Prompt templates for boundary detection (including session matching instructions and conditional last exchange sections) and summary generation. Includes `CANDIDATES_SECTION_TEMPLATE` for formatting candidate sessions into the user prompt. | Separated for easy iteration and testing |
+| `src/tachikoma/boundary/summary.py` | `SummaryProcessor` — `MessagePostProcessor` that calls standalone `query()` with Opus low effort to update the rolling summary. Accepts `agent_defaults` parameter. Logs a warning on empty responses. Fully consumes the query() generator (DES-005). | Uses incremental pattern: previous summary + latest exchange → updated summary |
+| `src/tachikoma/boundary/last_exchange.py` | `LastExchangeProcessor` — `MessagePostProcessor` that persists the agent response text to `session.last_exchange` via the session registry. Skips empty/whitespace-only responses. No SDK call — direct field update. | Simpler than SummaryProcessor; independent failure domain |
 | `src/tachikoma/message_post_processing.py` | `MessagePostProcessor` ABC (`process(session, user_message, agent_response)`) and `MessagePostProcessingPipeline` class | Parallel to `post_processing.py` but with a different interface reflecting the per-message context |
 
 ### Cross-Layer Contracts
 
 **Integration Points:**
-- Coordinator ↔ `detect_boundary`: pure function call, accepts optional `candidates: list[SessionCandidate]`, returns `BoundaryResult`, catches all errors and defaults to `BoundaryResult(continues=True)` (continuation). Skipped when `cwd is None`.
+- Coordinator ↔ `detect_boundary`: pure function call, accepts full `Session` object and optional `candidates: list[SessionCandidate]`, returns `BoundaryResult`, catches all errors and defaults to `BoundaryResult(continues=True)` (continuation). Skipped when `cwd is None`.
 - Coordinator ↔ `MessagePostProcessingPipeline`: `run(session, user_message, agent_response)`, launched as `asyncio.Task`, reference stored on coordinator
 - `SummaryProcessor` ↔ `SessionRegistry`: calls `update_summary()` to persist the rolling summary
+- `LastExchangeProcessor` ↔ `SessionRegistry`: calls `update_last_exchange()` to persist the last assistant response
 
 **Error contract:**
 - Boundary detection errors: caught in coordinator, logged, default to continuation (fail-open per R8)
@@ -84,8 +86,8 @@ Three new mechanisms layer onto the existing coordinator:
 
 - **`MessagePostProcessor` ABC** (`message_post_processing.py`): shared interface for per-message processors. Separate from session-level `PostProcessor`.
 - **`BoundaryResult` dataclass** (`boundary/detector.py`): shared between detector (produces) and coordinator (consumes). Contains `continues: bool` and `resume_session_id: str | None`.
-- **`SessionCandidate`** (`boundary/detector.py`): lightweight `(id, summary)` pair passed to the detector. Avoids coupling the boundary package to the full `Session` dataclass.
-- **`Session` dataclass** (`sessions/model.py`): extended with `summary` and `last_resumed_at` fields. Shared input to both pipelines and the boundary detector.
+- **`SessionCandidate`** (`boundary/detector.py`): lightweight `(id, summary, last_exchange)` tuple passed to the detector. `last_exchange` is nullable — older sessions may not have it. Avoids coupling the boundary package to the full `Session` dataclass.
+- **`Session` dataclass** (`sessions/model.py`): extended with `summary`, `last_exchange`, and `last_resumed_at` fields. Shared input to both pipelines and the boundary detector (passed directly to `detect_boundary`).
 - **Prompt templates** (`boundary/prompts.py`): shared between summary processor and boundary detector. Centralized for easy iteration.
 
 ## Modeling
@@ -106,10 +108,14 @@ MessagePostProcessingPipeline
 
 SummaryProcessor (MessagePostProcessor)
 ├── _registry: SessionRegistry
-├── _cwd: Path
-├── _cli_path: str | None
+├── _agent_defaults: AgentDefaults
 └── process(session, user_message, agent_response) → None
     └── standalone query() with Opus low effort → update summary
+
+LastExchangeProcessor (MessagePostProcessor)
+├── _registry: SessionRegistry
+└── process(session, user_message, agent_response) → None
+    └── if response non-empty: registry.update_last_exchange(session.id, response)
 
 BoundaryResult (frozen dataclass)
 ├── continues: bool                        (True = continuation, False = topic shift)
@@ -117,9 +123,11 @@ BoundaryResult (frozen dataclass)
 
 SessionCandidate (frozen dataclass)
 ├── id: str                                (session ID)
-└── summary: str                           (session summary for LLM matching)
+├── summary: str                           (session summary for LLM matching)
+└── last_exchange: str | None              (last assistant response, nullable)
 
-detect_boundary(message: str, summary: str, cwd: Path, *, candidates: list[SessionCandidate] | None = None, cli_path: str | None = None) → BoundaryResult
+detect_boundary(message: str, session: Session, agent_defaults: AgentDefaults, *, candidates: list[SessionCandidate] | None = None) → BoundaryResult
+└── extracts session.summary + session.last_exchange internally
 └── standalone query() with Opus low effort, JSON schema → BoundaryResult
 ```
 
@@ -132,7 +140,8 @@ erDiagram
     Coordinator ||--o| MessagePostProcessingPipeline : "triggers per-message"
     MessagePostProcessingPipeline ||--o{ MessagePostProcessor : "registers"
     SummaryProcessor ||--|| SessionRegistry : "updates summary"
-    Coordinator }o--|| detect_boundary : "calls before processing"
+    LastExchangeProcessor ||--|| SessionRegistry : "updates last_exchange"
+    Coordinator }o--|| detect_boundary : "passes Session + candidates"
 ```
 
 ## Data Flow
@@ -147,10 +156,11 @@ erDiagram
 3. Coordinator checks for active session; creates one if needed (existing behavior)
 4. If active session exists AND session has a summary AND cwd is not None:
    a. Fetch recent closed session candidates via registry.get_recent_closed()
-   b. Build SessionCandidate list from sessions (id + summary pairs)
-   c. Call detect_boundary(text, session.summary, cwd, candidates=candidates)
-   d. Standalone Opus low effort query returns {"continues_conversation": true, "resume_session_id": null}
-   e. Proceed normally
+   b. Build SessionCandidate list via _sessions_to_candidates() helper (id + summary + last_exchange tuples)
+   c. Call detect_boundary(text, session, agent_defaults, candidates=candidates)
+   d. Detector extracts session.summary and session.last_exchange internally
+   e. Standalone Opus low effort query returns {"continues_conversation": true, "resume_session_id": null}
+   f. Proceed normally
 5. Coordinator calls SDK client.query(text), streams response (existing behavior)
 6. During streaming, coordinator accumulates response text:
    - Initialize response_chunks: list[str] = []
@@ -259,6 +269,17 @@ erDiagram
    pattern as update_metadata())
 ```
 
+### Last exchange processor data flow
+
+```
+1. LastExchangeProcessor.process(session, user_message, agent_response) called
+2. If agent_response is empty or whitespace-only → skip, log debug
+3. Otherwise: call registry.update_last_exchange(session.id, agent_response)
+4. Registry calls repository.update(id, last_exchange=agent_response)
+5. Registry constructs new Session via dataclasses.replace() (avoids redundant DB re-fetch)
+6. Registry replaces _active_session with the new frozen Session instance
+```
+
 ## Key Decisions
 
 ### Opus with low effort for boundary detection and summarization
@@ -336,6 +357,44 @@ erDiagram
 - Pro: No risk of cancel scope leaks or dual-process overhead
 - Pro: No failure modes to handle (clearing a field can't fail)
 
+### Pass full Session object to detect_boundary
+
+**Choice**: Change `detect_boundary(message, summary, ...)` to `detect_boundary(message, session, ...)`, extracting `summary` and `last_exchange` internally.
+**Why**: The coordinator shouldn't need to know which specific fields the boundary detector needs. Passing the session object lets the detector select relevant fields without coordinator changes when future fields are added (e.g., topic tags, participant count).
+**Alternatives Considered**:
+- Separate `current_last_exchange` parameter: works but adds a parameter for every new session field the detector needs
+- Include in summary string: mixes data concerns, fragile formatting
+
+**Consequences**:
+- Pro: Future additions to the boundary prompt don't require coordinator changes
+- Pro: Clear ownership — the detector decides what's relevant from the session
+- Con: Slightly broader coupling to the `Session` dataclass (already imported in the boundary module)
+
+### LastExchangeProcessor as a separate processor
+
+**Choice**: Create a dedicated `LastExchangeProcessor` rather than updating `last_exchange` inside `SummaryProcessor`.
+**Why**: Single responsibility. Storing the last exchange is a trivial field update (no SDK call), while summary generation is an LLM-based operation. Combining them would make the simple operation dependent on the complex one failing. Separate processors also allow independent error isolation — if the summary LLM call fails, `last_exchange` still gets updated.
+**Alternatives Considered**:
+- Combined in SummaryProcessor: couples a simple DB write to an LLM call
+- Direct coordinator write: bypasses the per-message pipeline's error isolation
+
+**Consequences**:
+- Pro: Independent failure domains — `last_exchange` updates succeed even when summarization fails
+- Pro: Trivial processor — ~50 lines, no SDK interaction
+- Con: One more processor to register (minimal overhead)
+
+### Skip update on empty/whitespace agent_response
+
+**Choice**: If `agent_response` is empty or whitespace-only, the processor does nothing — `last_exchange` retains its current value.
+**Why**: An empty response provides no useful signal for boundary detection. Overwriting with empty would lose the previous (potentially useful) value, degrading matching quality for the next message.
+**Alternatives Considered**:
+- Set to None: loses useful previous signal
+- Set to empty string: would need null-check at prompt rendering time anyway
+
+**Consequences**:
+- Pro: Preserves the most useful signal for boundary detection
+- Pro: No special handling for empty strings in prompt rendering — null is the only "missing" state
+
 ## System Behavior
 
 ### Scenario: Normal message (continuation)
@@ -404,9 +463,39 @@ erDiagram
 **When**: The per-message pipeline handles the failure
 **Then**: The error is logged. The conversation continues uninterrupted. On the next exchange, the per-message pipeline runs again independently — no permanent failure state. The summary may be stale (from a prior successful run) or `None` (if it never succeeded), causing boundary detection to be skipped on the next message.
 
+### Scenario: Boundary detection with current session's last_exchange
+
+**Given**: An active session with both summary and `last_exchange`
+**When**: Boundary detection runs
+**Then**: The prompt includes both the summary and a "Last assistant response" section with the current session's last exchange. This provides the classifier with concrete recency signal alongside the rolling summary.
+
+### Scenario: Boundary detection with null last_exchange (summary-only)
+
+**Given**: An active session with `summary` but `last_exchange = None` (first exchange, or pipeline failure)
+**When**: Boundary detection runs
+**Then**: The prompt includes only the summary — no "Last assistant response" section. This matches pre-DLT-096 behavior (graceful degradation).
+
+### Scenario: Candidate sessions with mixed last_exchange availability
+
+**Given**: Candidate sessions where some have `last_exchange` and some don't
+**When**: The candidates section is rendered in the prompt
+**Then**: Each candidate with a non-null `last_exchange` shows it alongside its summary. Candidates without it show only their summary. The classifier uses whichever data is available for matching.
+
+### Scenario: LastExchangeProcessor failure — graceful degradation
+
+**Given**: The per-message pipeline is running after an agent response
+**When**: `LastExchangeProcessor` encounters a database error
+**Then**: The error is caught by `asyncio.gather(return_exceptions=True)` and logged. `SummaryProcessor` still runs independently. `last_exchange` retains its previous value (or null). Boundary detection proceeds with whatever `last_exchange` is available.
+
+### Scenario: LastExchangeProcessor succeeds, SummaryProcessor fails
+
+**Given**: The per-message pipeline runs after an agent response
+**When**: `LastExchangeProcessor` stores the response successfully, but `SummaryProcessor` encounters an LLM error
+**Then**: `last_exchange` is updated, `summary` retains its previous value. On the next boundary detection call, the current session has a fresh `last_exchange` but potentially stale `summary`. The detector uses both — the fresh last exchange provides strong recency signal even with a stale summary.
+
 ## Notes
 
-- The `boundary/` package encapsulates all boundary detection logic (detector, summary processor, prompts), keeping the coordinator focused on orchestration. The `SummaryProcessor` lives in `boundary/summary.py` rather than alongside `message_post_processing.py` because it is cohesively tied to boundary detection — its output (the rolling summary) exists primarily to feed the boundary detector.
+- The `boundary/` package encapsulates all boundary detection logic (detector, summary processor, last exchange processor, prompts), keeping the coordinator focused on orchestration. The `SummaryProcessor` lives in `boundary/summary.py` rather than alongside `message_post_processing.py` because it is cohesively tied to boundary detection — its output (the rolling summary) exists primarily to feed the boundary detector. The `LastExchangeProcessor` follows the same colocated pattern — its output feeds boundary detection.
 - Both Opus low effort calls (detection and summarization) use standalone `query()` — they never touch the coordinator's per-message `ClaudeSDKClient`. This satisfies R12 (independence from active session).
 - Both `detect_boundary` and `SummaryProcessor` fully consume their `query()` generators (no early `return` or `break` inside `async for`). This follows DES-005 — preventing orphaned SDK resources from busy-looping the event loop.
 - The `MessagePostProcessingPipeline` follows the same patterns as `PostProcessingPipeline` (parallel execution, error isolation via `asyncio.gather(return_exceptions=True)`, serialized execution) but with a different processor interface and no phased execution.

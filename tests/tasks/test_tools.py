@@ -8,7 +8,7 @@ import pytest
 from pydantic import ValidationError
 
 from tachikoma.tasks.errors import TaskRepositoryError
-from tachikoma.tasks.model import ScheduleConfig
+from tachikoma.tasks.model import ScheduleConfig, TaskDefinition
 from tachikoma.tasks.repository import TaskRepository
 from tachikoma.tasks.tools import (
     CreateTaskArgs,
@@ -487,3 +487,119 @@ class TestErrorHandling:
 
         error_str = str(exc_info.value)
         assert "archived" in error_str
+
+
+class TestTimezoneDisplay:
+    """Tests for timestamp display in configured timezone (R1)."""
+
+    @pytest.mark.asyncio
+    async def test_list_tasks_last_fired_at_in_configured_tz(self, repo: TaskRepository) -> None:
+        """AC1: list_tasks shows last_fired_at converted to configured timezone."""
+        # 18:00 UTC = 15:00 ART (UTC-3)
+        last_fired = datetime(2026, 4, 1, 18, 0, tzinfo=UTC)
+        await repo.create_definition(
+            _make_definition(definition_id="tz-1", name="TZ Test", last_fired_at=last_fired)
+        )
+
+        call_tool = _call_tool(repo, TZ_ART)
+        result = await call_tool("list_tasks", {})
+
+        text = result["content"][0]["text"]
+        assert "15:00" in text
+        assert "18:00" not in text
+
+    @pytest.mark.asyncio
+    async def test_get_task_timestamps_in_configured_tz(self, repo: TaskRepository) -> None:
+        """AC2: get_task shows last_fired_at and created_at in configured timezone."""
+        # 18:00 UTC = 15:00 ART, 12:00 UTC = 09:00 ART
+        last_fired = datetime(2026, 4, 1, 18, 0, tzinfo=UTC)
+        created = datetime(2026, 3, 15, 12, 0, tzinfo=UTC)
+
+        definition = TaskDefinition(
+            id="tz-2",
+            name="TZ Detail Test",
+            schedule=ScheduleConfig(type="cron", expression="0 9 * * *"),
+            task_type="session",
+            prompt="Test prompt",
+            enabled=True,
+            last_fired_at=last_fired,
+            created_at=created,
+        )
+        await repo.create_definition(definition)
+
+        call_tool = _call_tool(repo, TZ_ART)
+        result = await call_tool("get_task", {"task_id": "tz-2"})
+
+        text = result["content"][0]["text"]
+
+        # last_fired_at: 18:00 UTC → 15:00 ART
+        assert "15:00" in text
+
+        # created_at: 12:00 UTC → 09:00 ART
+        assert "09:00" in text
+
+
+class TestUpdateTaskScheduleReset:
+    """Tests for schedule update resetting last_fired_at and future validation."""
+
+    @pytest.mark.asyncio
+    async def test_update_schedule_resets_last_fired_at(self, repo: TaskRepository) -> None:
+        """AC3a: Updating schedule resets last_fired_at to None."""
+        last_fired = datetime(2026, 4, 1, 18, 0, tzinfo=UTC)
+        await repo.create_definition(
+            _make_definition(
+                definition_id="reset-1",
+                last_fired_at=last_fired,
+                enabled=False,
+            )
+        )
+
+        call_tool = _call_tool(repo)
+        result = await call_tool(
+            "update_task",
+            {"task_id": "reset-1", "schedule": "0 10 * * *", "enabled": True},
+        )
+
+        assert result.get("is_error") is not True
+        updated = await repo.get_definition("reset-1")
+        assert updated is not None
+        assert updated.last_fired_at is None
+        assert updated.enabled is True
+
+    @pytest.mark.asyncio
+    async def test_update_enabled_only_preserves_last_fired_at(self, repo: TaskRepository) -> None:
+        """AC3b: Updating only enabled preserves last_fired_at."""
+        last_fired = datetime(2026, 4, 1, 18, 0, tzinfo=UTC)
+        await repo.create_definition(
+            _make_definition(
+                definition_id="preserve-1",
+                last_fired_at=last_fired,
+                enabled=False,
+            )
+        )
+
+        call_tool = _call_tool(repo)
+        result = await call_tool(
+            "update_task",
+            {"task_id": "preserve-1", "enabled": True},
+        )
+
+        assert result.get("is_error") is not True
+        updated = await repo.get_definition("preserve-1")
+        assert updated is not None
+        assert updated.last_fired_at is not None
+
+    @pytest.mark.asyncio
+    async def test_update_rejects_past_one_shot_schedule(self, repo: TaskRepository) -> None:
+        """AC4: update_task rejects one-shot schedules in the past."""
+        await repo.create_definition(_make_definition(definition_id="past-1"))
+
+        call_tool = _call_tool(repo)
+        result = await call_tool(
+            "update_task",
+            {"task_id": "past-1", "schedule": "2020-01-01T00:00:00Z"},
+        )
+
+        text = result["content"][0]["text"]
+        assert "future" in text.lower()
+        assert "2020-01-01" in text

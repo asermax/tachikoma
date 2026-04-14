@@ -35,6 +35,7 @@ from tachikoma.pre_processing import (
 )
 from tachikoma.projects.context_provider import ProjectsContextProvider
 from tachikoma.projects.processor import ProjectsProcessor
+from tachikoma.sdk_query import StderrAccumulator
 from tachikoma.sessions.model import Session
 from tachikoma.sessions.registry import SessionRegistry
 from tachikoma.skills.context_provider import SkillsContextProvider
@@ -284,6 +285,7 @@ class BackgroundTaskExecutor:
             system_prompt_text = datetime_line + "\n" + BACKGROUND_TASK_SYSTEM_PROMPT
 
             # Build SDK options with adapted system prompt
+            stderr_acc = StderrAccumulator()
             options = ClaudeAgentOptions(
                 cwd=self._agent_defaults.cwd,
                 cli_path=self._agent_defaults.cli_path,
@@ -295,6 +297,7 @@ class BackgroundTaskExecutor:
                 ),
                 permission_mode="bypassPermissions",
                 mcp_servers=preprocessing_result.mcp_servers,
+                stderr=stderr_acc,
             )
 
             # Execute with evaluator loop
@@ -384,11 +387,20 @@ class BackgroundTaskExecutor:
             raise
 
         except Exception as exc:
-            _log.exception(
-                "Background task {inst_id} failed with error: {err}",
-                inst_id=instance.id,
-                err=str(exc),
-            )
+            stderr = stderr_acc.get()
+            if stderr is not None:
+                _log.exception(
+                    "Background task {inst_id} failed with error: {err}, stderr={stderr}",
+                    inst_id=instance.id,
+                    err=str(exc),
+                    stderr=stderr,
+                )
+            else:
+                _log.exception(
+                    "Background task {inst_id} failed with error: {err}",
+                    inst_id=instance.id,
+                    err=str(exc),
+                )
             await self._fail_instance(instance.id, str(exc))
             await dispatch_notification(
                 self._bus,
@@ -466,7 +478,7 @@ class BackgroundTaskExecutor:
         Returns:
             Parsed evaluator result with status and feedback
         """
-        from claude_agent_sdk import query  # noqa: PLC0415  – lazy for test mockability
+        from tachikoma.sdk_query import stderr_aware_query  # noqa: PLC0415
 
         eval_prompt = EVALUATOR_PROMPT_TEMPLATE.format(
             task_prompt=task_prompt,
@@ -474,7 +486,8 @@ class BackgroundTaskExecutor:
         )
 
         options = ClaudeAgentOptions(
-            model="claude-3-5-haiku-20241022",  # Lightweight model for evaluation
+            model="haiku",  # Lightweight model for evaluation
+            tools=[],
             cwd=self._agent_defaults.cwd,
             cli_path=self._agent_defaults.cli_path,
             env=self._agent_defaults.env,
@@ -483,7 +496,7 @@ class BackgroundTaskExecutor:
         response_text = ""
         try:
             # DES-005: Fully consume the generator
-            async for message in query(prompt=eval_prompt, options=options):
+            async for message in stderr_aware_query(prompt=eval_prompt, options=options):
                 if isinstance(message, AssistantMessage):
                     for block in message.content:
                         if isinstance(block, TextBlock):

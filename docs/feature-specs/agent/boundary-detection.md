@@ -33,12 +33,14 @@ Detects whether an incoming message continues the current conversation or starts
 | R14 | On graceful shutdown, await running background post-processing tasks before exiting |
 | R15 | On topic shift, compare the incoming message against recent closed session summaries and return a matching session ID when found |
 | R16 | Configurable time-based lookup window for recent session candidates, defaulting to 1 day |
+| R17 | Store the last assistant response on the session, updated by the per-message pipeline after each exchange (nullable — null until first exchange processed) |
+| R18 | Include the last assistant response in boundary detection prompts for both the current session and candidate sessions, providing improved recency signal alongside summaries |
 
 ## Behaviors
 
-### Boundary Detection (R0, R5, R6, R12)
+### Boundary Detection (R0, R5, R6, R12, R18)
 
-The boundary detector classifies each incoming message as either a continuation of the current conversation or a new topic, using the rolling conversation summary for comparison.
+The boundary detector classifies each incoming message as either a continuation of the current conversation or a new topic, using the rolling conversation summary and (when available) the last assistant response for comparison.
 
 **Acceptance Criteria**:
 - Given an active session with a conversation summary, when a new message arrives that continues the same topic, then the boundary detector classifies it as a continuation and the message proceeds to the coordinator normally
@@ -46,6 +48,8 @@ The boundary detector classifies each incoming message as either a continuation 
 - Given an active session with a conversation summary, when a new message arrives that could be interpreted as either a continuation or a new topic, then the boundary detector biases toward continuation — only clear, unambiguous topic shifts are classified as such
 - Given a boundary detection call, when the detector runs, then it operates independently of the active SDK conversation session
 - Given a boundary detection call, when the detector completes, then the detection itself adds no more than 1-2 seconds to message processing latency (excluding any await-pending time)
+- Given an active session with both summary and last_exchange, when boundary detection runs, then the prompt includes both the summary and a "Last assistant response" section with the most recent response
+- Given an active session with summary but null last_exchange, when boundary detection runs, then the prompt includes only the summary — no "Last assistant response" section (graceful degradation)
 
 ### Session Transition on Topic Shift (R1, R9, R10)
 
@@ -69,13 +73,14 @@ Session post-processing fires asynchronously when a session closes via boundary 
 - Given multiple topic shifts occur in sequence, when background post-processing tasks accumulate, then all tasks are tracked and complete independently
 - Given the system is shutting down gracefully, when background post-processing tasks are still running, then shutdown awaits their completion before exiting
 
-### Per-Message Post-Processing (R3, R3.1, R4, R13)
+### Per-Message Post-Processing (R3, R3.1, R4, R13, R17)
 
-After each agent response, a per-message pipeline runs asynchronously to update the rolling conversation summary.
+After each agent response, a per-message pipeline runs asynchronously to update the rolling conversation summary and persist the last assistant response.
 
 **Acceptance Criteria**:
 - Given the agent completes a response, when the response stream ends, then the per-message post-processing pipeline is triggered asynchronously
 - Given the per-message pipeline runs, when the summary processor executes, then it generates or updates a rolling conversation summary and stores it on the session record
+- Given the per-message pipeline runs, when the last exchange processor executes, then it stores the agent response text to the session's `last_exchange` field (skipping empty or whitespace-only responses to preserve the previous value)
 - Given the per-message pipeline uses the `MessagePostProcessor` interface, when processors are registered, then they follow the same error isolation patterns as session-level processors
 - Given a per-message processor fails, when the error occurs, then it is logged and the conversation continues uninterrupted
 - Given a per-message processor failed on a previous exchange, when the next agent response completes, then the per-message pipeline runs again (each invocation is independent — no permanent failure state)
@@ -101,9 +106,9 @@ Boundary detection is a best-effort enhancement that never blocks normal message
 - Given the boundary detector encounters an error (SDK failure, timeout, malformed response), when the error occurs, then it is logged and the message proceeds as a continuation (fail-open)
 - Given a topic shift triggers a session transition, when the SDK session ID is cleared, then the next message creates a fresh SDK session with no prior conversation context
 
-### Session Resumption Matching (R15, R16)
+### Session Resumption Matching (R15, R16, R18)
 
-When a topic shift is detected, the boundary detector also checks whether the incoming message matches a recently closed session. If a match is found, the system resumes that session instead of starting fresh. Candidates are pre-filtered to exclude sessions with missing transcript files or excessive age (see sessions spec R20).
+When a topic shift is detected, the boundary detector also checks whether the incoming message matches a recently closed session. If a match is found, the system resumes that session instead of starting fresh. Candidates are pre-filtered to exclude sessions with missing transcript files or excessive age (see sessions spec R20). Both the session summary and the last assistant response (when available) provide matching signal.
 
 **Acceptance Criteria**:
 - Given an active session with a summary and recent closed session candidates within the lookup window, when a new message arrives, then boundary detection receives both the current session summary and the recent session summaries (with their IDs)
@@ -115,3 +120,5 @@ When a topic shift is detected, the boundary detector also checks whether the in
 - Given a configurable time-based lookup window (default: 1 day), when querying recent sessions for boundary detection, then only sessions closed within that window with non-null SDK session IDs and non-null summaries are included
 - Given the boundary detector returns an invalid or unfound session ID, when the coordinator processes the transition, then it falls back to fresh-session behavior and logs a warning
 - Given recent closed sessions exist but their transcript files are missing from the local filesystem, when the coordinator builds candidates for boundary detection, then those sessions are excluded from the candidate list
+- Given candidate sessions with last_exchange data, when the candidates section is rendered in the prompt, then each candidate shows its last assistant response alongside its summary when available
+- Given a candidate session without last_exchange (null), when the candidates section is rendered, then that candidate shows only its summary

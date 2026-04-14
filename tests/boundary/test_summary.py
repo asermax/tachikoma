@@ -30,7 +30,7 @@ class TestSummaryProcessor:
 
     async def test_calls_query_with_opus_low_effort(self, mocker: MockerFixture) -> None:
         """AC: Summary processor uses Opus model with low effort."""
-        mock_query = mocker.patch("tachikoma.boundary.summary.query")
+        mock_query = mocker.patch("tachikoma.boundary.summary.stderr_aware_query")
         mock_registry = MagicMock()
         mock_registry.update_summary = AsyncMock()
 
@@ -54,7 +54,7 @@ class TestSummaryProcessor:
 
     async def test_updates_summary_on_registry(self, mocker: MockerFixture) -> None:
         """AC: Summary is persisted to registry."""
-        mock_query = mocker.patch("tachikoma.boundary.summary.query")
+        mock_query = mocker.patch("tachikoma.boundary.summary.stderr_aware_query")
         mock_registry = MagicMock()
         mock_registry.update_summary = AsyncMock()
 
@@ -77,7 +77,7 @@ class TestSummaryProcessor:
 
     async def test_handles_none_previous_summary(self, mocker: MockerFixture) -> None:
         """AC: First exchange (None summary) is handled correctly."""
-        mock_query = mocker.patch("tachikoma.boundary.summary.query")
+        mock_query = mocker.patch("tachikoma.boundary.summary.stderr_aware_query")
         mock_registry = MagicMock()
         mock_registry.update_summary = AsyncMock()
 
@@ -101,7 +101,7 @@ class TestSummaryProcessor:
 
     async def test_uses_existing_summary_in_prompt(self, mocker: MockerFixture) -> None:
         """AC: Previous summary is included in the prompt for updates."""
-        mock_query = mocker.patch("tachikoma.boundary.summary.query")
+        mock_query = mocker.patch("tachikoma.boundary.summary.stderr_aware_query")
         mock_registry = MagicMock()
         mock_registry.update_summary = AsyncMock()
 
@@ -126,7 +126,7 @@ class TestSummaryProcessor:
 
     async def test_uses_no_tools(self, mocker: MockerFixture) -> None:
         """AC: Summary processor uses no tools."""
-        mock_query = mocker.patch("tachikoma.boundary.summary.query")
+        mock_query = mocker.patch("tachikoma.boundary.summary.stderr_aware_query")
         mock_registry = MagicMock()
         mock_registry.update_summary = AsyncMock()
 
@@ -156,7 +156,7 @@ class TestSummaryProcessor:
             raise RuntimeError("SDK error")
             yield  # make it a generator
 
-        mocker.patch("tachikoma.boundary.summary.query", side_effect=failing_query)
+        mocker.patch("tachikoma.boundary.summary.stderr_aware_query", side_effect=failing_query)
 
         mock_registry = MagicMock()
         mock_registry.update_summary = AsyncMock()

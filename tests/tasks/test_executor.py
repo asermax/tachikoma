@@ -224,7 +224,7 @@ class TestBackgroundTaskExecutor:
                 session_id="sdk-session-123",
             )
 
-            with patch("claude_agent_sdk.query") as mock_query:
+            with patch("tachikoma.sdk_query.stderr_aware_query") as mock_query:
                 mock_query.return_value = _make_eval_response()
 
                 with (
@@ -328,7 +328,7 @@ class TestBackgroundTaskExecutor:
             mock_client.query = AsyncMock()
             mock_client.receive_response = _make_sdk_response(text="Done")
 
-            with patch("claude_agent_sdk.query") as mock_query:
+            with patch("tachikoma.sdk_query.stderr_aware_query") as mock_query:
                 mock_query.return_value = _make_eval_response()
 
                 with (
@@ -383,7 +383,7 @@ class TestBackgroundTaskExecutor:
             mock_client.query = AsyncMock()
             mock_client.receive_response = _make_sdk_response(text="Working...")
 
-            with patch("claude_agent_sdk.query") as mock_query:
+            with patch("tachikoma.sdk_query.stderr_aware_query") as mock_query:
                 mock_query.return_value = _make_eval_response(
                     '{"status": "continue", "feedback": "Keep going"}',
                 )
@@ -449,7 +449,7 @@ class TestBackgroundTaskExecutor:
             mock_client.query = AsyncMock()
             mock_client.receive_response = _make_sdk_response(text="Done")
 
-            with patch("claude_agent_sdk.query") as mock_query:
+            with patch("tachikoma.sdk_query.stderr_aware_query") as mock_query:
                 mock_query.return_value = _make_eval_response()
 
                 with (
@@ -523,7 +523,7 @@ class TestBackgroundTaskExecutor:
             mock_client.query = AsyncMock()
             mock_client.receive_response = mock_receive_response
 
-            with patch("claude_agent_sdk.query") as mock_query:
+            with patch("tachikoma.sdk_query.stderr_aware_query") as mock_query:
                 mock_query.return_value = _make_eval_response(
                     '{"status": "stuck", "feedback": "Agent is looping"}',
                 )
@@ -546,3 +546,118 @@ class TestBackgroundTaskExecutor:
         error_events = [e for e in dispatched_events if e.severity == "error"]
         assert len(error_events) == 1
         assert "failed" in error_events[0].prompt.lower()
+
+
+class TestExecutorStderrCapture:
+    """Tests for DLT-098: stderr capture in executor error handler."""
+
+    @pytest.mark.asyncio
+    async def test_stderr_accumulator_installed_on_options(
+        self, repo: TaskRepository, mocker
+    ) -> None:
+        """AC: DLT-098 R1 — StderrAccumulator installed on SDK options."""
+        captured_options = []
+
+        class CapturingClient:
+            def __init__(self, opts, **kwargs):
+                captured_options.append(opts)
+
+            async def __aenter__(self):
+                raise RuntimeError("crash before any work")
+
+            async def __aexit__(self, *args):
+                pass
+
+        instance = _make_instance(
+            "inst-verify-stderr",
+            task_type="background",
+            status="pending",
+            prompt="Test task",
+        )
+        await repo.create_instance(instance)
+
+        settings = TaskSettings()
+        bus = EventBus()
+        bus.dispatch = AsyncMock()
+
+        executor = BackgroundTaskExecutor(
+            repository=repo,
+            settings=settings,
+            bus=bus,
+            agent_defaults=AgentDefaults(cwd=Path("/tmp")),
+            skill_registry=_mock_skill_registry(),
+            session_registry=_mock_session_registry(),
+        )
+
+        with (
+            patch("tachikoma.tasks.executor.ClaudeSDKClient", CapturingClient),
+            patch.object(
+                executor,
+                "_run_preprocessing",
+                return_value=_mock_preproc_result(),
+            ),
+        ):
+            await executor.execute(instance)
+
+        # Verify stderr accumulator was installed
+        assert len(captured_options) == 1
+        assert captured_options[0].stderr is not None
+
+        # Feed it and verify accumulation works
+        captured_options[0].stderr("error line")
+        acc = captured_options[0].stderr
+        assert acc.get() == "error line"
+
+    @pytest.mark.asyncio
+    async def test_no_stderr_in_log_when_empty_executor(
+        self, repo: TaskRepository, mocker
+    ) -> None:
+        """AC: DLT-098 R0 — executor error with no stderr omits stderr kwarg."""
+        instance = _make_instance(
+            "inst-no-stderr",
+            task_type="background",
+            status="pending",
+            prompt="Test task",
+        )
+        await repo.create_instance(instance)
+
+        settings = TaskSettings()
+        bus = EventBus()
+        bus.dispatch = AsyncMock()
+
+        executor = BackgroundTaskExecutor(
+            repository=repo,
+            settings=settings,
+            bus=bus,
+            agent_defaults=AgentDefaults(cwd=Path("/tmp")),
+            skill_registry=_mock_skill_registry(),
+            session_registry=_mock_session_registry(),
+        )
+
+        mock_log = mocker.patch("tachikoma.tasks.executor._log")
+
+        class CrashingClient:
+            def __init__(self, opts, **kwargs):
+                pass
+
+            async def __aenter__(self):
+                raise RuntimeError("SDK crashed")
+
+            async def __aexit__(self, *args):
+                pass
+
+        with (
+            patch("tachikoma.tasks.executor.ClaudeSDKClient", CrashingClient),
+            patch.object(
+                executor,
+                "_run_preprocessing",
+                return_value=_mock_preproc_result(),
+            ),
+        ):
+            await executor.execute(instance)
+
+        exception_calls = mock_log.exception.call_args_list
+        assert len(exception_calls) > 0
+        # No stderr kwarg when buffer empty
+        last_call_kwargs = exception_calls[-1][1]
+        assert "stderr" not in last_call_kwargs

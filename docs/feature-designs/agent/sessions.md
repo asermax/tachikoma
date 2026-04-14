@@ -117,6 +117,7 @@ sequenceDiagram
 - Coordinator → SessionRegistry: `get_active_session()` + `create_session()` on first message, `update_metadata()` on Result events, `close_session()` on shutdown and topic shift, `get_recent_closed()` for resumption candidates, `reopen_session()` for session resumption, `record_resumption()` for best-effort tracking, `get_by_time_range()` for bridging context assembly, `save_context_entries(session_id, entries)` for persisting context (always takes a list of (owner, content) tuples), `load_context_entries(session_id)` for loading entries for system prompt assembly
 - PostProcessingPipeline → SessionRegistry: `mark_processed()` after pipeline completion (sets `processed_at`)
 - SummaryProcessor → SessionRegistry: `update_summary()` after each per-message pipeline run (see [boundary detection design](boundary-detection.md))
+- LastExchangeProcessor → SessionRegistry: `update_last_exchange()` after each per-message pipeline run (see [boundary detection design](boundary-detection.md))
 - SessionRegistry → SessionRepository: all persistence delegated
 - SessionRepository → shared Database (AsyncEngine → aiosqlite → tachikoma.db)
 - Bootstrap → SessionRegistry: `recover_interrupted()` on startup via `session_recovery_hook`
@@ -180,6 +181,7 @@ erDiagram
         string sdk_session_id "nullable - set on Result event"
         string transcript_path "nullable - derived from sdk_session_id"
         string summary "nullable - rolling conversation summary"
+        string last_exchange "nullable - last assistant response"
         datetime started_at "UTC - set on creation"
         datetime ended_at "nullable UTC - set on close"
         datetime last_resumed_at "nullable UTC - set on reopen"
@@ -208,6 +210,7 @@ Session (frozen dataclass)
 ├── sdk_session_id: str | None        (populated from Result event)
 ├── transcript_path: str | None       (derived from SDK session ID)
 ├── summary: str | None               (rolling conversation summary, updated by per-message pipeline)
+├── last_exchange: str | None         (last assistant response, updated by per-message pipeline)
 ├── started_at: datetime              (UTC, set at creation time)
 ├── ended_at: datetime | None         (UTC, set when session closes; cleared on reopen)
 ├── last_resumed_at: datetime | None  (UTC, set when session is reopened for resumption)
@@ -241,6 +244,7 @@ SessionRecord (DeclarativeBase)
 ├── sdk_session_id: Mapped[str | None]
 ├── transcript_path: Mapped[str | None]
 ├── summary: Mapped[str | None]       (rolling conversation summary)
+├── last_exchange: Mapped[str | None] (last assistant response)
 ├── started_at: Mapped[datetime]      (DateTime(timezone=True))
 ├── ended_at: Mapped[datetime | None] (DateTime(timezone=True))
 ├── last_resumed_at: Mapped[datetime | None] (DateTime(timezone=True))
@@ -347,6 +351,18 @@ Note: The `needs_processing()` check prevents re-triggering: once `processed_at`
 4. Registry re-fetches session via repository.get_by_id()
 5. Registry replaces _active_session with new frozen Session instance
    (same re-fetch-and-replace pattern as update_metadata())
+```
+
+### Last exchange update (per-message pipeline)
+
+```
+1. LastExchangeProcessor.process(session, user_message, agent_response) called
+2. If agent_response is empty or whitespace-only → skip, log debug
+3. Otherwise: call registry.update_last_exchange(session.id, agent_response)
+4. Registry calls repository.update(id, last_exchange=agent_response)
+5. Registry constructs new Session via dataclasses.replace()
+   (avoids redundant DB re-fetch — all field values are already known)
+6. Registry replaces _active_session with the new frozen Session instance
 ```
 
 ### Session reopen (resumption)
