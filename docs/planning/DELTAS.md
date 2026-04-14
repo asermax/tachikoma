@@ -672,3 +672,38 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 **Complexity**: Hard
 **Description**: When a background task notification is delivered at the exact moment a user sends a message, the two can collide at the coordinator's message queue — resulting in one being lost or the notification being silently swallowed. The existing message-loss prevention and notification buffering mechanisms handle their respective timing windows independently, but do not cover the case where both sources attempt to enqueue simultaneously. This delta adds serialization between the notification delivery path and the user message intake so that concurrent arrivals are safely ordered and neither is dropped.
 
+### DLT-136: Document `.tachikoma/config/` as the standard location for skill and script configuration
+**Status**: ✗ Defined
+**Depends on**: None
+**Priority**: 3 (Medium)
+**Complexity**: Easy
+**Description**: The `.tachikoma/config/` directory is the established location for storing configuration files consumed by skills and scripts, using a per-skill subdirectory pattern (`.tachikoma/config/<skill-name>/config.toml`). This convention is not documented anywhere, so new skills and scripts don't follow it consistently. Document the `.tachikoma/config/` directory as the standard configuration location, including the subdirectory pattern, loading conventions, and integration with the skill authoring guide.
+
+### DLT-137: API rate limit detection and retry with backoff
+**Status**: ✗ Defined
+**Depends on**: None
+**Priority**: 2 (High)
+**Complexity**: Medium
+**Description**: When the API returns 429 rate limit errors, the system has no code-level retry mechanism. The executor passes raw errors to the evaluator, which gets stuck saying "continue" until max iterations are hit. Add rate limit detection at the API call level with exponential backoff retry, applied uniformly across background task execution, pre/post processing sub-agents, and session tasks.
+
+### DLT-138: Stagger parallel API-consuming pipeline operations
+**Status**: ✗ Defined
+**Depends on**: DLT-137
+**Priority**: 3 (Medium)
+**Complexity**: Medium
+**Description**: Pre-processing and post-processing pipelines spawn multiple sub-agents concurrently via `asyncio.gather()`, creating burst API load that triggers rate limits even with retry logic in place. This delta adds configurable concurrency control between sub-agent spawns within these pipelines — for example, using a semaphore or staggered dispatch — to reduce burst API usage. This complements the reactive retry mechanism by preventing unnecessary rate limit hits and reducing total API cost. Specific sequencing strategies (e.g., whether memory search waits for skill classification) should be evaluated during speccing.
+
+### DLT-139: Fix task evaluator to judge completion, not output quality
+**Status**: ✗ Defined
+**Depends on**: None
+**Priority**: 2 (High)
+**Complexity**: Easy
+**Description**: The task completion evaluator prompt currently asks the model to assess whether the output matches its expectation of a "good" result, causing false negatives when the task completed correctly but the content wasn't what the evaluator expected. Reframe the evaluator prompt to focus on whether the agent encountered a blocking error, finished its workflow steps, or asked a clarifying question (which is valid, not a failure) — not whether the content is "correct."
+
+### DLT-140: Allow send_file to accept paths outside the workspace
+**Status**: ✗ Defined
+**Depends on**: None
+**Priority**: 3 (Medium)
+**Complexity**: Easy
+**Description**: The `send_file` MCP tool rejects files outside the workspace directory, but generated exports (PDFs, rendered images) are written to `/tmp/` per convention. Users must copy files to the workspace first as a workaround. Relax the path validation to accept absolute paths to temporary and standard system directories while maintaining workspace-relative resolution for unqualified paths.
+
