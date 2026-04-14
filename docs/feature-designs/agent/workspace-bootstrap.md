@@ -129,6 +129,27 @@ The `BootstrapContext` is frozen (fields can't be reassigned), but `settings_man
 4. If mkdir fails (PermissionError) → raise with clear error
 ```
 
+### Git hook logic
+
+```
+1. Read workspace_path from ctx.settings_manager.settings
+2. Check if workspace_path / ".git" exists
+   ├─ exists → skip init
+   └─ doesn't exist → continue
+3. Run: git init, git config user.name/email, git commit --allow-empty
+   If any subprocess fails → raise RuntimeError
+4. Sync workspace with origin remote:
+   a. Check if origin remote exists: _run_git("remote", "get-url", "origin")
+      ├─ no origin → debug log, skip sync
+      └─ origin exists → build AgentDefaults, call smart_pull(workspace_path, "origin", "HEAD", defaults)
+         ├─ DIRTY_SKIPPED → warning log
+         ├─ UP_TO_DATE → debug log
+         ├─ FAST_FORWARDED/REBASE_SUCCEEDED/AGENT_RESOLVED → info log
+         └─ SYNC_FAILED → warning log
+   b. All errors caught → warning log, startup continues (non-blocking)
+```
+```
+
 ## Key Decisions
 
 ### Bootstrap as a registry class (not a plain function)
@@ -208,5 +229,6 @@ The `BootstrapContext` is frozen (fields can't be reassigned), but `settings_man
 
 ## Notes
 
-- Hook registration order in `__main__.py`: workspace → logging → database → git → projects → skills → context → memory → sessions → tasks → media → telegram. Logging runs before git so that loguru's file handler is configured before any hooks emit log messages. Database runs before git because migrations may need to run early. Projects runs after git because it needs the git repository initialized. Skills runs before context so that the skills directory and registry are created before context initialization. Media runs after tasks and before telegram — the temp folder must exist before polling starts. Telegram runs last so all other subsystems are initialized before channel-specific validation.
+- Hook registration order in `__main__.py`: workspace → logging → database → git → projects → skills → context → memory → sessions → tasks → media → telegram. Logging runs before git so that loguru's file handler is configured before any hooks emit log messages. Database runs before git because migrations may need to run early. Git hook initializes the repo and syncs workspace from remote. Projects runs after git because it needs the git repository initialized and synced. Skills runs before context so that the skills directory and registry are created before context initialization. Media runs after tasks and before telegram — the temp folder must exist before polling starts. Telegram runs last so all other subsystems are initialized before channel-specific validation.
 - The hook registration order in `__main__.py` serves as the explicit documentation of initialization sequence — no magic discovery
+- The git hook's sync step delegates to `smart_pull` from `git/sync.py`, which handles divergence detection and agent-driven conflict resolution. Sync failures are non-blocking — logged and startup continues.

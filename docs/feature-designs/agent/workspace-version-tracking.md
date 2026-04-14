@@ -7,7 +7,7 @@
 
 ## Purpose
 
-This document explains the design rationale for workspace version tracking: how the git module initializes repos, spawns commit agents, pushes to remotes, and integrates with the post-processing pipeline.
+This document explains the design rationale for workspace version tracking: how the git module initializes repos, spawns commit agents, syncs with remotes, and integrates with the post-processing pipeline.
 
 ## Problem Context
 
@@ -30,8 +30,8 @@ Workspace changes (memories, context files, configuration) happen as side effect
 Three independent components, plus a system prompt section:
 
 1. A **system prompt preamble** "Commits" section (`context/loading.py`) that instructs the assistant not to manually commit or push — all version control is automated
-2. A **git bootstrap hook** that initializes the workspace as a git repo on first run (idempotent)
-3. A **git post-processor** that spawns a lightweight Haiku agent to inspect, group, and commit workspace changes after each session, then pushes to the `origin` remote when one is configured
+2. A **git bootstrap hook** that initializes the workspace as a git repo on first run (idempotent), then syncs with the origin remote
+3. A **git post-processor** that spawns a lightweight Haiku agent to inspect, group, and commit workspace changes after each session, then pushes to the `origin` remote with divergence detection and conflict resolution
 
 The post-processor runs in the pipeline's **finalize phase**, ensuring all memory extraction is complete before commits happen.
 
@@ -41,9 +41,10 @@ The post-processor runs in the pipeline's **finalize phase**, ensuring all memor
 
 | Layer/Component | Responsibility | Key Decisions |
 |-----------------|----------------|---------------|
-| `src/tachikoma/git/__init__.py` | Re-exports: `git_hook`, `GitProcessor` | Clean public API for the git package |
-| `src/tachikoma/git/hooks.py` | `git_hook`: initializes workspace as git repo | Subsystem-owned hook pattern (DES-003); uses `asyncio.create_subprocess_exec` |
-| `src/tachikoma/git/processor.py` | `GitProcessor(PostProcessor)` + `GIT_COMMIT_PROMPT` + `query_and_consume` helper + `_has_remote`/`_push` helpers | Prompt co-located with processor; fresh `query()` (not fork); push helpers local to module |
+| `src/tachikoma/git/__init__.py` | Re-exports: `git_hook`, `GitProcessor`, sync utilities | Clean public API for the git package |
+| `src/tachikoma/git/hooks.py` | `git_hook`: initializes workspace as git repo + syncs with origin | Subsystem-owned hook pattern (DES-003); delegates sync to `smart_pull` from sync module |
+| `src/tachikoma/git/processor.py` | `GitProcessor(PostProcessor)` + `GIT_COMMIT_PROMPT` + `query_and_consume` helper | Prompt co-located with processor; fresh `query()` (not fork); delegates push to `smart_push` from sync module |
+| `src/tachikoma/git/sync.py` | Shared sync utilities: `detect_divergence()`, `smart_push()`, `smart_pull()`, conflict resolution | Two-tier rebase (naive then agent); filesystem-based success detection; result enums |
 
 ### Cross-Layer Contracts
 
@@ -52,6 +53,7 @@ sequenceDiagram
     participant Pipeline as PostProcessingPipeline
     participant Git as GitProcessor
     participant Agent as Haiku Agent (query)
+    participant Sync as git/sync.py
     participant Remote as origin remote
     participant FS as Workspace Files
 
@@ -62,12 +64,28 @@ sequenceDiagram
         Git->>Agent: query(prompt, model="haiku")
         Agent->>FS: git add + git commit (per group)
         Agent-->>Git: complete
-        Git->>Git: git remote get-url origin
-        alt origin exists
-            Git->>Remote: git push origin HEAD
-            Remote-->>Git: success / failure (logged)
-        else no origin
-            Git->>Git: skip push (debug log)
+        Git->>Sync: smart_push(cwd, "origin", "HEAD", agent_defaults)
+        Sync->>Remote: git fetch origin
+        Sync->>Sync: detect_divergence()
+        alt UP_TO_DATE or BEHIND
+            Sync-->>Git: NOTHING_TO_PUSH
+        else AHEAD
+            Sync->>Remote: git push origin HEAD
+            Sync-->>Git: PUSHED
+        else DIVERGED
+            Sync->>Sync: naive rebase attempt
+            alt clean rebase
+                Sync->>Remote: git push origin HEAD
+                Sync-->>Git: REBASE_SUCCEEDED
+            else conflicts
+                Sync->>Agent: spawn Haiku for conflict resolution
+                alt agent succeeded
+                    Sync->>Remote: git push origin HEAD
+                    Sync-->>Git: AGENT_RESOLVED
+                else agent failed
+                    Sync-->>Git: REBASE_FAILED (local preserved)
+                end
+            end
         end
         Git->>Git: git status --porcelain (verify)
     else workspace clean
@@ -77,19 +95,21 @@ sequenceDiagram
 ```
 
 **Integration Points:**
-- GitProcessor ↔ subprocess: `asyncio.create_subprocess_exec("git", "status", "--porcelain")` for dirty check and post-agent verification; `git remote get-url origin` for remote detection; `git push origin HEAD` for pushing
+- GitProcessor ↔ subprocess: `asyncio.create_subprocess_exec("git", "status", "--porcelain")` for dirty check and post-agent verification
+- GitProcessor ↔ sync module: `smart_push(cwd, "origin", "HEAD", agent_defaults)` replaces bare git push with divergence detection and agent-driven conflict resolution
 - GitProcessor ↔ SDK: `query(prompt=GIT_COMMIT_PROMPT, options=ClaudeAgentOptions(model="haiku", cwd=..., permission_mode="bypassPermissions"))` — fresh stateless call, not a session fork
-- Bootstrap ↔ git hook: `git_hook` runs after workspace hook, uses `asyncio.create_subprocess_exec` for `git init`, `git config`, `git commit`
+- Bootstrap ↔ git hook: `git_hook` runs after workspace hook, uses sync module helpers for init and `_sync_workspace` for startup sync
 
 **Error contract:**
 - Git hook failures propagate as `BootstrapError` (fail-fast, per DES-003)
 - GitProcessor failures caught by pipeline's `asyncio.gather(return_exceptions=True)` (error isolation)
 - Partial commits are valid — if the agent commits 1 of 3 groups then fails, those commits persist
-- Push failures are caught and logged as warnings — commits remain intact and will be pushed on the next session
+- Push failures return result enums (REBASE_FAILED, PUSH_FAILED) — logged as warnings, commits intact, retried on next sync
 
 ### Shared Logic
 
-- **`query_and_consume` function** (`git/processor.py`): standalone helper for fresh `query()` calls (no session fork). Local to the git module since no other processor currently needs this pattern.
+- **`query_and_consume` function** (`git/processor.py`): standalone helper for fresh `query()` calls (no session fork). Used by both GitProcessor and ProjectsProcessor for spawning commit agents.
+- **`git/sync.py`**: Shared sync utilities (smart_push, smart_pull, detect_divergence) used by git hooks, git processor, projects hooks, and projects processor. Centralizes the fetch-detect-rebase-resolve-push sequence.
 
 ## Modeling
 
@@ -97,17 +117,27 @@ The domain model is minimal — no persistent entities or state. The git process
 
 ```
 GitProcessor(PostProcessor)
+├── _agent_defaults: AgentDefaults
 ├── _cwd: Path
 └── process(session) → None
 
 git_hook(ctx: BootstrapContext) → None
 
-query_and_consume(prompt, cwd) → None
+query_and_consume(prompt, agent_defaults) → None
+
+git/sync.py (stateless functions)
+├── detect_divergence(cwd, remote, branch) → DivergenceStatus
+├── smart_push(cwd, remote, branch, agent_defaults) → PushResult
+├── smart_pull(cwd, remote, branch, agent_defaults) → SyncResult
+├── _try_naive_rebase(cwd, remote_branch) → bool
+├── _agent_rebase(cwd, remote_branch, agent_defaults) → bool
+├── _abort_stale_rebase(cwd) → bool
+└── _has_uncommitted_changes(cwd) → bool
 ```
 
 ## Data Flow
 
-### Bootstrap: git repo initialization
+### Bootstrap: git repo initialization and workspace sync
 
 ```
 1. __main__.py registers git_hook after workspace hook
@@ -115,13 +145,22 @@ query_and_consume(prompt, cwd) → None
 3. git_hook(ctx) runs:
    a. Read workspace_path from ctx.settings_manager.settings
    b. Check if workspace_path / ".git" exists
-      ├─ exists → return immediately (idempotent)
+      ├─ exists → skip init
       └─ doesn't exist → continue
    c. Run: git init
    d. Run: git config user.name "Tachikoma"
    e. Run: git config user.email "tachikoma@local"
    f. Run: git commit --allow-empty -m "Initial commit"
    g. If any subprocess returns non-zero → raise with stderr output
+4. Sync workspace with remote:
+   a. Check if origin remote exists: _run_git("remote", "get-url", "origin")
+      ├─ no origin → debug log, skip sync
+      └─ origin exists → smart_pull(workspace_path, "origin", "HEAD", agent_defaults)
+         ├─ DIRTY_SKIPPED → warning log
+         ├─ UP_TO_DATE → debug log
+         ├─ FAST_FORWARDED/REBASE_SUCCEEDED/AGENT_RESOLVED → info log
+         └─ SYNC_FAILED → warning log
+   b. All errors caught → warning log, startup continues (non-blocking)
 ```
 
 ### Git post-processor: commit and push flow
@@ -131,16 +170,13 @@ query_and_consume(prompt, cwd) → None
 2. Run: git status --porcelain (from workspace cwd)
    ├─ empty output → log debug, return (no-op)
    └─ non-empty → continue
-3. Spawn: query(prompt=GIT_COMMIT_PROMPT, options=ClaudeAgentOptions(
-       model="haiku", cwd=self._cwd, permission_mode="bypassPermissions"))
+3. Spawn: query_and_consume(GIT_COMMIT_PROMPT, agent_defaults)
 4. Consume all messages from the async iterator
-5. Run: git remote get-url origin (remote detection)
-   ├─ exit code 0 (origin exists) → continue to push
-   └─ non-zero (no origin) → log debug "no origin remote configured", skip push
-6. Run: git push origin HEAD
-   ├─ success → log info "pushed workspace changes"
-   └─ failure → log warning with error details, continue
-7. Run: git status --porcelain (verification)
+5. result = smart_push(cwd, "origin", "HEAD", agent_defaults)
+   ├─ PUSHED/REBASE_SUCCEEDED/AGENT_RESOLVED → log info
+   ├─ NOTHING_TO_PUSH → log debug
+   └─ PUSH_FAILED/REBASE_FAILED → log warning, continue (commits intact)
+6. Run: git status --porcelain (verification)
    ├─ empty → log debug "all changes committed"
    └─ non-empty → log warning "uncommitted changes remain after git processor"
 ```
@@ -184,30 +220,10 @@ query_and_consume(prompt, cwd) → None
 - Pro: Simplest configuration, no risk of stopping mid-commit
 - Con: Theoretically unbounded cost in pathological cases (mitigated by Haiku's low cost)
 
-### Remote detection via `git remote get-url origin`
-
-**Choice**: Check for the `origin` remote specifically using `git remote get-url origin` (local-only, no network call).
-**Why**: More precise than `git remote` (which lists all remotes). The `origin` remote is the conventional default and matches how `ProjectsProcessor` targets submodule remotes.
-
-**Consequences**:
-- Pro: Near-instant, no network call
-- Pro: Specific to `origin` — avoids accidentally pushing to an unexpected remote
-- Con: Won't push if the user configured a remote with a different name (acceptable — `origin` is conventional)
-
-### `git push origin HEAD` instead of bare `git push`
-
-**Choice**: Use `git push origin HEAD` to push the current branch to a same-named branch on origin.
-**Why**: A bare `git push` depends on `push.default` config and upstream tracking. `origin HEAD` is explicit and works even when the user hasn't set up tracking (e.g., freshly added remote with no upstream configured).
-
-**Consequences**:
-- Pro: Works without upstream tracking configuration
-- Pro: Explicit — no ambiguity about which remote or branch
-- Con: Slightly different from `projects/git.py:push()` which uses bare `git push` (acceptable — submodules always have tracking set up from clone)
-
 ### Push is Python-side, not agent-side
 
-**Choice**: The commit agent prompt continues to prohibit `git push`. The processor handles pushing after the agent completes.
-**Why**: Keeps the agent focused on the mechanical commit task. Push is a single command that doesn't need LLM reasoning. Matches the `ProjectsProcessor` pattern where push is done by the processor, not the commit agent.
+**Choice**: The commit agent prompt continues to prohibit `git push`. The processor handles pushing after the agent completes via `smart_push`, which includes divergence detection and agent-driven conflict resolution. Push failure handling remains Python-side.
+**Why**: Keeps the agent focused on the mechanical commit task. Push divergence resolution is a separate concern handled by the shared sync module. Matches the `ProjectsProcessor` pattern where push is done by the processor, not the commit agent.
 
 **Consequences**:
 - Pro: Agent prompt stays simple and focused on commit grouping
@@ -229,7 +245,25 @@ query_and_consume(prompt, cwd) → None
 
 **Given**: Memory extraction processors wrote files to `memories/episodic/`, `memories/facts/`; origin remote is configured
 **When**: The finalize phase runs the git post-processor
-**Then**: `git status --porcelain` detects changes. Haiku agent groups by subdirectory and creates separate commits. Processor detects origin remote and pushes. Info log emitted.
+**Then**: `git status --porcelain` detects changes. Haiku agent groups by subdirectory and creates separate commits. `smart_push` fetches, detects divergence, and pushes. Info log emitted.
+
+### Scenario: Push with divergence — clean rebase
+
+**Given**: Origin remote has new commits in non-overlapping files
+**When**: `smart_push` detects divergence
+**Then**: Naive rebase succeeds cleanly. Push proceeds. Info log with REBASE_SUCCEEDED.
+
+### Scenario: Push with divergence — agent resolves conflicts
+
+**Given**: Origin remote has new commits in overlapping files
+**When**: `smart_push` detects divergence and naive rebase fails
+**Then**: Haiku agent spawned for conflict resolution. Agent resolves conflicts, rebase completes, push succeeds. Info log with AGENT_RESOLVED.
+
+### Scenario: Push with divergence — agent fails
+
+**Given**: Origin remote has conflicts the agent cannot resolve
+**When**: `smart_push` detects divergence and both naive and agent rebase fail
+**Then**: REBASE_FAILED logged as warning. Local commits preserved. Will be retried on next sync.
 
 ### Scenario: Session ends with workspace changes, no origin remote
 
@@ -243,11 +277,11 @@ query_and_consume(prompt, cwd) → None
 **When**: The finalize phase runs the git post-processor
 **Then**: `git status --porcelain` returns empty. Processor returns without spawning an agent or checking for remote.
 
-### Scenario: Push fails (non-fast-forward)
+### Scenario: Push fails after successful rebase
 
-**Given**: Origin remote has advanced since last push
-**When**: Processor attempts `git push origin HEAD` after committing
-**Then**: Push fails. Warning logged with error details. Commits remain intact locally and will be included in the next session's push.
+**Given**: Agent successfully resolved conflicts and completed rebase
+**When**: Processor attempts `git push` after rebase
+**Then**: Push fails (e.g., concurrent push). PUSH_FAILED logged as warning. Commits rebased and intact. Next sync will detect ahead state and retry.
 
 ### Scenario: Agent commits some groups but fails mid-way
 
@@ -265,10 +299,11 @@ query_and_consume(prompt, cwd) → None
 
 **Given**: Workspace has `.git`
 **When**: Bootstrap runs the git hook
-**Then**: Hook returns immediately (idempotent).
+**Then**: Init skipped (idempotent). Workspace synced with origin remote via `smart_pull`.
 
 ## Notes
 
 - The git processor establishes a second post-processor pattern: fork-based (memory) vs. fresh-query (git). Future processors can follow either pattern.
 - Agent guardrails (safe git commands only) are enforced via prompt instructions, consistent with memory processors' file scope constraints.
 - No `.gitignore` is created — all workspace content is tracked by default. Users can add their own if desired.
+- Known consolidation opportunities: `_run_git`/`_run_git_capture` duplicated between `git/sync.py` and `projects/git.py`; `_check_git_status` in processor.py vs `_has_uncommitted_changes` in sync.py are functionally identical; `AgentDefaults` construction from settings duplicated in both hooks (only 2 call sites).
