@@ -68,8 +68,8 @@ No database entities. Project state is entirely filesystem-derived — `.gitmodu
 | Layer/Component | Responsibility | Key Decisions |
 |-----------------|----------------|---------------|
 | `src/tachikoma/projects/__init__.py` | Package exports | Re-exports hook, processor, provider, server factory |
-| `src/tachikoma/projects/hooks.py` | Bootstrap hook (`projects_hook`) | Follows DES-003; runs after git hook in registration order |
-| `src/tachikoma/projects/processor.py` | `ProjectsProcessor` post-processor | Extends `PostProcessor` directly (not `PromptDrivenProcessor` — no session fork needed); session param unused; registered in `pre_finalize` phase |
+| `src/tachikoma/projects/hooks.py` | Bootstrap hook (`projects_hook`) | Follows DES-003; runs after git hook; uses `smart_pull` from sync module for submodule sync |
+| `src/tachikoma/projects/processor.py` | `ProjectsProcessor` post-processor | Extends `PostProcessor` directly (not `PromptDrivenProcessor` — no session fork needed); session param unused; registered in `pre_finalize` phase; uses `smart_push` from sync module |
 | `src/tachikoma/projects/context_provider.py` | `ProjectsContextProvider` pre-processor | Extends `ContextProvider`; always returns a `ContextResult` (never `None`) with MCP tools and project info or guidance text |
 | `src/tachikoma/projects/tools.py` | MCP tool server factory (DES-006) + extracted handlers | Factory `create_projects_server(workspace_path)` defines tools via closure; `handle_register_project()` and `handle_deregister_project()` extracted for testability |
 | `src/tachikoma/projects/git.py` | Shared async git helpers | Pure subprocess wrappers; no SDK dependency |
@@ -110,7 +110,8 @@ Output: ContextResult(
 
 ### Shared Logic
 
-- **`projects/git.py`**: Centralizes all git subprocess calls. Used by hooks (init/pull), processor (status/push), tools (add/remove), and context provider (branch detection). Avoids duplicating subprocess boilerplate and ensures consistent error handling across components.
+- **`projects/git.py`**: Centralizes submodule-specific git subprocess calls (init, checkout, branch resolution, status). Used by hooks, processor, tools, and context provider.
+- **`git/sync.py`**: Shared sync utilities (smart_push, smart_pull) used by both git and projects subsystems for divergence detection and conflict resolution. The projects hooks use `smart_pull` for startup sync; the projects processor uses `smart_push` for session-end push.
 - **`git/processor.py:query_and_consume()`**: Reused by `ProjectsProcessor` to spawn Haiku commit agents. Not duplicated — imported directly. Note: this creates a `projects` → `git` cross-subsystem import for a generic utility function. Acceptable for now; if more subsystems need fresh agent spawning, extract to a shared module.
 
 **Submodule commit prompt**: The processor uses a dedicated `SUBMODULE_COMMIT_PROMPT` constant (not the workspace-specific `GIT_COMMIT_PROMPT`). The submodule prompt instructs the Haiku agent to: (1) read recent `git log` entries to learn the project's commit style and conventions, (2) check for any commit instructions in the repo (CONTRIBUTING.md, CLAUDE.md, etc.), (3) inspect `git status` and `git diff`, (4) group changes by purpose/directory, (5) create descriptive commits following the project's own commit style. Unlike the workspace prompt, it does **not** reference workspace-specific directories (`memories/`, `context/`).
@@ -169,6 +170,7 @@ sequenceDiagram
     participant Main as __main__.py
     participant Hook as projects_hook
     participant Git as git subprocess
+    participant Sync as git/sync.py
 
     Main->>Hook: bootstrap.run()
     Hook->>Hook: Create projects/ dir (if missing)
@@ -181,8 +183,23 @@ sequenceDiagram
         Hook->>Git: git symbolic-ref refs/remotes/origin/HEAD
         Git-->>Hook: refs/remotes/origin/main
         Hook->>Git: git -C <path> checkout main
-        Hook->>Git: git -C <path> pull
-        Git-->>Hook: up to date
+        Hook->>Sync: smart_pull(path, "origin", branch, agent_defaults)
+        Sync->>Sync: check for uncommitted changes
+        alt dirty
+            Sync-->>Hook: DIRTY_SKIPPED
+        else clean
+            Sync->>Git: git fetch origin
+            Sync->>Sync: detect_divergence()
+            alt UP_TO_DATE
+                Sync-->>Hook: UP_TO_DATE
+            else BEHIND
+                Sync->>Git: git rebase origin/branch
+                Sync-->>Hook: FAST_FORWARDED
+            else DIVERGED
+                Sync->>Sync: naive rebase → agent rebase
+                Sync-->>Hook: REBASE_SUCCEEDED / AGENT_RESOLVED / SYNC_FAILED
+            end
+        end
     end
 
     Note over Hook: On failure: retry once, then log and continue
@@ -196,6 +213,7 @@ sequenceDiagram
     participant PP as ProjectsProcessor
     participant Agent as Haiku Agent (per submodule)
     participant Git as git subprocess
+    participant Sync as git/sync.py
     participant GP as GitProcessor
 
     Note over Pipeline: pre_finalize phase
@@ -209,11 +227,11 @@ sequenceDiagram
     end
 
     par For each dirty submodule (parallel)
-        PP->>Agent: query_and_consume(commit_prompt, cwd=<path>)
+        PP->>Agent: query_and_consume(commit_prompt, agent_defaults)
         Agent->>Agent: git status, git add, git commit
         Agent-->>PP: done
-        PP->>Git: git -C <path> push
-        Git-->>PP: success / failure (logged)
+        PP->>Sync: smart_push(path, "origin", "HEAD", agent_defaults)
+        Sync-->>PP: result enum (logged per result type)
     end
 
     Note over Pipeline: finalize phase
@@ -291,23 +309,23 @@ sequenceDiagram
 
 ### Scenario: Startup with Conflicting Submodule
 
-**Given**: A submodule has local unpushed commits that conflict with remote changes
-**When**: The startup pull runs and `git pull` fails with merge conflict
-**Then**: The failure is logged with details, the submodule is left in its pre-pull state, and other submodules continue syncing.
-**Rationale**: The user must resolve conflicts manually; the system shouldn't silently discard local work.
+**Given**: A submodule has local commits that conflict with remote changes
+**When**: `smart_pull` detects divergence and naive rebase fails
+**Then**: Haiku agent is spawned to resolve conflicts. If agent succeeds, submodule is synced. If agent fails, SYNC_FAILED is logged, submodule left in pre-sync state, and other submodules continue syncing.
+**Rationale**: Agent-driven resolution handles intelligent content merging. On failure, the system degrades gracefully — local work is preserved.
 
 ### Scenario: Session End with Multiple Dirty Submodules
 
 **Given**: Two submodules (`project-a`, `project-b`) have uncommitted changes; one submodule (`project-c`) is clean
 **When**: The projects post-processor runs in `pre_finalize` phase
-**Then**: `project-c` is skipped. `project-a` and `project-b` each get a Haiku agent spawned in parallel. After commits complete, each is pushed. If `project-b`'s push fails (e.g., non-fast-forward), the failure is logged and `project-a`'s push succeeds independently. Then `GitProcessor` runs in `finalize` and commits the updated submodule references.
+**Then**: `project-c` is skipped. `project-a` and `project-b` each get a Haiku agent spawned in parallel. After commits complete, each is pushed via `smart_push`. If `project-b`'s push detects divergence, naive rebase then agent resolution are attempted. If push still fails, the failure is logged and `project-a`'s push succeeds independently. Then `GitProcessor` runs in `finalize` and commits the updated submodule references.
 
-### Scenario: Push Failure (Non-Fast-Forward)
+### Scenario: Push with Divergence
 
-**Given**: A submodule's remote has advanced since last pull
-**When**: The push fails with non-fast-forward error
-**Then**: The failure is logged. The local commits remain intact and will be reconciled on the next startup pull.
-**Rationale**: Force-pushing would destroy remote work. The next startup sync will attempt to pull and merge.
+**Given**: A submodule's remote has diverged since last sync
+**When**: `smart_push` detects divergence
+**Then**: Naive rebase is attempted first. If it succeeds, push proceeds. If conflicts exist, Haiku agent resolves them. If agent also fails, REBASE_FAILED logged, local commits preserved for next sync.
+**Rationale**: Two-tier resolution handles the common case (clean rebase) cheaply and falls back to intelligent agent resolution for conflicts.
 
 ### Scenario: No Submodules Registered
 

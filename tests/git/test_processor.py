@@ -1,6 +1,7 @@
 """Tests for git post-processor.
 
 Tests for DLT-020: Git module for workspace version tracking.
+Tests updated for DLT-097: smart_push replaces bare push.
 """
 
 from datetime import UTC, datetime
@@ -19,6 +20,7 @@ from tachikoma.git.processor import (
     GitProcessor,
     query_and_consume,
 )
+from tachikoma.git.sync import PUSH_RESULT
 from tachikoma.sessions.model import Session
 
 
@@ -46,9 +48,9 @@ class TestGitProcessor:
             new_callable=AsyncMock,
         )
         mocker.patch(
-            "tachikoma.git.processor._has_remote",
+            "tachikoma.git.processor.smart_push",
             new_callable=AsyncMock,
-            return_value=False,
+            return_value=PUSH_RESULT["PUSHED"],
         )
 
         processor = GitProcessor(AgentDefaults(cwd=Path("/workspace")))
@@ -92,9 +94,9 @@ class TestGitProcessor:
             new_callable=AsyncMock,
         )
         mocker.patch(
-            "tachikoma.git.processor._has_remote",
+            "tachikoma.git.processor.smart_push",
             new_callable=AsyncMock,
-            return_value=False,
+            return_value=PUSH_RESULT["PUSHED"],
         )
 
         processor = GitProcessor(AgentDefaults(cwd=Path("/workspace")))
@@ -103,8 +105,33 @@ class TestGitProcessor:
         # Should have called status twice (before and after agent)
         assert mock_status.call_count == 2
 
-    async def test_pushes_when_remote_exists(self, mocker: MockerFixture) -> None:
-        """AC1: Processor pushes after committing when origin remote exists."""
+    async def test_calls_smart_push_after_commit(self, mocker: MockerFixture) -> None:
+        """AC: Processor calls smart_push after committing (replaces bare push)."""
+        mocker.patch(
+            "tachikoma.git.processor._check_git_status",
+            new_callable=AsyncMock,
+            side_effect=[True, False],
+        )
+        mocker.patch(
+            "tachikoma.git.processor.query_and_consume",
+            new_callable=AsyncMock,
+        )
+        mock_smart_push = mocker.patch(
+            "tachikoma.git.processor.smart_push",
+            new_callable=AsyncMock,
+            return_value=PUSH_RESULT["PUSHED"],
+        )
+
+        defaults = AgentDefaults(cwd=Path("/workspace"))
+        processor = GitProcessor(defaults)
+        await processor.process(_make_session())
+
+        mock_smart_push.assert_awaited_once_with(
+            Path("/workspace"), "origin", "HEAD", defaults,
+        )
+
+    async def test_handles_nothing_to_push(self, mocker: MockerFixture) -> None:
+        """AC: Processor handles NOTHING_TO_PUSH gracefully."""
         mocker.patch(
             "tachikoma.git.processor._check_git_status",
             new_callable=AsyncMock,
@@ -115,22 +142,16 @@ class TestGitProcessor:
             new_callable=AsyncMock,
         )
         mocker.patch(
-            "tachikoma.git.processor._has_remote",
+            "tachikoma.git.processor.smart_push",
             new_callable=AsyncMock,
-            return_value=True,
-        )
-        mock_push = mocker.patch(
-            "tachikoma.git.processor._push",
-            new_callable=AsyncMock,
+            return_value=PUSH_RESULT["NOTHING_TO_PUSH"],
         )
 
         processor = GitProcessor(AgentDefaults(cwd=Path("/workspace")))
-        await processor.process(_make_session())
+        await processor.process(_make_session())  # Should not raise
 
-        mock_push.assert_awaited_once_with(Path("/workspace"))
-
-    async def test_skips_push_when_no_remote(self, mocker: MockerFixture) -> None:
-        """AC2: Processor skips push when no origin remote is configured."""
+    async def test_handles_push_failure_gracefully(self, mocker: MockerFixture) -> None:
+        """AC: Processor handles PUSH_FAILED/REBASE_FAILED gracefully."""
         mocker.patch(
             "tachikoma.git.processor._check_git_status",
             new_callable=AsyncMock,
@@ -141,46 +162,13 @@ class TestGitProcessor:
             new_callable=AsyncMock,
         )
         mocker.patch(
-            "tachikoma.git.processor._has_remote",
+            "tachikoma.git.processor.smart_push",
             new_callable=AsyncMock,
-            return_value=False,
-        )
-        mock_push = mocker.patch(
-            "tachikoma.git.processor._push",
-            new_callable=AsyncMock,
+            return_value=PUSH_RESULT["REBASE_FAILED"],
         )
 
         processor = GitProcessor(AgentDefaults(cwd=Path("/workspace")))
-        await processor.process(_make_session())
-
-        mock_push.assert_not_awaited()
-
-    async def test_push_failure_logs_warning_and_continues(self, mocker: MockerFixture) -> None:
-        """AC3: Push failure logs warning with details; processor completes normally."""
-        mocker.patch(
-            "tachikoma.git.processor._check_git_status",
-            new_callable=AsyncMock,
-            side_effect=[True, False],
-        )
-        mocker.patch(
-            "tachikoma.git.processor.query_and_consume",
-            new_callable=AsyncMock,
-        )
-        mocker.patch(
-            "tachikoma.git.processor._has_remote",
-            new_callable=AsyncMock,
-            return_value=True,
-        )
-        mocker.patch(
-            "tachikoma.git.processor._push",
-            new_callable=AsyncMock,
-            side_effect=RuntimeError("non-fast-forward"),
-        )
-
-        processor = GitProcessor(AgentDefaults(cwd=Path("/workspace")))
-
-        # Should not raise — push failure is caught and logged
-        await processor.process(_make_session())
+        await processor.process(_make_session())  # Should not raise
 
     async def test_no_push_when_workspace_clean(self, mocker: MockerFixture) -> None:
         """AC: No push attempted when workspace is clean (early return before push)."""
@@ -189,15 +177,15 @@ class TestGitProcessor:
             new_callable=AsyncMock,
             return_value=False,
         )
-        mock_has_remote = mocker.patch(
-            "tachikoma.git.processor._has_remote",
+        mock_smart_push = mocker.patch(
+            "tachikoma.git.processor.smart_push",
             new_callable=AsyncMock,
         )
 
         processor = GitProcessor(AgentDefaults(cwd=Path("/workspace")))
         await processor.process(_make_session())
 
-        mock_has_remote.assert_not_awaited()
+        mock_smart_push.assert_not_awaited()
 
 
 class TestQueryAndConsume:

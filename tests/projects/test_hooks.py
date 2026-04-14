@@ -1,4 +1,7 @@
-"""Tests for projects bootstrap hook."""
+"""Tests for projects bootstrap hook.
+
+Tests updated for DLT-097: smart_pull replaces bare pull.
+"""
 
 import asyncio
 from pathlib import Path
@@ -6,6 +9,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from tachikoma.git.sync import SYNC_RESULT
 from tachikoma.projects.hooks import projects_hook
 
 
@@ -84,7 +88,9 @@ class TestProjectsHook:
 
         call_order: list[str] = []
 
-        async def mock_sync(workspace_path: Path, path: str) -> None:
+        async def mock_sync(
+            workspace_path: Path, path: str, agent_defaults: object,
+        ) -> None:
             call_order.append(f"{path}_start")
             await asyncio.sleep(0.05)
             call_order.append(f"{path}_end")
@@ -115,7 +121,9 @@ class TestProjectsHook:
 
         call_count = [0]
 
-        async def failing_sync(workspace_path: Path, path: str) -> None:
+        async def failing_sync(
+            workspace_path: Path, path: str, agent_defaults: object,
+        ) -> None:
             call_count[0] += 1
             if call_count[0] == 1:
                 raise RuntimeError("First attempt failed")
@@ -146,7 +154,9 @@ class TestProjectsHook:
 
         sync_results: list[str] = []
 
-        async def mock_sync(workspace_path: Path, path: str) -> None:
+        async def mock_sync(
+            workspace_path: Path, path: str, agent_defaults: object,
+        ) -> None:
             sync_results.append(path)
             if path == "projects/failing":
                 raise RuntimeError("Persistent failure")
@@ -168,10 +178,10 @@ class TestProjectsHook:
         assert "projects/failing" in sync_results
         assert "projects/success" in sync_results
 
-    async def test_checks_out_default_branch_after_pull(
+    async def test_sync_flow_uses_smart_pull(
         self, mock_context: MagicMock, tmp_path: Path
     ) -> None:
-        """Verifies the sync flow: init → resolve → checkout → pull."""
+        """Verifies the sync flow: init → resolve → checkout → smart_pull."""
         mock_context.settings_manager.settings.workspace.path = tmp_path
         (tmp_path / "projects").mkdir(parents=True, exist_ok=True)
 
@@ -203,11 +213,17 @@ class TestProjectsHook:
                 side_effect=track_call("checkout"),
             ),
             patch(
-                "tachikoma.projects.hooks.pull",
-                side_effect=track_call("pull"),
-            ),
+                "tachikoma.projects.hooks.smart_pull",
+                new_callable=AsyncMock,
+                return_value=SYNC_RESULT["FAST_FORWARDED"],
+            ) as mock_smart_pull,
         ):
             await projects_hook(mock_context)
 
-        # Verify order: pull includes fetch, so no separate fetch step
-        assert calls == ["init", "checkout", "pull"]
+        # Verify order: init, checkout, smart_pull (not plain pull)
+        assert calls == ["init", "checkout"]
+
+        # Verify smart_pull was called with the resolved branch
+        mock_smart_pull.assert_awaited_once()
+        call_args = mock_smart_pull.call_args
+        assert call_args[0][2] == "main"  # branch parameter

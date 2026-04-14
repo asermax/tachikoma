@@ -22,11 +22,11 @@ Git authentication (SSH keys, personal access tokens, etc.) is the user's respon
 | R0 | Manage external code repositories as git submodules for multi-codebase workflows |
 | R1 | Register new projects by name and git URL during conversations (MCP tool); submodule is checked out to default branch (per remote HEAD reference), not detached HEAD |
 | R2 | Store projects as git submodules within a `projects/` directory in the workspace |
-| R3 | On startup, initialize and pull all submodules in parallel (1 retry on failure, log and continue) |
-| R3.1 | After pull, check out the default branch (per remote HEAD reference, not detached HEAD) |
+| R3 | On startup, initialize and sync all submodules with divergence detection and conflict resolution in parallel (1 retry on failure, log and continue) |
+| R3.1 | After sync, check out the default branch (per remote HEAD reference, not detached HEAD) |
 | R4 | At session end, commit and push changes in each submodule before the main workspace commit |
 | R4.1 | Generate descriptive commits for submodule changes using the same approach as workspace version tracking |
-| R4.2 | Push after commit; on push failure, log and continue |
+| R4.2 | Push after commit with divergence detection and conflict resolution; on push failure, log and continue |
 | R4.3 | Process multiple submodules without sequential bottleneck |
 | R5 | Main workspace git history tracks submodule reference updates (existing GitProcessor runs after projects processor) |
 | R6 | Inject project context and MCP tools at session start via pre-processing context provider; MCP tools are always available even when no projects are registered |
@@ -52,14 +52,15 @@ During a conversation, the agent can register a new project by adding it as a gi
 On startup, the bootstrap hook creates the `projects/` directory and syncs all registered submodules in parallel.
 
 **Acceptance Criteria**:
-- Given registered submodules exist in `.gitmodules`, when the application starts, then all submodules are initialized, checked out to their default branch, and pulled to latest in parallel (1 retry per submodule on failure, log and continue)
-- Given a submodule pull fails, when the first attempt fails, then it retries once before logging the failure and continuing with other submodules
-- Given a submodule pull succeeds, when the pull completes, then the submodule is checked out to its default branch (determined by remote's HEAD reference, not left in detached HEAD)
-- Given a submodule has unpushed local commits that conflict with remote changes, when the startup pull runs, then the pull failure is logged with details about the conflict and the submodule is left in its pre-pull state
+- Given registered submodules exist in `.gitmodules`, when the application starts, then all submodules are initialized, checked out to their default branch, and synced via fetch with divergence detection and conflict resolution in parallel (1 retry per submodule on failure, log and continue)
+- Given a submodule sync fails, when the first attempt fails, then it retries once before logging the failure and continuing with other submodules
+- Given a submodule sync succeeds, when the sync completes, then the submodule is checked out to its default branch (determined by remote's HEAD reference, not left in detached HEAD)
+- Given a submodule has diverged from its remote, when sync detects divergence, then a naive rebase is attempted first; if it fails, a Haiku agent is spawned to resolve conflicts; if agent resolution also fails, the failure is logged and the submodule is left in its pre-sync state
+- Given a submodule has uncommitted changes, when startup sync runs, then sync is skipped for that submodule with a warning log
 - Given no submodules are registered, when the bootstrap hook runs, then it completes as a no-op after creating the `projects/` directory
-- Given some submodules fail to pull after retry, when the bootstrap completes, then the application starts normally with successful submodules available and failures logged
+- Given some submodules fail to sync after retry, when the bootstrap completes, then the application starts normally with successful submodules available and failures logged
 - Given the `projects/` directory already exists, when the bootstrap hook runs, then it does not recreate it (idempotent)
-- Given a submodule's remote requires authentication the user has not configured, when the pull fails, then the failure message indicates authentication failure
+- Given a submodule's remote requires authentication the user has not configured, when the sync fails, then the failure message indicates authentication failure
 
 ### Session-End Commit and Push (R4, R4.1, R4.2, R4.3, R5)
 
@@ -70,7 +71,7 @@ At session end, the projects post-processor commits and pushes changes in each d
 - Given multiple submodules have uncommitted changes, when the projects post-processor runs, then all submodules are processed in parallel
 - Given a submodule has commits to push, when commits complete, then the processor pushes to the submodule's remote
 - Given a push fails for a submodule, when the error occurs, then it is logged and other submodules continue processing normally; local commits remain intact
-- Given a submodule's remote has advanced since last pull, when push fails with non-fast-forward, then the failure is logged with a message indicating the remote has diverged (changes remain committed locally and will be reconciled on next startup pull)
+- Given a submodule's remote has diverged since last sync, when push detects divergence, then a naive rebase is attempted first; if it fails, a Haiku agent is spawned to resolve conflicts and push; if agent resolution also fails, the failure is logged and local commits remain intact (will be retried on next sync)
 - Given the projects post-processor completes (with or without errors), when the existing GitProcessor runs in the finalize phase, then the resulting submodule reference changes appear in `git status` and are committed alongside other workspace changes
 - Given no submodules have uncommitted changes, when the projects post-processor runs, then it completes as a no-op without spawning any agents
 - Given no submodules are registered, when the projects post-processor runs, then it completes as a no-op

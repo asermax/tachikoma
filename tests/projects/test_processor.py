@@ -1,4 +1,7 @@
-"""Tests for ProjectsProcessor post-processor."""
+"""Tests for ProjectsProcessor post-processor.
+
+Tests updated for DLT-097: smart_push replaces bare push.
+"""
 
 import asyncio
 from pathlib import Path
@@ -7,6 +10,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from tachikoma.agent_defaults import AgentDefaults
+from tachikoma.git.sync import PUSH_RESULT
 from tachikoma.projects.processor import SUBMODULE_COMMIT_PROMPT, ProjectsProcessor
 
 
@@ -82,14 +86,17 @@ class TestProjectsProcessor:
                 new_callable=AsyncMock,
             ),
             patch(
-                "tachikoma.projects.processor.push",
+                "tachikoma.projects.processor.smart_push",
                 new_callable=AsyncMock,
+                return_value=PUSH_RESULT["PUSHED"],
             ),
         ):
             await processor.process(mock_session)
 
-    async def test_pushes_after_commit(self, workspace_path: Path, mock_session: MagicMock) -> None:
-        """AC: Pushes to remote after successful commit."""
+    async def test_uses_smart_push_after_commit(
+        self, workspace_path: Path, mock_session: MagicMock,
+    ) -> None:
+        """AC: Uses smart_push (not bare push) after successful commit."""
         processor = ProjectsProcessor(AgentDefaults(cwd=workspace_path))
 
         with (
@@ -108,26 +115,28 @@ class TestProjectsProcessor:
                 new_callable=AsyncMock,
             ),
             patch(
-                "tachikoma.projects.processor.push",
+                "tachikoma.projects.processor.smart_push",
                 new_callable=AsyncMock,
-            ) as mock_push,
+                return_value=PUSH_RESULT["PUSHED"],
+            ) as mock_smart_push,
         ):
             await processor.process(mock_session)
 
-        mock_push.assert_awaited_once()
+        mock_smart_push.assert_awaited_once()
 
-    async def test_push_failure_logged_continues(
+    async def test_handles_push_failure_gracefully(
         self, workspace_path: Path, mock_session: MagicMock
     ) -> None:
         """AC: Push failure is logged but doesn't block other submodules."""
         processor = ProjectsProcessor(AgentDefaults(cwd=workspace_path))
 
-        push_call_count = [0]
+        push_results = [PUSH_RESULT["REBASE_FAILED"], PUSH_RESULT["PUSHED"]]
+        push_idx = [0]
 
-        async def failing_push(path: Path) -> None:
-            push_call_count[0] += 1
-            if push_call_count[0] == 1:
-                raise RuntimeError("Push failed")
+        async def mock_smart_push_fn(*args: object, **kwargs: object) -> str:
+            result = push_results[push_idx[0]]
+            push_idx[0] += 1
+            return result
 
         with (
             patch(
@@ -145,14 +154,13 @@ class TestProjectsProcessor:
                 new_callable=AsyncMock,
             ),
             patch(
-                "tachikoma.projects.processor.push",
-                side_effect=failing_push,
+                "tachikoma.projects.processor.smart_push",
+                side_effect=mock_smart_push_fn,
             ),
         ):
-            await processor.process(mock_session)
+            await processor.process(mock_session)  # Should not raise
 
-        # Both pushes should have been attempted
-        assert push_call_count[0] == 2
+        assert push_idx[0] == 2  # Both pushes attempted
 
     async def test_commit_failure_logged_no_push(
         self, workspace_path: Path, mock_session: MagicMock
@@ -177,14 +185,14 @@ class TestProjectsProcessor:
                 side_effect=RuntimeError("Commit failed"),
             ),
             patch(
-                "tachikoma.projects.processor.push",
+                "tachikoma.projects.processor.smart_push",
                 new_callable=AsyncMock,
-            ) as mock_push,
+            ) as mock_smart_push,
         ):
             await processor.process(mock_session)
 
         # Push should not have been called since commit failed
-        mock_push.assert_not_awaited()
+        mock_smart_push.assert_not_awaited()
 
     async def test_processes_submodules_in_parallel(
         self, workspace_path: Path, mock_session: MagicMock
@@ -198,9 +206,6 @@ class TestProjectsProcessor:
             call_order.append("query_start")
             await asyncio.sleep(0.05)
             call_order.append("query_end")
-
-        async def track_push(path: Path) -> None:
-            call_order.append(f"push_{path.name}")
 
         with (
             patch(
@@ -218,8 +223,9 @@ class TestProjectsProcessor:
                 side_effect=track_query_and_consume,
             ),
             patch(
-                "tachikoma.projects.processor.push",
-                side_effect=track_push,
+                "tachikoma.projects.processor.smart_push",
+                new_callable=AsyncMock,
+                return_value=PUSH_RESULT["PUSHED"],
             ),
         ):
             await processor.process(mock_session)
