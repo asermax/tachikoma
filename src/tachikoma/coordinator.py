@@ -385,7 +385,7 @@ class Coordinator:
 
                 result: BoundaryResult = await detect_boundary(
                     text,
-                    active.summary,
+                    active,
                     self._agent_defaults,
                     candidates=candidates,
                 )
@@ -623,7 +623,7 @@ class Coordinator:
             recent_sessions = await self._registry.get_recent_closed(before=now, window=window)
 
             candidates = [
-                SessionCandidate(id=s.id, summary=s.summary)
+                SessionCandidate(id=s.id, summary=s.summary, last_exchange=s.last_exchange)
                 for s in recent_sessions
                 if s.summary is not None
             ]
@@ -633,7 +633,7 @@ class Coordinator:
 
             result = await detect_boundary(
                 message,
-                _COLD_START_SUMMARY,
+                Session(id="", started_at=datetime.now(UTC), summary=_COLD_START_SUMMARY),
                 self._agent_defaults,
                 candidates=candidates,
             )
@@ -690,7 +690,7 @@ class Coordinator:
                 window=timedelta(seconds=self._session_resume_window),
             )
             return [
-                SessionCandidate(id=s.id, summary=s.summary)
+                SessionCandidate(id=s.id, summary=s.summary, last_exchange=s.last_exchange)
                 for s in recent
                 if s.summary is not None
             ]

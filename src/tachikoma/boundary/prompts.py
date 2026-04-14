@@ -28,13 +28,14 @@ A message is a NEW TOPIC only when:
 **Session Matching (when candidate sessions are provided)**
 
 If you detect a topic shift AND a list of previous session candidates is provided:
-1. Compare the new message's topic to each candidate's summary
+1. Compare the new message's topic to each candidate's summary and last assistant response (if available)
 2. If ONE candidate clearly matches the new topic (same subject matter, related domain), return its session ID
 3. If MULTIPLE candidates match, return the one with the strongest topical alignment
 4. If NO candidates match, return null for resume_session_id
 
 A candidate matches when:
 - The new message's topic is the same as or directly related to the candidate's summary
+- The last assistant response provides additional recency signal for matching
 - The user appears to be returning to a previously discussed topic
 
 **Examples:**
@@ -57,7 +58,7 @@ Respond with exactly one of these JSON objects:
 
 BOUNDARY_DETECTION_USER_PROMPT = """Current conversation summary:
 {summary}
-
+{last_exchange_section}
 New message:
 {message}
 
