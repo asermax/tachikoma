@@ -34,9 +34,7 @@ class TestLastExchangeProcessor:
 
         await processor.process(session, "Hello", "Hi there!")
 
-        mock_registry.update_last_exchange.assert_awaited_once_with(
-            session.id, "Hi there!"
-        )
+        mock_registry.update_last_exchange.assert_awaited_once_with(session.id, "Hi there!")
 
     async def test_skips_update_on_empty_response(self) -> None:
         """AC: empty response is skipped, previous value preserved."""

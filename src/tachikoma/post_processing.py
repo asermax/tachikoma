@@ -350,8 +350,7 @@ def make_bash_gate_hook(allowed_prefixes: list[str]) -> HookMatcher:
                 continue
 
             _log.warning(
-                "Bash denied by hook: command={cmd} "
-                "denied_part={part} allowed_prefixes={prefixes}",
+                "Bash denied by hook: command={cmd} denied_part={part} allowed_prefixes={prefixes}",
                 cmd=command[:80],
                 part=part[:80],
                 prefixes=allowed_prefixes,

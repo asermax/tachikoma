@@ -8,7 +8,7 @@ from pathlib import Path
 
 from loguru import logger
 
-from tachikoma.agent_defaults import AgentDefaults, merge_env
+from tachikoma.agent_defaults import AgentDefaults, agent_defaults_from_settings
 from tachikoma.bootstrap import BootstrapContext
 from tachikoma.git.sync import smart_pull
 from tachikoma.projects.git import (
@@ -52,14 +52,7 @@ async def projects_hook(ctx: BootstrapContext) -> None:
         return
 
     # Build AgentDefaults for smart_pull
-    merged_env = merge_env(
-        settings.agent.env, auto_injected={"TZ": settings.tasks.timezone},
-    )
-    agent_defaults = AgentDefaults(
-        cwd=workspace_path,
-        cli_path=settings.agent.cli_path,
-        env=merged_env,
-    )
+    agent_defaults = agent_defaults_from_settings(settings)
 
     _log.info(
         "Syncing submodules: count={count} paths={paths}",
@@ -69,8 +62,7 @@ async def projects_hook(ctx: BootstrapContext) -> None:
 
     # Sync in parallel with error isolation
     sync_tasks = [
-        _sync_submodule_with_retry(workspace_path, path, agent_defaults)
-        for path in submodule_paths
+        _sync_submodule_with_retry(workspace_path, path, agent_defaults) for path in submodule_paths
     ]
     results = await asyncio.gather(*sync_tasks, return_exceptions=True)
 
@@ -85,7 +77,9 @@ async def projects_hook(ctx: BootstrapContext) -> None:
 
 
 async def _sync_submodule_with_retry(
-    workspace_path: Path, path: str, agent_defaults: AgentDefaults,
+    workspace_path: Path,
+    path: str,
+    agent_defaults: AgentDefaults,
 ) -> None:
     """Sync a submodule with one retry on failure.
 

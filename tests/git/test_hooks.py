@@ -44,7 +44,8 @@ class TestGitHook:
         workspace_path = settings_manager.settings.workspace.path
 
         with patch(
-            "tachikoma.git.hooks._sync_workspace", new_callable=AsyncMock,
+            "tachikoma.git.hooks._sync_workspace",
+            new_callable=AsyncMock,
         ):
             await git_hook(ctx)
 
@@ -57,7 +58,8 @@ class TestGitHook:
         workspace_path = settings_manager.settings.workspace.path
 
         with patch(
-            "tachikoma.git.hooks._sync_workspace", new_callable=AsyncMock,
+            "tachikoma.git.hooks._sync_workspace",
+            new_callable=AsyncMock,
         ):
             await git_hook(ctx)
 
@@ -72,7 +74,8 @@ class TestGitHook:
         workspace_path = settings_manager.settings.workspace.path
 
         with patch(
-            "tachikoma.git.hooks._sync_workspace", new_callable=AsyncMock,
+            "tachikoma.git.hooks._sync_workspace",
+            new_callable=AsyncMock,
         ):
             await git_hook(ctx)
 
@@ -89,7 +92,8 @@ class TestGitHook:
         """AC: Hook is idempotent when .git already exists (skips init, runs sync)."""
 
         with patch(
-            "tachikoma.git.hooks._sync_workspace", new_callable=AsyncMock,
+            "tachikoma.git.hooks._sync_workspace",
+            new_callable=AsyncMock,
         ) as mock_sync:
             # Run twice
             await git_hook(ctx)
@@ -105,7 +109,8 @@ class TestGitHook:
         workspace_path = settings_manager.settings.workspace.path
 
         with patch(
-            "tachikoma.git.hooks._sync_workspace", new_callable=AsyncMock,
+            "tachikoma.git.hooks._sync_workspace",
+            new_callable=AsyncMock,
         ):
             # First run
             await git_hook(ctx)
@@ -125,7 +130,8 @@ class TestGitHook:
         workspace_path = settings_manager.settings.workspace.path
 
         with patch(
-            "tachikoma.git.hooks._sync_workspace", new_callable=AsyncMock,
+            "tachikoma.git.hooks._sync_workspace",
+            new_callable=AsyncMock,
         ):
             await git_hook(ctx)
 
@@ -138,7 +144,8 @@ class TestGitHook:
         workspace_path = settings_manager.settings.workspace.path
 
         with patch(
-            "tachikoma.git.hooks._sync_workspace", new_callable=AsyncMock,
+            "tachikoma.git.hooks._sync_workspace",
+            new_callable=AsyncMock,
         ):
             await git_hook(ctx)
 
@@ -158,7 +165,8 @@ class TestWorkspaceSync:
     ) -> None:
         """AC: Sync is called after init for newly initialized repos."""
         with patch(
-            "tachikoma.git.hooks._sync_workspace", new_callable=AsyncMock,
+            "tachikoma.git.hooks._sync_workspace",
+            new_callable=AsyncMock,
         ) as mock_sync:
             await git_hook(ctx)
 
@@ -170,7 +178,8 @@ class TestWorkspaceSync:
         """AC: Sync runs even when .git already exists."""
 
         with patch(
-            "tachikoma.git.hooks._sync_workspace", new_callable=AsyncMock,
+            "tachikoma.git.hooks._sync_workspace",
+            new_callable=AsyncMock,
         ) as mock_sync:
             # First run creates .git
             await git_hook(ctx)
@@ -187,7 +196,8 @@ class TestWorkspaceSync:
         # Mock _sync_workspace to simulate the "no origin" path
         # (it catches RuntimeError from _run_git_command internally)
         with patch(
-            "tachikoma.git.hooks._sync_workspace", new_callable=AsyncMock,
+            "tachikoma.git.hooks._sync_workspace",
+            new_callable=AsyncMock,
         ):
             await git_hook(ctx)
 
@@ -196,7 +206,8 @@ class TestWorkspaceSync:
     ) -> None:
         """AC: _sync_workspace is called with correct settings."""
         with patch(
-            "tachikoma.git.hooks._sync_workspace", new_callable=AsyncMock,
+            "tachikoma.git.hooks._sync_workspace",
+            new_callable=AsyncMock,
         ) as mock_sync:
             await git_hook(ctx)
 

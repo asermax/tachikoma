@@ -39,7 +39,7 @@ class TestGitProcessor:
     async def test_calls_query_when_workspace_dirty(self, mocker: MockerFixture) -> None:
         """AC: Processor calls query_and_consume when workspace is dirty."""
         mocker.patch(
-            "tachikoma.git.processor._check_git_status",
+            "tachikoma.git.processor.has_uncommitted_changes",
             new_callable=AsyncMock,
             side_effect=[True, False],  # First call: dirty, second call: clean
         )
@@ -68,7 +68,7 @@ class TestGitProcessor:
     async def test_no_op_when_workspace_clean(self, mocker: MockerFixture) -> None:
         """AC: Processor returns no-op when workspace is clean (no agent spawned)."""
         mocker.patch(
-            "tachikoma.git.processor._check_git_status",
+            "tachikoma.git.processor.has_uncommitted_changes",
             new_callable=AsyncMock,
             return_value=False,
         )
@@ -85,7 +85,7 @@ class TestGitProcessor:
     async def test_logs_warning_if_changes_remain(self, mocker: MockerFixture) -> None:
         """AC: Processor runs post-agent git status check and logs warning if changes remain."""
         mock_status = mocker.patch(
-            "tachikoma.git.processor._check_git_status",
+            "tachikoma.git.processor.has_uncommitted_changes",
             new_callable=AsyncMock,
             side_effect=[True, True],  # First call: dirty, second call: still dirty
         )
@@ -108,7 +108,7 @@ class TestGitProcessor:
     async def test_calls_smart_push_after_commit(self, mocker: MockerFixture) -> None:
         """AC: Processor calls smart_push after committing (replaces bare push)."""
         mocker.patch(
-            "tachikoma.git.processor._check_git_status",
+            "tachikoma.git.processor.has_uncommitted_changes",
             new_callable=AsyncMock,
             side_effect=[True, False],
         )
@@ -127,13 +127,16 @@ class TestGitProcessor:
         await processor.process(_make_session())
 
         mock_smart_push.assert_awaited_once_with(
-            Path("/workspace"), "origin", "HEAD", defaults,
+            Path("/workspace"),
+            "origin",
+            "HEAD",
+            defaults,
         )
 
     async def test_handles_nothing_to_push(self, mocker: MockerFixture) -> None:
         """AC: Processor handles NOTHING_TO_PUSH gracefully."""
         mocker.patch(
-            "tachikoma.git.processor._check_git_status",
+            "tachikoma.git.processor.has_uncommitted_changes",
             new_callable=AsyncMock,
             side_effect=[True, False],
         )
@@ -153,7 +156,7 @@ class TestGitProcessor:
     async def test_handles_push_failure_gracefully(self, mocker: MockerFixture) -> None:
         """AC: Processor handles PUSH_FAILED/REBASE_FAILED gracefully."""
         mocker.patch(
-            "tachikoma.git.processor._check_git_status",
+            "tachikoma.git.processor.has_uncommitted_changes",
             new_callable=AsyncMock,
             side_effect=[True, False],
         )
@@ -173,7 +176,7 @@ class TestGitProcessor:
     async def test_no_push_when_workspace_clean(self, mocker: MockerFixture) -> None:
         """AC: No push attempted when workspace is clean (early return before push)."""
         mocker.patch(
-            "tachikoma.git.processor._check_git_status",
+            "tachikoma.git.processor.has_uncommitted_changes",
             new_callable=AsyncMock,
             return_value=False,
         )

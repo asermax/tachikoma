@@ -3,15 +3,12 @@
 Spawns a Haiku agent to inspect and commit workspace changes after each session.
 """
 
-import asyncio
-from pathlib import Path
-
 from claude_agent_sdk import ClaudeAgentOptions
 from claude_agent_sdk.types import HookMatcher
 from loguru import logger
 
 from tachikoma.agent_defaults import AgentDefaults
-from tachikoma.git.sync import _PUSH_SUCCESS, PUSH_RESULT, smart_push
+from tachikoma.git.sync import PUSH_RESULT, PUSH_SUCCESS, has_uncommitted_changes, smart_push
 from tachikoma.post_processing import PostProcessor, build_permissions_settings, make_bash_gate_hook
 from tachikoma.sdk_query import stderr_aware_query
 from tachikoma.sessions.model import Session
@@ -168,7 +165,7 @@ class GitProcessor(PostProcessor):
         _log.info("Processor started: processor=GitProcessor")
 
         # Check if there are any uncommitted changes
-        is_dirty = await _check_git_status(self._cwd)
+        is_dirty = await has_uncommitted_changes(self._cwd)
 
         if not is_dirty:
             _log.debug("Workspace is clean, no commits needed")
@@ -189,7 +186,7 @@ class GitProcessor(PostProcessor):
         # Push to remote with divergence detection
         result = await smart_push(self._cwd, "origin", "HEAD", self._agent_defaults)
 
-        if result in _PUSH_SUCCESS:
+        if result in PUSH_SUCCESS:
             _log.info("Pushed workspace changes: result={result}", result=result)
         elif result == PUSH_RESULT["NOTHING_TO_PUSH"]:
             _log.debug("Nothing to push")
@@ -200,31 +197,8 @@ class GitProcessor(PostProcessor):
             )
 
         # Verify all changes were committed
-        still_dirty = await _check_git_status(self._cwd)
+        still_dirty = await has_uncommitted_changes(self._cwd)
         if still_dirty:
             _log.warning("Uncommitted changes remain after git processor")
 
         _log.info("Processor completed: processor=GitProcessor")
-
-
-async def _check_git_status(cwd: Path) -> bool:
-    """Check if the workspace has uncommitted changes.
-
-    Args:
-        cwd: The workspace directory.
-
-    Returns:
-        True if there are uncommitted changes, False if clean.
-    """
-    proc = await asyncio.create_subprocess_exec(
-        "git",
-        "status",
-        "--porcelain",
-        cwd=cwd,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-    )
-
-    stdout, _ = await proc.communicate()
-    return bool(stdout.strip())
-

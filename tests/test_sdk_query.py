@@ -48,6 +48,7 @@ class TestStderrAccumulator:
     def test_swallows_callback_errors(self, mocker: MockerFixture) -> None:
         """AC: R3 — callback errors silently swallowed, no propagation."""
         acc = StderrAccumulator()
+
         # Replace _lines with a list-like object that raises on append
         class FailList(list):  # noqa: SLOT000
             def append(self, item: object) -> None:
@@ -98,6 +99,7 @@ class TestStderrAwareQuery:
 
     async def test_logs_stderr_on_process_error(self, mocker: MockerFixture) -> None:
         """AC: R0 — ProcessError with stderr lines, log includes stderr= field."""
+
         async def fake_query(**kwargs: Any) -> AsyncIterator[dict[str, Any]]:
             # Simulate SDK calling stderr callback before raising
             stderr_cb = kwargs["options"].stderr
@@ -135,6 +137,7 @@ class TestStderrAwareQuery:
 
     async def test_no_stderr_field_when_buffer_empty(self, mocker: MockerFixture) -> None:
         """AC: R0 AC2 — ProcessError with no stderr, log omits stderr kwarg."""
+
         async def fake_query(**kwargs: Any) -> AsyncIterator[dict[str, Any]]:
             raise ProcessError("boom")
             yield  # type: ignore[unreachable]

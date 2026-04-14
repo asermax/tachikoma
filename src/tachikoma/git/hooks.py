@@ -8,9 +8,9 @@ from pathlib import Path
 
 from loguru import logger
 
-from tachikoma.agent_defaults import AgentDefaults, merge_env
+from tachikoma.agent_defaults import agent_defaults_from_settings
 from tachikoma.bootstrap import BootstrapContext
-from tachikoma.git.sync import SYNC_RESULT, _run_git, smart_pull
+from tachikoma.git.sync import SYNC_RESULT, run_git, smart_pull
 
 _log = logger.bind(component="git")
 
@@ -39,10 +39,10 @@ async def git_hook(ctx: BootstrapContext) -> None:
     if not git_dir.exists():
         _log.info("Initializing git repo: path={path}", path=str(workspace_path))
 
-        await _run_git("init", cwd=workspace_path)
-        await _run_git("config", "user.name", _COMMITTER_NAME, cwd=workspace_path)
-        await _run_git("config", "user.email", _COMMITTER_EMAIL, cwd=workspace_path)
-        await _run_git("commit", "--allow-empty", "-m", "Initial commit", cwd=workspace_path)
+        await run_git("init", cwd=workspace_path)
+        await run_git("config", "user.name", _COMMITTER_NAME, cwd=workspace_path)
+        await run_git("config", "user.email", _COMMITTER_EMAIL, cwd=workspace_path)
+        await run_git("commit", "--allow-empty", "-m", "Initial commit", cwd=workspace_path)
 
         _log.info("Git repo initialized successfully")
 
@@ -62,18 +62,13 @@ async def _sync_workspace(workspace_path: Path, settings) -> None:
     try:
         # Check if origin remote is configured
         try:
-            await _run_git("remote", "get-url", "origin", cwd=workspace_path)
+            await run_git("remote", "get-url", "origin", cwd=workspace_path)
         except RuntimeError:
             _log.debug("No origin remote configured, skipping sync")
             return
 
         # Build agent defaults following the same pattern as __main__.py
-        merged_env = merge_env(settings.agent.env, auto_injected={"TZ": settings.tasks.timezone})
-        agent_defaults = AgentDefaults(
-            cwd=workspace_path,
-            cli_path=settings.agent.cli_path,
-            env=merged_env,
-        )
+        agent_defaults = agent_defaults_from_settings(settings)
 
         result = await smart_pull(workspace_path, "origin", "HEAD", agent_defaults)
 

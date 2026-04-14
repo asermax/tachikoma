@@ -94,7 +94,9 @@ class TestProjectsProcessor:
             await processor.process(mock_session)
 
     async def test_uses_smart_push_after_commit(
-        self, workspace_path: Path, mock_session: MagicMock,
+        self,
+        workspace_path: Path,
+        mock_session: MagicMock,
     ) -> None:
         """AC: Uses smart_push (not bare push) after successful commit."""
         processor = ProjectsProcessor(AgentDefaults(cwd=workspace_path))

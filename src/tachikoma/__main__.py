@@ -15,7 +15,7 @@ from claude_agent_sdk import CLIConnectionError, CLINotFoundError, ProcessError
 from cyclopts import App
 from loguru import logger
 
-from tachikoma.agent_defaults import AgentDefaults, merge_env
+from tachikoma.agent_defaults import agent_defaults_from_settings
 from tachikoma.bootstrap import Bootstrap, BootstrapError
 from tachikoma.boundary import LastExchangeProcessor, SummaryProcessor
 from tachikoma.config import SettingsManager
@@ -130,20 +130,10 @@ async def run(
 
     # Build AgentDefaults: merge auto-injected, config, and hardcoded env
     try:
-        merged_env = merge_env(
-            settings.agent.env,
-            auto_injected={"TZ": settings.tasks.timezone},
-        )
+        agent_defaults = agent_defaults_from_settings(settings)
     except ValueError as e:
         print(f"Configuration error: {e}", file=sys.stderr)
         sys.exit(1)
-
-    agent_defaults = AgentDefaults(
-        cwd=settings.workspace.path,
-        cli_path=settings.agent.cli_path,
-        env=merged_env,
-        model=settings.agent.sub_agent_model,
-    )
 
     # Create and configure the session post-processing pipeline
     pipeline = PostProcessingPipeline(registry)

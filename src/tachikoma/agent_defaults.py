@@ -28,6 +28,31 @@ class AgentDefaults:
     model: str = "opus"
 
 
+def agent_defaults_from_settings(settings) -> AgentDefaults:
+    """Build AgentDefaults from application settings.
+
+    Centralizes the merge_env + AgentDefaults construction pattern used
+    across bootstrap hooks and __main__.py.
+
+    Args:
+        settings: Application settings (SettingsManager.settings).
+
+    Returns:
+        AgentDefaults with merged env and settings-derived values.
+    """
+    merged_env = merge_env(
+        settings.agent.env,
+        auto_injected={"TZ": settings.tasks.timezone},
+    )
+
+    return AgentDefaults(
+        cwd=settings.workspace.path,
+        cli_path=settings.agent.cli_path,
+        env=merged_env,
+        model=settings.agent.sub_agent_model,
+    )
+
+
 def merge_env(
     config_env: dict[str, str],
     *,

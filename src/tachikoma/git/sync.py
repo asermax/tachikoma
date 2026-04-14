@@ -53,17 +53,19 @@ SyncResult = str
 
 
 # Push results that indicate successful push (used by processors for result logging)
-_PUSH_SUCCESS = frozenset({
-    PUSH_RESULT["PUSHED"],
-    PUSH_RESULT["REBASE_SUCCEEDED"],
-    PUSH_RESULT["AGENT_RESOLVED"],
-})
+PUSH_SUCCESS = frozenset(
+    {
+        PUSH_RESULT["PUSHED"],
+        PUSH_RESULT["REBASE_SUCCEEDED"],
+        PUSH_RESULT["AGENT_RESOLVED"],
+    }
+)
 
 
 # --- Git Subprocess Helpers ---
 
 
-async def _run_git(*args: str, cwd: Path) -> None:
+async def run_git(*args: str, cwd: Path) -> None:
     """Run a git command and raise on failure.
 
     Args:
@@ -88,7 +90,7 @@ async def _run_git(*args: str, cwd: Path) -> None:
         raise RuntimeError(f"git {' '.join(args)} failed: {error_msg}")
 
 
-async def _run_git_capture(*args: str, cwd: Path) -> tuple[int, str]:
+async def run_git_capture(*args: str, cwd: Path) -> tuple[int, str]:
     """Run a git command and return exit code + stdout.
 
     Args:
@@ -110,7 +112,7 @@ async def _run_git_capture(*args: str, cwd: Path) -> tuple[int, str]:
     return proc.returncode or 0, stdout.decode().strip()
 
 
-async def _has_uncommitted_changes(cwd: Path) -> bool:
+async def has_uncommitted_changes(cwd: Path) -> bool:
     """Check if the working tree has uncommitted changes.
 
     Args:
@@ -119,7 +121,7 @@ async def _has_uncommitted_changes(cwd: Path) -> bool:
     Returns:
         True if there are uncommitted changes, False if clean.
     """
-    _, output = await _run_git_capture("status", "--porcelain", cwd=cwd)
+    _, output = await run_git_capture("status", "--porcelain", cwd=cwd)
     return bool(output)
 
 
@@ -147,7 +149,7 @@ async def _abort_stale_rebase(cwd: Path) -> bool:
     _log.warning("Stale rebase detected, aborting: path={path}", path=str(cwd))
 
     try:
-        await _run_git("rebase", "--abort", cwd=cwd)
+        await run_git("rebase", "--abort", cwd=cwd)
     except Exception as e:
         _log.warning(
             "Failed to abort stale rebase: path={path} err={err}",
@@ -162,7 +164,9 @@ async def _abort_stale_rebase(cwd: Path) -> bool:
 
 
 async def detect_divergence(
-    cwd: Path, remote: str = "origin", branch: str = "HEAD",
+    cwd: Path,
+    remote: str = "origin",
+    branch: str = "HEAD",
 ) -> DivergenceStatus:
     """Detect divergence between local and remote branches.
 
@@ -185,14 +189,22 @@ async def detect_divergence(
     remote_ref = f"{remote}/{branch}"
 
     # Is remote/branch an ancestor of HEAD? (local is at least AHEAD)
-    rc_remote_ancestor, _ = await _run_git_capture(
-        "merge-base", "--is-ancestor", remote_ref, "HEAD", cwd=cwd,
+    rc_remote_ancestor, _ = await run_git_capture(
+        "merge-base",
+        "--is-ancestor",
+        remote_ref,
+        "HEAD",
+        cwd=cwd,
     )
     remote_is_ancestor = rc_remote_ancestor == 0
 
     # Is HEAD an ancestor of remote/branch? (local is at least BEHIND)
-    rc_head_ancestor, _ = await _run_git_capture(
-        "merge-base", "--is-ancestor", "HEAD", remote_ref, cwd=cwd,
+    rc_head_ancestor, _ = await run_git_capture(
+        "merge-base",
+        "--is-ancestor",
+        "HEAD",
+        remote_ref,
+        cwd=cwd,
     )
     head_is_ancestor = rc_head_ancestor == 0
 
@@ -218,14 +230,14 @@ async def _try_naive_rebase(cwd: Path, remote_branch: str) -> bool:
     Returns:
         True if rebase succeeded cleanly, False if conflicts detected.
     """
-    rc, _ = await _run_git_capture("rebase", remote_branch, cwd=cwd)
+    rc, _ = await run_git_capture("rebase", remote_branch, cwd=cwd)
 
     if rc == 0:
         return True
 
     # Rebase failed — abort to restore pre-rebase state
     try:
-        await _run_git("rebase", "--abort", cwd=cwd)
+        await run_git("rebase", "--abort", cwd=cwd)
     except Exception as e:
         _log.warning(
             "Failed to abort rebase after conflict: path={path} err={err}",
@@ -315,7 +327,7 @@ async def _agent_rebase(cwd: Path, remote_branch: str, agent_defaults: AgentDefa
     )
 
     try:
-        await _run_git("rebase", "--abort", cwd=cwd)
+        await run_git("rebase", "--abort", cwd=cwd)
     except Exception as e:
         _log.warning(
             "Failed to abort after agent failure: path={path} err={err}",
@@ -357,7 +369,7 @@ async def smart_push(
         await _abort_stale_rebase(cwd)
 
         # Always fetch first (R8)
-        await _run_git("fetch", remote, cwd=cwd)
+        await run_git("fetch", remote, cwd=cwd)
 
         divergence = await detect_divergence(cwd, remote, branch)
 
@@ -365,7 +377,7 @@ async def smart_push(
             return PUSH_RESULT["NOTHING_TO_PUSH"]
 
         if divergence == DIVERGENCE_STATUS["AHEAD"]:
-            await _run_git("push", remote, "HEAD", cwd=cwd)
+            await run_git("push", remote, "HEAD", cwd=cwd)
             return PUSH_RESULT["PUSHED"]
 
         # DIVERGED — attempt rebase
@@ -374,7 +386,7 @@ async def smart_push(
         if await _try_naive_rebase(cwd, remote_branch):
             # Naive rebase succeeded — push
             try:
-                await _run_git("push", remote, "HEAD", cwd=cwd)
+                await run_git("push", remote, "HEAD", cwd=cwd)
                 return PUSH_RESULT["REBASE_SUCCEEDED"]
             except Exception as e:
                 _log.warning(
@@ -392,7 +404,7 @@ async def smart_push(
         if await _agent_rebase(cwd, remote_branch, agent_defaults):
             # Agent resolved — push
             try:
-                await _run_git("push", remote, "HEAD", cwd=cwd)
+                await run_git("push", remote, "HEAD", cwd=cwd)
                 return PUSH_RESULT["AGENT_RESOLVED"]
             except Exception as e:
                 _log.warning(
@@ -438,7 +450,7 @@ async def smart_pull(
     """
     try:
         # Skip sync if working tree is dirty
-        if await _has_uncommitted_changes(cwd):
+        if await has_uncommitted_changes(cwd):
             _log.warning(
                 "Working tree has uncommitted changes, skipping sync: path={path}",
                 path=str(cwd),
@@ -449,7 +461,7 @@ async def smart_pull(
         await _abort_stale_rebase(cwd)
 
         # Always fetch first (R8)
-        await _run_git("fetch", remote, cwd=cwd)
+        await run_git("fetch", remote, cwd=cwd)
 
         divergence = await detect_divergence(cwd, remote, branch)
 
@@ -460,7 +472,7 @@ async def smart_pull(
 
         if divergence == DIVERGENCE_STATUS["BEHIND"]:
             # Fast-forward via rebase
-            await _run_git("rebase", remote_branch, cwd=cwd)
+            await run_git("rebase", remote_branch, cwd=cwd)
             return SYNC_RESULT["FAST_FORWARDED"]
 
         # DIVERGED — attempt rebase

@@ -883,8 +883,13 @@ class TestPromptDrivenProcessor:
         await processor.process(session)
 
         mock_fork.assert_awaited_once_with(
-            session, prompt, defaults,
-            tools=None, allow=None, pre_tool_use_hooks=None, model=None,
+            session,
+            prompt,
+            defaults,
+            tools=None,
+            allow=None,
+            pre_tool_use_hooks=None,
+            model=None,
         )
 
     async def test_simple_subclass_inherits_process(self, mocker: MockerFixture) -> None:
@@ -962,9 +967,7 @@ class TestPromptDrivenProcessor:
         with pytest.raises(RuntimeError, match="SDK error"):
             await processor.process(session)
 
-    async def test_model_threaded_through_to_fork_and_consume(
-        self, mocker: MockerFixture
-    ) -> None:
+    async def test_model_threaded_through_to_fork_and_consume(self, mocker: MockerFixture) -> None:
         """AC: model kwarg on __init__ is threaded through to fork_and_consume."""
         mock_fork = mocker.patch(
             "tachikoma.post_processing.fork_and_consume", new_callable=AsyncMock
@@ -978,6 +981,11 @@ class TestPromptDrivenProcessor:
         await processor.process(session)
 
         mock_fork.assert_awaited_once_with(
-            session, "Test prompt", defaults,
-            tools=None, allow=None, pre_tool_use_hooks=None, model="haiku",
+            session,
+            "Test prompt",
+            defaults,
+            tools=None,
+            allow=None,
+            pre_tool_use_hooks=None,
+            model="haiku",
         )

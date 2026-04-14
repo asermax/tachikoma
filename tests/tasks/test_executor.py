@@ -609,9 +609,7 @@ class TestExecutorStderrCapture:
         assert acc.get() == "error line"
 
     @pytest.mark.asyncio
-    async def test_no_stderr_in_log_when_empty_executor(
-        self, repo: TaskRepository, mocker
-    ) -> None:
+    async def test_no_stderr_in_log_when_empty_executor(self, repo: TaskRepository, mocker) -> None:
         """AC: DLT-098 R0 — executor error with no stderr omits stderr kwarg."""
         instance = _make_instance(
             "inst-no-stderr",

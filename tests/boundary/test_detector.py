@@ -592,9 +592,7 @@ class TestDetectBoundary:
         prompt = call_kwargs[1]["prompt"]
         assert "Last assistant response" not in prompt
 
-    async def test_includes_candidate_last_exchange_in_prompt(
-        self, mocker: MockerFixture
-    ) -> None:
+    async def test_includes_candidate_last_exchange_in_prompt(self, mocker: MockerFixture) -> None:
         """AC: Candidate last_exchange is included when available (DLT-096 R4)."""
         mock_query = mocker.patch("tachikoma.boundary.detector.stderr_aware_query")
 

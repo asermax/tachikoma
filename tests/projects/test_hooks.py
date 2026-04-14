@@ -89,7 +89,9 @@ class TestProjectsHook:
         call_order: list[str] = []
 
         async def mock_sync(
-            workspace_path: Path, path: str, agent_defaults: object,
+            workspace_path: Path,
+            path: str,
+            agent_defaults: object,
         ) -> None:
             call_order.append(f"{path}_start")
             await asyncio.sleep(0.05)
@@ -122,7 +124,9 @@ class TestProjectsHook:
         call_count = [0]
 
         async def failing_sync(
-            workspace_path: Path, path: str, agent_defaults: object,
+            workspace_path: Path,
+            path: str,
+            agent_defaults: object,
         ) -> None:
             call_count[0] += 1
             if call_count[0] == 1:
@@ -155,7 +159,9 @@ class TestProjectsHook:
         sync_results: list[str] = []
 
         async def mock_sync(
-            workspace_path: Path, path: str, agent_defaults: object,
+            workspace_path: Path,
+            path: str,
+            agent_defaults: object,
         ) -> None:
             sync_results.append(path)
             if path == "projects/failing":
@@ -178,9 +184,7 @@ class TestProjectsHook:
         assert "projects/failing" in sync_results
         assert "projects/success" in sync_results
 
-    async def test_sync_flow_uses_smart_pull(
-        self, mock_context: MagicMock, tmp_path: Path
-    ) -> None:
+    async def test_sync_flow_uses_smart_pull(self, mock_context: MagicMock, tmp_path: Path) -> None:
         """Verifies the sync flow: init → resolve → checkout → smart_pull."""
         mock_context.settings_manager.settings.workspace.path = tmp_path
         (tmp_path / "projects").mkdir(parents=True, exist_ok=True)
