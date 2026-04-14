@@ -8,12 +8,13 @@ from pathlib import Path
 
 from loguru import logger
 
+from tachikoma.agent_defaults import AgentDefaults, merge_env
 from tachikoma.bootstrap import BootstrapContext
+from tachikoma.git.sync import smart_pull
 from tachikoma.projects.git import (
     checkout_branch,
     init_submodule,
     list_submodules,
-    pull,
     resolve_default_branch,
 )
 
@@ -30,7 +31,7 @@ async def projects_hook(ctx: BootstrapContext) -> None:
     1. Initialized via git submodule update --init
     2. Resolved to its default branch (from remote HEAD)
     3. Checked out to the default branch
-    4. Pulled to get latest changes (includes fetch)
+    4. Synced via smart_pull (fetch, divergence detection, rebase)
 
     Failures are logged and the hook continues with other submodules.
     Each submodule gets one retry on failure.
@@ -38,7 +39,8 @@ async def projects_hook(ctx: BootstrapContext) -> None:
     Args:
         ctx: Bootstrap context with settings manager.
     """
-    workspace_path = ctx.settings_manager.settings.workspace.path
+    settings = ctx.settings_manager.settings
+    workspace_path = settings.workspace.path
     projects_dir = workspace_path / "projects"
 
     projects_dir.mkdir(exist_ok=True)
@@ -49,6 +51,16 @@ async def projects_hook(ctx: BootstrapContext) -> None:
         _log.debug("No submodules found, skipping sync")
         return
 
+    # Build AgentDefaults for smart_pull
+    merged_env = merge_env(
+        settings.agent.env, auto_injected={"TZ": settings.tasks.timezone},
+    )
+    agent_defaults = AgentDefaults(
+        cwd=workspace_path,
+        cli_path=settings.agent.cli_path,
+        env=merged_env,
+    )
+
     _log.info(
         "Syncing submodules: count={count} paths={paths}",
         count=len(submodule_paths),
@@ -56,10 +68,11 @@ async def projects_hook(ctx: BootstrapContext) -> None:
     )
 
     # Sync in parallel with error isolation
-    results = await asyncio.gather(
-        *[_sync_submodule_with_retry(workspace_path, path) for path in submodule_paths],
-        return_exceptions=True,
-    )
+    sync_tasks = [
+        _sync_submodule_with_retry(workspace_path, path, agent_defaults)
+        for path in submodule_paths
+    ]
+    results = await asyncio.gather(*sync_tasks, return_exceptions=True)
 
     # Log failures
     for path, result in zip(submodule_paths, results, strict=True):
@@ -71,18 +84,21 @@ async def projects_hook(ctx: BootstrapContext) -> None:
             )
 
 
-async def _sync_submodule_with_retry(workspace_path: Path, path: str) -> None:
+async def _sync_submodule_with_retry(
+    workspace_path: Path, path: str, agent_defaults: AgentDefaults,
+) -> None:
     """Sync a submodule with one retry on failure.
 
     Args:
         workspace_path: The workspace root directory.
         path: The submodule path (e.g., "projects/my-app").
+        agent_defaults: Common SDK options for smart_pull conflict resolution.
 
     Raises:
         Exception: If sync fails after retry.
     """
     try:
-        await _sync_submodule(workspace_path, path)
+        await _sync_submodule(workspace_path, path, agent_defaults)
     except Exception as e:
         _log.debug(
             "Submodule sync failed, retrying: path={path} err={err}",
@@ -90,28 +106,26 @@ async def _sync_submodule_with_retry(workspace_path: Path, path: str) -> None:
             err=str(e),
         )
         # Retry once
-        await _sync_submodule(workspace_path, path)
+        await _sync_submodule(workspace_path, path, agent_defaults)
 
 
-async def _sync_submodule(workspace_path: Path, path: str) -> None:
-    """Sync a submodule: init → resolve → checkout → pull.
+async def _sync_submodule(workspace_path: Path, path: str, agent_defaults: AgentDefaults) -> None:
+    """Sync a submodule: init → resolve → checkout → smart_pull.
 
     Args:
         workspace_path: The workspace root directory.
         path: The submodule path (e.g., "projects/my-app").
+        agent_defaults: Common SDK options for smart_pull conflict resolution.
 
     Raises:
-        Exception: If any step fails.
+        Exception: If any git operation before smart_pull fails.
     """
     submodule_path = workspace_path / path
 
     await init_submodule(workspace_path, path)
     default_branch = await resolve_default_branch(submodule_path)
     await checkout_branch(submodule_path, default_branch)
-    await pull(submodule_path)
 
-    _log.debug(
-        "Submodule synced: path={path} branch={branch}",
-        path=path,
-        branch=default_branch,
-    )
+    # Smart pull with divergence detection and conflict resolution
+    result = await smart_pull(submodule_path, "origin", default_branch, agent_defaults)
+    _log.info("Submodule sync: path={path} result={result}", path=path, result=result)
