@@ -153,6 +153,60 @@ class TestStderrAwareQuery:
         # Should not have stderr in kwargs
         assert "stderr" not in call_args[1]
 
+    async def test_logs_stderr_on_rewrapped_exception(self, mocker: MockerFixture) -> None:
+        """AC1: Plain Exception (SDK re-wrapping) with stderr lines, log includes stderr= field."""
+
+        async def fake_query(**kwargs: Any) -> AsyncIterator[dict[str, Any]]:
+            stderr_cb = kwargs["options"].stderr
+            stderr_cb("real stderr line 1")
+            stderr_cb("real stderr line 2")
+            raise Exception("Check stderr output for details")
+            yield  # type: ignore[unreachable]
+
+        mocker.patch("tachikoma.sdk_query.query", side_effect=fake_query)
+        mock_log = mocker.patch("tachikoma.sdk_query._log")
+
+        with pytest.raises(Exception, match="Check stderr output for details"):
+            [msg async for msg in stderr_aware_query(prompt="test")]
+
+        mock_log.error.assert_called_once()
+        call_kwargs = mock_log.error.call_args
+        assert "stderr" in call_kwargs[1]
+        assert "real stderr line 1" in call_kwargs[1]["stderr"]
+
+    async def test_reraises_plain_exception_unchanged(self, mocker: MockerFixture) -> None:
+        """AC4: Plain Exception re-raised with same identity (not wrapped further)."""
+        original = Exception("SDK re-wrapped error")
+
+        async def fake_query(**kwargs: Any) -> AsyncIterator[dict[str, Any]]:
+            raise original
+            yield  # type: ignore[unreachable]
+
+        mocker.patch("tachikoma.sdk_query.query", side_effect=fake_query)
+        mocker.patch("tachikoma.sdk_query._log")
+
+        with pytest.raises(Exception) as exc_info:
+            [msg async for msg in stderr_aware_query(prompt="test")]
+
+        assert exc_info.value is original
+
+    async def test_no_stderr_on_plain_exception_without_stderr(self, mocker: MockerFixture) -> None:
+        """AC2: Plain Exception with no stderr, log omits stderr kwarg."""
+
+        async def fake_query(**kwargs: Any) -> AsyncIterator[dict[str, Any]]:
+            raise Exception("some error")
+            yield  # type: ignore[unreachable]
+
+        mocker.patch("tachikoma.sdk_query.query", side_effect=fake_query)
+        mock_log = mocker.patch("tachikoma.sdk_query._log")
+
+        with pytest.raises(Exception):
+            [msg async for msg in stderr_aware_query(prompt="test")]
+
+        mock_log.error.assert_called_once()
+        call_args = mock_log.error.call_args
+        assert "stderr" not in call_args[1]
+
     async def test_installs_accumulator_on_options(self, mocker: MockerFixture) -> None:
         """AC: options.stderr is set before SDK delegation."""
         captured_options: list[ClaudeAgentOptions] = []

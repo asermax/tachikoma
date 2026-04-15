@@ -11,7 +11,7 @@ See DLT-098 design for rationale.
 from collections.abc import AsyncIterable, AsyncIterator
 from typing import Any
 
-from claude_agent_sdk import ProcessError, query
+from claude_agent_sdk import query
 from claude_agent_sdk.types import ClaudeAgentOptions
 from loguru import logger
 
@@ -71,9 +71,11 @@ async def stderr_aware_query(
     """Drop-in replacement for SDK ``query()`` that logs stderr on error.
 
     Creates a ``StderrAccumulator``, installs it on ``options.stderr``, and
-    delegates to the SDK's ``query()``.  On ``ProcessError``, the accumulated
-    stderr is logged as a structured field per DES-002 and the exception is
-    re-raised unchanged.  On success, the accumulator is discarded.
+    delegates to the SDK's ``query()``.  On any ``Exception`` (including
+    ``ProcessError`` and the plain ``Exception`` the SDK raises when it
+    re-wraps transport errors), the accumulated stderr is logged as a
+    structured field per DES-002 and the exception is re-raised unchanged.
+    On success, the accumulator is discarded.
 
     Follows DES-005: all messages from the inner generator are re-yielded
     so the generator is fully consumed by the caller.
@@ -91,7 +93,7 @@ async def stderr_aware_query(
             transport=transport,
         ):
             yield message
-    except ProcessError as exc:
+    except Exception as exc:
         stderr = accumulator.get()
         if stderr is not None:
             _log.error(
