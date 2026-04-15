@@ -85,12 +85,15 @@ sequenceDiagram
             alt complete
                 Exec->>Repo: mark completed
                 Note over Exec: Agent may have called send_notification during execution
-            else not complete
-                Exec->>SDK: query(evaluator_feedback) [resume]
+            else needs_input
+                Note over Exec: Agent asked a clarifying question
+                Exec->>SDK: query(proceed-without-user message) [resume]
             else stuck/failed
                 Exec->>Repo: mark failed
                 Exec->>Notif: dispatch_notification(bus, source, error_msg, "error", instance_id)
                 Notif->>Bus: dispatch(Notification(prompt, severity="error"))
+            else continue
+                Exec->>SDK: query(evaluator_feedback) [resume]
             end
         end
     end
@@ -156,11 +159,12 @@ sequenceDiagram
    e. Executor creates `StderrAccumulator`, passes to `ClaudeAgentOptions(stderr=...)`, creates ClaudeSDKClient, calls query(prompt)
    f. Evaluator loop (max_iterations):
       i.   Consume agent response via receive_response() (per DES-005)
-      ii.  Evaluator prompt assesses: complete / continue / stuck
-      iii. If continue: call client.query(feedback) using resume
-      iv.  If complete: break loop
+      ii.  Evaluator prompt assesses workflow state via ordered checklist: stuck / complete / needs_input / continue
+      iii. If complete: break loop
            (Agent may have called send_notification during execution for success notifications)
-      v.   If stuck or max iterations: mark failed, break
+      iv.  If stuck or max iterations: mark failed, break
+      v.   If needs_input: call client.query(proceed-without-user message) — instructs the agent to proceed autonomously
+      vi.  If continue: call client.query(feedback) using resume
    g. Run adapted post-processing pipeline on the executor's session
    h. If failed: call dispatch_notification(bus, source, error_msg, "error", instance_id)
 4. Sleep until next tick
@@ -204,13 +208,14 @@ The notification system uses a standalone `tachikoma.notifications` module (not 
 
 ### Lightweight evaluator model
 
-**Choice**: Use `haiku` for the evaluator assessment.
-**Why**: The evaluator makes a simple structured assessment (complete/continue/stuck) that doesn't require a large model. Using a lightweight model reduces cost and latency for each evaluation turn.
+**Choice**: Use `haiku` for the evaluator assessment with a structured completion-signal checklist (not output quality judgment). Unlike DES-007 classification agents (which use Opus low effort for pre-processing classification), haiku is appropriate here because the evaluator runs after every agent turn (high frequency) and performs a simpler structured checklist assessment.
+**Why**: The evaluator assesses workflow state via an ordered checklist (blocking error → complete → needs_input → continue), not output quality. A lightweight model is sufficient for this structured assessment and reduces cost/latency per evaluation turn. The checklist explicitly instructs the evaluator not to judge output correctness — only whether the agent finished its workflow steps.
 
 **Consequences**:
-- Pro: Low cost per evaluation
+- Pro: Low cost per evaluation (runs after every agent turn)
 - Pro: Fast assessment turnaround
-- Con: Less nuanced assessment than a larger model
+- Pro: Structured checklist reduces evaluator ambiguity, preventing false negatives that triggered re-execution and duplicate notifications
+- Con: Less nuanced assessment than a larger model (acceptable given checklist structure)
 
 ### Agent-driven notification via MCP tool
 
@@ -262,6 +267,12 @@ The notification system uses a standalone `tachikoma.notifications` module (not 
 **When**: The evaluator detects stuck behavior
 **Then**: The instance is marked failed and `dispatch_notification()` is called with severity "error", dispatching a `Notification` event via `tachikoma.notifications`.
 
+### Scenario: Agent asks clarifying question
+
+**Given**: A background task agent that encounters an ambiguity and asks a clarifying question
+**When**: The evaluator assesses the response and returns `needs_input`
+**Then**: The executor injects a message telling the agent no user is available and to proceed with its best judgment. The agent continues execution in the next iteration.
+
 ### Scenario: Max iterations reached
 
 **Given**: A running background task at the iteration limit
@@ -276,7 +287,7 @@ The notification system uses a standalone `tachikoma.notifications` module (not 
 
 ## Notes
 
-- The evaluator uses the SDK's standalone `query()` function (not `ClaudeSDKClient`) for the assessment — it's a single-turn evaluation with no conversation continuity needed
+- The evaluator uses `stderr_aware_query()` (not `ClaudeSDKClient`) for the assessment — it's a single-turn evaluation with no conversation continuity needed. The evaluator prompt uses an ordered checklist that assesses workflow completion signals, not output quality. Four statuses: `stuck`, `complete`, `needs_input`, `continue`
 - The `on_complete` callback in `SessionTaskReady` is an async callable that marks the instance as completed in the repository — channels invoke it after successful delivery
 - Background task notifications in Telegram are routed through the coordinator pipeline (same path as session tasks), using `coordinator.enqueue()` + `_process_through_coordinator()` — this handles message splitting and prevents Telegram's 4096-char limit errors
 - The REPL channels handle notifications through the same `_task_queue` used for session tasks, with `isinstance` dispatch to `_execute_notification()` — notifications are buffered when the user is mid-conversation

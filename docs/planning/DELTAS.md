@@ -686,13 +686,6 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 **Complexity**: Medium
 **Description**: Pre-processing and post-processing pipelines spawn multiple sub-agents concurrently via `asyncio.gather()`, creating burst API load that triggers rate limits even with retry logic in place. This delta adds configurable concurrency control between sub-agent spawns within these pipelines — for example, using a semaphore or staggered dispatch — to reduce burst API usage. This complements the reactive retry mechanism by preventing unnecessary rate limit hits and reducing total API cost. Specific sequencing strategies (e.g., whether memory search waits for skill classification) should be evaluated during speccing.
 
-### DLT-139: Fix task evaluator to judge completion, not output quality
-**Status**: ✗ Defined
-**Depends on**: None
-**Priority**: 2 (High)
-**Complexity**: Easy
-**Description**: The task completion evaluator prompt currently asks the model to assess whether the output matches its expectation of a "good" result, causing false negatives when the task completed correctly but the content wasn't what the evaluator expected. A concrete consequence: when a background task sends a notification and the evaluator judges the output as insufficient, corrective feedback triggers re-execution — the agent rewrites reference files and re-sends a richer notification, producing duplicates (observed in sessions `2b19c7db` and `b90d2004`). Reframe the evaluator prompt to focus on whether the agent encountered a blocking error, finished its workflow steps, or asked a clarifying question (which is valid, not a failure) — not whether the content is "correct." This also prevents the evaluator from triggering re-execution after a notification has already been delivered.
-
 ### DLT-140: Allow send_file to accept paths outside the workspace
 **Status**: ✗ Defined
 **Depends on**: None

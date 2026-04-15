@@ -37,13 +37,15 @@ Background tasks run in fresh SDK sessions separate from the main conversation, 
 
 ### Evaluator Loop (R2, R3, R6)
 
-After each agent response, a lightweight model assesses whether the task is complete, should continue, or is stuck.
+After each agent response, a lightweight model assesses the agent's workflow state using an ordered structured checklist. The evaluator judges whether the agent finished its workflow — not whether the output content is correct or high-quality. Four statuses are possible: `complete` (workflow finished), `needs_input` (agent asked a clarifying question), `stuck` (blocking error), and `continue` (mid-workflow).
 
 **Acceptance Criteria**:
-- Given a background task agent produces a response, then the evaluator assesses whether the task is complete based on the task definition
-- Given the evaluator determines the task is not complete, then the agent receives feedback and continues working (next iteration)
+- Given a background task agent produces a response, then the evaluator assesses workflow completion using an ordered checklist: blocking error → complete → needs_input → continue
+- Given the evaluator determines the agent completed its workflow (announced completion, summarized results, or called `send_notification`), then the task instance is marked as `completed` — regardless of output quality
+- Given the evaluator detects the agent asked a clarifying question, then the executor injects a message telling the agent no user is available and to proceed with its best judgment (next iteration)
 - Given the evaluator detects the agent is stuck or looping, then the task instance is marked as `failed` and a notification is dispatched
-- Given the background task reaches the maximum iteration limit, then the evaluator forces completion assessment and marks the task as failed if not done
+- Given the evaluator determines the agent is mid-workflow, then the agent receives feedback and continues working (next iteration)
+- Given the background task reaches the maximum iteration limit, then the task is marked as failed if not done
 
 ### Notification (R4)
 
