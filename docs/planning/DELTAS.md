@@ -691,7 +691,7 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 **Depends on**: None
 **Priority**: 2 (High)
 **Complexity**: Easy
-**Description**: The task completion evaluator prompt currently asks the model to assess whether the output matches its expectation of a "good" result, causing false negatives when the task completed correctly but the content wasn't what the evaluator expected. Reframe the evaluator prompt to focus on whether the agent encountered a blocking error, finished its workflow steps, or asked a clarifying question (which is valid, not a failure) — not whether the content is "correct."
+**Description**: The task completion evaluator prompt currently asks the model to assess whether the output matches its expectation of a "good" result, causing false negatives when the task completed correctly but the content wasn't what the evaluator expected. A concrete consequence: when a background task sends a notification and the evaluator judges the output as insufficient, corrective feedback triggers re-execution — the agent rewrites reference files and re-sends a richer notification, producing duplicates (observed in sessions `2b19c7db` and `b90d2004`). Reframe the evaluator prompt to focus on whether the agent encountered a blocking error, finished its workflow steps, or asked a clarifying question (which is valid, not a failure) — not whether the content is "correct." This also prevents the evaluator from triggering re-execution after a notification has already been delivered.
 
 ### DLT-140: Allow send_file to accept paths outside the workspace
 **Status**: ✗ Defined
@@ -706,4 +706,11 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 **Priority**: 3 (Medium)
 **Complexity**: Medium
 **Description**: When a user message arrives at the coordinator during an active background task execution, signal the background task to pause so the main session receives full API attention and the task does not compete for resources. The paused task's SDK session is preserved and execution resumes automatically once the main session returns to idle. This covers the system-initiated pause triggered by user activity — distinct from task-initiated pauses where the background task itself requests user input. The pause mechanism integrates with the existing background task executor's evaluation loop: when a pause signal is received between iterations, the executor suspends the task, records the paused state in the task instance, and releases the semaphore slot. On resume, the executor reacquires a slot and continues from the preserved SDK session.
+
+### DLT-144: One-shot notification constraint for background tasks
+**Status**: ✗ Defined
+**Depends on**: None
+**Priority**: 2 (High)
+**Complexity**: Easy
+**Description**: The `send_notification` MCP tool can be called multiple times during a single background task execution, leading to duplicate notifications reaching the user — for example, the agent sends a minimal notification, then self-corrects and sends a better one. Restrict the tool to a single successful call per background task execution: once a notification is sent, subsequent calls within the same execution are rejected with a clear error message explaining why. This enforces notification finality at the tool level rather than relying on prompt guardrails alone. The constraint applies only to background task executions; interactive session notifications are unaffected.
 
