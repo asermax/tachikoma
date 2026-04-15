@@ -14,7 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Add DLT-141 delta for pausing background tasks on user activity
   ([`7b2fa84`](https://github.com/asermax/tachikoma/commit/7b2fa84b6e194b49d7e7e8c2496a61139fa35cac))
 
-- Add DLT-142 and DLT-143 deltas for session filtering and document review
+- Add DLT-142 delta for session filtering
   ([`c00a952`](https://github.com/asermax/tachikoma/commit/c00a95207f48b83e3ef8f6bb2a68cfa5863af5bc))
 
 - **sessions**: Update feature documentation for last_exchange filtering
