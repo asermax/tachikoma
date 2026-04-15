@@ -121,9 +121,9 @@ sequenceDiagram
 
 **Integration Points:**
 - Processor ↔ Pipeline: registers in default `main` phase via `pipeline.register(CoreContextProcessor(cwd))`
-- Processor ↔ SDK: `fork_and_consume(session, formatted_prompt, cwd, mcp_servers={"pending-signals": server}, model="haiku")` — standalone `query()`, independent of `ClaudeSDKClient`; uses haiku for cost efficiency (same pattern as memory processors)
+- Processor ↔ SDK: `fork_and_consume(session, formatted_prompt, cwd, mcp_servers={"pending-signals": server}, tools=..., allow=..., pre_tool_use_hooks=[UTILITY_BASH_HOOK], model="haiku")` — standalone `query()`, independent of `ClaudeSDKClient`; uses haiku for cost efficiency (same pattern as memory processors); scoped writer tier with utility-only Bash (DES-004)
 - Processor ↔ Prompt: `CONTEXT_UPDATE_PROMPT` is a template constant; `str.replace()` fills the `{pending_signals_section}` placeholder at runtime into a local `formatted_prompt` variable
-- Forked agent ↔ Context files: agent reads/writes `context/SOUL.md`, `context/USER.md`, `context/AGENTS.md` using standard Claude Code file tools
+- Forked agent ↔ Context files: agent reads/writes `context/SOUL.md`, `context/USER.md`, `context/AGENTS.md` using standard Claude Code file tools and utility Bash commands
 - Forked agent ↔ Pending signals: agent sees current signals via auto-injection in prompt; uses `add_pending_signal` (staging) and `remove_pending_signal` (cleanup) MCP tools — prompt instructs against direct file access
 - Remove tool ↔ File: rewrites file from immutable snapshot minus removed entries (not in-place editing); indices are stable across sequential removals
 - Processor ↔ Pending signals file: Python code manages auto-cleanup pre-fork and snapshot reading; MCP tools manage agent interactions during fork

@@ -45,14 +45,16 @@ Allow rules use Claude Code's permission rule syntax with absolute paths (via `a
 |------|-------|-------------|---------|
 | **Tool-less** | `tools=[]` | None needed | BoundaryDetector, SummaryProcessor |
 | **Read-only** | `Read, Glob, Grep` | Path-scoped Read + unrestricted Glob/Grep | MemoryContextProvider |
-| **Scoped writer** | `Read, Glob, Grep, Edit, Write` | Path-scoped Read/Edit/Write + unrestricted Glob/Grep | Memory processors, CoreContextProcessor |
-| **Git agent** | `Read, Glob, Grep, Bash, Edit, Write` | Unrestricted Read/Glob/Grep/Edit/Write + `Bash(git *)` + PreToolUse hook gating Bash to `git ` plus a curated set of read-only inspection prefixes (`ls `, `find `, `file `, `echo `, `date `, `cat `, `head `, `tail `, `wc `, `stat `) | GitProcessor, ProjectsProcessor |
+| **Scoped writer** | `Read, Glob, Grep, Bash, Edit, Write` | Path-scoped Read/Edit/Write + unrestricted Glob/Grep/Bash + PreToolUse hook (`UTILITY_BASH_HOOK`) gating Bash to read-only inspection prefixes (`ls `, `find `, `file `, `echo `, `date `, `cat `, `head `, `tail `, `wc `, `stat `, `cd`, `pwd`) | Memory processors, CoreContextProcessor |
+| **Git agent** | `Read, Glob, Grep, Bash, Edit, Write` | Unrestricted Read/Glob/Grep/Edit/Write + `Bash(git *)` + PreToolUse hook gating Bash to `git ` plus the same utility inspection prefixes as scoped writer | GitProcessor, ProjectsProcessor |
 
 ### Infrastructure
 
 - `abs_rule(tool, path)` — builds absolute-path permission rules using the `//` prefix (e.g., `Write(//home/user/workspace/memories/episodic/**)`). Always use this for path-scoped rules.
 - `build_permissions_settings(allow)` — serializes allow rules into the JSON format expected by `ClaudeAgentOptions.settings`.
 - `make_bash_gate_hook(allowed_prefixes)` — creates a PreToolUse `HookMatcher` that gates Bash commands by prefix. Required because `Bash(git *)` allow rules are not reliably enforced by the CLI (known upstream issue).
+- `UTILITY_BASH_PREFIXES` — shared list of read-only inspection command prefixes (`ls`, `find`, `file`, `echo`, `date`, `cat`, `head`, `tail`, `wc`, `stat`, `cd`, `pwd`). Used by scoped writer processors and composable into git agent hooks.
+- `UTILITY_BASH_HOOK` — pre-built `HookMatcher` from `make_bash_gate_hook(UTILITY_BASH_PREFIXES)`. Shared across all scoped writer processors.
 - The `dontAsk` mode is passed via `extra_args={"permission-mode": "dontAsk"}` since the Python SDK's `PermissionMode` type doesn't include it yet.
 
 ### Bash Command Enforcement
@@ -90,7 +92,7 @@ When a sub-agent runs a cheap, mechanical task (e.g. grouping files for commit, 
 
 ```python
 from tachikoma.agent_defaults import AgentDefaults
-from tachikoma.post_processing import PromptDrivenProcessor, abs_rule
+from tachikoma.post_processing import UTILITY_BASH_HOOK, PromptDrivenProcessor, abs_rule
 
 MY_PROMPT = """\
 You are a memory extraction agent...
@@ -98,7 +100,8 @@ You are a memory extraction agent...
 ## Permissions
 
 You can only access files within `$WORKSPACE/memories/episodic/`. Reads, edits, \
-and writes outside this directory will be denied.
+and writes outside this directory will be denied. For Bash, read-only inspection \
+commands (`ls`, `find`, ...) and navigation (`cd`, `pwd`) are allowed.
 """
 
 class MyProcessor(PromptDrivenProcessor):
@@ -109,15 +112,16 @@ class MyProcessor(PromptDrivenProcessor):
 
         super().__init__(
             MY_PROMPT, agent_defaults,
-            tools=["Read", "Glob", "Grep", "Edit", "Write"],
+            tools=["Read", "Glob", "Grep", "Bash", "Edit", "Write"],
             allow=[
-                abs_rule("Read", scope), "Glob", "Grep",
+                abs_rule("Read", scope), "Glob", "Grep", "Bash",
                 abs_rule("Edit", scope), abs_rule("Write", scope),
             ],
+            pre_tool_use_hooks=[UTILITY_BASH_HOOK],
         )
 ```
 
-**Why**: Explicit tool set and path scoping. The agent can only read/write within its designated directory. Glob/Grep are unrestricted (read-only, low risk). The prompt's permissions section tells the agent its boundaries upfront.
+**Why**: Explicit tool set and path scoping. The agent can only read/write within its designated directory. Glob/Grep are unrestricted (read-only, low risk). Bash is gated to utility-only commands via `UTILITY_BASH_HOOK`. The prompt's permissions section tells the agent its boundaries upfront.
 
 ### Do This — Git Agent (query_and_consume)
 
