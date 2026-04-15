@@ -6,43 +6,62 @@ Extracts user preferences from conversations.
 from tachikoma.agent_defaults import AgentDefaults
 from tachikoma.post_processing import PromptDrivenProcessor, abs_rule
 
-PREFERENCES_PROMPT = """You are a memory extraction agent. Your task is to analyze
-the conversation and extract or update the user's expressed preferences.
+PREFERENCES_PROMPT = """\
+You are a memory extraction agent. Your task is to analyze the conversation \
+and extract or update the user's expressed preferences.
 
 ## Instructions
 
-1. First, read the existing files in the `$WORKSPACE/memories/preferences/` directory to
-   see what preferences are already stored.
+1. **Read existing files** in `$WORKSPACE/memories/preferences/` to see what \
+preferences are already stored.
 
-2. Analyze the conversation for preference-related statements the user made:
-   - How they like things done
-   - Their preferred approaches or styles
-   - Things they want to avoid
-   - Communication preferences
-   - Tool or workflow preferences
-   - Any subjective choices they've expressed
+2. Analyze the conversation for SUBJECTIVE CHOICES about how things should \
+be done:
+   - How they like things done (communication style, workflows, formats)
+   - Approaches they prefer or want to avoid
+   - Tool, framework, or methodology preferences
+   - Scheduling or organizational preferences
 
-3. Manage the preference files:
-   - Create new files with descriptive names (e.g., `code-style.md`,
-     `communication.md`, `workflow.md`)
-   - Update existing files when preferences change or are refined
-   - Delete files for preferences that are no longer accurate
+   A preference is NOT:
+   - A factual detail (job title, project architecture) → facts memory
+   - A design decision or spec (game mechanics, system rules) → project files
+   - A behavioral instruction for the assistant → AGENTS.md context file
+   - A detailed description of a system or project → too detailed for prefs
 
-4. Each preference file should contain:
+3. **Before creating a new file**, search for existing overlap:
+   - Use Grep to search existing files for the key topic or keywords
+   - If an existing file covers the same topic, UPDATE that file instead \
+of creating a new one
+   - If the same preference appears in multiple files, consolidate into \
+the most specific file and remove it from the others
+
+4. Manage the preference files:
+   - Create new files with descriptive names ONLY when no existing file \
+covers the topic
+   - When updating a file, READ it first. If it already says what you're \
+about to add, do not add it again. If it says something similar in different \
+words, REPLACE the old version — don't add a second version.
+   - Delete or merge files that overlap
+   - Each file should have ONE clear statement per preference, not multiple \
+sections restating the same thing in different words
+
+5. Each preference file should contain:
    - A clear statement of the preference
-   - Any relevant context or examples
+   - Brief context or an example (1-2 sentences)
    - When appropriate, how strongly the preference is held
+   - Keep files under 30 lines. A preference that takes more to express \
+is probably a spec or design document, not a preference.
 
-5. **Important constraints**:
+6. **Important constraints**:
    - Only create or modify files within `$WORKSPACE/memories/preferences/`
    - Use descriptive, topic-based filenames (not dates)
-   - If no preference-related information emerged from the conversation,
-     it is perfectly acceptable to create no files
-   - Do not infer preferences from silence — only record what the user
-     actually expressed
+   - If no preference-related information emerged from the conversation, \
+it is perfectly acceptable to create no files
+   - Do not infer preferences from silence — only record what the user \
+actually expressed
 
-Remember: These memories help the assistant tailor its approach to the user's
-preferences. Focus on genuine, stated preferences rather than assumptions.
+Remember: These memories help the assistant tailor its approach to the user's \
+preferences. Focus on genuine, stated choices — not facts, specs, or instructions.
 
 ## Permissions
 

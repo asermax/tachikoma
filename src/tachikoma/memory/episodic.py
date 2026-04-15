@@ -6,36 +6,45 @@ Extracts date-stamped summaries of conversations from completed sessions.
 from tachikoma.agent_defaults import AgentDefaults
 from tachikoma.post_processing import PromptDrivenProcessor, abs_rule
 
-EPISODIC_PROMPT = """You are a memory extraction agent. Your task is to analyze
-the conversation that just ended and create or update episodic memory files.
+EPISODIC_PROMPT = """\
+You are a memory extraction agent. Your task is to analyze the conversation \
+that just ended and create or update the episodic memory file for today.
 
 ## Instructions
 
-1. First, read the existing files in the `$WORKSPACE/memories/episodic/` directory to see
-   what summaries already exist.
+1. **Read existing files** in `$WORKSPACE/memories/episodic/` to see what's there.
 
 2. Analyze the conversation for meaningful events, discussions, and activities.
 
-3. Create or update date-stamped files using the format `YYYY-MM-DD.md`:
-   - If a file for today's date already exists, read it and **consolidate**
-     the new information with the existing content rather than creating
-     a duplicate file
-   - Write a concise summary of what happened during this conversation
-   - Include key topics discussed, decisions made, and actions taken
+3. **Write to exactly one file per day: `YYYY-MM-DD.md`.**
+   - The ONLY valid filename is the date itself. No suffixes, no variants. \
+`2026-04-13.md` is correct. `2026-04-13-consolidated.md`, \
+`2026-04-13-final.md`, `2026-04-13-updated.md` are ALL WRONG — never \
+create files like these.
+   - If `YYYY-MM-DD.md` already exists, READ it first, then EDIT it to merge \
+the new information into the existing content. Do not create a second file.
+   - If it does not exist, create `YYYY-MM-DD.md`.
 
-4. Each memory file should contain:
-   - A brief summary of the conversation(s) for that day
-   - Key points or takeaways
-   - Any important context for future reference
+4. **Keep entries short and scannable:**
+   - One heading per session or topic, not per conversational turn
+   - 2-5 bullet points per heading capturing key outcomes
+   - Target: 30-80 lines per day, even for busy days with many sessions
+   - DO NOT include: verbatim quotes, step-by-step technical details, \
+full lists of files changed, implementation specifics, or routine activity \
+status (which activities were done/skipped — that belongs in facts)
 
-5. **Important constraints**:
+5. **Cleanup duty**: If you see files that don't match the `YYYY-MM-DD.md` \
+pattern (e.g., files with `-consolidated`, `-final`, `-updated` suffixes, or \
+empty 0-byte files), merge any useful content into the correct `YYYY-MM-DD.md` \
+file and delete the variant.
+
+6. **Important constraints**:
    - Only create or modify files within `$WORKSPACE/memories/episodic/`
-   - If the conversation was trivial or contained no meaningful information,
-     it is perfectly acceptable to create no files
-   - Do not create duplicate files for the same date — consolidate entries
+   - If the conversation was trivial or contained no meaningful information, \
+it is perfectly acceptable to create no files
 
-Remember: These memories help the assistant maintain context across sessions.
-Focus on what would be useful to remember about this conversation in the future.
+Remember: These memories help the assistant maintain context across sessions. \
+Focus on what would be useful to remember, not a transcript of what happened.
 
 ## Permissions
 

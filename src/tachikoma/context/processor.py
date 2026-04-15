@@ -48,9 +48,26 @@ conversation and update the foundational context files when appropriate.
 original numbers even after removals — the indices refer to the positions shown above.
 
 3. **Analyze the conversation** for information that should update these files:
-   - User information changes (new job, location, projects) → USER.md
-   - Personality/behavioral feedback ("be more concise") → SOUL.md
-   - Operational instruction changes ("always use pytest") → AGENTS.md
+
+   **USER.md** — Stable identity and interests. Things that stay true for \
+weeks or months:
+   - Name, location, employer, profession
+   - Broad interests and hobbies ("learning trumpet", "game development")
+   - Active project NAMES with one-line descriptions — not status, specs, or progress
+   - Communication preferences, learning style
+   DO NOT put in USER.md: project status updates, detailed specs, meeting prep, \
+daily routine logs, game mechanics, implementation details. If a section is being \
+rewritten more than once a week, it's too detailed for USER.md — that content \
+belongs in memory files (facts or preferences).
+
+   **SOUL.md** — Personality and behavioral guidelines:
+   - Tone and communication style feedback ("be more concise", "push back more")
+   - Behavioral instructions that shape the assistant's character
+
+   **AGENTS.md** — Operational instructions and workflow preferences:
+   - Tool usage patterns, CLI preferences
+   - Workflow conventions, formatting rules
+   - System-specific instructions (task scheduling, note creation patterns)
 
 4. **Classify each signal** and take action:
 
@@ -80,6 +97,12 @@ the provided `add_pending_signal` and `remove_pending_signal` tools — never ac
 the file directly
    - **Order matters**: Perform all removals before staging new signals to avoid \
 overwriting freshly-added entries
+   - **Watch file size**: USER.md should stay under ~120 lines. If it's growing \
+past that, you're including too much detail — summarize, remove stale sections, \
+or omit details that belong in facts/preferences memory instead.
+   - **Replace, don't append**: When updating a section, rewrite it cleanly \
+rather than appending new paragraphs. Each section should read as a current \
+snapshot, not a changelog.
 
 ## Pending Signals Lifecycle
 

@@ -51,13 +51,14 @@ about what works for them, suggest updates to this file.
 DEFAULT_USER_CONTENT = """\
 # About the User
 
-This file captures what you know about the user — their name, interests, preferences,
-projects, and communication style.
+This file captures stable, high-level information about the user — their identity,
+broad interests, and active projects (names and one-liners, not detailed specs or status).
 
 Start by asking the user about themselves. What should you know about them? What are
 their goals? How do they prefer to communicate? Update this file as you learn more.
 
-Over time, this becomes a living document that helps you provide personalized assistance.
+Keep it concise. Detailed project specs, meeting prep, and daily status belong in
+memory files (facts/preferences), not here.
 """
 
 DEFAULT_AGENTS_CONTENT = """\
@@ -110,18 +111,24 @@ Your foundational context lives in the workspace's `context/` directory as user-
 markdown files. You can read and edit these files directly:
 
 - **SOUL.md** (`<soul>` section below) — Your personality traits, tone, and behavioral guidelines
-- **USER.md** (`<user>` section below) — What you know about the user
+- **USER.md** (`<user>` section below) — Stable identity: who the user is, their broad interests, \
+and high-level project awareness. Not a project tracker — keep entries at the level of "what \
+projects exist" rather than detailed specs, status updates, or progress logs.
 - **AGENTS.md** (`<agents>` section below) — Operational instructions and workflow preferences
 
-Update these files when you learn something important that should persist across conversations.
+These are foundational, slow-changing documents. Update them only for durable information — \
+things that stay true for weeks or months. Detailed, conversation-specific learnings are \
+captured automatically in the `memories/` directory by the post-processing pipeline.
 
 ## Memories
 
 Past conversation learnings are stored in the `memories/` directory, organized by type:
 
-- `memories/episodic/` — Date-stamped conversation summaries
-- `memories/facts/` — Factual information (topic-named files)
-- `memories/preferences/` — User preferences (topic-named files)
+- `memories/episodic/` — High-level conversation summaries, one file per day (not transcripts)
+- `memories/facts/` — Stable reference information: personal details, key people, technical \
+decisions (not activity logs or full documents)
+- `memories/preferences/` — Subjective choices about how things should be done (not specs or \
+design documents)
 
 You can read these files for context during conversations, but do NOT write to them directly. \
 An automated post-processing pipeline extracts and manages memories after each conversation \
