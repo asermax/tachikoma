@@ -79,7 +79,7 @@ You have access to the `send_notification` tool, which delivers a message to the
 You can call `send_notification` multiple times during execution (e.g., for progress updates). Failure notifications are sent automatically — you do not need to notify on failure."""  # noqa: E501
 
 # Evaluator prompt for assessing task completion
-EVALUATOR_PROMPT_TEMPLATE = """You are a task completion evaluator. Assess whether the following background task has been completed.
+EVALUATOR_PROMPT_TEMPLATE = """You are a task completion evaluator for a background task agent. Your job is to determine whether the agent finished its workflow — NOT whether the output is good, correct, or complete enough.
 
 **Task Definition:**
 {task_prompt}
@@ -87,21 +87,21 @@ EVALUATOR_PROMPT_TEMPLATE = """You are a task completion evaluator. Assess wheth
 **Agent's Latest Response:**
 {agent_response}
 
-**Instructions:**
-1. Read the task definition and the agent's response
-2. Determine if the task is complete, needs more work, or the agent is stuck
-3. Respond with ONLY a JSON object (no other text):
+**Assessment checklist (evaluate in order, use the first match):**
 
-If the task is complete:
-{{"status": "complete", "feedback": "Brief summary of what was accomplished"}}
+1. **Blocking error**: Did the agent report an unrecoverable error, get stuck in a loop, or fail repeatedly without making progress?
+   → {{"status": "stuck", "feedback": "Description of the blocking issue"}}
 
-If the agent should continue working:
-{{"status": "continue", "feedback": "Specific guidance for what to do next"}}
+2. **Workflow complete**: Did the agent execute the requested actions and announce completion, summarize results, or produce final output? If the agent called `send_notification`, that is a strong signal of completion. Classify as complete even if the agent mentions optional follow-up actions it could take — completion announcements take precedence over hypothetical next steps. Do NOT judge whether the output content is correct, thorough, or high-quality.
+   → {{"status": "complete", "feedback": "Brief summary of what was accomplished"}}
 
-If the agent is stuck or looping:
-{{"status": "stuck", "feedback": "Description of why the agent appears stuck"}}
+3. **Clarifying question**: Did the agent ask a question and is waiting for an answer instead of proceeding?
+   → {{"status": "needs_input", "feedback": "The question the agent asked"}}
 
-Respond with ONLY the JSON object, no markdown formatting."""  # noqa: E501
+4. **Mid-workflow**: Is the agent still working — it announced next steps but hasn't executed them yet, or it's partway through a multi-step process?
+   → {{"status": "continue", "feedback": "Guidance on what to do next"}}
+
+Respond with ONLY a JSON object (no other text, no markdown formatting)."""  # noqa: E501
 
 
 async def background_task_runner(
@@ -360,6 +360,22 @@ class BackgroundTaskExecutor:
                             instance.id,
                         )
                         return
+
+                    if status == "needs_input":
+                        # Agent asked a clarifying question — no user available
+                        _log.debug(
+                            "Agent asked clarifying question for {inst_id},"
+                            " injecting proceed message",
+                            inst_id=instance.id,
+                        )
+                        proceed_message = (
+                            "You asked a question, but this is a background task"
+                            " — no user is available to respond."
+                            " Proceed with your best judgment,"
+                            " or skip this step if it's not essential."
+                        )
+                        await client.query(proceed_message)
+                        continue
 
                     # Continue: inject feedback as next turn
                     await client.query(feedback)

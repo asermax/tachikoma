@@ -548,6 +548,88 @@ class TestBackgroundTaskExecutor:
         assert "failed" in error_events[0].prompt.lower()
 
 
+    @pytest.mark.asyncio
+    async def test_needs_input_injects_proceed_message(self, repo: TaskRepository) -> None:
+        """AC2: Executor injects proceed-without-user message on needs_input status."""
+        instance = _make_instance(
+            "inst-1",
+            task_type="background",
+            status="pending",
+            prompt="Test task",
+        )
+        await repo.create_instance(instance)
+
+        settings = TaskSettings(max_iterations=3)
+        bus = EventBus()
+        bus.dispatch = AsyncMock()
+
+        executor = BackgroundTaskExecutor(
+            repository=repo,
+            settings=settings,
+            bus=bus,
+            agent_defaults=AgentDefaults(cwd=Path("/tmp")),
+            skill_registry=_mock_skill_registry(),
+            session_registry=_mock_session_registry(),
+        )
+
+        with patch("tachikoma.tasks.executor.ClaudeSDKClient") as mock_client_class:
+            mock_client = AsyncMock()
+            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_client.__aexit__ = AsyncMock(return_value=None)
+            mock_client_class.return_value = mock_client
+
+            mock_client.query = AsyncMock()
+
+            # First iteration: needs_input, second iteration: complete
+            call_count = 0
+
+            def make_response():
+                return _make_sdk_response(text="Working...")()
+
+            mock_client.receive_response = make_response
+
+            with patch("tachikoma.sdk_query.stderr_aware_query") as mock_query:
+
+                def eval_side_effect(*args, **kwargs):
+                    nonlocal call_count
+                    call_count += 1
+
+                    if call_count == 1:
+                        return _make_eval_response(
+                            '{"status": "needs_input", "feedback": "What format should I use?"}'
+                        )
+
+                    return _make_eval_response(
+                        '{"status": "complete", "feedback": "Done"}'
+                    )
+
+                mock_query.side_effect = eval_side_effect
+
+                with (
+                    patch.object(
+                        executor,
+                        "_run_preprocessing",
+                        return_value=_mock_preproc_result(),
+                    ),
+                    patch.object(executor, "_run_postprocessing", return_value=None),
+                ):
+                    await executor.execute(instance)
+
+        # Verify instance completed (second iteration returned complete)
+        updated = await repo.get_instance("inst-1")
+        assert updated is not None
+        assert updated.status == "completed"
+
+        # Verify the proceed-without-user message was injected
+        query_calls = mock_client.query.call_args_list
+
+        # First call is the initial task prompt, second is the proceed message
+        assert len(query_calls) >= 2
+        proceed_msg = query_calls[1][0][0]
+        assert "no user is available" in proceed_msg
+        assert "Proceed with your best judgment" in proceed_msg
+
+
 class TestExecutorStderrCapture:
     """Tests for DLT-098: stderr capture in executor error handler."""
 
