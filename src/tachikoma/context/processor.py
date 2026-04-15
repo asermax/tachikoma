@@ -20,6 +20,7 @@ from tachikoma.context.tools import (
     parse_pending_signals,
 )
 from tachikoma.post_processing import (
+    UTILITY_BASH_HOOK,
     PromptDrivenProcessor,
     abs_rule,
     augment_prompt_for_resumption,
@@ -151,7 +152,9 @@ for future recurrence detection rather than making premature changes.
 ## Permissions
 
 You can only access files within `context/`. Reads, edits, and writes outside \
-this directory will be denied."""
+this directory will be denied. For Bash, read-only inspection commands (`ls`, \
+`find`, `file`, `echo`, `date`, `cat`, `head`, `tail`, `wc`, `stat`) and \
+navigation (`cd`, `pwd`) are allowed — other commands will be denied."""
 
 
 def _read_pending_signals_snapshot(data_dir: Path) -> list[tuple[str, str]]:
@@ -230,16 +233,18 @@ class CoreContextProcessor(PromptDrivenProcessor):
         super().__init__(
             CONTEXT_UPDATE_PROMPT,
             agent_defaults,
-            tools=["Read", "Glob", "Grep", "Edit", "Write"],
+            tools=["Read", "Glob", "Grep", "Bash", "Edit", "Write"],
             allow=[
                 abs_rule("Read", scope),
                 "Glob",
                 "Grep",
+                "Bash",
                 abs_rule("Edit", scope),
                 abs_rule("Write", scope),
                 "mcp__pending-signals__add_pending_signal",
                 "mcp__pending-signals__remove_pending_signal",
             ],
+            pre_tool_use_hooks=[UTILITY_BASH_HOOK],
             model="haiku",
         )
         self._data_dir = agent_defaults.cwd / ".tachikoma"
@@ -293,6 +298,7 @@ class CoreContextProcessor(PromptDrivenProcessor):
             mcp_servers={"pending-signals": pending_signals_server},
             tools=self._tools,
             allow=self._allow,
+            pre_tool_use_hooks=self._pre_tool_use_hooks,
             model=self._model,
         )
 

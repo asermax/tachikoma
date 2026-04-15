@@ -4,7 +4,7 @@ Extracts date-stamped summaries of conversations from completed sessions.
 """
 
 from tachikoma.agent_defaults import AgentDefaults
-from tachikoma.post_processing import PromptDrivenProcessor, abs_rule
+from tachikoma.post_processing import UTILITY_BASH_HOOK, PromptDrivenProcessor, abs_rule
 
 EPISODIC_PROMPT = """\
 You are a memory extraction agent. Your task is to analyze the conversation \
@@ -49,7 +49,9 @@ Focus on what would be useful to remember, not a transcript of what happened.
 ## Permissions
 
 You can only access files within `$WORKSPACE/memories/episodic/`. Reads, edits, \
-and writes outside this directory will be denied."""
+and writes outside this directory will be denied. For Bash, read-only inspection \
+commands (`ls`, `find`, `file`, `echo`, `date`, `cat`, `head`, `tail`, `wc`, \
+`stat`) and navigation (`cd`, `pwd`) are allowed — other commands will be denied."""
 
 
 class EpisodicProcessor(PromptDrivenProcessor):
@@ -69,13 +71,15 @@ class EpisodicProcessor(PromptDrivenProcessor):
         super().__init__(
             EPISODIC_PROMPT,
             agent_defaults,
-            tools=["Read", "Glob", "Grep", "Edit", "Write"],
+            tools=["Read", "Glob", "Grep", "Bash", "Edit", "Write"],
             allow=[
                 abs_rule("Read", scope),
                 "Glob",
                 "Grep",
+                "Bash",
                 abs_rule("Edit", scope),
                 abs_rule("Write", scope),
             ],
+            pre_tool_use_hooks=[UTILITY_BASH_HOOK],
             model="haiku",
         )

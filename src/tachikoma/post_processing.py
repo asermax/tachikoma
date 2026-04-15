@@ -371,6 +371,26 @@ def make_bash_gate_hook(allowed_prefixes: list[str]) -> HookMatcher:
     return HookMatcher(matcher="Bash", hooks=[_hook])
 
 
+# Utility-only Bash prefixes shared by processors that need filesystem inspection
+# commands but not git. Used by memory processors and CoreContextProcessor.
+UTILITY_BASH_PREFIXES = [
+    "ls ",
+    "find ",
+    "file ",
+    "echo ",
+    "date ",
+    "cat ",
+    "head ",
+    "tail ",
+    "wc ",
+    "stat ",
+    "cd",
+    "pwd",
+]
+
+UTILITY_BASH_HOOK = make_bash_gate_hook(UTILITY_BASH_PREFIXES)
+
+
 def build_permissions_settings(allow: list[str]) -> str:
     """Build a settings JSON string with allow-only permission rules.
 

@@ -18,6 +18,7 @@ from tachikoma.context.processor import (
     _read_pending_signals_snapshot,
 )
 from tachikoma.context.tools import PENDING_SIGNALS_FILENAME, PENDING_SIGNALS_HEADER
+from tachikoma.post_processing import UTILITY_BASH_HOOK, abs_rule
 from tachikoma.sessions.model import Session
 
 
@@ -168,6 +169,37 @@ class TestCoreContextProcessor:
         assert call_args[0][2] == AgentDefaults(cwd=tmp_path)  # agent_defaults
         assert "mcp_servers" in call_args[1]
         assert "pending-signals" in call_args[1]["mcp_servers"]
+
+    async def test_passes_tools_and_hooks_to_fork_and_consume(
+        self, mocker: MockerFixture, tmp_path: Path
+    ) -> None:
+        """AC: process() passes tools, allow, pre_tool_use_hooks, and model to fork_and_consume."""
+        mock_fork = mocker.patch(
+            "tachikoma.context.processor.fork_and_consume",
+            new_callable=AsyncMock,
+        )
+        session = _make_session()
+
+        defaults = AgentDefaults(cwd=tmp_path)
+        processor = CoreContextProcessor(defaults)
+        await processor.process(session)
+
+        call_kwargs = mock_fork.call_args[1]
+        scope = tmp_path / "context"
+
+        assert call_kwargs["tools"] == ["Read", "Glob", "Grep", "Bash", "Edit", "Write"]
+        assert call_kwargs["allow"] == [
+            abs_rule("Read", scope),
+            "Glob",
+            "Grep",
+            "Bash",
+            abs_rule("Edit", scope),
+            abs_rule("Write", scope),
+            "mcp__pending-signals__add_pending_signal",
+            "mcp__pending-signals__remove_pending_signal",
+        ]
+        assert call_kwargs["pre_tool_use_hooks"] == [UTILITY_BASH_HOOK]
+        assert call_kwargs["model"] == "haiku"
 
     @pytest.mark.skip(
         reason="mtime changes happen inside mocked fork_and_consume, "

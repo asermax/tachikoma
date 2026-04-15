@@ -12,7 +12,7 @@ from pytest_mock import MockerFixture
 
 from tachikoma.agent_defaults import AgentDefaults
 from tachikoma.memory.episodic import EPISODIC_PROMPT, EpisodicProcessor
-from tachikoma.post_processing import abs_rule
+from tachikoma.post_processing import UTILITY_BASH_HOOK, abs_rule
 from tachikoma.sessions.model import Session
 
 
@@ -46,15 +46,16 @@ class TestEpisodicProcessor:
             session,
             expected_prompt,
             defaults,
-            tools=["Read", "Glob", "Grep", "Edit", "Write"],
+            tools=["Read", "Glob", "Grep", "Bash", "Edit", "Write"],
             allow=[
                 abs_rule("Read", scope),
                 "Glob",
                 "Grep",
+                "Bash",
                 abs_rule("Edit", scope),
                 abs_rule("Write", scope),
             ],
-            pre_tool_use_hooks=None,
+            pre_tool_use_hooks=[UTILITY_BASH_HOOK],
             model="haiku",
         )
 
