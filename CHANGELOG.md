@@ -7,6 +7,50 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v1.22.0 (2026-04-15)
+
+### Bug Fixes
+
+- **sdk**: Catch all SDK exceptions in stderr_aware_query
+  ([`d634b65`](https://github.com/asermax/tachikoma/commit/d634b653bddbb991962223275bd7db162e1a1170))
+
+- **tasks**: Reframe evaluator prompt to judge completion, not output quality
+  ([`d59f0e8`](https://github.com/asermax/tachikoma/commit/d59f0e87455d7661a97920c5da4bc7513e874e61))
+
+### Documentation
+
+- Remove DLT-143 collaborative document review feature
+  ([`20395a4`](https://github.com/asermax/tachikoma/commit/20395a4b6adcb36f8bd40147daf31a2b1c40870c))
+
+- Update feature specs for tightened extraction prompts
+  ([`9f9d01a`](https://github.com/asermax/tachikoma/commit/9f9d01a63c967b0b027a6c25d708f29b05cf7ce5))
+
+- **planning**: Reprioritize QoL deltas for next work round
+  ([`02e97df`](https://github.com/asermax/tachikoma/commit/02e97df67811cd379c4d504f3ab8607802dc2b0f))
+
+- **processors**: Update feature docs for utility Bash tool addition
+  ([`01b1f3d`](https://github.com/asermax/tachikoma/commit/01b1f3dfaea79cd52278e5c86bb23396c1338fe8))
+
+- **tasks**: Add DLT-144 and update DLT-139 with notification duplication context
+  ([`7ab2877`](https://github.com/asermax/tachikoma/commit/7ab2877fdcde084e2278c303f157573e90eeb907))
+
+- **tasks**: Update feature docs for evaluator completion-signal redesign
+  ([`96834c9`](https://github.com/asermax/tachikoma/commit/96834c966116ca3b087fb9940fac1a0cf82696d9))
+
+### Features
+
+- **processors**: Add utility Bash tools to memory and context processors
+  ([`6b277e1`](https://github.com/asermax/tachikoma/commit/6b277e104e52cc7e6784c53fdb4cfbf5ebde7040))
+
+### Refactoring
+
+- **context**: Use haiku model for CoreContextProcessor
+  ([`869c93e`](https://github.com/asermax/tachikoma/commit/869c93ea80b0ff267f872845e2bcf3944762345a))
+
+- **prompts**: Tighten memory extraction and context update prompts
+  ([`85d43cb`](https://github.com/asermax/tachikoma/commit/85d43cb0ab0ffeaaec2009cf74d57dc54667c031))
+
+
 ## v1.21.0 (2026-04-14)
 
 ### Documentation
