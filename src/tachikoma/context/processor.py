@@ -217,6 +217,7 @@ class CoreContextProcessor(PromptDrivenProcessor):
                 "mcp__pending-signals__add_pending_signal",
                 "mcp__pending-signals__remove_pending_signal",
             ],
+            model="haiku",
         )
         self._data_dir = agent_defaults.cwd / ".tachikoma"
 
@@ -269,6 +270,7 @@ class CoreContextProcessor(PromptDrivenProcessor):
             mcp_servers={"pending-signals": pending_signals_server},
             tools=self._tools,
             allow=self._allow,
+            model=self._model,
         )
 
         # Post-step: Compare mtimes and log changes
