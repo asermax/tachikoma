@@ -17,7 +17,7 @@ This is distinct from memory extraction: memory processors create individual fil
 | ID | Requirement |
 |----|-------------|
 | R0 | Analyze completed conversations and update foundational context files (SOUL.md, USER.md, AGENTS.md) when clear evidence warrants it |
-| R1 | Detect user information changes (new job, location, projects, etc.) and update USER.md |
+| R1 | Detect stable user identity changes (new job, location, broad interests, project names) and update USER.md — detailed specs, status updates, and meeting prep belong in memory files, not USER.md |
 | R2 | Detect personality/behavioral feedback ("be more concise", "stop using emojis") and update SOUL.md |
 | R3 | Detect operational instruction changes ("always use pytest", "prefer JSON over YAML") and update AGENTS.md |
 | R4 | Conservative update policy — only apply changes with clear conversational evidence; never overwrite correct info with noise |

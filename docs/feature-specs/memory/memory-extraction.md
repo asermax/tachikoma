@@ -40,27 +40,29 @@ Each memory processor forks the original SDK session and sends a tailored extrac
 Date-stamped summaries of conversations, consolidated over time.
 
 **Acceptance Criteria**:
-- Given a completed conversation with meaningful content, when the episodic processor runs, then the forked agent creates or updates a date-stamped file (`YYYY-MM-DD.md`) in `memories/episodic/`
-- Given multiple conversations on the same day, when the episodic processor runs, then the agent consolidates entries for that day rather than creating duplicates
+- Given a completed conversation with meaningful content, when the episodic processor runs, then the forked agent creates or updates exactly one date-stamped file (`YYYY-MM-DD.md`) in `memories/episodic/` — no variant filenames (e.g., `-consolidated`, `-final`) are permitted
+- Given multiple conversations on the same day, when the episodic processor runs, then the agent reads the existing day file and edits it to merge new content rather than creating a second file
 - Given a trivial conversation, when the episodic processor runs, then the agent may determine there's nothing meaningful to record — no file creation is forced
 
 ### Facts Memories (R3)
 
-Named files about the user and other factual information — job, projects, important dates, routines — updated when new information emerges.
+Named files about the user and other stable reference information — personal details, key people, technical decisions, routines — updated when new information emerges.
 
 **Acceptance Criteria**:
-- Given a conversation where new factual information is revealed, when the facts processor runs, then the forked agent creates or updates a topic-named file in `memories/facts/`
+- Given a conversation where new factual information is revealed, when the facts processor runs, then the forked agent searches existing files for topic overlap and updates the matching file, or creates a new topic-named file in `memories/facts/` only when no existing file covers the topic
 - Given previously stored factual information is contradicted, when the facts processor runs, then the agent updates the existing file with corrected information
 - Given a previously stored fact becomes invalid, when the facts processor runs, then the agent may delete the obsolete file
+- Given information about a topic is spread across multiple files, when the facts processor runs, then the agent merges them into a single file and deletes the redundant ones
 
 ### Preferences Memories (R3)
 
 Named files about how the user likes things — code style, communication, workflow — updated or deleted when preferences change.
 
 **Acceptance Criteria**:
-- Given a conversation where the user expresses a preference, when the preferences processor runs, then the forked agent creates or updates a topic-named file in `memories/preferences/`
+- Given a conversation where the user expresses a preference, when the preferences processor runs, then the forked agent searches existing files for topic overlap and updates the matching file, or creates a new topic-named file in `memories/preferences/` only when no existing file covers the topic
 - Given a user changes a previously expressed preference, when the preferences processor runs, then the agent updates or deletes the existing file
 - Given a conversation with no preference-related content, when the preferences processor runs, then no changes are made
+- Given the same preference appears in multiple files, when the preferences processor runs, then the agent consolidates into the most specific file and removes duplicates
 
 ### Directory Structure and Bootstrap (R4, R6)
 
