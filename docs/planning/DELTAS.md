@@ -115,7 +115,7 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 ### DLT-031: Granular processing status messages
 **Status**: ✗ Defined
 **Depends on**: None
-**Priority**: 2 (High)
+**Priority**: 1 (Critical)
 **Complexity**: Medium
 **Description**: Replace the single hardcoded "Thinking..." status message with granular, component-driven status updates during pre-processing and post-processing. Each pipeline component (context providers, post-processors, boundary detection) reports what it is currently doing via a status callback, and the coordinator forwards these as Status events to the active channel. This gives users real-time visibility into what the assistant is doing behind the scenes (e.g., "Searching memories...", "Detecting topic shift...", "Extracting memories...") instead of a generic indicator.
 
@@ -451,21 +451,21 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 ### DLT-102: Prevent stale cron from firing on create/update
 **Status**: ✗ Defined
 **Depends on**: None
-**Priority**: 3 (Medium)
+**Priority**: 1 (Critical)
 **Complexity**: Easy
 **Description**: When a cron task is created or updated with a schedule time that has already passed today, the instance generator fires it immediately to "catch up" instead of waiting for the next scheduled occurrence. For example: a task runs at 4 PM, you update it to 8 AM at noon, it fires right away instead of waiting until tomorrow. Add a `since` timestamp field to `task_definitions` that gets set to `now()` on every create and update operation. The instance generator should only create instances for cron matches that fall after the `since` timestamp, ensuring schedule changes never trigger retroactive firings. This addresses a distinct problem from preventing duplicate instances within the same cron period — here the issue is newly-created or recently-updated tasks firing retroactively for past schedule matches.
 
 ### DLT-103: Log and surface silently skipped session tasks
 **Status**: ✗ Defined
 **Depends on**: None
-**Priority**: 3 (Medium)
+**Priority**: 2 (High)
 **Complexity**: Easy
 **Description**: Session-type cron tasks are gated by an idle check — they only fire when the user has been inactive for at least the configured idle window. When the user is active, the session task scheduler silently skips the evaluation with no log entry or feedback. This means tasks like the Sunday planning routine can go weeks without ever firing, with no indication that something is wrong. Add structured logging for every skipped evaluation (task name, reason: user active, next evaluation window), and surface chronically skipped tasks through the task status queries so the user and agent can diagnose why a session task never fires. Scope is limited to logging and surfacing — force-firing and other fallback mechanisms are tracked separately.
 
 ### DLT-104: Auto-cleanup of completed one-shot tasks
 **Status**: ✗ Defined
 **Depends on**: None
-**Priority**: 2 (High)
+**Priority**: 1 (Critical)
 **Complexity**: Easy
 **Description**: One-shot tasks (reading list nudges, reminders) accumulate in the database after they fire and auto-disable — 14 accumulated in just two weeks of usage. The task system should automatically delete completed one-shot task definitions after a configurable retention period (default 24-48 hours). Only one-shot tasks whose instances have all reached terminal status (completed or failed) are eligible for cleanup. Recurring cron tasks are excluded from this cleanup regardless of instance status. The cleanup runs as part of the existing instance generator polling loop, checking for expired one-shot definitions on each evaluation cycle.
 
@@ -514,7 +514,7 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 ### DLT-111: Prevent message loss during response finalization
 **Status**: ✗ Defined
 **Depends on**: None
-**Priority**: 2 (High)
+**Priority**: 1 (Critical)
 **Complexity**: Medium
 **Description**: When the user sends a message at the exact moment a previous response is finalizing, the new message can be silently dropped. The coordinator consumes the message from the queue but loses it during the transition between completing the previous turn's post-processing and picking up the next turn. This delta eliminates that timing window so that every consumed message is guaranteed to be processed, even when it arrives during response finalization.
 
@@ -528,7 +528,7 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 ### DLT-113: Fix double 'and' in truncated tool activity summary
 **Status**: ✗ Defined
 **Depends on**: None
-**Priority**: 2 (High)
+**Priority**: 1 (Critical)
 **Complexity**: Easy
 **Description**: When a response uses many tools, the activity summary is truncated to show five items followed by "and more". Currently this produces malformed text like ", and and more" due to the joining logic not accounting for the truncation suffix. Fix the grammar so truncated summaries read naturally.
 
@@ -619,7 +619,7 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 ### DLT-127: Immediate background task execution
 **Status**: ✗ Defined
 **Depends on**: None
-**Priority**: 3 (Medium)
+**Priority**: 1 (Critical)
 **Complexity**: Easy
 **Description**: Allow firing a background task immediately on demand instead of only through scheduled triggers. Currently tasks can only be created with a cron expression or a future one-shot datetime — there is no way to say "run this task right now." Add an MCP tool or extend existing tools to trigger immediate execution of a task definition, bypassing the scheduler and running the task's prompt through the background task executor directly. Works alongside background task pause/resume — e.g., pause a long-running task, make changes, then re-run it immediately without setting up a new scheduled trigger.
 
@@ -689,7 +689,7 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 ### DLT-140: Allow send_file to accept paths outside the workspace
 **Status**: ✗ Defined
 **Depends on**: None
-**Priority**: 3 (Medium)
+**Priority**: 1 (Critical)
 **Complexity**: Easy
 **Description**: The `send_file` MCP tool rejects files outside the workspace directory, but generated exports (PDFs, rendered images) are written to `/tmp/` per convention. Users must copy files to the workspace first as a workaround. Relax the path validation to accept absolute paths to temporary and standard system directories while maintaining workspace-relative resolution for unqualified paths.
 
@@ -703,7 +703,7 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 ### DLT-144: One-shot notification constraint for background tasks
 **Status**: ✗ Defined
 **Depends on**: None
-**Priority**: 2 (High)
+**Priority**: 1 (Critical)
 **Complexity**: Easy
 **Description**: The `send_notification` MCP tool can be called multiple times during a single background task execution, leading to duplicate notifications reaching the user — for example, the agent sends a minimal notification, then self-corrects and sends a better one. Restrict the tool to a single successful call per background task execution: once a notification is sent, subsequent calls within the same execution are rejected with a clear error message explaining why. This enforces notification finality at the tool level rather than relying on prompt guardrails alone. The constraint applies only to background task executions; interactive session notifications are unaffected.
 
