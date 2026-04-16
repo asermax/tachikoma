@@ -110,7 +110,7 @@ class SkillsContextProvider(MessageContextProvider):
         #    so any tool permission request raises an exception.
         # 3. max_turns=10 — hard limit prevents runaway execution.
         options = ClaudeAgentOptions(
-            model=self._agent_defaults.model,
+            model=self._agent_defaults.searcher_model,
             effort="low",
             max_turns=10,
             tools=[],

@@ -63,6 +63,7 @@ class TestGitProcessor:
             tools=GIT_TOOLS,
             allow=GIT_ALLOW,
             pre_tool_use_hooks=[GIT_BASH_HOOK],
+            model="haiku",
         )
 
     async def test_no_op_when_workspace_clean(self, mocker: MockerFixture) -> None:
@@ -204,7 +205,7 @@ class TestQueryAndConsume:
         mock_query.return_value = fake_query()
 
         defaults = AgentDefaults(cwd=Path("/workspace"))
-        await query_and_consume("test prompt", defaults)
+        await query_and_consume("test prompt", defaults, model="haiku")
 
         mock_query.assert_called_once()
         call_kwargs = mock_query.call_args

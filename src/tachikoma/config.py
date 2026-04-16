@@ -89,9 +89,23 @@ class AgentSettings(BaseModel):
         default=None,
         description="Path to claude binary (None = SDK bundled binary)",
     )
-    sub_agent_model: str = Field(
+    searcher_model: str = Field(
         default="opus",
-        description="Model used by background sub-agents (memory, summary, boundary, skills)",
+        description=(
+            "Model for sub-agents doing smart retrieval "
+            "(memory search, skills classification, boundary detection)"
+        ),
+    )
+    processor_model: str = Field(
+        default="haiku",
+        description=(
+            "Model for sub-agents doing mechanical post-processing "
+            "(memory/context/git extraction, per-message summary, rebase resolver)"
+        ),
+    )
+    classifier_model: str = Field(
+        default="haiku",
+        description="Model for sub-agents doing rule-based classification (task evaluator)",
     )
     session_resume_window: int = Field(
         default=86400,

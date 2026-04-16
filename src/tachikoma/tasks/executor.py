@@ -502,7 +502,7 @@ class BackgroundTaskExecutor:
         )
 
         options = ClaudeAgentOptions(
-            model="haiku",  # Lightweight model for evaluation
+            model=self._agent_defaults.classifier_model,
             tools=[],
             cwd=self._agent_defaults.cwd,
             cli_path=self._agent_defaults.cli_path,

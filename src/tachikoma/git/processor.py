@@ -93,6 +93,7 @@ async def query_and_consume(
     tools: list[str] | None = None,
     allow: list[str] | None = None,
     pre_tool_use_hooks: list[HookMatcher] | None = None,
+    model: str | None = None,
 ) -> None:
     """Spawn a fresh agent and consume its response.
 
@@ -109,16 +110,20 @@ async def query_and_consume(
         tools: Optional tool restriction list for the agent.
         allow: Optional allow-only permission rules for scoping.
         pre_tool_use_hooks: Optional PreToolUse hook matchers.
+        model: Optional model alias for the spawned agent. When None
+            (the default), the SDK default model is used.
 
     Raises:
         Propagates: SDK errors from the query() call.
     """
     options = ClaudeAgentOptions(
-        model="haiku",
         cwd=agent_defaults.cwd,
         cli_path=agent_defaults.cli_path,
         env=agent_defaults.env,
     )
+
+    if model is not None:
+        options.model = model
 
     if tools is not None and allow is not None:
         options.tools = tools
@@ -181,6 +186,7 @@ class GitProcessor(PostProcessor):
             tools=GIT_TOOLS,
             allow=GIT_ALLOW,
             pre_tool_use_hooks=[GIT_BASH_HOOK],
+            model=self._agent_defaults.processor_model,
         )
 
         # Push to remote with divergence detection

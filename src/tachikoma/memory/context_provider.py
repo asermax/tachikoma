@@ -235,7 +235,7 @@ class MemoryContextProvider(MessageContextProvider):
         prompt = MEMORY_SEARCH_PROMPT.replace("$WORKSPACE", workspace).format(message=message)
 
         options = ClaudeAgentOptions(
-            model=self._agent_defaults.model,
+            model=self._agent_defaults.searcher_model,
             effort="low",
             tools=["Read", "Glob", "Grep"],
             allowed_tools=["Read", "Glob", "Grep"],
