@@ -79,7 +79,14 @@ You have access to the `send_notification` tool, which delivers a message to the
 You can call `send_notification` multiple times during execution (e.g., for progress updates). Failure notifications are sent automatically — you do not need to notify on failure."""  # noqa: E501
 
 # Evaluator prompt for assessing task completion
-EVALUATOR_PROMPT_TEMPLATE = """You are a task completion evaluator for a background task agent. Your job is to determine whether the agent finished its workflow — NOT whether the output is good, correct, or complete enough.
+EVALUATOR_PROMPT_TEMPLATE = """You are a task completion evaluator for a background task agent. Your ONLY job is to classify the agent's current workflow state using the ordered rules below.
+
+You are a CLASSIFIER, not a reviewer. You MUST NOT:
+- Perform any qualitative analysis of the agent's output (correctness, thoroughness, style, usefulness, depth of investigation)
+- Offer corrective feedback, suggestions, improvements, or opinions about what the agent should have done differently
+- Apply any criteria beyond the rules listed below
+
+The `rationale` field explains why you chose this classification and must describe observable facts about what the agent said or did — never advice, critique, or evaluation directed at the agent.
 
 **Task Definition:**
 {task_prompt}
@@ -87,19 +94,19 @@ EVALUATOR_PROMPT_TEMPLATE = """You are a task completion evaluator for a backgro
 **Agent's Latest Response:**
 {agent_response}
 
-**Assessment checklist (evaluate in order, use the first match):**
+**Classification rules (evaluate in order, use the first match):**
 
 1. **Blocking error**: Did the agent report an unrecoverable error, get stuck in a loop, or fail repeatedly without making progress?
-   → {{"status": "stuck", "feedback": "Description of the blocking issue"}}
+   → {{"status": "stuck", "rationale": "Factual description of the blocking signal the agent reported"}}
 
-2. **Workflow complete**: Did the agent execute the requested actions and announce completion, summarize results, or produce final output? If the agent called `send_notification`, that is a strong signal of completion. Classify as complete even if the agent mentions optional follow-up actions it could take — completion announcements take precedence over hypothetical next steps. Do NOT judge whether the output content is correct, thorough, or high-quality.
-   → {{"status": "complete", "feedback": "Brief summary of what was accomplished"}}
+2. **Workflow complete**: Did the agent execute the requested actions and announce completion, summarize results, or produce final output? If the agent called `send_notification`, that is a strong signal of completion. Classify as complete even if the agent mentions optional follow-up actions it could take — completion announcements take precedence over hypothetical next steps.
+   → {{"status": "complete", "rationale": "Brief factual summary of what the agent reported accomplishing"}}
 
 3. **Clarifying question**: Did the agent ask a question and is waiting for an answer instead of proceeding?
-   → {{"status": "needs_input", "feedback": "The question the agent asked"}}
+   → {{"status": "needs_input", "rationale": "The exact question the agent asked"}}
 
 4. **Mid-workflow**: Is the agent still working — it announced next steps but hasn't executed them yet, or it's partway through a multi-step process?
-   → {{"status": "continue", "feedback": "Guidance on what to do next"}}
+   → {{"status": "continue", "rationale": "What the agent said it would do next but has not yet executed"}}
 
 Respond with ONLY a JSON object (no other text, no markdown formatting)."""  # noqa: E501
 
@@ -335,7 +342,7 @@ class BackgroundTaskExecutor:
                     )
 
                     status = eval_result.get("status", "continue")
-                    feedback = eval_result.get("feedback", "")
+                    rationale = eval_result.get("rationale", "")
 
                     _log.debug(
                         "Evaluator result for {inst_id}: status={status}",
@@ -345,17 +352,17 @@ class BackgroundTaskExecutor:
 
                     if status == "complete":
                         # Agent controls notifications via send_notification tool
-                        await self._complete_instance(instance.id, feedback)
+                        await self._complete_instance(instance.id, rationale)
                         await self._run_postprocessing(sdk_session_id)
                         return
 
                     if status == "stuck":
                         # Agent is stuck
-                        await self._fail_instance(instance.id, f"Agent stuck: {feedback}")
+                        await self._fail_instance(instance.id, f"Agent stuck: {rationale}")
                         await dispatch_notification(
                             self._bus,
                             notification_source,
-                            f"Task failed: {feedback}",
+                            f"Task failed: {rationale}",
                             "error",
                             instance.id,
                         )
@@ -377,8 +384,9 @@ class BackgroundTaskExecutor:
                         await client.query(proceed_message)
                         continue
 
-                    # Continue: inject feedback as next turn
-                    await client.query(feedback)
+                    # Continue: inject the evaluator's factual rationale as the agent's
+                    # next user-turn so it can re-orient against its own stated plan.
+                    await client.query(rationale)
 
                 # Max iterations reached
                 _log.warning(
@@ -492,7 +500,7 @@ class BackgroundTaskExecutor:
             agent_response: The agent's latest response
 
         Returns:
-            Parsed evaluator result with status and feedback
+            Parsed evaluator result with status and rationale
         """
         from tachikoma.sdk_query import stderr_aware_query  # noqa: PLC0415
 
@@ -519,7 +527,7 @@ class BackgroundTaskExecutor:
                             response_text += sanitize_text(block.text)
         except Exception as exc:
             _log.warning("Evaluator query failed: {err}", err=str(exc))
-            return {"status": "continue", "feedback": "Evaluator failed, continuing"}
+            return {"status": "continue", "rationale": "Evaluator failed, continuing"}
 
         # Parse JSON response
         try:
@@ -536,7 +544,7 @@ class BackgroundTaskExecutor:
                 "Failed to parse evaluator response as JSON: {response}",
                 response=response_text[:200],
             )
-            return {"status": "continue", "feedback": "Could not parse evaluator response"}
+            return {"status": "continue", "rationale": "Could not parse evaluator response"}
 
     async def _run_postprocessing(self, sdk_session_id: str | None) -> None:
         """Run adapted post-processing pipeline (episodic + git only).

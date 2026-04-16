@@ -57,7 +57,7 @@ def _make_sdk_response(
     return _stream
 
 
-def _make_eval_response(text: str = '{"status": "complete", "feedback": "Done"}'):
+def _make_eval_response(text: str = '{"status": "complete", "rationale": "Done"}'):
     """Create a mock evaluator response async generator."""
 
     async def _stream():
@@ -385,7 +385,7 @@ class TestBackgroundTaskExecutor:
 
             with patch("tachikoma.sdk_query.stderr_aware_query") as mock_query:
                 mock_query.return_value = _make_eval_response(
-                    '{"status": "continue", "feedback": "Keep going"}',
+                    '{"status": "continue", "rationale": "Keep going"}',
                 )
 
                 with patch.object(
@@ -525,7 +525,7 @@ class TestBackgroundTaskExecutor:
 
             with patch("tachikoma.sdk_query.stderr_aware_query") as mock_query:
                 mock_query.return_value = _make_eval_response(
-                    '{"status": "stuck", "feedback": "Agent is looping"}',
+                    '{"status": "stuck", "rationale": "Agent is looping"}',
                 )
 
                 with patch.object(
@@ -596,11 +596,11 @@ class TestBackgroundTaskExecutor:
 
                     if call_count == 1:
                         return _make_eval_response(
-                            '{"status": "needs_input", "feedback": "What format should I use?"}'
+                            '{"status": "needs_input", "rationale": "What format should I use?"}'
                         )
 
                     return _make_eval_response(
-                        '{"status": "complete", "feedback": "Done"}'
+                        '{"status": "complete", "rationale": "Done"}'
                     )
 
                 mock_query.side_effect = eval_side_effect
