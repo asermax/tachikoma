@@ -268,15 +268,16 @@ sequenceDiagram
 
 ### Fresh `query()` for Submodule Commits (Not Session Fork)
 
-**Choice**: Use `query_and_consume()` (fresh agent, no session fork) to generate commits per submodule, matching the `GitProcessor` pattern.
-**Why**: Commit generation doesn't need conversation context — it only needs to inspect the submodule's git status and create descriptive commits. A fresh Haiku agent is cheaper and faster than forking the full session. This exactly matches how `GitProcessor` already works.
+**Choice**: Use `query_and_consume()` (fresh agent, no session fork) to generate commits per submodule, matching the `GitProcessor` pattern. The submodule-scoped `AgentDefaults` forwards all three role-based model fields from the parent defaults, and the call passes `model=submodule_defaults.processor_model` (default `"haiku"`, see DES-004).
+**Why**: Commit generation doesn't need conversation context — it only needs to inspect the submodule's git status and create descriptive commits. A fresh processor-tier agent is cheaper and faster than forking the full session. This exactly matches how `GitProcessor` already works.
 **Alternatives Considered**:
 - Direct `git add -A && git commit` via subprocess: Simpler but produces generic single commits without intelligent grouping by purpose.
 - Single agent for all submodules: Would process sequentially; violates R4.3 (no sequential bottleneck).
 
 **Consequences**:
 - Pro: Consistent with existing workspace commit pattern; descriptive grouped commits; parallel execution
-- Con: One Haiku agent call per dirty submodule (cost scales with number of dirty submodules)
+- Pro: Configurable via `processor_model` setting without code change
+- Con: One agent call per dirty submodule (cost scales with number of dirty submodules; mitigated by the processor tier's default cheap model)
 
 ### Default Branch via `git symbolic-ref`
 

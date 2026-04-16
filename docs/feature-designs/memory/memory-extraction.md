@@ -116,7 +116,7 @@ PreferencesProcessor(PromptDrivenProcessor) [DES-004]
 └── PREFERENCES_PROMPT: str
 ```
 
-Each processor inherits `_prompt`, `_cwd`, and the default `process()` implementation from `PromptDrivenProcessor`. All three pin `model="haiku"` at construction so their forks run on the cheapest model tier (mechanical extraction doesn't benefit from higher-tier reasoning, and smaller requests are less likely to trip upstream rate limits when the pipeline fires multiple forks concurrently on session close). For the base class, `PostProcessingPipeline`, `PostProcessor` ABC, and `fork_and_consume` models, see the [pipeline design](../agent/post-processing-pipeline.md).
+Each processor inherits `_prompt`, `_cwd`, and the default `process()` implementation from `PromptDrivenProcessor`. All three pass `model=agent_defaults.processor_model` at construction so their forks run on the configured mechanical-work model tier (default `"haiku"`). Mechanical extraction doesn't benefit from higher-tier reasoning, and smaller requests are less likely to trip upstream rate limits when the pipeline fires multiple forks concurrently on session close. The `processor_model` setting is shared across all post-processors (see DES-004 for the role taxonomy). For the base class, `PostProcessingPipeline`, `PostProcessor` ABC, and `fork_and_consume` models, see the [pipeline design](../agent/post-processing-pipeline.md).
 
 ## Data Flow
 
