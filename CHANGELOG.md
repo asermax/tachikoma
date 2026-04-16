@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v1.23.0 (2026-04-16)
+
+### Features
+
+- **post-processing**: Add grep to utility bash prefixes for sub-agents
+  ([`27fa383`](https://github.com/asermax/tachikoma/commit/27fa383ebc3497a1de58a339b36cedfab9aa2271))
+
+
 ## v1.22.1 (2026-04-16)
 
 ### Bug Fixes
