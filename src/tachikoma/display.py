@@ -155,10 +155,11 @@ def summarize_tool_activity(
                     # Unknown tool fallback
                     phrases.append(f"used {format_tool_name(tool_name)}")
 
-    # Cap at 5 phrases + "and more"
+    # Cap at 5 phrases + truncation sentinel.
+    # Sentinel is bare "more"; the Oxford-comma join below supplies the ", and".
     if len(phrases) > 5:
         phrases = phrases[:5]
-        phrases.append("and more")
+        phrases.append("more")
 
     # Join phrases: 1 item → as-is; 2 items → "A and B"; 3+ → "A, B, and C"
     if len(phrases) == 1:

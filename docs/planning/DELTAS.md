@@ -518,13 +518,6 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 **Complexity**: Medium
 **Description**: When a background task completes and triggers a notification while the user is in an active conversation, the notification is currently injected as a steering message into the ongoing exchange instead of being held for later delivery. Notifications should never interrupt or steer the current conversation — they must always be delivered as a separate message turn. Each notification carries a priority level that governs two timing parameters: how long the conversation must be idle before the notification is delivered, and how long the notification can be held before being force-delivered regardless of activity. Higher-priority notifications tolerate shorter idle windows and have shorter hold periods; lower-priority notifications wait longer for natural pauses and can be buffered indefinitely. This ensures urgent results reach the user quickly while routine updates wait for a natural break.
 
-### DLT-113: Fix double 'and' in truncated tool activity summary
-**Status**: ✗ Defined
-**Depends on**: None
-**Priority**: 1 (Critical)
-**Complexity**: Easy
-**Description**: When a response uses many tools, the activity summary is truncated to show five items followed by "and more". Currently this produces malformed text like ", and and more" due to the joining logic not accounting for the truncation suffix. Fix the grammar so truncated summaries read naturally.
-
 ### DLT-115: Run and monitor detached shell commands
 **Status**: ✗ Defined
 **Depends on**: None

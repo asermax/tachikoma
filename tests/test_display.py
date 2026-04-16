@@ -162,7 +162,7 @@ class TestSummarizeMultipleTools:
         assert result == "First, second, and reading a.py"
 
     def test_more_than_five_groups_capped(self) -> None:
-        """AC: >5 groups capped with 'and more'."""
+        """AC: >5 groups capped with 'and more' (no duplicated 'and')."""
         activities = [
             ToolActivity(tool_name="Read", tool_input={"file_path": "/src/a.py"}),
             ToolActivity(tool_name="Grep", tool_input={"pattern": "p1"}),
@@ -172,10 +172,25 @@ class TestSummarizeMultipleTools:
             ToolActivity(tool_name="Write", tool_input={"file_path": "/src/f.py"}),
             ToolActivity(tool_name="ToolSearch", tool_input={"query": "q"}),
         ]
-        result = summarize_tool_activity(activities)
-        # Should have first 5 + "and more"
-        assert "and more" in result
-        assert "searching tools" not in result.lower()  # 7th tool not included
+
+        # Exact match catches the prior ", and and more" bug — the substring
+        # check "and more" passed on buggy output too, which is why it didn't.
+        assert summarize_tool_activity(activities) == (
+            "Reading a.py, searching for 'p1', globbing '*.py', run, editing e.py, and more"
+        )
+
+    def test_exactly_six_groups_truncates(self) -> None:
+        """AC: Truncation threshold is >5, so 6 distinct groups activates it."""
+        activities = [
+            ToolActivity(tool_name="Read", tool_input={"file_path": "/src/a.py"}),
+            ToolActivity(tool_name="Grep", tool_input={"pattern": "p1"}),
+            ToolActivity(tool_name="Glob", tool_input={"pattern": "*.py"}),
+            ToolActivity(tool_name="Bash", tool_input={"description": "Run"}),
+            ToolActivity(tool_name="Edit", tool_input={"file_path": "/src/e.py"}),
+            ToolActivity(tool_name="Write", tool_input={"file_path": "/src/f.py"}),
+        ]
+
+        assert summarize_tool_activity(activities).endswith(", and more")
 
 
 class TestSummarizeBashDescription:
