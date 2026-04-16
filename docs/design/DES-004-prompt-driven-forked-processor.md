@@ -45,7 +45,7 @@ Allow rules use Claude Code's permission rule syntax with absolute paths (via `a
 |------|-------|-------------|---------|
 | **Tool-less** | `tools=[]` | None needed | BoundaryDetector, SummaryProcessor |
 | **Read-only** | `Read, Glob, Grep` | Path-scoped Read + unrestricted Glob/Grep | MemoryContextProvider |
-| **Scoped writer** | `Read, Glob, Grep, Bash, Edit, Write` | Path-scoped Read/Edit/Write + unrestricted Glob/Grep/Bash + PreToolUse hook (`UTILITY_BASH_HOOK`) gating Bash to read-only inspection prefixes (`ls `, `find `, `file `, `echo `, `date `, `cat `, `head `, `tail `, `wc `, `stat `, `cd`, `pwd`) | Memory processors, CoreContextProcessor |
+| **Scoped writer** | `Read, Glob, Grep, Bash, Edit, Write` | Path-scoped Read/Edit/Write + unrestricted Glob/Grep/Bash + PreToolUse hook (`UTILITY_BASH_HOOK`) gating Bash to read-only inspection prefixes (`ls `, `find `, `file `, `echo `, `date `, `cat `, `grep `, `head `, `tail `, `wc `, `stat `, `cd`, `pwd`) | Memory processors, CoreContextProcessor |
 | **Git agent** | `Read, Glob, Grep, Bash, Edit, Write` | Unrestricted Read/Glob/Grep/Edit/Write + `Bash(git *)` + PreToolUse hook gating Bash to `git ` plus the same utility inspection prefixes as scoped writer | GitProcessor, ProjectsProcessor |
 
 ### Infrastructure
@@ -53,7 +53,7 @@ Allow rules use Claude Code's permission rule syntax with absolute paths (via `a
 - `abs_rule(tool, path)` — builds absolute-path permission rules using the `//` prefix (e.g., `Write(//home/user/workspace/memories/episodic/**)`). Always use this for path-scoped rules.
 - `build_permissions_settings(allow)` — serializes allow rules into the JSON format expected by `ClaudeAgentOptions.settings`.
 - `make_bash_gate_hook(allowed_prefixes)` — creates a PreToolUse `HookMatcher` that gates Bash commands by prefix. Required because `Bash(git *)` allow rules are not reliably enforced by the CLI (known upstream issue).
-- `UTILITY_BASH_PREFIXES` — shared list of read-only inspection command prefixes (`ls`, `find`, `file`, `echo`, `date`, `cat`, `head`, `tail`, `wc`, `stat`, `cd`, `pwd`). Used by scoped writer processors and composable into git agent hooks.
+- `UTILITY_BASH_PREFIXES` — shared list of read-only inspection command prefixes (`ls`, `find`, `file`, `echo`, `date`, `cat`, `grep`, `head`, `tail`, `wc`, `stat`, `cd`, `pwd`). Used by scoped writer processors and composable into git agent hooks.
 - `UTILITY_BASH_HOOK` — pre-built `HookMatcher` from `make_bash_gate_hook(UTILITY_BASH_PREFIXES)`. Shared across all scoped writer processors.
 - The `dontAsk` mode is passed via `extra_args={"permission-mode": "dontAsk"}` since the Python SDK's `PermissionMode` type doesn't include it yet.
 

@@ -380,6 +380,7 @@ UTILITY_BASH_PREFIXES = [
     "echo ",
     "date ",
     "cat ",
+    "grep ",
     "head ",
     "tail ",
     "wc ",
