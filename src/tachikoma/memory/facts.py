@@ -102,5 +102,5 @@ class FactsProcessor(PromptDrivenProcessor):
                 abs_rule("Write", scope),
             ],
             pre_tool_use_hooks=[UTILITY_BASH_HOOK],
-            model="haiku",
+            model=agent_defaults.processor_model,
         )

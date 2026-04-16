@@ -245,7 +245,7 @@ class CoreContextProcessor(PromptDrivenProcessor):
                 "mcp__pending-signals__remove_pending_signal",
             ],
             pre_tool_use_hooks=[UTILITY_BASH_HOOK],
-            model="haiku",
+            model=agent_defaults.processor_model,
         )
         self._data_dir = agent_defaults.cwd / ".tachikoma"
 

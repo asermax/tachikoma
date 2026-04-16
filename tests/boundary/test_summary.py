@@ -28,8 +28,10 @@ def _make_session(summary: str | None = None) -> Session:
 class TestSummaryProcessor:
     """Tests for SummaryProcessor."""
 
-    async def test_calls_query_with_opus_low_effort(self, mocker: MockerFixture) -> None:
-        """AC: Summary processor uses Opus model with low effort."""
+    async def test_calls_query_with_processor_model_low_effort(
+        self, mocker: MockerFixture
+    ) -> None:
+        """AC: Summary processor uses the configured processor_model with low effort."""
         mock_query = mocker.patch("tachikoma.boundary.summary.stderr_aware_query")
         mock_registry = MagicMock()
         mock_registry.update_summary = AsyncMock()
@@ -37,7 +39,7 @@ class TestSummaryProcessor:
         async def fake_query(*args, **kwargs):
             yield AssistantMessage(
                 content=[TextBlock(text="Test summary")],
-                model="claude-opus",
+                model="claude-haiku",
             )
 
         mock_query.return_value = fake_query()
@@ -49,7 +51,7 @@ class TestSummaryProcessor:
 
         call_kwargs = mock_query.call_args
         options = call_kwargs[1]["options"]
-        assert options.model == "opus"
+        assert options.model == "haiku"
         assert options.effort == "low"
 
     async def test_updates_summary_on_registry(self, mocker: MockerFixture) -> None:

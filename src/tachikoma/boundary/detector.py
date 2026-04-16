@@ -94,7 +94,7 @@ async def detect_boundary(
     #    so any tool permission request raises an exception.
     # 3. max_turns=10 — hard limit prevents runaway execution.
     options = ClaudeAgentOptions(
-        model=agent_defaults.model,
+        model=agent_defaults.searcher_model,
         effort="low",
         max_turns=10,
         tools=[],

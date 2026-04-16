@@ -286,7 +286,7 @@ async def _agent_rebase(cwd: Path, remote_branch: str, agent_defaults: AgentDefa
     """
     # See ADR for agent-driven full rebase approach
     options = ClaudeAgentOptions(
-        model="haiku",
+        model=agent_defaults.processor_model,
         cwd=cwd,
         cli_path=agent_defaults.cli_path,
         env=agent_defaults.env,

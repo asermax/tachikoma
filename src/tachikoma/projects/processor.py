@@ -166,6 +166,9 @@ class ProjectsProcessor(PostProcessor):
             cwd=submodule_path,
             cli_path=self._agent_defaults.cli_path,
             env=self._agent_defaults.env,
+            searcher_model=self._agent_defaults.searcher_model,
+            processor_model=self._agent_defaults.processor_model,
+            classifier_model=self._agent_defaults.classifier_model,
         )
         await query_and_consume(
             SUBMODULE_COMMIT_PROMPT,
@@ -173,6 +176,7 @@ class ProjectsProcessor(PostProcessor):
             tools=GIT_TOOLS,
             allow=GIT_ALLOW,
             pre_tool_use_hooks=[GIT_BASH_HOOK],
+            model=submodule_defaults.processor_model,
         )
 
         result = await smart_push(submodule_path, "origin", "HEAD", submodule_defaults)

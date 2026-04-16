@@ -19,13 +19,20 @@ class AgentDefaults:
         cwd: Workspace directory for the agent.
         cli_path: Optional path to the Claude CLI binary (None = SDK bundled).
         env: Environment variables forwarded to CLI subprocesses.
-        model: Default model for sub-agents (memory, summary, boundary, skills).
+        searcher_model: Model for sub-agents doing smart retrieval
+            (memory search, skills classification, boundary detection).
+        processor_model: Model for sub-agents doing mechanical post-processing
+            (memory/context/git extraction, per-message summary, rebase resolver).
+        classifier_model: Model for sub-agents doing rule-based classification
+            (task evaluator).
     """
 
     cwd: Path
     cli_path: str | None = None
     env: dict[str, str] = field(default_factory=dict)
-    model: str = "opus"
+    searcher_model: str = "opus"
+    processor_model: str = "haiku"
+    classifier_model: str = "haiku"
 
 
 def agent_defaults_from_settings(settings) -> AgentDefaults:
@@ -49,7 +56,9 @@ def agent_defaults_from_settings(settings) -> AgentDefaults:
         cwd=settings.workspace.path,
         cli_path=settings.agent.cli_path,
         env=merged_env,
-        model=settings.agent.sub_agent_model,
+        searcher_model=settings.agent.searcher_model,
+        processor_model=settings.agent.processor_model,
+        classifier_model=settings.agent.classifier_model,
     )
 
 
