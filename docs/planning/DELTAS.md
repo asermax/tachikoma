@@ -178,7 +178,7 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 ### DLT-047: Proactive session handoff before context compaction
 **Status**: ✗ Defined
 **Depends on**: None
-**Priority**: 3 (Medium)
+**Priority**: 2 (High)
 **Complexity**: Medium
 **Description**: When a conversation grows long enough that the SDK's auto-compaction would compress away injected context (memories, skills, foundational files), proactively detect context pressure and perform an explicit handoff — close the current session with a structured summary and open a new one with fresh context injection plus the summary as bridging context. This replaces opaque auto-compaction with a controlled transition that guarantees critical context survives. The detection mechanism (token estimation, message count heuristic, or SDK signal) and the summary format should be evaluated during speccing. The handoff reuses the existing session close/reopen infrastructure and bridging context assembly.
 
@@ -311,7 +311,7 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 ### DLT-067: Telegram inline button support
 **Status**: ✗ Defined
 **Depends on**: None
-**Priority**: 3 (Medium)
+**Priority**: 2 (High)
 **Complexity**: Medium
 **Description**: Enable the agent to present interactive inline buttons in Telegram conversations, allowing users to respond to structured prompts by tapping a button instead of typing. How buttons are triggered, rendered, and how user interactions are routed back to the agent should be evaluated during speccing.
 
@@ -366,8 +366,8 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 
 ### DLT-080: Self-healing skill system via post-conversation analysis
 **Status**: ✗ Defined
-**Depends on**: None
-**Priority**: 4 (Low)
+**Depends on**: DLT-123
+**Priority**: 3 (Medium)
 **Complexity**: Hard
 **Description**: Skills currently only improve when the user explicitly notices a gap and requests changes. Add a post-conversation processor that analyzes skill usage during the completed session — which skills were invoked, which failed or were misapplied, what workarounds the agent resorted to — and surfaces concrete edit suggestions to the user for improving skill definitions. For example: detecting that a workflow required manually chaining references that should be linked, that a CLI flag used in practice is missing from a skill's guidance, or that documented instructions diverged from actual usage patterns. Suggestions are presented for user review and approval, not applied automatically.
 
@@ -401,15 +401,15 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 
 ### DLT-088: Scheduled memory store maintenance
 **Status**: ✗ Defined
-**Depends on**: None
+**Depends on**: DLT-147
 **Priority**: 4 (Low)
 **Complexity**: Medium
-**Description**: A scheduled background task that periodically reviews and cleans up the memory store. The task runs on a cron schedule using the background task execution system, evaluating stored memories against maintenance criteria — such as staleness, redundancy, relevance decay, or excessive granularity in episodic entries — and consolidating, archiving, or removing entries that no longer provide value. The specific criteria and cleanup strategies should be investigated during speccing by analyzing real memory data for common patterns worth addressing.
+**Description**: A scheduled system task that periodically reviews and cleans up the memory store. The task runs on a cron schedule using the silent-maintenance task execution path, evaluating stored memories against maintenance criteria — such as staleness, redundancy, relevance decay, or excessive granularity in episodic entries — and consolidating, archiving, or removing entries that no longer provide value. The specific criteria and cleanup strategies should be investigated during speccing by analyzing real memory data for common patterns worth addressing.
 
 ### DLT-089: Abort tool execution on stop steering message
 **Status**: ✗ Defined
 **Depends on**: None
-**Priority**: 2 (High)
+**Priority**: 3 (Medium)
 **Complexity**: Medium
 **Description**: When the user sends a steering message with stop intent (e.g., "stop", "cancel") during an active generation, immediately abort any in-progress tool execution chain rather than waiting for the full chain to complete before the message takes effect. Currently, steering messages do halt generation across all channels, but the agent continues executing queued tool calls before processing the stop — resulting in a noticeable delay. This delta detects stop intent in incoming steering messages and triggers an immediate interrupt that cuts the tool chain short, similar to how Esc works in Claude Code.
 
@@ -437,16 +437,9 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 ### DLT-099: Archive conversation transcripts to project workspace
 **Status**: ✗ Defined
 **Depends on**: None
-**Priority**: 2 (High)
+**Priority**: 1 (Critical)
 **Complexity**: Medium
 **Description**: Ensure conversation transcripts are archived to the project workspace for durability and accessibility independent of SDK storage internals. Currently transcripts are stored only in the SDK's standard location (`~/.claude/projects/<sanitized-cwd>/<session-id>.jsonl`), making them dependent on SDK behavior and inaccessible for project-local operations. On session close, copy the transcript file from the SDK location to a `.tachikoma/transcripts/` directory within the project workspace. The session model already tracks transcript paths — this delta adds the copy-on-close hook and ensures transcripts survive SDK storage changes. Lifecycle management (retention, cleanup) is a separate concern to be addressed independently.
-
-### DLT-100: Surface relevant file contents inline in conversations
-**Status**: ✗ Defined
-**Depends on**: None
-**Priority**: 2 (High)
-**Complexity**: Easy
-**Description**: When the agent writes to a file and the result isn't verbatim what the user asked for (the agent rephrased, added context, or took liberties), the user has no way to verify without opening the file. Similarly, when the agent references specific parts of a file it wrote or read, it assumes the user has seen the file contents — but in Telegram or across sessions, the user can't see files. Add agent behavior guidance (through system prompt or preamble instructions) so the agent surfaces relevant file excerpts inline using block quotes or code blocks when: (1) the written content diverges from the user's request, or (2) the agent references file contents the user hasn't seen. Not every write needs verification — only when the user would reasonably want to see what ended up on disk.
 
 ### DLT-102: Prevent stale cron from firing on create/update
 **Status**: ✗ Defined
@@ -455,12 +448,12 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 **Complexity**: Easy
 **Description**: When a cron task is created or updated with a schedule time that has already passed today, the instance generator fires it immediately to "catch up" instead of waiting for the next scheduled occurrence. For example: a task runs at 4 PM, you update it to 8 AM at noon, it fires right away instead of waiting until tomorrow. Add a `since` timestamp field to `task_definitions` that gets set to `now()` on every create and update operation. The instance generator should only create instances for cron matches that fall after the `since` timestamp, ensuring schedule changes never trigger retroactive firings. This addresses a distinct problem from preventing duplicate instances within the same cron period — here the issue is newly-created or recently-updated tasks firing retroactively for past schedule matches.
 
-### DLT-103: Log and surface silently skipped session tasks
+### DLT-103: Defer session tasks until user idle instead of silently skipping
 **Status**: ✗ Defined
 **Depends on**: None
-**Priority**: 2 (High)
-**Complexity**: Easy
-**Description**: Session-type cron tasks are gated by an idle check — they only fire when the user has been inactive for at least the configured idle window. When the user is active, the session task scheduler silently skips the evaluation with no log entry or feedback. This means tasks like the Sunday planning routine can go weeks without ever firing, with no indication that something is wrong. Add structured logging for every skipped evaluation (task name, reason: user active, next evaluation window), and surface chronically skipped tasks through the task status queries so the user and agent can diagnose why a session task never fires. Scope is limited to logging and surfacing — force-firing and other fallback mechanisms are tracked separately.
+**Priority**: 1 (Critical)
+**Complexity**: Medium
+**Description**: Session-type cron tasks are gated by an idle check — they only fire when the user has been inactive for at least the configured idle window. When the user is active at the scheduled time, the session task scheduler silently skips the evaluation and waits for the next cron match, which may never arrive during continued activity (e.g., the Sunday planning routine can go weeks without firing if the user happens to be active every Sunday at the scheduled time). Instead of dropping evaluations, record that a session task became due and defer its firing until the idle window is eventually reached, so the task eventually runs rather than silently disappearing. The deferral record should include the original scheduled time and the reason for deferral so the user and agent can see pending session tasks via task status queries. A staleness policy (e.g., discard deferrals older than N hours, or collapse multiple missed firings into a single run) should be evaluated during speccing to prevent stale tasks from firing at unexpected times.
 
 ### DLT-104: Auto-cleanup of completed one-shot tasks
 **Status**: ✗ Defined
@@ -535,14 +528,14 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 ### DLT-115: Run and monitor detached shell commands
 **Status**: ✗ Defined
 **Depends on**: None
-**Priority**: 2 (High)
+**Priority**: 1 (Critical)
 **Complexity**: Hard
 **Description**: Users need Tachikoma to dispatch OS-level commands (e.g., starting a Zenki worker on a VPS) that run independently of the current conversation and outlive the session. This delta adds MCP tools for starting a detached shell command, recording its PID and log path in the database, querying whether it is still running, reading its stdout/stderr output, and sending termination signals. The spawned process runs with no SDK involvement — unlike autonomous agent delegation which maintains ongoing Claude sessions, this targets standalone shell commands where Tachikoma acts as a lightweight process supervisor. The tools give the agent (and by extension the user) visibility into commands that would otherwise require SSH access to check on.
 
 ### DLT-116: Provide workflow tools to background tasks
 **Status**: ✗ Defined
 **Depends on**: None
-**Priority**: 3 (Medium)
+**Priority**: 2 (High)
 **Complexity**: Easy
 **Description**: Background tasks currently receive memory, projects, skills context, and a notification tool, but have no access to workflow management tools. This means a background task cannot start, advance, or complete a workflow — limiting scheduled automation to single-prompt fire-and-forget work. Attach the workflow tools MCP server to background task executions so the agent can operate on workflows during scheduled or autonomous runs.
 
@@ -598,7 +591,7 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 ### DLT-124: Add test coverage requirements to skill authoring guide
 **Status**: ✗ Defined
 **Depends on**: None
-**Priority**: 3 (Medium)
+**Priority**: 1 (Critical)
 **Complexity**: Easy
 **Description**: The skill authoring guide currently covers directory conventions, agent definitions, and reference files, but says nothing about testing skills that contain executable code (scripts, CLIs, or any programmatic logic). When skills evolve, regressions go unnoticed until they break in production — e.g., the share-markdown mermaid pipeline had multiple bugs that tests would have caught earlier. Update the skill authoring guidance to require test coverage for any skill that includes executable code, with conventions for test file placement, naming, and execution within the skill directory structure.
 
@@ -696,7 +689,7 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 ### DLT-141: Pause background tasks on user activity
 **Status**: ✗ Defined
 **Depends on**: DLT-120
-**Priority**: 3 (Medium)
+**Priority**: 2 (High)
 **Complexity**: Medium
 **Description**: When a user message arrives at the coordinator during an active background task execution, signal the background task to pause so the main session receives full API attention and the task does not compete for resources. The paused task's SDK session is preserved and execution resumes automatically once the main session returns to idle. This covers the system-initiated pause triggered by user activity — distinct from task-initiated pauses where the background task itself requests user input. The pause mechanism integrates with the existing background task executor's evaluation loop: when a pause signal is received between iterations, the executor suspends the task, records the paused state in the task instance, and releases the semaphore slot. On resume, the executor reacquires a slot and continues from the preserved SDK session.
 
@@ -706,4 +699,25 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 **Priority**: 1 (Critical)
 **Complexity**: Easy
 **Description**: The `send_notification` MCP tool can be called multiple times during a single background task execution, leading to duplicate notifications reaching the user — for example, the agent sends a minimal notification, then self-corrects and sends a better one. Restrict the tool to a single successful call per background task execution: once a notification is sent, subsequent calls within the same execution are rejected with a clear error message explaining why. This enforces notification finality at the tool level rather than relying on prompt guardrails alone. The constraint applies only to background task executions; interactive session notifications are unaffected.
+
+### DLT-145: Inject core context into skill classification
+**Status**: ✗ Defined
+**Depends on**: None
+**Priority**: 1 (Critical)
+**Complexity**: Easy
+**Description**: The skills context provider classifies which skills are relevant to an incoming message via a lightweight sub-agent whose prompt currently sees only the unloaded skill descriptions and the user message. Inject the foundational context (SOUL.md, USER.md, AGENTS.md) — the agent's personality, user knowledge, and agent guidelines that already inform the main loop — into the classifier's prompt so relevance decisions benefit from the same nuance the main agent has (e.g., the user's domain expertise or agent conventions that make some skills obviously more applicable than others).
+
+### DLT-146: Surface active skills and loaded memories to post-processors
+**Status**: ✗ Defined
+**Depends on**: None
+**Priority**: 1 (Critical)
+**Complexity**: Easy
+**Description**: The post-processing memory extractors (episodic, facts, preferences) and the core context update processor fork the SDK session with prompts describing their extraction task, but never tell them which skills were active during the session or which memory entries were loaded into context. Without that awareness, processors re-extract facts that were already in memory (duplication) and miss that skill-provided instructions influenced agent behavior. Include a summary — names only, not full content — of the aggregate set of skills and memory entries loaded across the session's turns in each processor's prompt so extractions avoid duplicating captured information and processors understand the context in which the conversation happened.
+
+### DLT-147: System task type for silent maintenance operations
+**Status**: ✗ Defined
+**Depends on**: None
+**Priority**: 1 (Critical)
+**Complexity**: Medium
+**Description**: Task definitions currently support `session` (idle-gated) and `background` (notifies user on completion/failure) types, both assuming user-facing work. Maintenance operations — memory reconciliation, stale task cleanup, vault consistency checks, log rotation — don't warrant user-visible notifications but still need the same scheduling infrastructure. Add a third `system` task type that reuses the background execution path but suppresses all notification dispatch (success, failure, and explicit `send_notification` calls made by the task itself). System tasks remain discoverable through existing task history tools so operators can inspect their runs. Scheduling triggers can be cron-based or condition-driven (e.g., "run reconciliation when N sessions have accumulated"); the trigger mechanism should be evaluated during speccing.
 
