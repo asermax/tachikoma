@@ -97,7 +97,7 @@ sequenceDiagram
 **Integration Points:**
 - GitProcessor ↔ subprocess: `asyncio.create_subprocess_exec("git", "status", "--porcelain")` for dirty check and post-agent verification
 - GitProcessor ↔ sync module: `smart_push(cwd, "origin", "HEAD", agent_defaults)` replaces bare git push with divergence detection and agent-driven conflict resolution
-- GitProcessor ↔ SDK: `query(prompt=GIT_COMMIT_PROMPT, options=ClaudeAgentOptions(model="haiku", cwd=..., permission_mode="bypassPermissions"))` — fresh stateless call, not a session fork
+- GitProcessor ↔ SDK: `query(prompt=GIT_COMMIT_PROMPT, options=ClaudeAgentOptions(model=agent_defaults.processor_model, cwd=..., permission_mode="bypassPermissions"))` — fresh stateless call, not a session fork; runs on the processor tier (default `"haiku"`, see DES-004)
 - Bootstrap ↔ git hook: `git_hook` runs after workspace hook, uses sync module helpers for init and `_sync_workspace` for startup sync
 
 **Error contract:**
@@ -211,14 +211,15 @@ git/sync.py (stateless functions)
 - Pro: Zero cost for clean workspaces
 - Con: Duplicates the dirty check (Python checks, agent also sees status) — acceptable
 
-### Model "haiku" with no resource limits
+### Processor-tier model with no resource limits
 
-**Choice**: Use `model="haiku"` with no `max_turns` or `max_budget_usd`.
-**Why**: Cheapest available model for a mechanical task. The task is naturally bounded (finite workspace changes).
+**Choice**: Use `model=agent_defaults.processor_model` (default `"haiku"`) with no `max_turns` or `max_budget_usd`. Applies to both the commit agent in `GitProcessor` and the conflict-resolution agent in `git/sync.py:_agent_rebase`.
+**Why**: Both tasks are mechanical post-processing, and the processor tier defaults to the cheapest model available (see DES-004). Tasks are naturally bounded (finite workspace changes / finite conflict markers).
 
 **Consequences**:
 - Pro: Simplest configuration, no risk of stopping mid-commit
-- Con: Theoretically unbounded cost in pathological cases (mitigated by Haiku's low cost)
+- Pro: Configurable via `processor_model` setting without code change
+- Con: Theoretically unbounded cost in pathological cases (mitigated by the default model's low cost)
 
 ### Push is Python-side, not agent-side
 

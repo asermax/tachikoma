@@ -206,15 +206,16 @@ The notification system uses a standalone `tachikoma.notifications` module (not 
 - Con: Pipeline registration duplicated between `__main__.py` (full) and executor (adapted)
 - Con: `SkillRegistry` must be threaded from bootstrap through `background_task_runner` to `BackgroundTaskExecutor`
 
-### Lightweight evaluator model
+### Classifier-tier evaluator model
 
-**Choice**: Use `haiku` for the evaluator assessment with a structured completion-signal checklist (not output quality judgment). Unlike DES-007 classification agents (which use Opus low effort for pre-processing classification), haiku is appropriate here because the evaluator runs after every agent turn (high frequency) and performs a simpler structured checklist assessment.
-**Why**: The evaluator assesses workflow state via an ordered checklist (blocking error → complete → needs_input → continue), not output quality. A lightweight model is sufficient for this structured assessment and reduces cost/latency per evaluation turn. The checklist explicitly instructs the evaluator not to judge output correctness — only whether the agent finished its workflow steps.
+**Choice**: Use `model=agent_defaults.classifier_model` (default `"haiku"`) for the evaluator assessment with a structured completion-signal checklist (not output quality judgment). The evaluator fits the "classifier" role in the DES-004 taxonomy — it applies a clear ordered checklist to map agent output to one of a small discrete set (`blocking_error | complete | needs_input | continue`).
+**Why**: The evaluator assesses workflow state via an ordered checklist, not output quality. A lightweight model is sufficient for this structured assessment and reduces cost/latency per evaluation turn. The checklist explicitly instructs the evaluator not to judge output correctness — only whether the agent finished its workflow steps.
 
 **Consequences**:
 - Pro: Low cost per evaluation (runs after every agent turn)
 - Pro: Fast assessment turnaround
 - Pro: Structured checklist reduces evaluator ambiguity, preventing false negatives that triggered re-execution and duplicate notifications
+- Pro: Configurable via `classifier_model` setting without code change
 - Con: Less nuanced assessment than a larger model (acceptable given checklist structure)
 
 ### Agent-driven notification via MCP tool

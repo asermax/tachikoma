@@ -171,7 +171,7 @@ watch_skills(skills_path, registry, bus)
 - SkillRegistry ↔ filesystem: scans each source path (built-in + workspace + channel-provided) for skill directories; reads `SKILL.md` and agent markdown files
 - SkillsContextProvider ↔ Per-Message Pipeline: registers via `msg_pre_pipeline.register(provider)`; `provide(message, existing_entries=entries)` called on every message
 - SkillsContextProvider ↔ SkillRegistry: shared — registry received via constructor from bootstrap extras; `refresh()` called before `skills` property access
-- SkillsContextProvider ↔ SDK: standalone `query()` call for classification (no tools, low effort, DES-007)
+- SkillsContextProvider ↔ SDK: standalone `query()` call for classification (no tools, low effort, DES-007); `model=agent_defaults.searcher_model` (default `"opus"`) because selecting relevant skills requires understanding user intent over a large candidate set — more "smart retrieval" than clear-rule classification (see DES-004)
 - Per-Message Pipeline ↔ Coordinator: `pipeline.run(message, existing_entries=entries)` returns `list[ContextResult]`; coordinator saves new entries and derives agents from all entries + registry
 - Watcher ↔ Registry: `mark_dirty()` — write-only, no return value
 - Watcher ↔ EventBus: `await bus.dispatch(SkillsChanged())` — awaited dispatch, no return value used

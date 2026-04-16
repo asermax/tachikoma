@@ -129,10 +129,10 @@ extract_memory_paths(entries: list[SessionContextEntry]) → set[str]
 3. Build search prompt by embedding user message into MEMORY_SEARCH_PROMPT
 4. Branch on sdk_session_id:
    a. If available → ClaudeAgentOptions(resume=sdk_session_id, fork_session=True,
-      model=agent_defaults.model, effort="low",
+      model=agent_defaults.searcher_model, effort="low",
       allowed_tools=["Read", "Glob", "Grep"],
       permission_mode="bypassPermissions", cwd=agent_defaults.cwd)
-   b. If None → ClaudeAgentOptions(model=agent_defaults.model, effort="low",
+   b. If None → ClaudeAgentOptions(model=agent_defaults.searcher_model, effort="low",
       allowed_tools=["Read", "Glob", "Grep"],
       permission_mode="bypassPermissions", cwd=agent_defaults.cwd)
 5. Call query(prompt=prompt, options=options)
@@ -206,7 +206,7 @@ extract_memory_paths(entries: list[SessionContextEntry]) → set[str]
 
 ### Preserved model and tool configuration
 
-**Choice**: Use `model=agent_defaults.model`, `effort="low"`, `allowed_tools=["Read", "Glob", "Grep"]`, `permission_mode="bypassPermissions"`. No explicit `max_turns` ceiling.
+**Choice**: Use `model=agent_defaults.searcher_model` (default `"opus"`, see DES-004), `effort="low"`, `allowed_tools=["Read", "Glob", "Grep"]`, `permission_mode="bypassPermissions"`. No explicit `max_turns` ceiling.
 **Why**: An earlier `max_turns=12` cap was observed producing `error_max_turns` failures on non-Claude model backends (GLM-family models running via Anthropic-compatible proxies occasionally loop through tool calls without emitting a final answer). Removing the cap eliminates it as a failure variable while diagnosing upstream behavior; the SDK's internal safety bounds still protect against unbounded runaway. `effort="low"` keeps per-turn cost minimal.
 
 **Consequences**:

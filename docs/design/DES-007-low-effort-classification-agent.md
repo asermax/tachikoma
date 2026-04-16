@@ -119,7 +119,7 @@ When a classification agent needs conversation context to make informed decision
 ```python
 # Forking variant — conditional based on session ID availability
 options = ClaudeAgentOptions(
-    model=agent_defaults.model,        # Opus via AgentDefaults
+    model=agent_defaults.searcher_model,  # Opus by default via AgentDefaults (DES-004)
     effort="low",
     max_turns=8,                        # More turns — agent may search files
     allowed_tools=["Read", "Glob", "Grep"],

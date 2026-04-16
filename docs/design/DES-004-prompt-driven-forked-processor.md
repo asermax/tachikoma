@@ -82,9 +82,25 @@ The hook compiles the allowed prefixes into a single regex at creation time. A c
 
 Every sub-agent prompt should end with a `## Permissions` section explaining its constraints in plain language. This prevents confusion when tool calls are denied and helps the agent stay within its scope. Only mention what the agent *can* do — don't list tools that aren't available to it.
 
-### Model Selection
+### Model Selection — Role-Based Taxonomy
 
-When a sub-agent runs a cheap, mechanical task (e.g. grouping files for commit, extracting structured memories from a conversation), pin it to the `haiku` tier via an explicit `model` kwarg rather than letting it inherit the parent session's model. `query_and_consume` (used by `GitProcessor` / `ProjectsProcessor`) and `fork_and_consume` / `fork_and_capture` (used by `PromptDrivenProcessor` subclasses) both accept an optional `model` parameter. When omitted, the fork inherits the parent session's model — reasonable for agents that benefit from the same reasoning power as the main chat (e.g. `CoreContextProcessor`), but expensive when run 3–4 in parallel on session close. The memory extractors (`EpisodicProcessor`, `FactsProcessor`, `PreferencesProcessor`) pin `model="haiku"` at construction; `CoreContextProcessor` intentionally does not.
+Sub-agents fall into three roles, each driven by a dedicated config setting on `AgentDefaults`. Pick the role that matches the agent's job and pass the corresponding `agent_defaults.<role>_model` to the SDK options. Never hardcode a model alias.
+
+| Role | Field | Default | When to use |
+|------|-------|---------|-------------|
+| **Searcher** | `searcher_model` | `"opus"` | Smart retrieval / high-stakes judgment: picking relevant items from a set, routing decisions, topic-shift classification. Quality matters more than speed because the output steers the rest of the pipeline. |
+| **Processor** | `processor_model` | `"haiku"` | Mechanical extraction, rewriting, committing, resolving. Often runs many in parallel on session close or per-turn. Speed and cost dominate; nuance is not required. |
+| **Classifier** | `classifier_model` | `"haiku"` | Rule-based mapping of an input to one of a few discrete outputs (e.g. `complete | continue | error`). Checklists are explicit; the cheapest model suffices. |
+
+**Current assignments:**
+
+| Role | Sub-agents |
+|------|------------|
+| Searcher | `MemoryContextProvider`, `SkillsContextProvider`, `BoundaryDetector` |
+| Processor | `EpisodicProcessor`, `FactsProcessor`, `PreferencesProcessor`, `CoreContextProcessor`, `SummaryProcessor` (per-message), `GitProcessor` (via `query_and_consume`), `ProjectsProcessor` (submodule commits), `_agent_rebase` in `git/sync.py` |
+| Classifier | task evaluator in `tasks/executor.py` |
+
+`query_and_consume` (used by `GitProcessor` / `ProjectsProcessor`) and `fork_and_consume` / `fork_and_capture` (used by `PromptDrivenProcessor` subclasses) all accept an optional `model` parameter. When omitted, the call inherits the parent session's model — avoid this: every sub-agent has a role, so pass the matching `agent_defaults.<role>_model` explicitly so users can tune each role independently.
 
 ## Examples
 

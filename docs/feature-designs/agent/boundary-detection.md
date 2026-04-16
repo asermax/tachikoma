@@ -282,18 +282,20 @@ erDiagram
 
 ## Key Decisions
 
-### Opus with low effort for boundary detection and summarization
+### Role-based model selection for boundary detection and summarization
 
-**Choice**: Use `model="opus"` with `effort="low"` for both `detect_boundary` and `SummaryProcessor` standalone `query()` calls.
-**Why**: Both tasks are simple (binary classification and short text summarization). Opus with low effort provides high classification quality while keeping latency within the 1-2 second budget (R6). The `model` and `effort` parameters on `ClaudeAgentOptions` are passed as `--model` and `--effort` to the CLI subprocess.
+**Choice**: `detect_boundary` uses `model=agent_defaults.searcher_model` (default `"opus"`) and `SummaryProcessor` uses `model=agent_defaults.processor_model` (default `"haiku"`). Both pass `effort="low"`. Models come from `ClaudeAgentOptions.model` / `.effort` (passed to CLI as `--model` / `--effort`).
+**Why**: Boundary detection is a high-stakes classification (miss a topic shift and the agent routes the user's message to the wrong session) — it belongs in the "searcher" role that defaults to opus for smart judgment. Per-message summarization is mechanical rewrite work that runs on every exchange — it belongs in the "processor" role that defaults to haiku for speed and cost. Both still use `effort="low"` because neither task needs long chain-of-thought; low effort keeps latency within the 1-2s budget (R6). See DES-004 for the role taxonomy.
 **Alternatives Considered**:
-- Haiku (fastest, cheapest but lower quality for edge cases), Sonnet (good balance), Opus with low effort (best quality with controlled latency).
+- A single `sub_agent_model` setting covering both (rejected: forces one default to win even though the two tasks have different cost/quality tradeoffs).
+- Hardcoding `"opus"` for boundary detection (rejected: no way to tune without code change).
 
 **Consequences**:
-- Pro: Best classification quality for detecting topic shifts, especially ambiguous ones
+- Pro: Best classification quality for detecting topic shifts, especially ambiguous ones, when `searcher_model` keeps its opus default
+- Pro: Per-message summary is cheap and fast on haiku — runs on every exchange without inflating cost
 - Pro: Both calls are independent — model choice doesn't affect the coordinator's main session
-- Pro: Low effort keeps latency within budget for simple binary classification and short summarization
-- Con: Higher per-token cost than Haiku, but the tasks use minimal tokens
+- Pro: Low effort keeps latency within budget for both tasks
+- Con: If a user downgrades `searcher_model` to haiku for cost reasons, boundary detection accuracy may drop on edge cases
 
 ### Incremental summarization over full-transcript fork
 
