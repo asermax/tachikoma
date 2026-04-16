@@ -7,6 +7,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v1.22.1 (2026-04-16)
+
+### Bug Fixes
+
+- **display**: Correct double 'and' in truncated tool activity summary
+  ([`2b277da`](https://github.com/asermax/tachikoma/commit/2b277da0c222f1ba9b9443ca3671e78b47f6bdfb))
+
+- **tasks**: Strengthen evaluator guardrails and rename feedback to rationale
+  ([`4eb32c8`](https://github.com/asermax/tachikoma/commit/4eb32c801872874123d26dfe191c5871a71def4a))
+
+### Documentation
+
+- **agent**: Update feature docs and DES-004 for role-based sub-agent models
+  ([`74bf630`](https://github.com/asermax/tachikoma/commit/74bf6301a529a13fb798b82700c31fd619966f94))
+
+- **planning**: Triage improvements note and reprioritize deltas
+  ([`18dfb02`](https://github.com/asermax/tachikoma/commit/18dfb02dbeeacc8051d452c991df81b2bca58124))
+
+### Refactoring
+
+- **agent**: Split sub-agent model setting into role-based settings
+  ([`e5e8c5e`](https://github.com/asermax/tachikoma/commit/e5e8c5e0c6f4bf1bbc168a292d8dd9f7f98b1bc1))
+
+### Testing
+
+- Enable three skipped tests via time-machine and mock side_effects
+  ([`47df7e0`](https://github.com/asermax/tachikoma/commit/47df7e017a78e0657cd54892f7b1dc4073b7d1cb))
+
+
 ## v1.22.0 (2026-04-15)
 
 ### Bug Fixes
