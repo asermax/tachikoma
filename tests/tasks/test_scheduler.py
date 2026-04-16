@@ -229,10 +229,15 @@ class TestInstanceGenerator:
         assert len(instances) == 1
         assert instances[0].id != "old-1"
 
-    async def test_no_early_firing_before_cron_boundary(self, repo: TaskRepository) -> None:
+    async def test_no_early_firing_before_cron_boundary(
+        self, repo: TaskRepository, time_machine
+    ) -> None:
         """R1: Generator does not fire when next cron time hasn't arrived yet."""
-        # Create a cron that fires at minute 59 of every hour
-        # If current minute is < 59, it should not fire
+        # Freeze the clock well before minute 59 so the "59 * * * *" cron cannot fire.
+        # tick=False keeps the instant stable — a drifting clock could cross minute 59
+        # during asyncio.sleep and re-introduce flakiness.
+        time_machine.move_to(datetime(2026, 4, 15, 12, 30, tzinfo=UTC), tick=False)
+
         schedule = ScheduleConfig(type="cron", expression="59 * * * *")
         definition = _make_definition("def-1", schedule=schedule)
         await repo.create_definition(definition)
@@ -244,11 +249,7 @@ class TestInstanceGenerator:
         with contextlib.suppress(asyncio.CancelledError):
             await task
 
-        now = datetime.now(UTC)
-        if now.minute >= 59:
-            pytest.skip("Current minute is 59, would fire — test not valid at this time")
-
-        # Should not fire because minute hasn't reached 59
+        # Should not fire because frozen minute (30) hasn't reached 59
         instances = await repo.get_pending_instances("session")
         assert len(instances) == 0
 

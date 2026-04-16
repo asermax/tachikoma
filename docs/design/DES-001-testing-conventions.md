@@ -207,6 +207,28 @@ def make_result(
 
 New SDK message builders should be added to `helpers.py` as more test files need them.
 
+### 9. Time Mocking
+
+For tests that depend on wall-clock behavior (cron boundaries, mtime comparisons, timestamp-sensitive logic), use [`time-machine`](https://github.com/adamchainz/time-machine). It mocks at the C layer (broader and faster than `freezegun`), ships a built-in `time_machine` pytest fixture (no plugin registration), and handles `datetime.now(UTC)` cleanly.
+
+Prefer the `time_machine` fixture with `move_to(..., tick=False)` for per-test freezing. `tick=False` is **mandatory** — the default `tick=True` lets the clock drift, which can re-introduce flakiness near time boundaries. The decorator form `@time_machine.travel(..., tick=False)` is acceptable for static freezes that span a whole test.
+
+```python
+from datetime import UTC, datetime
+
+
+async def test_no_early_firing_before_cron_boundary(
+    self, repo: TaskRepository, time_machine
+) -> None:
+    time_machine.move_to(datetime(2026, 4, 15, 12, 30, tzinfo=UTC), tick=False)
+
+    # ... exercise code that reads datetime.now(UTC) ...
+
+    assert len(instances) == 0
+```
+
+Do not use `time-machine` to work around tests that are non-deterministic for non-time reasons (e.g., race conditions, ordering issues) — fix the test design instead.
+
 ## Rationale
 
 1. **Mirrored structure**: Finding tests for any module is intuitive

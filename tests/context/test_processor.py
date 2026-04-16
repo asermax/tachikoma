@@ -3,11 +3,11 @@
 Tests for DLT-018: Update core context files from conversation learnings.
 """
 
+import os
 from datetime import UTC, datetime
 from pathlib import Path
 from unittest.mock import AsyncMock
 
-import pytest
 from pytest_mock import MockerFixture
 
 from tachikoma.agent_defaults import AgentDefaults
@@ -201,29 +201,62 @@ class TestCoreContextProcessor:
         assert call_kwargs["pre_tool_use_hooks"] == [UTILITY_BASH_HOOK]
         assert call_kwargs["model"] == "haiku"
 
-    @pytest.mark.skip(
-        reason="mtime changes happen inside mocked fork_and_consume, "
-        "making post-step comparison difficult to observe",
-    )
     async def test_logs_when_file_created(
-        self, mocker: MockerFixture, tmp_path: Path, caplog: pytest.LogCaptureFixture
+        self, mocker: MockerFixture, tmp_path: Path
     ) -> None:
         """AC: mtime comparison logs when files are created."""
-        # Note: This would require side_effect in mock to simulate file creation
-        # during the fork, which adds complexity for minimal test value.
-        pass
+        # Simulate the forked agent creating SOUL.md *during* fork_and_consume so the
+        # mutation lands inside the processor's pre/post-mtime snapshot window.
+        context_dir = tmp_path / "context"
+        context_dir.mkdir()
 
-    @pytest.mark.skip(
-        reason="mtime changes happen inside mocked fork_and_consume, "
-        "making post-step comparison difficult to observe",
-    )
+        async def _create_soul(*args, **kwargs) -> None:
+            (context_dir / "SOUL.md").write_text("# Personality\n")
+
+        mocker.patch(
+            "tachikoma.context.processor.fork_and_consume",
+            new_callable=AsyncMock,
+            side_effect=_create_soul,
+        )
+        # Loguru writes to stderr, not stdlib logging — caplog can't see it.
+        # Patch the bound logger and assert on the call signature instead.
+        mock_log = mocker.patch("tachikoma.context.processor._log")
+
+        processor = CoreContextProcessor(AgentDefaults(cwd=tmp_path))
+        await processor.process(_make_session())
+
+        mock_log.info.assert_any_call("Context file created: file={file}", file="SOUL.md")
+
     async def test_logs_when_file_updated(
-        self, mocker: MockerFixture, tmp_path: Path, caplog: pytest.LogCaptureFixture
+        self, mocker: MockerFixture, tmp_path: Path
     ) -> None:
         """AC: mtime comparison logs when files are modified."""
-        # Note: This would require side_effect in mock to simulate file modification
-        # during the fork, which adds complexity for minimal test value.
-        pass
+        # Pre-create SOUL.md with a fixed past mtime, then simulate the forked agent
+        # rewriting it with a bumped mtime. Explicit os.utime avoids filesystem
+        # granularity issues (same-second writes can collapse to identical mtimes).
+        context_dir = tmp_path / "context"
+        context_dir.mkdir()
+        soul = context_dir / "SOUL.md"
+        soul.write_text("original")
+
+        before_mtime = 1_700_000_000.0
+        os.utime(soul, (before_mtime, before_mtime))
+
+        async def _update_soul(*args, **kwargs) -> None:
+            soul.write_text("updated")
+            os.utime(soul, (before_mtime + 10, before_mtime + 10))
+
+        mocker.patch(
+            "tachikoma.context.processor.fork_and_consume",
+            new_callable=AsyncMock,
+            side_effect=_update_soul,
+        )
+        mock_log = mocker.patch("tachikoma.context.processor._log")
+
+        processor = CoreContextProcessor(AgentDefaults(cwd=tmp_path))
+        await processor.process(_make_session())
+
+        mock_log.info.assert_any_call("Context file updated: file={file}", file="SOUL.md")
 
     async def test_handles_missing_context_file_gracefully(
         self, mocker: MockerFixture, tmp_path: Path

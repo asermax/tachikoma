@@ -42,6 +42,7 @@ test = [
     "pytest-mock",
     "pytest-xdist",
     "pytest-cov",
+    "time-machine",
 ]
 
 [tool.uv]
