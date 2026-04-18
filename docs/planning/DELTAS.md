@@ -511,13 +511,6 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 **Complexity**: Medium
 **Description**: When the user sends a message at the exact moment a previous response is finalizing, the new message can be silently dropped. The coordinator consumes the message from the queue but loses it during the transition between completing the previous turn's post-processing and picking up the next turn. This delta eliminates that timing window so that every consumed message is guaranteed to be processed, even when it arrives during response finalization.
 
-### DLT-112: Buffer background task notifications until conversation is idle
-**Status**: ✓ Implementation
-**Depends on**: None
-**Priority**: 2 (High)
-**Complexity**: Medium
-**Description**: When a background task completes and triggers a notification while the user is in an active conversation, the notification is currently injected as a steering message into the ongoing exchange instead of being held for later delivery. Notifications should never interrupt or steer the current conversation — they must always be delivered as a separate message turn. Each notification carries a priority level that governs two timing parameters: how long the conversation must be idle before the notification is delivered, and how long the notification can be held before being force-delivered regardless of activity. Higher-priority notifications tolerate shorter idle windows and have shorter hold periods; lower-priority notifications wait longer for natural pauses and can be buffered indefinitely. This ensures urgent results reach the user quickly while routine updates wait for a natural break.
-
 ### DLT-115: Run and monitor detached shell commands
 **Status**: ✗ Defined
 **Depends on**: None
@@ -639,14 +632,14 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 
 ### DLT-134: Extend background tasks at iteration limit
 **Status**: ✗ Defined
-**Depends on**: DLT-112, DLT-120
+**Depends on**: DLT-120
 **Priority**: 3 (Medium)
 **Complexity**: Medium
 **Description**: Background tasks currently hard-fail when they reach their maximum iteration count, even if they are making meaningful progress. This delta allows the assistant to escalate to the user when the iteration limit is reached instead of failing outright. The user is presented with the task's progress and the assistant's latest assessment, and can choose to grant additional iterations or abort. If extended, the task continues from where it left off with a fresh iteration budget. If aborted, the task is failed as today. The iteration limit before escalation is configurable per task definition, falling back to the global default. This prevents premature failure of tasks that are progressing slowly but productively, giving the user control over the cost/completion tradeoff.
 
 ### DLT-135: Serialize concurrent notification delivery and user message processing
 **Status**: ✗ Defined
-**Depends on**: DLT-111, DLT-112
+**Depends on**: DLT-111
 **Priority**: 2 (High)
 **Complexity**: Hard
 **Description**: When a background task notification is delivered at the exact moment a user sends a message, the two can collide at the coordinator's message queue — resulting in one being lost or the notification being silently swallowed. The existing message-loss prevention and notification buffering mechanisms handle their respective timing windows independently, but do not cover the case where both sources attempt to enqueue simultaneously. This delta adds serialization between the notification delivery path and the user message intake so that concurrent arrivals are safely ordered and neither is dropped.

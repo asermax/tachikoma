@@ -85,7 +85,7 @@ The key components:
 | Layer/Component | Responsibility | Key Decisions |
 |-----------------|----------------|---------------|
 | `src/tachikoma/__main__.py` | Cyclopts `App` entry point: `run()` subcommand with `--channel` flag (also the default for bare invocation); creates `SettingsManager`, applies CLI overrides, runs bootstrap, dispatches to channel. Registers `media_hook` in bootstrap sequence (after `tasks`, before `telegram`) | Replaces bare `asyncio.run(main())` with cyclopts; `cli()` wrapper as `[project.scripts]` entry point; integrates with SettingsManager + Bootstrap |
-| `src/tachikoma/telegram.py` | `TelegramChannel` class + `ResponseRenderer` class + `telegram_hook` function. Subscribes to `SessionTaskReady` and `Notification` (from `tachikoma.notifications`) events via `bus.on()` at construction. Shared `_process_through_coordinator()` method handles both user messages and session task delivery. `_handle_media` catch-all handler delegates to `media.py` functions for descriptor resolution, download, and description building. `_handle_notification()` sends notifications directly as Telegram messages with severity emoji prefix. Channel-specific formatter maps (`TELEGRAM_TOOL_DISPLAY`, `TELEGRAM_TOOL_SUMMARY`) with `code_wrap()` utility for inline code wrapping of dynamic tool arguments (file paths, patterns, commands — but not Bash descriptions, which are plain text) | High cohesion between channel control flow and response rendering; event bus subscriptions at construction |
+| `src/tachikoma/telegram.py` | `TelegramChannel` class + `ResponseRenderer` class + `telegram_hook` function. Subscribes to `BufferedDelivery` events via `bus.on()` in `run()` (deferred until the coordinator is set). Shared `_process_through_coordinator()` method handles both user messages and buffered deliveries. `_handle_buffered_delivery()` routes `event.prompt` through the coordinator and fires per-item `on_delivered` callbacks after the exchange completes. `_handle_media` catch-all handler delegates to `media.py` functions for descriptor resolution, download, and description building. Channel-specific formatter maps (`TELEGRAM_TOOL_DISPLAY`, `TELEGRAM_TOOL_SUMMARY`) with `code_wrap()` utility for inline code wrapping of dynamic tool arguments (file paths, patterns, commands — but not Bash descriptions, which are plain text) | High cohesion between channel control flow and response rendering; only `BufferedDelivery` is observed — session tasks and notifications are enqueued into the priority buffer by their producers (see [delivery/priority-buffer](../delivery/priority-buffer.md)) |
 | `src/tachikoma/media.py` | Media descriptor table (`MEDIA_DESCRIPTORS`), `resolve_media()`, `download_media()`, `build_description()`, `generate_media_filename()`, `MediaTooLargeError`, `media_hook` bootstrap function. Constants: `MEDIA_TEMP_DIR`, `TELEGRAM_MAX_FILE_SIZE`, `MEDIA_CLEANUP_DAYS` | High cohesion between all media-related logic; bootstrap hook follows DES-003; descriptor table driven by ordered sequence for priority resolution |
 | `src/tachikoma/coordinator.py` | Existing + `enqueue()` method, `_message_buffer` queue, `has_pending_messages` property, and `_message_source()` async generator passed to `client.connect()` | Message buffer replaces steer/pending-steers pattern |
 | `src/tachikoma/config.py` | `TelegramSettings` model added to `Settings` | Extends existing config; optional section (`None` when not configured) |
@@ -193,7 +193,7 @@ sequenceDiagram
 - `__main__.py` ↔ SettingsManager: CLI overrides applied via `update_root()` + `reload()` (runtime-only)
 - `telegram_hook` ↔ Bootstrap: follows DES-003 pattern (defined in telegram module, registered in __main__.py, self-skips when channel != "telegram")
 - `media_hook` ↔ Bootstrap: follows DES-003 pattern (defined in media module, registered in __main__.py)
-- Channel ↔ Event bus: subscribes to `SessionTaskReady` (session task delivery) and `Notification` from `tachikoma.notifications` (direct notification display) via `bus.on()` at construction (see ADR-009)
+- Channel ↔ Event bus: subscribes to `BufferedDelivery` (unified buffered-item delivery) via `bus.on()` in `run()` (see ADR-009 and [delivery/priority-buffer](../delivery/priority-buffer.md))
 
 ## Modeling
 
@@ -503,6 +503,12 @@ The `Result` event serves as a turn boundary signal. The channel finalizes the c
 **Given**: SIGTERM or SIGINT is received
 **When**: The bot is streaming a response
 **Then**: aiogram's internal signal handler sets the stop event, ending the polling loop. The `@dp.shutdown()` hook fires and sends a final edit with the partial response. The process exits cleanly.
+
+### Scenario: Shutdown flush delivers a digest
+
+**Given**: Graceful shutdown begins with pending items in the priority buffer
+**When**: The buffer dispatches its digest `BufferedDelivery`
+**Then**: The channel routes the combined prompt through the coordinator as a single final exchange (sent via `coordinator.send_message()`, or `enqueue()` if an exchange is still in-flight). After the exchange completes, each item's `on_delivered` callback fires. The bot then stops polling.
 
 ### Scenario: Graceful shutdown via q keypress
 

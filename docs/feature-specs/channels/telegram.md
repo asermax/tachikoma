@@ -29,7 +29,7 @@ A Telegram bot that receives text messages and media messages from a single auth
 | R9 | CLI entry point: `tachikoma run --channel` flag selects between REPL (default) and Telegram; bare `tachikoma` defaults to `run`; CLI flags override TOML config values at runtime |
 | R10 | Message validation: silently ignore empty messages and unsupported message types (contacts, locations, polls, venues, dice) |
 | R11 | Error display: surface coordinator errors (recoverable and non-recoverable) as messages in the Telegram chat |
-| R12 | Event bus integration: subscribe to task events for proactive session task delivery and direct notification display |
+| R12 | Event bus integration: subscribe to `BufferedDelivery` events and route prompts through the coordinator as new message turns; flush pending buffer items on graceful shutdown (see [delivery/priority-buffer](../delivery/priority-buffer.md)) |
 
 ## Behaviors
 
@@ -177,12 +177,12 @@ Coordinator errors are surfaced as messages in the Telegram chat.
 
 ### Event Bus Integration (R12)
 
-The Telegram channel subscribes to task events via the event bus. Session tasks are delivered through the coordinator; notifications are sent directly as messages.
+The Telegram channel subscribes to `BufferedDelivery` events dispatched by the priority buffer. Each delivery carries a ready-to-send prompt (single item or shutdown digest) which Telegram routes through the coordinator as a new message turn. The channel does not subscribe to `Notification` or session-task events directly — the priority buffer handles enqueueing, ordering, and idle gating (see [delivery/priority-buffer](../delivery/priority-buffer.md)).
 
 **Acceptance Criteria**:
-- Given a `SessionTaskReady` event is received while idle, then the task prompt is sent through the coordinator via the shared `_process_through_coordinator()` method and the response is rendered normally
-- Given a `SessionTaskReady` event is received while a response is active, then the task prompt is buffered via `coordinator.enqueue()` and processed after the current response completes
-- Given a `Notification` event is received, then the notification prompt is enqueued into the coordinator for pipeline-routed delivery (same path as session tasks) (ℹ️ for info, ⚠️ for error)
+- Given a `BufferedDelivery` event is received while the channel is idle, then the prompt is routed through the coordinator via the shared `_process_through_coordinator()` method and the response is rendered normally; per-item `on_delivered` callbacks fire on completion
+- Given a `BufferedDelivery` event is received while a response is active, then delivery is deferred to the next idle moment (the buffer waits for the coordinator busy→idle transition before re-emitting)
+- Given a shutdown digest `BufferedDelivery` event arrives, then the combined prompt is routed through the coordinator as a final exchange before the bot stops polling
 
 ## User Flow
 
