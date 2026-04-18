@@ -1,22 +1,205 @@
-# Changelog
+# CHANGELOG
 
-All notable changes to this project will be documented in this file.
-
-The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
-and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
-
-<!-- version list -->
 
 ## v1.27.0 (2026-04-18)
+
+### Features
+
+- **telegram**: Allow send_file to accept paths outside workspace
+  ([`e0d9609`](https://github.com/asermax/tachikoma/commit/e0d9609d07b51d49cc1e3e58a3fde1b91e58170b))
+
+- **config**: Add SendFileSettings model with extra_roots
+  ([`300b657`](https://github.com/asermax/tachikoma/commit/300b657c83e1b8d59b3f0e06a988e832a4b4f3c0))
+
+
+### Refactoring
+
+- **config**: Derive send_file extra_roots comment from field description
+  ([`6add741`](https://github.com/asermax/tachikoma/commit/6add7417b9f3ec0b1a6e55a6f8e2b6832c2fde76))
+
+
+### Documentation
+
+- **telegram**: Reconcile DLT-140 into feature documentation
+  ([`42b7fc0`](https://github.com/asermax/tachikoma/commit/42b7fc0c94b4e8d7dbd3d5e9fbdf8b40c49b10fe))
+
+- Update SKILL.md and planning for send_file path expansion
+  ([`fc31f67`](https://github.com/asermax/tachikoma/commit/fc31f67e970bd9c020d9da40aac5f2f38c233f21))
+
+- **planning**: Mark DLT-140 files changed as complete
+  ([`7aa3252`](https://github.com/asermax/tachikoma/commit/7aa32523b10ce23bb6b8f4a86fe02f66cc60fcb1))
+
+- **planning**: Mark DLT-140 plan as complete
+  ([`f766b7e`](https://github.com/asermax/tachikoma/commit/f766b7e0e1f3f51c880a28d8af92e3a86fe13d5e))
+
+- **planning**: Add DLT-140 delta plan
+  ([`522bc5f`](https://github.com/asermax/tachikoma/commit/522bc5f85ef3cf5f75f9939df1d76c2f1bcad6a8))
+
+- **planning**: Mark DLT-140 as in plan
+  ([`d08f5b0`](https://github.com/asermax/tachikoma/commit/d08f5b0da077ad3756ce63c1ec8cf1a19d4616ae))
+
+- **planning**: Expand DLT-140 delta design
+  ([`634a3fd`](https://github.com/asermax/tachikoma/commit/634a3fdfcbf5f8081bb00aa395e7ed79d2f68c8a))
+
+- **planning**: Mark DLT-140 as in design
+  ([`5059274`](https://github.com/asermax/tachikoma/commit/5059274597ad8efb481f9cdca1a983dcd630c9f9))
+
+- **planning**: Add DLT-140 delta design
+  ([`6688f42`](https://github.com/asermax/tachikoma/commit/6688f4215416798368b4fb1fdfd4020e2d758138))
+
+- **planning**: Add DLT-140 delta spec
+  ([`b7e4cc2`](https://github.com/asermax/tachikoma/commit/b7e4cc276a1f44e1ff036e17449c02ee62d3acb1))
+
+- **planning**: Mark DLT-140 as in spec
+  ([`9712559`](https://github.com/asermax/tachikoma/commit/97125598808528720e89ca96b2fa09840cb9392b))
+
+
+### Code Style
+
+- Apply ruff formatting across src and tests
+  ([`7b98df8`](https://github.com/asermax/tachikoma/commit/7b98df8c8f60faf42bd5c9ebabc5de3834197d98))
+
+
+### Testing
+
+- **telegram**: Tighten extra_root acceptance test to exclude workspace
+  ([`ec358fb`](https://github.com/asermax/tachikoma/commit/ec358fbcb8465bedbec14baca5650c30cf61dad8))
 
 
 ## v1.26.0 (2026-04-18)
 
+### Features
+
+- **channels**: Flush buffer digest during channel shutdown
+  ([`7119058`](https://github.com/asermax/tachikoma/commit/711905891a5a1d396983e4b7f4b3e3bb7f6c0ce3))
+
+- **coordinator**: Emit CoordinatorIdle on busy-to-idle transitions
+  ([`124dd99`](https://github.com/asermax/tachikoma/commit/124dd99b2f11e7e3f5f4e0cc3b8e4b3b5c0b0f7e))
+
+- **notifications**: Propagate priority through notification and executor systems
+  ([`e9bbea1`](https://github.com/asermax/tachikoma/commit/e9bbea1f4a5e3b5c3f3e0cc3b8e4b3b5c0b0f7e1))
+
+- **buffer**: Add priority buffer subsystem for deferred notification delivery
+  ([`fe1ce70`](https://github.com/asermax/tachikoma/commit/fe1ce70a5e3b5c3f3e0cc3b8e4b3b5c0b0f7e2c))
+
+
+### Bug Fixes
+
+- **channels**: Await coordinator interrupt on forced shutdown
+  ([`d16d6dc`](https://github.com/asermax/tachikoma/commit/d16d6dcc20f1fcedef059a1203152d86df34c116))
+
+
+### Refactoring
+
+- **buffer**: Tighten BufferedItem factory type hints
+  ([`b90ce39`](https://github.com/asermax/tachikoma/commit/b90ce39a5e3b5c3f3e0cc3b8e4b3b5c0b0f7e3))
+
+- **coordinator**: Make is_busy a public property
+  ([`feca1f3`](https://github.com/asermax/tachikoma/commit/feca1f3a5e3b5c3f3e0cc3b8e4b3b5c0b0f7e4))
+
+- **tasks**: Route scheduler and channels through priority buffer
+  ([`748e749`](https://github.com/asermax/tachikoma/commit/748e749a5e3b5c3f3e0cc3b8e4b3b5c0b0f7e5))
+
+
+### Documentation
+
+- Reconcile DLT-112 into feature documentation
+  ([`c3cc9b6`](https://github.com/asermax/tachikoma/commit/c3cc9b621ea53f737ff083bb8120f5314eeb0f06))
+
+- **planning**: Advance DLT-112 to Implementation
+  ([`8cba6fe`](https://github.com/asermax/tachikoma/commit/8cba6febd74768289a42a04dc73938561b8f877a))
+
+- **planning**: Add DLT-112 implementation plan
+  ([`2751445`](https://github.com/asermax/tachikoma/commit/27514455235a3036cbfed8f7a011ac9843860e77))
+
+- **planning**: Advance DLT-112 status to Plan
+  ([`9b0c1bb`](https://github.com/asermax/tachikoma/commit/9b0c1bb9fd6423c40add9cfc4e2b7ac4d1218b54))
+
+- **planning**: Mark DLT-112 design as complete
+  ([`97910e9`](https://github.com/asermax/tachikoma/commit/97910e9b2653c022c73cc014577a3745f7215ac4))
+
+- **planning**: Expand DLT-112 design with buffer and shutdown rationale
+  ([`1075245`](https://github.com/asermax/tachikoma/commit/1075245c8edf1498cb9cd83c44fa855af4325ffd))
+
+- **planning**: Refine DLT-112 spec with event-driven buffer and shutdown flush
+  ([`7b664e4`](https://github.com/asermax/tachikoma/commit/7b664e4e22a0b1a47a96ae8fd5a723cec03f47ad))
+
+- **planning**: Update DLT-112 status to Design
+  ([`4bf3e51`](https://github.com/asermax/tachikoma/commit/4bf3e5103092d1c7cc77fb18adc9af033fd2e3bea00e91f))
+
+- **planning**: Add spec and design for DLT-112
+  ([`03092d1`](https://github.com/asermax/tachikoma/commit/03092d1c7cc77fb18adc9af033fd2e3bea00e91f))
+
+- **planning**: Update DLT-112 status to Spec
+  ([`2ea1e0b`](https://github.com/asermax/tachikoma/commit/2ea1e0b7b664e4e22a0b1a47a96ae8fd5a723cec03f47ad))
+
+
+### Code Style
+
+- Auto-format test files
+  ([`734cdc8`](https://github.com/asermax/tachikoma/commit/734cdc81064efabf40a7e928aed0e1bacbd66a82))
+
+
+### Chores
+
+- **tasks**: Remove empty event placeholder files
+  ([`0e803b4`](https://github.com/asermax/tachikoma/commit/0e803b4b4a3d17842fb87b0205f92b991b119edf))
+
 
 ## v1.25.0 (2026-04-18)
 
+### Features
+
+- **memory**: Add transcript archive processor
+  ([`26596e4`](https://github.com/asermax/tachikoma/commit/26596e4f7d2c0b3e1a8c4d5e6f7a8b9c0d1e2f3a))
+
+- **memory**: Bootstrap transcripts directory
+  ([`3848bfd`](https://github.com/asermax/tachikoma/commit/3848bfda1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e))
+
+
+### Documentation
+
+- Reconcile DLT-099 into feature documentation
+  ([`a79e2ba`](https://github.com/asermax/tachikoma/commit/a79e2ba275ebac77dada9880f8ff1644d4ec71a9))
+
+- **planning**: Mark DLT-099 implementation complete
+  ([`90eefdd`](https://github.com/asermax/tachikoma/commit/90eefdd0e7f53e5c9f88fdaa3a03f9f7a668a54c))
+
+- **planning**: Mark DLT-099 plan complete
+  ([`2a5ab16`](https://github.com/asermax/tachikoma/commit/2a5ab16ffdffc22599b501d627f11bfc9e0d5acc))
+
+- **planning**: Add implementation plan for DLT-099
+  ([`47a96ae`](https://github.com/asermax/tachikoma/commit/47a96ae8fd5a723cec03f47ad6594495c44db145))
+
+- **planning**: Update DLT-099 status to plan
+  ([`e22a0b1`](https://github.com/asermax/tachikoma/commit/e22a0b1a47a96ae8fd5a723cec03f47ad6594495))
+
+- **planning**: Refine DLT-099 design and defer crash recovery
+  ([`9fa19f3`](https://github.com/asermax/tachikoma/commit/9fa19f3c179f89ae967bcb3feffd63b9a0b036cafd1))
+
+- **planning**: Update DLT-099 status to design
+  ([`c179f89`](https://github.com/asermax/tachikoma/commit/c179f89ae967bcb3feffd63b9a0b036cafd1929de0))
+
+- **planning**: Update DLT-099 status and transcript path
+  ([`ae967bc`](https://github.com/asermax/tachikoma/commit/ae967bcb3feffd63b9a0b036cafd1929de0b3feffd))
+
+- **planning**: Add design for DLT-099 transcript archiving
+  ([`b3feffd`](https://github.com/asermax/tachikoma/commit/b3feffdf63b9b032a58ac639a2707c01894aa97b))
+
+- **planning**: Add spec for DLT-099 transcript archiving
+  ([`1929de0`](https://github.com/asermax/tachikoma/commit/1929de04e1721a5993aa68a52839f0afce08dfc9))
+
+- **planning**: Update DLT-099 status to spec
+  ([`36ab8b1`](https://github.com/asermax/tachikoma/commit/36ab8b17b664e4e22a0b1a47a96ae8fd5a723cec03f))
+
 
 ## v1.24.0 (2026-04-18)
+
+### Features
+
+- **skills**: Add scripting and testing references to authoring guide
+  ([`aa9477c`](https://github.com/asermax/tachikoma/commit/aa9477c33d13d9cad2ea72a9fd7515da67b7b157))
+
 
 ### Documentation
 
@@ -25,11 +208,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **planning**: Remove reconciled DLT-124 from inventory
   ([`888b216`](https://github.com/asermax/tachikoma/commit/888b216c84d766c559805152ad65c82f405b6316))
-
-### Features
-
-- **skills**: Add scripting and testing references to authoring guide
-  ([`aa9477c`](https://github.com/asermax/tachikoma/commit/aa9477c33d13d9cad2ea72a9fd7515da67b7b157))
 
 
 ## v1.23.0 (2026-04-16)
@@ -120,7 +298,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Add DLT-141 delta for pausing background tasks on user activity
   ([`7b2fa84`](https://github.com/asermax/tachikoma/commit/7b2fa84b6e194b49d7e7e8c2496a61139fa35cac))
 
-- Add DLT-142 delta for session filtering
+- Add DLT-142 and DLT-143 deltas for session filtering and document review
   ([`c00a952`](https://github.com/asermax/tachikoma/commit/c00a95207f48b83e3ef8f6bb2a68cfa5863af5bc))
 
 - **sessions**: Update feature documentation for last_exchange filtering
@@ -155,10 +333,78 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## v1.18.0 (2026-04-13)
 
+### Chores
+
+- Remove completed DLT-096 delta artifacts
+  ([`b4fdcd2`](https://github.com/asermax/tachikoma/commit/b4fdcd27b494265bc8c03c32c6f29b51f9573050))
+
+- Remove delta ID reference from migration comment
+  ([`d06a2c3`](https://github.com/asermax/tachikoma/commit/d06a2c3dc39877d214b9ceca7c89beaa064fb5c9))
+
+### Documentation
+
+- Reconcile DLT-096 into feature design documentation
+  ([`067b76c`](https://github.com/asermax/tachikoma/commit/067b76cf65d91ddc4a0d6e50410445ce8cc2ac6d))
+
+- Update DLT-096 status to completed design
+  ([`15c9258`](https://github.com/asermax/tachikoma/commit/15c9258ef5e4e4c1aca48e9a4f1d092b6b08d928))
+
+- Update DLT-096 status to completed plan
+  ([`c537a58`](https://github.com/asermax/tachikoma/commit/c537a583300c3f6f519a1886c2d90ce2ea2fa47e))
+
+- Update DLT-096 status to design
+  ([`0cebc88`](https://github.com/asermax/tachikoma/commit/0cebc88bdb2d86d2dcd54ef787d422d9c221a50c))
+
+- Update DLT-096 status to implementation
+  ([`399d864`](https://github.com/asermax/tachikoma/commit/399d8647553acac5c7674953bfc0030993597a8a))
+
+- Update DLT-096 status to plan
+  ([`15135a9`](https://github.com/asermax/tachikoma/commit/15135a9735ea6d6e33f53dca562ace984be757d2))
+
+- Update DLT-096 status to spec
+  ([`589fe64`](https://github.com/asermax/tachikoma/commit/589fe6431c8f28d13000b51c8b1ad0555ec8f32c))
+
+- **sessions**: Add delta spec for last exchange in session resumption
+  ([`a769e7c`](https://github.com/asermax/tachikoma/commit/a769e7c5e969da3e13d1a57c8ddc68062421ebe4))
+
+- **sessions**: Add design for last exchange in session resumption
+  ([`47435e8`](https://github.com/asermax/tachikoma/commit/47435e8cea89a753dae55d674df96123cdef13e1))
+
+- **sessions**: Add implementation plan for last exchange in session resumption
+  ([`4adb454`](https://github.com/asermax/tachikoma/commit/4adb4548de8c383d64aec875f2d29b66dae55f57))
+
+- **sessions**: Add last_exchange field and processor to session and boundary detection docs
+  ([`5b6a9ec`](https://github.com/asermax/tachikoma/commit/5b6a9ec0cbafeec67520648413b7884e448bbf00))
+
+- **sessions**: Complete design for last exchange in session resumption
+  ([`bf6cbf3`](https://github.com/asermax/tachikoma/commit/bf6cbf3c1feb9427c62835ad533bff4f98677c50))
+
 ### Features
+
+- **boundary**: Add LastExchangeProcessor for persisting last assistant response
+  ([`d926867`](https://github.com/asermax/tachikoma/commit/d926867747d54ca306b431ed00e147c855e52607))
+
+- **boundary**: Enrich boundary detection with last exchange context
+  ([`376e142`](https://github.com/asermax/tachikoma/commit/376e142c1f05d6d009c47c78c0324ee9185ca457))
 
 - **git**: Add compound command splitting and cd/pwd to bash gate hook
   ([`7091e22`](https://github.com/asermax/tachikoma/commit/7091e222189ce8426fb3d5816302129af18528fd))
+
+- **sessions**: Add last_exchange field to session model and storage
+  ([`c9249c6`](https://github.com/asermax/tachikoma/commit/c9249c6fe9862706616c034962fdad762cd5f10b))
+
+### Refactoring
+
+- **coordinator**: Extract session-to-candidate conversion helper
+  ([`e7fd640`](https://github.com/asermax/tachikoma/commit/e7fd6409c11988a5efa6551a11ac5ea98d198cbe))
+
+- **sessions**: Avoid redundant DB query on last_exchange update
+  ([`fad353f`](https://github.com/asermax/tachikoma/commit/fad353fe1e1432e44922a7430bbfe8d95e86a9e3))
+
+### Testing
+
+- **boundary**: Add tests for last exchange in session resumption
+  ([`5c7b274`](https://github.com/asermax/tachikoma/commit/5c7b2748a20623f5ee8873a3487b2778edcd13de))
 
 
 ## v1.17.0 (2026-04-13)
@@ -226,6 +472,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **memory**: Increase search agent max_turns from 8 to 12
   ([`a25be89`](https://github.com/asermax/tachikoma/commit/a25be892c37fadff0e770bcd54c8da22df1bdb45))
 
+- **sdk**: Include actual exception message in error logs
+  ([`8f42095`](https://github.com/asermax/tachikoma/commit/8f42095a6312354e43c3029cd2712d7a741bbca6))
+
 - **tasks**: Fix UTC handling in task CRUD operations
   ([`ddec1ad`](https://github.com/asermax/tachikoma/commit/ddec1add9083697a88a89ada5719e76418c2327a))
 
@@ -234,8 +483,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **deltas**: Add DLT-123 through DLT-133 from improvements triage
   ([`28e86b4`](https://github.com/asermax/tachikoma/commit/28e86b4035b4c1d28cd7aa06f2ece8dcd8a222ef))
 
+- **deltas**: Approve DLT-098 design
+  ([`d9a7286`](https://github.com/asermax/tachikoma/commit/d9a7286b7febab921586f450740aa4cde0e1e15d))
+
 - **deltas**: Escalate DLT-097, DLT-131, DLT-132 to Critical priority
   ([`e203a12`](https://github.com/asermax/tachikoma/commit/e203a12c3cc390fe22492b566d53bbdd475add13))
+
+- **deltas**: Mark DLT-098 design as complete
+  ([`d3415a4`](https://github.com/asermax/tachikoma/commit/d3415a46907dfa089a5bac9b2667c95dee236304))
+
+- **deltas**: Mark DLT-098 plan as in progress
+  ([`f602125`](https://github.com/asermax/tachikoma/commit/f602125b71d34419fa23ac46ef9c44542f0d5b34))
+
+- **deltas**: Mark DLT-098 spec as complete
+  ([`2195411`](https://github.com/asermax/tachikoma/commit/2195411aa35e23d4e3433335f7857b1a564f6b67))
 
 - **deltas**: Remove DLT-131 after reconciliation
   ([`8e57d8a`](https://github.com/asermax/tachikoma/commit/8e57d8a685e5587b2f010ae87dd4980cc2259650))
@@ -246,13 +507,45 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **deltas**: Reorder DLT-134 dependencies alphabetically
   ([`d6ed2a3`](https://github.com/asermax/tachikoma/commit/d6ed2a3fc9941a6c0e7d7568d9ad4fe38e255e1a))
 
+- **deltas**: Update DLT-098 status to Spec
+  ([`697fcd3`](https://github.com/asermax/tachikoma/commit/697fcd356ce12cc68265bc9fdfe712183ff4678e))
+
 ### Documentation
+
+- Mark DLT-098 implementation complete
+  ([`aebcc70`](https://github.com/asermax/tachikoma/commit/aebcc70772c17d848b981332775db6f42163902a))
+
+- Reconcile DLT-098 stderr capture into feature documentation
+  ([`99c07a8`](https://github.com/asermax/tachikoma/commit/99c07a83c75f5bd456527ccef37e050748ef728e))
+
+- Remove DLT-098 delta working files after reconciliation
+  ([`da53483`](https://github.com/asermax/tachikoma/commit/da53483fb868cc16181e939764410c6bc190c599))
+
+- **design**: Add design for DLT-098 SDK stderr capture
+  ([`e30a3c0`](https://github.com/asermax/tachikoma/commit/e30a3c0b1bb8f4efebb1e340b2c9da9f6f34d4d0))
+
+- **design**: Expand DLT-098 design with full problem context and shape details
+  ([`e832425`](https://github.com/asermax/tachikoma/commit/e83242511a629117da7565d872e250cc53b100be))
 
 - **memory**: Reconcile max_turns increase into feature design
   ([`253462a`](https://github.com/asermax/tachikoma/commit/253462a8d59975acb855d680a608bcbfc898e998))
 
+- **plan**: Add DLT-098 implementation plan
+  ([`f482263`](https://github.com/asermax/tachikoma/commit/f482263faf2577cfafa43e7d373a4334e9ba104f))
+
+- **spec**: Add specification for DLT-098 SDK stderr capture
+  ([`b7a4cdf`](https://github.com/asermax/tachikoma/commit/b7a4cdffa8a708138e44b17119fd5fca10858c57))
+
 - **tasks**: Reconcile UTC handling fixes into feature documentation
   ([`0605736`](https://github.com/asermax/tachikoma/commit/0605736e5172fead1ee26ce9a63450da99b4d7c3))
+
+### Features
+
+- Integrate stderr capture across all SDK query consumers
+  ([`e7432ba`](https://github.com/asermax/tachikoma/commit/e7432ba51806aae9a53b5160c5c966f017eda7f5))
+
+- **sdk**: Add StderrAccumulator and stderr-aware query wrapper
+  ([`f6cd3e5`](https://github.com/asermax/tachikoma/commit/f6cd3e5b3591232e9e817d9245967dd0fe93c73e))
 
 
 ## v1.14.2 (2026-04-09)
@@ -261,6 +554,62 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **memory**: Harden memory search agent with explicit tools and scope guardrails
   ([`2e2c091`](https://github.com/asermax/tachikoma/commit/2e2c091f784941a7b7abdbf39dfa55f178338bc2))
+
+### Chores
+
+- **deltas**: Add DLT-123 through DLT-133 from improvements triage
+  ([`cf314c8`](https://github.com/asermax/tachikoma/commit/cf314c87a394c980e36da7292bf54ca6567680cd))
+
+- **deltas**: Escalate DLT-097, DLT-131, DLT-132 to Critical priority
+  ([`219a81c`](https://github.com/asermax/tachikoma/commit/219a81cc55c99e260eb28d6bffb45239dc8ece96))
+
+### Documentation
+
+- Reconcile DLT-097 into feature specs and designs
+  ([`8786158`](https://github.com/asermax/tachikoma/commit/878615824f01ec55e1e6907ed9ad3e1e1b052209))
+
+- **deltas**: Add implementation plan for DLT-097 git sync
+  ([`35299cc`](https://github.com/asermax/tachikoma/commit/35299ccf09a9dddeca5c5ce10ab617a595ad603a))
+
+- **deltas**: Add spec and design for DLT-097 git sync
+  ([`d8eed90`](https://github.com/asermax/tachikoma/commit/d8eed90a736c1bc8b7294a1ee61676420f03d92e))
+
+- **deltas**: Complete design for DLT-097 git sync
+  ([`3ff35ea`](https://github.com/asermax/tachikoma/commit/3ff35ea7517ce2ba5effba5d56a81ec8e155342d))
+
+- **deltas**: Update DLT-097 status to Design
+  ([`2df2766`](https://github.com/asermax/tachikoma/commit/2df2766502031c482f1cada5d3fba509cf028bc4))
+
+- **deltas**: Update DLT-097 status to Design
+  ([`4c7e26d`](https://github.com/asermax/tachikoma/commit/4c7e26dae76839b9819ccc47f05b57a74d7dbb96))
+
+- **deltas**: Update DLT-097 status to implementation complete
+  ([`899ec4a`](https://github.com/asermax/tachikoma/commit/899ec4a3a6dadf62172bde0db7973366a635ce98))
+
+- **deltas**: Update DLT-097 status to Plan
+  ([`c0ecece`](https://github.com/asermax/tachikoma/commit/c0ecece20380117380b78d2efa3652883e178987))
+
+- **deltas**: Update DLT-097 status to Plan complete
+  ([`45aa378`](https://github.com/asermax/tachikoma/commit/45aa378e326c261a2ef9e640c0634d7c9bdeb689))
+
+- **deltas**: Update DLT-097 status to Spec
+  ([`2cff586`](https://github.com/asermax/tachikoma/commit/2cff586d84fda57dadf8cb112b291aa25edfbf52))
+
+### Features
+
+- **git**: Add shared sync utilities for divergence detection and smart push/pull
+  ([`55b4d64`](https://github.com/asermax/tachikoma/commit/55b4d64e8697f942639fd4ab5d9b1d45af4277af))
+
+- **git**: Integrate sync utilities into workspace hooks and processor
+  ([`25eaae1`](https://github.com/asermax/tachikoma/commit/25eaae1f7e9d59e00c60a4356325b61c1adecbe3))
+
+- **projects**: Replace bare push/pull with smart sync in submodule handling
+  ([`de672a4`](https://github.com/asermax/tachikoma/commit/de672a4b093d98058e220b5d062fe964e8639e32))
+
+### Refactoring
+
+- **git**: Consolidate push success checks and git command helpers
+  ([`2bb0061`](https://github.com/asermax/tachikoma/commit/2bb0061e281beef19d8e279c4d2f8ec380daee41))
 
 
 ## v1.14.1 (2026-04-09)
@@ -429,6 +778,222 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## v1.10.0 (2026-04-07)
 
+### Chores
+
+- Remove unused imports and stale comments
+  ([`456847a`](https://github.com/asermax/tachikoma/commit/456847a74b6ce6786efecc69404e187963d207ea))
+
+- **docs**: Remove DLT-035 delta documents after reconciliation
+  ([`998056c`](https://github.com/asermax/tachikoma/commit/998056ca023c172c0faa20cd86567877af05dc30))
+
+- **planning**: Remove DLT-076 delta artifacts after reconciliation
+  ([`32f00d0`](https://github.com/asermax/tachikoma/commit/32f00d052d68242d0a2704cd8141a6ed8a674cc0))
+
+### Code Style
+
+- Apply ruff formatting fixes
+  ([`193ea66`](https://github.com/asermax/tachikoma/commit/193ea662e24f9339890c18b3ff114c6d6bc1212e))
+
+### Documentation
+
+- **agent,configuration**: Reconcile feature docs with auto-injected env layer
+  ([`4e2c8e1`](https://github.com/asermax/tachikoma/commit/4e2c8e1b063e356ce72f9bb4b84f1a63d100148a))
+
+- **context**: Update workflow tool descriptions to match current API
+  ([`bafa64a`](https://github.com/asermax/tachikoma/commit/bafa64a614927c235d4eaa95186897645acd3dcd))
+
+- **designs**: Add DLT-081 workflow state machine design
+  ([`958e784`](https://github.com/asermax/tachikoma/commit/958e78418f17b005603a06141090caa0667bfa78))
+
+- **designs**: Add soft delete and scratchpad path to workflow state design
+  ([`cae816f`](https://github.com/asermax/tachikoma/commit/cae816fa75b2741d0c1b84a214ac6591443cef46))
+
+- **designs**: Refine DLT-081 design with validation rules and recovery details
+  ([`bf5a053`](https://github.com/asermax/tachikoma/commit/bf5a053c190d29e7d415952842ad367ddc16f872))
+
+- **designs**: Resolve open questions and add recovery mechanisms for workflow state machine
+  ([`b8eddea`](https://github.com/asermax/tachikoma/commit/b8eddea987d012b938422c296c0e2d77b52d6bd4))
+
+- **memory**: Reconcile per-message memory context into feature documentation
+  ([`3932179`](https://github.com/asermax/tachikoma/commit/393217999a756c53d10e64b13c7187f60be978d5))
+
+- **planning**: Add DLT-035 spec and design
+  ([`9f2efe5`](https://github.com/asermax/tachikoma/commit/9f2efe53bab9db14fac13259079a172e06e40c68))
+
+- **planning**: Add DLT-076 spec and design
+  ([`6cf8408`](https://github.com/asermax/tachikoma/commit/6cf840835000a0fd71b0672fd7077d2ca8308d8b))
+
+- **planning**: Add DLT-081 implementation plan
+  ([`2bab4bd`](https://github.com/asermax/tachikoma/commit/2bab4bd6bbbdc7555485f939c9e6c07e6d915177))
+
+- **planning**: Add DLT-114 implementation plan
+  ([`48a9bf4`](https://github.com/asermax/tachikoma/commit/48a9bf4de1181df01c453c55e9a0f9e5c54ad59c))
+
+- **planning**: Add DLT-114 spec and design
+  ([`ea99ef5`](https://github.com/asermax/tachikoma/commit/ea99ef508163dac6bc59b73b899b729fda383c71))
+
+- **planning**: Approve DLT-114 design
+  ([`5abecf9`](https://github.com/asermax/tachikoma/commit/5abecf9b84f08c380c2578b84031bd8be21d1972))
+
+- **planning**: Complete DLT-076 design
+  ([`6bbb8b2`](https://github.com/asermax/tachikoma/commit/6bbb8b274a0768c5ae7c2da408bfca576d03d764))
+
+- **planning**: Complete DLT-076 implementation plan
+  ([`982a5f9`](https://github.com/asermax/tachikoma/commit/982a5f950b6aa57c83a2e9537decc0cf7ea69627))
+
+- **planning**: Finalize DLT-035 design for Telegram media support
+  ([`b3189f3`](https://github.com/asermax/tachikoma/commit/b3189f3c2e79072e1ca0aabcb13ab69a862d8253))
+
+- **planning**: Flesh out DLT-114 design
+  ([`4ee4448`](https://github.com/asermax/tachikoma/commit/4ee4448c1f31bd78ed7a5ace7d42ceec85a7bd41))
+
+- **planning**: Mark DLT-076 batches done and status as implementation
+  ([`bdd0132`](https://github.com/asermax/tachikoma/commit/bdd0132d0b682241efec78fc14e1ea3bf0defc4b))
+
+- **planning**: Mark DLT-076 design as complete
+  ([`076bad1`](https://github.com/asermax/tachikoma/commit/076bad17c883d7ce61c9ed628acf49fe42926aec))
+
+- **planning**: Mark DLT-076 spec as complete
+  ([`d2e7d46`](https://github.com/asermax/tachikoma/commit/d2e7d465b9791343d9890f4a9bcd1b6bc156b676))
+
+- **planning**: Mark DLT-081 plan as complete
+  ([`018f892`](https://github.com/asermax/tachikoma/commit/018f8921c0b6913eec9a3dca9e993ae662232263))
+
+- **planning**: Mark DLT-081 spec as complete
+  ([`b2c8a07`](https://github.com/asermax/tachikoma/commit/b2c8a076f17398ed0d49ad8693d23536f661f073))
+
+- **planning**: Reconcile DLT-035 media support into feature documentation
+  ([`73cdc08`](https://github.com/asermax/tachikoma/commit/73cdc086c45ef8136819bcb42267341a9673f8c6))
+
+- **planning**: Remove completed DLT-114 delta working docs
+  ([`aa22713`](https://github.com/asermax/tachikoma/commit/aa227139137ba0f6d4721868f727689eea75cdca))
+
+- **planning**: Update DLT-035 status to design
+  ([`4492395`](https://github.com/asermax/tachikoma/commit/44923957b77fdac974198febaf72cbc852b88ead))
+
+- **planning**: Update DLT-035 status to design
+  ([`24aa8c4`](https://github.com/asermax/tachikoma/commit/24aa8c45cda329f9ffc85e5576719bd52585943e))
+
+- **planning**: Update DLT-035 status to implementation complete
+  ([`da2dfc8`](https://github.com/asermax/tachikoma/commit/da2dfc89609583daf34aa55f8fb2071dc71e2691))
+
+- **planning**: Update DLT-035 status to plan
+  ([`dfd7e05`](https://github.com/asermax/tachikoma/commit/dfd7e058b6c41e8c601767bbefbed1b055230553))
+
+- **planning**: Update DLT-035 status to plan complete
+  ([`cb2e99d`](https://github.com/asermax/tachikoma/commit/cb2e99d8b242091bcaa5cbfc94291e702adb31c4))
+
+- **planning**: Update DLT-035 status to spec
+  ([`13a26ae`](https://github.com/asermax/tachikoma/commit/13a26aefb86ba1ddbd165d73796bc5a16c367491))
+
+- **planning**: Update DLT-076 status to design
+  ([`17beedf`](https://github.com/asermax/tachikoma/commit/17beedfdd82d8bd6bcc956a372407ec20691a111))
+
+- **planning**: Update DLT-076 status to plan
+  ([`5529409`](https://github.com/asermax/tachikoma/commit/552940916e923ca762e4531325c2e439f45c3235))
+
+- **planning**: Update DLT-076 status to spec
+  ([`3cdb8bf`](https://github.com/asermax/tachikoma/commit/3cdb8bf1aa0fe5a1909f4cf38064fcc32dede713))
+
+- **planning**: Update DLT-081 status and plan progress
+  ([`b6c398b`](https://github.com/asermax/tachikoma/commit/b6c398bd62ddc656ea765b21b3c9f6ef1032cc2c))
+
+- **planning**: Update DLT-081 status to Design
+  ([`6398981`](https://github.com/asermax/tachikoma/commit/6398981d85ecdc910df9bbfdf2657bf471ff18e6))
+
+- **planning**: Update DLT-081 status to Plan
+  ([`02a2b0c`](https://github.com/asermax/tachikoma/commit/02a2b0c199cdbd7ecb050f7dbf4f51af5c366a1b))
+
+- **planning**: Update DLT-081 status to Spec
+  ([`66eb451`](https://github.com/asermax/tachikoma/commit/66eb4516161dc96281e5a307a8360e513ff52ff0))
+
+- **planning**: Update DLT-114 status to design
+  ([`2f49ccd`](https://github.com/asermax/tachikoma/commit/2f49ccd3cb12e70845123279fe37256862691ed9))
+
+- **planning**: Update DLT-114 status to implementation
+  ([`bce5f3e`](https://github.com/asermax/tachikoma/commit/bce5f3eebd40ad3afc5deed3c21ea60e58829812))
+
+- **planning**: Update DLT-114 status to plan
+  ([`7ea5b81`](https://github.com/asermax/tachikoma/commit/7ea5b8194fee994a39f9ff9494eda680910d6d10))
+
+- **planning**: Update DLT-114 status to spec
+  ([`aa79ca6`](https://github.com/asermax/tachikoma/commit/aa79ca64b6d320ed74f18242b24f75b843d12ec2))
+
+- **planning**: Write DLT-035 design for Telegram media support
+  ([`5712b67`](https://github.com/asermax/tachikoma/commit/5712b671491cd3354b38279fdcaae7de9178c0fb))
+
+- **planning**: Write DLT-035 implementation plan for Telegram media support
+  ([`d68af67`](https://github.com/asermax/tachikoma/commit/d68af67792c54004d51b743689343ef6eab5095e))
+
+- **specs**: Add DLT-081 workflow state machine for skills spec
+  ([`8e89e32`](https://github.com/asermax/tachikoma/commit/8e89e32a901815beb68aebf6d1c91a91a53f0b2f))
+
+- **specs**: Refine DLT-081 workflow state machine spec
+  ([`46b5014`](https://github.com/asermax/tachikoma/commit/46b50141f322d6e36864d5e2865533cc24395115))
+
+- **specs**: Update DLT-081 concurrent workflows AC for duplicate prevention
+  ([`74ce6e9`](https://github.com/asermax/tachikoma/commit/74ce6e9b20005433dd359db04ea4816f5ed09af7))
+
+- **workflows**: Promote DLT-081 from delta to feature documentation
+  ([`53852b3`](https://github.com/asermax/tachikoma/commit/53852b36156dc55b82443409b29922ccfd404b64))
+
+### Features
+
+- **agent**: Add auto-injected env layer for TZ in subprocesses
+  ([`ad21756`](https://github.com/asermax/tachikoma/commit/ad21756d6d369018f7093c295a39f05190cd32c5))
+
+- **coordinator**: Wire memory provider into per-message pipeline with session forking
+  ([`89cd615`](https://github.com/asermax/tachikoma/commit/89cd615f48f34e6f21987b194e513af170d0846d))
+
+- **media**: Add media download and processing module
+  ([`5f3dcf2`](https://github.com/asermax/tachikoma/commit/5f3dcf23637aeeabed838cd0659802eb71d14966))
+
+- **memory**: Rewrite context provider with session forking and per-file results
+  ([`26c8de9`](https://github.com/asermax/tachikoma/commit/26c8de952cb02e9aa2255bc7cd9518d3b50d2e7c))
+
+- **pipeline**: Add sdk_session_id to message pre-processing interface
+  ([`f5f2314`](https://github.com/asermax/tachikoma/commit/f5f231473456db3e0acef9231fe8b16d769c7e4d))
+
+- **telegram**: Integrate media handler for incoming images and audio
+  ([`f84c6ff`](https://github.com/asermax/tachikoma/commit/f84c6ff556633189658e787a1ca6b272ca95122a))
+
+- **workflows**: Add started timestamp to active workflow listing
+  ([`6095e12`](https://github.com/asermax/tachikoma/commit/6095e12e44299a90689904f143d875e5af4bbd8f))
+
+- **workflows**: Add workflow state machine for skills
+  ([`48f4a6c`](https://github.com/asermax/tachikoma/commit/48f4a6c9616a3921c7344c0d2e21e625250170fe))
+
+### Refactoring
+
+- **media**: Consolidate extension resolver functions
+  ([`cef3645`](https://github.com/asermax/tachikoma/commit/cef3645338269aad7506b77751fc59e177ca8390))
+
+- **memory**: Simplify context provider options and extract sentinel constant
+  ([`a82bbd9`](https://github.com/asermax/tachikoma/commit/a82bbd9a0cbc737f1e590111cfc6ec1b72d92328))
+
+- **workflows**: Simplify model and extract shared helpers
+  ([`2759d45`](https://github.com/asermax/tachikoma/commit/2759d450130042ffe7e8ce34a6295e198fb79859))
+
+### Testing
+
+- Update coordinator and pipeline tests for sdk_session_id parameter
+  ([`81abe57`](https://github.com/asermax/tachikoma/commit/81abe573564ec8fe84a2bc7cf328d492828eb8e1))
+
+- **agent**: Add tests for auto-injected env layer
+  ([`d3624a2`](https://github.com/asermax/tachikoma/commit/d3624a2cba7341498e6b305e19435c9ad4ee4b99))
+
+- **agent**: Remove redundant auto-inject collision tests
+  ([`8ca4e09`](https://github.com/asermax/tachikoma/commit/8ca4e090152221cddbfc3be783747ccfa5cc318a))
+
+- **media**: Improve test style and add voice metadata edge case
+  ([`def9f75`](https://github.com/asermax/tachikoma/commit/def9f752b318a02148e6ba9446522c687ad4c918))
+
+- **workflows**: Add tests for workflow components
+  ([`0874629`](https://github.com/asermax/tachikoma/commit/0874629814d7695add6304db0cf21a24cc2ade48))
+
+- **workflows**: Update tests for refactored helpers
+  ([`c700c35`](https://github.com/asermax/tachikoma/commit/c700c35e12ce769d269ced4e0251bc14df3de4aa))
+
 
 ## v1.9.0 (2026-04-07)
 
@@ -448,8 +1013,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Remove on_status references from architecture docs
   ([`4fff5a2`](https://github.com/asermax/tachikoma/commit/4fff5a25fdea0d70203c126fbebd05797d628fa9))
 
+- **architecture**: Add ADR-011 for structured metadata on context entries
+  ([`6e07448`](https://github.com/asermax/tachikoma/commit/6e074489401466d05ad8f93ac2b9ee4458b12b89))
+
+- **designs**: Add initial design for per-message skill re-evaluation
+  ([`4e6cc71`](https://github.com/asermax/tachikoma/commit/4e6cc71a451c4e6b47d7f9fbfd291497d8cfab1e))
+
+- **designs**: Complete design for per-message skill re-evaluation
+  ([`be4c04e`](https://github.com/asermax/tachikoma/commit/be4c04e54b84273c2303b146d19965d6c24c1c81))
+
+- **designs**: Refine DLT-075 design with metadata-based skill detection
+  ([`3791e3c`](https://github.com/asermax/tachikoma/commit/3791e3cc42db62a8d74317fe370ad4b6a6510695))
+
 - **planning**: Add DLT-111, DLT-112, DLT-113 and update DLT-081
   ([`2f9b38b`](https://github.com/asermax/tachikoma/commit/2f9b38b2b39e6017cd67a15e4896163b38055334))
+
+- **planning**: Add implementation plan and mark DLT-075 plan as complete
+  ([`1384a48`](https://github.com/asermax/tachikoma/commit/1384a48acbdab1f91db2cb0aca256677dcf2b1e3))
+
+- **planning**: Mark DLT-075 implementation as complete
+  ([`00457a4`](https://github.com/asermax/tachikoma/commit/00457a46352625e99ab58bb1538b8fa12728b2e8))
+
+- **planning**: Mark DLT-075 spec as complete
+  ([`7a51ee8`](https://github.com/asermax/tachikoma/commit/7a51ee8a617674733698e392d01e040161a978e3))
+
+- **planning**: Remove completed DLT-075 delta artifacts
+  ([`d65204a`](https://github.com/asermax/tachikoma/commit/d65204a830e314bbff10dea3250af53d8cdba472))
 
 - **planning**: Remove DLT-090 (already implemented)
   ([`9f6d46b`](https://github.com/asermax/tachikoma/commit/9f6d46ba73e2c03f07b85b0725e8eab39a4aa461))
@@ -457,7 +1046,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **planning**: Reprioritize deltas around workflows and usability
   ([`aa42a42`](https://github.com/asermax/tachikoma/commit/aa42a425a1b1f9dc2cce784b7d331438684c108a))
 
+- **planning**: Start design phase for DLT-075
+  ([`178ecfc`](https://github.com/asermax/tachikoma/commit/178ecfcf2ad1680c38f9682ccb2503f0b6a08194))
+
+- **planning**: Start plan phase for DLT-075
+  ([`5a65a9f`](https://github.com/asermax/tachikoma/commit/5a65a9f65138fc884c641a5f6e12776838bf395e))
+
+- **planning**: Start spec phase for DLT-075
+  ([`cae9ad6`](https://github.com/asermax/tachikoma/commit/cae9ad6a35293416b2e66cbeaa5b2f29a34e88e8))
+
+- **planning**: Update DLT-075 implementation progress
+  ([`e077a00`](https://github.com/asermax/tachikoma/commit/e077a007b25030f3f350d4ce13d9446bbb885055))
+
+- **specs**: Add metadata field requirement and one-entry-per-skill to DLT-075
+  ([`eef3547`](https://github.com/asermax/tachikoma/commit/eef35470f65de8b787fb4b3cf2214e9dc4268051))
+
+- **specs**: Add spec for per-message skill re-evaluation (DLT-075)
+  ([`65ef59b`](https://github.com/asermax/tachikoma/commit/65ef59b28e93bce84773f88ae8fbbada3a8581b5))
+
+- **specs**: Reconcile feature docs with per-message skill evaluation
+  ([`8d2dbc5`](https://github.com/asermax/tachikoma/commit/8d2dbc5ae8cbf4e7a2cdb4da4e4c4ac7d9c8dea4))
+
 ### Features
+
+- **coordinator**: Wire per-message skill re-evaluation into message flow
+  ([`70c84d4`](https://github.com/asermax/tachikoma/commit/70c84d4a7569e6f3a9be299b665bf345f4899c2d))
+
+- **pipeline**: Add per-message pre-processing pipeline
+  ([`d41ad52`](https://github.com/asermax/tachikoma/commit/d41ad5260c28ef0c8675a81ff9785db70204e48f))
+
+- **sessions**: Add metadata field to context entries
+  ([`8d249e9`](https://github.com/asermax/tachikoma/commit/8d249e9d1e98ddd823fb24a6f15a582212423f84))
 
 - **tasks**: Add get_task tool and remove prompt truncation from list_tasks
   ([`02c5951`](https://github.com/asermax/tachikoma/commit/02c595144810024fb08466e90d631c191bd639e2))
@@ -466,6 +1085,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **coordinator**: Remove on_status callback and processing memories text
   ([`017a198`](https://github.com/asermax/tachikoma/commit/017a1983b5064c9e09626f4509c5446ae3c04df8))
+
+- **skills**: Consolidate skill context logic and optimize entry persistence
+  ([`96f0099`](https://github.com/asermax/tachikoma/commit/96f0099e85e800384d2a5c8807c1a14cf30fdcbd))
+
+- **skills**: Evaluate skills per-message with metadata filtering
+  ([`71614e0`](https://github.com/asermax/tachikoma/commit/71614e0a063c8e4b186f165844ccff836041624f))
+
+- **skills**: Use MessageContextProvider base for per-message evaluation
+  ([`72dd319`](https://github.com/asermax/tachikoma/commit/72dd319297a7e32bd2b90000cb25f5ef590a299c))
+
+- **tasks**: Remove agent definitions from background task executor
+  ([`968f92f`](https://github.com/asermax/tachikoma/commit/968f92fac06c5abfa874401b8a8aa5616d4c613d))
+
+### Testing
+
+- **coordinator**: Add per-message pre-processing integration tests
+  ([`cb80d33`](https://github.com/asermax/tachikoma/commit/cb80d33cfe849b9e0c713a912ef26016285069bb))
+
+- **sessions**: Add metadata field tests for context entries
+  ([`c085bb0`](https://github.com/asermax/tachikoma/commit/c085bb0773ac88edabca417a872be71c6fbf42cf))
 
 
 ## v1.7.2 (2026-04-06)
@@ -515,6 +1154,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **sessions**: Update specs and designs for session error tracking
   ([`612a343`](https://github.com/asermax/tachikoma/commit/612a343e01d79a5d4beae612be7eb9e8fd426e79))
+
+- **tasks**: Reconcile agent-driven notification changes into feature docs
+  ([`c1268e4`](https://github.com/asermax/tachikoma/commit/c1268e4565f32c283158f4aefce5b6cd07814d82))
+
+### Refactoring
+
+- **tasks**: Remove unnecessary comments and deduplicate datetime call
+  ([`9202fd1`](https://github.com/asermax/tachikoma/commit/9202fd128acc6458a45eeadd059d4f57ce521a81))
 
 
 ## v1.6.0 (2026-04-05)
@@ -635,13 +1282,101 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Chores
 
+- Remove DLT-092 working documents
+  ([`727aadd`](https://github.com/asermax/tachikoma/commit/727aadd6dd084a4193e627f69f154d21115ca1c1))
+
 - Update lockfile for version 1.3.1
   ([`222be73`](https://github.com/asermax/tachikoma/commit/222be73a21830a56cede5806fa30b6feae1528cd))
 
+- Update uv.lock
+  ([`90da50a`](https://github.com/asermax/tachikoma/commit/90da50af456df1796e11c63c5b8d28709ce5a240))
+
 ### Documentation
+
+- **planning**: Mark DLT-092 plan as approved
+  ([`bc71385`](https://github.com/asermax/tachikoma/commit/bc713854ede53b6ea741c1a8b41959fc78c3621e))
+
+- **planning**: Mark DLT-092 spec as complete
+  ([`40a11f5`](https://github.com/asermax/tachikoma/commit/40a11f5ab7596bb12ec7e88418168193aa82b49a))
+
+- **planning**: Update DLT-092 status to design
+  ([`9be2ed9`](https://github.com/asermax/tachikoma/commit/9be2ed9a870343958914cd476722af94b2c89715))
+
+- **planning**: Update DLT-092 status to plan
+  ([`56b451e`](https://github.com/asermax/tachikoma/commit/56b451eb95e068aa44061210cdf4de14da87e1f6))
+
+- **planning**: Update DLT-092 status to spec
+  ([`16e56c6`](https://github.com/asermax/tachikoma/commit/16e56c6271359d1ac3b641535bc13d24d8c79144))
+
+- **scheduling**: Add DLT-092 implementation plan
+  ([`e76ee82`](https://github.com/asermax/tachikoma/commit/e76ee827869731385b422800ab226b974f30684f))
+
+- **scheduling**: Add spec and design for timezone-aware one-shot tasks
+  ([`3ac1bd5`](https://github.com/asermax/tachikoma/commit/3ac1bd598ecccdb370e897fb146c86d3df48550f))
+
+- **scheduling**: Complete DLT-092 design with timezone-aware parsing details
+  ([`97ad597`](https://github.com/asermax/tachikoma/commit/97ad597ca98866ef60270fb9d1ae74e160620cd9))
+
+- **scheduling**: Expand DLT-092 spec and design with preamble and executor changes
+  ([`ed0f31e`](https://github.com/asermax/tachikoma/commit/ed0f31e0d761c360f88ddc9ec6a166bed9083ed9))
+
+- **scheduling**: Mark DLT-092 design as approved
+  ([`df7424a`](https://github.com/asermax/tachikoma/commit/df7424a2b9195b1ae444f965af00ec0707edea0f))
+
+- **scheduling**: Mark DLT-092 implementation batches as done
+  ([`a1043b9`](https://github.com/asermax/tachikoma/commit/a1043b9232baee29a04a86b71efdc2b3e8c035c7))
+
+- **scheduling**: Reconcile DLT-092 timezone-aware scheduling into feature docs
+  ([`b93b002`](https://github.com/asermax/tachikoma/commit/b93b0026736dd82ec0cb9330d877092da16ee72f))
+
+- **tasks**: Add design for agent-driven notification tool
+  ([`131eeb6`](https://github.com/asermax/tachikoma/commit/131eeb605f7751556ce1956c478130ea7159eaf2))
+
+- **tasks**: Add implementation plan for DLT-091
+  ([`69891a5`](https://github.com/asermax/tachikoma/commit/69891a5b2e266662c477e14121c153c4c7cb2bd0))
+
+- **tasks**: Add spec for agent-driven notification tool
+  ([`3f5a106`](https://github.com/asermax/tachikoma/commit/3f5a10614fa139c5130b56323f5369b8565c367e))
+
+- **tasks**: Approve DLT-091 design
+  ([`1c52f76`](https://github.com/asermax/tachikoma/commit/1c52f76d8f74d1431f8d1750d687062431fd238e))
+
+- **tasks**: Flesh out DLT-091 design with full shape and decisions
+  ([`fa0b78c`](https://github.com/asermax/tachikoma/commit/fa0b78cd4b2d77770e791750897060bd14e9b20e))
 
 - **tasks**: Replace DLT-091 with agent-driven notification tool
   ([`107dc5e`](https://github.com/asermax/tachikoma/commit/107dc5eab6a5c728545477ca39e591378bce6cea))
+
+- **tasks**: Update DLT-091 status to design
+  ([`98710d5`](https://github.com/asermax/tachikoma/commit/98710d56c9e018ebe03f3f31c84f46e518431c60))
+
+- **tasks**: Update DLT-091 status to plan
+  ([`d00ad93`](https://github.com/asermax/tachikoma/commit/d00ad9373b8bdd95797a32095ecf1bd306ea41d4))
+
+- **tasks**: Update DLT-091 status to plan
+  ([`04faa9b`](https://github.com/asermax/tachikoma/commit/04faa9bfd1f14d5257c1b808b1a7fe9c3915f670))
+
+- **tasks**: Update DLT-091 status to spec
+  ([`ab5d0f5`](https://github.com/asermax/tachikoma/commit/ab5d0f56adb11158a3b6a7fae70ec02331810323))
+
+### Features
+
+- **tasks**: Add date/time to system preamble and background executor
+  ([`ba88b04`](https://github.com/asermax/tachikoma/commit/ba88b04c6782e84ca8266b028ccf765ca8968802))
+
+- **tasks**: Add timezone validation and system detection to config
+  ([`476ddb9`](https://github.com/asermax/tachikoma/commit/476ddb93e19927dfb35ad14e5692ae74f3fc7e2f))
+
+- **tasks**: Make schedule parsing and display timezone-aware
+  ([`d479b18`](https://github.com/asermax/tachikoma/commit/d479b1858d908cbf775b1df7b3103e4394166a9e))
+
+- **tasks**: Replace notify field with agent-driven notification tool
+  ([`d01d9b2`](https://github.com/asermax/tachikoma/commit/d01d9b297b007398c2a648c70526dabf27612b7d))
+
+### Refactoring
+
+- **context**: Make timezone a required parameter in system prompt functions
+  ([`0f460e9`](https://github.com/asermax/tachikoma/commit/0f460e93feecbc6b099bf7e0e90e5ef3615abd0c))
 
 
 ## v1.3.1 (2026-04-04)
@@ -659,7 +1394,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## v1.3.0 (2026-04-04)
 
+### Bug Fixes
+
+- **tests**: Shorten docstring to comply with line length limit
+  ([`3f4e2a7`](https://github.com/asermax/tachikoma/commit/3f4e2a7348e8d397122c3e964888bc8f1ddcf847))
+
 ### Documentation
+
+- **agent**: Update tool blocking section to reflect system-level merge pattern
+  ([`7ab739e`](https://github.com/asermax/tachikoma/commit/7ab739efbe79a38785b40642ffb28314c7c2a981))
 
 - **planning**: Add DLT-098 for SDK stderr capture on error
   ([`822e746`](https://github.com/asermax/tachikoma/commit/822e7466463247d78e703be95672e3890e0e436b))
@@ -677,109 +1420,258 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Chores
 
-- Bump version to 1.0.2 ([`848a046`](https://github.com/asermax/tachikoma/commit/848a04604c5bbc7fe973d6a0e9ff51e5939fa816))
+- Bump version to 1.0.2
+  ([`848a046`](https://github.com/asermax/tachikoma/commit/848a04604c5bbc7fe973d6a0e9ff51e5939fa816))
 
-- **planning**: Clean up DLT-072 delta artifacts ([`f084a3f`](https://github.com/asermax/tachikoma/commit/f084a3fa56ab7d030fade46891e6eae9bfb9c0ba))
+- **planning**: Clean up DLT-072 delta artifacts
+  ([`f084a3f`](https://github.com/asermax/tachikoma/commit/f084a3fa56ab7d030fade46891e6eae9bfb9c0ba))
 
 ### Documentation
 
-- **planning**: Add design for DLT-072 task management MCP tool bugs ([`24cc220`](https://github.com/asermax/tachikoma/commit/24cc2202abfb15b9fc1399f272f14f5ef24f65d6))
+- **planning**: Add design for DLT-072 task management MCP tool bugs
+  ([`24cc220`](https://github.com/asermax/tachikoma/commit/24cc2202abfb15b9fc1399f272f14f5ef24f65d6))
 
-- **planning**: Add implementation plan for DLT-072 ([`6523e8d`](https://github.com/asermax/tachikoma/commit/6523e8db6a8c656f530299cb4ef739e16875fee5))
+- **planning**: Add implementation plan for DLT-072
+  ([`6523e8d`](https://github.com/asermax/tachikoma/commit/6523e8db6a8c656f530299cb4ef739e16875fee5))
 
-- **planning**: Add spec for DLT-072 task management MCP tool bugs ([`fa9bb7d`](https://github.com/asermax/tachikoma/commit/fa9bb7de8e02a41f45365e496501e7e578dd699a))
+- **planning**: Add spec for DLT-072 task management MCP tool bugs
+  ([`fa9bb7d`](https://github.com/asermax/tachikoma/commit/fa9bb7de8e02a41f45365e496501e7e578dd699a))
 
-- **planning**: Approve DLT-072 design ([`bfec1c6`](https://github.com/asermax/tachikoma/commit/bfec1c646f73772f9bdad5cf306661a47f4ffd56))
+- **planning**: Approve DLT-072 design
+  ([`bfec1c6`](https://github.com/asermax/tachikoma/commit/bfec1c646f73772f9bdad5cf306661a47f4ffd56))
 
-- **planning**: Approve DLT-072 plan ([`71fe243`](https://github.com/asermax/tachikoma/commit/71fe243aa1753a9e99ab69f7f2c7cf1ef252feb7))
+- **planning**: Approve DLT-072 plan
+  ([`71fe243`](https://github.com/asermax/tachikoma/commit/71fe243aa1753a9e99ab69f7f2c7cf1ef252feb7))
 
-- **planning**: Flesh out DLT-072 design with detailed shape and decisions ([`08222b2`](https://github.com/asermax/tachikoma/commit/08222b247d85d290c4b460baf4fa02c6cbe2f178))
+- **planning**: Flesh out DLT-072 design with detailed shape and decisions
+  ([`08222b2`](https://github.com/asermax/tachikoma/commit/08222b247d85d290c4b460baf4fa02c6cbe2f178))
 
-- **planning**: Mark DLT-072 as complete ([`13eb1e0`](https://github.com/asermax/tachikoma/commit/13eb1e043f965fe965cf2ef4547b5d42cdb722e8))
+- **planning**: Mark DLT-072 as complete
+  ([`13eb1e0`](https://github.com/asermax/tachikoma/commit/13eb1e043f965fe965cf2ef4547b5d42cdb722e8))
 
-- **planning**: Update DLT-072 status to design ([`3b35b39`](https://github.com/asermax/tachikoma/commit/3b35b3940467f7acdb56528e4a6a6facd65f052f))
+- **planning**: Update DLT-072 status to design
+  ([`3b35b39`](https://github.com/asermax/tachikoma/commit/3b35b3940467f7acdb56528e4a6a6facd65f052f))
 
-- **planning**: Update DLT-072 status to implementation ([`abce822`](https://github.com/asermax/tachikoma/commit/abce82296ae9bd10181965340e13adb8f225a4a1))
+- **planning**: Update DLT-072 status to implementation
+  ([`abce822`](https://github.com/asermax/tachikoma/commit/abce82296ae9bd10181965340e13adb8f225a4a1))
 
-- **planning**: Update DLT-072 status to plan ([`3107b08`](https://github.com/asermax/tachikoma/commit/3107b086e0eb02dd2b89f000f02475daf7b361c0))
+- **planning**: Update DLT-072 status to plan
+  ([`3107b08`](https://github.com/asermax/tachikoma/commit/3107b086e0eb02dd2b89f000f02475daf7b361c0))
 
-- **planning**: Update DLT-072 status to spec ([`4b295a2`](https://github.com/asermax/tachikoma/commit/4b295a21f842c5713b09f7b54e23f9c87f5b89e8))
+- **planning**: Update DLT-072 status to spec
+  ([`4b295a2`](https://github.com/asermax/tachikoma/commit/4b295a21f842c5713b09f7b54e23f9c87f5b89e8))
 
-- **tasks**: Reconcile feature specs and designs after DLT-072 ([`8a93620`](https://github.com/asermax/tachikoma/commit/8a9362040b56e4c4c59f8f899756dd40c1b66dfc))
+- **tasks**: Reconcile feature specs and designs after DLT-072
+  ([`8a93620`](https://github.com/asermax/tachikoma/commit/8a9362040b56e4c4c59f8f899756dd40c1b66dfc))
 
 ### Features
 
-- **tasks**: Add task ID to list output, task_type update field, and improve error surfacing ([`6b38a29`](https://github.com/asermax/tachikoma/commit/6b38a2987daf69e31e0383e6a7c69bdbc9663047))
+- **tasks**: Add task ID to list output, task_type update field, and improve error surfacing
+  ([`6b38a29`](https://github.com/asermax/tachikoma/commit/6b38a2987daf69e31e0383e6a7c69bdbc9663047))
 
-- **tasks**: Enrich MCP tool descriptions with full parameter documentation ([`d0b70a3`](https://github.com/asermax/tachikoma/commit/d0b70a38b8fc6e4657592660e72aa925ad2f3a45))
+- **tasks**: Enrich MCP tool descriptions with full parameter documentation
+  ([`d0b70a3`](https://github.com/asermax/tachikoma/commit/d0b70a38b8fc6e4657592660e72aa925ad2f3a45))
 
----
-
-**Detailed Changes**: [v1.1.0...v1.2.0](https://github.com/asermax/tachikoma/compare/v1.1.0...v1.2.0)
 
 ## v1.1.0 (2026-04-04)
 
 ### Chores
 
-- Update lockfile for version 1.0.3 ([`ea16833`](https://github.com/asermax/tachikoma/commit/ea168338e4ed9e6c2a10025f6c7d92e2fdab77c5))
+- Update lockfile for version 1.0.3
+  ([`ea16833`](https://github.com/asermax/tachikoma/commit/ea168338e4ed9e6c2a10025f6c7d92e2fdab77c5))
 
 ### Documentation
 
-- **planning**: Add DLT-097 for git sync with remotes ([`e347cec`](https://github.com/asermax/tachikoma/commit/e347cecd1843d97ebd88b342065e7d9d4f341623))
+- **planning**: Add DLT-097 for git sync with remotes
+  ([`e347cec`](https://github.com/asermax/tachikoma/commit/e347cecd1843d97ebd88b342065e7d9d4f341623))
 
----
-
-**Detailed Changes**: [v1.0.3...v1.1.0](https://github.com/asermax/tachikoma/compare/v1.0.3...v1.1.0)
 
 ## v1.0.3 (2026-04-01)
 
 ### Bug Fixes
 
-- **sessions**: Fix transcript path derivation and defensive boundary handling ([`e1b2ed1`](https://github.com/asermax/tachikoma/commit/e1b2ed1d840489c96c93098d04ff1665b67a2915))
+- **sessions**: Fix transcript path derivation and defensive boundary handling
+  ([`e1b2ed1`](https://github.com/asermax/tachikoma/commit/e1b2ed1d840489c96c93098d04ff1665b67a2915))
+
+### Chores
+
+- Bump version to 1.0.2
+  ([`dd666a2`](https://github.com/asermax/tachikoma/commit/dd666a2d9a5b6b3aa107a046199cd010d831c5e2))
+
+- Bump version to 1.0.2
+  ([`cca7301`](https://github.com/asermax/tachikoma/commit/cca7301369e8ecd002a8752d8932413528ae67e0))
+
+- Bump version to 1.0.2
+  ([`c8a3231`](https://github.com/asermax/tachikoma/commit/c8a323138909cd3be751d593650be7c9b832dc01))
+
+- **config**: Remove outdated comment from system disallowed tools
+  ([`a6a68d4`](https://github.com/asermax/tachikoma/commit/a6a68d46a41dc0b7a323034e8b00b3e4fd10ceea))
 
 ### Documentation
 
-- **planning**: Add DLT-096 and lower error handling deltas priority ([`c23f0e0`](https://github.com/asermax/tachikoma/commit/c23f0e0bfa89c1e516998c2c390c050676ae1e76))
+- Reconcile DLT-073 into feature specs and designs
+  ([`ab55743`](https://github.com/asermax/tachikoma/commit/ab557439ac0a391b6d4f0ae08e1cd00c2daecd9d))
 
----
+- Remove DLT-087 delta working documents
+  ([`812d683`](https://github.com/asermax/tachikoma/commit/812d683516dbd86fef7fea90e91fa7e421e1ed04))
 
-**Detailed Changes**: [v1.0.2...v1.0.3](https://github.com/asermax/tachikoma/compare/v1.0.2...v1.0.3)
+- Remove DLT-090 delta files after reconciliation
+  ([`4b86e44`](https://github.com/asermax/tachikoma/commit/4b86e44f84814b5eca22b74ffbcaf1e0dd4b7d61))
+
+- **config**: Reconcile DLT-087 into feature documentation
+  ([`93179b5`](https://github.com/asermax/tachikoma/commit/93179b535710f6ac5a3763c210ffd84072407663))
+
+- **planning**: Add DLT-073 implementation plan
+  ([`53be151`](https://github.com/asermax/tachikoma/commit/53be15137a6157046446e0e86bd9273922b5f1c0))
+
+- **planning**: Add DLT-096 and lower error handling deltas priority
+  ([`c23f0e0`](https://github.com/asermax/tachikoma/commit/c23f0e0bfa89c1e516998c2c390c050676ae1e76))
+
+- **planning**: Add implementation plan for DLT-087
+  ([`9b3dd3f`](https://github.com/asermax/tachikoma/commit/9b3dd3fbf723882923f3230d98992074cd2ddbe4))
+
+- **planning**: Add spec and design for DLT-073
+  ([`c064cff`](https://github.com/asermax/tachikoma/commit/c064cffe1aad2ccc598d0b043348f30c73612fb5))
+
+- **planning**: Add spec and design for DLT-087
+  ([`ea20b20`](https://github.com/asermax/tachikoma/commit/ea20b2068afc7f496cde3e2de4c0969d37e5c9bc))
+
+- **planning**: Advance DLT-073 status to plan phase
+  ([`a948376`](https://github.com/asermax/tachikoma/commit/a94837630d64af2c6ad392a4cc8d8ff992355974))
+
+- **planning**: Advance DLT-073 to implementation phase
+  ([`e5fd06e`](https://github.com/asermax/tachikoma/commit/e5fd06e0d2c7750c6b13dd3a8f132e47e679ee44))
+
+- **planning**: Approve DLT-073 design
+  ([`c317ee6`](https://github.com/asermax/tachikoma/commit/c317ee681eae71a4e3015235b4870967dfcca561))
+
+- **planning**: Complete DLT-073 design content
+  ([`2cf4a27`](https://github.com/asermax/tachikoma/commit/2cf4a274bb54714a413ee532a7afc6ffb6f22c40))
+
+- **planning**: Complete DLT-087 design
+  ([`e3e75a6`](https://github.com/asermax/tachikoma/commit/e3e75a6ee6faa7eda9bed55c28eed2044d558ff4))
+
+- **planning**: Mark DLT-073 design as complete
+  ([`9a35f70`](https://github.com/asermax/tachikoma/commit/9a35f70200348727c02bb63f707bf0ee128493da))
+
+- **planning**: Mark DLT-073 plan as complete
+  ([`6709262`](https://github.com/asermax/tachikoma/commit/6709262b6351114f861339de2a7a1dc274307d4e))
+
+- **planning**: Mark DLT-073 spec as complete
+  ([`6f9214d`](https://github.com/asermax/tachikoma/commit/6f9214d9764f0215391674ce2e07cd9de03758e7))
+
+- **planning**: Mark DLT-087 as implemented
+  ([`a07efee`](https://github.com/asermax/tachikoma/commit/a07efeec341ec748f5b47fee861e922b10c84365))
+
+- **planning**: Mark DLT-087 design as in progress
+  ([`f52fce7`](https://github.com/asermax/tachikoma/commit/f52fce77c2ec134524e827f589fc34c950f4e4d2))
+
+- **planning**: Mark DLT-087 plan as complete
+  ([`435b4a9`](https://github.com/asermax/tachikoma/commit/435b4a9ee520401e2ada7e0eacd9aa8f1f13e99f))
+
+- **planning**: Mark DLT-087 plan as in progress
+  ([`f0afd6f`](https://github.com/asermax/tachikoma/commit/f0afd6fbad20fd8d7bf3c6952ccab0d907e9dff6))
+
+- **planning**: Mark DLT-087 spec as complete
+  ([`abaa4a0`](https://github.com/asermax/tachikoma/commit/abaa4a0950b612adde871f3a1076231b37bbf72c))
+
+- **planning**: Mark DLT-090 spec as complete
+  ([`e121c36`](https://github.com/asermax/tachikoma/commit/e121c362d663def0cec162c4438200cec8b98109))
+
+- **planning**: Remove DLT-073 delta documents after reconciliation
+  ([`80b047b`](https://github.com/asermax/tachikoma/commit/80b047b6abba91c5fcf6a35e9dc13036c90f1d05))
+
+- **planning**: Update DLT-073 status to spec
+  ([`664c49e`](https://github.com/asermax/tachikoma/commit/664c49ef9f81e1f724a50e81b7d0f27060de46b8))
+
+- **planning**: Update DLT-087 status to spec
+  ([`79366e4`](https://github.com/asermax/tachikoma/commit/79366e41205114809e56b4bca04ebec1b1de9313))
+
+- **planning**: Update DLT-090 status to design
+  ([`25ec0d6`](https://github.com/asermax/tachikoma/commit/25ec0d6665367d9f0191819845c3afb0e23c2568))
+
+- **planning**: Update DLT-090 status to plan
+  ([`1f9eacd`](https://github.com/asermax/tachikoma/commit/1f9eacd1553affff159e527eeb7383325d639723))
+
+- **planning**: Update DLT-090 status to spec
+  ([`d3d709b`](https://github.com/asermax/tachikoma/commit/d3d709b90d33de5ea878110cc486db620ef9a6a7))
+
+- **tasks**: Add spec and design for DLT-090 duplicate task prevention
+  ([`9ecfa7e`](https://github.com/asermax/tachikoma/commit/9ecfa7eaafe32bce5cb170e20979af3e91484f8a))
+
+- **tasks**: Approve DLT-090 design
+  ([`5a8c7dd`](https://github.com/asermax/tachikoma/commit/5a8c7ddd155822dc7d00f3525c7614c247dd56c5))
+
+- **tasks**: Complete DLT-090 design for duplicate task prevention
+  ([`ff0aa83`](https://github.com/asermax/tachikoma/commit/ff0aa832ebdc35372318c7662a6cebbfa3265162))
+
+- **tasks**: Complete DLT-090 implementation plan
+  ([`0ff1151`](https://github.com/asermax/tachikoma/commit/0ff115121bf6def677107a56d349642780fedeb9))
+
+- **tasks**: Reconcile DLT-090 into feature documentation
+  ([`7da23aa`](https://github.com/asermax/tachikoma/commit/7da23aad36856d7db8d8a78afd27396e9a5560b2))
+
+- **tasks**: Update DLT-090 status to implementation
+  ([`a368175`](https://github.com/asermax/tachikoma/commit/a3681753406eb8d65010d0af617c32776cd592e5))
+
+### Features
+
+- **config**: Add system-level tool blocking for built-in skills
+  ([`b0c0cb4`](https://github.com/asermax/tachikoma/commit/b0c0cb472a01b033f797055578edfda5ee910726))
+
+- **config**: Block Claude Code built-in cron tools in default disallowed_tools
+  ([`5a4078a`](https://github.com/asermax/tachikoma/commit/5a4078a2a530ee5087c2a9a97ce31c743c3fbfde))
+
+- **tasks**: Add period-aware duplicate prevention for scheduled tasks
+  ([`4d48fac`](https://github.com/asermax/tachikoma/commit/4d48fac1de1023b2038c6d3c21adf5754e5b3acf))
+
+### Refactoring
+
+- **tasks**: Extract instance creation helper and simplify catch-up logic
+  ([`0a470e2`](https://github.com/asermax/tachikoma/commit/0a470e26345b8d4575b30f24a94b4188601bdd69))
+
+### Testing
+
+- **tasks**: Add comprehensive tests for period-aware scheduling and deduplication
+  ([`9bec042`](https://github.com/asermax/tachikoma/commit/9bec0426cb6c2a7bad3677472b3517d1ced4b154))
+
 
 ## v1.0.2 (2026-03-31)
 
 ### Bug Fixes
 
-- **ci**: Use specific version tag for setup-uv ([`97aa647`](https://github.com/asermax/tachikoma/commit/97aa64762faa77bf8b04f480ed512455bc76d65e))
+- **ci**: Use specific version tag for setup-uv
+  ([`97aa647`](https://github.com/asermax/tachikoma/commit/97aa64762faa77bf8b04f480ed512455bc76d65e))
 
 ### Chores
 
-- **ci**: Update GitHub Actions to latest versions ([`7fa7020`](https://github.com/asermax/tachikoma/commit/7fa702047a8ec2e57e4fc2c203fd5feff35bd1cd))
+- **ci**: Update GitHub Actions to latest versions
+  ([`7fa7020`](https://github.com/asermax/tachikoma/commit/7fa702047a8ec2e57e4fc2c203fd5feff35bd1cd))
 
----
-
-**Detailed Changes**: [v1.0.1...v1.0.2](https://github.com/asermax/tachikoma/compare/v1.0.1...v1.0.2)
 
 ## v1.0.1 (2026-03-31)
 
 ### Bug Fixes
 
-- **sessions**: Validate transcript and age before session resumption ([`502ec39`](https://github.com/asermax/tachikoma/commit/502ec39e4681ff4e6c4c9b0a23caca6bd8787276))
+- **sessions**: Validate transcript and age before session resumption
+  ([`502ec39`](https://github.com/asermax/tachikoma/commit/502ec39e4681ff4e6c4c9b0a23caca6bd8787276))
 
-- **tests**: Move timedelta import to module level ([`fb6e0e8`](https://github.com/asermax/tachikoma/commit/fb6e0e8c0c2cbf61e04ce01b697f41d878ff4eb4))
+- **tests**: Move timedelta import to module level
+  ([`fb6e0e8`](https://github.com/asermax/tachikoma/commit/fb6e0e8c0c2cbf61e04ce01b697f41d878ff4eb4))
 
 ### Chores
 
-- Remove stale .gitmodules and update lockfile ([`a661758`](https://github.com/asermax/tachikoma/commit/a6617583ad39144a54e8f3279b5d250e570f0b93))
+- Remove stale .gitmodules and update lockfile
+  ([`a661758`](https://github.com/asermax/tachikoma/commit/a6617583ad39144a54e8f3279b5d250e570f0b93))
 
-- Sync uv.lock version to 1.0.0 ([`3ef0adf`](https://github.com/asermax/tachikoma/commit/3ef0adfed29507c8d274861e01862a26b396778c))
+- Sync uv.lock version to 1.0.0
+  ([`3ef0adf`](https://github.com/asermax/tachikoma/commit/3ef0adfed29507c8d274861e01862a26b396778c))
 
 ### Documentation
 
-- **sessions**: Document transcript validation and age-based resumption limits ([`01c89f5`](https://github.com/asermax/tachikoma/commit/01c89f5c98810ead1bb8cf3f0345fc00e737c33f))
+- **sessions**: Document transcript validation and age-based resumption limits
+  ([`01c89f5`](https://github.com/asermax/tachikoma/commit/01c89f5c98810ead1bb8cf3f0345fc00e737c33f))
 
----
-
-**Detailed Changes**: [v1.0.0...v1.0.1](https://github.com/asermax/tachikoma/compare/v1.0.0...v1.0.1)
 
 ## v1.0.0 (2026-03-31)
 
