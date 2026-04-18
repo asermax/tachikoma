@@ -123,7 +123,7 @@ Dependencies:
 
 Assumes existing:
 - Coordinator `last_message_time` and `is_busy` properties, `enqueue()` + `send_message()` APIs (core-architecture)
-- `Notification` event dispatched by the background executor and `send_notification` MCP tool (background-task-execution)
+- `Notification` event dispatched by the background executor and `send_notification` MCP tool (background-task-execution), and by the detached-process exit watcher (detached-processes/process-supervision)
 - Session-task scheduler that identifies ready session instances (session-task-execution)
 - Event bus for `Notification`, `CoordinatorIdle`, and `BufferedDelivery` dispatch (ADR-009)
 - Channels that can subscribe to `BufferedDelivery` and route prompts through the coordinator (terminal-repl, telegram)
