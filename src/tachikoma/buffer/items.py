@@ -3,9 +3,13 @@ from __future__ import annotations
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 from tachikoma.buffer.priority import Priority
+
+if TYPE_CHECKING:
+    from tachikoma.notifications import Notification
+    from tachikoma.tasks.model import TaskInstance
 
 
 @dataclass
@@ -24,18 +28,14 @@ class BufferedItem:
     metadata: dict[str, Any] = field(default_factory=dict)
     on_delivered: Callable[[], Awaitable[None]] | None = None
 
-    # Assigned on enqueue by the Buffer
     arrival_seq: int = 0
     total_front_time: float = 0.0
     current_front_since: datetime | None = None
 
     @classmethod
-    def from_notification(cls, event: Any) -> BufferedItem:
-        """Build a BufferedItem from a Notification event."""
-        priority = getattr(event, "priority", Priority.NORMAL)
-
+    def from_notification(cls, event: Notification) -> BufferedItem:
         return cls(
-            priority=priority,
+            priority=event.priority,
             prompt=event.prompt,
             kind="notification",
             source_id=event.source_id,
@@ -44,10 +44,9 @@ class BufferedItem:
     @classmethod
     def from_session_instance(
         cls,
-        instance: Any,
+        instance: TaskInstance,
         on_delivered: Callable[[], Awaitable[None]] | None = None,
     ) -> BufferedItem:
-        """Build a BufferedItem from a TaskInstance for session-task delivery."""
         return cls(
             priority=Priority.NORMAL,
             prompt=instance.prompt,
