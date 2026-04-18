@@ -13,9 +13,9 @@ _log = logger.bind(component="memory")
 async def memory_hook(ctx: BootstrapContext) -> None:
     """Bootstrap hook: create memories directory structure.
 
-    Creates memories/, memories/episodic/, memories/facts/, and
-    memories/preferences/ within the workspace path. Idempotent —
-    safe to call on every launch.
+    Creates memories/, memories/episodic/, memories/facts/,
+    memories/preferences/, and memories/transcripts/ within the workspace
+    path. Idempotent — safe to call on every launch.
 
     Args:
         ctx: Bootstrap context with settings manager.
@@ -26,12 +26,14 @@ async def memory_hook(ctx: BootstrapContext) -> None:
     episodic_path = memories_root / "episodic"
     facts_path = memories_root / "facts"
     preferences_path = memories_root / "preferences"
+    transcripts_path = memories_root / "transcripts"
 
     # Create all directories idempotently
     memories_root.mkdir(parents=True, exist_ok=True)
     episodic_path.mkdir(exist_ok=True)
     facts_path.mkdir(exist_ok=True)
     preferences_path.mkdir(exist_ok=True)
+    transcripts_path.mkdir(exist_ok=True)
 
     _log.info(
         "Memory directories initialized: root={root}",
