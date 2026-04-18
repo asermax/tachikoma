@@ -153,6 +153,37 @@ class LoggingSettings(BaseModel):
     )
 
 
+class SendFileSettings(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="ignore")
+
+    extra_roots: list[Path] = Field(
+        default_factory=list,
+        description=(
+            "Absolute roots outside workspace and system temp that send_file "
+            "will also accept; entries may not exist at load time"
+        ),
+    )
+
+    @field_validator("extra_roots", mode="before")
+    @classmethod
+    def _expand_home(cls, v: object) -> object:
+        if not isinstance(v, list):
+            return v
+
+        return [Path(p).expanduser() if isinstance(p, (str, Path)) else p for p in v]
+
+    @field_validator("extra_roots", mode="after")
+    @classmethod
+    def _validate_absolute(cls, v: list[Path]) -> list[Path]:
+        non_absolute = [p for p in v if not p.is_absolute()]
+
+        if non_absolute:
+            names = ", ".join(f"'{p}'" for p in non_absolute)
+            raise ValueError(f"extra_roots entries must be absolute paths: {names}")
+
+        return v
+
+
 class TelegramSettings(BaseModel):
     model_config = ConfigDict(frozen=True, extra="ignore")
 
@@ -165,6 +196,10 @@ class TelegramSettings(BaseModel):
     push_notifications: bool = Field(
         default=True,
         description="Enable post-response push notifications via copy+delete",
+    )
+    send_file: SendFileSettings = Field(
+        default_factory=SendFileSettings,
+        description="send_file tool configuration",
     )
 
 
@@ -382,6 +417,10 @@ def _generate_default_config(config_path: Path = CONFIG_PATH) -> None:
     doc.add(tomlkit.comment("[telegram]"))
 
     for name, field_info in TelegramSettings.model_fields.items():
+        # Nested sub-table handled separately below
+        if name == "send_file":
+            continue
+
         desc = field_info.description or ""
         default = field_info.default
 
@@ -393,6 +432,16 @@ def _generate_default_config(config_path: Path = CONFIG_PATH) -> None:
             doc.add(tomlkit.comment("authorized_chat_id = 0"))
         elif isinstance(default, bool):
             doc.add(tomlkit.comment(f"{name} = {str(default).lower()}"))
+
+    doc.add(tomlkit.nl())
+
+    # [telegram.send_file] sub-table
+    doc.add(tomlkit.comment("[telegram.send_file]"))
+    doc.add(tomlkit.comment(
+        "Absolute roots outside workspace and system temp that send_file "
+        "will also accept; entries may not exist at load time"
+    ))
+    doc.add(tomlkit.comment('extra_roots = ["~/exports"]'))
 
     doc.add(tomlkit.nl())
 
