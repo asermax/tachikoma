@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v1.24.0 (2026-04-18)
+
+### Documentation
+
+- **planning**: Add deltas from shin-sekai review and refocus DLT-048
+  ([`7095d91`](https://github.com/asermax/tachikoma/commit/7095d9150bd6548c467fd0ccb9b0d3c26009b960))
+
+- **planning**: Remove reconciled DLT-124 from inventory
+  ([`888b216`](https://github.com/asermax/tachikoma/commit/888b216c84d766c559805152ad65c82f405b6316))
+
+### Features
+
+- **skills**: Add scripting and testing references to authoring guide
+  ([`aa9477c`](https://github.com/asermax/tachikoma/commit/aa9477c33d13d9cad2ea72a9fd7515da67b7b157))
+
+
 ## v1.23.0 (2026-04-16)
 
 ### Features
