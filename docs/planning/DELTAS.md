@@ -297,7 +297,7 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 ### DLT-065: Parallel conversation sessions
 **Status**: ✗ Defined
 **Depends on**: None
-**Priority**: 3 (Medium)
+**Priority**: 1 (Critical)
 **Complexity**: Hard
 **Description**: Users can have multiple independent conversations with the assistant running simultaneously. When a new message arrives while the assistant is busy and represents a distinct topic, it spawns as a separate concurrent session with its own context and history. This enables users to follow up on something urgent without waiting for a long-running task to complete.
 
@@ -521,21 +521,21 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 ### DLT-117: Attach specific skills to task definitions
 **Status**: ✗ Defined
 **Depends on**: None
-**Priority**: 3 (Medium)
+**Priority**: 1 (Critical)
 **Complexity**: Medium
 **Description**: Task definitions currently rely on LLM-based skill classification at execution time to determine which skills are relevant. This is unreliable for tasks that always need specific skills — the classifier might not select the right skills for a terse task prompt. Add an optional list of skill names to the task definition model. When a task executes, the named skills are loaded unconditionally into the context before the classification step runs, ensuring the agent always has the domain knowledge the task requires. The task creation and update MCP tools expose this field so the agent can attach skills when defining tasks.
 
 ### DLT-118: Declare dependencies between skills
 **Status**: ✗ Defined
 **Depends on**: None
-**Priority**: 3 (Medium)
+**Priority**: 1 (Critical)
 **Complexity**: Medium
 **Description**: Skills are currently loaded independently — when the classifier selects a skill, only that skill's content is injected. Some skills implicitly depend on concepts or tools defined in other skills (e.g., a domain skill that assumes the workflow authoring guide is available). Add a `depends_on` field to the SKILL.md frontmatter that lists skill names this skill requires. When a skill is selected (by classification, task attachment, or workflow step binding), the registry resolves its dependency chain and ensures all required skills are loaded into context. Circular dependencies are detected and reported as warnings.
 
 ### DLT-119: Declare required skills for workflow steps
 **Status**: ✗ Defined
 **Depends on**: DLT-118
-**Priority**: 3 (Medium)
+**Priority**: 1 (Critical)
 **Complexity**: Easy
 **Description**: Workflow steps are self-contained instruction bundles with no mechanism to declare which skills the agent needs to execute them. A step that involves git operations, API calls, or domain-specific knowledge relies on the skill classifier to infer this from the step instructions — which may fail for terse or technical steps. Allow workflow step authors to explicitly declare the skills required for a step. When the workflow engine activates a step, the declared skills and their transitive dependencies (via the skill dependency system) are loaded unconditionally into the agent's context, bypassing classification.
 
@@ -658,12 +658,6 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 **Complexity**: Medium
 **Description**: When a user message arrives at the coordinator during an active background task execution, signal the background task to pause so the main session receives full API attention and the task does not compete for resources. The paused task's SDK session is preserved and execution resumes automatically once the main session returns to idle. This covers the system-initiated pause triggered by user activity — distinct from task-initiated pauses where the background task itself requests user input. The pause mechanism integrates with the existing background task executor's evaluation loop: when a pause signal is received between iterations, the executor suspends the task, records the paused state in the task instance, and releases the semaphore slot. On resume, the executor reacquires a slot and continues from the preserved SDK session.
 
-### DLT-144: One-shot notification constraint for background tasks
-**Status**: ✗ Defined
-**Depends on**: None
-**Priority**: 1 (Critical)
-**Complexity**: Easy
-**Description**: The `send_notification` MCP tool can be called multiple times during a single background task execution, leading to duplicate notifications reaching the user — for example, the agent sends a minimal notification, then self-corrects and sends a better one. Restrict the tool to a single successful call per background task execution: once a notification is sent, subsequent calls within the same execution are rejected with a clear error message explaining why. This enforces notification finality at the tool level rather than relying on prompt guardrails alone. The constraint applies only to background task executions; interactive session notifications are unaffected.
 
 ### DLT-145: Inject core context into skill classification
 **Status**: ✗ Defined
@@ -706,4 +700,25 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 **Priority**: 3 (Medium)
 **Complexity**: Medium
 **Description**: The agent currently produces a single undifferentiated output stream that mixes internal work (file reads, searches, tool chains) with the final user-facing response. Channels have no way to distinguish these phases, so presentation is uniform — everything is equally visible, which adds noise in surfaces like Telegram where conversational flow matters more than process transparency. Introduce phase markers the agent emits to tag different kinds of work — at minimum research, execution, and response — propagated through the adapter as typed events. Channels consume the markers to style phases differently: collapse "boring work" sections, hide internal phases entirely, or suppress the final message when the whole turn was marked hidden (e.g., silent background-style activity). The canonical phase vocabulary, how the agent is nudged to emit markers, and the rendering rules per channel (starting with Telegram) are part of the delta's scope. The feature separates the agent's internal process from what the user sees and gives channels fine-grained control over message presentation without the agent having to format output differently per channel.
+
+### DLT-151: Secure credential delivery to whitelisted commands
+**Status**: ✗ Defined
+**Depends on**: None
+**Priority**: 3 (Medium)
+**Complexity**: Hard
+**Description**: A mechanism where the agent can pipe passwords and credentials to specific pre-approved CLI commands without ever seeing the plaintext. The agent knows that a secret exists and which command needs it, but the actual value flows directly from a secrets store to the CLI's stdin or environment, never through the agent's context or output. This prevents credential leaks through conversation logs, tool outputs, or prompt injection. The whitelist is critical: only commands explicitly registered in configuration can receive secrets. The mechanism exposes a pluggable provider interface so different backends (1Password CLI SDK, Bitwarden CLI, local encrypted file) can be swapped via configuration. The delta delivers the injection mechanism, the whitelist configuration schema, the provider interface, and at least one concrete backend implementation.
+
+### DLT-152: Boundary-aware message queueing
+**Status**: ✗ Defined
+**Depends on**: None
+**Priority**: 1 (Critical)
+**Complexity**: Medium
+**Description**: Run boundary detection on each incoming message and either steer it into the active session or queue it for sequential processing instead of force-routing or dropping. Currently, messages arriving while the agent is busy are either force-routed to the active session or dropped. This delta adds a boundary-aware routing layer that detects when an incoming message belongs to a different topic than the active session and queues it for processing after the current session's turn completes. This is an intermediate step toward full parallel conversation sessions — it provides message-aware routing and sequential queueing without requiring concurrent session execution.
+
+### DLT-153: Immediate steering mode for session tasks
+**Status**: ✗ Defined
+**Depends on**: None
+**Priority**: 2 (High)
+**Complexity**: Medium
+**Description**: Allow session tasks to fire immediately as steering messages into the active conversation, bypassing the idle wait. Currently, session tasks are gated by an idle check — they only fire when the user has been inactive for a configured period. This delta adds an optional immediate mode to session tasks that, when enabled, skips the idle check and injects the task's content as a steering message into the active conversation at the earliest opportunity. This enables reminder-like behavior where time-sensitive prompts reach the user without waiting for idle. The mode is configured per task definition and uses the existing steering message infrastructure.
 
