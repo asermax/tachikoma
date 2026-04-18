@@ -15,7 +15,10 @@ You have access to the `send_file` tool for delivering files directly to the use
 
 ## Parameters
 
-- **file_path** (required): Path to the file — absolute or relative to the workspace
+- **file_path** (required): Path to the file. Accepted forms:
+  - workspace-relative (e.g. `exports/report.pdf`)
+  - absolute under the workspace, the system temporary directory, or a
+    configured extra root
 - **caption** (optional): Brief description, max 1024 characters
 
 ## Media Types
@@ -29,6 +32,8 @@ Files are automatically detected by extension and rendered appropriately:
 
 ## Constraints
 
-- The file must exist in the workspace
+- The file must exist on disk and be a regular file (directories are rejected)
+- The file must live under one of: the workspace, the system temporary directory
+  (e.g. `/tmp`), or any root declared in `telegram.send_file.extra_roots`
 - Telegram enforces a 50MB upload limit (10MB for photos)
-- If sending fails, the error will be returned — inform the user and suggest alternatives
+- If sending fails, the error names the allowed roots so a valid location can be picked next
