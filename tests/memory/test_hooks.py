@@ -37,7 +37,8 @@ class TestMemoryHook:
     async def test_creates_memories_directory_structure(
         self, ctx: BootstrapContext, settings_manager: SettingsManager
     ) -> None:
-        """AC: Hook creates all four directories (memories/, episodic/, facts/, preferences/)."""
+        """AC: Hook creates all five directories (memories/, episodic/, facts/,
+        preferences/, transcripts/)."""
         workspace_path = settings_manager.settings.workspace.path
 
         await memory_hook(ctx)
@@ -47,6 +48,7 @@ class TestMemoryHook:
         assert (memories_root / "episodic").is_dir()
         assert (memories_root / "facts").is_dir()
         assert (memories_root / "preferences").is_dir()
+        assert (memories_root / "transcripts").is_dir()
 
     async def test_idempotent_when_directories_exist(
         self, ctx: BootstrapContext, settings_manager: SettingsManager
@@ -64,6 +66,7 @@ class TestMemoryHook:
         assert (memories_root / "episodic").is_dir()
         assert (memories_root / "facts").is_dir()
         assert (memories_root / "preferences").is_dir()
+        assert (memories_root / "transcripts").is_dir()
 
     async def test_creates_subdirectories_inside_workspace_path(
         self, ctx: BootstrapContext, settings_manager: SettingsManager
@@ -79,3 +82,4 @@ class TestMemoryHook:
         assert (memories_root / "episodic").is_relative_to(workspace_path)
         assert (memories_root / "facts").is_relative_to(workspace_path)
         assert (memories_root / "preferences").is_relative_to(workspace_path)
+        assert (memories_root / "transcripts").is_relative_to(workspace_path)

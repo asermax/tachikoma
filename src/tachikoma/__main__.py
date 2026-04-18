@@ -30,6 +30,7 @@ from tachikoma.memory import (
     FactsProcessor,
     MemoryContextProvider,
     PreferencesProcessor,
+    TranscriptArchiveProcessor,
     memory_hook,
 )
 from tachikoma.message_post_processing import MessagePostProcessingPipeline
@@ -144,6 +145,10 @@ async def run(
     pipeline.register(ProjectsProcessor(agent_defaults), phase=PRE_FINALIZE_PHASE)
     pipeline.register(
         StaleWorkflowCleanupProcessor(workflow_repository),
+        phase=PRE_FINALIZE_PHASE,
+    )
+    pipeline.register(
+        TranscriptArchiveProcessor(agent_defaults),
         phase=PRE_FINALIZE_PHASE,
     )
     pipeline.register(GitProcessor(agent_defaults), phase=FINALIZE_PHASE)
