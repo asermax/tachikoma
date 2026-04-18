@@ -187,7 +187,7 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 **Depends on**: None
 **Priority**: 3 (Medium)
 **Complexity**: Hard
-**Description**: Introduce a directory-based plugin system that allows extending the assistant with additional capabilities. A plugin is a self-describing directory with a manifest file that declares its structure and contributions — context providers, post-processors, skills, channels, or MCP tools. Plugins are installed by copying from a source location (local path or remote repository) into a managed plugins directory within the workspace. At startup, the plugin loader discovers installed plugins, validates their manifests, and feeds declared contributions into the existing registration points (bootstrap, pipelines, coordinator). Plugin loading is fail-safe: a broken plugin is logged and skipped without affecting the rest of the system. Plugin-specific configuration is managed through the existing TOML config under a plugins section.
+**Description**: Introduce a directory-based plugin system that allows extending the assistant with additional capabilities. Where possible the plugin format reuses Claude Code's conventions (skill directories with SKILL.md, slash commands, MCP tool declarations) so existing Claude Code community plugins can be installed into Tachikoma without modification, unlocking the upstream ecosystem for free. On top of that base, Tachikoma adds its own contribution points that CC does not cover — context providers, post-processors, secondary channels, boundary-detection hooks, and any other extension surfaces the system exposes — so plugins can participate in the full pipeline, not just the parts CC knows about. The evaluation of which CC conventions to adopt as-is versus extend is part of the delta's scope. Plugins are installed by copying from a source location (local path or remote repository) into a managed plugins directory within the workspace. At startup, the plugin loader discovers installed plugins, validates their declarations, and feeds declared contributions into the existing registration points (bootstrap, pipelines, coordinator). Plugin loading is fail-safe: a broken plugin is logged and skipped without affecting the rest of the system. Plugin-specific configuration is managed through the existing TOML config under a plugins section.
 
 ### DLT-055: Plugin update mechanism
 **Status**: ✗ Defined
@@ -574,13 +574,6 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 **Complexity**: Medium
 **Description**: Add a memory category for the agent's own subjective assessments — what worked, what didn't, patterns it notices about its own behavior and capabilities. Distinct from existing memory types (episodic, facts, preferences) which capture objective user-centric information. Reflections are the agent's self-observations, forming the input layer for automated self-improvement. A new post-processing processor extracts reflections from completed sessions and stores them alongside other memory types. This enables the self-healing skill system and future self-learning capabilities to draw on the agent's accumulated experience rather than starting from scratch each session.
 
-### DLT-124: Add test coverage requirements to skill authoring guide
-**Status**: ✗ Defined
-**Depends on**: None
-**Priority**: 1 (Critical)
-**Complexity**: Easy
-**Description**: The skill authoring guide currently covers directory conventions, agent definitions, and reference files, but says nothing about testing skills that contain executable code (scripts, CLIs, or any programmatic logic). When skills evolve, regressions go unnoticed until they break in production — e.g., the share-markdown mermaid pipeline had multiple bugs that tests would have caught earlier. Update the skill authoring guidance to require test coverage for any skill that includes executable code, with conventions for test file placement, naming, and execution within the skill directory structure.
-
 ### DLT-125: Message envelope for typed message routing
 **Status**: ✗ Defined
 **Depends on**: None
@@ -706,4 +699,25 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 **Priority**: 1 (Critical)
 **Complexity**: Medium
 **Description**: Task definitions currently support `session` (idle-gated) and `background` (notifies user on completion/failure) types, both assuming user-facing work. Maintenance operations — memory reconciliation, stale task cleanup, vault consistency checks, log rotation — don't warrant user-visible notifications but still need the same scheduling infrastructure. Add a third `system` task type that reuses the background execution path but suppresses all notification dispatch (success, failure, and explicit `send_notification` calls made by the task itself). System tasks remain discoverable through existing task history tools so operators can inspect their runs. Scheduling triggers can be cron-based or condition-driven (e.g., "run reconciliation when N sessions have accumulated"); the trigger mechanism should be evaluated during speccing.
+
+### DLT-148: Sharpen scope boundaries across post-processor prompts
+**Status**: ✗ Defined
+**Depends on**: None
+**Priority**: 3 (Medium)
+**Complexity**: Medium
+**Description**: The post-processing extractors for episodic memory, facts, preferences, and core context updates each have their own prompt, but their outputs currently overlap in ways that don't serve distinct purposes. Episodic entries recap CLI commands instead of summarizing high-level arcs, facts paste full diffs or code snippets instead of capturing what-and-why, and preferences restate technical details already covered in facts. Refine each processor's prompt with sharper guidance on what belongs in its memory type versus others, including concrete positive and negative examples drawn from observed output. Intentional duplication across types stays valid when the framing differs (a topic appearing in both a fact and a preference with different angles), but incidental overlap should be eliminated. Scope boundaries to enforce: episodic stays high-level narrative, facts stay declarative what/why, preferences stay behavioral. Verification is a spot-review of extracted memories after the change to confirm overlap reduction without losing coverage.
+
+### DLT-149: Sort tool usage list newest-first in agent context
+**Status**: ✗ Defined
+**Depends on**: None
+**Priority**: 4 (Low)
+**Complexity**: Easy
+**Description**: The tool usage summary injected into the agent's pre-processing context currently lists invocations in chronological order (oldest first). The most recent tool usages are typically the most relevant signal for the current turn — they reflect what the agent was just doing and which tools are likely to be needed next. Reverse the ordering so the newest entries appear at the top of the list, improving the signal density of this slice of the agent's context.
+
+### DLT-150: Output phase markers for agent work styling
+**Status**: ✗ Defined
+**Depends on**: None
+**Priority**: 3 (Medium)
+**Complexity**: Medium
+**Description**: The agent currently produces a single undifferentiated output stream that mixes internal work (file reads, searches, tool chains) with the final user-facing response. Channels have no way to distinguish these phases, so presentation is uniform — everything is equally visible, which adds noise in surfaces like Telegram where conversational flow matters more than process transparency. Introduce phase markers the agent emits to tag different kinds of work — at minimum research, execution, and response — propagated through the adapter as typed events. Channels consume the markers to style phases differently: collapse "boring work" sections, hide internal phases entirely, or suppress the final message when the whole turn was marked hidden (e.g., silent background-style activity). The canonical phase vocabulary, how the agent is nudged to emit markers, and the rendering rules per channel (starting with Telegram) are part of the delta's scope. The feature separates the agent's internal process from what the user sees and gives channels fine-grained control over message presentation without the agent having to format output differently per channel.
 
