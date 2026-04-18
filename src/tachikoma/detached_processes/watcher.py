@@ -5,8 +5,6 @@ Two complementary watcher tasks share a single reconciler:
   of .exit sidecar file writes.
 - Polling watcher: periodic psutil liveness check every ~5s, catching
   cases where the wrapper itself was killed before writing the sidecar.
-
-Both are started as asyncio.Tasks and cancelled on shutdown.
 """
 
 import asyncio
@@ -28,6 +26,10 @@ _log = logger.bind(component="detached_processes")
 DETACHED_PROCESS_POLL_INTERVAL = 5.0
 
 
+def _is_exit_file(change: watchfiles.Change, path: str) -> bool:
+    return path.endswith(".exit")
+
+
 async def event_driven_watcher(
     repository: ProcessRepository,
     bus: "EventBus",
@@ -35,22 +37,20 @@ async def event_driven_watcher(
 ) -> None:
     """Watch for .exit sidecar file creations using inotify/FSEvents.
 
-    Filters events to .exit files, parses the record ID from the filename,
-    and delegates to the shared reconciler.
+    Filters events to .exit files at the OS layer, parses the record ID
+    from the filename, and delegates to the shared reconciler.
     """
     try:
-        async for changes in watchfiles.awatch(log_dir):
-            for change, path_str in changes:
+        async for changes in watchfiles.awatch(log_dir, watch_filter=_is_exit_file):
+            for _change, path_str in changes:
                 path = Path(path_str)
 
                 if path.suffix != ".exit":
                     continue
 
-                record_id = path.stem
-
                 try:
                     await reconcile_exit(
-                        record_id,
+                        path.stem,
                         repository=repository,
                         bus=bus,
                         log_dir=log_dir,
@@ -58,7 +58,7 @@ async def event_driven_watcher(
                 except Exception:
                     _log.exception(
                         "Event-driven watcher: error processing {id}",
-                        id=record_id,
+                        id=path.stem,
                     )
     except asyncio.CancelledError:
         raise

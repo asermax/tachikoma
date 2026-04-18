@@ -1,8 +1,4 @@
-"""Log file reading helpers for detached process output.
-
-Provides efficient tail-based and windowed reading of process log files
-without loading the entire file into memory.
-"""
+"""Log file reading helpers for detached process output."""
 
 from pathlib import Path
 
@@ -16,46 +12,44 @@ def read_tail(path: Path, n: int = 100) -> list[str]:
 
     Raises FileNotFoundError if the file does not exist.
     """
-    if not path.exists():
-        raise FileNotFoundError(f"Log file not found: {path}")
-
-    file_size = path.stat().st_size
-    if file_size == 0:
-        return []
-
     chunk_size = 8192
     lines: list[str] = []
-    position = file_size
     remaining = b""
     first_iteration = True
 
-    while position > 0 and len(lines) < n:
-        read_size = min(chunk_size, position)
-        position -= read_size
+    with open(path, "rb") as f:
+        f.seek(0, 2)
+        position = f.tell()
 
-        with open(path, "rb") as f:
+        if position == 0:
+            return []
+
+        while position > 0 and len(lines) < n:
+            read_size = min(chunk_size, position)
+            position -= read_size
+
             f.seek(position)
             chunk = f.read(read_size)
 
-        data = chunk + remaining
-        parts = data.split(b"\n")
+            data = chunk + remaining
+            parts = data.split(b"\n")
 
-        if position > 0:
-            remaining = parts[0]
-            line_bytes = parts[1:]
-        else:
-            line_bytes = parts
+            if position > 0:
+                remaining = parts[0]
+                line_bytes = parts[1:]
+            else:
+                line_bytes = parts
 
-        # Drop the trailing-newline artifact on the first iteration only —
-        # genuine blank lines elsewhere in the file should be preserved.
-        if first_iteration and line_bytes and line_bytes[-1] == b"":
-            line_bytes = line_bytes[:-1]
-        first_iteration = False
+            # Drop the trailing-newline artifact on the first iteration only —
+            # genuine blank lines elsewhere in the file should be preserved.
+            if first_iteration and line_bytes and line_bytes[-1] == b"":
+                line_bytes = line_bytes[:-1]
+            first_iteration = False
 
-        for line in reversed(line_bytes):
-            if len(lines) >= n:
-                break
-            lines.append(line.decode("utf-8", errors="replace"))
+            for line in reversed(line_bytes):
+                if len(lines) >= n:
+                    break
+                lines.append(line.decode("utf-8", errors="replace"))
 
     lines.reverse()
     return lines
@@ -64,14 +58,8 @@ def read_tail(path: Path, n: int = 100) -> list[str]:
 def read_window(path: Path, line_offset: int, line_count: int) -> list[str]:
     """Read a specific window of lines from a file.
 
-    Sequentially reads lines from the start to satisfy the offset/count
-    window. Suitable for paging through log output.
-
     Raises FileNotFoundError if the file does not exist.
     """
-    if not path.exists():
-        raise FileNotFoundError(f"Log file not found: {path}")
-
     result: list[str] = []
     current_line = 0
 

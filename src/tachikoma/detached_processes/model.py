@@ -14,12 +14,7 @@ from sqlalchemy.orm import Mapped, mapped_column
 from tachikoma.database import Base
 from tachikoma.db_utils import ensure_utc
 
-# ---------------------------------------------------------------------------
-# Domain types — public API
-# ---------------------------------------------------------------------------
-
-ProcessStatus = {"running": "running", "exited": "exited"}
-ProcessStatusType = Literal["running", "exited"]
+ProcessStatus = Literal["running", "exited"]
 
 
 @dataclass(frozen=True)
@@ -36,22 +31,17 @@ class ProcessRecord:
     pid: int
     process_create_time: float
     log_path: str
-    status: ProcessStatusType
+    status: ProcessStatus
     started_at: datetime
     exited_at: datetime | None = None
     exit_code: int | None = None
 
 
-# ---------------------------------------------------------------------------
-# SQLAlchemy ORM — internal to the persistence layer
-# ---------------------------------------------------------------------------
-
-
 class ProcessRecordRow(Base):
     """SQLAlchemy ORM model for the detached_processes table.
 
-    Internal to the persistence layer; callers never see this type.
-    Use to_domain() to convert to the ProcessRecord dataclass.
+    Internal to the persistence layer; use to_domain() to convert to the
+    ProcessRecord dataclass.
     """
 
     __tablename__ = "detached_processes"
@@ -71,7 +61,6 @@ class ProcessRecordRow(Base):
     __table_args__ = (Index("ix_detached_processes_status", "status"),)
 
     def to_domain(self) -> ProcessRecord:
-        """Convert ORM record to domain dataclass."""
         return ProcessRecord(
             id=self.id,
             name=self.name,

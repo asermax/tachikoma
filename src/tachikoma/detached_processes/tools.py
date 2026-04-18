@@ -176,21 +176,18 @@ def create_detached_process_tools_server(
             if parsed.archived:
                 records = await repository.list_exited()
             else:
-                records = await repository.list_running()
-
-            # Lazy reconciliation for running records
-            if not parsed.archived:
-                for record in list(records):
-                    if not is_alive(record):
+                running = await repository.list_running()
+                records = []
+                for record in running:
+                    if is_alive(record):
+                        records.append(record)
+                    else:
                         await reconcile_exit(
                             record.id,
                             repository=repository,
                             bus=bus,
                             log_dir=log_dir,
                         )
-
-                # Re-fetch after reconciliation
-                records = await repository.list_running()
 
             if not records:
                 label = "exited" if parsed.archived else "running"
@@ -237,7 +234,6 @@ def create_detached_process_tools_server(
             if record is None:
                 return _not_found(parsed.process_id)
 
-            # Lazy reconciliation
             if record.status == "running" and not is_alive(record):
                 await reconcile_exit(
                     record.id,
@@ -351,7 +347,7 @@ def create_detached_process_tools_server(
             if record is None:
                 return _not_found(parsed.process_id)
 
-            # Lazy reconciliation — no notification from stop (R15)
+            # Lazy reconcile — stop-initiated exits don't notify the user.
             if record.status == "running" and not is_alive(record):
                 await reconcile_exit(
                     record.id,
@@ -372,7 +368,6 @@ def create_detached_process_tools_server(
                     f"Process '{record.name}' already stopped (exit code: {record.exit_code})."
                 )
 
-            # Parse signal
             sig = signal.SIGTERM
             if parsed.signal:
                 try:
@@ -385,11 +380,10 @@ def create_detached_process_tools_server(
             except PermissionError:
                 return _error(f"Permission denied: cannot signal process {record.pid}.")
 
-            # timeout=0 is fire-and-forget — let the watcher reconcile the actual exit
+            # timeout=0 is fire-and-forget — the watcher will observe the exit.
             if parsed.timeout == 0:
                 return _msg(f"Signal sent to process '{record.name}'.")
 
-            # Reconcile after termination — no notification (R15)
             await reconcile_exit(
                 record.id,
                 repository=repository,
@@ -434,7 +428,7 @@ def create_detached_process_tools_server(
             if record is None:
                 return _not_found(parsed.process_id)
 
-            await repository.update(parsed.process_id, name=parsed.name)
+            await repository.rename(parsed.process_id, parsed.name)
 
             return _msg(f"Process renamed to '{parsed.name}'.")
 

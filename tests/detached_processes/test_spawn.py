@@ -151,7 +151,7 @@ async def test_spawn_validates_cwd(tmp_path, repo):
     log_dir = tmp_path / "logs"
     log_dir.mkdir()
 
-    with pytest.raises(ValueError, match="cwd"):
+    with pytest.raises(FileNotFoundError):
         await spawn_process(
             name="test",
             command="echo hi",

@@ -7,6 +7,7 @@ of this module.
 from datetime import datetime
 
 from loguru import logger
+from sqlalchemy import delete as sql_delete
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
@@ -14,6 +15,7 @@ from tachikoma.detached_processes.errors import ProcessRepositoryError
 from tachikoma.detached_processes.model import (
     ProcessRecord,
     ProcessRecordRow,
+    ProcessStatus,
 )
 
 _log = logger.bind(component="detached_processes")
@@ -23,19 +25,10 @@ class ProcessRepository:
     """Async repository for detached process records backed by SQLite via aiosqlite.
 
     Receives a shared session factory from the Database class.
-
-    Usage::
-
-        repo = ProcessRepository(database.session_factory)
-        record = await repo.create(record_obj)
     """
 
     def __init__(self, session_factory: async_sessionmaker) -> None:
         self._session_factory = session_factory
-
-    # ------------------------------------------------------------------
-    # CRUD operations
-    # ------------------------------------------------------------------
 
     async def create(self, record: ProcessRecord) -> ProcessRecord:
         """Persist a new process record and return it."""
@@ -77,80 +70,55 @@ class ProcessRepository:
         except Exception as exc:
             raise ProcessRepositoryError(f"Failed to get process record {record_id}") from exc
 
-    async def list_running(self) -> list[ProcessRecord]:
-        """Return all process records with status='running'."""
+    async def list_by_status(self, status: ProcessStatus) -> list[ProcessRecord]:
+        """Return all process records with the given status."""
         try:
             async with self._session_factory() as db:
                 result = await db.execute(
-                    select(ProcessRecordRow).where(ProcessRecordRow.status == "running")
+                    select(ProcessRecordRow).where(ProcessRecordRow.status == status)
                 )
                 rows = result.scalars().all()
 
             return [r.to_domain() for r in rows]
 
         except Exception as exc:
-            raise ProcessRepositoryError("Failed to list running processes") from exc
+            raise ProcessRepositoryError(f"Failed to list {status} processes") from exc
+
+    async def list_running(self) -> list[ProcessRecord]:
+        """Return all process records with status='running'."""
+        return await self.list_by_status("running")
 
     async def list_exited(self) -> list[ProcessRecord]:
         """Return all process records with status='exited'."""
+        return await self.list_by_status("exited")
+
+    async def rename(self, record_id: str, name: str) -> None:
+        """Rename a process record. No-op if the record does not exist."""
         try:
             async with self._session_factory() as db:
-                result = await db.execute(
-                    select(ProcessRecordRow).where(ProcessRecordRow.status == "exited")
+                await db.execute(
+                    update(ProcessRecordRow)
+                    .where(ProcessRecordRow.id == record_id)
+                    .values(name=name)
                 )
-                rows = result.scalars().all()
-
-            return [r.to_domain() for r in rows]
-
-        except Exception as exc:
-            raise ProcessRepositoryError("Failed to list exited processes") from exc
-
-    async def update(self, record_id: str, **fields) -> None:
-        """Update arbitrary fields on a process record by ID.
-
-        Accepted fields: name, status, exited_at, exit_code.
-        """
-        try:
-            async with self._session_factory() as db:
-                result = await db.execute(
-                    select(ProcessRecordRow).where(ProcessRecordRow.id == record_id)
-                )
-                row = result.scalar_one_or_none()
-
-                if row is None:
-                    return
-
-                for key, value in fields.items():
-                    setattr(row, key, value)
-
                 await db.commit()
 
         except Exception as exc:
-            raise ProcessRepositoryError(f"Failed to update process record {record_id}") from exc
+            raise ProcessRepositoryError(f"Failed to rename process record {record_id}") from exc
 
     async def delete(self, record_id: str) -> bool:
         """Delete a process record by ID. Returns True if deleted."""
         try:
             async with self._session_factory() as db:
                 result = await db.execute(
-                    select(ProcessRecordRow).where(ProcessRecordRow.id == record_id)
+                    sql_delete(ProcessRecordRow).where(ProcessRecordRow.id == record_id)
                 )
-                row = result.scalar_one_or_none()
-
-                if row is None:
-                    return False
-
-                await db.delete(row)
                 await db.commit()
 
-            return True
+            return result.rowcount > 0
 
         except Exception as exc:
             raise ProcessRepositoryError(f"Failed to delete process record {record_id}") from exc
-
-    # ------------------------------------------------------------------
-    # Race-safe conditional update
-    # ------------------------------------------------------------------
 
     async def reconcile_to_exited(
         self,

@@ -5,7 +5,6 @@ from datetime import UTC, datetime
 from tachikoma.detached_processes.model import (
     ProcessRecord,
     ProcessRecordRow,
-    ProcessStatus,
 )
 
 
@@ -59,11 +58,6 @@ def test_to_domain_all_populated():
     assert record.exited_at is not None
     assert record.exited_at.tzinfo == UTC
     assert record.exit_code == 42
-
-
-def test_process_status_constants():
-    assert ProcessStatus["running"] == "running"
-    assert ProcessStatus["exited"] == "exited"
 
 
 def test_round_trip():

@@ -16,17 +16,25 @@ from .conftest import _make_record
 TZ = ZoneInfo("UTC")
 
 
-def _get_tools(repo, mock_bus, log_dir):
-    """Build the tool server and return a dict of tool_name -> handler."""
-    server = create_detached_process_tools_server(repo, mock_bus, log_dir, TZ)
-    # create_sdk_mcp_server returns a dict; the tools are captured in the closures
-    # We need to extract the tool handlers from the @tool decorators
-    return server
+def _build_tools_map(repo, mock_bus, log_dir):
+    """Build tools server and return {name: handler_fn} dict by capturing
+    the handlers registered with @tool during the factory call."""
+    captured: dict = {}
 
+    class FakeTool:
+        def __init__(self, name, desc, schema):
+            self.name = name
+            self.description = desc
+            self.input_schema = schema
 
-# ---------------------------------------------------------------------------
-# Factory test
-# ---------------------------------------------------------------------------
+        def __call__(self, fn):
+            captured[self.name] = fn
+            return self
+
+    with patch("tachikoma.detached_processes.tools.tool", FakeTool):
+        create_detached_process_tools_server(repo, mock_bus, log_dir, TZ)
+
+    return captured
 
 
 @pytest.mark.asyncio
@@ -40,62 +48,8 @@ async def test_factory_returns_server(repo):
     assert server["name"] == "detached-process-tools"
 
 
-# ---------------------------------------------------------------------------
-# start_process tests
-# ---------------------------------------------------------------------------
-
-
 @pytest.mark.asyncio
 async def test_start_process_rejects_empty_name(repo):
-    mock_bus = AsyncMock()
-    log_dir = Path("/tmp/test-logs")
-    create_detached_process_tools_server(repo, mock_bus, log_dir, TZ)
-
-    # Test through the SdkMcpTool handlers — re-extract via the closures
-    tools_map = _build_tools_map(repo, mock_bus, log_dir)
-    result = await tools_map["start_process"]({"name": "  ", "command": "echo hi"})
-
-    assert result["is_error"] is True
-    assert "name" in result["content"][0]["text"]
-
-
-def _build_tools_map(repo, mock_bus, log_dir):
-    """Build tools server and return {name: handler_fn} dict."""
-
-    # Capture the tools registered during factory creation
-    captured = {}
-
-    class FakeTool:
-        def __init__(self, name, desc, schema):
-            self.name = name
-            self.description = desc
-            self.input_schema = schema
-            self._handler = None
-
-        def __call__(self, fn):
-            self._handler = fn
-            captured[self.name] = fn
-            return self
-
-    with patch("tachikoma.detached_processes.tools.tool", FakeTool):
-        create_detached_process_tools_server(repo, mock_bus, log_dir, TZ)
-
-    return captured
-
-
-# Use a fixture-based approach instead — create the tools map per test
-
-@pytest.fixture
-def tools_map(repo):
-    mock_bus = AsyncMock()
-    log_dir = Path("/tmp/test-logs")
-    return _build_tools_map(repo, mock_bus, log_dir), AsyncMock(), Path("/tmp/test-logs")
-
-
-# Re-do the tests using direct handler invocation via the captured tools
-
-@pytest.mark.asyncio
-async def test_start_process_rejects_empty_name_v2(repo):
     mock_bus = AsyncMock()
     log_dir = Path("/tmp/test-logs")
     tools = _build_tools_map(repo, mock_bus, log_dir)

@@ -51,22 +51,19 @@ async def test_list_exited_filters_by_status(repo):
 
 
 @pytest.mark.asyncio
-async def test_update_mutates_named_fields(repo):
+async def test_rename_updates_name(repo):
     await repo.create(_make_record(record_id="u1", status="running"))
-    now = datetime.now(UTC)
 
-    await repo.update("u1", name="New Name", status="exited", exited_at=now, exit_code=0)
+    await repo.rename("u1", "New Name")
 
     updated = await repo.get("u1")
     assert updated is not None
     assert updated.name == "New Name"
-    assert updated.status == "exited"
-    assert updated.exit_code == 0
 
 
 @pytest.mark.asyncio
-async def test_update_nonexistent_is_noop(repo):
-    await repo.update("nonexistent", name="Ghost")
+async def test_rename_nonexistent_is_noop(repo):
+    await repo.rename("nonexistent", "Ghost")
 
     assert await repo.get("nonexistent") is None
 

@@ -26,7 +26,7 @@ async def test_event_driven_detects_exit_file(tmp_path, repo):
     await repo.create(_make_record(record_id="ev-1", status="running"))
     mock_bus = AsyncMock()
 
-    async def mock_awatch(path):
+    async def mock_awatch(path, **_kwargs):
         exit_file = log_dir / "ev-1.exit"
         exit_file.write_text("0\n")
         yield [(watchfiles.Change.added, str(exit_file))]
@@ -48,7 +48,7 @@ async def test_event_driven_ignores_non_exit_files(tmp_path, repo):
     await repo.create(_make_record(record_id="ev-ignore", status="running"))
     mock_bus = AsyncMock()
 
-    async def mock_awatch(path):
+    async def mock_awatch(path, **_kwargs):
         yield [(watchfiles.Change.modified, str(log_dir / "ev-ignore.log"))]
 
     with patch("tachikoma.detached_processes.watcher.watchfiles.awatch", side_effect=mock_awatch):
@@ -65,7 +65,7 @@ async def test_event_driven_handles_missing_record(tmp_path, repo):
     log_dir.mkdir()
     mock_bus = AsyncMock()
 
-    async def mock_awatch(path):
+    async def mock_awatch(path, **_kwargs):
         exit_file = log_dir / "nonexistent.exit"
         exit_file.write_text("0\n")
         yield [(watchfiles.Change.added, str(exit_file))]

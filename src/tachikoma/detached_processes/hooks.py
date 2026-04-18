@@ -37,8 +37,8 @@ async def detached_processes_hook(ctx: BootstrapContext) -> None:
 
     repository = ProcessRepository(database.session_factory)
 
-    # Crash recovery: reconcile running records whose processes are dead
-    # Notifications suppressed — user shouldn't get a burst on restart
+    # Crash recovery: reconcile records whose processes died while we were
+    # down. Notifications suppressed so the user doesn't get a burst on restart.
     running = await repository.list_running()
     for record in running:
         if not is_alive(record):
