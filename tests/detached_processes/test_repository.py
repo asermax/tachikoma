@@ -4,16 +4,13 @@ from datetime import UTC, datetime
 
 import pytest
 
-from tachikoma.detached_processes.errors import ProcessRepositoryError
-from tachikoma.detached_processes.model import ProcessRecord
-
 from .conftest import _make_record
 
 
 @pytest.mark.asyncio
 async def test_create_and_get_round_trip(repo):
     record = _make_record(record_id="create-test")
-    created = await repo.create(record)
+    await repo.create(record)
     fetched = await repo.get("create-test")
 
     assert fetched is not None

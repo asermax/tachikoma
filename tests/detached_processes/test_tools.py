@@ -1,11 +1,13 @@
 """Tests for detached process MCP tools."""
 
+import contextlib
+import os
 import signal
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
+from zoneinfo import ZoneInfo
 
 import pytest
-from zoneinfo import ZoneInfo
 
 from tachikoma.detached_processes.tools import create_detached_process_tools_server
 
@@ -47,12 +49,9 @@ async def test_factory_returns_server(repo):
 async def test_start_process_rejects_empty_name(repo):
     mock_bus = AsyncMock()
     log_dir = Path("/tmp/test-logs")
-    server = create_detached_process_tools_server(repo, mock_bus, log_dir, TZ)
+    create_detached_process_tools_server(repo, mock_bus, log_dir, TZ)
 
-    start_tool = next(t for t in server["instance"].request_handlers.values())
-    # Instead, test through the SdkMcpTool handlers
-    from tachikoma.detached_processes import tools as tools_module
-    # Re-extract via the closures
+    # Test through the SdkMcpTool handlers — re-extract via the closures
     tools_map = _build_tools_map(repo, mock_bus, log_dir)
     result = await tools_map["start_process"]({"name": "  ", "command": "echo hi"})
 
@@ -62,12 +61,9 @@ async def test_start_process_rejects_empty_name(repo):
 
 def _build_tools_map(repo, mock_bus, log_dir):
     """Build tools server and return {name: handler_fn} dict."""
-    from unittest.mock import MagicMock
 
     # Capture the tools registered during factory creation
     captured = {}
-
-    original_tool = __import__("claude_agent_sdk").tool
 
     class FakeTool:
         def __init__(self, name, desc, schema):
@@ -139,12 +135,9 @@ async def test_start_process_allows_duplicate_names(tmp_path, repo):
     running = await repo.list_running()
     assert len(running) == 2
 
-    import os
     for r in running:
-        try:
+        with contextlib.suppress(ProcessLookupError, PermissionError):
             os.killpg(os.getpgid(r.pid), signal.SIGKILL)
-        except (ProcessLookupError, PermissionError):
-            pass
 
 
 # ---------------------------------------------------------------------------
@@ -278,7 +271,9 @@ async def test_read_output_missing_log(repo, tmp_path):
     log_dir.mkdir()
     tools = _build_tools_map(repo, mock_bus, log_dir)
 
-    await repo.create(_make_record(record_id="ro3", status="running", log_path=str(log_dir / "ro3.log")))
+    await repo.create(
+        _make_record(record_id="ro3", status="running", log_path=str(log_dir / "ro3.log"))
+    )
 
     with patch("tachikoma.detached_processes.tools.is_alive", return_value=True):
         result = await tools["read_process_output"]({"process_id": "ro3"})
@@ -365,7 +360,8 @@ async def test_rename_empty_name_rejected(repo):
     result = await tools["rename_process"]({"process_id": "rn2", "name": "  "})
 
     assert result["is_error"] is True
-    assert "empty" in result["content"][0]["text"].lower() or "whitespace" in result["content"][0]["text"].lower()
+    text = result["content"][0]["text"].lower()
+    assert "empty" in text or "whitespace" in text
 
 
 @pytest.mark.asyncio

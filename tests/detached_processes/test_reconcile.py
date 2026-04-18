@@ -1,6 +1,6 @@
 """Tests for the shared reconciler."""
 
-from pathlib import Path
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -21,7 +21,7 @@ async def test_sidecar_zero_dispatches_normal(repo, tmp_path, mock_bus):
     log_dir = tmp_path / "logs"
     log_dir.mkdir()
 
-    record = await repo.create(_make_record(record_id="rec-ok", status="running"))
+    await repo.create(_make_record(record_id="rec-ok", status="running"))
 
     # Write exit code sidecar
     (log_dir / "rec-ok.exit").write_text("0\n")
@@ -52,7 +52,7 @@ async def test_sidecar_nonzero_dispatches_urgent(repo, tmp_path, mock_bus):
     log_dir = tmp_path / "logs"
     log_dir.mkdir()
 
-    record = await repo.create(_make_record(record_id="rec-fail", status="running"))
+    await repo.create(_make_record(record_id="rec-fail", status="running"))
 
     (log_dir / "rec-fail.exit").write_text("1\n")
 
@@ -129,7 +129,6 @@ async def test_lost_race_no_dispatch(repo, tmp_path, mock_bus):
     (log_dir / "rec-race.exit").write_text("0\n")
 
     # Pre-reconcile so the conditional update loses
-    from datetime import UTC, datetime
     await repo.reconcile_to_exited("rec-race", exited_at=datetime.now(UTC), exit_code=0)
 
     await reconcile_exit(

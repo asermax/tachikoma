@@ -1,17 +1,17 @@
 """Tests for spawn, liveness, and termination helpers."""
 
 import asyncio
+import contextlib
+import os
 import signal
 from pathlib import Path
 
 import psutil
 import pytest
 
-from tachikoma.detached_processes.model import ProcessRecord, ProcessStatus
 from tachikoma.detached_processes.spawn import is_alive, spawn_process, terminate
 
 from .conftest import _make_record
-
 
 # ---------------------------------------------------------------------------
 # is_alive tests
@@ -109,11 +109,9 @@ async def test_spawn_happy_path(tmp_path, repo):
         assert is_alive(record) is True
     finally:
         # Clean up
-        import os
-        try:
+        with contextlib.suppress(ProcessLookupError, PermissionError):
+
             os.killpg(os.getpgid(record.pid), signal.SIGKILL)
-        except (ProcessLookupError, PermissionError):
-            pass
 
 
 @pytest.mark.asyncio
@@ -190,11 +188,9 @@ async def test_spawn_shell_features(tmp_path, repo):
             assert "hello" in content
             assert "world" in content
     finally:
-        import os
-        try:
+        with contextlib.suppress(ProcessLookupError, PermissionError):
+
             os.killpg(os.getpgid(record.pid), signal.SIGKILL)
-        except (ProcessLookupError, PermissionError):
-            pass
 
 
 @pytest.mark.asyncio
@@ -218,11 +214,9 @@ async def test_spawn_env_overrides(tmp_path, repo):
             content = log_path.read_text()
             assert "hello_from_test" in content
     finally:
-        import os
-        try:
+        with contextlib.suppress(ProcessLookupError, PermissionError):
+
             os.killpg(os.getpgid(record.pid), signal.SIGKILL)
-        except (ProcessLookupError, PermissionError):
-            pass
 
 
 # ---------------------------------------------------------------------------
@@ -289,11 +283,9 @@ async def test_terminate_timeout_zero(tmp_path, repo):
         # Process may or may not be dead yet — timeout=0 returns immediately
         # Just verify no exception was raised
     finally:
-        import os
-        try:
+        with contextlib.suppress(ProcessLookupError, PermissionError):
+
             os.killpg(os.getpgid(record.pid), signal.SIGKILL)
-        except (ProcessLookupError, PermissionError):
-            pass
 
 
 @pytest.mark.asyncio

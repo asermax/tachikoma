@@ -11,19 +11,19 @@ from tachikoma.detached_processes.model import (
 
 def _make_row(**overrides) -> ProcessRecordRow:
     """Create a ProcessRecordRow with sensible defaults."""
-    defaults = dict(
-        id="test-id",
-        name="Test",
-        command="echo hi",
-        cwd="/tmp",
-        pid=999,
-        process_create_time=1234567.0,
-        log_path="/tmp/test-id.log",
-        status="running",
-        started_at=datetime.now(UTC),
-        exited_at=None,
-        exit_code=None,
-    )
+    defaults = {
+        "id": "test-id",
+        "name": "Test",
+        "command": "echo hi",
+        "cwd": "/tmp",
+        "pid": 999,
+        "process_create_time": 1234567.0,
+        "log_path": "/tmp/test-id.log",
+        "status": "running",
+        "started_at": datetime.now(UTC),
+        "exited_at": None,
+        "exit_code": None,
+    }
     defaults.update(overrides)
     return ProcessRecordRow(**defaults)
 

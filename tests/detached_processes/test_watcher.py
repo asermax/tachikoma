@@ -1,7 +1,6 @@
 """Tests for exit watchers."""
 
 import asyncio
-from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -13,7 +12,6 @@ from tachikoma.detached_processes.watcher import (
 )
 
 from .conftest import _make_record
-
 
 # ---------------------------------------------------------------------------
 # Event-driven watcher tests
@@ -102,6 +100,8 @@ async def test_polling_detects_dead_process(tmp_path, repo):
     log_dir.mkdir()
 
     await repo.create(_make_record(record_id="poll-1", status="running"))
+    # Pre-write the sidecar so the reconciler doesn't need to retry (async sleep)
+    (log_dir / "poll-1.exit").write_text("0\n")
     mock_bus = AsyncMock()
 
     iteration = 0
@@ -117,9 +117,9 @@ async def test_polling_detects_dead_process(tmp_path, repo):
     with (
         patch("tachikoma.detached_processes.watcher.is_alive", return_value=False),
         patch("tachikoma.detached_processes.watcher.asyncio.sleep", side_effect=sleep_then_cancel),
+        pytest.raises(asyncio.CancelledError),
     ):
-        with pytest.raises(asyncio.CancelledError):
-            await polling_watcher(repo, mock_bus, log_dir, interval=0.01)
+        await polling_watcher(repo, mock_bus, log_dir, interval=0.01)
 
     updated = await repo.get("poll-1")
     assert updated is not None
@@ -147,9 +147,9 @@ async def test_polling_skips_alive_processes(tmp_path, repo):
     with (
         patch("tachikoma.detached_processes.watcher.is_alive", return_value=True),
         patch("tachikoma.detached_processes.watcher.asyncio.sleep", side_effect=sleep_then_cancel),
+        pytest.raises(asyncio.CancelledError),
     ):
-        with pytest.raises(asyncio.CancelledError):
-            await polling_watcher(repo, mock_bus, log_dir, interval=0.01)
+        await polling_watcher(repo, mock_bus, log_dir, interval=0.01)
 
     record = await repo.get("poll-alive")
     assert record is not None
@@ -172,6 +172,8 @@ async def test_polling_handles_empty_running_list(tmp_path, repo):
             raise asyncio.CancelledError()
         await original_sleep(0)
 
-    with patch("tachikoma.detached_processes.watcher.asyncio.sleep", side_effect=sleep_then_cancel):
-        with pytest.raises(asyncio.CancelledError):
-            await polling_watcher(repo, mock_bus, log_dir, interval=0.01)
+    with (
+        patch("tachikoma.detached_processes.watcher.asyncio.sleep", side_effect=sleep_then_cancel),
+        pytest.raises(asyncio.CancelledError),
+    ):
+        await polling_watcher(repo, mock_bus, log_dir, interval=0.01)

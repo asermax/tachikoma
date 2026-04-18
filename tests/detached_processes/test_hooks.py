@@ -1,6 +1,6 @@
 """Tests for the detached processes bootstrap hook."""
 
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import MagicMock
 
 import pytest
 
