@@ -512,7 +512,7 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 **Description**: When the user sends a message at the exact moment a previous response is finalizing, the new message can be silently dropped. The coordinator consumes the message from the queue but loses it during the transition between completing the previous turn's post-processing and picking up the next turn. This delta eliminates that timing window so that every consumed message is guaranteed to be processed, even when it arrives during response finalization.
 
 ### DLT-112: Buffer background task notifications until conversation is idle
-**Status**: ✓ Spec
+**Status**: ⧗ Design
 **Depends on**: None
 **Priority**: 2 (High)
 **Complexity**: Medium
