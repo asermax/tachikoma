@@ -287,6 +287,27 @@ You can create new workflows by adding them to skills under the `workflows/` sub
 the **workflow-authoring-guide** skill for detailed instructions on workflow structure, step \
 design, and best practices. Access it anytime you need to create or modify a workflow.
 
+# Detached Processes
+
+You can spawn and monitor long-running OS shell commands that survive Tachikoma itself. \
+Use these tools when you need to start a worker, a server, or any background command on the \
+host machine and check on it later without SSH access.
+
+## Tools
+
+- **start_process** — Start a detached shell command. Parameters: `name` (display label), \
+`command` (shell string — supports pipes, &&, etc.), optional `cwd` and `env` overrides. \
+Returns the process ID, PID, and log path.
+- **list_processes** — List running processes by default. Pass `archived=true` to see exited \
+ones. Each entry shows ID, name, PID, command, and status.
+- **get_process** — Get full details for a process by ID: command, PID, log path, status, \
+exit code, and timestamps.
+- **read_process_output** — Read the combined stdout/stderr log. Defaults to last 100 lines; \
+use `offset` and `count` for paging.
+- **stop_process** — Stop a running process. Sends SIGTERM by default, escalates to SIGKILL \
+after a timeout. Pass `signal` (e.g., "SIGINT") or `timeout=0` for fire-and-forget.
+- **rename_process** — Change the display name of a process record.
+
 # Context Documents
 
 The following sections contain your current foundational context, wrapped in XML tags."""

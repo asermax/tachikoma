@@ -504,13 +504,6 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 **Complexity**: Medium
 **Description**: When the user sends a message at the exact moment a previous response is finalizing, the new message can be silently dropped. The coordinator consumes the message from the queue but loses it during the transition between completing the previous turn's post-processing and picking up the next turn. This delta eliminates that timing window so that every consumed message is guaranteed to be processed, even when it arrives during response finalization.
 
-### DLT-115: Run and monitor detached shell commands
-**Status**: ✗ Defined
-**Depends on**: None
-**Priority**: 1 (Critical)
-**Complexity**: Hard
-**Description**: Users need Tachikoma to dispatch OS-level commands (e.g., starting a Zenki worker on a VPS) that run independently of the current conversation and outlive the session. This delta adds MCP tools for starting a detached shell command, recording its PID and log path in the database, querying whether it is still running, reading its stdout/stderr output, and sending termination signals. The spawned process runs with no SDK involvement — unlike autonomous agent delegation which maintains ongoing Claude sessions, this targets standalone shell commands where Tachikoma acts as a lightweight process supervisor. The tools give the agent (and by extension the user) visibility into commands that would otherwise require SSH access to check on.
-
 ### DLT-116: Provide workflow tools to background tasks
 **Status**: ✗ Defined
 **Depends on**: None
@@ -590,7 +583,7 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 
 ### DLT-128: Surface running detached processes in agent context
 **Status**: ✗ Defined
-**Depends on**: DLT-115
+**Depends on**: None
 **Priority**: 4 (Low)
 **Complexity**: Easy
 **Description**: Currently running detached processes should be part of the agent's injected context so the agent is always aware of them and can monitor proactively without having to explicitly check. Add a context provider that queries the detached process registry on each message, surfaces active processes (name, PID, uptime, log path), and injects this information into the agent's pre-processing context. This enables the agent to proactively notice when a process has been running for an unusual duration, has stopped unexpectedly, or is relevant to the current conversation.

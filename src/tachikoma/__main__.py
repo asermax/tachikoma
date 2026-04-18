@@ -24,6 +24,13 @@ from tachikoma.config import SettingsManager
 from tachikoma.context import CoreContextProcessor, context_hook
 from tachikoma.coordinator import Coordinator
 from tachikoma.database import Database, database_hook
+from tachikoma.detached_processes import (
+    ProcessRepository,
+    create_detached_process_tools_server,
+    detached_processes_hook,
+    event_driven_watcher,
+    polling_watcher,
+)
 from tachikoma.git import GitProcessor, git_hook
 from tachikoma.logging import logging_hook
 from tachikoma.media import media_hook
@@ -100,6 +107,7 @@ async def run(
     bootstrap.register("memory", memory_hook)
     bootstrap.register("sessions", session_recovery_hook)
     bootstrap.register("tasks", tasks_hook)
+    bootstrap.register("detached_processes", detached_processes_hook)
     bootstrap.register("media", media_hook)
     bootstrap.register("workflows", workflows_hook)
     bootstrap.register("telegram", telegram_hook)
@@ -119,6 +127,8 @@ async def run(
     task_repository: TaskRepository = bootstrap.extras["task_repository"]
     skill_registry: SkillRegistry = bootstrap.extras["skill_registry"]
     workflow_repository: WorkflowStateRepository = bootstrap.extras["workflow_repository"]
+    process_repository: ProcessRepository = bootstrap.extras["process_repository"]
+    detached_log_dir: Path = bootstrap.extras["detached_process_log_dir"]
     bus = EventBus()
 
     _log.info(
@@ -175,6 +185,12 @@ async def run(
         skill_registry,
         settings.workspace.path,
     )
+    detached_process_tools = create_detached_process_tools_server(
+        process_repository,
+        bus,
+        detached_log_dir,
+        ZoneInfo(settings.tasks.timezone),
+    )
 
     # Create channel before coordinator to extract capabilities. The buffer is
     # attached after coordinator startup (see below) since it depends on the
@@ -202,7 +218,12 @@ async def run(
 
     # Merge channel MCP servers with task and workflow tools
     channel_mcp = active_channel.get_mcp_servers()
-    all_mcp_servers = {"task-tools": task_tools, "workflow-tools": workflow_tools, **channel_mcp}
+    all_mcp_servers = {
+        "task-tools": task_tools,
+        "workflow-tools": workflow_tools,
+        "detached-process-tools": detached_process_tools,
+        **channel_mcp,
+    }
 
     scheduler_tasks: list[asyncio.Task[None]] = []
     buffer: Buffer | None = None
@@ -273,6 +294,20 @@ async def run(
                         bus,
                     ),
                     name="skills_watcher",
+                )
+            )
+
+            scheduler_tasks.append(
+                asyncio.create_task(
+                    event_driven_watcher(process_repository, bus, detached_log_dir),
+                    name="detached_event_watcher",
+                )
+            )
+
+            scheduler_tasks.append(
+                asyncio.create_task(
+                    polling_watcher(process_repository, bus, detached_log_dir),
+                    name="detached_polling_watcher",
                 )
             )
 
