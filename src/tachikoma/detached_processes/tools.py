@@ -384,6 +384,10 @@ def create_detached_process_tools_server(
             except PermissionError:
                 return _error(f"Permission denied: cannot signal process {record.pid}.")
 
+            # timeout=0 is fire-and-forget — let the watcher reconcile the actual exit
+            if parsed.timeout == 0:
+                return _msg(f"Signal sent to process '{record.name}'.")
+
             # Reconcile after termination — no notification (R15)
             await reconcile_exit(
                 record.id,

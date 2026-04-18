@@ -99,13 +99,16 @@ async def spawn_process(
     # Close parent's copy of the log fd — child has its own descriptor
     log_fd.close()
 
-    # Capture identity pair immediately
+    # Capture identity pair immediately — failure here means we can't enforce
+    # PID-reuse protection on this record, which is worse than no record at all.
     pid = proc.pid
     try:
         process_create_time = psutil.Process(pid).create_time()
     except (psutil.NoSuchProcess, psutil.AccessDenied) as exc:
-        _log.warning("Failed to capture create_time for pid={pid}: {err}", pid=pid, err=exc)
-        process_create_time = 0.0
+        _log.exception("Failed to capture create_time for pid={pid}, killing child", pid=pid)
+        with contextlib.suppress(ProcessLookupError, PermissionError, OSError):
+            os.killpg(os.getpgid(pid), signal.SIGKILL)
+        raise OSError(f"Failed to capture process identity for pid {pid}: {exc}") from exc
 
     # Persist the record
     record = ProcessRecord(
@@ -167,14 +170,15 @@ async def terminate(
         await asyncio.sleep(interval)
         elapsed += interval
 
-    # Escalate to SIGKILL
+    # Escalate to SIGKILL — reuse the original pgid (process group outlives
+    # individual members while any are still alive, and we polled above)
     _log.warning(
         "Process {pid} still alive after {timeout}s, sending SIGKILL",
         pid=record.pid,
         timeout=timeout,
     )
     try:
-        os.killpg(os.getpgid(record.pid), signal.SIGKILL)
+        os.killpg(pgid, signal.SIGKILL)
     except (ProcessLookupError, PermissionError):
         return
 

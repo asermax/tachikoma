@@ -5,9 +5,9 @@ reconciliation in MCP tool handlers. Idempotent via conditional UPDATE
 so concurrent reconcilers converge to a single winner.
 """
 
+import asyncio
 from datetime import UTC, datetime
 from pathlib import Path
-from time import sleep
 from typing import TYPE_CHECKING
 
 from loguru import logger
@@ -53,7 +53,7 @@ async def reconcile_exit(
 
         # Try to read the exit code sidecar
         exit_path = log_dir / f"{record.id}.exit"
-        exit_code = _read_exit_code(exit_path)
+        exit_code = await _read_exit_code(exit_path)
 
         # Conditional UPDATE — only the race winner proceeds
         won = await repository.reconcile_to_exited(
@@ -91,7 +91,7 @@ async def reconcile_exit(
         _log.exception("Error reconciling process {id}", id=record_id)
 
 
-def _read_exit_code(exit_path: Path) -> int | None:
+async def _read_exit_code(exit_path: Path) -> int | None:
     """Read the exit code from the sidecar file.
 
     Performs a single 100ms retry if the file is not yet present,
@@ -103,7 +103,7 @@ def _read_exit_code(exit_path: Path) -> int | None:
             return int(content)
         except FileNotFoundError:
             if attempt == 0:
-                sleep(0.1)
+                await asyncio.sleep(0.1)
                 continue
             return None
         except (ValueError, OSError):
