@@ -31,6 +31,7 @@ from telegramify_markdown import convert, split_entities, utf16_len
 
 from tachikoma.adapter import sanitize_text
 from tachikoma.bootstrap import BootstrapContext, BootstrapError
+from tachikoma.buffer.events import BufferedDelivery
 from tachikoma.channel import Channel
 from tachikoma.config import TelegramSettings
 from tachikoma.display import _format_bash_summary, format_tool_name, summarize_tool_activity
@@ -43,8 +44,6 @@ from tachikoma.media import (
     generate_media_filename,
     resolve_media,
 )
-from tachikoma.notifications import Notification
-from tachikoma.tasks.events import SessionTaskReady
 from tachikoma.telegram.tools import create_send_file_server
 
 if TYPE_CHECKING:
@@ -513,8 +512,7 @@ class TelegramChannel(Channel):
     shutdown with partial response delivery.
 
     When an event bus is provided, the channel subscribes to:
-    - SessionTaskReady: Proactive tasks from the task scheduler
-    - Notification: Completion/failure notifications from background tasks
+    - BufferedDelivery: Deferred notifications and session tasks from the priority buffer
     """
 
     def __init__(
@@ -581,10 +579,9 @@ class TelegramChannel(Channel):
         """
         self.__coordinator = coordinator
 
-        # Subscribe to task events — deferred to run() so coordinator is set
+        # Subscribe to buffered delivery events — deferred to run() so coordinator is set
         if self._bus is not None:
-            self._bus.on(SessionTaskReady, self._handle_session_task)
-            self._bus.on(Notification, self._handle_notification)
+            self._bus.on(BufferedDelivery, self._handle_buffered_delivery)
         _log.info(
             "Starting Telegram bot for chat {chat_id}",
             chat_id=self._settings.authorized_chat_id,
@@ -721,26 +718,35 @@ class TelegramChannel(Channel):
             except TelegramAPIError:
                 _log.warning("Could not send partial response on shutdown")
 
-    async def _handle_session_task(self, event: SessionTaskReady) -> None:
-        """Handle a SessionTaskReady event from the task scheduler.
+    async def _handle_buffered_delivery(self, event: BufferedDelivery) -> None:
+        """Handle a BufferedDelivery event from the priority buffer.
 
-        This delivers a proactive task message to the user through the coordinator.
+        Routes the delivery prompt through the coordinator pipeline.
         If the user is currently in a conversation, the message is buffered.
         """
-        instance = event.instance
         _log.info(
-            "Processing session task: id={task_id}, prompt_preview={preview}",
-            task_id=instance.id,
-            preview=instance.prompt[:50] if instance.prompt else "",
+            "Processing buffered delivery: items={count}, shutdown={is_shutdown}",
+            count=len(event.items),
+            is_shutdown=event.is_shutdown_digest,
         )
 
-        self._coordinator.enqueue(instance.prompt)
+        async def on_complete() -> None:
+            for item in event.items:
+                if item.on_delivered is not None:
+                    await item.on_delivered()
+
+            if event.is_shutdown_digest:
+                buffer = getattr(self, "_buffer", None)
+                if buffer is not None:
+                    buffer.resolve_shutdown()
+
+        self._coordinator.enqueue(event.prompt)
 
         if self._is_processing:
-            _log.debug("Buffered session task mid-stream")
+            _log.debug("Buffered delivery mid-stream")
             return
 
-        await self._process_through_coordinator(on_complete=event.on_complete)
+        await self._process_through_coordinator(on_complete=on_complete)
 
     async def _process_through_coordinator(
         self,
@@ -804,26 +810,6 @@ class TelegramChannel(Channel):
         finally:
             self._is_processing = False
             self._active_renderer = None
-
-    async def _handle_notification(self, event: Notification) -> None:
-        """Handle a Notification event from the background task executor.
-
-        Routes the notification prompt through the coordinator pipeline,
-        following the same delivery pattern as session tasks.
-        """
-        _log.info(
-            "Routing notification: severity={severity}, source={source}",
-            severity=event.severity,
-            source=event.source_id,
-        )
-
-        self._coordinator.enqueue(event.prompt)
-
-        if self._is_processing:
-            _log.debug("Buffered task notification mid-stream")
-            return
-
-        await self._process_through_coordinator()
 
 
 async def telegram_hook(ctx: BootstrapContext) -> None:

@@ -18,6 +18,7 @@ from loguru import logger
 from tachikoma.agent_defaults import agent_defaults_from_settings
 from tachikoma.bootstrap import Bootstrap, BootstrapError
 from tachikoma.boundary import LastExchangeProcessor, SummaryProcessor
+from tachikoma.buffer.factory import create_and_start_buffer
 from tachikoma.config import SettingsManager
 from tachikoma.context import CoreContextProcessor, context_hook
 from tachikoma.coordinator import Coordinator
@@ -215,7 +216,14 @@ async def run(
             session_idle_timeout=settings.agent.session_idle_timeout,
             mcp_servers=all_mcp_servers,
             timezone=settings.tasks.timezone,
+            bus=bus,
         ) as coordinator:
+            buffer = await create_and_start_buffer(
+                bus=bus,
+                coordinator=coordinator,
+                settings=settings.buffer,
+            )
+
             scheduler_tasks.append(
                 asyncio.create_task(
                     instance_generator(task_repository, settings.tasks),
@@ -228,8 +236,7 @@ async def run(
                     session_task_scheduler(
                         task_repository,
                         settings.tasks,
-                        bus,
-                        lambda: coordinator.last_message_time,
+                        buffer,
                     ),
                     name="session_task_scheduler",
                 )
@@ -262,6 +269,9 @@ async def run(
 
             _log.info("Task schedulers started: tasks={count}", count=len(scheduler_tasks))
 
+            # Pass buffer reference to channel for shutdown flush resolution
+            active_channel._buffer = buffer  # type: ignore[attr-defined]
+
             # Start channel with coordinator
             await active_channel.run(coordinator)
 
@@ -270,6 +280,17 @@ async def run(
         print(str(e), file=sys.stderr)
         sys.exit(1)
     finally:
+        # Flush remaining buffer items as shutdown digest, then stop
+        try:
+            await buffer.flush_on_shutdown()
+        except Exception:
+            _log.exception("Buffer flush failed during shutdown")
+
+        try:
+            await buffer.stop()
+        except Exception:
+            _log.exception("Buffer stop failed during shutdown")
+
         # Cancel scheduler tasks
         for task in scheduler_tasks:
             task.cancel()

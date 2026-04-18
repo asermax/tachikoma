@@ -15,11 +15,10 @@ from prompt_toolkit.validation import Validator
 from rich.console import Console
 from rich.markdown import Markdown
 
+from tachikoma.buffer.events import BufferedDelivery
 from tachikoma.channel import Channel
 from tachikoma.display import TOOL_DISPLAY, format_tool_name
 from tachikoma.events import AgentEvent, Error, Result, Status, TextChunk, ToolActivity
-from tachikoma.notifications import Notification
-from tachikoma.tasks.events import SessionTaskReady
 
 if TYPE_CHECKING:
     from tachikoma.coordinator import Coordinator
@@ -71,8 +70,7 @@ class Repl(Channel):
     """Terminal REPL that sends user input through the coordinator.
 
     When an event bus is provided, the REPL subscribes to:
-    - SessionTaskReady: Proactive tasks from the task scheduler
-    - Notification: Completion/failure notifications from background tasks
+    - BufferedDelivery: Deferred notifications and session tasks from the priority buffer
     """
 
     def __init__(
@@ -83,7 +81,7 @@ class Repl(Channel):
         self.__coordinator: Coordinator | None = None
         self._renderer = Renderer()
         self._bus = bus
-        self._task_queue: asyncio.Queue[SessionTaskReady | Notification] = asyncio.Queue()
+        self._task_queue: asyncio.Queue[BufferedDelivery] = asyncio.Queue()
 
         kb = KeyBindings()
 
@@ -120,10 +118,9 @@ class Repl(Channel):
         """
         self.__coordinator = coordinator
 
-        # Subscribe to task events — deferred to run() so coordinator is set
+        # Subscribe to buffered delivery events — deferred to run() so coordinator is set
         if self._bus is not None:
-            self._bus.on(SessionTaskReady, self._handle_session_task)
-            self._bus.on(Notification, self._handle_notification)
+            self._bus.on(BufferedDelivery, self._handle_buffered_delivery)
         _log.debug("REPL started")
 
         while True:
@@ -152,7 +149,7 @@ class Repl(Channel):
                 break
 
     async def _process_queued_tasks(self) -> None:
-        """Process any queued session tasks and notifications without blocking.
+        """Process any queued buffered deliveries without blocking.
 
         Drains the queue of all pending items and processes them.
         """
@@ -162,10 +159,7 @@ class Repl(Channel):
             except asyncio.QueueEmpty:
                 break
 
-            if isinstance(event, SessionTaskReady):
-                await self._execute_session_task(event)
-            elif isinstance(event, Notification):
-                await self._execute_notification(event)
+            await self._execute_buffered_delivery(event)
 
     async def _execute_through_coordinator(self, prompt: str) -> bool:
         """Send a prompt through the coordinator and render the response.
@@ -185,55 +179,35 @@ class Repl(Channel):
             )
         return True
 
-    async def _execute_session_task(self, event: SessionTaskReady) -> None:
-        """Execute a session task by sending it through the coordinator."""
-        instance = event.instance
+    async def _execute_buffered_delivery(self, event: BufferedDelivery) -> None:
+        """Execute a buffered delivery by sending it through the coordinator."""
         _log.info(
-            "Processing session task: id={task_id}, prompt_preview={preview}",
-            task_id=instance.id,
-            preview=instance.prompt[:50] if instance.prompt else "",
+            "Processing buffered delivery: items={count}, shutdown={is_shutdown}",
+            count=len(event.items),
+            is_shutdown=event.is_shutdown_digest,
         )
 
+        label = "Shutdown digest" if event.is_shutdown_digest else "Scheduled task"
         self._renderer._console.print(
-            "\n[dim italic]📋 Scheduled task:[/dim italic]",
+            f"\n[dim italic]📋 {label}:[/dim italic]",
         )
 
-        if not await self._execute_through_coordinator(instance.prompt):
+        if not await self._execute_through_coordinator(event.prompt):
             return
 
-        if event.on_complete is not None:
-            await event.on_complete()
+        for item in event.items:
+            if item.on_delivered is not None:
+                await item.on_delivered()
 
-    async def _handle_session_task(self, event: SessionTaskReady) -> None:
-        """Handle a SessionTaskReady event from the task scheduler.
+        if event.is_shutdown_digest:
+            buffer = getattr(self, "_buffer", None)
+            if buffer is not None:
+                buffer.resolve_shutdown()
 
-        Queues the task for processing in the main REPL loop.
+    async def _handle_buffered_delivery(self, event: BufferedDelivery) -> None:
+        """Handle a BufferedDelivery event from the buffer.
+
+        Queues the delivery for processing in the main REPL loop.
         """
-        _log.debug("Queueing session task: id={task_id}", task_id=event.instance.id)
+        _log.debug("Queueing buffered delivery: items={count}", count=len(event.items))
         await self._task_queue.put(event)
-
-    async def _handle_notification(self, event: Notification) -> None:
-        """Handle a Notification event from the background task executor.
-
-        Queues the notification for processing in the main REPL loop,
-        following the same pattern as session tasks.
-        """
-        _log.debug(
-            "Queueing notification: source={source}",
-            source=event.source_id,
-        )
-        await self._task_queue.put(event)
-
-    async def _execute_notification(self, event: Notification) -> None:
-        """Execute a notification by sending it through the coordinator."""
-        _log.info(
-            "Processing notification: severity={severity}, source={source}",
-            severity=event.severity,
-            source=event.source_id,
-        )
-
-        self._renderer._console.print(
-            "\n[dim italic]📋 Task notification:[/dim italic]",
-        )
-
-        await self._execute_through_coordinator(event.prompt)
