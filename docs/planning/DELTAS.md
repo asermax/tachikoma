@@ -434,13 +434,6 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 **Complexity**: Medium
 **Description**: Developers need to debug failed background tasks and understand execution history, but task instances currently record only status, timestamps, and a free-text result — with no link to the SDK session that ran, no transcript reference, and no structured error context. This delta enriches the task instance model and execution flow with traceability data: recording the SDK session ID and transcript path for each background execution, capturing structured error context (error type, message, tool calls leading to failure) on failure using the error classification from the structured error handling subsystem, and computing execution duration as a first-class field. These fields enable querying past executions by session, inspecting failure artifacts, and displaying execution metrics without manual timestamp arithmetic. The scope is limited to the tasks subsystem — background jobs are not interactive conversations, but they still require an audit trail linking execution to its artifacts and outcomes.
 
-### DLT-099: Archive conversation transcripts to project workspace
-**Status**: ✓ Implementation
-**Depends on**: None
-**Priority**: 1 (Critical)
-**Complexity**: Medium
-**Description**: Ensure conversation transcripts are archived to the project workspace for durability and accessibility independent of SDK storage internals. Currently transcripts are stored only in the SDK's standard location (`~/.claude/projects/<sanitized-cwd>/<session-id>.jsonl`), making them dependent on SDK behavior and inaccessible for project-local operations. On session close, copy the transcript file from the SDK location to a `memories/transcripts/` directory within the project workspace. The session model already tracks transcript paths — this delta adds the copy-on-close hook and ensures transcripts survive SDK storage changes. Lifecycle management (retention, cleanup) is a separate concern to be addressed independently.
-
 ### DLT-102: Prevent stale cron from firing on create/update
 **Status**: ✗ Defined
 **Depends on**: None
@@ -485,7 +478,7 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 
 ### DLT-108: Transcript search and analysis tools
 **Status**: ✗ Defined
-**Depends on**: DLT-099
+**Depends on**: None
 **Priority**: 3 (Medium)
 **Complexity**: Medium
 **Description**: Provide CLI subcommands and MCP tools to search, filter, and analyze archived conversation transcripts stored in the project workspace. Enable the agent to reference past conversations by searching transcript content, and enable operators to review conversation history from the terminal. The initial scope covers full-text search across transcripts with date filtering and basic excerpt retrieval — enough for the agent to answer "what did we discuss about X?" by searching past transcripts. Summary extraction and conversation statistics are follow-up enhancements.
