@@ -77,9 +77,9 @@ async def spawn_process(
     # Merge environment
     env = {**os.environ, **(env_overrides or {})}
 
-    # Spawn the process
+    # Spawn the process — parent's copy of the log fd is closed in finally
+    # (the child receives its own descriptor via fork).
     log_fd = open(log_path, "ab")  # noqa: SIM115
-
     try:
         proc = await asyncio.create_subprocess_exec(
             "sh",
@@ -92,12 +92,8 @@ async def spawn_process(
             env=env,
             cwd=target_cwd,
         )
-    except Exception:
+    finally:
         log_fd.close()
-        raise
-
-    # Close parent's copy of the log fd — child has its own descriptor
-    log_fd.close()
 
     # Capture identity pair immediately — failure here means we can't enforce
     # PID-reuse protection on this record, which is worse than no record at all.

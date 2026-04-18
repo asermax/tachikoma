@@ -1,5 +1,6 @@
 """Shared fixtures for detached process tests."""
 
+from collections.abc import AsyncGenerator
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -44,7 +45,7 @@ def _make_record(
 
 
 @pytest.fixture
-async def repo(tmp_path: Path) -> ProcessRepository:
+async def repo(tmp_path: Path) -> AsyncGenerator[ProcessRepository, None]:
     """Initialized ProcessRepository backed by a temp SQLite file."""
     database = Database(tmp_path / "tachikoma.db")
     await database.initialize()

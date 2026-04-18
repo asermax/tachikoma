@@ -27,6 +27,7 @@ def read_tail(path: Path, n: int = 100) -> list[str]:
     lines: list[str] = []
     position = file_size
     remaining = b""
+    first_iteration = True
 
     while position > 0 and len(lines) < n:
         read_size = min(chunk_size, position)
@@ -45,12 +46,16 @@ def read_tail(path: Path, n: int = 100) -> list[str]:
         else:
             line_bytes = parts
 
+        # Drop the trailing-newline artifact on the first iteration only —
+        # genuine blank lines elsewhere in the file should be preserved.
+        if first_iteration and line_bytes and line_bytes[-1] == b"":
+            line_bytes = line_bytes[:-1]
+        first_iteration = False
+
         for line in reversed(line_bytes):
             if len(lines) >= n:
                 break
-            decoded = line.decode("utf-8", errors="replace")
-            if decoded:
-                lines.append(decoded)
+            lines.append(line.decode("utf-8", errors="replace"))
 
     lines.reverse()
     return lines
@@ -76,9 +81,7 @@ def read_window(path: Path, line_offset: int, line_count: int) -> list[str]:
                 break
 
             if current_line >= line_offset:
-                stripped = raw_line.rstrip("\n")
-                if stripped:
-                    result.append(stripped)
+                result.append(raw_line.rstrip("\n"))
 
             current_line += 1
 

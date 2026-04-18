@@ -308,7 +308,8 @@ def create_detached_process_tools_server(
             if parsed.offset is not None and parsed.count is not None:
                 lines = read_window(log_path, parsed.offset, parsed.count)
             else:
-                lines = read_tail(log_path, parsed.count or 100)
+                count = parsed.count if parsed.count is not None else 100
+                lines = read_tail(log_path, count)
 
             if not lines:
                 return _msg("No output yet.")
