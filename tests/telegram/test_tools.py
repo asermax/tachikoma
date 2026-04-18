@@ -3,6 +3,7 @@
 Tests for DLT-063: Send files and media to users.
 """
 
+import tempfile
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
@@ -80,7 +81,7 @@ class TestValidateFilePath:
         test_file = tmp_path / "test.txt"
         test_file.write_text("content")
 
-        result = validate_file_path(str(test_file), tmp_path)
+        result = validate_file_path(str(test_file), tmp_path, (tmp_path.resolve(),))
 
         assert result == test_file.resolve()
 
@@ -90,32 +91,162 @@ class TestValidateFilePath:
         test_file.parent.mkdir()
         test_file.write_text("content")
 
-        result = validate_file_path("output/report.pdf", tmp_path)
+        result = validate_file_path("output/report.pdf", tmp_path, (tmp_path.resolve(),))
 
         assert result == test_file.resolve()
 
     def test_nonexistent_file_raises_value_error(self, tmp_path: Path) -> None:
         """Non-existent file raises ValueError."""
         with pytest.raises(ValueError, match="File not found"):
-            validate_file_path("missing.txt", tmp_path)
+            validate_file_path("missing.txt", tmp_path, (tmp_path.resolve(),))
 
-    def test_path_outside_workspace_raises_value_error(self, tmp_path: Path) -> None:
-        """Path outside workspace raises ValueError."""
-        with pytest.raises(ValueError, match="File must be within the workspace"):
-            validate_file_path("/etc/passwd", tmp_path)
+    def test_path_outside_allowed_roots_raises_value_error(self, tmp_path: Path) -> None:
+        """Path outside all allowed roots raises ValueError."""
+        with pytest.raises(ValueError, match="allowed roots"):
+            validate_file_path("/etc/passwd", tmp_path, (tmp_path.resolve(),))
 
     def test_path_traversal_blocked(self, tmp_path: Path) -> None:
         """Path traversal via .. components is blocked."""
-        # Create a file outside the workspace to test workspace boundary
         outside_dir = tmp_path.parent / "outside"
         outside_dir.mkdir(exist_ok=True)
         outside_file = outside_dir / "secret.txt"
         outside_file.write_text("secret")
 
-        # Attempt traversal from workspace to outside
-        traversal_path = "../outside/secret.txt"
-        with pytest.raises(ValueError, match="File must be within the workspace"):
-            validate_file_path(traversal_path, tmp_path)
+        with pytest.raises(ValueError, match="allowed roots"):
+            validate_file_path("../outside/secret.txt", tmp_path, (tmp_path.resolve(),))
+
+    def test_relative_path_with_dotdot_inside_workspace(self, tmp_path: Path) -> None:
+        """Relative path with .. that resolves inside workspace is accepted."""
+        sub = tmp_path / "sub"
+        sub.mkdir()
+        test_file = sub / "test.txt"
+        test_file.write_text("content")
+
+        result = validate_file_path("sub/../sub/test.txt", tmp_path, (tmp_path.resolve(),))
+
+        assert result == test_file.resolve()
+
+    def test_absolute_path_under_system_temp_dir_accepted(self, tmp_path: Path) -> None:
+        """Absolute path under the system temp directory is accepted."""
+        temp_file = Path(tempfile.gettempdir()) / "tachikoma_test_file.txt"
+        temp_file.write_text("content")
+
+        try:
+            result = validate_file_path(
+                str(temp_file),
+                tmp_path,
+                (tmp_path.resolve(), Path(tempfile.gettempdir()).resolve()),
+            )
+
+            assert result == temp_file.resolve()
+        finally:
+            temp_file.unlink(missing_ok=True)
+
+    def test_configured_extra_root_accepted(self, tmp_path: Path) -> None:
+        """Absolute path under a configured extra root is accepted."""
+        extra = tmp_path / "extra"
+        extra.mkdir()
+        test_file = extra / "chart.png"
+        test_file.write_bytes(b"\x89PNG")
+
+        result = validate_file_path(
+            str(test_file),
+            tmp_path / "ws",
+            (tmp_path.resolve(),),
+        )
+
+        assert result == test_file.resolve()
+
+    def test_symlink_from_inside_to_outside_rejected(self, tmp_path: Path) -> None:
+        """Symlink inside an allowed root pointing outside is rejected."""
+        outside = tmp_path.parent / "outside"
+        outside.mkdir(exist_ok=True)
+        target = outside / "secret.txt"
+        target.write_text("secret")
+
+        link = tmp_path / "escape.txt"
+        link.symlink_to(target)
+
+        with pytest.raises(ValueError, match="allowed roots"):
+            validate_file_path(str(link), tmp_path, (tmp_path.resolve(),))
+
+    def test_symlink_from_outside_to_inside_accepted(self, tmp_path: Path) -> None:
+        """Symlink outside all roots pointing inside is accepted."""
+        target = tmp_path / "report.pdf"
+        target.write_text("content")
+
+        link = tmp_path.parent / "shortcut.pdf"
+        link.symlink_to(target)
+
+        try:
+            result = validate_file_path(str(link), tmp_path, (tmp_path.resolve(),))
+
+            assert result == target.resolve()
+        finally:
+            link.unlink(missing_ok=True)
+
+    def test_platform_symlink_to_temp_dir_accepted(self, tmp_path: Path) -> None:
+        """Symlink-based temp dir (macOS /tmp → /private/tmp) is accepted."""
+        real_temp = tmp_path / "real-temp"
+        real_temp.mkdir()
+        test_file = real_temp / "file.txt"
+        test_file.write_text("content")
+
+        link_to_temp = tmp_path / "link-to-temp"
+        link_to_temp.symlink_to(real_temp)
+
+        # Accessing via the symlink path when the real path is the allowed root
+        result = validate_file_path(
+            str(test_file),
+            tmp_path / "ws",
+            (real_temp.resolve(),),
+        )
+
+        assert result == test_file.resolve()
+
+        # Reverse: real path as allowed root, input via symlink
+        linked_file = link_to_temp / "file.txt"
+        result2 = validate_file_path(
+            str(linked_file),
+            tmp_path / "ws",
+            (real_temp.resolve(),),
+        )
+
+        assert result2 == test_file.resolve()
+
+    def test_directory_rejected(self, tmp_path: Path) -> None:
+        """Directory path is rejected."""
+        subdir = tmp_path / "subdir"
+        subdir.mkdir()
+
+        with pytest.raises(ValueError, match="not a regular file"):
+            validate_file_path(str(subdir), tmp_path, (tmp_path.resolve(),))
+
+    def test_error_message_names_allowed_roots(self, tmp_path: Path) -> None:
+        """Rejection error names all allowed roots."""
+        roots = (tmp_path.resolve(), Path("/extra").resolve())
+
+        with pytest.raises(ValueError) as exc_info:
+            validate_file_path("/etc/passwd", tmp_path, roots)
+
+        msg = str(exc_info.value)
+        assert str(tmp_path.resolve()) in msg
+        assert "/extra" in msg
+
+    def test_workspace_under_system_temp_accepted(self, tmp_path: Path) -> None:
+        """Workspace under system temp: relative paths still work."""
+        test_file = tmp_path / "src" / "main.py"
+        test_file.parent.mkdir()
+        test_file.write_text("content")
+
+        allowed = (
+            tmp_path.resolve(),
+            Path(tempfile.gettempdir()).resolve(),
+        )
+
+        result = validate_file_path("src/main.py", tmp_path, allowed)
+
+        assert result == test_file.resolve()
 
 
 class TestHandleSendFile:
@@ -129,7 +260,9 @@ class TestHandleSendFile:
         bot = MagicMock()
         bot.send_photo = AsyncMock()
 
-        result = await handle_send_file(str(test_file), None, bot, 123, tmp_path)
+        result = await handle_send_file(
+            str(test_file), None, bot, 123, tmp_path, (tmp_path.resolve(),)
+        )
 
         bot.send_photo.assert_called_once()
         assert result["content"][0]["text"].startswith("File sent:")
@@ -143,7 +276,9 @@ class TestHandleSendFile:
         bot = MagicMock()
         bot.send_document = AsyncMock()
 
-        result = await handle_send_file(str(test_file), None, bot, 123, tmp_path)
+        result = await handle_send_file(
+            str(test_file), None, bot, 123, tmp_path, (tmp_path.resolve(),)
+        )
 
         bot.send_document.assert_called_once()
         assert "report.pdf" in result["content"][0]["text"]
@@ -156,7 +291,9 @@ class TestHandleSendFile:
         bot = MagicMock()
         bot.send_audio = AsyncMock()
 
-        await handle_send_file(str(test_file), None, bot, 123, tmp_path)
+        await handle_send_file(
+            str(test_file), None, bot, 123, tmp_path, (tmp_path.resolve(),)
+        )
 
         bot.send_audio.assert_called_once()
 
@@ -168,7 +305,9 @@ class TestHandleSendFile:
         bot = MagicMock()
         bot.send_video = AsyncMock()
 
-        await handle_send_file(str(test_file), None, bot, 123, tmp_path)
+        await handle_send_file(
+            str(test_file), None, bot, 123, tmp_path, (tmp_path.resolve(),)
+        )
 
         bot.send_video.assert_called_once()
 
@@ -176,19 +315,23 @@ class TestHandleSendFile:
         """Missing file returns is_error response."""
         bot = MagicMock()
 
-        result = await handle_send_file("missing.png", None, bot, 123, tmp_path)
+        result = await handle_send_file(
+            "missing.png", None, bot, 123, tmp_path, (tmp_path.resolve(),)
+        )
 
         assert result["is_error"] is True
         assert "File not found" in result["content"][0]["text"]
 
-    async def test_returns_error_for_path_outside_workspace(self, tmp_path: Path) -> None:
-        """Path outside workspace returns is_error response."""
+    async def test_returns_error_for_path_outside_allowed_roots(self, tmp_path: Path) -> None:
+        """Path outside allowed roots returns is_error response."""
         bot = MagicMock()
 
-        result = await handle_send_file("/etc/passwd", None, bot, 123, tmp_path)
+        result = await handle_send_file(
+            "/etc/passwd", None, bot, 123, tmp_path, (tmp_path.resolve(),)
+        )
 
         assert result["is_error"] is True
-        assert "workspace" in result["content"][0]["text"].lower()
+        assert "allowed roots" in result["content"][0]["text"]
 
     async def test_returns_error_on_telegram_api_failure(self, tmp_path: Path) -> None:
         """Telegram API error is returned as is_error response."""
@@ -200,7 +343,9 @@ class TestHandleSendFile:
             side_effect=TelegramAPIError(method="send_photo", message="File too large"),
         )
 
-        result = await handle_send_file(str(test_file), None, bot, 123, tmp_path)
+        result = await handle_send_file(
+            str(test_file), None, bot, 123, tmp_path, (tmp_path.resolve(),)
+        )
 
         assert result["is_error"] is True
         assert "File too large" in result["content"][0]["text"]
@@ -213,7 +358,9 @@ class TestHandleSendFile:
         bot = MagicMock()
         bot.send_photo = AsyncMock()
 
-        await handle_send_file(str(test_file), "A nice image", bot, 123, tmp_path)
+        await handle_send_file(
+            str(test_file), "A nice image", bot, 123, tmp_path, (tmp_path.resolve(),)
+        )
 
         call_kwargs = bot.send_photo.call_args.kwargs
         assert call_kwargs["caption"] == "A nice image"
@@ -226,10 +373,26 @@ class TestHandleSendFile:
         bot = MagicMock()
         bot.send_photo = AsyncMock()
 
-        await handle_send_file(str(test_file), None, bot, 123, tmp_path)
+        await handle_send_file(
+            str(test_file), None, bot, 123, tmp_path, (tmp_path.resolve(),)
+        )
 
         call_kwargs = bot.send_photo.call_args.kwargs
         assert call_kwargs["caption"] is None
+
+    async def test_returns_error_for_directory(self, tmp_path: Path) -> None:
+        """Directory path returns is_error response."""
+        subdir = tmp_path / "subdir"
+        subdir.mkdir()
+
+        bot = MagicMock()
+
+        result = await handle_send_file(
+            str(subdir), None, bot, 123, tmp_path, (tmp_path.resolve(),)
+        )
+
+        assert result["is_error"] is True
+        assert "not a regular file" in result["content"][0]["text"]
 
 
 class TestCreateSendFileServer:
@@ -240,8 +403,20 @@ class TestCreateSendFileServer:
         bot = MagicMock()
         workspace = Path("/tmp/workspace")
 
-        server = create_send_file_server(bot, 123, workspace)
+        server = create_send_file_server(bot, 123, workspace, [])
 
         # McpSdkServerConfig is a TypedDict with 'name', 'type', 'instance'
+        assert server["name"] == "send-file"
+        assert server["type"] == "sdk"
+
+    def test_factory_accepts_extra_roots(self) -> None:
+        """Factory accepts extra roots and still returns valid config."""
+        bot = MagicMock()
+        workspace = Path("/tmp/workspace")
+
+        server = create_send_file_server(
+            bot, 123, workspace, [Path("/srv/artifacts")]
+        )
+
         assert server["name"] == "send-file"
         assert server["type"] == "sdk"

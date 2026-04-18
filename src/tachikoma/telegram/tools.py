@@ -4,6 +4,7 @@ Follows DES-006: factory pattern with closure-captured state,
 extracted handler for testability, Pydantic model for arg validation.
 """
 
+import tempfile
 from pathlib import Path
 
 from aiogram import Bot
@@ -34,18 +35,24 @@ def detect_media_type(path: Path) -> str:
     return "document"
 
 
-def validate_file_path(file_path: str, workspace_path: Path) -> Path:
-    """Validate and resolve a file path within the workspace.
+def validate_file_path(
+    file_path: str,
+    workspace_path: Path,
+    allowed_roots: tuple[Path, ...],
+) -> Path:
+    """Validate and resolve a file path against the allowed roots.
 
     Args:
         file_path: Absolute or workspace-relative path.
-        workspace_path: The workspace root directory.
+        workspace_path: The workspace root directory (anchors relative resolution).
+        allowed_roots: Resolved, deduplicated set of allowed root directories.
 
     Returns:
         Resolved absolute Path.
 
     Raises:
-        ValueError: If file doesn't exist or is outside workspace.
+        ValueError: If file doesn't exist, is not a regular file,
+            or is outside all allowed roots.
     """
     path = Path(file_path)
 
@@ -57,8 +64,14 @@ def validate_file_path(file_path: str, workspace_path: Path) -> Path:
     if not resolved.exists():
         raise ValueError(f"File not found: {resolved}")
 
-    if not resolved.is_relative_to(workspace_path.resolve()):
-        raise ValueError(f"File must be within the workspace: {resolved}")
+    if not resolved.is_file():
+        raise ValueError(f"Path is not a regular file: {resolved}")
+
+    if not any(resolved.is_relative_to(root) for root in allowed_roots):
+        roots_str = ", ".join(str(r) for r in allowed_roots)
+        raise ValueError(
+            f"File must be under one of the allowed roots: {roots_str} (got {resolved})"
+        )
 
     return resolved
 
@@ -76,15 +89,15 @@ async def handle_send_file(
     bot: Bot,
     chat_id: int,
     workspace_path: Path,
+    allowed_roots: tuple[Path, ...],
 ) -> dict:
     """Handle a send_file tool call.
 
     Validates the file path, detects media type, and sends via
     the appropriate Telegram API method.
     """
-    # Validate file path
     try:
-        resolved = validate_file_path(file_path, workspace_path)
+        resolved = validate_file_path(file_path, workspace_path, allowed_roots)
     except ValueError as e:
         return {
             "is_error": True,
@@ -120,6 +133,7 @@ def create_send_file_server(
     bot: Bot,
     chat_id: int,
     workspace_path: Path,
+    configured_extra_roots: list[Path],
 ) -> McpSdkServerConfig:
     """Create MCP tool server for the send_file tool.
 
@@ -127,17 +141,27 @@ def create_send_file_server(
         bot: The aiogram Bot instance for sending files.
         chat_id: The Telegram chat ID to send files to.
         workspace_path: The workspace root for file path validation.
+        configured_extra_roots: Extra allowed roots from config.
 
     Returns:
         McpSdkServerConfig for registration with the coordinator.
     """
+    # Compute resolved, deduplicated allowed roots once at factory call time
+    allowed_roots: tuple[Path, ...] = tuple(
+        dict.fromkeys(
+            p.resolve()
+            for p in (workspace_path, Path(tempfile.gettempdir()), *configured_extra_roots)
+        )
+    )
 
     @tool(
         "send_file",
         "Send a file to the user via Telegram.\n"
         "\n"
         "Parameters:\n"
-        "- file_path (str, required): Path to the file — absolute or relative to the workspace\n"
+        "- file_path (str, required): Path to the file — workspace-relative, "
+        "or absolute under the workspace, the system temporary directory, or a "
+        "configured extra root\n"
         "- caption (str, optional, max 1024 chars): Brief description of the file\n"
         "\n"
         "Supported media types (auto-detected from extension):\n"
@@ -146,7 +170,9 @@ def create_send_file_server(
         "- Video (.mp4, .avi, .mov, .webm) → sent as video\n"
         "- All other files → sent as document\n"
         "\n"
-        "The file must exist within the workspace. Telegram enforces a 50MB upload limit.",
+        "The file must exist on disk and be a regular file. "
+        "Allowed roots are enumerated in any rejection error. "
+        "Telegram enforces a 50MB upload limit.",
         SendFileArgs.model_json_schema(),
     )
     async def send_file(args: dict) -> dict:
@@ -157,6 +183,7 @@ def create_send_file_server(
             bot,
             chat_id,
             workspace_path,
+            allowed_roots,
         )
 
     return create_sdk_mcp_server(
