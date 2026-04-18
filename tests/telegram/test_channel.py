@@ -3,6 +3,8 @@
 Tests for DLT-002: Send and receive messages via Telegram.
 """
 
+import asyncio
+import signal
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -1495,3 +1497,138 @@ class TestHandleMedia:
         await channel._handle_media(msg)
 
         channel._coordinator.enqueue.assert_not_called()
+
+
+class TestTelegramChannelBufferFlush:
+    """R12: TelegramChannel flushes buffer in run() teardown."""
+
+    @patch("tachikoma.telegram.tty")
+    @patch("tachikoma.telegram.termios")
+    @patch("tachikoma.telegram.sys")
+    async def test_run_exit_calls_flush_on_shutdown(
+        self,
+        mock_sys: MagicMock,
+        mock_termios: MagicMock,
+        mock_tty: MagicMock,
+    ) -> None:
+        """When run() exits, the buffer's flush_on_shutdown is awaited."""
+        settings = MagicMock()
+        settings.bot_token = "123:abc"
+        settings.authorized_chat_id = 1
+
+        buffer = MagicMock()
+        buffer.flush_on_shutdown = AsyncMock()
+
+        channel = TelegramChannel(
+            settings,
+            workspace_path=Path("/tmp/test-workspace"),
+            buffer=buffer,
+        )
+        channel._dispatcher = MagicMock()
+        channel._dispatcher.start_polling = AsyncMock()
+        channel._dispatcher.stop_polling = AsyncMock()
+        channel._dispatcher.include_router = MagicMock()
+        channel._dispatcher.shutdown = MagicMock()
+        channel._bot = MagicMock()
+
+        mock_sys.stdin.isatty.return_value = False
+
+        loop = MagicMock()
+        loop.add_signal_handler = MagicMock()
+        loop.remove_signal_handler = MagicMock()
+
+        with patch("asyncio.get_running_loop", return_value=loop):
+            await channel.run(MagicMock())
+
+        buffer.flush_on_shutdown.assert_awaited_once()
+
+    @patch("tachikoma.telegram.tty")
+    @patch("tachikoma.telegram.termios")
+    @patch("tachikoma.telegram.sys")
+    async def test_run_exit_without_buffer_skips_flush(
+        self,
+        mock_sys: MagicMock,
+        mock_termios: MagicMock,
+        mock_tty: MagicMock,
+    ) -> None:
+        """No buffer attached → run() exits cleanly without attempting flush."""
+        settings = MagicMock()
+        settings.bot_token = "123:abc"
+        settings.authorized_chat_id = 1
+
+        channel = TelegramChannel(
+            settings,
+            workspace_path=Path("/tmp/test-workspace"),
+        )
+        channel._dispatcher = MagicMock()
+        channel._dispatcher.start_polling = AsyncMock()
+        channel._dispatcher.stop_polling = AsyncMock()
+        channel._dispatcher.include_router = MagicMock()
+        channel._dispatcher.shutdown = MagicMock()
+        channel._bot = MagicMock()
+
+        mock_sys.stdin.isatty.return_value = False
+
+        loop = MagicMock()
+        loop.add_signal_handler = MagicMock()
+        loop.remove_signal_handler = MagicMock()
+
+        with patch("asyncio.get_running_loop", return_value=loop):
+            await channel.run(MagicMock())
+
+    async def test_second_signal_during_flush_force_exits(self) -> None:
+        """KD-6/S15: second SIGINT/SIGTERM during flush cancels and force-exits."""
+        settings = MagicMock()
+        settings.bot_token = "123:abc"
+        settings.authorized_chat_id = 1
+
+        flush_should_complete = asyncio.Event()
+        buffer = MagicMock()
+
+        async def _slow_flush() -> None:
+            await flush_should_complete.wait()
+
+        buffer.flush_on_shutdown = _slow_flush
+
+        coordinator = MagicMock()
+        coordinator.interrupt = AsyncMock()
+
+        channel = TelegramChannel(
+            settings,
+            workspace_path=Path("/tmp/test-workspace"),
+            buffer=buffer,
+        )
+        channel._TelegramChannel__coordinator = coordinator  # type: ignore[attr-defined]
+
+        loop = asyncio.get_running_loop()
+        captured: dict[str, object] = {}
+
+        def fake_add(sig, callback, *args):  # noqa: ANN001, ANN202
+            if sig == signal.SIGINT:
+                captured["handler"] = callback
+                captured["args"] = args
+
+        # Patch only the relevant loop methods on the live loop
+        original_add = loop.add_signal_handler
+        original_remove = loop.remove_signal_handler
+        loop.add_signal_handler = fake_add  # type: ignore[method-assign]
+        loop.remove_signal_handler = lambda sig: True  # type: ignore[method-assign,assignment]
+
+        try:
+            flush_outer: asyncio.Task[bool] = asyncio.ensure_future(
+                channel._flush_buffer_on_shutdown(loop)
+            )
+            await asyncio.sleep(0.01)
+
+            assert "handler" in captured
+            # Signal handler is added with the sig as the first arg
+            captured["handler"](*captured["args"])  # type: ignore[operator,misc]
+
+            force_exit = await flush_outer
+            await asyncio.sleep(0)
+
+            assert force_exit is True
+            coordinator.interrupt.assert_awaited()
+        finally:
+            loop.add_signal_handler = original_add  # type: ignore[method-assign]
+            loop.remove_signal_handler = original_remove  # type: ignore[method-assign]

@@ -207,6 +207,153 @@ class TestBufferDelivery:
         assert len(delivered) == 1
 
 
+class TestBufferIdleGate:
+    """R5/R14: front item blocked by busy, released by CoordinatorIdle wake."""
+
+    async def test_busy_blocks_then_idle_wake_releases(self) -> None:
+        bus = EventBus()
+        old_time = datetime.now(UTC) - timedelta(seconds=10)
+        coord = FakeCoordinator(is_busy=True, last_message_time=old_time)
+        buf = Buffer(bus=bus, coordinator=coord, settings=_tight_settings())
+
+        delivered: list[BufferedDelivery] = []
+
+        async def capture(event: BufferedDelivery) -> None:
+            delivered.append(event)
+
+        bus.dispatch = lambda e: capture(e)  # type: ignore[assignment]
+
+        await buf.start()
+        await buf.enqueue(_make_item(Priority.NORMAL, prompt="gated"))
+
+        # Verify busy blocks delivery
+        await asyncio.sleep(0.1)
+        assert len(delivered) == 0
+
+        # Flip to idle and dispatch CoordinatorIdle to wake the loop
+        coord.set_busy(False)
+        await buf._handle_coordinator_idle(None)  # type: ignore[arg-type]
+
+        await asyncio.sleep(0.2)
+        await buf.stop()
+
+        assert len(delivered) == 1
+        assert delivered[0].items[0].prompt == "gated"
+
+
+class TestBufferLoopResilience:
+    """R1: loop survives exceptions in handlers and continues processing."""
+
+    async def test_loop_continues_after_dispatch_exception(self) -> None:
+        bus = EventBus()
+        old_time = datetime.now(UTC) - timedelta(seconds=10)
+        coord = FakeCoordinator(last_message_time=old_time)
+        buf = Buffer(bus=bus, coordinator=coord, settings=_tight_settings())
+
+        call_count = 0
+        delivered_after_failure: list[BufferedDelivery] = []
+
+        async def _capture(event: BufferedDelivery) -> None:
+            delivered_after_failure.append(event)
+
+        def flaky_dispatch(event: BufferedDelivery) -> object:
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                raise RuntimeError("first dispatch fails")
+            return _capture(event)
+
+        bus.dispatch = flaky_dispatch  # type: ignore[assignment]
+
+        await buf.start()
+        await buf.enqueue(_make_item(Priority.NORMAL, prompt="first"))
+
+        await asyncio.sleep(0.2)
+        # Loop survived; enqueue another item and verify it still processes
+        await buf.enqueue(_make_item(Priority.NORMAL, prompt="second"))
+        await asyncio.sleep(0.2)
+        await buf.stop()
+
+        assert call_count >= 2
+        assert any(d.items[0].prompt == "second" for d in delivered_after_failure)
+
+
+class TestBufferStartupNoMessageTime:
+    """R4: when last_message_time is None (startup), idle window is not satisfied."""
+
+    async def test_no_last_message_time_blocks_idle_delivery(self) -> None:
+        bus = EventBus()
+        # last_message_time = None — fresh process, no exchange yet
+        coord = FakeCoordinator(last_message_time=None)
+        # Use settings with no max_hold so only idle window can release
+        settings = BufferSettings(
+            normal=PriorityTiming(idle_window_seconds=0.05, max_hold_seconds=None),
+        )
+        buf = Buffer(bus=bus, coordinator=coord, settings=settings)
+
+        delivered: list[BufferedDelivery] = []
+        bus.dispatch = lambda e: delivered.append(e)  # type: ignore[assignment]
+
+        await buf.start()
+        await buf.enqueue(_make_item(Priority.NORMAL))
+
+        await asyncio.sleep(0.2)
+        await buf.stop()
+
+        assert len(delivered) == 0
+
+
+class TestBufferPreemptionAccounting:
+    """R3: max-hold accumulates across preemptions by higher-priority items."""
+
+    async def test_total_front_time_accumulates_after_preemption(self) -> None:
+        bus = EventBus()
+        # Recent message — idle window never satisfied, only max_hold can release
+        coord = FakeCoordinator(
+            is_busy=True,
+            last_message_time=datetime.now(UTC),
+        )
+        settings = BufferSettings(
+            urgent=PriorityTiming(idle_window_seconds=999, max_hold_seconds=999),
+            normal=PriorityTiming(idle_window_seconds=999, max_hold_seconds=0.3),
+        )
+        buf = Buffer(bus=bus, coordinator=coord, settings=settings)
+
+        delivered: list[BufferedDelivery] = []
+
+        async def capture(event: BufferedDelivery) -> None:
+            delivered.append(event)
+
+        bus.dispatch = lambda e: capture(e)  # type: ignore[assignment]
+
+        # Enqueue normal item directly (not going through start) to control timing
+        normal = _make_item(Priority.NORMAL, prompt="normal")
+        await buf.enqueue(normal)
+
+        # Simulate normal being at front for ~0.15s
+        buf._update_front_accounting(normal)
+        await asyncio.sleep(0.15)
+
+        # Preempt by enqueueing urgent
+        urgent = _make_item(Priority.URGENT, prompt="urgent")
+        await buf.enqueue(urgent)
+
+        # Accounting flush — urgent now becomes front, accumulating normal's time
+        buf._update_front_accounting(urgent)
+
+        # normal should have accumulated ~0.15s of front time
+        assert normal.total_front_time >= 0.1
+
+        # Resume normal as front (e.g., urgent delivered)
+        buf._update_front_accounting(normal)
+        await asyncio.sleep(0.2)
+        # Trigger another accumulation
+        buf._accumulate_front_time()
+
+        # Now total should exceed max_hold of 0.3s
+        assert normal.total_front_time >= 0.3
+
+
 class TestBufferLifecycle:
     async def test_start_stop(self) -> None:
         bus = EventBus()

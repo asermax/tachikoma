@@ -18,6 +18,7 @@ from loguru import logger
 from tachikoma.agent_defaults import agent_defaults_from_settings
 from tachikoma.bootstrap import Bootstrap, BootstrapError
 from tachikoma.boundary import LastExchangeProcessor, SummaryProcessor
+from tachikoma.buffer.buffer import Buffer
 from tachikoma.buffer.factory import create_and_start_buffer
 from tachikoma.config import SettingsManager
 from tachikoma.context import CoreContextProcessor, context_hook
@@ -170,7 +171,9 @@ async def run(
         settings.workspace.path,
     )
 
-    # Create channel before coordinator to extract capabilities
+    # Create channel before coordinator to extract capabilities. The buffer is
+    # attached after coordinator startup (see below) since it depends on the
+    # coordinator instance.
     if settings.channel == "telegram":
         if settings.telegram is None:
             print(
@@ -197,6 +200,7 @@ async def run(
     all_mcp_servers = {"task-tools": task_tools, "workflow-tools": workflow_tools, **channel_mcp}
 
     scheduler_tasks: list[asyncio.Task[None]] = []
+    buffer: Buffer | None = None
 
     try:
         async with Coordinator(
@@ -269,8 +273,8 @@ async def run(
 
             _log.info("Task schedulers started: tasks={count}", count=len(scheduler_tasks))
 
-            # Pass buffer reference to channel for shutdown flush resolution
-            active_channel._buffer = buffer  # type: ignore[attr-defined]
+            # Attach buffer so the channel can flush it during its own teardown
+            active_channel.attach_buffer(buffer)
 
             # Start channel with coordinator
             await active_channel.run(coordinator)
@@ -280,16 +284,14 @@ async def run(
         print(str(e), file=sys.stderr)
         sys.exit(1)
     finally:
-        # Flush remaining buffer items as shutdown digest, then stop
-        try:
-            await buffer.flush_on_shutdown()
-        except Exception:
-            _log.exception("Buffer flush failed during shutdown")
-
-        try:
-            await buffer.stop()
-        except Exception:
-            _log.exception("Buffer stop failed during shutdown")
+        # Buffer flush happens inside the channel's run() teardown so that the
+        # coordinator and channel subscription are still alive. Here we only
+        # cancel the loop task (channel may have been killed before flushing).
+        if buffer is not None:
+            try:
+                await buffer.stop()
+            except Exception:
+                _log.exception("Buffer stop failed during shutdown")
 
         # Cancel scheduler tasks
         for task in scheduler_tasks:

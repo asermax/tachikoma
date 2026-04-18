@@ -3,6 +3,9 @@
 Tests for DLT-001: Core agent architecture and DLT-025: Markdown rendering.
 """
 
+import asyncio
+import contextlib
+import signal
 from io import StringIO
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
@@ -11,6 +14,9 @@ import pytest
 from prompt_toolkit.validation import Validator
 from rich.console import Console
 
+from tachikoma.buffer.events import BufferedDelivery
+from tachikoma.buffer.items import BufferedItem
+from tachikoma.buffer.priority import Priority
 from tachikoma.events import Error, Result, TextChunk, ToolActivity
 from tachikoma.repl import Renderer, Repl
 
@@ -284,6 +290,121 @@ class TestReplMultilineInput:
         await repl.run(coordinator)
 
         coordinator.enqueue.assert_called_once_with("line1\nline2\nline3")
+
+
+class TestReplBufferIntegration:
+    """R12: REPL invokes buffer.flush_on_shutdown when run() exits."""
+
+    async def test_run_exit_flushes_buffer(self, tmp_path: Path, mocker) -> None:
+        coordinator = MagicMock()
+        buffer = MagicMock()
+        buffer.flush_on_shutdown = AsyncMock()
+
+        repl = Repl(history_path=tmp_path / "repl_history", buffer=buffer)
+        mocker.patch.object(repl._session, "prompt_async", side_effect=EOFError)
+
+        await repl.run(coordinator)
+
+        buffer.flush_on_shutdown.assert_awaited_once()
+
+    async def test_run_exit_without_buffer_is_noop(self, tmp_path: Path, mocker) -> None:
+        coordinator = MagicMock()
+        repl = Repl(history_path=tmp_path / "repl_history")
+        mocker.patch.object(repl._session, "prompt_async", side_effect=EOFError)
+
+        # Should not raise even though buffer is None
+        await repl.run(coordinator)
+
+    async def test_buffered_delivery_handler_routes_through_coordinator(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        coordinator = MagicMock()
+
+        async def _stream():
+            yield Result()
+
+        coordinator.send_message = MagicMock(side_effect=_stream)
+
+        repl = Repl(history_path=tmp_path / "repl_history")
+        repl._Repl__coordinator = coordinator  # type: ignore[attr-defined]
+
+        item = BufferedItem(priority=Priority.NORMAL, prompt="from-buffer", kind="notification")
+        event = BufferedDelivery(prompt="from-buffer", items=[item])
+
+        await repl._handle_buffered_delivery(event)
+
+        coordinator.enqueue.assert_called_with("from-buffer")
+
+    async def test_second_sigint_cancels_flush_and_interrupts(
+        self,
+        tmp_path: Path,
+        mocker,
+    ) -> None:
+        """KD-6/S15: second SIGINT during flush cancels flush + coordinator and
+        signals force-exit to the caller."""
+        coordinator = MagicMock()
+        coordinator.interrupt = AsyncMock()
+
+        flush_should_complete = asyncio.Event()
+        buffer = MagicMock()
+
+        async def _slow_flush() -> None:
+            await flush_should_complete.wait()
+
+        buffer.flush_on_shutdown = _slow_flush
+
+        repl = Repl(history_path=tmp_path / "repl_history", buffer=buffer)
+        repl._Repl__coordinator = coordinator  # type: ignore[attr-defined]
+
+        captured: dict[str, object] = {}
+        loop = asyncio.get_running_loop()
+        real_add = loop.add_signal_handler
+
+        def fake_add(sig, callback, *args):  # noqa: ANN001, ANN202
+            if sig == signal.SIGINT:
+                captured["handler"] = callback
+            else:
+                real_add(sig, callback, *args)
+
+        mocker.patch.object(loop, "add_signal_handler", side_effect=fake_add)
+        mocker.patch.object(loop, "remove_signal_handler", return_value=True)
+        mocker.patch("tachikoma.repl.signal.getsignal", return_value=None)
+        mocker.patch("tachikoma.repl.signal.signal")
+
+        flush_outer: asyncio.Task[bool] = asyncio.ensure_future(
+            repl._flush_buffer_on_shutdown()
+        )
+        await asyncio.sleep(0.01)
+
+        assert "handler" in captured, "SIGINT handler should be registered during flush"
+        captured["handler"]()  # type: ignore[operator]
+
+        force_exit = await flush_outer
+        # Drain pending callbacks (ensure_future for coordinator.interrupt)
+        await asyncio.sleep(0)
+
+        assert force_exit is True
+        coordinator.interrupt.assert_awaited()
+
+    async def test_run_force_exit_raises_keyboard_interrupt(
+        self,
+        tmp_path: Path,
+        mocker,
+    ) -> None:
+        """When _flush_buffer_on_shutdown returns True, run() re-raises KI."""
+        coordinator = MagicMock()
+        buffer = MagicMock()
+        buffer.flush_on_shutdown = AsyncMock()
+
+        repl = Repl(history_path=tmp_path / "repl_history", buffer=buffer)
+        mocker.patch.object(repl._session, "prompt_async", side_effect=EOFError)
+        mocker.patch.object(repl, "_flush_buffer_on_shutdown", AsyncMock(return_value=True))
+
+        with contextlib.suppress(KeyboardInterrupt):
+            await repl.run(coordinator)
+
+        repl._flush_buffer_on_shutdown.assert_awaited_once()
 
 
 class TestReplInputValidation:

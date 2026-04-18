@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING, Protocol, runtime_checkable
 from claude_agent_sdk.types import McpSdkServerConfig
 
 if TYPE_CHECKING:
+    from tachikoma.buffer.buffer import Buffer
     from tachikoma.coordinator import Coordinator
 
 
@@ -41,6 +42,17 @@ class Channel(Protocol):
         Called during startup to register additional skills in the registry.
         """
         return []
+
+    def attach_buffer(self, buffer: Buffer) -> None:
+        """Attach a priority buffer for shutdown-flush coordination.
+
+        Called during startup once both the channel and the buffer are
+        constructed (the buffer needs the live coordinator, which is only
+        available after channel construction). Channels with a `_buffer`
+        slot use the buffer to drain remaining items as a shutdown digest
+        in their run() teardown.
+        """
+        return None
 
     async def run(self, coordinator: Coordinator) -> None:
         """Start the channel's main loop.

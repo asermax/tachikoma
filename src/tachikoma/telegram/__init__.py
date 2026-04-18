@@ -47,6 +47,7 @@ from tachikoma.media import (
 from tachikoma.telegram.tools import create_send_file_server
 
 if TYPE_CHECKING:
+    from tachikoma.buffer.buffer import Buffer
     from tachikoma.coordinator import Coordinator
 
 _log = logger.bind(component="telegram")
@@ -520,6 +521,7 @@ class TelegramChannel(Channel):
         settings: TelegramSettings,
         workspace_path: Path,
         bus: EventBus | None = None,
+        buffer: Buffer | None = None,
     ) -> None:
         self.__coordinator: Coordinator | None = None
         self._settings = settings
@@ -530,6 +532,7 @@ class TelegramChannel(Channel):
         self._active_renderer: ResponseRenderer | None = None
         self._is_processing: bool = False
         self._bus = bus
+        self._buffer: Buffer | None = buffer
 
         # Set up router with authorization filter
         self._router.message.filter(F.chat.id == settings.authorized_chat_id)
@@ -559,6 +562,9 @@ class TelegramChannel(Channel):
     def _coordinator(self) -> Coordinator:
         assert self.__coordinator is not None, "run() must be called before processing messages"
         return self.__coordinator
+
+    def attach_buffer(self, buffer: Buffer) -> None:
+        self._buffer = buffer
 
     def get_mcp_servers(self) -> dict[str, McpSdkServerConfig]:
         server = create_send_file_server(
@@ -645,8 +651,49 @@ class TelegramChannel(Channel):
             if old_termios is not None and stdin_fd is not None:
                 termios.tcsetattr(stdin_fd, termios.TCSADRAIN, old_termios)
 
+            # Drain buffer as a single shutdown digest while coordinator and
+            # subscription are still alive. A second signal during the flush
+            # cancels both the digest AND any in-flight coordinator exchange
+            # (KD-6/S15).
+            force_exit = await self._flush_buffer_on_shutdown(loop)
+
             for sig in (signal.SIGINT, signal.SIGTERM):
+                with contextlib.suppress(NotImplementedError, RuntimeError):
+                    loop.remove_signal_handler(sig)
+
+            if force_exit:
+                raise KeyboardInterrupt
+
+    async def _flush_buffer_on_shutdown(self, loop: asyncio.AbstractEventLoop) -> bool:
+        """Drain the buffer as a single shutdown digest, returning True if a
+        second signal force-exited the flush (KD-6/S15)."""
+        if self._buffer is None:
+            return False
+
+        flush_task: asyncio.Task[None] = asyncio.create_task(self._buffer.flush_on_shutdown())
+        force_exit_triggered = False
+
+        def _force_exit_during_flush(sig: signal.Signals) -> None:
+            nonlocal force_exit_triggered
+            force_exit_triggered = True
+            _log.warning(
+                "Second {sig} during shutdown flush — abandoning digest", sig=sig.name
+            )
+            flush_task.cancel()
+            asyncio.ensure_future(self._coordinator.interrupt())
+
+        for sig in (signal.SIGINT, signal.SIGTERM):
+            with contextlib.suppress(NotImplementedError, RuntimeError):
                 loop.remove_signal_handler(sig)
+            with contextlib.suppress(NotImplementedError, RuntimeError):
+                loop.add_signal_handler(sig, _force_exit_during_flush, sig)
+
+        try:
+            await flush_task
+        except asyncio.CancelledError:
+            _log.info("Shutdown flush cancelled by second signal")
+
+        return force_exit_triggered
 
     async def _handle_message(self, message: Message) -> None:
         """Handle an incoming message from the authorized user."""
@@ -735,10 +782,8 @@ class TelegramChannel(Channel):
                 if item.on_delivered is not None:
                     await item.on_delivered()
 
-            if event.is_shutdown_digest:
-                buffer = getattr(self, "_buffer", None)
-                if buffer is not None:
-                    buffer.resolve_shutdown()
+            if event.is_shutdown_digest and self._buffer is not None:
+                self._buffer.resolve_shutdown()
 
         self._coordinator.enqueue(event.prompt)
 

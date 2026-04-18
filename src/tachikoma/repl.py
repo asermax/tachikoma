@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
+import signal
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -21,6 +23,7 @@ from tachikoma.display import TOOL_DISPLAY, format_tool_name
 from tachikoma.events import AgentEvent, Error, Result, Status, TextChunk, ToolActivity
 
 if TYPE_CHECKING:
+    from tachikoma.buffer.buffer import Buffer
     from tachikoma.coordinator import Coordinator
 
 _log = logger.bind(component="repl")
@@ -77,11 +80,14 @@ class Repl(Channel):
         self,
         history_path: Path,
         bus: EventBus | None = None,
+        buffer: Buffer | None = None,
     ) -> None:
         self.__coordinator: Coordinator | None = None
         self._renderer = Renderer()
         self._bus = bus
-        self._task_queue: asyncio.Queue[BufferedDelivery] = asyncio.Queue()
+        self._buffer: Buffer | None = buffer
+        # Serialize delivery vs. prompt-driven coordinator usage
+        self._delivery_lock = asyncio.Lock()
 
         kb = KeyBindings()
 
@@ -110,11 +116,15 @@ class Repl(Channel):
         assert self.__coordinator is not None, "run() must be called before processing messages"
         return self.__coordinator
 
+    def attach_buffer(self, buffer: Buffer) -> None:
+        self._buffer = buffer
+
     async def run(self, coordinator: Coordinator) -> None:
         """Run the REPL input loop until the user exits.
 
-        Between user inputs, the loop checks for queued session tasks
-        from the event bus and processes them.
+        On exit, drains any remaining buffered items as a single shutdown
+        digest before returning, so the digest delivery happens while the
+        coordinator and BufferedDelivery subscription are still alive.
         """
         self.__coordinator = coordinator
 
@@ -123,43 +133,77 @@ class Repl(Channel):
             self._bus.on(BufferedDelivery, self._handle_buffered_delivery)
         _log.debug("REPL started")
 
-        while True:
-            # Process any queued session tasks before prompting
-            await self._process_queued_tasks()
+        try:
+            while True:
+                try:
+                    text = await self._session.prompt_async("> ")
+                except (KeyboardInterrupt, EOFError):
+                    _log.debug("REPL interrupted by user")
+                    break
 
-            try:
-                text = await self._session.prompt_async("> ")
-            except (KeyboardInterrupt, EOFError):
-                _log.debug("REPL interrupted by user")
-                break
+                if text.strip().lower() in ("exit", "quit"):
+                    _log.debug("REPL exited by command")
+                    break
 
-            if text.strip().lower() in ("exit", "quit"):
-                _log.debug("REPL exited by command")
-                break
+                _log.debug("Message received: length={n}", n=len(text))
 
-            _log.debug("Message received: length={n}", n=len(text))
+                try:
+                    async with self._delivery_lock:
+                        self._coordinator.enqueue(text)
+                        async for event in self._coordinator.send_message():
+                            if not self._renderer.render(event):
+                                return
+                except KeyboardInterrupt:
+                    await self._coordinator.interrupt()
+                    break
+        finally:
+            force_exit = await self._flush_buffer_on_shutdown()
+            if force_exit:
+                # KD-6/S15: abort shutdown immediately; skip post-processing
+                raise KeyboardInterrupt
 
-            try:
-                self._coordinator.enqueue(text)
-                async for event in self._coordinator.send_message():
-                    if not self._renderer.render(event):
-                        return
-            except KeyboardInterrupt:
-                await self._coordinator.interrupt()
-                break
+    async def _flush_buffer_on_shutdown(self) -> bool:
+        """Drain remaining buffered items as a shutdown digest.
 
-    async def _process_queued_tasks(self) -> None:
-        """Process any queued buffered deliveries without blocking.
-
-        Drains the queue of all pending items and processes them.
+        Installs a SIGINT handler for the duration of the flush so a second
+        Ctrl+C cancels the flush AND any in-flight coordinator exchange
+        (KD-6/S15). Returns True when the flush was force-cancelled by a
+        second SIGINT — the caller should then exit immediately.
         """
-        while not self._task_queue.empty():
-            try:
-                event = self._task_queue.get_nowait()
-            except asyncio.QueueEmpty:
-                break
+        if self._buffer is None:
+            return False
 
-            await self._execute_buffered_delivery(event)
+        loop = asyncio.get_running_loop()
+
+        flush_task: asyncio.Task[None] = asyncio.create_task(self._buffer.flush_on_shutdown())
+        force_exit_triggered = False
+
+        def _force_exit() -> None:
+            nonlocal force_exit_triggered
+            force_exit_triggered = True
+            _log.warning("Second SIGINT during shutdown flush — abandoning digest")
+            flush_task.cancel()
+            # Cancel any in-flight coordinator send started by the digest handler
+            asyncio.ensure_future(self._coordinator.interrupt())
+
+        previous_handler: object = signal.getsignal(signal.SIGINT)
+        try:
+            loop.add_signal_handler(signal.SIGINT, _force_exit)
+        except (NotImplementedError, RuntimeError):
+            previous_handler = None
+
+        try:
+            await flush_task
+        except asyncio.CancelledError:
+            _log.info("Shutdown flush cancelled by second SIGINT")
+        finally:
+            with contextlib.suppress(NotImplementedError, RuntimeError):
+                loop.remove_signal_handler(signal.SIGINT)
+
+            if callable(previous_handler):
+                signal.signal(signal.SIGINT, previous_handler)
+
+        return force_exit_triggered
 
     async def _execute_through_coordinator(self, prompt: str) -> bool:
         """Send a prompt through the coordinator and render the response.
@@ -199,15 +243,16 @@ class Repl(Channel):
             if item.on_delivered is not None:
                 await item.on_delivered()
 
-        if event.is_shutdown_digest:
-            buffer = getattr(self, "_buffer", None)
-            if buffer is not None:
-                buffer.resolve_shutdown()
+        if event.is_shutdown_digest and self._buffer is not None:
+            self._buffer.resolve_shutdown()
 
     async def _handle_buffered_delivery(self, event: BufferedDelivery) -> None:
         """Handle a BufferedDelivery event from the buffer.
 
-        Queues the delivery for processing in the main REPL loop.
+        Delivers inline through the coordinator. The delivery_lock serializes
+        with the prompt-driven path so the coordinator is never used by both
+        flows concurrently.
         """
-        _log.debug("Queueing buffered delivery: items={count}", count=len(event.items))
-        await self._task_queue.put(event)
+        _log.debug("Delivering buffered event inline: items={count}", count=len(event.items))
+        async with self._delivery_lock:
+            await self._execute_buffered_delivery(event)
