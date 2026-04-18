@@ -16,6 +16,7 @@ from pathlib import Path
 from types import TracebackType
 from typing import Any
 
+from bubus import EventBus
 from claude_agent_sdk import (
     ClaudeAgentOptions,
     ClaudeSDKClient,
@@ -29,6 +30,7 @@ from loguru import logger
 from tachikoma.adapter import adapt, is_encoding_error, sanitize_text
 from tachikoma.agent_defaults import AgentDefaults
 from tachikoma.boundary import BoundaryResult, SessionCandidate, detect_boundary
+from tachikoma.buffer.events import CoordinatorIdle
 from tachikoma.context.assembly import build_system_prompt
 from tachikoma.events import AgentEvent, Error, Result, Status, TextChunk, ToolActivity
 from tachikoma.message_post_processing import MessagePostProcessingPipeline
@@ -138,6 +140,7 @@ class Coordinator:
         session_idle_timeout: int = 900,
         mcp_servers: dict[str, McpSdkServerConfig] | None = None,
         timezone: str = "",
+        bus: EventBus | None = None,
     ) -> None:
         # Store individual options for building ClaudeAgentOptions per message
         self._allowed_tools = allowed_tools or []
@@ -182,7 +185,12 @@ class Coordinator:
         # Background session post-processing tasks from topic shifts
         self._background_tasks: list[asyncio.Task[None]] = []
 
+        # CoordinatorIdle emission state
+        self._bus: EventBus | None = bus
+        self._was_busy: bool = False
+
     async def __aenter__(self) -> "Coordinator":
+        self._was_busy = False
         _log.info("Coordinator initialized")
 
         # Start idle post-processing loop if timeout > 0
@@ -594,20 +602,24 @@ class Coordinator:
                 # When tools were used but no text follows the last one, the join
                 # produces an empty string which becomes None via `or None`.
                 final_text = (
-                    "".join(final_text_group).strip() or None
-                    if had_tool_activity
-                    else None
+                    "".join(final_text_group).strip() or None if had_tool_activity else None
                 )
 
                 self._pending_msg_task = asyncio.create_task(
                     self._msg_pipeline.run(
-                        current_session, text, response_text,
+                        current_session,
+                        text,
+                        response_text,
                         final_text=final_text,
                     )
+                )
+                self._pending_msg_task.add_done_callback(
+                    lambda _t: self._maybe_emit_idle(),
                 )
 
         # Update last message time after response completes
         self._last_message_time = datetime.now(UTC)
+        self._maybe_emit_idle()
 
         _log.debug("Response complete")
 
@@ -895,6 +907,7 @@ providing context for what the user has been doing in the meantime.
         """
         self._message_buffer.put_nowait(text)
         _log.debug("Message buffered: queue_size={n}", n=self._message_buffer.qsize())
+        self._maybe_emit_idle()  # state capture only (idle->busy, never emits)
 
     @property
     def has_pending_messages(self) -> bool:
@@ -915,6 +928,17 @@ providing context for what the user has been doing in the meantime.
             or self.has_pending_messages
             or (self._pending_msg_task is not None and not self._pending_msg_task.done())
         )
+
+    def _maybe_emit_idle(self) -> None:
+        """Dispatch CoordinatorIdle exactly once per busy->idle transition.
+
+        Sync so it can be attached as a Task.add_done_callback target.
+        bus.dispatch() is synchronous (enqueues event for async processing).
+        """
+        is_busy_now = self._is_busy
+        if self._was_busy and not is_busy_now and self._bus is not None:
+            self._bus.dispatch(CoordinatorIdle(timestamp=datetime.now(UTC)))
+        self._was_busy = is_busy_now
 
     async def _idle_post_process(self) -> None:
         """Run post-processing on the active session without closing it.
