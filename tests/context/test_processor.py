@@ -201,9 +201,7 @@ class TestCoreContextProcessor:
         assert call_kwargs["pre_tool_use_hooks"] == [UTILITY_BASH_HOOK]
         assert call_kwargs["model"] == "haiku"
 
-    async def test_logs_when_file_created(
-        self, mocker: MockerFixture, tmp_path: Path
-    ) -> None:
+    async def test_logs_when_file_created(self, mocker: MockerFixture, tmp_path: Path) -> None:
         """AC: mtime comparison logs when files are created."""
         # Simulate the forked agent creating SOUL.md *during* fork_and_consume so the
         # mutation lands inside the processor's pre/post-mtime snapshot window.
@@ -227,9 +225,7 @@ class TestCoreContextProcessor:
 
         mock_log.info.assert_any_call("Context file created: file={file}", file="SOUL.md")
 
-    async def test_logs_when_file_updated(
-        self, mocker: MockerFixture, tmp_path: Path
-    ) -> None:
+    async def test_logs_when_file_updated(self, mocker: MockerFixture, tmp_path: Path) -> None:
         """AC: mtime comparison logs when files are modified."""
         # Pre-create SOUL.md with a fixed past mtime, then simulate the forked agent
         # rewriting it with a bumped mtime. Explicit os.utime avoids filesystem

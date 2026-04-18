@@ -594,14 +594,14 @@ class Coordinator:
                 # When tools were used but no text follows the last one, the join
                 # produces an empty string which becomes None via `or None`.
                 final_text = (
-                    "".join(final_text_group).strip() or None
-                    if had_tool_activity
-                    else None
+                    "".join(final_text_group).strip() or None if had_tool_activity else None
                 )
 
                 self._pending_msg_task = asyncio.create_task(
                     self._msg_pipeline.run(
-                        current_session, text, response_text,
+                        current_session,
+                        text,
+                        response_text,
                         final_text=final_text,
                     )
                 )

@@ -2351,14 +2351,18 @@ class TestPerMessagePostProcessing:
         """AC1/AC5: final_text contains only text after the last tool call."""
         client, _ = mock_sdk
         client.receive_response.return_value = _mock_messages(
-            make_assistant([
-                TextBlock(text="Let me check..."),
-                ToolUseBlock(id="t1", name="Read", input={"file_path": "main.py"}),
-            ]),
+            make_assistant(
+                [
+                    TextBlock(text="Let me check..."),
+                    ToolUseBlock(id="t1", name="Read", input={"file_path": "main.py"}),
+                ]
+            ),
             make_assistant([TextBlock(text="Now let me fix...")]),
-            make_assistant([
-                ToolUseBlock(id="t2", name="Edit", input={"file_path": "main.py"}),
-            ]),
+            make_assistant(
+                [
+                    ToolUseBlock(id="t2", name="Edit", input={"file_path": "main.py"}),
+                ]
+            ),
             make_assistant([TextBlock(text="Done! Here's the fix.")]),
             make_result(),
         )
@@ -2431,10 +2435,12 @@ class TestPerMessagePostProcessing:
         """AC3: final_text is None when response ends with a tool call (no trailing text)."""
         client, _ = mock_sdk
         client.receive_response.return_value = _mock_messages(
-            make_assistant([
-                TextBlock(text="Let me check..."),
-                ToolUseBlock(id="t1", name="Read", input={"file_path": "main.py"}),
-            ]),
+            make_assistant(
+                [
+                    TextBlock(text="Let me check..."),
+                    ToolUseBlock(id="t1", name="Read", input={"file_path": "main.py"}),
+                ]
+            ),
             make_result(),
         )
         active = Session(

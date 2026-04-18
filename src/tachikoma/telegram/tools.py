@@ -146,7 +146,6 @@ def create_send_file_server(
     Returns:
         McpSdkServerConfig for registration with the coordinator.
     """
-    # Compute resolved, deduplicated allowed roots once at factory call time
     allowed_roots: tuple[Path, ...] = tuple(
         dict.fromkeys(
             p.resolve()

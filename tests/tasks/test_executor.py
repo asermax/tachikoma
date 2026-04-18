@@ -547,7 +547,6 @@ class TestBackgroundTaskExecutor:
         assert len(error_events) == 1
         assert "failed" in error_events[0].prompt.lower()
 
-
     @pytest.mark.asyncio
     async def test_needs_input_injects_proceed_message(self, repo: TaskRepository) -> None:
         """AC2: Executor injects proceed-without-user message on needs_input status."""
@@ -599,9 +598,7 @@ class TestBackgroundTaskExecutor:
                             '{"status": "needs_input", "rationale": "What format should I use?"}'
                         )
 
-                    return _make_eval_response(
-                        '{"status": "complete", "rationale": "Done"}'
-                    )
+                    return _make_eval_response('{"status": "complete", "rationale": "Done"}')
 
                 mock_query.side_effect = eval_side_effect
 
