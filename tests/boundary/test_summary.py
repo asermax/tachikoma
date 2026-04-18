@@ -28,9 +28,7 @@ def _make_session(summary: str | None = None) -> Session:
 class TestSummaryProcessor:
     """Tests for SummaryProcessor."""
 
-    async def test_calls_query_with_processor_model_low_effort(
-        self, mocker: MockerFixture
-    ) -> None:
+    async def test_calls_query_with_processor_model_low_effort(self, mocker: MockerFixture) -> None:
         """AC: Summary processor uses the configured processor_model with low effort."""
         mock_query = mocker.patch("tachikoma.boundary.summary.stderr_aware_query")
         mock_registry = MagicMock()
