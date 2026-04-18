@@ -64,17 +64,20 @@ Each **memory processor** is a `PromptDrivenProcessor` subclass (DES-004, scoped
 
 For the context update processor that also runs in the main phase, see [core-context-updates design](../agent/core-context-updates.md).
 
+The memory package also owns `TranscriptArchiveProcessor` — a plain `PostProcessor` (not `PromptDrivenProcessor`) that copies the SDK-owned transcript into `memories/transcripts/<sdk-session-id>.jsonl` on session close. It is deterministic I/O with no LLM reasoning, registered in the `pre_finalize` phase so it runs after the extraction processors have read the SDK transcript and before the git commit processor stages the workspace. See the [post-processing pipeline design](../agent/post-processing-pipeline.md) for phase semantics.
+
 ## Components
 
 ### Implementation Structure
 
 | Layer/Component | Responsibility | Key Decisions |
 |-----------------|----------------|---------------|
-| `src/tachikoma/memory/__init__.py` | Re-exports: `EpisodicProcessor`, `FactsProcessor`, `PreferencesProcessor`, `memory_hook` | Clean public API for the memory package |
-| `src/tachikoma/memory/hooks.py` | `memory_hook`: creates `memories/` directory structure | Subsystem-owned hook pattern; registered after context hook |
+| `src/tachikoma/memory/__init__.py` | Re-exports: `EpisodicProcessor`, `FactsProcessor`, `PreferencesProcessor`, `TranscriptArchiveProcessor`, `memory_hook` | Clean public API for the memory package |
+| `src/tachikoma/memory/hooks.py` | `memory_hook`: creates `memories/` directory structure — `episodic/`, `facts/`, `preferences/`, and `transcripts/` subdirectories | Subsystem-owned hook pattern; registered after context hook; `transcripts/` lives alongside the extraction subdirectories because it is owned by the same package, even though it is populated by a deterministic processor |
 | `src/tachikoma/memory/episodic.py` | `EpisodicProcessor(PromptDrivenProcessor)` + `EPISODIC_PROMPT` constant | Extends DES-004 base class; prompt co-located with processor |
 | `src/tachikoma/memory/facts.py` | `FactsProcessor(PromptDrivenProcessor)` + `FACTS_PROMPT` constant | Extends DES-004 base class; prompt co-located with processor |
 | `src/tachikoma/memory/preferences.py` | `PreferencesProcessor(PromptDrivenProcessor)` + `PREFERENCES_PROMPT` constant | Extends DES-004 base class; prompt co-located with processor |
+| `src/tachikoma/memory/transcripts.py` | `TranscriptArchiveProcessor(PostProcessor)` — copies `session.transcript_path` to `memories/transcripts/<sdk-session-id>.jsonl` via `shutil.copy2` | Plain `PostProcessor` (no sub-agent — deterministic I/O); self-healing `mkdir(parents=True, exist_ok=True)` inside `process()`; all errors (`FileNotFoundError`, `OSError`) logged and swallowed so the pipeline never crashes on archival failure |
 
 ### Cross-Layer Contracts
 
@@ -136,6 +139,21 @@ Each processor inherits `_prompt`, `_cwd`, and the default `process()` implement
 4. Once the async iterator is exhausted, the forked session ends
 ```
 
+### Transcript archival flow
+
+```
+1. TranscriptArchiveProcessor.process(session) runs in the pre_finalize phase
+2. If session.transcript_path is None or session.sdk_session_id is None → debug log, return
+3. dest_dir = cwd / "memories" / "transcripts"
+4. dest = dest_dir / f"{session.sdk_session_id}.jsonl"
+5. dest_dir.mkdir(parents=True, exist_ok=True)   — self-healing if removed after bootstrap
+6. shutil.copy2(Path(session.transcript_path), dest)
+   - FileNotFoundError → warning log, return
+   - OSError → error log with traceback, return
+7. On success: info log with session id and destination path
+8. The finalize phase's GitProcessor picks up the new/updated file via its normal "stage everything in workspace" behavior
+```
+
 ## Key Decisions
 
 ### Processor-per-file with co-located prompts
@@ -157,6 +175,44 @@ Each processor inherits `_prompt`, `_cwd`, and the default `process()` implement
 - Pro: Clean ordering — session close → post-processing → SDK disconnect
 - Pro: Pipeline independent of SDK client state
 - Con: Adds latency to shutdown (acceptable — extraction runs in parallel)
+
+### Plain `PostProcessor` for transcript archival (no sub-agent)
+
+**Choice**: `TranscriptArchiveProcessor` extends `PostProcessor` directly — no forked sub-agent, just `shutil.copy2` with `loguru` logging.
+**Why**: Copying a file has no reasoning component. Forking a sub-agent (DES-004 `PromptDrivenProcessor`) would add LLM latency, cost, and failure modes for deterministic I/O. DES-004 is scoped to sub-agent spawning; plain `PostProcessor` remains the right choice when the task is purely mechanical.
+
+**Consequences**:
+- Pro: No prompt/tool/permission configuration — processor module is stdlib-only
+- Pro: Tests run with pure filesystem assertions (no LLM mocks)
+- Pro: Establishes precedent (alongside `StaleWorkflowCleanupProcessor`) that deterministic processors live in the same pipeline as sub-agent processors without ceremony
+
+### `pre_finalize` phase for transcript archival
+
+**Choice**: Register `TranscriptArchiveProcessor` on the `pre_finalize` phase.
+**Why**: (a) The `main` phase's memory processors read the SDK transcript — they must complete before we copy it, otherwise we race their reads. (b) The `finalize` phase is `GitProcessor`'s — the archive must already be on disk when git stages. `pre_finalize` is the only phase that satisfies both constraints.
+
+**Consequences**:
+- Pro: Archive is guaranteed present for the git commit without coordinating with `finalize` processors
+- Pro: Runs concurrently with other `pre_finalize` processors (`ProjectsProcessor`, `StaleWorkflowCleanupProcessor`) — disjoint filesystem scopes, no conflict
+
+### Archived path derived from `sdk_session_id`
+
+**Choice**: The archived path is always `memories/transcripts/<sdk-session-id>.jsonl` — computed from the session's existing `sdk_session_id` field. No `archived_transcript_path` column is added.
+**Why**: The SDK session ID is already globally unique, already stored on `Session`, and already filesystem-safe. Adding a column would duplicate information the system can compute.
+
+**Consequences**:
+- Pro: Zero migration cost
+- Pro: Consumers compute the path with a one-line helper or inline `f-string`
+- Con: A future scheme change (different filename, different location) becomes a code change rather than a data migration — acceptable given the single source of archival logic
+
+### Defensive `mkdir` inside `process()` (self-healing)
+
+**Choice**: The processor calls `dest_dir.mkdir(parents=True, exist_ok=True)` on every run in addition to the bootstrap hook creating the directory at startup.
+**Why**: Handles the edge case where `memories/transcripts/` is removed between bootstrap and session close (manual cleanup, fresh clone, etc.). Cost is negligible and the "log and continue" error policy absorbs any mkdir failure.
+
+**Consequences**:
+- Pro: Processor survives directory deletion mid-run
+- Pro: No special-case error-handling branch required for the missing-directory AC
 
 ## System Behavior
 
@@ -189,6 +245,36 @@ Each processor inherits `_prompt`, `_cwd`, and the default `process()` implement
 **Given**: User edits `memories/facts/work-info.md`
 **When**: Next facts processor runs
 **Then**: Forked agent reads the user-edited file and respects changes.
+
+### Scenario: Transcript archived on session close
+
+**Given**: A closing session with populated `transcript_path` and `sdk_session_id`, and the SDK transcript file exists at that path
+**When**: The post-processing pipeline advances through `pre_finalize`
+**Then**: `TranscriptArchiveProcessor` copies the file to `memories/transcripts/<sdk-session-id>.jsonl`. The subsequent `finalize` phase's `GitProcessor` stages and commits the new file alongside the extracted memories.
+
+### Scenario: SDK transcript already gone at archive time
+
+**Given**: A closing session whose `transcript_path` points at a file removed before `pre_finalize` runs (e.g., `~/.claude` wiped between session end and post-processing)
+**When**: `TranscriptArchiveProcessor.process(session)` runs
+**Then**: `FileNotFoundError` is caught, a warning is logged with both source and destination paths, and the processor returns normally. Other `pre_finalize` processors and the `finalize` git commit are unaffected.
+
+### Scenario: Filesystem error during archive
+
+**Given**: The destination is read-only, disk is full, or any other `OSError` condition
+**When**: `shutil.copy2` raises
+**Then**: The error is logged with traceback, and the processor returns normally. The git commit still runs and commits whatever other workspace changes exist.
+
+### Scenario: Archive directory missing at copy time
+
+**Given**: `memories/transcripts/` was removed after bootstrap (manual cleanup, fresh clone)
+**When**: The processor runs
+**Then**: `mkdir(parents=True, exist_ok=True)` recreates it, then the copy proceeds. No error surfaces.
+
+### Scenario: Idempotent re-archival
+
+**Given**: A prior run already produced `memories/transcripts/<sid>.jsonl` (complete or partial)
+**When**: The processor runs again for the same session
+**Then**: `shutil.copy2` overwrites the destination. The final file matches the current source.
 
 ## Notes
 

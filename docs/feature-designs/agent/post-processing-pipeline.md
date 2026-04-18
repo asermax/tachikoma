@@ -24,6 +24,7 @@ After a conversation ends, various post-processing tasks need to run — memory 
 - Memory processors (`memory-extraction`): register in `main` phase
 - Projects processor (`project-management`): registers in `pre_finalize` phase
 - Stale workflow cleanup processor (`workflows/workflow-state-machine`): registers in `pre_finalize` phase
+- Transcript archive processor (`memory-extraction`): registers in `pre_finalize` phase — runs after memory-extraction readers, before the git commit
 - Git processor (`workspace-version-tracking`): registers in `finalize` phase
 
 ## Design Overview
@@ -270,6 +271,13 @@ erDiagram
 **Given**: A processor is registered with `phase="cleanup"` (invalid)
 **When**: `register()` is called
 **Then**: `ValueError` raised immediately listing valid phases.
+
+### Scenario: Deterministic I/O processor in pre_finalize
+
+**Given**: A processor that performs deterministic file I/O with no LLM reasoning (e.g., `TranscriptArchiveProcessor` copying the SDK transcript into the workspace) is registered in the `pre_finalize` phase
+**When**: The post-processing pipeline runs
+**Then**: The processor runs in parallel with other `pre_finalize` processors after the `main` phase completes. If the copy fails, the processor logs and returns normally — other processors in the phase and the `finalize` git commit are unaffected.
+**Rationale**: Not every post-processor needs a forked sub-agent. Processors whose work is mechanical (file copies, state cleanup) extend `PostProcessor` directly and implement `process()` with stdlib calls — avoiding the latency, cost, and failure modes of `PromptDrivenProcessor` (DES-004). `pre_finalize` is the correct phase whenever the processor must (a) observe the output of `main`-phase readers of the SDK transcript and (b) leave workspace state visible to the `finalize` git commit.
 
 ### Scenario: Stale workflow cleanup during session close
 
