@@ -157,8 +157,9 @@ Note: `send_message()` is an async generator. The per-message pipeline launch ha
 - Coordinator ↔ `detect_boundary` (from `boundary` package): pure function call before processing, accepts optional `candidates: list[SessionCandidate]`, returns `BoundaryResult(continues, resume_session_id)`, errors caught and defaulted to `BoundaryResult(continues=True)` (continuation). Skipped when no session, no summary, or no cwd (see [boundary detection design](boundary-detection.md))
 - Coordinator ↔ `MessagePostProcessingPipeline` (optional): `run(session, text, response_text)` as background `asyncio.Task` after each response, reference stored as `_pending_msg_task` (see [boundary detection design](boundary-detection.md))
 - Coordinator ↔ MCP servers (optional): `mcp_servers` parameter passed to `ClaudeAgentOptions.mcp_servers` in `_build_options()` — used by task subsystem for task CRUD tools and workflow subsystem for workflow lifecycle tools (see [workflows design](../workflows/workflow-state-machine.md))
-- Coordinator ↔ Task subsystem: `last_message_time` property read by session task scheduler for idle gating
+- Coordinator ↔ Priority buffer: `last_message_time` and `is_busy` properties consumed by the buffer for idle-gated delivery; coordinator dispatches `CoordinatorIdle(timestamp)` on every busy→idle transition via `_maybe_emit_idle()` so the buffer can wake without polling (see [delivery/priority-buffer](../../feature-designs/delivery/priority-buffer.md))
 - `__main__.py` ↔ EventBus: created in `__main__.py`, passed to channels and task async loops; `bus.stop()` called on shutdown
+- `__main__.py` ↔ Priority buffer: `create_and_start_buffer(bus, coordinator, settings)` is called after coordinator construction and before channel dispatch, subscribing the buffer to `Notification` + `CoordinatorIdle` and returning a started buffer instance wired to the coordinator
 
 ### Shared Logic
 
@@ -222,6 +223,9 @@ Coordinator
 ├── _mcp_servers: dict[str, McpServerConfig]  (from pre-processing, session-scoped, merged with _base_mcp_servers in _build_options)
 ├── _client: ClaudeSDKClient | None       (set only during send_message, None between messages)
 ├── _last_message_time: datetime | None      (timestamp of last exchange, for idle gating)
+├── _was_busy: bool                          (tracks prior is_busy state for busy→idle transition detection)
+├── is_busy → bool (property)                (True while an exchange is in progress)
+├── _maybe_emit_idle() → None                (dispatches CoordinatorIdle(now) on bus if state transitioned busy→idle; best-effort, swallows bus errors)
 ├── _message_buffer: asyncio.Queue[str]   (unbounded FIFO queue for buffered messages)
 ├── _pending_msg_task: asyncio.Task | None  (background per-message post-processing)
 ├── _background_tasks: list[asyncio.Task]   (session post-processing from topic shifts)
@@ -323,6 +327,7 @@ The `Result` event serves as a turn boundary. Channels can detect it to reset th
 14. Enters coordinator async context (no SDK client connection — clients are created per-message)
 15. If any SDK error occurs during the first message → catch, log + print to stderr, exit
 15a. Starts task async loops as `asyncio.Task`s: instance_generator, session_task_scheduler, background_task_runner — all receiving bus, coordinator, task_repository, and task settings
+15b. Calls `create_and_start_buffer(bus, coordinator, settings)` to construct the priority buffer, subscribe it to `Notification` + `CoordinatorIdle`, and start its internal loop (see [delivery/priority-buffer](../../feature-designs/delivery/priority-buffer.md))
 16. Dispatches based on settings.channel:
     ├─ "repl" → Repl(coordinator, history_path=..., bus=bus)
     └─ "telegram" → TelegramChannel(coordinator, settings.telegram, bus=bus)

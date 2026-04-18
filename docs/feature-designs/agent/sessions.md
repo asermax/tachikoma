@@ -300,6 +300,8 @@ The ORM models are internal to the persistence layer. A `to_domain()` method on 
 
 The `transcript_path` is derived from the SDK session ID using the known Claude SDK directory structure: `~/.claude/projects/<sanitized-cwd>/<session-id>.jsonl`, where `<sanitized-cwd>` replaces `/` with `-`, preserving the leading `-` from the absolute path. This derivation is isolated to a single helper function (`_derive_transcript_path` in the coordinator) so it can be updated in one place.
 
+The `transcript_path` always points at the SDK-owned location. A separate workspace-archived copy is produced at session close by the transcript archive processor at `memories/transcripts/<sdk-session-id>.jsonl` — that path is a pure convention derivable from `sdk_session_id` alone, so no `archived_transcript_path` column is added to the session schema. See [memory-extraction design](../memory/memory-extraction.md) for the archival processor.
+
 ### Session close (shutdown)
 
 ```

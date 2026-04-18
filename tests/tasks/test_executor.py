@@ -13,6 +13,7 @@ from tachikoma.agent_defaults import AgentDefaults
 from tachikoma.config import TaskSettings
 from tachikoma.notifications import Notification, handle_send_notification
 from tachikoma.tasks.executor import (
+    BACKGROUND_TASK_SYSTEM_PROMPT,
     BackgroundTaskExecutor,
     _PreprocessingResult,
     background_task_runner,
@@ -738,3 +739,13 @@ class TestExecutorStderrCapture:
         # No stderr kwarg when buffer empty
         last_call_kwargs = exception_calls[-1][1]
         assert "stderr" not in last_call_kwargs
+
+
+class TestBackgroundTaskSystemPrompt:
+    """Tests for system prompt documentation (DLT-112 R8)."""
+
+    def test_mentions_all_priority_levels(self) -> None:
+        assert "urgent" in BACKGROUND_TASK_SYSTEM_PROMPT
+        assert "normal" in BACKGROUND_TASK_SYSTEM_PROMPT
+        assert "low" in BACKGROUND_TASK_SYSTEM_PROMPT
+        assert "priority" in BACKGROUND_TASK_SYSTEM_PROMPT

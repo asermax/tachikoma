@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
+import signal
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -15,13 +17,13 @@ from prompt_toolkit.validation import Validator
 from rich.console import Console
 from rich.markdown import Markdown
 
+from tachikoma.buffer.events import BufferedDelivery
 from tachikoma.channel import Channel
 from tachikoma.display import TOOL_DISPLAY, format_tool_name
 from tachikoma.events import AgentEvent, Error, Result, Status, TextChunk, ToolActivity
-from tachikoma.notifications import Notification
-from tachikoma.tasks.events import SessionTaskReady
 
 if TYPE_CHECKING:
+    from tachikoma.buffer.buffer import Buffer
     from tachikoma.coordinator import Coordinator
 
 _log = logger.bind(component="repl")
@@ -71,19 +73,21 @@ class Repl(Channel):
     """Terminal REPL that sends user input through the coordinator.
 
     When an event bus is provided, the REPL subscribes to:
-    - SessionTaskReady: Proactive tasks from the task scheduler
-    - Notification: Completion/failure notifications from background tasks
+    - BufferedDelivery: Deferred notifications and session tasks from the priority buffer
     """
 
     def __init__(
         self,
         history_path: Path,
         bus: EventBus | None = None,
+        buffer: Buffer | None = None,
     ) -> None:
         self.__coordinator: Coordinator | None = None
         self._renderer = Renderer()
         self._bus = bus
-        self._task_queue: asyncio.Queue[SessionTaskReady | Notification] = asyncio.Queue()
+        self._buffer: Buffer | None = buffer
+        # Serialize delivery vs. prompt-driven coordinator usage
+        self._delivery_lock = asyncio.Lock()
 
         kb = KeyBindings()
 
@@ -112,60 +116,98 @@ class Repl(Channel):
         assert self.__coordinator is not None, "run() must be called before processing messages"
         return self.__coordinator
 
+    def attach_buffer(self, buffer: Buffer) -> None:
+        self._buffer = buffer
+
     async def run(self, coordinator: Coordinator) -> None:
         """Run the REPL input loop until the user exits.
 
-        Between user inputs, the loop checks for queued session tasks
-        from the event bus and processes them.
+        On exit, drains any remaining buffered items as a single shutdown
+        digest before returning, so the digest delivery happens while the
+        coordinator and BufferedDelivery subscription are still alive.
         """
         self.__coordinator = coordinator
 
-        # Subscribe to task events — deferred to run() so coordinator is set
+        # Subscribe to buffered delivery events — deferred to run() so coordinator is set
         if self._bus is not None:
-            self._bus.on(SessionTaskReady, self._handle_session_task)
-            self._bus.on(Notification, self._handle_notification)
+            self._bus.on(BufferedDelivery, self._handle_buffered_delivery)
         _log.debug("REPL started")
 
-        while True:
-            # Process any queued session tasks before prompting
-            await self._process_queued_tasks()
+        try:
+            while True:
+                try:
+                    text = await self._session.prompt_async("> ")
+                except (KeyboardInterrupt, EOFError):
+                    _log.debug("REPL interrupted by user")
+                    break
 
-            try:
-                text = await self._session.prompt_async("> ")
-            except (KeyboardInterrupt, EOFError):
-                _log.debug("REPL interrupted by user")
-                break
+                if text.strip().lower() in ("exit", "quit"):
+                    _log.debug("REPL exited by command")
+                    break
 
-            if text.strip().lower() in ("exit", "quit"):
-                _log.debug("REPL exited by command")
-                break
+                _log.debug("Message received: length={n}", n=len(text))
 
-            _log.debug("Message received: length={n}", n=len(text))
+                try:
+                    async with self._delivery_lock:
+                        self._coordinator.enqueue(text)
+                        async for event in self._coordinator.send_message():
+                            if not self._renderer.render(event):
+                                return
+                except KeyboardInterrupt:
+                    await self._coordinator.interrupt()
+                    break
+        finally:
+            force_exit = await self._flush_buffer_on_shutdown()
+            if force_exit:
+                # KD-6/S15: abort shutdown immediately; skip post-processing
+                raise KeyboardInterrupt
 
-            try:
-                self._coordinator.enqueue(text)
-                async for event in self._coordinator.send_message():
-                    if not self._renderer.render(event):
-                        return
-            except KeyboardInterrupt:
-                await self._coordinator.interrupt()
-                break
+    async def _flush_buffer_on_shutdown(self) -> bool:
+        """Drain remaining buffered items as a shutdown digest.
 
-    async def _process_queued_tasks(self) -> None:
-        """Process any queued session tasks and notifications without blocking.
-
-        Drains the queue of all pending items and processes them.
+        Installs a SIGINT handler for the duration of the flush so a second
+        Ctrl+C cancels the flush AND any in-flight coordinator exchange
+        (KD-6/S15). Returns True when the flush was force-cancelled by a
+        second SIGINT — the caller should then exit immediately.
         """
-        while not self._task_queue.empty():
-            try:
-                event = self._task_queue.get_nowait()
-            except asyncio.QueueEmpty:
-                break
+        if self._buffer is None:
+            return False
 
-            if isinstance(event, SessionTaskReady):
-                await self._execute_session_task(event)
-            elif isinstance(event, Notification):
-                await self._execute_notification(event)
+        loop = asyncio.get_running_loop()
+
+        flush_task: asyncio.Task[None] = asyncio.create_task(self._buffer.flush_on_shutdown())
+        interrupt_task: asyncio.Task[None] | None = None
+        force_exit_triggered = False
+
+        def _force_exit() -> None:
+            nonlocal force_exit_triggered, interrupt_task
+            force_exit_triggered = True
+            _log.warning("Second SIGINT during shutdown flush — abandoning digest")
+            flush_task.cancel()
+            interrupt_task = asyncio.create_task(self._coordinator.interrupt())
+
+        previous_handler: object = signal.getsignal(signal.SIGINT)
+        try:
+            loop.add_signal_handler(signal.SIGINT, _force_exit)
+        except (NotImplementedError, RuntimeError):
+            previous_handler = None
+
+        try:
+            await flush_task
+        except asyncio.CancelledError:
+            _log.info("Shutdown flush cancelled by second SIGINT")
+        finally:
+            with contextlib.suppress(NotImplementedError, RuntimeError):
+                loop.remove_signal_handler(signal.SIGINT)
+
+            if callable(previous_handler):
+                signal.signal(signal.SIGINT, previous_handler)
+
+            if interrupt_task is not None:
+                with contextlib.suppress(Exception):
+                    await interrupt_task
+
+        return force_exit_triggered
 
     async def _execute_through_coordinator(self, prompt: str) -> bool:
         """Send a prompt through the coordinator and render the response.
@@ -185,55 +227,36 @@ class Repl(Channel):
             )
         return True
 
-    async def _execute_session_task(self, event: SessionTaskReady) -> None:
-        """Execute a session task by sending it through the coordinator."""
-        instance = event.instance
+    async def _execute_buffered_delivery(self, event: BufferedDelivery) -> None:
+        """Execute a buffered delivery by sending it through the coordinator."""
         _log.info(
-            "Processing session task: id={task_id}, prompt_preview={preview}",
-            task_id=instance.id,
-            preview=instance.prompt[:50] if instance.prompt else "",
+            "Processing buffered delivery: items={count}, shutdown={is_shutdown}",
+            count=len(event.items),
+            is_shutdown=event.is_shutdown_digest,
         )
 
+        label = "Shutdown digest" if event.is_shutdown_digest else "Scheduled task"
         self._renderer._console.print(
-            "\n[dim italic]📋 Scheduled task:[/dim italic]",
+            f"\n[dim italic]📋 {label}:[/dim italic]",
         )
 
-        if not await self._execute_through_coordinator(instance.prompt):
+        if not await self._execute_through_coordinator(event.prompt):
             return
 
-        if event.on_complete is not None:
-            await event.on_complete()
+        for item in event.items:
+            if item.on_delivered is not None:
+                await item.on_delivered()
 
-    async def _handle_session_task(self, event: SessionTaskReady) -> None:
-        """Handle a SessionTaskReady event from the task scheduler.
+        if event.is_shutdown_digest and self._buffer is not None:
+            self._buffer.resolve_shutdown()
 
-        Queues the task for processing in the main REPL loop.
+    async def _handle_buffered_delivery(self, event: BufferedDelivery) -> None:
+        """Handle a BufferedDelivery event from the buffer.
+
+        Delivers inline through the coordinator. The delivery_lock serializes
+        with the prompt-driven path so the coordinator is never used by both
+        flows concurrently.
         """
-        _log.debug("Queueing session task: id={task_id}", task_id=event.instance.id)
-        await self._task_queue.put(event)
-
-    async def _handle_notification(self, event: Notification) -> None:
-        """Handle a Notification event from the background task executor.
-
-        Queues the notification for processing in the main REPL loop,
-        following the same pattern as session tasks.
-        """
-        _log.debug(
-            "Queueing notification: source={source}",
-            source=event.source_id,
-        )
-        await self._task_queue.put(event)
-
-    async def _execute_notification(self, event: Notification) -> None:
-        """Execute a notification by sending it through the coordinator."""
-        _log.info(
-            "Processing notification: severity={severity}, source={source}",
-            severity=event.severity,
-            source=event.source_id,
-        )
-
-        self._renderer._console.print(
-            "\n[dim italic]📋 Task notification:[/dim italic]",
-        )
-
-        await self._execute_through_coordinator(event.prompt)
+        _log.debug("Delivering buffered event inline: items={count}", count=len(event.items))
+        async with self._delivery_lock:
+            await self._execute_buffered_delivery(event)

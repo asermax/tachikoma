@@ -245,6 +245,32 @@ class TaskSettings(BaseModel):
         return v
 
 
+class PriorityTiming(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="ignore")
+
+    idle_window_seconds: float = Field(
+        description="Seconds the conversation must be idle before delivery",
+    )
+    max_hold_seconds: float | None = Field(
+        default=None,
+        description="Max seconds before force-delivery (None = never force-deliver)",
+    )
+
+
+class BufferSettings(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="ignore")
+
+    urgent: PriorityTiming = Field(
+        default_factory=lambda: PriorityTiming(idle_window_seconds=30, max_hold_seconds=120),
+    )
+    normal: PriorityTiming = Field(
+        default_factory=lambda: PriorityTiming(idle_window_seconds=120, max_hold_seconds=900),
+    )
+    low: PriorityTiming = Field(
+        default_factory=lambda: PriorityTiming(idle_window_seconds=300, max_hold_seconds=None),
+    )
+
+
 class Settings(BaseModel):
     model_config = ConfigDict(frozen=True, extra="ignore")
 
@@ -260,6 +286,7 @@ class Settings(BaseModel):
         description="Telegram bot configuration (required when channel is telegram)",
     )
     tasks: TaskSettings = Field(default_factory=TaskSettings)
+    buffer: BufferSettings = Field(default_factory=BufferSettings)
 
 
 class SettingsManager:
@@ -454,6 +481,23 @@ def _generate_default_config(config_path: Path = CONFIG_PATH) -> None:
             doc.add(tomlkit.comment(f"{name} = {default}"))
         elif isinstance(default, str):
             doc.add(tomlkit.comment(f'{name} = "{default}"'))
+
+    doc.add(tomlkit.nl())
+
+    # [buffer] section
+    doc.add(tomlkit.comment("[buffer.urgent]"))
+    doc.add(tomlkit.comment("Seconds the conversation must be idle before delivery"))
+    doc.add(tomlkit.comment("idle_window_seconds = 30"))
+    doc.add(tomlkit.comment("Max seconds before force-delivery (None = never force-deliver)"))
+    doc.add(tomlkit.comment("max_hold_seconds = 120"))
+    doc.add(tomlkit.nl())
+    doc.add(tomlkit.comment("[buffer.normal]"))
+    doc.add(tomlkit.comment("idle_window_seconds = 120"))
+    doc.add(tomlkit.comment("max_hold_seconds = 900"))
+    doc.add(tomlkit.nl())
+    doc.add(tomlkit.comment("[buffer.low]"))
+    doc.add(tomlkit.comment("idle_window_seconds = 300"))
+    doc.add(tomlkit.comment("max_hold_seconds ="))
 
     try:
         config_path.parent.mkdir(parents=True, exist_ok=True)

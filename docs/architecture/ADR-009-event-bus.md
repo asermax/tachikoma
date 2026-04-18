@@ -41,5 +41,10 @@ The `EventBus` is created in `__main__.py` (not in a bootstrap hook) — this ke
 - Relatively new library (96 stars) — but code is straightforward, actively maintained, and small enough to vendor if needed
 
 **Current event types:**
-- `SessionTaskReady(BaseEvent)`: carries task instance + completion callback — dispatched by session task scheduler, consumed by channels
-- `TaskNotification(BaseEvent)`: carries prompt + severity — dispatched by background executor, consumed by channels which enqueue the prompt into the coordinator for pipeline-routed delivery. **Replaced by `Notification` in DLT-091** — see `tachikoma.notifications`.
+- `Notification(BaseEvent)`: carries prompt + severity + priority (Urgent/Normal/Low) — dispatched by background executor (agent-driven via `send_notification` MCP tool, or automatic on failure) and consumed by the priority buffer (see [delivery/priority-buffer](../feature-designs/delivery/priority-buffer.md)).
+- `CoordinatorIdle(BaseEvent)`: carries the transition timestamp — dispatched by the coordinator on every busy→idle transition and consumed by the priority buffer to wake and re-evaluate pending deliveries without polling.
+- `BufferedDelivery(BaseEvent)`: carries the prompt, the list of underlying `BufferedItem`s, and an `is_shutdown_digest` flag — dispatched by the priority buffer when delivery conditions are met (or during shutdown flush) and consumed by the active channel, which routes the prompt through the coordinator as a new message turn and fires each item's `on_delivered` callback on completion.
+
+**Retired event types:**
+- `SessionTaskReady(BaseEvent)`: previously dispatched by the session task scheduler for channel delivery. Replaced by direct `buffer.enqueue()` calls from the scheduler — the priority buffer now owns idle gating and ordering, and channels observe only `BufferedDelivery`.
+- `TaskNotification(BaseEvent)`: previously carried prompt + severity for channel delivery. Replaced by `Notification` (see `tachikoma.notifications`).

@@ -75,12 +75,37 @@ Reference files are regular files in the skill directory that the agent reads vi
 
 **Format**: Any file type (`.md`, `.txt`, `.json`, etc.). Reference from SKILL.md like: "See `references/api.md` for detailed options."
 
+### Executable Code (CLI subpackage)
+
+**When to use**: The skill needs deterministic work the assistant shouldn't improvise (rendering, API calls, file manipulation) or a reusable command the user may invoke directly.
+
+**Default stack**: Python + `uv` + a shell wrapper script at the skill root. Use another stack only when the user asks.
+
+The standard layout pairs a hyphenated skill folder (`my-skill/`) with an underscored Python subpackage (`my_skill_cli/`) and a thin bash shim at the skill root that the assistant invokes. Every executable skill in the repo follows this pattern.
+
+**Format**: See `references/scripting.md` for the full directory anatomy, naming rules, shim template, and base `pyproject.toml` wiring.
+
 ### Other Subdirectories
 
 Organize additional content as needed:
 - `data/` — Static data files
 - `templates/` — Template files
 - `examples/` — Example files
+
+## Testing
+
+**Any skill that ships executable code — a CLI, script, or programmatic logic — must include tests.** Skills that are pure prompt content (SKILL.md + `references/` only) don't need tests.
+
+**Why**: When skills evolve, regressions in executable code go unnoticed until they break in production.
+
+At a glance (for the default Python + uv stack):
+
+- Tests live in the CLI subpackage's `tests/` folder, next to `src/` (see `references/scripting.md` for the subpackage layout)
+- Files are named `test_<module>.py`, one per source module under test
+- Wired through `[dependency-groups] dev = ["pytest>=8.0"]` and `[tool.pytest.ini_options] testpaths = ["tests"]` in `pyproject.toml`
+- Run with `uv run --project skills/<skill-name>/<skill_name>_cli pytest`
+
+See `references/testing.md` for the full pytest wiring, file conventions, coverage guidance, and notes on non-Python stacks.
 
 ## Detection Tuning
 
@@ -202,3 +227,5 @@ The following capabilities are planned but not yet available:
 ---
 
 For detailed agent definition format, see `references/agents.md`.
+For executable-code layout (CLI subpackage, shim, pyproject), see `references/scripting.md`.
+For test layout and conventions, see `references/testing.md`.

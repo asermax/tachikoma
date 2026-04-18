@@ -12,6 +12,7 @@ from pydantic import ValidationError
 
 from tachikoma.config import (
     SYSTEM_DISALLOWED_TOOLS,
+    BufferSettings,
     LoggingSettings,
     SendFileSettings,
     Settings,
@@ -1012,3 +1013,56 @@ class TestSendFileSettings:
 
         assert settings.telegram is None
         assert settings.channel == "repl"
+
+
+class TestBufferSettings:
+    """Tests for BufferSettings model (DLT-112)."""
+
+    def test_default_urgent_timing(self) -> None:
+        settings = BufferSettings()
+
+        assert settings.urgent.idle_window_seconds == 30
+        assert settings.urgent.max_hold_seconds == 120
+
+    def test_default_normal_timing(self) -> None:
+        settings = BufferSettings()
+
+        assert settings.normal.idle_window_seconds == 120
+        assert settings.normal.max_hold_seconds == 900
+
+    def test_default_low_timing(self) -> None:
+        settings = BufferSettings()
+
+        assert settings.low.idle_window_seconds == 300
+        assert settings.low.max_hold_seconds is None
+
+    def test_settings_has_buffer_with_defaults(self) -> None:
+        settings = Settings()
+
+        assert settings.buffer.urgent.idle_window_seconds == 30
+        assert settings.buffer.normal.idle_window_seconds == 120
+        assert settings.buffer.low.max_hold_seconds is None
+
+    def test_buffer_from_config(self, tmp_path: Path) -> None:
+        config_path = tmp_path / "config.toml"
+        config_path.write_text(
+            "[buffer.urgent]\nidle_window_seconds = 10\nmax_hold_seconds = 60\n"
+            "[buffer.normal]\nidle_window_seconds = 60\nmax_hold_seconds = 300\n"
+        )
+
+        settings = load_settings(config_path)
+
+        assert settings.buffer.urgent.idle_window_seconds == 10
+        assert settings.buffer.urgent.max_hold_seconds == 60
+        assert settings.buffer.normal.idle_window_seconds == 60
+
+    def test_generated_file_contains_buffer_section(self, tmp_path: Path) -> None:
+        config_path = tmp_path / "config.toml"
+        _generate_default_config(config_path)
+
+        content = config_path.read_text()
+
+        assert "[buffer.urgent]" in content
+        assert "[buffer.normal]" in content
+        assert "[buffer.low]" in content
+        assert "idle_window_seconds" in content

@@ -434,13 +434,6 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 **Complexity**: Medium
 **Description**: Developers need to debug failed background tasks and understand execution history, but task instances currently record only status, timestamps, and a free-text result — with no link to the SDK session that ran, no transcript reference, and no structured error context. This delta enriches the task instance model and execution flow with traceability data: recording the SDK session ID and transcript path for each background execution, capturing structured error context (error type, message, tool calls leading to failure) on failure using the error classification from the structured error handling subsystem, and computing execution duration as a first-class field. These fields enable querying past executions by session, inspecting failure artifacts, and displaying execution metrics without manual timestamp arithmetic. The scope is limited to the tasks subsystem — background jobs are not interactive conversations, but they still require an audit trail linking execution to its artifacts and outcomes.
 
-### DLT-099: Archive conversation transcripts to project workspace
-**Status**: ✗ Defined
-**Depends on**: None
-**Priority**: 1 (Critical)
-**Complexity**: Medium
-**Description**: Ensure conversation transcripts are archived to the project workspace for durability and accessibility independent of SDK storage internals. Currently transcripts are stored only in the SDK's standard location (`~/.claude/projects/<sanitized-cwd>/<session-id>.jsonl`), making them dependent on SDK behavior and inaccessible for project-local operations. On session close, copy the transcript file from the SDK location to a `.tachikoma/transcripts/` directory within the project workspace. The session model already tracks transcript paths — this delta adds the copy-on-close hook and ensures transcripts survive SDK storage changes. Lifecycle management (retention, cleanup) is a separate concern to be addressed independently.
-
 ### DLT-102: Prevent stale cron from firing on create/update
 **Status**: ✗ Defined
 **Depends on**: None
@@ -485,7 +478,7 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 
 ### DLT-108: Transcript search and analysis tools
 **Status**: ✗ Defined
-**Depends on**: DLT-099
+**Depends on**: None
 **Priority**: 3 (Medium)
 **Complexity**: Medium
 **Description**: Provide CLI subcommands and MCP tools to search, filter, and analyze archived conversation transcripts stored in the project workspace. Enable the agent to reference past conversations by searching transcript content, and enable operators to review conversation history from the terminal. The initial scope covers full-text search across transcripts with date filtering and basic excerpt retrieval — enough for the agent to answer "what did we discuss about X?" by searching past transcripts. Summary extraction and conversation statistics are follow-up enhancements.
@@ -510,13 +503,6 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 **Priority**: 1 (Critical)
 **Complexity**: Medium
 **Description**: When the user sends a message at the exact moment a previous response is finalizing, the new message can be silently dropped. The coordinator consumes the message from the queue but loses it during the transition between completing the previous turn's post-processing and picking up the next turn. This delta eliminates that timing window so that every consumed message is guaranteed to be processed, even when it arrives during response finalization.
-
-### DLT-112: Buffer background task notifications until conversation is idle
-**Status**: ✗ Defined
-**Depends on**: None
-**Priority**: 2 (High)
-**Complexity**: Medium
-**Description**: When a background task completes and triggers a notification while the user is in an active conversation, the notification is currently injected as a steering message into the ongoing exchange instead of being held for later delivery. Notifications should never interrupt or steer the current conversation — they must always be delivered as a separate message turn. Each notification carries a priority level that governs two timing parameters: how long the conversation must be idle before the notification is delivered, and how long the notification can be held before being force-delivered regardless of activity. Higher-priority notifications tolerate shorter idle windows and have shorter hold periods; lower-priority notifications wait longer for natural pauses and can be buffered indefinitely. This ensures urgent results reach the user quickly while routine updates wait for a natural break.
 
 ### DLT-115: Run and monitor detached shell commands
 **Status**: ✗ Defined
@@ -581,13 +567,6 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 **Complexity**: Medium
 **Description**: Add a memory category for the agent's own subjective assessments — what worked, what didn't, patterns it notices about its own behavior and capabilities. Distinct from existing memory types (episodic, facts, preferences) which capture objective user-centric information. Reflections are the agent's self-observations, forming the input layer for automated self-improvement. A new post-processing processor extracts reflections from completed sessions and stores them alongside other memory types. This enables the self-healing skill system and future self-learning capabilities to draw on the agent's accumulated experience rather than starting from scratch each session.
 
-### DLT-124: Add test coverage requirements to skill authoring guide
-**Status**: ✗ Defined
-**Depends on**: None
-**Priority**: 1 (Critical)
-**Complexity**: Easy
-**Description**: The skill authoring guide currently covers directory conventions, agent definitions, and reference files, but says nothing about testing skills that contain executable code (scripts, CLIs, or any programmatic logic). When skills evolve, regressions go unnoticed until they break in production — e.g., the share-markdown mermaid pipeline had multiple bugs that tests would have caught earlier. Update the skill authoring guidance to require test coverage for any skill that includes executable code, with conventions for test file placement, naming, and execution within the skill directory structure.
-
 ### DLT-125: Message envelope for typed message routing
 **Status**: ✗ Defined
 **Depends on**: None
@@ -639,14 +618,14 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 
 ### DLT-134: Extend background tasks at iteration limit
 **Status**: ✗ Defined
-**Depends on**: DLT-112, DLT-120
+**Depends on**: DLT-120
 **Priority**: 3 (Medium)
 **Complexity**: Medium
 **Description**: Background tasks currently hard-fail when they reach their maximum iteration count, even if they are making meaningful progress. This delta allows the assistant to escalate to the user when the iteration limit is reached instead of failing outright. The user is presented with the task's progress and the assistant's latest assessment, and can choose to grant additional iterations or abort. If extended, the task continues from where it left off with a fresh iteration budget. If aborted, the task is failed as today. The iteration limit before escalation is configurable per task definition, falling back to the global default. This prevents premature failure of tasks that are progressing slowly but productively, giving the user control over the cost/completion tradeoff.
 
 ### DLT-135: Serialize concurrent notification delivery and user message processing
 **Status**: ✗ Defined
-**Depends on**: DLT-111, DLT-112
+**Depends on**: DLT-111
 **Priority**: 2 (High)
 **Complexity**: Hard
 **Description**: When a background task notification is delivered at the exact moment a user sends a message, the two can collide at the coordinator's message queue — resulting in one being lost or the notification being silently swallowed. The existing message-loss prevention and notification buffering mechanisms handle their respective timing windows independently, but do not cover the case where both sources attempt to enqueue simultaneously. This delta adds serialization between the notification delivery path and the user message intake so that concurrent arrivals are safely ordered and neither is dropped.

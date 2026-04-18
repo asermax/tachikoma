@@ -6,6 +6,8 @@
 
 After a conversation ends, the system automatically extracts and persists learnings as structured markdown files. Each memory type has its own processor that forks the original SDK session and directs the agent to read existing memories, analyze the conversation, and create, update, or delete memory files as needed. Three memory types: episodic (date-stamped conversation summaries), facts (named files about the user and other factual information), and preferences (named files about how the user likes things). All memories are human-readable markdown in the workspace.
 
+The memory workspace also includes `memories/transcripts/`, a non-extractive subdirectory populated by a transcript archive processor that copies each conversation's SDK transcript into the workspace on session close. Archived transcripts are raw `.jsonl` files (not curated markdown) and are named by SDK session ID so the archived path is derivable without a dedicated model field.
+
 ## User Stories
 
 - As the system, I need to automatically extract and persist learnings from completed conversations so that future sessions are contextually aware of past interactions, known preferences, and prior decisions
@@ -19,9 +21,11 @@ After a conversation ends, the system automatically extracts and persists learni
 | R1 | Each memory type has its own processor that forks the original SDK session to analyze the conversation |
 | R2 | Forked agents autonomously manage memory files — processor code performs no file I/O |
 | R3 | Three memory types with distinct extraction strategies: episodic (date-stamped summaries), facts (topic-named factual information), preferences (topic-named user preferences) |
-| R4 | Memories organized in subdirectories: `memories/episodic/`, `memories/facts/`, `memories/preferences/` |
+| R4 | Memories organized in subdirectories: `memories/episodic/`, `memories/facts/`, `memories/preferences/`, `memories/transcripts/` |
 | R5 | Memory files are human-readable markdown, directly inspectable and editable |
 | R6 | Bootstrap hook creates the memory directory structure on first run (idempotent) |
+| R7 | Transcript archive processor copies each session's SDK transcript into `memories/transcripts/<sdk-session-id>.jsonl` on session close; runs in the post-processing `pre_finalize` phase so archived files land before the workspace git commit |
+| R8 | Transcript archival is best-effort — failures (missing source, filesystem errors) are logged and swallowed, never crashing the conversation or blocking other post-processing |
 
 ## Behaviors
 
@@ -67,8 +71,21 @@ Named files about how the user likes things — code style, communication, workf
 ### Directory Structure and Bootstrap (R4, R6)
 
 **Acceptance Criteria**:
-- Given no `memories/` directory exists, when the memory bootstrap hook runs, then `memories/`, `memories/episodic/`, `memories/facts/`, and `memories/preferences/` are created
+- Given no `memories/` directory exists, when the memory bootstrap hook runs, then `memories/`, `memories/episodic/`, `memories/facts/`, `memories/preferences/`, and `memories/transcripts/` are created
 - Given the directory structure already exists, when the hook runs, then nothing changes (idempotent)
+
+### Transcript Archival (R7, R8)
+
+On session close, the transcript archive processor copies the SDK-owned transcript into the workspace so it survives SDK storage changes and is committed to git alongside other workspace memory.
+
+**Acceptance Criteria**:
+- Given a closed session with populated `transcript_path` and `sdk_session_id`, when the archive processor runs, then the transcript is copied to `memories/transcripts/<sdk-session-id>.jsonl`
+- Given the archive processor runs in the `pre_finalize` phase, when the pipeline advances to `finalize`, then the archived file is visible to the git commit processor and included in the auto-commit
+- Given `transcript_path` or `sdk_session_id` is null, when the archive processor runs, then it skips with a debug log and completes normally
+- Given the SDK transcript no longer exists at `transcript_path`, when the archive processor runs, then it logs a warning and completes normally
+- Given a filesystem error occurs during the copy (permissions, disk full), when the archive processor runs, then it logs the error and completes normally — other processors and phases are unaffected
+- Given `memories/transcripts/` was removed after bootstrap, when the archive processor runs, then it recreates the directory on demand before copying
+- Given the processor runs more than once for the same session, when the copy executes, then the destination is overwritten (idempotent)
 
 ### Human Readability (R5)
 

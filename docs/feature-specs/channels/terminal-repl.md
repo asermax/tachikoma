@@ -22,7 +22,7 @@ An interactive terminal REPL that reads user input, sends it through the coordin
 | R2 | Input management: persistent history across sessions, empty input prevention |
 | R3 | Clean exit handling: Ctrl+C, Ctrl+D, exit/quit commands |
 | R4 | Multiline input: Enter submits, Escape+Enter inserts newline |
-| R5 | Event bus integration: subscribe to task events for proactive session task delivery and direct notification display |
+| R5 | Event bus integration: subscribe to `BufferedDelivery` events and route prompts through the coordinator as new message turns; flush pending buffer items on shutdown (see [delivery/priority-buffer](../delivery/priority-buffer.md)) |
 
 ## Behaviors
 
@@ -60,12 +60,12 @@ The REPL accepts multiline input using prompt_toolkit with custom key bindings t
 
 ### Event Bus Integration (R5)
 
-The REPL subscribes to task events via the event bus. Both session tasks and task notifications are buffered in an `asyncio.Queue[SessionTaskReady | Notification]` and processed before each input prompt. Items are dispatched by type — session tasks via `_execute_session_task`, notifications via `_execute_notification`.
+The REPL subscribes to `BufferedDelivery` events dispatched by the priority buffer. Each delivery carries a ready-to-send prompt (single item or shutdown digest) which the REPL routes through the coordinator as a new message turn. The REPL does not subscribe to `Notification` or session-task events directly — the priority buffer handles enqueueing, ordering, and idle gating (see [delivery/priority-buffer](../delivery/priority-buffer.md)).
 
 **Acceptance Criteria**:
-- Given a `SessionTaskReady` event arrives while the REPL is waiting for input, then the task is queued and processed before the next input prompt
-- Given a queued session task is processed, then it is sent through the coordinator and rendered normally
-- Given a `Notification` event is received, then it is enqueued into `_task_queue` and processed by `_execute_notification` (which enqueues the prompt into the coordinator for pipeline-routed delivery)
+- Given a `BufferedDelivery` event arrives while the REPL is waiting for input, then the REPL routes the event's prompt through `coordinator.send_message()` as a new message turn, renders the response normally, and fires the per-item `on_delivered` callbacks on completion
+- Given a `BufferedDelivery` event arrives while the REPL is actively processing a previous exchange, then delivery is deferred to the next idle moment (the buffer waits for the coordinator busy→idle transition before re-emitting)
+- Given the REPL receives a shutdown digest `BufferedDelivery`, then the combined prompt is routed through the coordinator as a final exchange before exit
 
 ### Exit Handling (R3)
 
