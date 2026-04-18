@@ -671,16 +671,17 @@ class TelegramChannel(Channel):
             return False
 
         flush_task: asyncio.Task[None] = asyncio.create_task(self._buffer.flush_on_shutdown())
+        interrupt_task: asyncio.Task[None] | None = None
         force_exit_triggered = False
 
         def _force_exit_during_flush(sig: signal.Signals) -> None:
-            nonlocal force_exit_triggered
+            nonlocal force_exit_triggered, interrupt_task
             force_exit_triggered = True
             _log.warning(
                 "Second {sig} during shutdown flush — abandoning digest", sig=sig.name
             )
             flush_task.cancel()
-            asyncio.ensure_future(self._coordinator.interrupt())
+            interrupt_task = asyncio.create_task(self._coordinator.interrupt())
 
         for sig in (signal.SIGINT, signal.SIGTERM):
             with contextlib.suppress(NotImplementedError, RuntimeError):
@@ -692,6 +693,10 @@ class TelegramChannel(Channel):
             await flush_task
         except asyncio.CancelledError:
             _log.info("Shutdown flush cancelled by second signal")
+
+        if interrupt_task is not None:
+            with contextlib.suppress(Exception):
+                await interrupt_task
 
         return force_exit_triggered
 

@@ -176,15 +176,15 @@ class Repl(Channel):
         loop = asyncio.get_running_loop()
 
         flush_task: asyncio.Task[None] = asyncio.create_task(self._buffer.flush_on_shutdown())
+        interrupt_task: asyncio.Task[None] | None = None
         force_exit_triggered = False
 
         def _force_exit() -> None:
-            nonlocal force_exit_triggered
+            nonlocal force_exit_triggered, interrupt_task
             force_exit_triggered = True
             _log.warning("Second SIGINT during shutdown flush — abandoning digest")
             flush_task.cancel()
-            # Cancel any in-flight coordinator send started by the digest handler
-            asyncio.ensure_future(self._coordinator.interrupt())
+            interrupt_task = asyncio.create_task(self._coordinator.interrupt())
 
         previous_handler: object = signal.getsignal(signal.SIGINT)
         try:
@@ -202,6 +202,10 @@ class Repl(Channel):
 
             if callable(previous_handler):
                 signal.signal(signal.SIGINT, previous_handler)
+
+            if interrupt_task is not None:
+                with contextlib.suppress(Exception):
+                    await interrupt_task
 
         return force_exit_triggered
 
