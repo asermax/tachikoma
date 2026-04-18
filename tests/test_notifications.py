@@ -5,9 +5,12 @@ from unittest.mock import AsyncMock
 
 import pytest
 from bubus import EventBus
+from pydantic import ValidationError
 
+from tachikoma.buffer.priority import Priority
 from tachikoma.notifications import (
     Notification,
+    SendNotificationArgs,
     build_notification_prompt,
     create_notification_server,
     dispatch_notification,
@@ -49,6 +52,19 @@ class TestNotification:
         assert event.prompt == "Hello"
         assert event.source_id is None
         assert event.severity == "info"
+        assert event.priority == Priority.NORMAL
+
+    def test_priority_default_is_normal(self) -> None:
+        """AC (R7): Notification priority defaults to Normal."""
+        event = Notification(prompt="test")
+
+        assert event.priority == Priority.NORMAL
+
+    def test_priority_explicit_urgent(self) -> None:
+        """AC (R7): Notification accepts explicit Urgent priority."""
+        event = Notification(prompt="urgent!", priority=Priority.URGENT)
+
+        assert event.priority == Priority.URGENT
 
     def test_severity_literal(self) -> None:
         """AC: severity must be 'info' or 'error'."""
@@ -132,6 +148,29 @@ class TestDispatchNotification:
         event = dispatched_events[0]
         assert event.severity == "info"
         assert event.source_id is None
+        assert event.priority == Priority.NORMAL
+
+    @pytest.mark.asyncio
+    async def test_dispatch_with_explicit_priority(self) -> None:
+        """AC (R7): dispatch_notification passes priority to Notification."""
+        bus = EventBus()
+        dispatched_events: list = []
+
+        async def capture_dispatch(event):
+            dispatched_events.append(event)
+
+        bus.dispatch = AsyncMock(side_effect=capture_dispatch)
+
+        await dispatch_notification(
+            bus,
+            source="Test",
+            content="Hello",
+            severity="info",
+            priority=Priority.URGENT,
+        )
+
+        event = dispatched_events[0]
+        assert event.priority == Priority.URGENT
 
 
 class TestHandleSendNotification:
@@ -181,6 +220,86 @@ class TestHandleSendNotification:
         assert event.severity == "info"
         assert event.source_id == "inst-100"
         assert "Progress: 50% complete" in event.prompt
+
+    @pytest.mark.asyncio
+    async def test_dispatches_with_default_normal_priority(self) -> None:
+        """AC (R8): Default priority is Normal."""
+        bus = EventBus()
+        dispatched_events: list = []
+
+        async def capture_dispatch(event):
+            dispatched_events.append(event)
+
+        bus.dispatch = AsyncMock(side_effect=capture_dispatch)
+
+        await handle_send_notification(
+            message="Done",
+            bus=bus,
+            source="Test",
+            source_id="id-1",
+        )
+
+        assert dispatched_events[0].priority == Priority.NORMAL
+
+    @pytest.mark.asyncio
+    async def test_dispatches_with_explicit_urgent_priority(self) -> None:
+        """AC (R8): Urgent priority is mapped correctly."""
+        bus = EventBus()
+        dispatched_events: list = []
+
+        async def capture_dispatch(event):
+            dispatched_events.append(event)
+
+        bus.dispatch = AsyncMock(side_effect=capture_dispatch)
+
+        await handle_send_notification(
+            message="Critical!",
+            bus=bus,
+            source="Test",
+            source_id="id-1",
+            priority="urgent",
+        )
+
+        assert dispatched_events[0].priority == Priority.URGENT
+
+    @pytest.mark.asyncio
+    async def test_dispatches_with_low_priority(self) -> None:
+        """AC (R8): Low priority is mapped correctly."""
+        bus = EventBus()
+        dispatched_events: list = []
+
+        async def capture_dispatch(event):
+            dispatched_events.append(event)
+
+        bus.dispatch = AsyncMock(side_effect=capture_dispatch)
+
+        await handle_send_notification(
+            message="FYI",
+            bus=bus,
+            source="Test",
+            source_id="id-1",
+            priority="low",
+        )
+
+        assert dispatched_events[0].priority == Priority.LOW
+
+
+class TestSendNotificationArgs:
+    """Tests for SendNotificationArgs priority field (R8)."""
+
+    def test_default_priority_is_normal(self) -> None:
+        parsed = SendNotificationArgs(message="test")
+
+        assert parsed.priority == "normal"
+
+    def test_accepts_all_priority_levels(self) -> None:
+        for level in ("urgent", "normal", "low"):
+            parsed = SendNotificationArgs(message="test", priority=level)
+            assert parsed.priority == level
+
+    def test_rejects_invalid_priority(self) -> None:
+        with pytest.raises(ValidationError):
+            SendNotificationArgs.model_validate({"message": "test", "priority": "critical"})
 
 
 class TestCreateNotificationServer:

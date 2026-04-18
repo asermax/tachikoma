@@ -18,6 +18,7 @@ from loguru import logger
 
 from tachikoma.adapter import sanitize_text
 from tachikoma.agent_defaults import AgentDefaults
+from tachikoma.buffer.priority import Priority
 from tachikoma.config import TaskSettings
 from tachikoma.git.processor import GitProcessor
 from tachikoma.memory.context_provider import MemoryContextProvider
@@ -76,7 +77,16 @@ You have access to the `send_notification` tool, which delivers a message to the
 - You want to provide a progress update during a long-running task
 - The task outcome is worth the user's attention
 
-You can call `send_notification` multiple times during execution (e.g., for progress updates). Failure notifications are sent automatically — you do not need to notify on failure."""  # noqa: E501
+You can call `send_notification` multiple times during execution (e.g., for progress updates). Failure notifications are sent automatically — you do not need to notify on failure.
+
+### Priority Levels
+
+The `send_notification` tool accepts a `priority` parameter with three levels:
+- **urgent**: Time-sensitive results the user must see promptly (e.g., critical failures, time-bound alerts)
+- **normal**: Standard completion results — the default. Use for most task outcomes and progress updates
+- **low**: Informational updates that can wait for a natural break (e.g., routine status checks, non-urgent summaries)
+
+If unsure, use the default (normal)."""  # noqa: E501
 
 # Evaluator prompt for assessing task completion
 EVALUATOR_PROMPT_TEMPLATE = """You are a task completion evaluator for a background task agent. Your ONLY job is to classify the agent's current workflow state using the ordered rules below.
@@ -365,6 +375,7 @@ class BackgroundTaskExecutor:
                             f"Task failed: {rationale}",
                             "error",
                             instance.id,
+                            priority=Priority.URGENT,
                         )
                         return
 
@@ -403,6 +414,7 @@ class BackgroundTaskExecutor:
                     f"Task failed: reached max iterations ({max_iterations})",
                     "error",
                     instance.id,
+                    priority=Priority.URGENT,
                 )
 
         except asyncio.CancelledError:
@@ -432,6 +444,7 @@ class BackgroundTaskExecutor:
                 f"Task failed with error: {exc}",
                 "error",
                 instance.id,
+                priority=Priority.URGENT,
             )
 
     async def _run_preprocessing(self, prompt: str) -> _PreprocessingResult:
