@@ -417,7 +417,6 @@ def _generate_default_config(config_path: Path = CONFIG_PATH) -> None:
     doc.add(tomlkit.comment("[telegram]"))
 
     for name, field_info in TelegramSettings.model_fields.items():
-        # Nested sub-table handled separately below
         if name == "send_file":
             continue
 
@@ -435,12 +434,9 @@ def _generate_default_config(config_path: Path = CONFIG_PATH) -> None:
 
     doc.add(tomlkit.nl())
 
-    # [telegram.send_file] sub-table
     doc.add(tomlkit.comment("[telegram.send_file]"))
-    doc.add(tomlkit.comment(
-        "Absolute roots outside workspace and system temp that send_file "
-        "will also accept; entries may not exist at load time"
-    ))
+    extra_roots_desc = SendFileSettings.model_fields["extra_roots"].description or ""
+    doc.add(tomlkit.comment(extra_roots_desc))
     doc.add(tomlkit.comment('extra_roots = ["~/exports"]'))
 
     doc.add(tomlkit.nl())
