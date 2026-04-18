@@ -568,7 +568,10 @@ class TelegramChannel(Channel):
 
     def get_mcp_servers(self) -> dict[str, McpSdkServerConfig]:
         server = create_send_file_server(
-            self._bot, self._settings.authorized_chat_id, self._workspace_path
+            self._bot,
+            self._settings.authorized_chat_id,
+            self._workspace_path,
+            self._settings.send_file.extra_roots,
         )
         return {"send-file": server}
 

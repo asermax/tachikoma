@@ -651,13 +651,6 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 **Complexity**: Medium
 **Description**: Pre-processing and post-processing pipelines spawn multiple sub-agents concurrently via `asyncio.gather()`, creating burst API load that triggers rate limits even with retry logic in place. This delta adds configurable concurrency control between sub-agent spawns within these pipelines — for example, using a semaphore or staggered dispatch — to reduce burst API usage. This complements the reactive retry mechanism by preventing unnecessary rate limit hits and reducing total API cost. Specific sequencing strategies (e.g., whether memory search waits for skill classification) should be evaluated during speccing.
 
-### DLT-140: Allow send_file to accept paths outside the workspace
-**Status**: ✗ Defined
-**Depends on**: None
-**Priority**: 1 (Critical)
-**Complexity**: Easy
-**Description**: The `send_file` MCP tool rejects files outside the workspace directory, but generated exports (PDFs, rendered images) are written to `/tmp/` per convention. Users must copy files to the workspace first as a workaround. Relax the path validation to accept absolute paths to temporary and standard system directories while maintaining workspace-relative resolution for unqualified paths.
-
 ### DLT-141: Pause background tasks on user activity
 **Status**: ✗ Defined
 **Depends on**: DLT-120

@@ -14,6 +14,7 @@ from tachikoma.config import (
     SYSTEM_DISALLOWED_TOOLS,
     BufferSettings,
     LoggingSettings,
+    SendFileSettings,
     Settings,
     SettingsManager,
     TaskSettings,
@@ -912,6 +913,106 @@ class TestTaskSettingsDefaultConfig:
         assert "idle_window = 300" in content
         assert 'idle_window = "300"' not in content
         assert "max_iterations = 10" in content
+
+
+class TestSendFileSettings:
+    """Tests for SendFileSettings model (DLT-140)."""
+
+    def test_default_extra_roots_is_empty(self) -> None:
+        settings = SendFileSettings()
+
+        assert settings.extra_roots == []
+
+    def test_tilde_expanded(self) -> None:
+        settings = SendFileSettings(extra_roots=["~/exports"])
+
+        assert settings.extra_roots == [Path.home() / "exports"]
+
+    def test_tilde_expanded_from_path(self) -> None:
+        settings = SendFileSettings(extra_roots=[Path("~/exports")])
+
+        assert settings.extra_roots == [Path.home() / "exports"]
+
+    def test_absolute_path_accepted(self) -> None:
+        settings = SendFileSettings(extra_roots=["/srv/artifacts"])
+
+        assert settings.extra_roots == [Path("/srv/artifacts")]
+
+    def test_relative_path_rejected(self) -> None:
+        with pytest.raises(ValidationError, match="extra_roots entries must be absolute"):
+            SendFileSettings(extra_roots=["exports"])
+
+    def test_nonexistent_path_accepted(self) -> None:
+        """Extra roots need not exist at load time."""
+        settings = SendFileSettings(extra_roots=["/srv/doesnotexist"])
+
+        assert settings.extra_roots == [Path("/srv/doesnotexist")]
+
+    def test_explicit_empty_list_accepted(self) -> None:
+        settings = SendFileSettings(extra_roots=[])
+
+        assert settings.extra_roots == []
+
+    def test_missing_section_defaults_in_telegram(self) -> None:
+        """Missing [telegram.send_file] falls back to empty defaults."""
+        settings = TelegramSettings(bot_token="t", authorized_chat_id=1)
+
+        assert settings.send_file.extra_roots == []
+
+    def test_nested_in_telegram_from_dict(self) -> None:
+        settings = TelegramSettings(
+            bot_token="t",
+            authorized_chat_id=1,
+            send_file={"extra_roots": ["/tmp/x"]},
+        )
+
+        assert settings.send_file.extra_roots == [Path("/tmp/x")]
+
+    def test_loads_from_toml(self, tmp_path: Path) -> None:
+        config_path = tmp_path / "config.toml"
+        config_path.write_text(
+            '[telegram]\nbot_token = "t"\nauthorized_chat_id = 1\n'
+            '\n[telegram.send_file]\nextra_roots = ["/tmp/a", "~/b"]\n'
+        )
+
+        settings = load_settings(config_path)
+
+        assert settings.telegram is not None
+        assert settings.telegram.send_file.extra_roots == [
+            Path("/tmp/a"),
+            Path.home() / "b",
+        ]
+
+    def test_relative_rejected_via_load_settings(self, tmp_path: Path, capsys) -> None:
+        config_path = tmp_path / "config.toml"
+        config_path.write_text(
+            '[telegram]\nbot_token = "t"\nauthorized_chat_id = 1\n'
+            '\n[telegram.send_file]\nextra_roots = ["exports"]\n'
+        )
+
+        with pytest.raises(SystemExit):
+            load_settings(config_path)
+
+        err = capsys.readouterr().err
+        assert "exports" in err
+
+    def test_generated_default_config_contains_send_file_section(self, tmp_path: Path) -> None:
+        config_path = tmp_path / "config.toml"
+        _generate_default_config(config_path)
+
+        content = config_path.read_text()
+
+        assert "[telegram.send_file]" in content
+        assert "extra_roots" in content
+
+    def test_generated_default_config_loads_to_defaults(self, tmp_path: Path) -> None:
+        config_path = tmp_path / "config.toml"
+        _generate_default_config(config_path)
+
+        settings = load_settings(config_path)
+
+        assert settings.telegram is None
+        assert settings.channel == "repl"
 
 
 class TestBufferSettings:

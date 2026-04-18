@@ -30,6 +30,7 @@ A Telegram bot that receives text messages and media messages from a single auth
 | R10 | Message validation: silently ignore empty messages and unsupported message types (contacts, locations, polls, venues, dice) |
 | R11 | Error display: surface coordinator errors (recoverable and non-recoverable) as messages in the Telegram chat |
 | R12 | Event bus integration: subscribe to `BufferedDelivery` events and route prompts through the coordinator as new message turns; flush pending buffer items on graceful shutdown (see [delivery/priority-buffer](../delivery/priority-buffer.md)) |
+| R13 | File delivery via `send_file` tool: the agent can send a file to the user's Telegram chat. Accepted `file_path` forms are workspace-relative, absolute paths inside the workspace, absolute paths under the system temporary directory, and absolute paths under operator-configured extra roots. Paths outside all allowed roots are rejected with an error that names the allowed roots. Only existing regular files can be sent. |
 
 ## Behaviors
 
@@ -183,6 +184,18 @@ The Telegram channel subscribes to `BufferedDelivery` events dispatched by the p
 - Given a `BufferedDelivery` event is received while the channel is idle, then the prompt is routed through the coordinator via the shared `_process_through_coordinator()` method and the response is rendered normally; per-item `on_delivered` callbacks fire on completion
 - Given a `BufferedDelivery` event is received while a response is active, then delivery is deferred to the next idle moment (the buffer waits for the coordinator busy→idle transition before re-emitting)
 - Given a shutdown digest `BufferedDelivery` event arrives, then the combined prompt is routed through the coordinator as a final exchange before the bot stops polling
+
+### File Delivery via send_file (R13)
+
+The agent delivers a file to the user via the `send_file` tool. The tool validates `file_path` against a set of allowed roots: the workspace, the system temporary directory, and any roots declared in `[telegram.send_file] extra_roots`. Paths inside any allowed root are accepted; paths outside all of them are rejected. Symlinks are resolved before the membership check, so the canonical target governs the decision.
+
+**Acceptance Criteria**:
+- Given a workspace-relative `file_path` (e.g. `exports/report.pdf`), when the tool is called, then it resolves against the workspace root and the file is sent if it exists there
+- Given an absolute `file_path` under the workspace, the system temporary directory, or a configured extra root, when the file exists and is a regular file, then it is sent
+- Given a `file_path` whose resolved target is outside all allowed roots, when the tool is called, then it returns `is_error: True` with an error message that names every allowed root so the agent can self-correct
+- Given a `file_path` that does not exist or is not a regular file (e.g. a directory), when the tool is called, then it returns `is_error: True`
+- Given a symlink that crosses an allowed-root boundary, when the tool resolves it, then the resolved target governs the membership check (symlinks inside pointing outside are rejected; symlinks outside pointing inside are accepted)
+- Given the operator declares extra roots under `[telegram.send_file] extra_roots`, when the config is loaded, then `~` is expanded and each entry must be absolute; entries need not exist at load time
 
 ## User Flow
 
