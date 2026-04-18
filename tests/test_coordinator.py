@@ -3042,12 +3042,12 @@ class TestIdlePostProcessingConfig:
 
 
 class TestIsBusy:
-    """Tests for DLT-036: _is_busy property detection."""
+    """Tests for DLT-036: is_busy property detection."""
 
     async def test_not_busy_when_idle(self, mock_sdk) -> None:
         """AC: All conditions false means not busy."""
         async with Coordinator() as coord:
-            assert coord._is_busy is False
+            assert coord.is_busy is False
 
     async def test_busy_when_client_active(self, mock_sdk) -> None:
         """AC: _client is not None means busy."""
@@ -3055,7 +3055,7 @@ class TestIsBusy:
         async with Coordinator() as coord:
             coord._client = MagicMock()  # Simulate active client
 
-            assert coord._is_busy is True
+            assert coord.is_busy is True
 
     async def test_busy_when_messages_pending(self) -> None:
         """AC: has_pending_messages (buffer not empty) means busy."""
@@ -3063,7 +3063,7 @@ class TestIsBusy:
             coord.enqueue("pending message")
 
             assert coord.has_pending_messages is True
-            assert coord._is_busy is True
+            assert coord.is_busy is True
 
     async def test_busy_when_msg_task_running(self, mock_sdk) -> None:
         """AC: _pending_msg_task not done means busy."""
@@ -3076,7 +3076,7 @@ class TestIsBusy:
         coord._pending_msg_task = asyncio.create_task(_slow_task())
         await asyncio.sleep(0.01)
 
-        assert coord._is_busy is True
+        assert coord.is_busy is True
 
         # Cleanup
         coord._pending_msg_task.cancel()
@@ -3258,7 +3258,7 @@ class TestIdlePostProcessingLoop:
         # Make coordinator busy
         coord.enqueue("pending")
 
-        assert coord._is_busy is True
+        assert coord.is_busy is True
 
     async def test_snooze_duration_capped(self) -> None:
         """AC: Snooze duration is min(300, timeout)."""
@@ -3884,7 +3884,7 @@ class TestCoordinatorIdleEmission:
         coord._maybe_emit_idle()
         assert len(dispatched) == 0
 
-        # Simulate becoming busy: set _was_busy=True, _is_busy is False -> emission
+        # Simulate becoming busy: set _was_busy=True, is_busy is False -> emission
         coord._was_busy = True
         coord._maybe_emit_idle()
         assert len(dispatched) == 1

@@ -17,7 +17,7 @@ class FakeCoordinator:
         self._last_msg_time = datetime.now(UTC) - timedelta(seconds=10)
 
     @property
-    def _is_busy(self) -> bool:
+    def is_busy(self) -> bool:
         return False
 
     @property

@@ -915,7 +915,7 @@ providing context for what the user has been doing in the meantime.
         return not self._message_buffer.empty()
 
     @property
-    def _is_busy(self) -> bool:
+    def is_busy(self) -> bool:
         """Whether the coordinator is actively processing.
 
         Used by idle close to avoid interrupting:
@@ -935,7 +935,7 @@ providing context for what the user has been doing in the meantime.
         Sync so it can be attached as a Task.add_done_callback target.
         bus.dispatch() is synchronous (enqueues event for async processing).
         """
-        is_busy_now = self._is_busy
+        is_busy_now = self.is_busy
         if self._was_busy and not is_busy_now and self._bus is not None:
             self._bus.dispatch(CoordinatorIdle(timestamp=datetime.now(UTC)))
         self._was_busy = is_busy_now
@@ -1015,7 +1015,7 @@ providing context for what the user has been doing in the meantime.
                 ):
                     continue
 
-                while self._is_busy:
+                while self.is_busy:
                     snooze_duration = min(300, self._idle_timeout)
                     _log.debug(
                         "Idle post-processing snoozing: duration={dur}",
@@ -1037,7 +1037,7 @@ providing context for what the user has been doing in the meantime.
                 # Proceed with post-processing if conditions still met
                 if session is not None and self._last_message_time is not None:
                     elapsed = (datetime.now(UTC) - self._last_message_time).total_seconds()
-                    if elapsed >= self._idle_timeout and not self._is_busy:
+                    if elapsed >= self._idle_timeout and not self.is_busy:
                         await self._idle_post_process()
 
             except asyncio.CancelledError:
