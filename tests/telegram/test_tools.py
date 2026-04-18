@@ -143,16 +143,20 @@ class TestValidateFilePath:
             temp_file.unlink(missing_ok=True)
 
     def test_configured_extra_root_accepted(self, tmp_path: Path) -> None:
-        """Absolute path under a configured extra root is accepted."""
+        """Absolute path under a configured extra root (not the workspace) is accepted."""
+        workspace = tmp_path / "ws"
+        workspace.mkdir()
+
         extra = tmp_path / "extra"
         extra.mkdir()
         test_file = extra / "chart.png"
         test_file.write_bytes(b"\x89PNG")
 
+        # Workspace does not cover the file; only the extra root does
         result = validate_file_path(
             str(test_file),
-            tmp_path / "ws",
-            (tmp_path.resolve(),),
+            workspace,
+            (workspace.resolve(), extra.resolve()),
         )
 
         assert result == test_file.resolve()
