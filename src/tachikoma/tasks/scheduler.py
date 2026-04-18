@@ -6,19 +6,18 @@ This module contains:
 """
 
 import asyncio
-from collections.abc import Callable
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 from zoneinfo import ZoneInfo
 
-from bubus import EventBus
 from cronsim import CronSim
 from cronsim.cronsim import CronSimError
 from loguru import logger
 
+from tachikoma.buffer.buffer import Buffer
+from tachikoma.buffer.items import BufferedItem
 from tachikoma.config import TaskSettings
-from tachikoma.tasks.events import SessionTaskReady
 from tachikoma.tasks.model import TaskDefinition, TaskInstance
 from tachikoma.tasks.repository import TaskRepository
 
@@ -225,24 +224,20 @@ async def instance_generator(
 async def session_task_scheduler(
     repository: TaskRepository,
     settings: TaskSettings,
-    bus: EventBus,
-    get_last_message_time: Callable[[], datetime | None],
+    buffer: Buffer,
 ) -> None:
-    """Async loop that dispatches ready session tasks onto the event bus.
+    """Async loop that enqueues ready session tasks into the priority buffer.
 
     Runs every check_interval seconds. For pending session instances:
-    - Idle gate: skip if user is active (last_message_time within idle_window)
-    - Mark running, dispatch SessionTaskReady with on_complete callback
+    - Mark running, enqueue into buffer as BufferedItem with on_delivered callback
 
     Args:
         repository: TaskRepository for persistence
-        settings: TaskSettings with idle_window and check_interval
-        bus: EventBus for dispatching events
-        get_last_message_time: Callable returning last message time from coordinator
+        settings: TaskSettings with check_interval
+        buffer: Priority buffer for deferred delivery
     """
     _log.info(
-        "Session task scheduler started (idle_window={idle}s, check_interval={check}s)",
-        idle=settings.idle_window,
+        "Session task scheduler started (check_interval={check}s)",
         check=settings.check_interval,
     )
 
@@ -255,22 +250,9 @@ async def session_task_scheduler(
                 _log.debug("No pending session instances")
             else:
                 now_utc = datetime.now(UTC)
-                last_message_time = get_last_message_time()
 
                 for instance in pending_instances:
                     try:
-                        # Check idle gate
-                        if last_message_time is not None:
-                            elapsed = (now_utc - last_message_time).total_seconds()
-                            if elapsed < settings.idle_window:
-                                _log.debug(
-                                    "User is active (last message {elapsed}s ago), "
-                                    "skipping instance {inst_id}",
-                                    elapsed=int(elapsed),
-                                    inst_id=instance.id,
-                                )
-                                continue
-
                         await repository.update_instance(
                             instance.id,
                             status="running",
@@ -288,15 +270,15 @@ async def session_task_scheduler(
                             )
 
                         updated_instance = replace(instance, status="running", started_at=now_utc)
-                        event = SessionTaskReady(
-                            instance=updated_instance,
-                            on_complete=on_complete,
+                        item = BufferedItem.from_session_instance(
+                            updated_instance,
+                            on_delivered=on_complete,
                         )
-                        await bus.dispatch(event)
+                        await buffer.enqueue(item)
 
                         _log.info(
-                            "Dispatched SessionTaskReady for instance {inst_id}",
-                            inst_id=instance.id,
+                            "Enqueued session task into buffer: inst_id={id}",
+                            id=instance.id,
                         )
 
                     except Exception as exc:

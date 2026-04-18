@@ -98,7 +98,10 @@ class TestMessagePostProcessingPipeline:
         call_times: list[tuple[float, str]] = []
 
         async def track_process(
-            session: Session, user_message: str, agent_response: str, **kwargs: object,
+            session: Session,
+            user_message: str,
+            agent_response: str,
+            **kwargs: object,
         ) -> None:
             call_times.append((asyncio.get_event_loop().time(), "start"))
             await asyncio.sleep(0.05)
@@ -140,14 +143,20 @@ class TestMessagePostProcessingPipeline:
         call_order: list[str] = []
 
         async def slow_process(
-            session: Session, user_message: str, agent_response: str, **kwargs: object,
+            session: Session,
+            user_message: str,
+            agent_response: str,
+            **kwargs: object,
         ) -> None:
             call_order.append("slow_start")
             await asyncio.sleep(0.05)
             call_order.append("slow_end")
 
         async def fast_process(
-            session: Session, user_message: str, agent_response: str, **kwargs: object,
+            session: Session,
+            user_message: str,
+            agent_response: str,
+            **kwargs: object,
         ) -> None:
             call_order.append("fast_start")
             await asyncio.sleep(0.01)

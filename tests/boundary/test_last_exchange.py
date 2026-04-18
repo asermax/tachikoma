@@ -100,7 +100,8 @@ class TestLastExchangeProcessor:
         await processor.process(session, "Hello", "Full response here")
 
         mock_registry.update_last_exchange.assert_awaited_once_with(
-            session.id, "Full response here",
+            session.id,
+            "Full response here",
         )
 
     async def test_falls_back_to_full_response_when_final_text_is_empty(self) -> None:
@@ -119,5 +120,6 @@ class TestLastExchangeProcessor:
         )
 
         mock_registry.update_last_exchange.assert_awaited_once_with(
-            session.id, "Let me check...Done!",
+            session.id,
+            "Let me check...Done!",
         )

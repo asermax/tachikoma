@@ -13,6 +13,8 @@ from claude_agent_sdk import McpSdkServerConfig, create_sdk_mcp_server, tool
 from loguru import logger
 from pydantic import BaseModel
 
+from tachikoma.buffer.priority import Priority
+
 _log = logger.bind(component="notifications")
 
 
@@ -33,6 +35,8 @@ class Notification(BaseEvent[None]):
     source_id: str | None = None
 
     severity: Literal["info", "error"] = "info"
+
+    priority: Priority = Priority.NORMAL
 
 
 # ---------------------------------------------------------------------------
@@ -74,6 +78,7 @@ async def dispatch_notification(
     content: str,
     severity: Literal["info", "error"],
     source_id: str | None = None,
+    priority: Priority = Priority.NORMAL,
 ) -> None:
     """Build a notification prompt and dispatch it as a Notification event.
 
@@ -83,19 +88,22 @@ async def dispatch_notification(
         content: The notification message body.
         severity: Severity level — "info" for informational, "error" for failures.
         source_id: Optional ID of the originating entity (e.g. task instance ID).
+        priority: Delivery priority — defaults to Normal.
     """
     prompt = build_notification_prompt(source, content)
     event = Notification(
         prompt=prompt,
         source_id=source_id,
         severity=severity,
+        priority=priority,
     )
 
     await bus.dispatch(event)
     _log.info(
-        "Dispatched Notification: source_id={source_id}, severity={severity}",
+        "Dispatched Notification: source_id={source_id}, severity={severity}, priority={priority}",
         source_id=source_id,
         severity=severity,
+        priority=priority.name,
     )
 
 
@@ -106,6 +114,14 @@ async def dispatch_notification(
 
 class SendNotificationArgs(BaseModel):
     message: str
+    priority: Literal["urgent", "normal", "low"] = "normal"
+
+
+_PRIORITY_MAP: dict[str, Priority] = {
+    "urgent": Priority.URGENT,
+    "normal": Priority.NORMAL,
+    "low": Priority.LOW,
+}
 
 
 async def handle_send_notification(
@@ -113,6 +129,7 @@ async def handle_send_notification(
     bus: EventBus,
     source: str,
     source_id: str,
+    priority: str = "normal",
 ) -> dict:
     """Handle the send_notification tool invocation.
 
@@ -124,6 +141,7 @@ async def handle_send_notification(
         bus: The EventBus to dispatch on.
         source: The notification source identifier.
         source_id: The originating entity ID.
+        priority: Delivery priority — "urgent", "normal", or "low".
 
     Returns:
         MCP tool response dict.
@@ -134,7 +152,15 @@ async def handle_send_notification(
             "content": [{"type": "text", "text": "Message cannot be empty."}],
         }
 
-    await dispatch_notification(bus, source, message, "info", source_id)
+    resolved_priority = _PRIORITY_MAP.get(priority, Priority.NORMAL)
+    await dispatch_notification(
+        bus,
+        source,
+        message,
+        "info",
+        source_id,
+        priority=resolved_priority,
+    )
 
     return {
         "content": [{"type": "text", "text": "Notification sent successfully."}],
@@ -163,7 +189,10 @@ def create_notification_server(
     @tool(
         "send_notification",
         "Send a notification to the user during background task execution. "
-        "Use this to deliver progress updates or results to the user.",
+        "Use this to deliver progress updates or results to the user. "
+        "The priority parameter controls delivery urgency: "
+        "'urgent' for time-sensitive results, 'normal' for standard results (default), "
+        "'low' for informational updates that can wait.",
         SendNotificationArgs.model_json_schema(),
     )
     async def send_notification(args: dict) -> dict:
@@ -173,6 +202,7 @@ def create_notification_server(
             bus,
             source,
             source_id,
+            parsed.priority,
         )
 
     return create_sdk_mcp_server(

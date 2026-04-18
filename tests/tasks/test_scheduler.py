@@ -10,11 +10,10 @@ from unittest.mock import AsyncMock, patch
 from zoneinfo import ZoneInfo
 
 import pytest
-from bubus import EventBus
 from cronsim import CronSim
 
+from tachikoma.buffer.items import BufferedItem
 from tachikoma.config import TaskSettings
-from tachikoma.tasks.events import SessionTaskReady
 from tachikoma.tasks.model import ScheduleConfig
 from tachikoma.tasks.repository import TaskRepository
 from tachikoma.tasks.scheduler import instance_generator, session_task_scheduler
@@ -545,8 +544,8 @@ class TestSessionTaskScheduler:
     """Tests for the session_task_scheduler async function."""
 
     @pytest.mark.asyncio
-    async def test_dispatches_when_idle(self, repo: TaskRepository) -> None:
-        """AC: Dispatches SessionTaskReady when idle window exceeded."""
+    async def test_enqueues_pending_instance(self, repo: TaskRepository) -> None:
+        """AC: Enqueues BufferedItem when pending instance exists."""
         instance = _make_instance(
             "inst-1",
             task_type="session",
@@ -555,82 +554,41 @@ class TestSessionTaskScheduler:
         await repo.create_instance(instance)
 
         settings = TaskSettings(idle_window=0, check_interval=300)
-        bus = EventBus()
 
-        dispatched_events = []
+        enqueued_items: list[BufferedItem] = []
 
-        async def capture_dispatch(event):
-            dispatched_events.append(event)
+        mock_buffer = AsyncMock()
+        mock_buffer.enqueue = AsyncMock(side_effect=lambda item: enqueued_items.append(item))
 
-        bus.dispatch = AsyncMock(side_effect=capture_dispatch)
-
-        last_msg_time = datetime.now(UTC) - timedelta(minutes=10)
-
-        def get_last_msg_time():
-            return last_msg_time
-
-        task = asyncio.create_task(session_task_scheduler(repo, settings, bus, get_last_msg_time))
+        task = asyncio.create_task(session_task_scheduler(repo, settings, mock_buffer))
         await asyncio.sleep(0.1)
         task.cancel()
         with contextlib.suppress(asyncio.CancelledError):
             await task
 
-        assert len(dispatched_events) == 1
-        assert isinstance(dispatched_events[0], SessionTaskReady)
-        assert dispatched_events[0].instance.id == "inst-1"
-
-    @pytest.mark.asyncio
-    async def test_skips_when_user_active(self, repo: TaskRepository) -> None:
-        """AC: Skips when user is active (last_message_time too recent)."""
-        instance = _make_instance(
-            "inst-1",
-            task_type="session",
-            status="pending",
-        )
-        await repo.create_instance(instance)
-
-        settings = TaskSettings(idle_window=300, check_interval=300)
-        bus = EventBus()
-        bus.dispatch = AsyncMock()
-
-        last_msg_time = datetime.now(UTC) - timedelta(seconds=30)
-
-        def get_last_msg_time():
-            return last_msg_time
-
-        task = asyncio.create_task(session_task_scheduler(repo, settings, bus, get_last_msg_time))
-        await asyncio.sleep(0.1)
-        task.cancel()
-        with contextlib.suppress(asyncio.CancelledError):
-            await task
-
-        bus.dispatch.assert_not_called()
-
-        inst = await repo.get_instance("inst-1")
-        assert inst is not None
-        assert inst.status == "pending"
+        assert len(enqueued_items) == 1
+        assert enqueued_items[0].kind == "session_task"
+        assert enqueued_items[0].priority == 2  # NORMAL
+        assert enqueued_items[0].metadata["instance"].id == "inst-1"
 
     @pytest.mark.asyncio
     async def test_skips_when_no_pending_instances(self, repo: TaskRepository) -> None:
         """AC: Skips when no pending session instances."""
         settings = TaskSettings(idle_window=0, check_interval=300)
-        bus = EventBus()
-        bus.dispatch = AsyncMock()
 
-        def get_last_msg_time():
-            return None
+        mock_buffer = AsyncMock()
 
-        task = asyncio.create_task(session_task_scheduler(repo, settings, bus, get_last_msg_time))
+        task = asyncio.create_task(session_task_scheduler(repo, settings, mock_buffer))
         await asyncio.sleep(0.1)
         task.cancel()
         with contextlib.suppress(asyncio.CancelledError):
             await task
 
-        bus.dispatch.assert_not_called()
+        mock_buffer.enqueue.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_on_complete_marks_completed(self, repo: TaskRepository) -> None:
-        """AC: on_complete callback marks instance completed in repository."""
+    async def test_on_delivered_marks_completed(self, repo: TaskRepository) -> None:
+        """AC: on_delivered callback marks instance completed in repository."""
         instance = _make_instance(
             "inst-1",
             task_type="session",
@@ -639,27 +597,22 @@ class TestSessionTaskScheduler:
         await repo.create_instance(instance)
 
         settings = TaskSettings(idle_window=0, check_interval=300)
-        bus = EventBus()
 
-        dispatched_events = []
+        enqueued_items: list[BufferedItem] = []
 
-        async def capture_dispatch(event):
-            dispatched_events.append(event)
+        mock_buffer = AsyncMock()
+        mock_buffer.enqueue = AsyncMock(side_effect=lambda item: enqueued_items.append(item))
 
-        bus.dispatch = AsyncMock(side_effect=capture_dispatch)
-
-        def get_last_msg_time():
-            return datetime.now(UTC) - timedelta(hours=1)
-
-        task = asyncio.create_task(session_task_scheduler(repo, settings, bus, get_last_msg_time))
+        task = asyncio.create_task(session_task_scheduler(repo, settings, mock_buffer))
         await asyncio.sleep(0.1)
         task.cancel()
         with contextlib.suppress(asyncio.CancelledError):
             await task
 
-        assert len(dispatched_events) == 1
-        event = dispatched_events[0]
-        await event.on_complete()
+        assert len(enqueued_items) == 1
+        item = enqueued_items[0]
+        assert item.on_delivered is not None
+        await item.on_delivered()
 
         inst = await repo.get_instance("inst-1")
         assert inst is not None

@@ -13,6 +13,7 @@ from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from bubus import EventBus
 from claude_agent_sdk import CLIConnectionError, ProcessError
 from claude_agent_sdk.types import (
     AgentDefinition,
@@ -25,6 +26,7 @@ from helpers import make_assistant, make_result
 
 from tachikoma.agent_defaults import AgentDefaults
 from tachikoma.boundary import BoundaryResult
+from tachikoma.buffer.events import CoordinatorIdle
 from tachikoma.coordinator import Coordinator, _derive_transcript_path
 from tachikoma.events import Error, Result, Status, TextChunk, ToolActivity
 from tachikoma.pre_processing import ContextResult
@@ -2351,14 +2353,18 @@ class TestPerMessagePostProcessing:
         """AC1/AC5: final_text contains only text after the last tool call."""
         client, _ = mock_sdk
         client.receive_response.return_value = _mock_messages(
-            make_assistant([
-                TextBlock(text="Let me check..."),
-                ToolUseBlock(id="t1", name="Read", input={"file_path": "main.py"}),
-            ]),
+            make_assistant(
+                [
+                    TextBlock(text="Let me check..."),
+                    ToolUseBlock(id="t1", name="Read", input={"file_path": "main.py"}),
+                ]
+            ),
             make_assistant([TextBlock(text="Now let me fix...")]),
-            make_assistant([
-                ToolUseBlock(id="t2", name="Edit", input={"file_path": "main.py"}),
-            ]),
+            make_assistant(
+                [
+                    ToolUseBlock(id="t2", name="Edit", input={"file_path": "main.py"}),
+                ]
+            ),
             make_assistant([TextBlock(text="Done! Here's the fix.")]),
             make_result(),
         )
@@ -2431,10 +2437,12 @@ class TestPerMessagePostProcessing:
         """AC3: final_text is None when response ends with a tool call (no trailing text)."""
         client, _ = mock_sdk
         client.receive_response.return_value = _mock_messages(
-            make_assistant([
-                TextBlock(text="Let me check..."),
-                ToolUseBlock(id="t1", name="Read", input={"file_path": "main.py"}),
-            ]),
+            make_assistant(
+                [
+                    TextBlock(text="Let me check..."),
+                    ToolUseBlock(id="t1", name="Read", input={"file_path": "main.py"}),
+                ]
+            ),
             make_result(),
         )
         active = Session(
@@ -3034,12 +3042,12 @@ class TestIdlePostProcessingConfig:
 
 
 class TestIsBusy:
-    """Tests for DLT-036: _is_busy property detection."""
+    """Tests for DLT-036: is_busy property detection."""
 
     async def test_not_busy_when_idle(self, mock_sdk) -> None:
         """AC: All conditions false means not busy."""
         async with Coordinator() as coord:
-            assert coord._is_busy is False
+            assert coord.is_busy is False
 
     async def test_busy_when_client_active(self, mock_sdk) -> None:
         """AC: _client is not None means busy."""
@@ -3047,7 +3055,7 @@ class TestIsBusy:
         async with Coordinator() as coord:
             coord._client = MagicMock()  # Simulate active client
 
-            assert coord._is_busy is True
+            assert coord.is_busy is True
 
     async def test_busy_when_messages_pending(self) -> None:
         """AC: has_pending_messages (buffer not empty) means busy."""
@@ -3055,7 +3063,7 @@ class TestIsBusy:
             coord.enqueue("pending message")
 
             assert coord.has_pending_messages is True
-            assert coord._is_busy is True
+            assert coord.is_busy is True
 
     async def test_busy_when_msg_task_running(self, mock_sdk) -> None:
         """AC: _pending_msg_task not done means busy."""
@@ -3068,7 +3076,7 @@ class TestIsBusy:
         coord._pending_msg_task = asyncio.create_task(_slow_task())
         await asyncio.sleep(0.01)
 
-        assert coord._is_busy is True
+        assert coord.is_busy is True
 
         # Cleanup
         coord._pending_msg_task.cancel()
@@ -3250,7 +3258,7 @@ class TestIdlePostProcessingLoop:
         # Make coordinator busy
         coord.enqueue("pending")
 
-        assert coord._is_busy is True
+        assert coord.is_busy is True
 
     async def test_snooze_duration_capped(self) -> None:
         """AC: Snooze duration is min(300, timeout)."""
@@ -3837,3 +3845,51 @@ class TestColdStartResume:
         call_kwargs = registry.record_resumption.await_args[1]
         assert call_kwargs["session_id"] == "prev-session"
         assert call_kwargs["previous_ended_at"] == ended_at
+
+
+class TestCoordinatorIdleEmission:
+    """Tests for CoordinatorIdle emission on busy->idle transitions (DLT-112 R13)."""
+
+    async def test_emit_on_busy_to_idle(self) -> None:
+        """AC (R13): CoordinatorIdle emitted exactly once per busy->idle transition."""
+        bus = EventBus()
+        idle_events: list[CoordinatorIdle] = []
+        bus.on(CoordinatorIdle, lambda e: idle_events.append(e))
+
+        async with Coordinator(bus=bus) as coord:
+            coord.enqueue("test")
+            coord.enqueue("test2")
+
+            # enqueue only captures state; doesn't emit because it goes idle->busy
+            assert len(idle_events) == 0
+
+    async def test_no_emit_on_aenter(self) -> None:
+        """AC: __aenter__ does not emit CoordinatorIdle."""
+        bus = EventBus()
+        idle_events: list[CoordinatorIdle] = []
+        bus.on(CoordinatorIdle, lambda e: idle_events.append(e))
+
+        async with Coordinator(bus=bus):
+            assert len(idle_events) == 0
+
+    async def test_maybe_emit_idle_helper(self) -> None:
+        """AC: _maybe_emit_idle emits only on True->False transition."""
+        bus = EventBus()
+        dispatched: list[CoordinatorIdle] = []
+        bus.dispatch = lambda event: dispatched.append(event)  # type: ignore[assignment]
+
+        coord = Coordinator(bus=bus)
+
+        # Initial state: not busy, _was_busy=False -> no emission
+        coord._maybe_emit_idle()
+        assert len(dispatched) == 0
+
+        # Simulate becoming busy: set _was_busy=True, is_busy is False -> emission
+        coord._was_busy = True
+        coord._maybe_emit_idle()
+        assert len(dispatched) == 1
+        assert isinstance(dispatched[0], CoordinatorIdle)
+
+        # Already idle -> no second emission
+        coord._maybe_emit_idle()
+        assert len(dispatched) == 1

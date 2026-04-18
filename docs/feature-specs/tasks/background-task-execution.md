@@ -19,7 +19,7 @@ Background tasks execute in isolated parallel sessions without interrupting the 
 | R1 | Adapted pipeline: full pre-processing (memory, projects, skills) and selective post-processing — episodic memory extraction, project submodule commit/push, and git commit (no facts, preferences, or core context extraction) |
 | R2 | Evaluator loop that assesses each agent response for completion using a lightweight model |
 | R3 | Max iterations limit (configurable, default 10) — forces completion assessment and marks task as failed if not done |
-| R4 | Agent-driven success notifications via `send_notification` MCP tool during background task execution; automatic failure notifications dispatched by the executor |
+| R4 | Agent-driven success notifications via `send_notification` MCP tool during background task execution; automatic failure notifications dispatched by the executor. Notifications carry a priority field (Urgent/Normal/Low); `send_notification` accepts an optional priority (default Normal) and automatic failure notifications use Urgent. Delivery to the user is handled by the priority buffer (see [delivery/priority-buffer](../delivery/priority-buffer.md)) |
 | R5 | Concurrency gating via configurable limit (default 3); excess instances remain pending until a slot opens |
 | R6 | Stuck/looping agent detection — evaluator detects unproductive iterations and marks the task as failed |
 
@@ -49,18 +49,19 @@ After each agent response, a lightweight model assesses the agent's workflow sta
 
 ### Notification (R4)
 
-Background task agents can send notifications to the user during execution via the `send_notification` MCP tool, which dispatches a generic `Notification` event (from `tachikoma.notifications`). The tool is only available during background task execution — the executor registers a notification MCP server per-execution using the DES-006 factory pattern. Failure notifications are dispatched automatically by the executor using the same shared `dispatch_notification()` function, ensuring consistent prompt formatting for both agent-driven and automatic notifications.
+Background task agents can send notifications to the user during execution via the `send_notification` MCP tool, which dispatches a generic `Notification` event (from `tachikoma.notifications`). The tool is only available during background task execution — the executor registers a notification MCP server per-execution using the DES-006 factory pattern. Failure notifications are dispatched automatically by the executor using the same shared `dispatch_notification()` function, ensuring consistent prompt formatting for both agent-driven and automatic notifications. Notifications carry a `priority` field (Urgent/Normal/Low); agents can pass a priority to `send_notification`, and automatic failure notifications default to Urgent. Channels do not handle `Notification` directly — the priority buffer subscribes to the event, enqueues each notification, and delivers it to the user as a new message turn when the conversation is idle (see [delivery/priority-buffer](../delivery/priority-buffer.md)).
 
 **Acceptance Criteria**:
 - Given a background task instance is being executed, then the `send_notification` MCP tool server is registered in the SDK client's MCP servers
-- Given a background task agent calls `send_notification` with a message, then a `Notification` event with the wrapped prompt and severity "info" is dispatched
+- Given a background task agent calls `send_notification` with a message, then a `Notification` event with the wrapped prompt, severity "info", and the specified priority (default Normal) is dispatched
 - Given a background task agent calls `send_notification` with an empty or whitespace-only message, then the tool returns an error response without dispatching a notification
 - Given a background task agent executing a long-running task, when it calls `send_notification` multiple times, then each call dispatches a separate `Notification` event independently
 - Given a background task completes successfully and the agent did not call `send_notification`, then no notification is dispatched
-- Given a background task fails (stuck, error, or max iterations), then a `Notification` event with severity "error" is dispatched automatically by the executor
+- Given a background task fails (stuck, error, or max iterations), then a `Notification` event with severity "error" and priority Urgent is dispatched automatically by the executor
 - Given a background task agent sent a notification during execution and the task subsequently fails, then both the agent's notification and the automatic failure notification are delivered independently
 - Given the `send_notification` MCP tool, then it is only available within a background task agent session — it is not exposed to the main conversation
-- Given a `Notification` event is received by a channel, then the notification prompt is enqueued into the coordinator for pipeline-routed delivery (same path as session tasks)
+- Given the background task system prompt, then it documents the available priority levels (Urgent for time-sensitive results, Normal for standard completion results, Low for informational updates) and the default (Normal)
+- Given a `Notification` event is dispatched on the bus, then the priority buffer enqueues it for idle-gated delivery — no channel subscribes to `Notification` directly
 
 ### Concurrency (R5)
 

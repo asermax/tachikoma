@@ -32,7 +32,8 @@ The core agent loop: receive a user message, pass it to the Claude agent via the
 | R13 | Sub-agent delegation: coordinator receives detected agents from the pre-processing pipeline per-session and passes to SDK for delegation (see [skills](skills.md)) |
 | R14 | Session resumption: on topic shift with a matching recent session, reopen the matched session instead of creating a fresh one; inject bridging context from intermediate sessions; skip pre-processing (resumed SDK session has full prior context) |
 | R15 | MCP server registration: coordinator accepts an optional mapping of named MCP server configurations at construction and passes them to `ClaudeAgentOptions` |
-| R16 | Last message time tracking: coordinator tracks the timestamp of the last message exchange for idle gating by external subsystems |
+| R16 | Last message time tracking: coordinator tracks the timestamp of the last message exchange for idle gating by external subsystems (consumed by the priority buffer — see [delivery/priority-buffer](../delivery/priority-buffer.md)) |
+| R19 | Coordinator idle signaling: on every busy→idle transition, the coordinator dispatches a `CoordinatorIdle(timestamp)` event so the priority buffer can re-evaluate pending deliveries without polling |
 | R17 | Configurable tool blocking: specific tools can be unconditionally blocked via `disallowed_tools` config, defaulting to `["AskUserQuestion", "CronCreate", "CronDelete", "CronList"]` |
 | R18 | Text sanitization: the adapter strips invalid UTF-8 characters (surrogate code points, overlong encodings) from all SDK text before passing to domain types, preventing encoding failures in downstream consumers |
 
@@ -224,9 +225,18 @@ The coordinator accepts an optional mapping of named MCP server configurations a
 
 ### Last Message Time Tracking (R16)
 
-The coordinator tracks the timestamp of the last message exchange, updated on both send and response completion. External subsystems read this property for idle gating.
+The coordinator tracks the timestamp of the last message exchange, updated on both send and response completion. External subsystems read this property for idle gating — in particular, the priority buffer uses it to gate new-turn deliveries (see [delivery/priority-buffer](../delivery/priority-buffer.md)).
 
 **Acceptance Criteria**:
 - Given a user message is sent via `send_message()`, when the call begins, then `last_message_time` is updated to the current time
 - Given the agent completes a response, when the Result event is produced, then `last_message_time` is updated to the current time
 - Given an external subsystem reads `last_message_time`, then it receives the timestamp of the most recent message exchange
+
+### Coordinator Idle Signaling (R19)
+
+Whenever the coordinator transitions from busy to idle (an exchange completes or the queue drains), it dispatches a `CoordinatorIdle(timestamp)` event on the bus. The priority buffer subscribes to this event to wake from its wait and re-evaluate delivery conditions without needing to poll the coordinator.
+
+**Acceptance Criteria**:
+- Given the coordinator finishes processing an exchange and `is_busy` becomes False, when the busy→idle transition is observed, then a `CoordinatorIdle` event is dispatched on the bus with the transition timestamp
+- Given the coordinator is already idle when an operation completes (no state change), then no `CoordinatorIdle` event is dispatched
+- Given the event bus is unavailable at the coordinator, when the transition occurs, then the transition proceeds without error (idle signaling is best-effort)

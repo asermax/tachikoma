@@ -9,6 +9,7 @@ Implementation approaches organized by domain. Each design corresponds to a feat
 | [agent](agent/) | Core agent loop, SDK integration, and message processing |
 | [channels](channels/) | Communication interfaces for interacting with the agent |
 | [configuration](configuration/) | Application configuration management |
+| [delivery](delivery/) | Buffered delivery of background-originated items to the user |
 | [memory](memory/) | Automatic memory extraction from conversations |
 | [tasks](tasks/) | Proactive task scheduling and execution |
 | [workflows](workflows/) | Multi-step workflow state machine within skills |
