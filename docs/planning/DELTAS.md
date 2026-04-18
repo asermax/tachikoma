@@ -581,13 +581,6 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 **Complexity**: Medium
 **Description**: Add a memory category for the agent's own subjective assessments — what worked, what didn't, patterns it notices about its own behavior and capabilities. Distinct from existing memory types (episodic, facts, preferences) which capture objective user-centric information. Reflections are the agent's self-observations, forming the input layer for automated self-improvement. A new post-processing processor extracts reflections from completed sessions and stores them alongside other memory types. This enables the self-healing skill system and future self-learning capabilities to draw on the agent's accumulated experience rather than starting from scratch each session.
 
-### DLT-124: Add test coverage requirements to skill authoring guide
-**Status**: ✗ Defined
-**Depends on**: None
-**Priority**: 1 (Critical)
-**Complexity**: Easy
-**Description**: The skill authoring guide currently covers directory conventions, agent definitions, and reference files, but says nothing about testing skills that contain executable code (scripts, CLIs, or any programmatic logic). When skills evolve, regressions go unnoticed until they break in production — e.g., the share-markdown mermaid pipeline had multiple bugs that tests would have caught earlier. Update the skill authoring guidance to require test coverage for any skill that includes executable code, with conventions for test file placement, naming, and execution within the skill directory structure.
-
 ### DLT-125: Message envelope for typed message routing
 **Status**: ✗ Defined
 **Depends on**: None
