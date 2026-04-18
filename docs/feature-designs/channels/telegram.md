@@ -209,12 +209,18 @@ Settings (root, frozen)
 └── telegram: TelegramSettings | None = None  (new, optional)
     ├── bot_token: str
     ├── authorized_chat_id: int
-    └── push_notifications: bool = True
+    ├── push_notifications: bool = True
+    └── send_file: SendFileSettings = SendFileSettings()
+        └── extra_roots: list[Path] = []
+            — entries are Path objects
+            — `~` is expanded at load (before-validator)
+            — must be absolute after expansion (after-validator)
+            — need NOT exist at load time
 ```
 
 `channel` is a top-level setting defaulting to `"repl"`. The CLI `--channel` flag overrides it via `SettingsManager.update_root()` at runtime (no file persistence).
 
-`TelegramSettings` is `None` by default. When the `[telegram]` section exists in TOML, Pydantic validates both fields as required (no defaults — both must be provided).
+`TelegramSettings` is `None` by default. When the `[telegram]` section exists in TOML, Pydantic validates `bot_token` and `authorized_chat_id` as required (no defaults). The nested `[telegram.send_file]` sub-section is optional — when absent, `SendFileSettings` defaults to an empty `extra_roots` list. The nested sub-section leaves room for future `send_file` knobs (e.g. size limits, MIME filters) without reshuffling `TelegramSettings`.
 
 ### ResponseRenderer state
 
@@ -579,11 +585,35 @@ The `Result` event serves as a turn boundary signal. The channel finalizes the c
 **When**: The tool validates the path
 **Then**: The tool returns `is_error: True` with message "File not found: {path}". The agent can inform the user or try an alternative.
 
-### Scenario: File outside workspace
+### Scenario: File outside all allowed roots
 
 **Given**: The agent calls `send_file` with a path like `/etc/passwd`
-**When**: The tool validates the resolved path against the workspace boundary
-**Then**: The tool returns `is_error: True` with message "File must be within the workspace: {path}". Path traversal via `..` components is blocked by `Path.resolve()` + `is_relative_to()`.
+**When**: The tool validates the resolved path against the allowed-roots set (workspace, system temp directory, configured extras)
+**Then**: The tool returns `is_error: True` with a message that enumerates every allowed root and the rejected path (e.g. `"File must be under one of the allowed roots: /home/me/ws, /tmp, /srv/artifacts (got /etc/passwd)"`). Listing the roots lets the agent self-correct on the next call. Path traversal via `..` components is blocked by `Path.resolve()` + `is_relative_to()`.
+
+### Scenario: Send from the system temporary directory
+
+**Given**: The agent has written `/tmp/report.pdf` and calls `send_file({"file_path": "/tmp/report.pdf"})`
+**When**: The tool validates the resolved path against the allowed roots
+**Then**: The resolved path is under `tempfile.gettempdir()` (also resolved, handling platform symlinks like macOS `/tmp → /private/tmp`), so the membership check passes. The document is uploaded without requiring a prior copy into the workspace.
+
+### Scenario: Send from a configured extra root
+
+**Given**: Config has `[telegram.send_file] extra_roots = ["~/exports"]`; the file `~/exports/chart.png` exists
+**When**: The agent calls `send_file({"file_path": "/home/user/exports/chart.png"})`
+**Then**: `~` was expanded at load time, so `/home/user/exports` is in the allowed-roots tuple. The resolved path is under that root; the photo is sent.
+
+### Scenario: send_file path is a directory
+
+**Given**: The agent calls `send_file` with a path that points to a directory
+**When**: The tool validates the resolved path
+**Then**: `resolve()` and `exists()` pass but `is_file()` is false, so the tool returns `is_error: True` with `"Path is not a regular file: {path}"`. Directories, FIFOs, sockets, and block/char devices are all rejected for the same reason.
+
+### Scenario: send_file symlink crossing the allowed-roots boundary
+
+**Given**: `/tmp/escape` is a symlink to `/etc/passwd`, and separately `/home/user/shortcut` is a symlink to `/tmp/report.pdf`
+**When**: The agent calls `send_file` with each path
+**Then**: `Path.resolve()` follows the symlink before the membership check. `/tmp/escape` resolves to `/etc/passwd` (outside all roots) and is rejected with the allowed-roots error. `/home/user/shortcut` resolves to `/tmp/report.pdf` (inside the system temp root) and is accepted. The canonical target governs the decision.
 
 ### Scenario: Telegram API rejects file
 
@@ -606,7 +636,7 @@ The `Result` event serves as a turn boundary signal. The channel finalizes the c
 - The `ResponseRenderer` in `telegram/__init__.py` follows the same pattern as `Renderer` in `repl.py` — both consume `AgentEvent`s and render them to their respective outputs
 - Both `TelegramChannel` and `Repl` use a `__coordinator` private field + `_coordinator` property pattern: the private field is `None` until `run()` is called, and the property asserts non-None to provide safe access. Event bus subscriptions are deferred to `run()` to prevent handlers from firing before the coordinator is set
 - `telegram_hook` follows DES-003 (subsystem bootstrap hooks): defined in the telegram package, registered in __main__.py, self-skips when `settings.channel != "telegram"`
-- The `send_file` tool server in `telegram/tools.py` follows DES-006 (SDK MCP tool server factory): factory function with closure-captured state (bot, chat_id, workspace_path), extracted `handle_send_file()` handler for testability, Pydantic `SendFileArgs` model for arg validation
+- The `send_file` tool server in `telegram/tools.py` follows DES-006 (SDK MCP tool server factory): factory function with closure-captured state — `bot`, `chat_id`, `workspace_path`, and a resolved `allowed_roots` tuple (workspace + system temp directory + configured `extra_roots`, deduplicated via `dict.fromkeys`) — plus an extracted `handle_send_file()` handler for testability and a Pydantic `SendFileArgs` model for arg validation. The allowed-roots tuple is computed once at factory-call time so per-request validation avoids repeat syscalls.
 - Telegram caption limit: 1024 characters (enforced via Pydantic `max_length` on `SendFileArgs.caption`)
 - `FSInputFile` from aiogram streams files without loading them into memory — handles files up to 50MB without memory pressure
 - `_message_buffer` is an `asyncio.Queue` — safe under asyncio's cooperative concurrency and supports sync `put_nowait()` via `enqueue()`
