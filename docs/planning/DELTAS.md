@@ -497,13 +497,6 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 **Complexity**: Medium
 **Description**: The baseline sensor for the proactive nudge framework, using existing episodic memory data. Polls recent episodic memories with priority weighting for conversations that have open threads, upcoming events mentioned in past chats, or topics that have been discussed multiple times. Produces scored signals (data + relevance score + optional nudge suggestion) that feed into the nudge engine via the sensor framework. This is the first concrete sensor implementation and validates the sensor abstraction. Additional sensors (routine, calendar, time-based, geo-fencing, external events) follow the same pattern and are tracked separately.
 
-### DLT-111: Prevent message loss during response finalization
-**Status**: ✓ Implementation
-**Depends on**: None
-**Priority**: 1 (Critical)
-**Complexity**: Medium
-**Description**: When the user sends a message at the exact moment a previous response is finalizing, the new message can be silently dropped. The coordinator consumes the message from the queue but loses it during the transition between completing the previous turn's post-processing and picking up the next turn. This delta eliminates that timing window so that every consumed message is guaranteed to be processed, even when it arrives during response finalization.
-
 ### DLT-115: Run and monitor detached shell commands
 **Status**: ✗ Defined
 **Depends on**: None
@@ -625,7 +618,7 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 
 ### DLT-135: Serialize concurrent notification delivery and user message processing
 **Status**: ✗ Defined
-**Depends on**: DLT-111
+**Depends on**: None
 **Priority**: 2 (High)
 **Complexity**: Hard
 **Description**: When a background task notification is delivered at the exact moment a user sends a message, the two can collide at the coordinator's message queue — resulting in one being lost or the notification being silently swallowed. The existing message-loss prevention and notification buffering mechanisms handle their respective timing windows independently, but do not cover the case where both sources attempt to enqueue simultaneously. This delta adds serialization between the notification delivery path and the user message intake so that concurrent arrivals are safely ordered and neither is dropped.
@@ -657,7 +650,6 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 **Priority**: 2 (High)
 **Complexity**: Medium
 **Description**: When a user message arrives at the coordinator during an active background task execution, signal the background task to pause so the main session receives full API attention and the task does not compete for resources. The paused task's SDK session is preserved and execution resumes automatically once the main session returns to idle. This covers the system-initiated pause triggered by user activity — distinct from task-initiated pauses where the background task itself requests user input. The pause mechanism integrates with the existing background task executor's evaluation loop: when a pause signal is received between iterations, the executor suspends the task, records the paused state in the task instance, and releases the semaphore slot. On resume, the executor reacquires a slot and continues from the preserved SDK session.
-
 
 ### DLT-145: Inject core context into skill classification
 **Status**: ✗ Defined
