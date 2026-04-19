@@ -441,13 +441,6 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 **Complexity**: Easy
 **Description**: When a cron task is created or updated with a schedule time that has already passed today, the instance generator fires it immediately to "catch up" instead of waiting for the next scheduled occurrence. For example: a task runs at 4 PM, you update it to 8 AM at noon, it fires right away instead of waiting until tomorrow. Add a `since` timestamp field to `task_definitions` that gets set to `now()` on every create and update operation. The instance generator should only create instances for cron matches that fall after the `since` timestamp, ensuring schedule changes never trigger retroactive firings. This addresses a distinct problem from preventing duplicate instances within the same cron period — here the issue is newly-created or recently-updated tasks firing retroactively for past schedule matches.
 
-### DLT-103: Defer session tasks until user idle instead of silently skipping
-**Status**: ✗ Defined
-**Depends on**: None
-**Priority**: 1 (Critical)
-**Complexity**: Medium
-**Description**: Session-type cron tasks are gated by an idle check — they only fire when the user has been inactive for at least the configured idle window. When the user is active at the scheduled time, the session task scheduler silently skips the evaluation and waits for the next cron match, which may never arrive during continued activity (e.g., the Sunday planning routine can go weeks without firing if the user happens to be active every Sunday at the scheduled time). Instead of dropping evaluations, record that a session task became due and defer its firing until the idle window is eventually reached, so the task eventually runs rather than silently disappearing. The deferral record should include the original scheduled time and the reason for deferral so the user and agent can see pending session tasks via task status queries. A staleness policy (e.g., discard deferrals older than N hours, or collapse multiple missed firings into a single run) should be evaluated during speccing to prevent stale tasks from firing at unexpected times.
-
 ### DLT-104: Auto-cleanup of completed one-shot tasks
 **Status**: ✗ Defined
 **Depends on**: None
@@ -524,7 +517,6 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 **Priority**: 1 (Critical)
 **Complexity**: Easy
 **Description**: Workflow steps are self-contained instruction bundles with no mechanism to declare which skills the agent needs to execute them. A step that involves git operations, API calls, or domain-specific knowledge relies on the skill classifier to infer this from the step instructions — which may fail for terse or technical steps. Allow workflow step authors to explicitly declare the skills required for a step. When the workflow engine activates a step, the declared skills and their transitive dependencies (via the skill dependency system) are loaded unconditionally into the agent's context, bypassing classification.
-
 
 ### DLT-122: Evaluate alternatives to Claude Agent SDK
 **Status**: ✗ Defined
@@ -700,4 +692,39 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 **Priority**: 3 (Medium)
 **Complexity**: Medium
 **Description**: Tokens and other sensitive values currently sit as plaintext files under `.tachikoma/config/`, which means they are readable by the agent and end up in any transcript, context dump, or accidental commit. Introduce a secrets store where values live encrypted inside the repository and are accessed programmatically without ever exposing plaintext to the agent. Requirements: secrets live in the repo (encrypted, git-friendly), the store exposes a CLI suitable for piping values to command stdin or environment variables, the agent never sees plaintext at any layer (context, logs, tool output), and secret rotation is straightforward. Approaches to evaluate during speccing include age-encryption (simple, file-based, no daemon), SOPS (encrypted YAML/JSON with readable git diffs), and git-crypt (transparent per-pattern encryption). This delta delivers the store itself — encryption scheme, repo layout, CLI, and the access path used by downstream consumers such as the secure credential delivery mechanism (DLT-151).
+
+### DLT-157: Default-deny problematic Claude Code built-in tools across all agent roles
+**Status**: ✗ Defined
+**Depends on**: None
+**Priority**: 2 (High)
+**Complexity**: Easy
+**Description**: Claude Code ships built-in tools that either duplicate Tachikoma's own subsystems or create misleading failure modes when invoked, and agents tend to discover and use them because they appear first in the tool list. Known offenders: `CronCreate` / `CronDelete` / `CronList` (create session-only in-memory crons that never persist to the database or fire through Tachikoma's scheduler, so reminders silently vanish on restart), and `RemoteTrigger` (returns "not authenticated" and is picked as a fallback by background tasks that can't reach the `task-tools` MCP server). The current mitigation is a per-workspace `.claude/settings.local.json` deny list, but it only covers cron, only applies to the main agent, and has to be re-added for every new workspace. This delta delivers a default-deny policy that is baked into the Tachikoma project template so every new workspace starts with the offending built-ins blocked, applies uniformly across all agent roles (main, background tasks, post-processors, forked sub-agents) rather than only the main session, and includes a one-time audit of the remaining Claude Code built-in tools to identify any additional candidates that duplicate MCP functionality, produce session-only state, or otherwise conflict with Tachikoma's systems — with those additions folded into the same default-deny list.
+
+### DLT-158: Required step flag for workflow engine
+**Status**: ✗ Defined
+**Depends on**: None
+**Priority**: 3 (Medium)
+**Complexity**: Easy
+**Description**: Workflow steps currently expose a `skippable` frontmatter field that opts a step into user- or agent-initiated skipping, defaulting to false. "Non-skippable" is only enforced against the explicit skip action though — there is no positive way to declare that a step must always execute, and the semantic distinction between "off by default" and "must run" is not surfaced anywhere. Introduce an explicit `required: true` frontmatter field that marks a step as mandatory: when set, the workflow engine rejects any skip attempt regardless of source (user, agent action, future conditional or composition logic), and surfaces the requirement in the step listing output so the agent understands the constraint. Useful for steps that persist data, perform deployments, or otherwise produce effects that downstream steps assume have happened. Complements `skippable` without replacing it: `skippable=false` keeps today's meaning (skipping requires effort), while `required=true` is a strong guarantee that the engine enforces.
+
+### DLT-159: Conditional step execution for workflow engine
+**Status**: ✗ Defined
+**Depends on**: None
+**Priority**: 3 (Medium)
+**Complexity**: Medium
+**Description**: Workflow steps currently always execute in order, which forces authors to either write steps that no-op based on runtime state or split workflows into variants. Add a `condition` frontmatter field containing an expression the workflow engine evaluates before starting the step; if the expression resolves to false, the step is auto-skipped (independently of the `skippable` field) and the engine advances to the next step. The condition expression language should read from runtime state available to the engine — at minimum the workflow scratchpad, outputs of previous steps, and simple filesystem checks (file existence) — and should fail closed (unevaluable expressions skip the step and surface a warning rather than crashing the workflow). Example use cases from real workflows: "only run dashboard deploy if a plan was written", "only create calendar events if events exist in the scratchpad". Scope explicitly excludes loop semantics (covered separately) and cross-workflow composition.
+
+### DLT-160: Loop iteration for workflow steps
+**Status**: ✗ Defined
+**Depends on**: DLT-159
+**Priority**: 3 (Medium)
+**Complexity**: Medium
+**Description**: Workflows today can only express fixed-length sequences, so batch-processing steps where the item count isn't known upfront (e.g., "process all inbox notes", "handle each pending email") have to be unrolled by hand or faked with agent-level self-looping. Add a `loop` frontmatter field carrying a condition expression; the workflow engine re-executes the step body until the expression evaluates to false, then advances to the next step. Iteration should reuse the workflow condition expression language so authors only learn one syntax, should expose an iteration counter and prior-iteration outputs through the scratchpad so the loop body can make progress, and should guard against infinite loops with a configurable maximum iteration cap that surfaces a clear error when hit. Scope is limited to single-step loops; multi-step loop bodies are a natural follow-up but not part of this delta.
+
+### DLT-161: Workflow composition via inline sub-workflow references
+**Status**: ✗ Defined
+**Depends on**: DLT-158, DLT-159, DLT-160
+**Priority**: 3 (Medium)
+**Complexity**: Medium
+**Description**: Complex workflows tend to contain sub-sequences that are genuinely reusable across multiple parent workflows — for example a "process inbox note" sequence that both the weekly review and the daily review want to run. Currently there is no way to share them without duplicating steps in each parent. Add a composition mechanism where a step can declare an inline reference to another workflow; when the engine reaches such a step it pauses the parent workflow, runs the referenced workflow to completion (honouring the full step-level semantics — mandatory-step enforcement, conditional skipping, and loop iteration — just as it would when run standalone), then resumes the parent at the next step. Scope covers: the frontmatter field that names the target workflow, nested workflow-state persistence so the engine can track both layers during execution, scratchpad isolation vs sharing rules between parent and child (decided during speccing), cycle detection so a workflow cannot recursively include itself, and the tool-layer UX so the agent can see which workflow it is currently executing. Out of scope: parameter passing between parent and child workflows (can be revisited once the basic composition works).
 
