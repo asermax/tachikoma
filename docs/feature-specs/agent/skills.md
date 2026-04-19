@@ -4,7 +4,7 @@
 
 ## Overview
 
-The skill system provides a structured way to organize, detect, and delegate specialized sub-agents. Skills are directory-based packages containing YAML-formatted agent definitions. A skill registry discovers all skills at startup, with on-demand refresh when marked dirty by a filesystem watcher. On each message, a skills context provider classifies which skills are relevant to the user's message, considering only skills not already in context. Newly detected skills are appended as separate context entries with metadata identifying the skill name. Agents are derived from loaded skill entries and the skill registry on each message. Skills accumulate within a session — existing skills are never removed.
+The skill system provides a structured way to organize, detect, and delegate specialized sub-agents. Skills are directory-based packages containing YAML-formatted agent definitions. A skill registry discovers all skills at startup, with on-demand refresh when marked dirty by a filesystem watcher. On each message, a skills context provider classifies which skills are relevant to the user's message, considering only skills not already in context. Skills can declare dependencies on other skills; when a skill is selected, the registry resolves its transitive dependency chain so that required foundations are injected alongside it. Newly detected skills (and their resolved dependencies) are appended as separate context entries with metadata identifying the skill name. Agents are derived from loaded skill entries and the skill registry on each message. Skills accumulate within a session — existing skills are never removed.
 
 ## User Stories
 
@@ -49,6 +49,7 @@ The skill system provides a structured way to organize, detect, and delegate spe
 | R29 | Skills can optionally contain a `workflows/` folder with multiple workflow definitions, each as a subdirectory of ordered steps |
 | R30 | Skill registry discovers workflow definitions alongside skills and exposes them for lookup |
 | R31 | Built-in `workflow-authoring-guide` skill ships with the package |
+| R32 | Skills can declare direct dependencies via a `depends_on` frontmatter list; the registry exposes a resolver that returns the transitive chain (deps-first, anchor-last, cycle-tolerant, unknown-dep-tolerant, memoized with invalidation on refresh/add_source); the context provider expands each classification-detected skill through the resolver and emits resolved deps as additional context entries, deduped against skills already loaded in the session |
 
 ## Behaviors
 
@@ -96,6 +97,7 @@ The skill registry discovers all skills and agents at startup from multiple sour
 - Given no changes have occurred since the last refresh, when the provider triggers a refresh, then the registry skips the re-scan
 - Given the re-scan itself fails (e.g., permission error), then the registry retains its previous valid state, logs the error, and remains marked dirty for retry on the next refresh
 - Given a skill with a `workflows/` subdirectory, when the registry loads the skill, then workflow definitions are discovered and available via `get_workflow(skill_name, workflow_name)` (R30)
+- Given a skill declares `depends_on` names that are not registered, when the registry finishes loading (init, refresh, or `add_source`), then a single warning is logged for that skill enumerating all missing names; the skill still loads successfully (R32)
 
 ### Coordinator Integration (R4, R5, R11)
 
@@ -158,14 +160,37 @@ On each message, the skills context provider classifies which skills are relevan
 - Given all skills in the registry are already in context, when a new message arrives, then classification is skipped entirely (no LLM call)
 - Given the classification code path, when comparing initial evaluation vs subsequent evaluation, then the same classification process is used (unified)
 
-### Skill Content Injection (R10, R27)
+### Dependency Resolution (R32)
 
-Detected skills' content is injected as individual `<skills>` XML context blocks, one per detected skill, each with metadata identifying the skill name.
+Skills declare direct dependencies on other skills via a `depends_on` list in SKILL.md frontmatter. The registry exposes a resolver that returns the transitive dependency chain for a named skill in deps-first order with the anchor skill last, each skill appearing exactly once. Cycles (including self-reference) are broken via a visited-set; unknown dependency names are silently skipped during resolution (they are warned about at load time — see Skill Registry). Resolved chains are memoized on the registry and invalidated on every load path (`__init__`, `refresh()`, `add_source()`). Workspace skills that replace a built-in skill use the workspace version's `depends_on` — a natural consequence of the registry's last-wins precedence (R17).
 
 **Acceptance Criteria**:
-- Given skills are detected as relevant, when the provider assembles results, then each detected skill is returned as a separate context entry with a `<skills>` XML block containing the skill's content body and directory path, and metadata with the skill name
+- Given a skill declares `depends_on: [skill-a, skill-b]` in its SKILL.md, when the registry loads the skill, then its record stores both names in declared order
+- Given a skill has no `depends_on` field (or an explicit empty list), when loaded, then the stored dependency list is empty and no warnings are emitted
+- Given a skill's `depends_on` value is malformed (not a list, or contains non-strings), when loaded, then a single warning is logged and the skill is loaded with an empty dependency list (the rest of the skill is still usable)
+- Given skill-name comparisons during parsing and resolution, then they are case-sensitive (matching folder-name convention elsewhere in the registry)
+- Given skill A depends on B and B depends on C, when the resolver is asked for A's chain, then it returns `[C, B, A]` with no duplicates
+- Given a cycle (A↔B or self-reference), when the resolver is called, then each skill appears exactly once and traversal terminates without error
+- Given a diamond (A→B, A→C, B→D, C→D), when the resolver is called for A, then D appears exactly once before both B and C, and A is last
+- Given a skill with no dependencies, when the resolver is called, then it returns a single-element chain containing only that skill
+- Given the resolver has computed a chain for a skill, when it is called again without an intervening refresh or `add_source`, then the cached chain is returned
+- Given the registry is refreshed (or a source is added), when the resolver is next called, then cached chains are invalidated and recomputed against the fresh state
+- Given a skill's declared dep is unknown at resolution time, when the resolver runs, then the unknown name is silently skipped and the remaining real deps are still resolved
+- Given a built-in skill and a workspace skill with the same name but different `depends_on`, when the resolver is called, then the workspace version's dependencies are used (R17 last-wins)
+- Given a dep edge crosses sources (built-in → workspace or the reverse), when the resolver is called, then the dep is resolved normally — the registry is a single flat namespace
+
+### Skill Content Injection (R10, R27, R32)
+
+Detected skills' content is injected as individual `<skills>` XML context blocks, one per detected skill, each with metadata identifying the skill name. Before emission, each classification-detected skill is expanded through the registry's dependency resolver — the resolved transitive chain is flattened with first-seen dedup, filtered against skills already present in the session's context entries (by `skill_name` metadata), and emitted with shape identical to classification-loaded entries so downstream agent derivation treats them uniformly.
+
+**Acceptance Criteria**:
+- Given skills are detected as relevant, when the provider assembles results, then each detected skill and its transitive dependencies are returned as separate context entries with a `<skills>` XML block containing the skill's content body and directory path, and metadata with the skill name
 - Given multiple skills are detected, when results are persisted, then separate context entries are appended for each
-- Given no skills are detected as relevant, when the provider completes, then it returns no text context and no agent definitions
+- Given overlapping chains (two detected skills share a dep), when the provider assembles results, then the shared dep is emitted exactly once (first-seen wins across sibling chains)
+- Given a dependency in a detected skill's chain is already present in the session's context entries, when the provider emits results, then that dependency is skipped (deduped by `skill_name` metadata)
+- Given no skills are detected as relevant, when the provider completes, then it returns no text context and no agent definitions (no resolver calls made)
+- Given the candidate list fed to classification, then it contains every unloaded skill — dep relationships do not filter candidates (classification runs strictly before expansion)
+- Given the resolver raises unexpectedly for one skill, when the provider processes the batch, then the error is logged and other detected skills' chains are still emitted (one bad chain does not block the message)
 
 ### Detection Error Handling (R14)
 
