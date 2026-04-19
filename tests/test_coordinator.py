@@ -8,6 +8,7 @@ Mocks ClaudeSDKClient to test the coordinator's end-to-end behavior.
 
 import asyncio
 import contextlib
+from collections.abc import AsyncIterator
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
@@ -3854,7 +3855,7 @@ class TestCoordinatorIdleEmission:
         """AC (R13): CoordinatorIdle emitted exactly once per busy->idle transition."""
         bus = EventBus()
         idle_events: list[CoordinatorIdle] = []
-        bus.on(CoordinatorIdle, lambda e: idle_events.append(e))
+        bus.dispatch = lambda event: idle_events.append(event)  # type: ignore[assignment]
 
         async with Coordinator(bus=bus) as coord:
             coord.enqueue("test")
@@ -3867,7 +3868,7 @@ class TestCoordinatorIdleEmission:
         """AC: __aenter__ does not emit CoordinatorIdle."""
         bus = EventBus()
         idle_events: list[CoordinatorIdle] = []
-        bus.on(CoordinatorIdle, lambda e: idle_events.append(e))
+        bus.dispatch = lambda event: idle_events.append(event)  # type: ignore[assignment]
 
         async with Coordinator(bus=bus):
             assert len(idle_events) == 0
@@ -3899,136 +3900,127 @@ class TestCoordinatorTeardownRace:
     """Regression tests for DLT-111 R0/R1/R3/R4 + CoordinatorIdle invariant."""
 
     async def test_message_enqueued_during_teardown_is_preserved(self, mock_sdk) -> None:
-        """R0/R1: message enqueued during teardown window lands in _message_buffer."""
+        """R0/R1-AC1: message enqueued during teardown window lands in _message_buffer."""
         client, _ = mock_sdk
         client.receive_response.return_value = _mock_messages(
             make_assistant([TextBlock(text="ok")]),
             make_result(),
         )
 
-        # Side-effect on disconnect: enqueue a "late" message
-        async def _enqueue_on_disconnect():
-            # This simulates a message arriving during the teardown window
-            pass
-
-        client.disconnect = AsyncMock(side_effect=_enqueue_on_disconnect)
-
         async with Coordinator() as coord:
             coord.enqueue("initial")
-            events = []
             async for event in coord.send_message():
-                events.append(event)
                 if isinstance(event, Result):
-                    # Enqueue "late" — simulates message arriving during teardown
+                    # Simulates a message arriving during the teardown window
                     coord.enqueue("late")
 
-        # The "late" message should be in the buffer after send_message returns
         assert coord.has_pending_messages
         assert coord._message_buffer.qsize() == 1
         assert coord._message_buffer.get_nowait() == "late"
 
     async def test_forwarder_cancelled_before_disconnect(self, mock_sdk) -> None:
-        """KD-2: forwarder_task cancellation + await completes BEFORE client.disconnect."""
+        """KD-2: forwarder_task is cancelled+awaited BEFORE client.disconnect runs."""
         client, _ = mock_sdk
-        client.receive_response.return_value = _mock_messages(
-            make_assistant([TextBlock(text="ok")]),
-            make_result(),
-        )
+
+        # Yield control mid-stream so the forwarder task actually gets scheduled.
+        async def _yielding_response():
+            yield make_assistant([TextBlock(text="ok")])
+            await asyncio.sleep(0)
+            yield make_result()
+
+        client.receive_response.return_value = _yielding_response()
 
         call_order: list[str] = []
-        original_disconnect = client.disconnect
 
         async def _tracking_disconnect():
             call_order.append("disconnect")
-            await original_disconnect()
 
         client.disconnect = AsyncMock(side_effect=_tracking_disconnect)
 
-        # We need to track when the forwarder finishes. We can observe this
-        # indirectly: the forwarder runs until cancelled in the finally block.
-        # Since client.disconnect runs AFTER the forwarder is cancelled and awaited,
-        # if we see "disconnect" in call_order, the forwarder was already done.
-
         async with Coordinator() as coord:
-            coord.enqueue("initial")
-            events = []
-            async for event in coord.send_message():
-                events.append(event)
+            # Wrap the real forwarder so its `finally` appends a marker
+            real_forwarder = Coordinator._forwarder
 
-        # disconnect was called, which means forwarder was already cancelled+awaited
-        assert "disconnect" in call_order
+            async def _tracking_forwarder(self, inbox):
+                try:
+                    await real_forwarder(self, inbox)
+                finally:
+                    call_order.append("forwarder-done")
+
+            coord._forwarder = _tracking_forwarder.__get__(coord, Coordinator)  # type: ignore[method-assign]
+
+            coord.enqueue("initial")
+            async for _ in coord.send_message():
+                pass
+
+        # Forwarder must terminate before disconnect runs (KD-2)
+        assert call_order.index("forwarder-done") < call_order.index("disconnect")
 
     async def test_ordering_preserved_under_concurrent_enqueue(self, mock_sdk) -> None:
-        """R3: A in sdk_inbox + B enqueued during teardown → replay order [A, B]."""
+        """R3-AC3: A in sdk_inbox + B enqueued during teardown → replay order [A, B]."""
         client, _ = mock_sdk
         client.receive_response.return_value = _mock_messages(
             make_assistant([TextBlock(text="ok")]),
             make_result(),
         )
-
-        # Arrange: enqueue "A" before send_message (forwarder pulls it into sdk_inbox)
-        # Then during disconnect, enqueue "B"
-        async def _enqueue_b_on_disconnect():
-            pass
-
-        client.disconnect = AsyncMock(side_effect=_enqueue_b_on_disconnect)
 
         async with Coordinator() as coord:
             coord.enqueue("initial")
             coord.enqueue("A")  # will be pulled by forwarder into sdk_inbox
-            events = []
             async for event in coord.send_message():
-                events.append(event)
                 if isinstance(event, Result):
-                    coord.enqueue("B")  # enqueued during teardown
+                    coord.enqueue("B")  # enqueued during teardown window
 
-        # After send_message returns: buffer should contain ["A", "B"] in order
-        # "A" was moved to sdk_inbox by forwarder, then drain-back recovered it
-        # "B" was enqueued after forwarder was cancelled, so stays in buffer
+        # "A" was moved to sdk_inbox by forwarder → drain-back recovered it first
+        # "B" was enqueued after forwarder cancellation → drain-back kept it after A
         buffer_items: list[str] = []
         while not coord._message_buffer.empty():
             buffer_items.append(coord._message_buffer.get_nowait())
         assert buffer_items == ["A", "B"]
 
     async def test_mid_stream_steering_consumed_then_followup_queued(self, mock_sdk) -> None:
-        """R3/R4: mid-stream A consumed by SDK; B enqueued after session → buffer == [B]."""
+        """R3-AC2: mid-stream A consumed by SDK; B enqueued after turn → buffer == [B]."""
         client, _ = mock_sdk
 
-        # We'll simulate mid-stream by having the response generator
-        # pull messages from the captured generator
-        captured_gen = None
+        captured_gen: AsyncIterator | None = None
 
         async def _capturing_connect(gen):
             nonlocal captured_gen
             captured_gen = gen
 
         client.connect = AsyncMock(side_effect=_capturing_connect)
-        client.receive_response.return_value = _mock_messages(
-            make_assistant([TextBlock(text="ok")]),
-            make_result(),
-        )
+
+        async def _response_consuming_gen():
+            # Consume initial from the message_source
+            await captured_gen.__anext__()
+            yield make_assistant([TextBlock(text="ok")])
+            # Consume "A" (enqueued during this turn, moved by forwarder into sdk_inbox)
+            await asyncio.sleep(0)
+            msg = await captured_gen.__anext__()
+            assert msg["message"]["content"] == "A"
+            yield make_result()
+
+        client.receive_response.return_value = _response_consuming_gen()
 
         async with Coordinator() as coord:
             coord.enqueue("initial")
-            events = []
             async for event in coord.send_message():
-                events.append(event)
-                if isinstance(event, Result):
-                    # After the turn completes, enqueue B (arrives post-session)
-                    coord.enqueue("B")
+                if isinstance(event, TextChunk):
+                    coord.enqueue("A")  # mid-stream steering, consumed by SDK
+                elif isinstance(event, Result):
+                    coord.enqueue("B")  # queued for next turn
 
-        # "B" should be in the buffer
         buffer_items: list[str] = []
         while not coord._message_buffer.empty():
             buffer_items.append(coord._message_buffer.get_nowait())
         assert buffer_items == ["B"]
 
     async def test_mid_stream_message_reaches_sdk_via_inbox(self, mock_sdk) -> None:
-        """R4: follow-up enqueued mid-stream is yielded by the generator to the SDK."""
+        """R4-AC1: follow-up enqueued mid-stream is yielded by the generator to the SDK."""
         client, _ = mock_sdk
 
-        # Capture the generator passed to client.connect
-        captured_gen = None
+        captured_gen: AsyncIterator | None = None
+        yielded: list[dict] = []
 
         async def _capturing_connect(gen):
             nonlocal captured_gen
@@ -4036,31 +4028,31 @@ class TestCoordinatorTeardownRace:
 
         client.connect = AsyncMock(side_effect=_capturing_connect)
 
-        # Make receive_response produce a result after some time
-        async def _slow_response():
+        async def _response_driving_gen():
+            # Drive the message_source to consume the initial message
+            yielded.append(await captured_gen.__anext__())
             yield make_assistant([TextBlock(text="ok")])
-            await asyncio.sleep(0)  # allow forwarder to run
+            # Let forwarder move the mid-stream follow-up into sdk_inbox, then drive gen
+            await asyncio.sleep(0)
+            yielded.append(await captured_gen.__anext__())
             yield make_result()
 
-        client.receive_response.return_value = _slow_response()
+        client.receive_response.return_value = _response_driving_gen()
 
         async with Coordinator() as coord:
             coord.enqueue("initial")
-            events = []
             async for event in coord.send_message():
-                events.append(event)
                 if isinstance(event, TextChunk):
-                    # Enqueue a follow-up mid-stream
                     coord.enqueue("follow-up")
 
-        # The captured generator should have yielded "follow-up" after "initial"
-        assert captured_gen is not None
+        assert [m["message"]["content"] for m in yielded] == ["initial", "follow-up"]
 
     async def test_multiple_mid_stream_messages_preserve_order(self, mock_sdk) -> None:
-        """R4: multiple mid-stream follow-ups delivered in enqueue order."""
+        """R4-AC2: multiple mid-stream follow-ups delivered in enqueue order."""
         client, _ = mock_sdk
 
-        captured_gen = None
+        captured_gen: AsyncIterator | None = None
+        yielded: list[dict] = []
 
         async def _capturing_connect(gen):
             nonlocal captured_gen
@@ -4068,23 +4060,51 @@ class TestCoordinatorTeardownRace:
 
         client.connect = AsyncMock(side_effect=_capturing_connect)
 
-        async def _slow_response():
+        async def _response_driving_gen():
+            yielded.append(await captured_gen.__anext__())
             yield make_assistant([TextBlock(text="ok")])
+            # Let forwarder move both follow-ups into sdk_inbox
             await asyncio.sleep(0)
+            await asyncio.sleep(0)
+            yielded.append(await captured_gen.__anext__())
+            yielded.append(await captured_gen.__anext__())
             yield make_result()
 
-        client.receive_response.return_value = _slow_response()
+        client.receive_response.return_value = _response_driving_gen()
 
         async with Coordinator() as coord:
             coord.enqueue("initial")
-            events = []
             async for event in coord.send_message():
-                events.append(event)
                 if isinstance(event, TextChunk):
                     coord.enqueue("x")
                     coord.enqueue("y")
 
-        assert captured_gen is not None
+        assert [m["message"]["content"] for m in yielded] == ["initial", "x", "y"]
+
+    async def test_buffer_preserved_on_connection_error_during_teardown(
+        self, mock_sdk
+    ) -> None:
+        """R0-AC4: CLIConnectionError teardown path still runs drain-back."""
+        client, _ = mock_sdk
+
+        async def _failing_response():
+            yield make_assistant([TextBlock(text="partial")])
+            raise CLIConnectionError("stream died")
+
+        client.receive_response.return_value = _failing_response()
+
+        async with Coordinator() as coord:
+            coord.enqueue("initial")
+            coord.enqueue("A")  # moved into sdk_inbox by forwarder during the turn
+            async for event in coord.send_message():
+                if isinstance(event, Error):
+                    coord.enqueue("B")  # enqueued after the error, during teardown
+
+        # Both A (recovered from sdk_inbox) and B (from buffer) must survive, in order
+        buffer_items: list[str] = []
+        while not coord._message_buffer.empty():
+            buffer_items.append(coord._message_buffer.get_nowait())
+        assert buffer_items == ["A", "B"]
 
     async def test_coordinator_idle_not_emitted_when_items_recovered(self, mock_sdk) -> None:
         """KD-3: is_busy stays True through _client reset when drain recovers items."""
@@ -4094,21 +4114,18 @@ class TestCoordinatorTeardownRace:
             make_result(),
         )
 
-        idle_events: list[CoordinatorIdle] = []
         bus = EventBus()
+        idle_events: list[CoordinatorIdle] = []
         bus.dispatch = lambda event: idle_events.append(event)  # type: ignore[assignment]
 
         async with Coordinator(bus=bus) as coord:
             coord.enqueue("initial")
-            events = []
             async for event in coord.send_message():
-                events.append(event)
                 if isinstance(event, Result):
                     coord.enqueue("late")
 
-        # Items recovered → is_busy stays True → no CoordinatorIdle emitted
         assert coord.has_pending_messages
-        assert len(idle_events) == 0
+        assert idle_events == []
 
     async def test_coordinator_idle_emitted_when_buffer_truly_empty(self, mock_sdk) -> None:
         """Empty drain-back → is_busy flips → CoordinatorIdle dispatched once."""
@@ -4118,107 +4135,111 @@ class TestCoordinatorTeardownRace:
             make_result(),
         )
 
-        idle_events: list[CoordinatorIdle] = []
         bus = EventBus()
+        idle_events: list[CoordinatorIdle] = []
         bus.dispatch = lambda event: idle_events.append(event)  # type: ignore[assignment]
 
         async with Coordinator(bus=bus) as coord:
             coord.enqueue("initial")
-            events = []
-            async for event in coord.send_message():
-                events.append(event)
+            async for _ in coord.send_message():
+                pass
 
-        # Happy path, no items recovered → CoordinatorIdle emitted exactly once
         assert len(idle_events) == 1
         assert isinstance(idle_events[0], CoordinatorIdle)
 
 
 class TestMessageSourceCancellation:
-    """Tier B: unit tests for S4 cancellation recovery in _message_source."""
+    """Tier B: unit tests for _message_source behavior under cancellation.
+
+    Note on S4 coverage: the `pending is not None` recovery branch is
+    unreachable in normal operation — between `pending = await inbox.get()`
+    returning and `pending = None` (which runs before `yield`), there is no
+    `await` point, so CPython cannot inject CancelledError into that window.
+    S4 is defence-in-depth for future refactors that may introduce an await.
+    The tests below verify the reachable invariants: clean teardown from
+    any yield point never drops or duplicates items.
+    """
 
     async def test_item_in_inbox_not_consumed_on_close(self) -> None:
-        """S4: item in inbox is not consumed when generator is closed while awaiting."""
+        """Closing the generator while suspended at a yield does not consume inbox items."""
         inbox: asyncio.Queue[str] = asyncio.Queue()
         inbox.put_nowait("x")
 
         gen = _message_source("initial", inbox)
 
-        # Consume the initial message
         msg = await gen.__anext__()
         assert msg["message"]["content"] == "initial"
 
-        # The generator is now suspended at the yield point.
-        # "x" is in the inbox but the generator hasn't read it yet.
-        # Close the generator (simulates teardown).
+        # Generator is suspended at the first yield (outside the try/finally).
+        # Close it — "x" was never read from the inbox, so it must remain there.
         await gen.aclose()
 
-        # "x" should still be in the inbox — it was never consumed
-        assert not inbox.empty()
+        assert inbox.qsize() == 1
         assert inbox.get_nowait() == "x"
 
-    async def test_no_double_recovery_on_cancel(self) -> None:
-        """S4: already-yielded item is not re-enqueued on cancellation."""
+    async def test_yielded_item_not_re_enqueued_on_close(self) -> None:
+        """An item that was yielded to the consumer is not recovered on close."""
         inbox: asyncio.Queue[str] = asyncio.Queue()
         inbox.put_nowait("x")
 
         gen = _message_source("initial", inbox)
 
-        # Consume initial
         msg1 = await gen.__anext__()
         assert msg1["message"]["content"] == "initial"
 
-        # Consume "x" — it's already in the inbox
         msg2 = await gen.__anext__()
         assert msg2["message"]["content"] == "x"
 
-        # Close cleanly — the item was already yielded, no recovery needed
+        # Generator is suspended at the yield *after* "x" was consumed.
+        # `pending` was set to None before the yield, so the finally is a no-op.
         await gen.aclose()
 
-        # Inbox should be empty — "x" was consumed, not recovered
         assert inbox.empty()
 
-    async def test_no_item_returned_when_no_pending(self) -> None:
-        """S4: no recovery needed when generator is cancelled with no local item."""
+    async def test_close_with_empty_inbox_is_noop(self) -> None:
+        """Closing a generator that has no local item and an empty inbox is a no-op."""
         inbox: asyncio.Queue[str] = asyncio.Queue()
 
         gen = _message_source("initial", inbox)
         msg = await gen.__anext__()
         assert msg["message"]["content"] == "initial"
 
-        # Close cleanly — no item was pending
         await gen.aclose()
 
-        # Inbox should be empty (nothing to recover)
         assert inbox.empty()
 
 
 class TestForwarderCancellation:
-    """Tier B: unit tests for S4b cancellation recovery in _forwarder."""
+    """Tier B: unit tests for _forwarder behavior under cancellation.
 
-    async def test_item_in_buffer_preserved_on_cancel(self) -> None:
-        """S4b: item moved to inbox survives cancellation (no drop)."""
+    Note on S4b coverage: the `pending is not None` recovery branch is
+    unreachable under `CancelledError` — between `pending = await get()`
+    returning and `pending = None`, no await sits, so cancellation cannot
+    land there (see design §Open Questions). The dedicated
+    `test_pending_recovered_on_put_failure` test forces the branch via a
+    non-cancellation exception from `put_nowait` to prove the recovery
+    logic itself is correct.
+    """
+
+    async def test_item_survives_cancellation_after_forward(self) -> None:
+        """Item moved from buffer to inbox before cancellation is not lost."""
         coord = Coordinator()
         inbox: asyncio.Queue[str] = asyncio.Queue()
         coord._message_buffer.put_nowait("x")
 
         task = asyncio.create_task(coord._forwarder(inbox))
-        await asyncio.sleep(0)  # forwarder picks up "x" → puts in inbox
+        await asyncio.sleep(0)  # forwarder moves "x" into inbox
 
         task.cancel()
         with contextlib.suppress(asyncio.CancelledError):
             await task
 
-        # "x" should exist somewhere — either in inbox or buffer (no drop)
-        all_items: list[str] = []
-        while not inbox.empty():
-            all_items.append(inbox.get_nowait())
-        while not coord._message_buffer.empty():
-            all_items.append(coord._message_buffer.get_nowait())
+        assert inbox.qsize() == 1
+        assert inbox.get_nowait() == "x"
+        assert coord._message_buffer.empty()
 
-        assert all_items == ["x"]
-
-    async def test_no_item_lost_when_buffer_empty_on_cancel(self) -> None:
-        """S4b: forwarder cancelled while waiting on empty buffer — no item to recover."""
+    async def test_cancellation_with_empty_buffer_loses_nothing(self) -> None:
+        """Forwarder cancelled while awaiting on empty buffer: no spurious items appear."""
         coord = Coordinator()
         inbox: asyncio.Queue[str] = asyncio.Queue()
 
@@ -4232,15 +4253,14 @@ class TestForwarderCancellation:
         assert inbox.empty()
         assert coord._message_buffer.empty()
 
-    async def test_multiple_items_preserved_on_cancel(self) -> None:
-        """S4b: multiple items moved to inbox survive cancellation."""
+    async def test_multiple_items_survive_cancellation(self) -> None:
+        """Multiple items forwarded before cancellation preserve order."""
         coord = Coordinator()
         inbox: asyncio.Queue[str] = asyncio.Queue()
         coord._message_buffer.put_nowait("a")
         coord._message_buffer.put_nowait("b")
 
         task = asyncio.create_task(coord._forwarder(inbox))
-        # Allow forwarder to pick up both items
         await asyncio.sleep(0)
         await asyncio.sleep(0)
 
@@ -4248,10 +4268,27 @@ class TestForwarderCancellation:
         with contextlib.suppress(asyncio.CancelledError):
             await task
 
-        all_items: list[str] = []
+        forwarded: list[str] = []
         while not inbox.empty():
-            all_items.append(inbox.get_nowait())
-        while not coord._message_buffer.empty():
-            all_items.append(coord._message_buffer.get_nowait())
+            forwarded.append(inbox.get_nowait())
+        assert forwarded == ["a", "b"]
+        assert coord._message_buffer.empty()
 
-        assert sorted(all_items) == ["a", "b"]
+    async def test_pending_recovered_on_put_failure(self) -> None:
+        """S4b `pending is not None` branch: put_nowait failure re-enqueues to buffer."""
+        coord = Coordinator()
+        coord._message_buffer.put_nowait("x")
+
+        class _FailingQueue(asyncio.Queue[str]):
+            def put_nowait(self, item: str) -> None:
+                raise RuntimeError("simulated put failure")
+
+        failing_inbox: asyncio.Queue[str] = _FailingQueue()
+
+        with pytest.raises(RuntimeError, match="simulated put failure"):
+            await coord._forwarder(failing_inbox)
+
+        # `pending` was holding "x" when put_nowait raised — finally must
+        # re-enqueue it to _message_buffer (no drop).
+        assert coord._message_buffer.qsize() == 1
+        assert coord._message_buffer.get_nowait() == "x"
