@@ -208,7 +208,7 @@ async def handle_sync(
             "is_error": True,
         }
 
-    pull_result = await smart_pull(resolved, "origin", "HEAD", agent_defaults)
+    pull_result, _ = await smart_pull(resolved, "origin", "HEAD", agent_defaults)
 
     # Short-circuit on pull failure / dirty skip
     if pull_result in _SYNC_FAILURES:

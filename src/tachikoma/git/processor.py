@@ -8,6 +8,7 @@ from claude_agent_sdk.types import HookMatcher
 from loguru import logger
 
 from tachikoma.agent_defaults import AgentDefaults
+from tachikoma.git.db_sync import dump_database
 from tachikoma.git.sync import PUSH_RESULT, PUSH_SUCCESS, has_uncommitted_changes, smart_push
 from tachikoma.post_processing import PostProcessor, build_permissions_settings, make_bash_gate_hook
 from tachikoma.sdk_query import stderr_aware_query
@@ -168,6 +169,17 @@ class GitProcessor(PostProcessor):
             session: The closed session (not used, but required by interface).
         """
         _log.info("Processor started: processor=GitProcessor")
+
+        # Dump DB to diffable text files before checking for changes.
+        # Must happen before the dirty check because the DB binary is
+        # gitignored — only the dump files surface in git status.
+        db_path = self._cwd / ".tachikoma" / "tachikoma.db"
+        dump_dir = self._cwd / ".tachikoma" / "db-dump"
+
+        try:
+            await dump_database(db_path, dump_dir)
+        except Exception as e:
+            _log.warning("DB dump failed, continuing without it: err={err}", err=str(e))
 
         # Check if there are any uncommitted changes
         is_dirty = await has_uncommitted_changes(self._cwd)
