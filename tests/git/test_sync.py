@@ -23,6 +23,15 @@ from tachikoma.git.sync import (
 )
 
 
+def _mock_git_capture(*args: str, cwd: Path | None = None) -> AsyncMock:
+    """Helper to mock run_git_capture for HEAD capture and diff."""
+    if "rev-parse" in args:
+        return AsyncMock(return_value=(0, "abc123"))
+    if "diff" in args:
+        return AsyncMock(return_value=(0, ""))
+    return AsyncMock(return_value=(0, ""))
+
+
 class AsyncSubprocessMock:
     """Mock for asyncio.subprocess.Process."""
 
@@ -514,21 +523,22 @@ class TestSmartPull:
         repo_path: Path,
         agent_defaults: AgentDefaults,
     ) -> None:
-        """Returns DIRTY_SKIPPED when working tree has uncommitted changes."""
+        """Returns (DIRTY_SKIPPED, []) when working tree has uncommitted changes."""
         with patch(
             "tachikoma.git.sync.has_uncommitted_changes",
             new_callable=AsyncMock,
             return_value=True,
         ):
-            result = await smart_pull(repo_path, agent_defaults=agent_defaults)
+            result, changed = await smart_pull(repo_path, agent_defaults=agent_defaults)
         assert result == SYNC_RESULT["DIRTY_SKIPPED"]
+        assert changed == []
 
     async def test_up_to_date_when_no_divergence(
         self,
         repo_path: Path,
         agent_defaults: AgentDefaults,
     ) -> None:
-        """Returns UP_TO_DATE when local matches remote."""
+        """Returns (UP_TO_DATE, []) when local matches remote."""
         with (
             patch(
                 "tachikoma.git.sync.has_uncommitted_changes",
@@ -543,15 +553,16 @@ class TestSmartPull:
                 return_value=DIVERGENCE_STATUS["UP_TO_DATE"],
             ),
         ):
-            result = await smart_pull(repo_path, agent_defaults=agent_defaults)
+            result, changed = await smart_pull(repo_path, agent_defaults=agent_defaults)
         assert result == SYNC_RESULT["UP_TO_DATE"]
+        assert changed == []
 
     async def test_fast_forwarded_when_behind(
         self,
         repo_path: Path,
         agent_defaults: AgentDefaults,
     ) -> None:
-        """Returns FAST_FORWARDED when local is behind remote."""
+        """Returns (FAST_FORWARDED, changed) when local is behind remote."""
         with (
             patch(
                 "tachikoma.git.sync.has_uncommitted_changes",
@@ -560,21 +571,30 @@ class TestSmartPull:
             ),
             patch("tachikoma.git.sync._abort_stale_rebase", new_callable=AsyncMock),
             patch("tachikoma.git.sync.run_git", new_callable=AsyncMock),
+            patch(
+                "tachikoma.git.sync.run_git_capture",
+                new_callable=AsyncMock,
+                side_effect=[
+                    (0, "abc123"),  # rev-parse HEAD
+                    (0, "file1.txt\nfile2.txt"),  # diff --name-only
+                ],
+            ),
             patch(
                 "tachikoma.git.sync.detect_divergence",
                 new_callable=AsyncMock,
                 return_value=DIVERGENCE_STATUS["BEHIND"],
             ),
         ):
-            result = await smart_pull(repo_path, agent_defaults=agent_defaults)
+            result, changed = await smart_pull(repo_path, agent_defaults=agent_defaults)
         assert result == SYNC_RESULT["FAST_FORWARDED"]
+        assert changed == ["file1.txt", "file2.txt"]
 
     async def test_rebase_succeeded_when_clean_rebase(
         self,
         repo_path: Path,
         agent_defaults: AgentDefaults,
     ) -> None:
-        """Returns REBASE_SUCCEEDED when naive rebase works cleanly."""
+        """Returns (REBASE_SUCCEEDED, changed) when naive rebase works cleanly."""
         with (
             patch(
                 "tachikoma.git.sync.has_uncommitted_changes",
@@ -583,6 +603,14 @@ class TestSmartPull:
             ),
             patch("tachikoma.git.sync._abort_stale_rebase", new_callable=AsyncMock),
             patch("tachikoma.git.sync.run_git", new_callable=AsyncMock),
+            patch(
+                "tachikoma.git.sync.run_git_capture",
+                new_callable=AsyncMock,
+                side_effect=[
+                    (0, "abc123"),  # rev-parse HEAD
+                    (0, ".tachikoma/db-dump/sessions.ndjson"),  # diff --name-only
+                ],
+            ),
             patch(
                 "tachikoma.git.sync.detect_divergence",
                 new_callable=AsyncMock,
@@ -594,15 +622,16 @@ class TestSmartPull:
                 return_value=True,
             ),
         ):
-            result = await smart_pull(repo_path, agent_defaults=agent_defaults)
+            result, changed = await smart_pull(repo_path, agent_defaults=agent_defaults)
         assert result == SYNC_RESULT["REBASE_SUCCEEDED"]
+        assert ".tachikoma/db-dump/sessions.ndjson" in changed
 
     async def test_agent_resolved_when_agent_succeeds(
         self,
         repo_path: Path,
         agent_defaults: AgentDefaults,
     ) -> None:
-        """Returns AGENT_RESOLVED when naive fails but agent succeeds."""
+        """Returns (AGENT_RESOLVED, changed) when naive fails but agent succeeds."""
         with (
             patch(
                 "tachikoma.git.sync.has_uncommitted_changes",
@@ -611,6 +640,14 @@ class TestSmartPull:
             ),
             patch("tachikoma.git.sync._abort_stale_rebase", new_callable=AsyncMock),
             patch("tachikoma.git.sync.run_git", new_callable=AsyncMock),
+            patch(
+                "tachikoma.git.sync.run_git_capture",
+                new_callable=AsyncMock,
+                side_effect=[
+                    (0, "abc123"),  # rev-parse HEAD
+                    (0, ""),  # diff --name-only (empty)
+                ],
+            ),
             patch(
                 "tachikoma.git.sync.detect_divergence",
                 new_callable=AsyncMock,
@@ -627,15 +664,16 @@ class TestSmartPull:
                 return_value=True,
             ),
         ):
-            result = await smart_pull(repo_path, agent_defaults=agent_defaults)
+            result, changed = await smart_pull(repo_path, agent_defaults=agent_defaults)
         assert result == SYNC_RESULT["AGENT_RESOLVED"]
+        assert changed == []
 
     async def test_sync_failed_when_both_fail(
         self,
         repo_path: Path,
         agent_defaults: AgentDefaults,
     ) -> None:
-        """Returns SYNC_FAILED when both naive and agent rebase fail."""
+        """Returns (SYNC_FAILED, []) when both naive and agent rebase fail."""
         with (
             patch(
                 "tachikoma.git.sync.has_uncommitted_changes",
@@ -660,15 +698,16 @@ class TestSmartPull:
                 return_value=False,
             ),
         ):
-            result = await smart_pull(repo_path, agent_defaults=agent_defaults)
+            result, changed = await smart_pull(repo_path, agent_defaults=agent_defaults)
         assert result == SYNC_RESULT["SYNC_FAILED"]
+        assert changed == []
 
     async def test_catches_fetch_failure(
         self,
         repo_path: Path,
         agent_defaults: AgentDefaults,
     ) -> None:
-        """Returns SYNC_FAILED when fetch fails (network error)."""
+        """Returns (SYNC_FAILED, []) when fetch fails (network error)."""
         with (
             patch(
                 "tachikoma.git.sync.has_uncommitted_changes",
@@ -682,8 +721,9 @@ class TestSmartPull:
                 side_effect=RuntimeError("network error"),
             ),
         ):
-            result = await smart_pull(repo_path, agent_defaults=agent_defaults)
+            result, changed = await smart_pull(repo_path, agent_defaults=agent_defaults)
         assert result == SYNC_RESULT["SYNC_FAILED"]
+        assert changed == []
 
 
 # --- Agent Rebase Tests ---

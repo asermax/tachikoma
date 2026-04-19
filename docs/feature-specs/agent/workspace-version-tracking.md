@@ -24,12 +24,20 @@ Automatic git version tracking for all workspace file changes. Every modificatio
 | R5 | Bootstrap hook initializes workspace as a git repo on first run (idempotent) |
 | R6 | Commits use a fixed identity via repo-local git config (no global config dependency) |
 | R7 | Linear history on a single branch — no branch operations |
-| R8 | Bootstrap does not create a .gitignore — all workspace content is tracked by default |
+| R8 | Bootstrap creates `.gitignore` with `.tachikoma/*.db` to exclude the DB binary from git tracking; the `.tachikoma/db-dump/` directory (diffable text dumps) is tracked by git |
 | R9 | After committing, push committed changes to the `origin` remote with divergence detection and conflict resolution; on divergence, rebase local changes on top of remote before pushing |
 | R10 | If no `origin` remote is configured, skip pushing silently (no-op) |
 | R11 | On push failure (rebase failed, push failed after rebase), log a warning with the failure reason and continue; committed changes remain intact and will be retried on next sync |
 | R12 | System prompt preamble instructs the assistant that workspace changes are pushed automatically when a remote is configured |
 | R13 | Sync/push operations skip repositories with uncommitted changes to avoid data loss |
+| R14 | `push` and `sync` MCP tools that wrap `smart_push` / `smart_pull` for the workspace (and registered project submodules); always available to the main coordinator agent and the task executor agent |
+| R15 | PreToolUse deny hook on every non-git-processor agent surface that blocks destructive bash git commands: `git push`, `git reset`, `git checkout .`, `git restore .`, `git clean`, and mutating `git remote` subcommands |
+| R16 | The deny hook splits compound commands (`&&`, `||`, `|`, `;`) and checks each sub-command independently |
+| R17 | Read-only git commands (`status`, `log`, `diff`, `show`, `fetch`, `branch`, `remote -v`) and `git clone` pass through the deny hook unimpeded |
+| R18 | The workspace SQLite DB is dumped to diffable text files (`.ndjson` + `.metadata.json` per table) via `dump_database()` before the commit agent runs, so DB changes appear as dump-file diffs in `git status`. `sqlite_sequence` is excluded. |
+| R19 | After `smart_pull` succeeds with incoming changes that include dump file modifications, the DB is rebuilt from dumps via `restore_database()` (drops the existing DB file, re-runs each `CREATE TABLE` from the dump metadata, bulk-inserts the rows); restore failure is non-fatal (log warning, `database_hook` creates fresh DB) |
+| R20 | Bootstrap hook runs before `database_hook` so DB restore completes before the database engine opens; the DB path is derived from settings, not from `ctx.extras` |
+| R21 | On startup, if the database file is missing but dump files exist (e.g., fresh clone, deleted DB), `database_hook` restores the DB from dumps before initializing the engine; restore failure is non-fatal (log warning, fresh DB created via `create_all()`) |
 
 ## Behaviors
 
@@ -61,13 +69,33 @@ The Haiku agent inspects the workspace and creates well-organized commits using 
 - Given the agent creates commits, then each commit message is descriptive and reflects the content of the group
 - Given the agent creates commits, then it does not create or switch branches (linear history)
 
-### Git Repo Initialization (R5, R6, R8)
+### Git Repo Initialization (R5, R6, R8, R14, R15, R16)
 
-A bootstrap hook initializes the workspace as a git repo on first run.
+A bootstrap hook initializes the workspace as a git repo on first run, creates `.gitignore` for the DB binary, and syncs with the remote.
 
 **Acceptance Criteria**:
 - Given no `.git` directory in the workspace, when the git bootstrap hook runs, then a git repo is initialized with an initial empty commit
 - Given a fresh init, when the hook completes, then repo-local `user.name` and `user.email` are configured with a fixed identity
-- Given a fresh init, when the hook completes, then no `.gitignore` file is created
-- Given an existing `.git` directory, when the hook runs, then it skips initialization (idempotent)
+- Given a fresh init, when the hook completes, then `.gitignore` contains `.tachikoma/*.db` and the file is committed
+- Given a fresh init with a pre-existing `.gitignore`, when the hook runs, then the DB binary pattern is appended without clobbering existing content
+- Given an existing `.git` directory, when the hook runs, then it does not rewrite `.gitignore` (idempotent)
 - Given git init fails, when the hook runs, then a clear exception propagates with the failure reason
+
+### Push/Sync MCP Tools (R14)
+
+Two MCP tools — `push` and `sync` — expose the existing `smart_push` / `smart_pull` logic to the main coordinator agent and the task executor agent. Both tools target either the workspace or a registered project submodule.
+
+**Acceptance Criteria**:
+- Given the main agent has the `push` tool, when it calls `push(type="workspace")`, then `smart_push` is invoked against the workspace root with `origin`/`HEAD` and the tool response contains the resulting `PUSH_RESULT` value
+- Given the main agent has the `push` tool, when it calls `push(type="project", target="my-app")` for a registered project, then `smart_push` runs against `<workspace>/projects/my-app` with `origin`/`HEAD` and the result enum is surfaced to the agent
+- Given the main agent calls `push` or `sync` with `type="project"` and a `target` that is missing or does not resolve to a git repository under `projects/<target>`, when the tool runs, then it returns an `is_error` response naming the unknown target without invoking any git subprocess
+- Given the main agent calls `sync(type=..., target=...)`, when the tool runs, then `smart_pull` runs first. If it returns `DIRTY_SKIPPED` or `SYNC_FAILED`, `smart_push` is not attempted and the pull result is surfaced. Otherwise, `smart_push` runs and both results are surfaced together
+
+### Destructive Git Deny Hook (R15, R16, R17)
+
+A PreToolUse hook installed on every non-git-processor agent surface (main coordinator agent, task executor agent) denies destructive bash git commands. Git-dedicated processor agents (GitProcessor and ProjectsProcessor commit agents, rebase resolver) are exempt — they keep their existing git allow-list unchanged.
+
+**Acceptance Criteria**:
+- Given the deny hook is installed, when the agent issues any form of `git push` (with or without flags) or `git reset`, then the bash call is denied with a clear reason and no subprocess runs
+- Given the deny hook is installed, when the agent issues a compound command like `git status && git reset HEAD~1`, then the whole command is denied because one sub-command matches a destructive pattern
+- Given the deny hook is installed, when the agent issues `git status`, `git log`, `git diff`, `git fetch`, `git remote -v`, `git clone <url> /tmp/foo`, or any non-git bash command, then the command passes through unchanged

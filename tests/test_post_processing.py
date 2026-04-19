@@ -4,6 +4,7 @@ Tests for DLT-008: Extract and store memories from conversations.
 """
 
 import asyncio
+import re
 from datetime import UTC, datetime
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
@@ -21,6 +22,7 @@ from tachikoma.post_processing import (
     PromptDrivenProcessor,
     fork_and_capture,
     fork_and_consume,
+    make_bash_deny_hook,
 )
 from tachikoma.sessions.model import Session
 
@@ -989,3 +991,87 @@ class TestPromptDrivenProcessor:
             pre_tool_use_hooks=None,
             model="haiku",
         )
+
+
+class TestMakeBashDenyHook:
+    """Tests for make_bash_deny_hook (DLT-155)."""
+
+    @staticmethod
+    async def _run_hook(hook_matcher, command: str) -> dict:
+        hook = hook_matcher.hooks[0]
+        return await hook(
+            {"tool_input": {"command": command}},
+            None,
+            MagicMock(),
+        )
+
+    @pytest.fixture
+    def deny_hook(self):
+        patterns = [
+            re.compile(r"^git\s+push\b"),
+            re.compile(r"^git\s+reset\b"),
+        ]
+        return make_bash_deny_hook(patterns)
+
+    async def test_denies_matching_command(self, deny_hook) -> None:
+        result = await self._run_hook(deny_hook, "git push origin main")
+
+        assert result["hookSpecificOutput"]["permissionDecision"] == "deny"
+        assert "git push" in result["hookSpecificOutput"]["permissionDecisionReason"]
+
+    async def test_denies_force_push(self, deny_hook) -> None:
+        result = await self._run_hook(deny_hook, "git push --force origin main")
+
+        assert result["hookSpecificOutput"]["permissionDecision"] == "deny"
+
+    async def test_denies_reset(self, deny_hook) -> None:
+        result = await self._run_hook(deny_hook, "git reset HEAD~1")
+
+        assert result["hookSpecificOutput"]["permissionDecision"] == "deny"
+
+    async def test_denies_compound_with_destructive_subcommand(self, deny_hook) -> None:
+        result = await self._run_hook(deny_hook, "git status && git reset HEAD~1")
+
+        assert result["hookSpecificOutput"]["permissionDecision"] == "deny"
+        assert "git reset" in result["hookSpecificOutput"]["permissionDecisionReason"]
+
+    async def test_denies_pipe_to_destructive(self, deny_hook) -> None:
+        result = await self._run_hook(deny_hook, "echo hi | git reset --hard")
+
+        assert result["hookSpecificOutput"]["permissionDecision"] == "deny"
+
+    async def test_passes_safe_git_commands(self, deny_hook) -> None:
+        for command in (
+            "git status",
+            "git log --oneline",
+            "git diff",
+            "git fetch origin",
+            "git remote -v",
+            "git clone git@github.com:x/y.git /tmp/foo",
+        ):
+            result = await self._run_hook(deny_hook, command)
+
+            assert result == {}, f"{command!r} was denied: {result}"
+
+    async def test_passes_non_git_bash(self, deny_hook) -> None:
+        for command in ("ls -la", "echo hello", "cat file.txt"):
+            result = await self._run_hook(deny_hook, command)
+
+            assert result == {}
+
+    async def test_passes_compound_of_safe_commands(self, deny_hook) -> None:
+        result = await self._run_hook(deny_hook, "git status && git log")
+
+        assert result == {}
+
+    async def test_empty_command_passes(self, deny_hook) -> None:
+        result = await self._run_hook(deny_hook, "")
+
+        assert result == {}
+
+    async def test_ignores_missing_command_key(self, deny_hook) -> None:
+        hook = deny_hook.hooks[0]
+
+        result = await hook({"tool_input": {}}, None, MagicMock())
+
+        assert result == {}

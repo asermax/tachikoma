@@ -114,6 +114,9 @@ def summarize_tool_activity(
     tools ran. Tools of the same type are aggregated (>2 uses count, ≤2 list
     individually). Multiple tool types are joined with commas and "and".
 
+    Activities are processed newest-first so the most recent tool usage
+    appears first in the output.
+
     Args:
         activities: List of ToolActivity events from a tool→text segment.
         summary_map: Optional per-tool formatters to use instead of TOOL_SUMMARY.
@@ -127,7 +130,10 @@ def summarize_tool_activity(
 
     effective_summary = summary_map if summary_map is not None else TOOL_SUMMARY
 
-    # Group activities by tool_name, preserving first-seen order
+    # Process newest-first so recent tool usage appears first in output
+    activities = list(reversed(activities))
+
+    # Group activities by tool_name, preserving first-seen order (now newest-first)
     groups: dict[str, list[ToolActivity]] = {}
     for activity in activities:
         tool_name = activity.tool_name

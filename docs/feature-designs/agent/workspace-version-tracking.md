@@ -18,6 +18,7 @@ Workspace changes (memories, context files, configuration) happen as side effect
 - Must not depend on gitpython — the agent uses bash git commands directly
 - Must work on a fresh workspace with no prior git history
 - No global git config dependency — committer identity configured per-repo
+- DB dump/restore uses stdlib `sqlite3` + `json` in `src/tachikoma/git/db_sync.py` (no third-party dep); on-disk format is compatible with `simonw/sqlite-diffable` — the DB binary is gitignored, only diffable text files are tracked
 
 **Interactions:**
 - Post-processing pipeline: git processor registers in the `finalize` phase (see [pipeline design](post-processing-pipeline.md))
@@ -29,9 +30,11 @@ Workspace changes (memories, context files, configuration) happen as side effect
 
 Three independent components, plus a system prompt section:
 
-1. A **system prompt preamble** "Commits" section (`context/loading.py`) that instructs the assistant not to manually commit or push — all version control is automated
-2. A **git bootstrap hook** that initializes the workspace as a git repo on first run (idempotent), then syncs with the origin remote
-3. A **git post-processor** that spawns a lightweight Haiku agent to inspect, group, and commit workspace changes after each session, then pushes to the `origin` remote with divergence detection and conflict resolution
+1. A **system prompt preamble** "Git Management" section (`context/loading.py`) that instructs the assistant about the automatic commit system, the destructive-git deny rules, the safe bash git surface, and the available `push`/`sync` MCP tools
+2. A **git bootstrap hook** that initializes the workspace as a git repo on first run (idempotent), creates `.gitignore` for the DB binary, then syncs with the origin remote. After a successful pull that changed dump files, rebuilds the DB from the diffable text dumps
+3. A **git post-processor** that dumps the workspace DB to diffable text files (`.ndjson` + `.metadata.json` per table) via `dump_database()`, then spawns a lightweight Haiku agent to inspect, group, and commit workspace changes after each session, then pushes to the `origin` remote with divergence detection and conflict resolution
+4. **MCP tools** (`push`, `sync`) that expose the sync module's `smart_push`/`smart_pull` to the main coordinator and task executor agents, targeting the workspace or registered project submodules
+5. A **destructive-git deny hook** (`make_bash_deny_hook` + `DESTRUCTIVE_GIT_DENY_PATTERNS`) installed on every non-git-processor agent surface, blocking `git push`, `git reset`, `git checkout .`, `git restore .`, `git clean`, and mutating `git remote` subcommands
 
 The post-processor runs in the pipeline's **finalize phase**, ensuring all memory extraction is complete before commits happen.
 
@@ -42,9 +45,12 @@ The post-processor runs in the pipeline's **finalize phase**, ensuring all memor
 | Layer/Component | Responsibility | Key Decisions |
 |-----------------|----------------|---------------|
 | `src/tachikoma/git/__init__.py` | Re-exports: `git_hook`, `GitProcessor`, sync utilities | Clean public API for the git package |
-| `src/tachikoma/git/hooks.py` | `git_hook`: initializes workspace as git repo + syncs with origin | Subsystem-owned hook pattern (DES-003); delegates sync to `smart_pull` from sync module |
-| `src/tachikoma/git/processor.py` | `GitProcessor(PostProcessor)` + `GIT_COMMIT_PROMPT` + `query_and_consume` helper | Prompt co-located with processor; uses `$WORKSPACE` placeholders for directory paths (DES-008), replaced at call site before passing to `query_and_consume`; fresh `query()` (not fork); delegates push to `smart_push` from sync module |
-| `src/tachikoma/git/sync.py` | Shared sync utilities: `detect_divergence()`, `smart_push()`, `smart_pull()`, conflict resolution | Two-tier rebase (naive then agent); filesystem-based success detection; result enums |
+| `src/tachikoma/git/hooks.py` | `git_hook`: initializes workspace as git repo + syncs with origin | Subsystem-owned hook pattern (DES-003); creates `.gitignore` on fresh init; delegates sync to `smart_pull`; restores DB from dumps when dump files changed during pull |
+| `src/tachikoma/database.py` | `database_hook`: initializes shared database | Restores DB from dump files if DB is missing but dumps exist (complements git_hook's sync-triggered restore); restore failure is non-fatal |
+| `src/tachikoma/git/db_sync.py` | `dump_database()`, `restore_database()` | Stdlib-only (`sqlite3` + `json`); on-disk format matches `simonw/sqlite-diffable` for backwards compatibility; dump clears stale files before writing; restore deletes DB and rebuilds from dumps |
+| `src/tachikoma/git/processor.py` | `GitProcessor(PostProcessor)` + `GIT_COMMIT_PROMPT` + `query_and_consume` helper | Dumps DB before dirty check so DB changes surface in `git status`; prompt co-located with processor; uses `$WORKSPACE` placeholders for directory paths (DES-008), replaced at call site before passing to `query_and_consume`; fresh `query()` (not fork); delegates push to `smart_push` from sync module |
+| `src/tachikoma/git/sync.py` | Shared sync utilities: `detect_divergence()`, `smart_push()`, `smart_pull()`, conflict resolution | Two-tier rebase (naive then agent); filesystem-based success detection; result enums; `smart_pull` returns changed files for dump-change detection |
+| `src/tachikoma/git/tools.py` | MCP tool server factory (DES-006): `push` and `sync` tools + `DESTRUCTIVE_GIT_DENY_PATTERNS` | Extracted handlers for testability; targets workspace or project submodules via `type`/`target` args; deny patterns co-located with tools |
 
 ### Cross-Layer Contracts
 
@@ -109,7 +115,8 @@ sequenceDiagram
 ### Shared Logic
 
 - **`query_and_consume` function** (`git/processor.py`): standalone helper for fresh `query()` calls (no session fork). Used by both GitProcessor and ProjectsProcessor for spawning commit agents.
-- **`git/sync.py`**: Shared sync utilities (smart_push, smart_pull, detect_divergence) used by git hooks, git processor, projects hooks, and projects processor. Centralizes the fetch-detect-rebase-resolve-push sequence.
+- **`git/sync.py`**: Shared sync utilities (smart_push, smart_pull, detect_divergence) used by git hooks, git processor, projects hooks, projects processor, and the push/sync MCP tools. Centralizes the fetch-detect-rebase-resolve-push sequence.
+- **`git/tools.py`**: MCP tools (`push`, `sync`) wrapping `smart_push`/`smart_pull` for agent-tier access. Also exports `DESTRUCTIVE_GIT_DENY_PATTERNS` used by `make_bash_deny_hook` to block destructive git on non-git-processor agent surfaces. Follows DES-006 (factory + extracted handlers + Pydantic arg models).
 
 ## Modeling
 
@@ -133,6 +140,13 @@ git/sync.py (stateless functions)
 ├── _agent_rebase(cwd, remote_branch, agent_defaults) → bool
 ├── _abort_stale_rebase(cwd) → bool
 └── _has_uncommitted_changes(cwd) → bool
+
+git/tools.py
+├── create_git_tools_server(workspace_path, agent_defaults) → McpSdkServerConfig
+├── handle_push(type_, target, workspace_path, agent_defaults) → dict
+├── handle_sync(type_, target, workspace_path, agent_defaults) → dict
+├── resolve_target(type_, target, workspace_path) → Path | None
+└── DESTRUCTIVE_GIT_DENY_PATTERNS: list[re.Pattern]
 ```
 
 ## Data Flow
@@ -143,15 +157,21 @@ git/sync.py (stateless functions)
 1. __main__.py registers git_hook after workspace hook
 2. bootstrap.run() executes hooks in registration order
 3. git_hook(ctx) runs:
-   a. Read workspace_path from ctx.settings_manager.settings
-   b. Check if workspace_path / ".git" exists
-      ├─ exists → skip init
+   a. Pre-flight: check `git-lfs` is on PATH (raises RuntimeError with install hint if missing)
+   b. Read workspace_path from ctx.settings_manager.settings
+   c. Check if workspace_path / ".git" exists
+      ├─ exists → skip init, check LFS tracking
+      │  ├─ .gitattributes has `.tachikoma/*.db filter=lfs` → no-op
+      │  └─ no LFS tracking → log warning (no auto-migration)
       └─ doesn't exist → continue
-   c. Run: git init
-   d. Run: git config user.name "Tachikoma"
-   e. Run: git config user.email "tachikoma@local"
-   f. Run: git commit --allow-empty -m "Initial commit"
-   g. If any subprocess returns non-zero → raise with stderr output
+   d. Run: git init
+   e. Run: git config user.name "Tachikoma"
+   f. Run: git config user.email "tachikoma@local"
+   g. Run: git commit --allow-empty -m "Initial commit"
+   h. Run: git lfs install --local
+   i. Write `.tachikoma/*.db filter=lfs diff=lfs merge=lfs -text` to .gitattributes (append, don't clobber)
+   j. Run: git add .gitattributes && git commit -m "Configure LFS for database"
+   k. If any subprocess returns non-zero → raise with stderr output
 4. Sync workspace with remote:
    a. Check if origin remote exists: _run_git("remote", "get-url", "origin")
       ├─ no origin → debug log, skip sync
@@ -240,6 +260,28 @@ git/sync.py (stateless functions)
 - Pro: Clear separation, consistent with existing patterns
 - Con: More files for a small feature (acceptable)
 
+### MCP tools for agent-tier push/sync
+
+**Choice**: Expose `push` and `sync` MCP tools via a factory in `git/tools.py`, following DES-006. Both tools accept `type: "workspace" | "project"` and `target: str | None` to target the workspace root or a named project submodule. Target resolution uses a filesystem check (`.git` marker exists).
+**Why**: The main coordinator and task executor agents need a structured way to push and sync without hand-assembling fetch/rebase/push from bash. The existing `smart_push`/`smart_pull` already encapsulate divergence handling and conflict resolution. Wrapping them in MCP tools gives agents a safe, well-defined surface.
+
+**Consequences**:
+- Pro: Agents can push/sync on demand (mid-session) rather than waiting for session-end auto-push
+- Pro: Same divergence/conflict handling as the auto-commit path
+- Pro: Clear error when targeting unknown/missing projects
+- Con: One more MCP server to register and thread through
+
+### Destructive-git deny hook for non-git-processor surfaces
+
+**Choice**: Install a `PreToolUse` deny hook (via `make_bash_deny_hook` in `post_processing.py`) on every agent surface that runs in `bypassPermissions` mode *except* the git-dedicated processors. The hook denies `git push` (any form), `git reset`, `git checkout .`, `git restore .`, `git clean`, and mutating `git remote` subcommands. Read-only git and `git clone` are unaffected. The deny patterns live alongside the MCP tools in `git/tools.py` as `DESTRUCTIVE_GIT_DENY_PATTERNS`.
+**Why**: The main coordinator and task executor agents run in `bypassPermissions` with no git guardrails — a confused agent could wipe local changes, force-push, or repoint a remote. The git processors (GitProcessor, ProjectsProcessor commit agents, rebase resolver) already use allow-list gate hooks (`GIT_BASH_HOOK`) that only permit the commands they need. The deny hook is the inverse: it blocks destructive patterns while allowing everything else. This makes DLT-154 (role-based git permissions) obsolete.
+
+**Consequences**:
+- Pro: Irrecoverable git operations are blocked on all non-git-processor surfaces
+- Pro: Git processors keep full git access — no behavioral change
+- Pro: `make_bash_deny_hook` is generic and reusable for future deny patterns
+- Con: `git push` is fully denied rather than just `--force` — acceptable since the MCP `push` tool handles push with divergence detection
+
 ## System Behavior
 
 ### Scenario: Session ends with workspace changes and origin configured
@@ -301,6 +343,12 @@ git/sync.py (stateless functions)
 **Given**: Workspace has `.git`
 **When**: Bootstrap runs the git hook
 **Then**: Init skipped (idempotent). Workspace synced with origin remote via `smart_pull`.
+
+### Scenario: Database file missing but dump files exist
+
+**Given**: The DB binary (`.tachikoma/tachikoma.db`) does not exist but `.tachikoma/db-dump/` contains dump files (e.g., fresh clone, manually deleted DB)
+**When**: Bootstrap runs the database hook
+**Then**: `database_hook` detects the missing DB and non-empty dump directory, calls `restore_database()` to rebuild the DB from dumps, then proceeds with normal engine initialization and schema migrations. If restore fails, a warning is logged and a fresh empty DB is created via `create_all()`.
 
 ## Notes
 

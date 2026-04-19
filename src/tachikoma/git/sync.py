@@ -422,12 +422,28 @@ async def smart_push(
         return PUSH_RESULT["REBASE_FAILED"]
 
 
+async def _get_changed_files(cwd: Path, old_head: str) -> list[str]:
+    """Get list of files changed between old_head and current HEAD.
+
+    Args:
+        cwd: The repository directory.
+        old_head: The commit hash before the pull operation.
+
+    Returns:
+        List of file paths changed between old_head and HEAD.
+    """
+    _, output = await run_git_capture(
+        "diff", "--name-only", old_head, "HEAD", cwd=cwd
+    )
+    return output.splitlines() if output else []
+
+
 async def smart_pull(
     cwd: Path,
     remote: str = "origin",
     branch: str = "HEAD",
     agent_defaults: AgentDefaults | None = None,
-) -> SyncResult:
+) -> tuple[SyncResult, list[str]]:
     """Pull remote changes with divergence detection and conflict resolution.
 
     Flow:
@@ -446,7 +462,8 @@ async def smart_pull(
             agent resolution is skipped (rebase failures return SYNC_FAILED).
 
     Returns:
-        SyncResult indicating what happened.
+        Tuple of (SyncResult, list of changed file paths).
+        Changed files list is empty for non-success results.
     """
     try:
         # Skip sync if working tree is dirty
@@ -455,10 +472,13 @@ async def smart_pull(
                 "Working tree has uncommitted changes, skipping sync: path={path}",
                 path=str(cwd),
             )
-            return SYNC_RESULT["DIRTY_SKIPPED"]
+            return SYNC_RESULT["DIRTY_SKIPPED"], []
 
         # Clean up any stale rebase state
         await _abort_stale_rebase(cwd)
+
+        # Capture HEAD before pull for change detection
+        _, old_head = await run_git_capture("rev-parse", "HEAD", cwd=cwd)
 
         # Always fetch first (R8)
         await run_git("fetch", remote, cwd=cwd)
@@ -466,29 +486,32 @@ async def smart_pull(
         divergence = await detect_divergence(cwd, remote, branch)
 
         if divergence == DIVERGENCE_STATUS["UP_TO_DATE"]:
-            return SYNC_RESULT["UP_TO_DATE"]
+            return SYNC_RESULT["UP_TO_DATE"], []
 
         remote_branch = f"{remote}/{branch}"
 
         if divergence == DIVERGENCE_STATUS["BEHIND"]:
             # Fast-forward via rebase
             await run_git("rebase", remote_branch, cwd=cwd)
-            return SYNC_RESULT["FAST_FORWARDED"]
+            changed = await _get_changed_files(cwd, old_head)
+            return SYNC_RESULT["FAST_FORWARDED"], changed
 
         # DIVERGED — attempt rebase
         if await _try_naive_rebase(cwd, remote_branch):
-            return SYNC_RESULT["REBASE_SUCCEEDED"]
+            changed = await _get_changed_files(cwd, old_head)
+            return SYNC_RESULT["REBASE_SUCCEEDED"], changed
 
         # Naive rebase failed — try agent resolution
         if agent_defaults is None:
             _log.warning("Rebase failed but no agent_defaults provided for conflict resolution")
-            return SYNC_RESULT["SYNC_FAILED"]
+            return SYNC_RESULT["SYNC_FAILED"], []
 
         if await _agent_rebase(cwd, remote_branch, agent_defaults):
-            return SYNC_RESULT["AGENT_RESOLVED"]
+            changed = await _get_changed_files(cwd, old_head)
+            return SYNC_RESULT["AGENT_RESOLVED"], changed
 
-        return SYNC_RESULT["SYNC_FAILED"]
+        return SYNC_RESULT["SYNC_FAILED"], []
 
     except Exception as e:
         _log.warning("Smart pull failed: path={path} err={err}", path=str(cwd), err=str(e))
-        return SYNC_RESULT["SYNC_FAILED"]
+        return SYNC_RESULT["SYNC_FAILED"], []

@@ -2,9 +2,11 @@
 
 Tests for DLT-020: Git module for workspace version tracking.
 Tests updated for DLT-097: workspace startup sync after init.
+Tests updated for diffable DB dump/restore (replaces LFS).
 """
 
 import shutil
+import subprocess
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
@@ -12,7 +14,7 @@ import pytest
 
 from tachikoma.bootstrap import BootstrapContext
 from tachikoma.config import SettingsManager
-from tachikoma.git.hooks import git_hook
+from tachikoma.git.hooks import _sync_workspace, git_hook
 from tachikoma.git.sync import SYNC_RESULT
 
 
@@ -123,10 +125,10 @@ class TestGitHook:
 
         assert (workspace_path / ".git").is_dir()
 
-    async def test_no_gitignore_created(
+    async def test_fresh_init_creates_gitignore(
         self, ctx: BootstrapContext, settings_manager: SettingsManager
     ) -> None:
-        """AC: No .gitignore is created."""
+        """AC1: Fresh init creates .gitignore with DB binary pattern and commits it."""
         workspace_path = settings_manager.settings.workspace.path
 
         with patch(
@@ -135,13 +137,22 @@ class TestGitHook:
         ):
             await git_hook(ctx)
 
-        assert not (workspace_path / ".gitignore").exists()
+        gitignore = (workspace_path / ".gitignore").read_text()
+        assert ".tachikoma/*.db" in gitignore
 
-    async def test_works_without_global_git_config(
+        # .gitignore was committed as a second commit after the initial empty one
+        log = subprocess.check_output(["git", "log", "--format=%s"], cwd=workspace_path, text=True)
+        assert "Add gitignore for database binary" in log
+        assert "Initial commit" in log
+
+    async def test_fresh_init_appends_to_existing_gitignore(
         self, ctx: BootstrapContext, settings_manager: SettingsManager
     ) -> None:
-        """AC: Hook works without global git config (uses repo-local identity)."""
+        """AC: If the workspace was pre-populated with a .gitignore, the DB line
+        is appended without clobbering."""
         workspace_path = settings_manager.settings.workspace.path
+        gitignore = workspace_path / ".gitignore"
+        gitignore.write_text("*.log\n")
 
         with patch(
             "tachikoma.git.hooks._sync_workspace",
@@ -149,11 +160,33 @@ class TestGitHook:
         ):
             await git_hook(ctx)
 
-        # Verify repo-local config exists
-        config_path = workspace_path / ".git" / "config"
-        assert config_path.exists()
-        config_content = config_path.read_text()
-        assert "Tachikoma" in config_content
+        content = gitignore.read_text()
+        assert "*.log" in content
+        assert ".tachikoma/*.db" in content
+
+    async def test_existing_repo_with_gitignore_noop(
+        self, ctx: BootstrapContext, settings_manager: SettingsManager
+    ) -> None:
+        """AC3: Hook is idempotent — running twice against a freshly
+        initialized repo does not rewrite .gitignore."""
+        workspace_path = settings_manager.settings.workspace.path
+        gitignore = workspace_path / ".gitignore"
+
+        with patch(
+            "tachikoma.git.hooks._sync_workspace",
+            new_callable=AsyncMock,
+        ):
+            await git_hook(ctx)
+            snapshot = gitignore.read_text()
+
+            await git_hook(ctx)
+            assert gitignore.read_text() == snapshot
+
+        # Only the two init-time commits exist; second hook invocation made none
+        commit_count = subprocess.check_output(
+            ["git", "rev-list", "--count", "HEAD"], cwd=workspace_path, text=True
+        ).strip()
+        assert commit_count == "2"
 
 
 @pytest.mark.asyncio
@@ -193,8 +226,6 @@ class TestWorkspaceSync:
     ) -> None:
         """AC: Sync is skipped silently when no origin remote configured."""
 
-        # Mock _sync_workspace to simulate the "no origin" path
-        # (it catches RuntimeError from _run_git_command internally)
         with patch(
             "tachikoma.git.hooks._sync_workspace",
             new_callable=AsyncMock,
@@ -220,11 +251,75 @@ class TestWorkspaceSync:
         self, ctx: BootstrapContext, settings_manager: SettingsManager
     ) -> None:
         """AC: Sync failure doesn't block startup."""
-        # _sync_workspace catches exceptions internally, so git_hook
-        # continues even if sync fails. Test by mocking smart_pull to fail.
         with patch(
             "tachikoma.git.hooks.smart_pull",
             new_callable=AsyncMock,
-            return_value=SYNC_RESULT["SYNC_FAILED"],
+            return_value=(SYNC_RESULT["SYNC_FAILED"], []),
         ):
             await git_hook(ctx)  # Should not raise
+
+    async def test_restores_db_when_dump_files_changed(
+        self, ctx: BootstrapContext, settings_manager: SettingsManager
+    ) -> None:
+        """AC: DB is restored when smart_pull reports changed dump files."""
+        workspace_path = settings_manager.settings.workspace.path
+
+        with (
+            patch(
+                "tachikoma.git.hooks.run_git",
+                new_callable=AsyncMock,
+            ),
+            patch(
+                "tachikoma.git.hooks.agent_defaults_from_settings",
+            ),
+            patch(
+                "tachikoma.git.hooks.smart_pull",
+                new_callable=AsyncMock,
+                return_value=(
+                    SYNC_RESULT["FAST_FORWARDED"],
+                    [".tachikoma/db-dump/sessions.ndjson"],
+                ),
+            ),
+            patch(
+                "tachikoma.git.hooks._restore_db_if_possible",
+                new_callable=AsyncMock,
+            ) as mock_restore,
+        ):
+            await _sync_workspace(
+                workspace_path, settings_manager.settings
+            )
+
+        mock_restore.assert_awaited_once_with(workspace_path)
+
+    async def test_no_restore_when_no_dump_files_changed(
+        self, ctx: BootstrapContext, settings_manager: SettingsManager
+    ) -> None:
+        """AC: No DB restore when pull succeeds but no dump files changed."""
+        workspace_path = settings_manager.settings.workspace.path
+
+        with (
+            patch(
+                "tachikoma.git.hooks.run_git",
+                new_callable=AsyncMock,
+            ),
+            patch(
+                "tachikoma.git.hooks.agent_defaults_from_settings",
+            ),
+            patch(
+                "tachikoma.git.hooks.smart_pull",
+                new_callable=AsyncMock,
+                return_value=(
+                    SYNC_RESULT["FAST_FORWARDED"],
+                    ["memories/episodic/2026-04-18.md"],
+                ),
+            ),
+            patch(
+                "tachikoma.git.hooks._restore_db_if_possible",
+                new_callable=AsyncMock,
+            ) as mock_restore,
+        ):
+            await _sync_workspace(
+                workspace_path, settings_manager.settings
+            )
+
+        mock_restore.assert_not_awaited()

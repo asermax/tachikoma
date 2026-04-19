@@ -143,6 +143,18 @@ class TestRenderSystemPreamble:
         assert "respond_to_task" in result
         assert "task_instance_id" in result
 
+    def test_detached_processes_section_present(self) -> None:
+        """AC: Preamble includes Detached Processes section with all six tool names."""
+        result = render_system_preamble(timezone="UTC")
+
+        assert "# Detached Processes" in result
+        assert "start_process" in result
+        assert "list_processes" in result
+        assert "get_process" in result
+        assert "read_process_output" in result
+        assert "stop_process" in result
+        assert "rename_process" in result
+
 
 class TestLoadContextIntegration:
     """Integration tests for load_foundational_context + build_system_prompt together.

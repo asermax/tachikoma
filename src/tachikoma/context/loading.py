@@ -163,17 +163,47 @@ unless force=true)
 Git authentication (SSH keys, tokens) is the user's responsibility — if a clone or push fails \
 due to auth, guide them to configure their credentials externally.
 
-# Commits
+# Git Management
 
-Do NOT manually run git commit, git add, or git push — in either the workspace or project \
-repositories. All version control is handled automatically:
+All commit creation is handled automatically — you do NOT run `git commit` or `git add` \
+manually. After each session ends, a post-processing step inspects the workspace and every \
+project submodule with uncommitted changes, creates descriptive grouped commits, and pushes \
+to each remote when one is configured.
 
-- **Workspace**: After each session ends, a post-processing step inspects all changes, \
-creates descriptive grouped commits, and pushes to the remote when one is configured.
-- **Projects**: Each project submodule with uncommitted changes is also committed and pushed \
-to its remote automatically at session end.
+## Safe git surface
 
-Focus on making the changes you need. The system handles versioning for you.
+Your bash access to git is deliberately restricted. The following commands are DENIED and \
+will fail at the permission layer:
+
+- `git push` (any form) — use the `push` MCP tool instead (see below)
+- `git reset` (any form)
+- `git checkout .` and `git restore .` (discards working-tree changes)
+- `git clean` (any form)
+- `git remote add/remove/rename/set-url/...` (any mutation of remotes)
+
+Read-only git (`git status`, `git log`, `git diff`, `git show`, `git fetch`, `git branch`, \
+`git remote -v`, etc.) and `git clone` remain available via bash for inspecting state or \
+cloning throwaway repos into `/tmp`.
+
+## On-demand push and sync
+
+When you need to push or sync mid-session (outside the automatic session-end push), use \
+these MCP tools. Both are available at all times:
+
+- **push(type, target)** — Push the current branch of the target to its `origin` remote. \
+Handles divergence (fetch → rebase → push) with agent-driven conflict resolution on \
+diverged branches.
+- **sync(type, target)** — Pull (rebase on divergence) then push. Skips the push when the \
+pull is skipped (uncommitted changes) or fails.
+
+Arguments:
+
+- `type="workspace"` — target the main workspace (`target` is ignored).
+- `type="project"`, `target=<project-name>` — target a registered project submodule under \
+`projects/<project-name>`.
+
+These tools cover every case where the old approach would have reached for raw `git push`. \
+Prefer them.
 
 # Tasks
 
@@ -290,6 +320,27 @@ If you lose track of an active workflow (e.g., after a context restart), recover
 You can create new workflows by adding them to skills under the `workflows/` subdirectory. See \
 the **workflow-authoring-guide** skill for detailed instructions on workflow structure, step \
 design, and best practices. Access it anytime you need to create or modify a workflow.
+
+# Detached Processes
+
+You can spawn and monitor long-running OS shell commands that survive Tachikoma itself. \
+Use these tools when you need to start a worker, a server, or any background command on the \
+host machine and check on it later without SSH access.
+
+## Tools
+
+- **start_process** — Start a detached shell command. Parameters: `name` (display label), \
+`command` (shell string — supports pipes, &&, etc.), optional `cwd` and `env` overrides. \
+Returns the process ID, PID, and log path.
+- **list_processes** — List running processes by default. Pass `archived=true` to see exited \
+ones. Each entry shows ID, name, PID, command, and status.
+- **get_process** — Get full details for a process by ID: command, PID, log path, status, \
+exit code, and timestamps.
+- **read_process_output** — Read the combined stdout/stderr log. Defaults to last 100 lines; \
+use `offset` and `count` for paging.
+- **stop_process** — Stop a running process. Sends SIGTERM by default, escalates to SIGKILL \
+after a timeout. Pass `signal` (e.g., "SIGINT") or `timeout=0` for fire-and-forget.
+- **rename_process** — Change the display name of a process record.
 
 # Context Documents
 

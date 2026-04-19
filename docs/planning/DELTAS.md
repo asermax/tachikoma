@@ -497,20 +497,6 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 **Complexity**: Medium
 **Description**: The baseline sensor for the proactive nudge framework, using existing episodic memory data. Polls recent episodic memories with priority weighting for conversations that have open threads, upcoming events mentioned in past chats, or topics that have been discussed multiple times. Produces scored signals (data + relevance score + optional nudge suggestion) that feed into the nudge engine via the sensor framework. This is the first concrete sensor implementation and validates the sensor abstraction. Additional sensors (routine, calendar, time-based, geo-fencing, external events) follow the same pattern and are tracked separately.
 
-### DLT-111: Prevent message loss during response finalization
-**Status**: ✗ Defined
-**Depends on**: None
-**Priority**: 1 (Critical)
-**Complexity**: Medium
-**Description**: When the user sends a message at the exact moment a previous response is finalizing, the new message can be silently dropped. The coordinator consumes the message from the queue but loses it during the transition between completing the previous turn's post-processing and picking up the next turn. This delta eliminates that timing window so that every consumed message is guaranteed to be processed, even when it arrives during response finalization.
-
-### DLT-115: Run and monitor detached shell commands
-**Status**: ✗ Defined
-**Depends on**: None
-**Priority**: 1 (Critical)
-**Complexity**: Hard
-**Description**: Users need Tachikoma to dispatch OS-level commands (e.g., starting a Zenki worker on a VPS) that run independently of the current conversation and outlive the session. This delta adds MCP tools for starting a detached shell command, recording its PID and log path in the database, querying whether it is still running, reading its stdout/stderr output, and sending termination signals. The spawned process runs with no SDK involvement — unlike autonomous agent delegation which maintains ongoing Claude sessions, this targets standalone shell commands where Tachikoma acts as a lightweight process supervisor. The tools give the agent (and by extension the user) visibility into commands that would otherwise require SSH access to check on.
-
 ### DLT-116: Provide workflow tools to background tasks
 **Status**: ✗ Defined
 **Depends on**: None
@@ -539,12 +525,6 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 **Complexity**: Easy
 **Description**: Workflow steps are self-contained instruction bundles with no mechanism to declare which skills the agent needs to execute them. A step that involves git operations, API calls, or domain-specific knowledge relies on the skill classifier to infer this from the step instructions — which may fail for terse or technical steps. Allow workflow step authors to explicitly declare the skills required for a step. When the workflow engine activates a step, the declared skills and their transitive dependencies (via the skill dependency system) are loaded unconditionally into the agent's context, bypassing classification.
 
-### DLT-121: Git-friendly database storage for workspace versioning
-**Status**: ✗ Defined
-**Depends on**: None
-**Priority**: 2 (High)
-**Complexity**: Medium
-**Description**: The SQLite database file is committed to the workspace git repository on every session close, but as a binary file it produces opaque diffs that bloat the git history over time — each commit stores a full copy of the database rather than meaningful deltas. Replace the current storage approach with one that produces human-readable, diffable representations of the database state so that changes are trackable in git history with the same fidelity as memory files and context documents. Approaches to evaluate during speccing include replacing SQLite with a git-native database like Dolt, exporting SQLite tables to diffable text formats (SQL dumps, sorted CSV/TSV via tools like sqlite-diffable) alongside or instead of the binary file, or other mechanisms that preserve queryable database access while making commits meaningful. The chosen approach must support the existing async query patterns used throughout the codebase.
 
 ### DLT-122: Evaluate alternatives to Claude Agent SDK
 **Status**: ✗ Defined
@@ -583,7 +563,7 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 
 ### DLT-128: Surface running detached processes in agent context
 **Status**: ✗ Defined
-**Depends on**: DLT-115
+**Depends on**: None
 **Priority**: 4 (Low)
 **Complexity**: Easy
 **Description**: Currently running detached processes should be part of the agent's injected context so the agent is always aware of them and can monitor proactively without having to explicitly check. Add a context provider that queries the detached process registry on each message, surfaces active processes (name, PID, uptime, log path), and injects this information into the agent's pre-processing context. This enables the agent to proactively notice when a process has been running for an unusual duration, has stopped unexpectedly, or is relevant to the current conversation.
@@ -618,7 +598,7 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 
 ### DLT-135: Serialize concurrent notification delivery and user message processing
 **Status**: ✗ Defined
-**Depends on**: DLT-111
+**Depends on**: None
 **Priority**: 2 (High)
 **Complexity**: Hard
 **Description**: When a background task notification is delivered at the exact moment a user sends a message, the two can collide at the coordinator's message queue — resulting in one being lost or the notification being silently swallowed. The existing message-loss prevention and notification buffering mechanisms handle their respective timing windows independently, but do not cover the case where both sources attempt to enqueue simultaneously. This delta adds serialization between the notification delivery path and the user message intake so that concurrent arrivals are safely ordered and neither is dropped.
@@ -679,26 +659,19 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 **Complexity**: Medium
 **Description**: The post-processing extractors for episodic memory, facts, preferences, and core context updates each have their own prompt, but their outputs currently overlap in ways that don't serve distinct purposes. Episodic entries recap CLI commands instead of summarizing high-level arcs, facts paste full diffs or code snippets instead of capturing what-and-why, and preferences restate technical details already covered in facts. Refine each processor's prompt with sharper guidance on what belongs in its memory type versus others, including concrete positive and negative examples drawn from observed output. Intentional duplication across types stays valid when the framing differs (a topic appearing in both a fact and a preference with different angles), but incidental overlap should be eliminated. Scope boundaries to enforce: episodic stays high-level narrative, facts stay declarative what/why, preferences stay behavioral. Verification is a spot-review of extracted memories after the change to confirm overlap reduction without losing coverage.
 
-### DLT-149: Sort tool usage list newest-first in agent context
-**Status**: ✗ Defined
-**Depends on**: None
-**Priority**: 4 (Low)
-**Complexity**: Easy
-**Description**: The tool usage summary injected into the agent's pre-processing context currently lists invocations in chronological order (oldest first). The most recent tool usages are typically the most relevant signal for the current turn — they reflect what the agent was just doing and which tools are likely to be needed next. Reverse the ordering so the newest entries appear at the top of the list, improving the signal density of this slice of the agent's context.
-
 ### DLT-150: Output phase markers for agent work styling
 **Status**: ✗ Defined
 **Depends on**: None
 **Priority**: 3 (Medium)
 **Complexity**: Medium
-**Description**: The agent currently produces a single undifferentiated output stream that mixes internal work (file reads, searches, tool chains) with the final user-facing response. Channels have no way to distinguish these phases, so presentation is uniform — everything is equally visible, which adds noise in surfaces like Telegram where conversational flow matters more than process transparency. Introduce phase markers the agent emits to tag different kinds of work — at minimum research, execution, and response — propagated through the adapter as typed events. Channels consume the markers to style phases differently: collapse "boring work" sections, hide internal phases entirely, or suppress the final message when the whole turn was marked hidden (e.g., silent background-style activity). The canonical phase vocabulary, how the agent is nudged to emit markers, and the rendering rules per channel (starting with Telegram) are part of the delta's scope. The feature separates the agent's internal process from what the user sees and gives channels fine-grained control over message presentation without the agent having to format output differently per channel.
+**Description**: The agent currently produces a single undifferentiated output stream that mixes internal work (file reads, searches, tool chains) with the final user-facing response. Channels have no way to distinguish these phases, so presentation is uniform — everything is equally visible, which adds noise in surfaces like Telegram where conversational flow matters more than process transparency. Introduce phase markers the agent emits to tag different kinds of work — at minimum research, execution, and response — propagated through the adapter as typed events. Channels consume the markers to style phases differently: collapse "boring work" sections, hide internal phases entirely, or suppress the final message when the whole turn was marked hidden (e.g., silent background-style activity). The canonical phase vocabulary and the rendering rules per channel (starting with Telegram) are part of the delta's scope. The marker emission mechanism should be evaluated during speccing — XML-style tags in the agent's text output (parsed by the adapter into typed events) are the preferred approach for simplicity, with MCP tool calls as a heavier alternative if tags prove insufficient. The feature separates the agent's internal process from what the user sees and gives channels fine-grained control over message presentation without the agent having to format output differently per channel.
 
 ### DLT-151: Secure credential delivery to whitelisted commands
 **Status**: ✗ Defined
-**Depends on**: None
+**Depends on**: DLT-156
 **Priority**: 3 (Medium)
 **Complexity**: Hard
-**Description**: A mechanism where the agent can pipe passwords and credentials to specific pre-approved CLI commands without ever seeing the plaintext. The agent knows that a secret exists and which command needs it, but the actual value flows directly from a secrets store to the CLI's stdin or environment, never through the agent's context or output. This prevents credential leaks through conversation logs, tool outputs, or prompt injection. The whitelist is critical: only commands explicitly registered in configuration can receive secrets. The mechanism exposes a pluggable provider interface so different backends (1Password CLI SDK, Bitwarden CLI, local encrypted file) can be swapped via configuration. The delta delivers the injection mechanism, the whitelist configuration schema, the provider interface, and at least one concrete backend implementation.
+**Description**: A mechanism where the agent can pipe passwords and credentials to specific pre-approved CLI commands without ever seeing the plaintext. The agent knows that a secret exists and which command needs it, but the actual value flows directly from a secrets store to the CLI's stdin or environment, never through the agent's context or output. This prevents credential leaks through conversation logs, tool outputs, or prompt injection. The whitelist is critical: only commands explicitly registered in configuration can receive secrets. The mechanism exposes a pluggable provider interface so different backends (1Password CLI SDK, Bitwarden CLI, local encrypted file) can be swapped via configuration. The delta delivers the injection mechanism, the whitelist configuration schema, the provider interface, and at least one concrete backend implementation. The encrypted token store provides the local backend that ships out of the box.
 
 ### DLT-152: Boundary-aware message queueing
 **Status**: ✗ Defined
@@ -713,4 +686,18 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 **Priority**: 2 (High)
 **Complexity**: Medium
 **Description**: Allow session tasks to fire immediately as steering messages into the active conversation, bypassing the idle wait. Currently, session tasks are gated by an idle check — they only fire when the user has been inactive for a configured period. This delta adds an optional immediate mode to session tasks that, when enabled, skips the idle check and injects the task's content as a steering message into the active conversation at the earliest opportunity. This enables reminder-like behavior where time-sensitive prompts reach the user without waiting for idle. The mode is configured per task definition and uses the existing steering message infrastructure.
+
+### DLT-154: Role-based git permission guardrails
+**Status**: ✓ Reconciled (subsumed by DLT-155)
+**Depends on**: None
+**Priority**: 3 (Medium)
+**Complexity**: Medium
+**Description**: Agents operating inside Tachikoma (main user-driven agent, background tasks, post-processors, sub-agents spawned by pre/post-processing) currently share a single git access surface with no role-based restrictions, so any of them can commit, push, or otherwise mutate repository state. This is risky for non-user-driven roles: a runaway background task or a misbehaving post-processor could publish unintended commits or corrupt remote history before the user sees what happened. Introduce a permission layer that scopes git access by agent role — at minimum, background tasks, post-processors, and forked sub-agents must be read-only on git (no `commit`, no `push`, no `git` subcommand that mutates the working tree or refs), while the main agent retains the full surface. The layer should live at the permission/deny-rule level so restrictions apply regardless of whether the agent reaches git through bash, an MCP tool, or the auto-commit system. The delta delivers the role classification, the deny-rule enforcement, and sensible defaults per role.
+
+### DLT-156: Encrypted token store for repo-committed secrets
+**Status**: ✗ Defined
+**Depends on**: None
+**Priority**: 3 (Medium)
+**Complexity**: Medium
+**Description**: Tokens and other sensitive values currently sit as plaintext files under `.tachikoma/config/`, which means they are readable by the agent and end up in any transcript, context dump, or accidental commit. Introduce a secrets store where values live encrypted inside the repository and are accessed programmatically without ever exposing plaintext to the agent. Requirements: secrets live in the repo (encrypted, git-friendly), the store exposes a CLI suitable for piping values to command stdin or environment variables, the agent never sees plaintext at any layer (context, logs, tool output), and secret rotation is straightforward. Approaches to evaluate during speccing include age-encryption (simple, file-based, no daemon), SOPS (encrypted YAML/JSON with readable git diffs), and git-crypt (transparent per-pattern encryption). This delta delivers the store itself — encryption scheme, repo layout, CLI, and the access path used by downstream consumers such as the secure credential delivery mechanism (DLT-151).
 

@@ -13,7 +13,14 @@ from typing import TYPE_CHECKING, Any
 
 from bubus import EventBus
 from claude_agent_sdk import ClaudeAgentOptions, ClaudeSDKClient
-from claude_agent_sdk.types import AssistantMessage, ResultMessage, SystemPromptPreset, TextBlock
+from claude_agent_sdk.types import (
+    AssistantMessage,
+    HookMatcher,
+    McpSdkServerConfig,
+    ResultMessage,
+    SystemPromptPreset,
+    TextBlock,
+)
 from loguru import logger
 
 from tachikoma.adapter import sanitize_text
@@ -177,6 +184,8 @@ async def background_task_runner(
     agent_defaults: AgentDefaults,
     skill_registry: "SkillRegistry",
     session_registry: SessionRegistry,
+    extra_mcp_servers: dict[str, McpSdkServerConfig] | None = None,
+    hooks: list[HookMatcher] | None = None,
 ) -> None:
     """Async loop that picks up and executes pending background tasks.
 
@@ -190,6 +199,9 @@ async def background_task_runner(
         agent_defaults: Common SDK options (cwd, cli_path, env)
         skill_registry: Shared skill registry for SkillsContextProvider
         session_registry: SessionRegistry for post-processing pipeline
+        extra_mcp_servers: Optional MCP servers always injected into the
+            task executor's ``ClaudeAgentOptions`` (e.g. git-tools)
+        hooks: Optional PreToolUse hooks (e.g. destructive-git deny hook)
     """
     semaphore = asyncio.Semaphore(settings.max_concurrent_background)
     running_tasks: dict[str, asyncio.Task[None]] = {}
@@ -230,6 +242,8 @@ async def background_task_runner(
                             agent_defaults=agent_defaults,
                             skill_registry=skill_registry,
                             session_registry=session_registry,
+                            extra_mcp_servers=extra_mcp_servers,
+                            hooks=hooks,
                         )
                         await executor.execute(inst)
 
@@ -295,6 +309,8 @@ class BackgroundTaskExecutor:
         agent_defaults: AgentDefaults,
         skill_registry: "SkillRegistry",
         session_registry: SessionRegistry,
+        extra_mcp_servers: dict[str, McpSdkServerConfig] | None = None,
+        hooks: list[HookMatcher] | None = None,
     ) -> None:
         self._repository = repository
         self._settings = settings
@@ -303,6 +319,8 @@ class BackgroundTaskExecutor:
         self._cwd = agent_defaults.cwd
         self._skill_registry = skill_registry
         self._session_registry = session_registry
+        self._extra_mcp_servers = extra_mcp_servers or {}
+        self._hooks = hooks or []
 
     async def execute(self, instance: TaskInstance) -> None:
         """Execute a background task instance (fresh or resuming a waiter)."""
@@ -366,6 +384,11 @@ class BackgroundTaskExecutor:
                 instance.id,
             )
 
+            # Merge any always-on extra servers (e.g. git-tools) without
+            # letting them shadow per-invocation servers
+            for name, server in self._extra_mcp_servers.items():
+                preprocessing_result.mcp_servers.setdefault(name, server)
+
             tz = get_timezone(self._settings)
             now = datetime.now(tz)
             datetime_line = (
@@ -387,6 +410,9 @@ class BackgroundTaskExecutor:
                 stderr=stderr_acc,
                 resume=instance.sdk_session_id if resuming else None,
             )
+
+            if self._hooks:
+                options.hooks = {"PreToolUse": self._hooks}
 
             first_message = initial_query if resuming else preprocessing_result.prompt
             # On resume, seed the evaluator with the known session id so the
