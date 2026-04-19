@@ -108,6 +108,8 @@ class TestDumpDatabase:
             str(db_path),
             str(dump_dir),
             "--all",
+            "--exclude",
+            "sqlite_sequence",
             stdout=-1,
             stderr=-1,
         )

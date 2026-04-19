@@ -64,7 +64,13 @@ async def dump_database(db_path: Path, dump_dir: Path) -> None:
     shutil.rmtree(dump_dir, ignore_errors=True)
     dump_dir.mkdir(parents=True, exist_ok=True)
 
-    await _run_sqlite_diffable("dump", str(db_path), str(dump_dir), "--all")
+    # Exclude sqlite_sequence: it's SQLite's internal AUTOINCREMENT bookkeeping
+    # and `sqlite-diffable load` rejects it on restore with
+    # "object name reserved for internal use". SQLite rebuilds it automatically
+    # from MAX(rowid) on the next insert into an AUTOINCREMENT table.
+    await _run_sqlite_diffable(
+        "dump", str(db_path), str(dump_dir), "--all", "--exclude", "sqlite_sequence"
+    )
     _log.debug("DB dumped to diffable files: dir={dir}", dir=str(dump_dir))
 
 
