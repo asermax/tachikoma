@@ -644,7 +644,6 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 **Complexity**: Medium
 **Description**: When a user message arrives at the coordinator during an active background task execution, signal the background task to pause so the main session receives full API attention and the task does not compete for resources. The paused task's SDK session is preserved and execution resumes automatically once the main session returns to idle. This covers the system-initiated pause triggered by user activity — distinct from task-initiated pauses where the background task itself requests user input. The pause mechanism integrates with the existing background task executor's evaluation loop: when a pause signal is received between iterations, the executor suspends the task, records the paused state in the task instance, and releases the semaphore slot. On resume, the executor reacquires a slot and continues from the preserved SDK session.
 
-
 ### DLT-145: Inject core context into skill classification
 **Status**: ✗ Defined
 **Depends on**: None
@@ -672,13 +671,6 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 **Priority**: 3 (Medium)
 **Complexity**: Medium
 **Description**: The post-processing extractors for episodic memory, facts, preferences, and core context updates each have their own prompt, but their outputs currently overlap in ways that don't serve distinct purposes. Episodic entries recap CLI commands instead of summarizing high-level arcs, facts paste full diffs or code snippets instead of capturing what-and-why, and preferences restate technical details already covered in facts. Refine each processor's prompt with sharper guidance on what belongs in its memory type versus others, including concrete positive and negative examples drawn from observed output. Intentional duplication across types stays valid when the framing differs (a topic appearing in both a fact and a preference with different angles), but incidental overlap should be eliminated. Scope boundaries to enforce: episodic stays high-level narrative, facts stay declarative what/why, preferences stay behavioral. Verification is a spot-review of extracted memories after the change to confirm overlap reduction without losing coverage.
-
-### DLT-149: Sort tool usage list newest-first in agent context
-**Status**: ✗ Defined
-**Depends on**: None
-**Priority**: 4 (Low)
-**Complexity**: Easy
-**Description**: The tool usage summary injected into the agent's pre-processing context currently lists invocations in chronological order (oldest first). The most recent tool usages are typically the most relevant signal for the current turn — they reflect what the agent was just doing and which tools are likely to be needed next. Reverse the ordering so the newest entries appear at the top of the list, improving the signal density of this slice of the agent's context.
 
 ### DLT-150: Output phase markers for agent work styling
 **Status**: ✗ Defined
