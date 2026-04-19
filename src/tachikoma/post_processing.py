@@ -450,6 +450,7 @@ UTILITY_BASH_PREFIXES = [
     "head ",
     "tail ",
     "wc ",
+    "sort ",
     "stat ",
     "cd",
     "pwd",
