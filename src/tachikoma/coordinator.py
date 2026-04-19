@@ -77,11 +77,11 @@ async def _message_source(
     """Long-lived generator feeding messages from per-turn inbox to SDK.
 
     Yields the enriched initial message first, then reads subsequent
-    messages from the per-turn ``inbox`` queue (populated by _forwarder).
+    messages from the per-turn ``inbox`` queue.
 
-    On cancellation after ``inbox.get()`` returns but before ``yield``
-    commits, the locally held item is re-enqueued into ``inbox`` so
-    _drain_back can recover it (KD-4).
+    If cancellation lands after ``inbox.get()`` returns but before the
+    ``yield`` commits, the locally held item is re-enqueued so it is
+    not dropped.
     """
     _log.debug("Message source: yielding initial message")
     yield _user_message(initial)
@@ -600,8 +600,8 @@ class Coordinator:
             yield Error(message=sanitize_text(str(exc)), recoverable=True)
 
         finally:
-            # KD-2: cancel forwarder BEFORE client.disconnect so _message_buffer
-            # has no consumer during SDK teardown.
+            # Cancel the forwarder before disconnecting so _message_buffer has
+            # no consumer during SDK teardown.
             forwarder_task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 try:
@@ -611,7 +611,7 @@ class Coordinator:
 
             await client.disconnect()
 
-            # KD-3: drain-back + _client=None form a single synchronous block so
+            # Drain-back and _client reset form a single synchronous block so
             # has_pending_messages is accurate at the exact moment _client flips.
             self._drain_back(sdk_inbox)
             self._client = None
@@ -921,10 +921,10 @@ providing context for what the user has been doing in the meantime.
     async def _forwarder(self, inbox: asyncio.Queue[str]) -> None:
         """Forward items from _message_buffer to the per-turn SDK inbox.
 
-        Single suspension point on _message_buffer.get() — put_nowait is
-        synchronous, so a CancelledError cannot land between get() returning
-        and put_nowait() executing. The try/finally makes the recovery
-        explicit for readability and robustness to future edits (KD-4b).
+        The try/finally re-enqueues a held item on cancellation as
+        defence-in-depth — under the current code cancellation cannot
+        land between get() and the synchronous put_nowait(), but the
+        guard keeps the invariant robust to future edits.
         """
         pending: str | None = None
         try:
@@ -939,9 +939,9 @@ providing context for what the user has been doing in the meantime.
     def _drain_back(self, inbox: asyncio.Queue[str]) -> None:
         """Recover items from per-turn inbox and re-populate _message_buffer in order.
 
-        Synchronous; runs in a single atomic block so concurrent enqueue()
-        cannot interleave. Must be called AFTER the forwarder has awaited
-        to completion and AFTER client.disconnect() has returned (KD-2, KD-3).
+        Must be called after the forwarder has been cancelled and awaited
+        and after client.disconnect() has returned — otherwise either could
+        still consume from or push into the queues mid-drain.
         """
         recovered: list[str] = []
         while not inbox.empty():

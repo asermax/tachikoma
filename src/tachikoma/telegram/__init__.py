@@ -793,8 +793,8 @@ class TelegramChannel(Channel):
     ) -> None:
         """Process one buffered message through the coordinator.
 
-        Serialization is provided by the caller's _delivery_lock (DLT-111/KD-5).
-        Follow-up messages queue on the lock and become the next call.
+        Serialization is provided by the caller's _delivery_lock. Follow-up
+        messages queue on the lock and become the next call.
         """
         chat_id = self._settings.authorized_chat_id
         self._active_renderer = ResponseRenderer(
