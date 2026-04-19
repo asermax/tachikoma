@@ -3,6 +3,7 @@
 Uses real SQLite databases in tmp_path (no mocking of the DB layer).
 """
 
+import time
 from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import select
@@ -587,8 +588,6 @@ class TestUpdatedAtAutoStamping:
         )
         original = await repo.get_instance("inst-1")
         assert original is not None
-
-        import time
 
         time.sleep(0.01)
 

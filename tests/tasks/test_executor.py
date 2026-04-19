@@ -2,6 +2,7 @@
 
 import asyncio
 import contextlib
+from datetime import timedelta
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -17,6 +18,7 @@ from tachikoma.tasks.executor import (
     BACKGROUND_TASK_SYSTEM_PROMPT,
     BackgroundTaskExecutor,
     _PreprocessingResult,
+    _sweep_expired_waiters,
     background_task_runner,
 )
 from tachikoma.tasks.repository import TaskRepository
@@ -962,10 +964,6 @@ class TestRunnerTimeoutSweep:
     @pytest.mark.asyncio
     async def test_expired_waiting_instance_swept(self, repo: TaskRepository) -> None:
         """AC: Expired waiting instance is marked failed with notification."""
-        from datetime import timedelta
-
-        from tachikoma.tasks.executor import _sweep_expired_waiters
-
         old_time = _utcnow() - timedelta(seconds=7210)
         await repo.create_instance(
             _make_instance(
