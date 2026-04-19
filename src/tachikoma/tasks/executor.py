@@ -335,6 +335,10 @@ class BackgroundTaskExecutor:
             inst_id=instance.id,
         )
 
+        # Initialized before try so the except block can safely inspect stderr
+        stderr_acc = StderrAccumulator()
+        notification_source = f"Background task: {instance.prompt[:100]}"
+
         try:
             # Get the definition if available (for notification source naming)
             definition: TaskDefinition | None = None
@@ -365,7 +369,6 @@ class BackgroundTaskExecutor:
             system_prompt_text = datetime_line + "\n" + BACKGROUND_TASK_SYSTEM_PROMPT
 
             # Build SDK options with adapted system prompt
-            stderr_acc = StderrAccumulator()
             options = ClaudeAgentOptions(
                 cwd=self._agent_defaults.cwd,
                 cli_path=self._agent_defaults.cli_path,
@@ -488,6 +491,10 @@ class BackgroundTaskExecutor:
             sdk_id=instance.sdk_session_id,
         )
 
+        # Initialized before try so the except block can safely inspect stderr
+        stderr_acc = StderrAccumulator()
+        notification_source = f"Background task: {instance.prompt[:100]}"
+
         try:
             # Get the definition for notification source naming
             definition: TaskDefinition | None = None
@@ -517,7 +524,6 @@ class BackgroundTaskExecutor:
             )
             system_prompt_text = datetime_line + "\n" + BACKGROUND_TASK_SYSTEM_PROMPT
 
-            stderr_acc = StderrAccumulator()
             options = ClaudeAgentOptions(
                 cwd=self._agent_defaults.cwd,
                 cli_path=self._agent_defaults.cli_path,
@@ -533,17 +539,18 @@ class BackgroundTaskExecutor:
                 resume=instance.sdk_session_id,
             )
 
-            sdk_session_id: str | None = None
-
             async with ClaudeSDKClient(options) as client:
                 await client.query(consumed_response)
 
+                # Seed the evaluator loop with the known session id — if the
+                # resumed run errors before a ResultMessage is observed, the
+                # needs_input branch still has a valid resume target.
                 await self._run_evaluator_loop(
                     client,
                     instance,
                     notification_source,
                     stderr_acc,
-                    sdk_session_id,
+                    instance.sdk_session_id,
                 )
 
         except asyncio.CancelledError:
