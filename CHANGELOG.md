@@ -1,7 +1,22 @@
 # CHANGELOG
 
-
 <!-- version list -->
+
+## v1.36.1 (2026-04-19)
+
+### Bug Fixes
+
+- **boundary**: Classify short acknowledgment messages as continuations
+  ([`751832e`](https://github.com/asermax/tachikoma/commit/751832eb16b3a41cea123612720fefc5745cfc3f))
+
+### Documentation
+
+- **boundary**: Add short-message handling to feature docs
+  ([`028a401`](https://github.com/asermax/tachikoma/commit/028a40188094890068a50728a2a2b20ad107f3e5))
+
+- **changelog**: Restore insertion flag and backfill v1.28.0-v1.36.0
+  ([`bc7929b`](https://github.com/asermax/tachikoma/commit/bc7929b23657e467b9ea2ecea5084f53e64dda20))
+
 
 ## v1.36.0 (2026-04-19)
 
