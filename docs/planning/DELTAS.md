@@ -504,16 +504,9 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 **Complexity**: Medium
 **Description**: Task definitions currently rely on LLM-based skill classification at execution time to determine which skills are relevant. This is unreliable for tasks that always need specific skills — the classifier might not select the right skills for a terse task prompt. Add an optional list of skill names to the task definition model. When a task executes, the named skills are loaded unconditionally into the context before the classification step runs, ensuring the agent always has the domain knowledge the task requires. The task creation and update MCP tools expose this field so the agent can attach skills when defining tasks.
 
-### DLT-118: Declare dependencies between skills
-**Status**: ✗ Defined
-**Depends on**: None
-**Priority**: 1 (Critical)
-**Complexity**: Medium
-**Description**: Skills are currently loaded independently — when the classifier selects a skill, only that skill's content is injected. Some skills implicitly depend on concepts or tools defined in other skills (e.g., a domain skill that assumes the workflow authoring guide is available). Add a `depends_on` field to the SKILL.md frontmatter that lists skill names this skill requires. When a skill is selected (by classification, task attachment, or workflow step binding), the registry resolves its dependency chain and ensures all required skills are loaded into context. Circular dependencies are detected and reported as warnings.
-
 ### DLT-119: Declare required skills for workflow steps
 **Status**: ✗ Defined
-**Depends on**: DLT-118
+**Depends on**: None
 **Priority**: 1 (Critical)
 **Complexity**: Easy
 **Description**: Workflow steps are self-contained instruction bundles with no mechanism to declare which skills the agent needs to execute them. A step that involves git operations, API calls, or domain-specific knowledge relies on the skill classifier to infer this from the step instructions — which may fail for terse or technical steps. Allow workflow step authors to explicitly declare the skills required for a step. When the workflow engine activates a step, the declared skills and their transitive dependencies (via the skill dependency system) are loaded unconditionally into the agent's context, bypassing classification.

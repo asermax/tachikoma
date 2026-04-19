@@ -6,6 +6,9 @@ Tests for DLT-003: Skill system foundation and sub-agent delegation.
 import shutil
 from pathlib import Path
 
+import pytest
+from loguru import logger
+
 from tachikoma.skills.registry import SkillRegistry
 
 
@@ -835,3 +838,550 @@ class TestAddSource:
         registry.add_source(tmp_path / "nonexistent")
 
         assert registry.skills == {}
+
+
+class TestSkillDependsOnParsing:
+    """Tests for depends_on frontmatter parsing (DLT-118)."""
+
+    def test_parses_depends_on_list(self, tmp_path: Path) -> None:
+        """AC: depends_on: [skill-a, skill-b] → tuple preserving order."""
+        skills_dir = tmp_path / "skills"
+        skills_dir.mkdir(parents=True)
+
+        skill_dir = skills_dir / "my-skill"
+        skill_dir.mkdir()
+        (skill_dir / "SKILL.md").write_text(
+            '---\ndescription: "Test"\ndepends_on:\n  - skill-a\n  - skill-b\n---\n\nBody'
+        )
+
+        registry = SkillRegistry([skills_dir])
+
+        assert registry.skills["my-skill"].depends_on == ("skill-a", "skill-b")
+
+    def test_missing_depends_on_defaults_empty(self, tmp_path: Path) -> None:
+        """AC: No depends_on field → empty tuple."""
+        skills_dir = tmp_path / "skills"
+        skills_dir.mkdir(parents=True)
+
+        skill_dir = skills_dir / "my-skill"
+        skill_dir.mkdir()
+        (skill_dir / "SKILL.md").write_text('---\ndescription: "Test"\n---\n\nBody')
+
+        registry = SkillRegistry([skills_dir])
+
+        assert registry.skills["my-skill"].depends_on == ()
+
+    def test_empty_depends_on_list_behaves_same_as_missing(self, tmp_path: Path) -> None:
+        """AC: depends_on: [] → empty tuple, no warning."""
+        skills_dir = tmp_path / "skills"
+        skills_dir.mkdir(parents=True)
+
+        skill_dir = skills_dir / "my-skill"
+        skill_dir.mkdir()
+        (skill_dir / "SKILL.md").write_text('---\ndescription: "Test"\ndepends_on: []\n---\n\nBody')
+
+        registry = SkillRegistry([skills_dir])
+
+        assert registry.skills["my-skill"].depends_on == ()
+
+    def test_invalid_depends_on_warns_and_falls_back(self, tmp_path: Path) -> None:
+        """AC: Non-list depends_on → skill loads with empty tuple, warning logged."""
+        skills_dir = tmp_path / "skills"
+        skills_dir.mkdir(parents=True)
+
+        skill_dir = skills_dir / "my-skill"
+        skill_dir.mkdir()
+        (skill_dir / "SKILL.md").write_text(
+            '---\ndescription: "Test"\ndepends_on: "not-a-list"\n---\n\nBody'
+        )
+
+        warnings: list[str] = []
+        sink_id = logger.add(
+            lambda m: warnings.append(str(m)),
+            filter=lambda r: r["level"].no >= 30,
+        )
+
+        try:
+            registry = SkillRegistry([skills_dir])
+        finally:
+            logger.remove(sink_id)
+
+        assert "my-skill" in registry.skills
+        assert registry.skills["my-skill"].depends_on == ()
+        assert any("invalid depends_on" in w and "my-skill" in w for w in warnings)
+
+    def test_depends_on_non_string_elements_warns_and_falls_back(self, tmp_path: Path) -> None:
+        """AC: depends_on with non-string elements → skill loads with empty tuple."""
+        skills_dir = tmp_path / "skills"
+        skills_dir.mkdir(parents=True)
+
+        skill_dir = skills_dir / "my-skill"
+        skill_dir.mkdir()
+        (skill_dir / "SKILL.md").write_text(
+            '---\ndescription: "Test"\ndepends_on:\n  - foo\n  - 123\n---\n\nBody'
+        )
+
+        warnings: list[str] = []
+        sink_id = logger.add(
+            lambda m: warnings.append(str(m)),
+            filter=lambda r: r["level"].no >= 30,
+        )
+
+        try:
+            registry = SkillRegistry([skills_dir])
+        finally:
+            logger.remove(sink_id)
+
+        assert "my-skill" in registry.skills
+        assert registry.skills["my-skill"].depends_on == ()
+        assert any("invalid depends_on" in w and "my-skill" in w for w in warnings)
+
+    def test_depends_on_case_sensitive(self, tmp_path: Path) -> None:
+        """AC: Case-sensitive names — Foo and foo are distinct, preserved verbatim."""
+        skills_dir = tmp_path / "skills"
+        skills_dir.mkdir(parents=True)
+
+        (skills_dir / "Foo").mkdir()
+        (skills_dir / "Foo" / "SKILL.md").write_text(
+            '---\ndescription: "Upper"\ndepends_on:\n  - foo\n---\n\nBody'
+        )
+
+        (skills_dir / "foo").mkdir()
+        (skills_dir / "foo" / "SKILL.md").write_text('---\ndescription: "Lower"\n---\n\nBody')
+
+        registry = SkillRegistry([skills_dir])
+
+        assert registry.skills["Foo"].depends_on == ("foo",)
+        assert registry.skills["foo"].depends_on == ()
+
+
+class TestResolveChain:
+    """Tests for SkillRegistry.resolve_chain() (DLT-118)."""
+
+    def _build_skills(self, skills_dir: Path, skills: dict[str, tuple[str, list[str]]]) -> None:
+        """Create multiple skills with dependencies.
+
+        Args:
+            skills: mapping of name → (description, [depends_on names])
+        """
+        for name, (desc, deps) in skills.items():
+            skill_dir = skills_dir / name
+            skill_dir.mkdir(parents=True, exist_ok=True)
+            dep_yaml = ""
+            if deps:
+                dep_yaml = f"\ndepends_on: {deps}"
+            (skill_dir / "SKILL.md").write_text(
+                f'---\ndescription: "{desc}"{dep_yaml}\n---\n\nBody for {name}'
+            )
+
+    def test_linear_chain_deps_first_anchor_last(self, tmp_path: Path) -> None:
+        """AC: A→B→C returns [C, B, A]."""
+        skills_dir = tmp_path / "skills"
+        skills_dir.mkdir(parents=True)
+
+        self._build_skills(skills_dir, {
+            "A": ("Desc A", ["B"]),
+            "B": ("Desc B", ["C"]),
+            "C": ("Desc C", []),
+        })
+
+        registry = SkillRegistry([skills_dir])
+        chain = registry.resolve_chain("A")
+
+        names = [s.name for s in chain]
+        assert names == ["C", "B", "A"]
+
+    def test_cycle_terminates_each_skill_once(self, tmp_path: Path) -> None:
+        """AC: A↔B → both appear once, terminates."""
+        skills_dir = tmp_path / "skills"
+        skills_dir.mkdir(parents=True)
+
+        self._build_skills(skills_dir, {
+            "A": ("Desc A", ["B"]),
+            "B": ("Desc B", ["A"]),
+        })
+
+        registry = SkillRegistry([skills_dir])
+        chain = registry.resolve_chain("A")
+
+        names = [s.name for s in chain]
+        assert len(names) == len(set(names))
+        assert set(names) == {"A", "B"}
+        assert names[-1] == "A"
+
+    def test_self_reference_returns_single_element(self, tmp_path: Path) -> None:
+        """AC: A depends on [a] → returns [A]."""
+        skills_dir = tmp_path / "skills"
+        skills_dir.mkdir(parents=True)
+
+        self._build_skills(skills_dir, {
+            "A": ("Desc A", ["A"]),
+        })
+
+        registry = SkillRegistry([skills_dir])
+        chain = registry.resolve_chain("A")
+
+        assert [s.name for s in chain] == ["A"]
+
+    def test_diamond_shared_dep_appears_once(self, tmp_path: Path) -> None:
+        """AC: A→B, A→C, B→D, C→D → D once before B and C, A last."""
+        skills_dir = tmp_path / "skills"
+        skills_dir.mkdir(parents=True)
+
+        self._build_skills(skills_dir, {
+            "A": ("Desc A", ["B", "C"]),
+            "B": ("Desc B", ["D"]),
+            "C": ("Desc C", ["D"]),
+            "D": ("Desc D", []),
+        })
+
+        registry = SkillRegistry([skills_dir])
+        chain = registry.resolve_chain("A")
+
+        names = [s.name for s in chain]
+        assert names[-1] == "A"
+        assert names.count("D") == 1
+        assert names.index("D") < names.index("B")
+        assert names.index("D") < names.index("C")
+
+    def test_no_dependencies_returns_single_element_chain(self, tmp_path: Path) -> None:
+        """AC: Skill with no deps → [self]."""
+        skills_dir = tmp_path / "skills"
+        skills_dir.mkdir(parents=True)
+
+        self._build_skills(skills_dir, {
+            "A": ("Desc A", []),
+        })
+
+        registry = SkillRegistry([skills_dir])
+        chain = registry.resolve_chain("A")
+
+        assert [s.name for s in chain] == ["A"]
+
+    def test_unknown_dep_silently_skipped_during_resolution(self, tmp_path: Path) -> None:
+        """AC: A depends on [missing-x] → returns [A], no warning at resolution."""
+        skills_dir = tmp_path / "skills"
+        skills_dir.mkdir(parents=True)
+
+        self._build_skills(skills_dir, {
+            "A": ("Desc A", ["missing-x"]),
+        })
+
+        registry = SkillRegistry([skills_dir])
+        chain = registry.resolve_chain("A")
+
+        assert [s.name for s in chain] == ["A"]
+
+    def test_partial_unknown_real_dep_still_resolved(self, tmp_path: Path) -> None:
+        """AC: A depends on [missing-x, real-b] → returns [real-b, A]."""
+        skills_dir = tmp_path / "skills"
+        skills_dir.mkdir(parents=True)
+
+        self._build_skills(skills_dir, {
+            "A": ("Desc A", ["missing-x", "real-b"]),
+            "real-b": ("Desc B", []),
+        })
+
+        registry = SkillRegistry([skills_dir])
+        chain = registry.resolve_chain("A")
+
+        assert [s.name for s in chain] == ["real-b", "A"]
+
+    def test_cache_hit_returns_same_list_object(self, tmp_path: Path) -> None:
+        """AC: Second call returns same list object (memoized)."""
+        skills_dir = tmp_path / "skills"
+        skills_dir.mkdir(parents=True)
+
+        self._build_skills(skills_dir, {
+            "A": ("Desc A", ["B"]),
+            "B": ("Desc B", []),
+        })
+
+        registry = SkillRegistry([skills_dir])
+        first = registry.resolve_chain("A")
+        second = registry.resolve_chain("A")
+
+        assert first is second
+
+    def test_keyerror_when_anchor_not_registered(self, tmp_path: Path) -> None:
+        """AC: resolve_chain("nonexistent") raises KeyError."""
+        skills_dir = tmp_path / "skills"
+        skills_dir.mkdir(parents=True)
+
+        registry = SkillRegistry([skills_dir])
+
+        with pytest.raises(KeyError):
+            registry.resolve_chain("nonexistent")
+
+    def test_workspace_override_uses_workspace_depends_on(self, tmp_path: Path) -> None:
+        """AC: Two sources with same skill name, different deps → last-wins deps used."""
+        source1 = tmp_path / "builtin"
+        source2 = tmp_path / "workspace"
+        source1.mkdir()
+        source2.mkdir()
+
+        self._build_skills(source1, {
+            "foo": ("Built-in", ["a"]),
+        })
+        self._build_skills(source2, {
+            "foo": ("Workspace", ["b"]),
+        })
+        self._build_skills(source1, {
+            "a": ("A", []),
+        })
+        self._build_skills(source2, {
+            "b": ("B", []),
+        })
+
+        registry = SkillRegistry([source1, source2])
+        chain = registry.resolve_chain("foo")
+
+        names = [s.name for s in chain]
+        assert names == ["b", "foo"]
+
+    def test_cross_source_dependency_resolves_normally(self, tmp_path: Path) -> None:
+        """AC: Built-in skill depends on workspace-only skill → resolves across sources."""
+        source1 = tmp_path / "builtin"
+        source2 = tmp_path / "workspace"
+        source1.mkdir()
+        source2.mkdir()
+
+        self._build_skills(source1, {
+            "foo": ("Built-in", ["bar"]),
+        })
+        self._build_skills(source2, {
+            "bar": ("Workspace-only", []),
+        })
+
+        registry = SkillRegistry([source1, source2])
+        chain = registry.resolve_chain("foo")
+
+        names = [s.name for s in chain]
+        assert names == ["bar", "foo"]
+
+    def test_case_sensitive_distinct_skills_do_not_conflate(self, tmp_path: Path) -> None:
+        """AC: Foo depends on [foo] → chain is [foo, Foo] (distinct entries)."""
+        skills_dir = tmp_path / "skills"
+        skills_dir.mkdir(parents=True)
+
+        self._build_skills(skills_dir, {
+            "Foo": ("Upper", ["foo"]),
+            "foo": ("Lower", []),
+        })
+
+        registry = SkillRegistry([skills_dir])
+        chain = registry.resolve_chain("Foo")
+
+        names = [s.name for s in chain]
+        assert names == ["foo", "Foo"]
+
+
+class TestValidateDeps:
+    """Tests for SkillRegistry._validate_deps() (DLT-118)."""
+
+    def test_unknown_deps_warn_once_per_skill(self, tmp_path: Path) -> None:
+        """AC: Skill with unknown deps gets one warning listing all missing names."""
+        skills_dir = tmp_path / "skills"
+        skills_dir.mkdir(parents=True)
+
+        skill_dir = skills_dir / "my-skill"
+        skill_dir.mkdir()
+        (skill_dir / "SKILL.md").write_text(
+            '---\ndescription: "Test"\ndepends_on:\n  - missing-x\n  - missing-y\n---\n\nBody'
+        )
+
+        warnings: list[str] = []
+        sink_id = logger.add(
+            lambda m: warnings.append(str(m)),
+            filter=lambda r: r["level"].no >= 30,
+        )
+
+        try:
+            registry = SkillRegistry([skills_dir])
+        finally:
+            logger.remove(sink_id)
+
+        assert "my-skill" in registry.skills
+        assert any("my-skill" in w and "missing-x" in w and "missing-y" in w for w in warnings)
+
+    def test_multiple_skills_each_get_one_warning(self, tmp_path: Path) -> None:
+        """AC: Two skills with missing deps → exactly two warnings, one per skill."""
+        skills_dir = tmp_path / "skills"
+        skills_dir.mkdir(parents=True)
+
+        (skills_dir / "skill-a").mkdir()
+        (skills_dir / "skill-a" / "SKILL.md").write_text(
+            '---\ndescription: "A"\ndepends_on:\n  - missing-1\n---\n\nBody'
+        )
+
+        (skills_dir / "skill-b").mkdir()
+        (skills_dir / "skill-b" / "SKILL.md").write_text(
+            '---\ndescription: "B"\ndepends_on:\n  - missing-2\n---\n\nBody'
+        )
+
+        warnings: list[str] = []
+        sink_id = logger.add(
+            lambda m: warnings.append(str(m)),
+            filter=lambda r: r["level"].no >= 30 and "unknown dependencies" in r["message"],
+        )
+
+        try:
+            SkillRegistry([skills_dir])
+        finally:
+            logger.remove(sink_id)
+
+        assert len(warnings) == 2
+        assert any("skill-a" in w and "missing-1" in w for w in warnings)
+        assert any("skill-b" in w and "missing-2" in w for w in warnings)
+
+    def test_skill_with_all_valid_deps_no_warning(self, tmp_path: Path) -> None:
+        """AC: Skill with only valid deps → no warning."""
+        skills_dir = tmp_path / "skills"
+        skills_dir.mkdir(parents=True)
+
+        (skills_dir / "dep-skill").mkdir(parents=True)
+        (skills_dir / "dep-skill" / "SKILL.md").write_text(
+            '---\ndescription: "Dep"\n---\n\nBody'
+        )
+
+        skill_dir2 = skills_dir / "my-skill"
+        skill_dir2.mkdir()
+        (skill_dir2 / "SKILL.md").write_text(
+            '---\ndescription: "Test"\ndepends_on:\n  - dep-skill\n---\n\nBody'
+        )
+
+        warnings: list[str] = []
+        sink_id = logger.add(
+            lambda m: warnings.append(str(m)),
+            filter=lambda r: r["level"].no >= 30,
+        )
+
+        try:
+            SkillRegistry([skills_dir])
+        finally:
+            logger.remove(sink_id)
+
+        assert not any("unknown dependencies" in w for w in warnings)
+
+    def test_skill_with_empty_depends_on_no_warning(self, tmp_path: Path) -> None:
+        """AC: Skill with empty depends_on → no warning."""
+        skills_dir = tmp_path / "skills"
+        skills_dir.mkdir(parents=True)
+
+        skill_dir = skills_dir / "my-skill"
+        skill_dir.mkdir()
+        (skill_dir / "SKILL.md").write_text('---\ndescription: "Test"\n---\n\nBody')
+
+        warnings: list[str] = []
+        sink_id = logger.add(
+            lambda m: warnings.append(str(m)),
+            filter=lambda r: r["level"].no >= 30,
+        )
+
+        try:
+            SkillRegistry([skills_dir])
+        finally:
+            logger.remove(sink_id)
+
+        assert not any("unknown dependencies" in w for w in warnings)
+
+
+class TestCacheInvalidation:
+    """Tests for chain cache invalidation on refresh/add_source (DLT-118)."""
+
+    def test_refresh_clears_chain_cache(self, tmp_path: Path) -> None:
+        """AC: After refresh, cached chains are recomputed from fresh state."""
+        skills_dir = tmp_path / "skills"
+        skills_dir.mkdir(parents=True)
+
+        (skills_dir / "A").mkdir()
+        (skills_dir / "A" / "SKILL.md").write_text(
+            '---\ndescription: "A"\ndepends_on:\n  - B\n---\n\nBody'
+        )
+        (skills_dir / "B").mkdir()
+        (skills_dir / "B" / "SKILL.md").write_text('---\ndescription: "B"\n---\n\nBody')
+
+        registry = SkillRegistry([skills_dir])
+        chain1 = registry.resolve_chain("A")
+        assert [s.name for s in chain1] == ["B", "A"]
+
+        # Modify B's dependencies on disk
+        (skills_dir / "B" / "SKILL.md").write_text(
+            '---\ndescription: "B"\ndepends_on:\n  - C\n---\n\nBody'
+        )
+        (skills_dir / "C").mkdir()
+        (skills_dir / "C" / "SKILL.md").write_text('---\ndescription: "C"\n---\n\nBody')
+
+        registry.mark_dirty()
+        registry.refresh()
+
+        chain2 = registry.resolve_chain("A")
+        assert [s.name for s in chain2] == ["C", "B", "A"]
+
+    def test_add_source_clears_chain_cache(self, tmp_path: Path) -> None:
+        """AC: After add_source, chains reflect the new skills."""
+        source1 = tmp_path / "initial"
+        source2 = tmp_path / "added"
+        source1.mkdir()
+        source2.mkdir()
+
+        (source1 / "A").mkdir()
+        (source1 / "A" / "SKILL.md").write_text(
+            '---\ndescription: "A"\ndepends_on:\n  - B\n---\n\nBody'
+        )
+
+        registry = SkillRegistry([source1])
+        # A depends on B which doesn't exist → chain is just [A]
+        chain1 = registry.resolve_chain("A")
+        assert [s.name for s in chain1] == ["A"]
+
+        # Add source that contains B
+        (source2 / "B").mkdir()
+        (source2 / "B" / "SKILL.md").write_text('---\ndescription: "B"\n---\n\nBody')
+
+        registry.add_source(source2)
+
+        chain2 = registry.resolve_chain("A")
+        assert [s.name for s in chain2] == ["B", "A"]
+
+    def test_refresh_failure_leaves_cache_empty(self, tmp_path: Path, mocker) -> None:
+        """AC: Failed refresh leaves cache empty, _skills restored."""
+        skills_dir = tmp_path / "skills"
+        skills_dir.mkdir(parents=True)
+
+        (skills_dir / "A").mkdir()
+        (skills_dir / "A" / "SKILL.md").write_text('---\ndescription: "A"\n---\n\nBody')
+
+        registry = SkillRegistry([skills_dir])
+        registry.resolve_chain("A")
+
+        # Force discover failure
+        mocker.patch.object(
+            registry,
+            "_discover",
+            side_effect=PermissionError("nope"),
+        )
+
+        registry.mark_dirty()
+        registry.refresh()
+
+        assert registry._chain_cache == {}
+        assert "A" in registry.skills
+
+    def test_validate_deps_called_after_add_source(self, tmp_path: Path) -> None:
+        """AC: add_source triggers _validate_deps for the new skills."""
+        source1 = tmp_path / "initial"
+        source2 = tmp_path / "added"
+        source1.mkdir()
+        source2.mkdir()
+
+        (source2 / "A").mkdir()
+        (source2 / "A" / "SKILL.md").write_text(
+            '---\ndescription: "A"\ndepends_on:\n  - nonexistent\n---\n\nBody'
+        )
+
+        registry = SkillRegistry([source1])
+        registry.add_source(source2)
+
+        # Skill loaded successfully despite missing dep
+        assert "A" in registry.skills

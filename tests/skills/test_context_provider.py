@@ -441,3 +441,242 @@ class TestSkillsContextProvider:
         assert "test" in prompt
 
         assert result is None  # NO_RELEVANT_SKILLS
+
+
+class TestProviderChainExpansion:
+    """Tests for chain expansion in SkillsContextProvider (DLT-118)."""
+
+    def _create_skill_with_deps(
+        self, skills_dir: Path, name: str, description: str, deps: list[str] | None = None
+    ) -> None:
+        """Create a skill directory with optional depends_on."""
+        skill_dir = skills_dir / name
+        skill_dir.mkdir(parents=True, exist_ok=True)
+        dep_yaml = ""
+        if deps:
+            dep_yaml = f"\ndepends_on: {deps}"
+        (skill_dir / "SKILL.md").write_text(
+            f'---\ndescription: "{description}"{dep_yaml}\n---\n\nBody for {name}'
+        )
+
+    async def test_emits_detected_skill_with_its_transitive_deps(
+        self, mocker: MockerFixture, tmp_path: Path
+    ) -> None:
+        """AC: A depends on B; classifier returns A → results contain [B, A]."""
+        mock_query = mocker.patch("tachikoma.skills.context_provider.stderr_aware_query")
+
+        skills_dir = tmp_path / "skills"
+        skills_dir.mkdir(parents=True)
+        self._create_skill_with_deps(skills_dir, "A", "Desc A", ["B"])
+        self._create_skill_with_deps(skills_dir, "B", "Desc B")
+
+        mock_query.return_value = _make_query_result("A")
+
+        defaults = AgentDefaults(cwd=tmp_path)
+        registry = SkillRegistry([skills_dir])
+        provider = SkillsContextProvider(defaults, registry)
+
+        result = await provider.provide("hello")
+
+        assert result is not None
+        assert len(result) == 2
+        assert result[0].metadata["skill_name"] == "B"
+        assert result[1].metadata["skill_name"] == "A"
+
+    async def test_skips_deps_already_in_existing_entries(
+        self, mocker: MockerFixture, tmp_path: Path
+    ) -> None:
+        """AC: B already loaded; classifier returns A (depends on B) → only A emitted."""
+        mock_query = mocker.patch("tachikoma.skills.context_provider.stderr_aware_query")
+
+        skills_dir = tmp_path / "skills"
+        skills_dir.mkdir(parents=True)
+        self._create_skill_with_deps(skills_dir, "A", "Desc A", ["B"])
+        self._create_skill_with_deps(skills_dir, "B", "Desc B")
+
+        mock_query.return_value = _make_query_result("A")
+
+        defaults = AgentDefaults(cwd=tmp_path)
+        registry = SkillRegistry([skills_dir])
+        provider = SkillsContextProvider(defaults, registry)
+
+        existing = [
+            SessionContextEntry(
+                id=1,
+                session_id="s1",
+                owner="skills",
+                content="...",
+                metadata={"skill_name": "B"},
+            ),
+        ]
+
+        result = await provider.provide("hello", existing_entries=existing)
+
+        assert result is not None
+        assert len(result) == 1
+        assert result[0].metadata["skill_name"] == "A"
+
+    async def test_overlapping_chains_emit_shared_dep_once(
+        self, mocker: MockerFixture, tmp_path: Path
+    ) -> None:
+        """AC: X and Y both depend on F → results are [F, X, Y]."""
+        mock_query = mocker.patch("tachikoma.skills.context_provider.stderr_aware_query")
+
+        skills_dir = tmp_path / "skills"
+        skills_dir.mkdir(parents=True)
+        self._create_skill_with_deps(skills_dir, "X", "Desc X", ["F"])
+        self._create_skill_with_deps(skills_dir, "Y", "Desc Y", ["F"])
+        self._create_skill_with_deps(skills_dir, "F", "Desc F")
+
+        mock_query.return_value = _make_query_result("X\nY")
+
+        defaults = AgentDefaults(cwd=tmp_path)
+        registry = SkillRegistry([skills_dir])
+        provider = SkillsContextProvider(defaults, registry)
+
+        result = await provider.provide("hello")
+
+        assert result is not None
+        names = [r.metadata["skill_name"] for r in result]
+        assert names == ["F", "X", "Y"]
+
+    async def test_chain_partially_loaded_still_emits_remaining(
+        self, mocker: MockerFixture, tmp_path: Path
+    ) -> None:
+        """AC: Chain [C, B, A] but B already in entries → results are [C, A]."""
+        mock_query = mocker.patch("tachikoma.skills.context_provider.stderr_aware_query")
+
+        skills_dir = tmp_path / "skills"
+        skills_dir.mkdir(parents=True)
+        self._create_skill_with_deps(skills_dir, "A", "Desc A", ["B"])
+        self._create_skill_with_deps(skills_dir, "B", "Desc B", ["C"])
+        self._create_skill_with_deps(skills_dir, "C", "Desc C")
+
+        mock_query.return_value = _make_query_result("A")
+
+        defaults = AgentDefaults(cwd=tmp_path)
+        registry = SkillRegistry([skills_dir])
+        provider = SkillsContextProvider(defaults, registry)
+
+        existing = [
+            SessionContextEntry(
+                id=1,
+                session_id="s1",
+                owner="skills",
+                content="...",
+                metadata={"skill_name": "B"},
+            ),
+        ]
+
+        result = await provider.provide("hello", existing_entries=existing)
+
+        assert result is not None
+        names = [r.metadata["skill_name"] for r in result]
+        assert names == ["C", "A"]
+
+    async def test_classification_empty_no_resolve_calls(
+        self, mocker: MockerFixture, tmp_path: Path
+    ) -> None:
+        """AC: Classifier returns NO_RELEVANT_SKILLS → resolver not invoked."""
+        mock_query = mocker.patch("tachikoma.skills.context_provider.stderr_aware_query")
+
+        skills_dir = tmp_path / "skills"
+        skills_dir.mkdir(parents=True)
+        self._create_skill_with_deps(skills_dir, "A", "Desc A")
+
+        mock_query.return_value = _make_query_result("NO_RELEVANT_SKILLS")
+
+        defaults = AgentDefaults(cwd=tmp_path)
+        registry = SkillRegistry([skills_dir])
+        provider = SkillsContextProvider(defaults, registry)
+        spy = mocker.spy(registry, "resolve_chain")
+
+        result = await provider.provide("hello")
+
+        assert result is None
+        spy.assert_not_called()
+
+    async def test_resolver_exception_for_one_skill_does_not_block_others(
+        self, mocker: MockerFixture, tmp_path: Path
+    ) -> None:
+        """AC: resolve_chain raises for X but succeeds for Y → only Y emitted."""
+        mock_query = mocker.patch("tachikoma.skills.context_provider.stderr_aware_query")
+
+        skills_dir = tmp_path / "skills"
+        skills_dir.mkdir(parents=True)
+        self._create_skill_with_deps(skills_dir, "X", "Desc X")
+        self._create_skill_with_deps(skills_dir, "Y", "Desc Y")
+
+        mock_query.return_value = _make_query_result("X\nY")
+
+        defaults = AgentDefaults(cwd=tmp_path)
+        registry = SkillRegistry([skills_dir])
+        provider = SkillsContextProvider(defaults, registry)
+
+        original_resolve = registry.resolve_chain
+
+        def patched_resolve(name: str):
+            if name == "X":
+                raise RuntimeError("boom")
+            return original_resolve(name)
+
+        mocker.patch.object(registry, "resolve_chain", side_effect=patched_resolve)
+
+        result = await provider.provide("hello")
+
+        assert result is not None
+        names = [r.metadata["skill_name"] for r in result]
+        assert names == ["Y"]
+
+    async def test_candidate_list_contains_every_unloaded_skill_regardless_of_dep_relationship(
+        self, mocker: MockerFixture, tmp_path: Path
+    ) -> None:
+        """AC: Classification prompt includes all unloaded skills, deps don't filter."""
+        mock_query = mocker.patch("tachikoma.skills.context_provider.stderr_aware_query")
+
+        skills_dir = tmp_path / "skills"
+        skills_dir.mkdir(parents=True)
+        self._create_skill_with_deps(skills_dir, "alpha", "Alpha skill", ["bravo"])
+        self._create_skill_with_deps(skills_dir, "bravo", "Bravo skill")
+
+        mock_query.return_value = _make_query_result("NO_RELEVANT_SKILLS")
+
+        defaults = AgentDefaults(cwd=tmp_path)
+        registry = SkillRegistry([skills_dir])
+        provider = SkillsContextProvider(defaults, registry)
+
+        await provider.provide("hello")
+
+        call_args = mock_query.call_args
+        prompt = call_args[1]["prompt"]
+        assert "- **alpha**" in prompt
+        assert "- **bravo**" in prompt
+
+    async def test_emitted_entries_shape_identical_to_classification_loaded(
+        self, mocker: MockerFixture, tmp_path: Path
+    ) -> None:
+        """AC: Dep-loaded entry has same tag, content structure, and metadata keys."""
+        mock_query = mocker.patch("tachikoma.skills.context_provider.stderr_aware_query")
+
+        skills_dir = tmp_path / "skills"
+        skills_dir.mkdir(parents=True)
+        self._create_skill_with_deps(skills_dir, "A", "Desc A", ["B"])
+        self._create_skill_with_deps(skills_dir, "B", "Desc B")
+
+        mock_query.return_value = _make_query_result("A")
+
+        defaults = AgentDefaults(cwd=tmp_path)
+        registry = SkillRegistry([skills_dir])
+        provider = SkillsContextProvider(defaults, registry)
+
+        result = await provider.provide("hello")
+
+        assert result is not None
+        assert len(result) == 2
+
+        for entry in result:
+            assert entry.tag == "skills"
+            assert "skill_name" in entry.metadata
+            assert '<skill name=' in entry.content
+            assert "directory=" in entry.content
+            assert entry.agents is None

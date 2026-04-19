@@ -33,7 +33,7 @@ The coordinator needs to make specialized sub-agents available to the SDK's orch
 
 ## Design Overview
 
-Eight-component architecture: a bootstrap hook creates the directory structure and shared registry, the skill registry discovers and loads all skills and agents at startup from multiple sources (with runtime refresh support), a filesystem watcher monitors the skills directory for changes and marks the registry dirty, a per-message pre-processing pipeline runs on every message, a skills context provider (receiving the registry via injection) classifies relevance per-message considering only skills not already in context (refreshing the registry first), the coordinator derives agents from context entries and the skill registry, and the system prompt preamble provides awareness-level skill context independent of per-message detection.
+Eight-component architecture: a bootstrap hook creates the directory structure and shared registry, the skill registry discovers and loads all skills and agents at startup from multiple sources (with runtime refresh support) and exposes a transitive dependency resolver, a filesystem watcher monitors the skills directory for changes and marks the registry dirty, a per-message pre-processing pipeline runs on every message, a skills context provider (receiving the registry via injection) classifies relevance per-message considering only skills not already in context (refreshing the registry first, then expanding each detected skill through the resolver before emission), the coordinator derives agents from context entries and the skill registry, and the system prompt preamble provides awareness-level skill context independent of per-message detection.
 
 ```
 ┌────────────────────────────────────────────────────────────┐
@@ -101,8 +101,8 @@ Eight-component architecture: a bootstrap hook creates the directory structure a
 | Layer/Component | Responsibility | Key Decisions |
 |-----------------|----------------|---------------|
 | `src/tachikoma/skills/__init__.py` | Re-exports `SkillRegistry`, `Skill`, `SkillsChanged`, `SkillsContextProvider`, `skills_hook`, `watch_skills` | Package module for the skills subsystem |
-| `src/tachikoma/skills/registry.py` | `SkillRegistry` class: discovers skills from multiple sources, loads agents, builds agents dict, stores skill body and path; discovers workflow definitions within skills and exposes via `get_workflow()` and `workflows` property; refreshes all sources on dirty flag via swap-on-success; `add_source(path)` registers and discovers additional sources post-construction (used by channels to contribute skills during startup); `Skill` dataclass for metadata (name from folder, description, version, body, path) | Uses `python-frontmatter` for parsing; constructs `AgentDefinition` directly; multi-source with last-wins precedence; `mark_dirty()` for external callers, `refresh()` for dirty-check-and-rescan; `add_source()` appends to `_skill_sources` and calls `_discover()` immediately; workflow definitions stored in `_workflows` dict keyed by (skill_name, workflow_name) |
-| `src/tachikoma/skills/context_provider.py` | `SkillsContextProvider(MessageContextProvider)`: extends standalone MessageContextProvider ABC (not ContextProvider — signatures are incompatible), receives `SkillRegistry` via constructor injection, refreshes registry before classification, classifies only unloaded skills via standalone `query()` with Opus low effort (DES-007), reads skill body from registry's pre-loaded `Skill.body`, returns one ContextResult per detected skill with metadata identifying skill name, agents=None. Also contains `extract_skill_names()` and `derive_agents_from_entries()` helpers | Receives registry and `AgentDefaults` via constructor injection; no tools for classification agent (pure reasoning); fully consumes query() generator (DES-005); `extract_skill_names()` reads skill names from entry metadata for filtering; `derive_agents_from_entries()` derives agents for the coordinator |
+| `src/tachikoma/skills/registry.py` | `SkillRegistry` class: discovers skills from multiple sources, loads agents, builds agents dict, stores skill body and path; parses the `depends_on` frontmatter list onto the `Skill` dataclass; discovers workflow definitions within skills and exposes via `get_workflow()` and `workflows` property; refreshes all sources on dirty flag via swap-on-success; `add_source(path)` registers and discovers additional sources post-construction (used by channels to contribute skills during startup); exposes `resolve_chain(skill_name)` for transitive dependency resolution (deps-first, anchor-last, cycle-tolerant, unknown-dep-tolerant, memoized); runs a post-discovery `_validate_deps()` pass on every load path to log unknown-dep warnings; `Skill` dataclass for metadata (name from folder, description, version, body, path, `depends_on`) | Uses `python-frontmatter` for parsing; constructs `AgentDefinition` directly; multi-source with last-wins precedence; `mark_dirty()` for external callers, `refresh()` for dirty-check-and-rescan; `add_source()` appends to `_skill_sources` and calls `_discover()` immediately; workflow definitions stored in `_workflows` dict keyed by (skill_name, workflow_name); `depends_on` parsed as `tuple[str, ...]` with warn-and-fall-back on malformed values; `_chain_cache` keyed by skill name, cleared in `refresh()` alongside the fresh-dict swap and at the start of `add_source()` |
+| `src/tachikoma/skills/context_provider.py` | `SkillsContextProvider(MessageContextProvider)`: extends standalone MessageContextProvider ABC (not ContextProvider — signatures are incompatible), receives `SkillRegistry` via constructor injection, refreshes registry before classification, classifies only unloaded skills via standalone `query()` with Opus low effort (DES-007), expands each classification-detected skill via `registry.resolve_chain()` and merges the chains with first-seen dedup before emission, reads skill body from registry's pre-loaded `Skill.body`, returns one ContextResult per skill in the resolved chain with metadata identifying skill name, agents=None. Also contains `extract_skill_names()` and `derive_agents_from_entries()` helpers | Receives registry and `AgentDefaults` via constructor injection; no tools for classification agent (pure reasoning); fully consumes query() generator (DES-005); `extract_skill_names()` reads skill names from entry metadata for filtering; `derive_agents_from_entries()` derives agents for the coordinator; dep expansion happens strictly after classification (does not influence candidate list) and before dedup against `existing_entries`; emitted dep-loaded entries are shape-identical to classification-loaded entries; per-skill `try/except` around `resolve_chain` so one failing chain does not block other detected skills |
 | `src/tachikoma/skills/hooks.py` | `skills_hook` bootstrap callback: creates `workspace/skills/` directory, resolves built-in skills path, creates `SkillRegistry` with both sources, stores in `ctx.extras["skill_registry"]` | Follows DES-003 pattern; built-in path via `Path(__file__).parent / "builtin"`; graceful fallback if built-in missing |
 | `src/tachikoma/skills/watcher.py` | `watch_skills()` async function: monitors skills directory, marks registry dirty, dispatches `SkillsChanged` events; top-level exception handler prevents silent task death | Uses `watchfiles.awatch()` with 5s debounce and 2s rust_timeout; relies on watchfiles' default filtering behavior (hidden files, `__pycache__` excluded) |
 | `src/tachikoma/skills/events.py` | `SkillsChanged(BaseEvent[None])`: typed event for skill change notification | Follows bubus event pattern (ADR-009); no payload — signals "something changed" |
@@ -139,7 +139,10 @@ SkillsContextProvider.provide(message, existing_entries=entries)
     ├── Filters registry to unloaded skills only
     ├── If no unloaded skills → return None (skip, no LLM call)
     ├── Classifies via query() [Opus low effort, DES-007]
-    ├── For each detected skill:
+    ├── For each detected skill (per-skill try/except for error isolation):
+    │   └── chain = registry.resolve_chain(name)  # deps-first, anchor-last
+    │   └── merge into ordered list with first-seen dedup (seed seen-set with loaded_names)
+    ├── For each skill in the resolved ordered chain:
     │   └── ContextResult(tag="skills", content=XML, metadata={"skill_name": name})
     └── Returns list[ContextResult] (agents=None on all)
         │
@@ -202,23 +205,27 @@ flowchart TD
 ### Data Types
 
 ```
-Skill (dataclass)
+Skill (dataclass, frozen)
 ├── name: str (derived from folder name)
 ├── description: str
 ├── version: str | None
 ├── body: str (SKILL.md content without YAML frontmatter, loaded at init)
-└── path: Path (absolute path to skill directory)
+├── path: Path (absolute path to skill directory)
+└── depends_on: tuple[str, ...] (declared direct dependencies by skill name; default ())
 
 SkillRegistry
-├── __init__(skill_sources: list[Path])  # scans each source; last-wins on name collision
+├── __init__(skill_sources: list[Path])  # scans each source; last-wins on name collision; runs _validate_deps at end
 ├── _agents: dict[str, AgentDefinition]
 ├── _skills: dict[str, Skill]
 ├── _workflows: dict[tuple[str, str], WorkflowDefinition]  (keyed by skill_name, workflow_name)
+├── _chain_cache: dict[str, list[Skill]]  (memoized transitive chains, keyed by anchor skill name; cleared on refresh/add_source)
 ├── _dirty: bool                         (set by watcher, cleared by refresh)
 ├── _skill_sources: list[Path]           (stored for reuse during refresh)
-├── add_source(path: Path) → None       (appends to _skill_sources, discovers immediately; used by channels)
+├── add_source(path: Path) → None       (clears _chain_cache, appends to _skill_sources, discovers immediately, runs _validate_deps; used by channels)
 ├── mark_dirty() → None                 (external API for watcher)
-├── refresh() → None                    (check dirty, re-discover all sources if needed)
+├── refresh() → None                    (check dirty, re-discover all sources if needed; clears _chain_cache alongside fresh-dict swap; runs _validate_deps on success)
+├── resolve_chain(skill_name: str) → list[Skill]  (DFS post-order, visited-set, memoized; raises KeyError if skill_name not registered)
+├── _validate_deps() → None             (private; walks _skills once, logs one warning per dependent skill whose depends_on contains unknown names)
 ├── get_agents() → dict[str, AgentDefinition]
 ├── get_agents_for_skill(skill_name: str) → dict[str, AgentDefinition]
 ├── get_workflow(skill_name: str, workflow_name: str) → WorkflowDefinition | None
@@ -526,6 +533,29 @@ SkillsChanged(BaseEvent[None])
 - Pro: Maintains last-wins precedence — channel skills added last, can override built-in/workspace
 - Note: Channel sources are not watched by the filesystem watcher (acceptable — they're package resources, not user-editable)
 
+### Declarable Skill Dependencies
+
+**Choice**: Skills declare direct dependencies via a `depends_on: tuple[str, ...]` field on the frozen `Skill` dataclass, parsed from SKILL.md frontmatter. The registry exposes `resolve_chain(skill_name) → list[Skill]` implemented as a post-order DFS with a visited-set, memoized in `_chain_cache` and invalidated on every mutation path (`refresh()`, `add_source()`). A post-discovery `_validate_deps()` pass runs at the end of every load path and logs one warning per dependent skill whose `depends_on` contains unknown names. The resolver returns the unfiltered transitive chain; the provider handles dedup against `existing_entries` and across sibling chains.
+**Why**: Skills routinely assume foundations that live in *other* skills (the built-in `workflow-authoring-guide` being the canonical example). Without a declarative link, loading the foundation depends on the classifier happening to also detect it — fragile and phrasing-sensitive. Post-order DFS with a visited-set gives deps-first ordering and handles cycles, diamonds, and self-references uniformly; unfiltered chains let the resolver be reusable across future non-provider callers (task attachment, workflow step binding) while keeping cache keys simple (just the skill name); post-discovery validation is the only point where `_skills` is authoritative for distinguishing "unknown" from "will be registered by a later source."
+**Alternatives Considered**:
+- **Iterative DFS with explicit stack**: same result, more code. Python's default recursion limit is comfortably above realistic dep depths (usually 1–3).
+- **Kahn's algorithm (BFS topological sort)**: requires a DAG; would need to explicitly reject cycles instead of tolerating them (R4 says tolerate).
+- **`functools.lru_cache` on `resolve_chain`**: tempting but wrong — instance-scoped quirks; a plain dict is clearer and explicitly invalidatable.
+- **Resolver filters against `existing_entries`**: cache key would need to include the entry set, breaking memoization across messages; also couples resolver to the provider's concerns.
+- **In-line warnings during `_load_skill`**: produces false positives when a later source registers the "missing" skill; would need a retraction dance.
+- **`list[str]` default via `field(default_factory=list)`**: violates the frozen-dataclass value-object expectation and breaks potential hashability.
+- **Case-insensitive dep matching**: would forgive typos but create asymmetry with folder-name identity used elsewhere in the registry.
+
+**Consequences**:
+- Pro: Declarative, textbook resolution in O(V+E) per uncached call; cycle handling is a consequence of the existing visited-set, not a special case.
+- Pro: Memoized chains shared across messages until refresh — repeated resolutions are O(1).
+- Pro: Resolver API is reusable for non-provider callers (future task attachment / workflow step binding).
+- Pro: Shape-identical emission at the provider boundary — downstream agent derivation cannot tell dep-loaded from classification-loaded entries.
+- Pro: Authoring-time warnings surface typos and deleted-skill references at startup without blocking the load.
+- Con: Recursion depth bounded by Python's default limit (acceptable — realistic chains are shallow).
+- Con: Every load path must remember to call `_validate_deps` (mitigated: only three load paths).
+- Con: On `refresh()` failure the cache is left empty rather than restored alongside the fresh-dict swap (accepted — empty cache is consistent with any `_skills` state; cold-recompute is the only cost).
+
 ### Skills Provider Moves Entirely to Per-Message Pipeline
 
 **Choice**: `SkillsContextProvider` is removed from the session-gated `PreProcessingPipeline` and registered only in the `MessagePreProcessingPipeline`.
@@ -608,6 +638,55 @@ SkillsChanged(BaseEvent[None])
 **When**: The filesystem watcher detects the change (after 5s debounce), marks the registry dirty, and dispatches a SkillsChanged event
 **Then**: The next per-message evaluation's `provide()` call triggers a registry refresh, discovering the updated skills. The current session's accumulated entries remain, but newly discovered skills become available for classification on the next message.
 **Rationale**: Runtime refresh enables skill authoring without restart while allowing new skills to be detected mid-session through the per-message evaluation.
+
+### Scenario: Detected skill has a transitive dependency chain
+
+**Given**: Skill A depends on B; B depends on C; none are loaded in the session.
+**When**: The classifier detects A and the provider calls `registry.resolve_chain("A")`.
+**Then**: The resolver returns `[C, B, A]`. The provider emits three `ContextResult`s in that order, each shape-identical to a classification-loaded entry.
+**Rationale**: Deps-first ordering ensures foundations appear before their dependents in the assembled prompt.
+
+### Scenario: Diamond dependency
+
+**Given**: Skill A depends on B and C; both B and C depend on D.
+**When**: The classifier detects A.
+**Then**: The resolver returns a chain containing `D, B, C, A` (D appears exactly once, before both B and C; A is last). The visited-set dedup prevents D from being emitted twice.
+**Rationale**: Shared foundations are injected once per message regardless of how many paths reach them.
+
+### Scenario: Cycle or self-reference
+
+**Given**: Skill A depends on B and B depends on A (or A declares `depends_on: [a]`).
+**When**: The resolver is called.
+**Then**: Traversal enters each node at most once via the visited-set, terminates cleanly, and returns each skill exactly once. No warning is emitted at resolution time.
+**Rationale**: Cycles are tolerated (R4); the visited-set serves double duty (cycle break + dedup).
+
+### Scenario: Unknown dependency at load and resolution time
+
+**Given**: Skill A declares `depends_on: [missing-x, real-b]`; `missing-x` is not registered.
+**When**: The registry finishes loading (or is refreshed).
+**Then**: `_validate_deps` logs a single warning for A naming `missing-x`; A still loads. On a later `resolve_chain("A")` call, `missing-x` is silently skipped and the chain is `[real-b, A]` (plus `real-b`'s own deps).
+**Rationale**: Authoring-time warning is the authoritative signal; silent skip at resolution avoids log spam on every message.
+
+### Scenario: Chain partially loaded in the session
+
+**Given**: The session's context entries already contain skill B. Classifier detects A (depends on B).
+**When**: The provider expands `resolve_chain("A")` → `[B, A]` and dedups against `existing_entries`.
+**Then**: Only A is emitted (B is skipped via `skill_name` metadata match).
+**Rationale**: Dedup against the session's existing entries prevents re-injecting foundations that are already in prompt.
+
+### Scenario: Cache invalidation after refresh
+
+**Given**: The registry has cached the chain for A. A SKILL.md file changes on disk; the watcher marks the registry dirty.
+**When**: The provider's next `provide()` call invokes `refresh()`.
+**Then**: `refresh()` clears `_chain_cache` alongside the fresh-dict swap. The next `resolve_chain("A")` call traverses from scratch against the refreshed `_skills`.
+**Rationale**: Stale cache entries after schema changes would return obsolete chains (R10).
+
+### Scenario: Resolver exception for one skill
+
+**Given**: `resolve_chain` raises unexpectedly for skill X (e.g., pathological recursion depth).
+**When**: The provider is mid-expansion over `detected_names = [X, Y, Z]`.
+**Then**: The per-skill try/except logs X's exception and continues; Y and Z are still expanded and emitted.
+**Rationale**: Error isolation (R14 / R32) — one bad chain does not block the message.
 
 ### Scenario: Watcher encounters an error
 

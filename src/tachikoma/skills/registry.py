@@ -38,6 +38,7 @@ class Skill:
         body: Markdown body content (frontmatter stripped).
         path: Path to the skill directory.
         version: Optional version string.
+        depends_on: Tuple of declared direct dependency skill names.
     """
 
     name: str
@@ -45,6 +46,7 @@ class Skill:
     body: str
     path: Path
     version: str | None = None
+    depends_on: tuple[str, ...] = ()
 
 
 class SkillRegistry:
@@ -74,11 +76,14 @@ class SkillRegistry:
         self._agents: dict[str, AgentDefinition] = {}
         self._skills: dict[str, Skill] = {}
         self._workflows: dict[tuple[str, str], WorkflowDefinition] = {}
+        self._chain_cache: dict[str, list[Skill]] = {}
         self._dirty: bool = False
         self._skill_sources = skill_sources
 
         for source in skill_sources:
             self._discover(source)
+
+        self._validate_deps()
 
     def get_agents(self) -> dict[str, AgentDefinition]:
         """Return all discovered agents indexed by namespace.
@@ -132,6 +137,40 @@ class SkillRegistry:
         """
         return self._workflows.get((skill_name, workflow_name))
 
+    def resolve_chain(self, skill_name: str) -> list[Skill]:
+        """Return the transitive dependency chain for a skill, deps-first with anchor last.
+
+        Cycles (including self-reference) are broken via a visited-set; unknown dep
+        names are silently skipped. Results are memoized until the next refresh() or
+        add_source() call.
+
+        Raises:
+            KeyError: If skill_name is not in self._skills.
+        """
+        if skill_name in self._chain_cache:
+            return self._chain_cache[skill_name]
+
+        if skill_name not in self._skills:
+            raise KeyError(skill_name)
+
+        visited: set[str] = set()
+        chain: list[Skill] = []
+
+        def dfs(name: str) -> None:
+            if name in visited:
+                return
+            if name not in self._skills:
+                return
+            visited.add(name)
+            current = self._skills[name]
+            for dep in current.depends_on:
+                dfs(dep)
+            chain.append(current)
+
+        dfs(skill_name)
+        self._chain_cache[skill_name] = chain
+        return chain
+
     def mark_dirty(self) -> None:
         """Mark the registry as needing refresh.
 
@@ -146,8 +185,23 @@ class SkillRegistry:
         Must be called during startup before message processing begins.
         Added sources are included in subsequent refresh() scans.
         """
+        self._chain_cache.clear()
         self._skill_sources.append(path)
         self._discover(path)
+        self._validate_deps()
+
+    def _validate_deps(self) -> None:
+        """Log one warning per dependent skill whose depends_on contains unknown names."""
+        for name, skill in self._skills.items():
+            if not skill.depends_on:
+                continue
+            missing = [d for d in skill.depends_on if d not in self._skills]
+            if missing:
+                _log.warning(
+                    "Skill declares unknown dependencies: skill={skill}, missing={missing}",
+                    skill=name,
+                    missing=missing,
+                )
 
     def refresh(self) -> None:
         """Re-scan skills directory if dirty, using swap-on-success.
@@ -169,10 +223,13 @@ class SkillRegistry:
         self._agents = {}
         self._skills = {}
         self._workflows = {}
+        self._chain_cache = {}
 
         try:
             for source in self._skill_sources:
                 self._discover(source)
+
+            self._validate_deps()
 
             # Success — clear dirty flag
             self._dirty = False
@@ -259,12 +316,28 @@ class SkillRegistry:
         # Store skill metadata (version from YAML is object, need to cast)
         version_str: str | None = version if isinstance(version, str) else None
 
+        raw_depends_on = post.metadata.get("depends_on")
+
+        if raw_depends_on is None:
+            depends_on: tuple[str, ...] = ()
+        elif isinstance(raw_depends_on, list) and all(isinstance(d, str) for d in raw_depends_on):
+            # Per-element isinstance in the comprehension narrows `object` → `str` for ty.
+            depends_on = tuple(d for d in raw_depends_on if isinstance(d, str))
+        else:
+            _log.warning(
+                "Skill has invalid depends_on (expected list of strings), treating as empty: "
+                "skill={skill}",
+                skill=name,
+            )
+            depends_on = ()
+
         skill = Skill(
             name=name,
             description=description,
             body=post.content.strip(),
             path=skill_dir,
             version=version_str,
+            depends_on=depends_on,
         )
 
         if name in self._skills:
