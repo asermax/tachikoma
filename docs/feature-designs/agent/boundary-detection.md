@@ -64,7 +64,7 @@ Three new mechanisms layer onto the existing coordinator:
 |-----------------|----------------|---------------|
 | `src/tachikoma/boundary/__init__.py` | Re-exports public API: `detect_boundary`, `BoundaryResult`, `SessionCandidate`, `SummaryProcessor`, `LastExchangeProcessor` | New package for boundary detection |
 | `src/tachikoma/boundary/detector.py` | `detect_boundary(message, session, agent_defaults, *, candidates=None)` — standalone `query()` with Opus low effort, JSON schema output, returns `BoundaryResult(continues, resume_session_id)`. Uses tool-less agent pattern: `tools=[]`, default permission mode, `max_turns=10` (DES-007 "Disabling Tools"). Accepts full `Session` object (extracts `summary` and `last_exchange` internally). Accepts optional `candidates: list[SessionCandidate]` for session matching. Fully consumes the query() generator (DES-005). Includes structured logging for results and warnings. Validates `resume_session_id` (sanitizes empty strings and non-string values to None). | Independent of coordinator; pure function + SDK call |
-| `src/tachikoma/boundary/prompts.py` | Prompt templates for boundary detection (including session matching instructions and conditional last exchange sections) and summary generation. Includes `CANDIDATES_SECTION_TEMPLATE` for formatting candidate sessions into the user prompt. | Separated for easy iteration and testing |
+| `src/tachikoma/boundary/prompts.py` | Prompt templates for boundary detection (including session matching instructions, conditional last exchange sections, and explicit short-message handling guidance) and summary generation. Includes `CANDIDATES_SECTION_TEMPLATE` for formatting candidate sessions into the user prompt. | Separated for easy iteration and testing |
 | `src/tachikoma/boundary/summary.py` | `SummaryProcessor` — `MessagePostProcessor` that calls standalone `query()` with Opus low effort to update the rolling summary. Accepts `agent_defaults` parameter. Logs a warning on empty responses. Fully consumes the query() generator (DES-005). | Uses incremental pattern: previous summary + latest exchange → updated summary |
 | `src/tachikoma/boundary/last_exchange.py` | `LastExchangeProcessor` — `MessagePostProcessor` that persists the agent response text to `session.last_exchange` via the session registry. Skips empty/whitespace-only responses. No SDK call — direct field update. | Simpler than SummaryProcessor; independent failure domain |
 | `src/tachikoma/message_post_processing.py` | `MessagePostProcessor` ABC (`process(session, user_message, agent_response)`) and `MessagePostProcessingPipeline` class | Parallel to `post_processing.py` but with a different interface reflecting the per-message context |
@@ -494,6 +494,12 @@ erDiagram
 **Given**: The per-message pipeline runs after an agent response
 **When**: `LastExchangeProcessor` stores the response successfully, but `SummaryProcessor` encounters an LLM error
 **Then**: `last_exchange` is updated, `summary` retains its previous value. On the next boundary detection call, the current session has a fresh `last_exchange` but potentially stale `summary`. The detector uses both — the fresh last exchange provides strong recency signal even with a stale summary.
+
+### Scenario: Short acknowledgment message
+
+**Given**: An active session with a summary about any topic
+**When**: The user sends a short acknowledgment or confirmation (e.g., "yes", "ok", "go ahead", "sure", "no", "thanks")
+**Then**: Boundary detector classifies as continuation. Short messages lack enough independent topic content to establish a new topic — they are continuations by default. This applies regardless of the current session's topic content.
 
 ## Notes
 

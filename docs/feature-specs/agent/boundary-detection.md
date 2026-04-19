@@ -35,17 +35,19 @@ Detects whether an incoming message continues the current conversation or starts
 | R16 | Configurable time-based lookup window for recent session candidates, defaulting to 1 day |
 | R17 | Store the last assistant response on the session, updated by the per-message pipeline after each exchange (nullable — null until first exchange processed) |
 | R18 | Include the last assistant response in boundary detection prompts for both the current session and candidate sessions, providing improved recency signal alongside summaries |
+| R19 | Short messages that serve as acknowledgments, confirmations, or brief responses (e.g., "yes", "ok", "go ahead", "sure", "no", "thanks") must be classified as continuations — they lack enough independent topic content to establish a new topic |
 
 ## Behaviors
 
-### Boundary Detection (R0, R5, R6, R12, R18)
+### Boundary Detection (R0, R5, R6, R12, R18, R19)
 
-The boundary detector classifies each incoming message as either a continuation of the current conversation or a new topic, using the rolling conversation summary and (when available) the last assistant response for comparison.
+The boundary detector classifies each incoming message as either a continuation of the current conversation or a new topic, using the rolling conversation summary and (when available) the last assistant response for comparison. Short acknowledgment messages are always classified as continuations.
 
 **Acceptance Criteria**:
 - Given an active session with a conversation summary, when a new message arrives that continues the same topic, then the boundary detector classifies it as a continuation and the message proceeds to the coordinator normally
 - Given an active session with a conversation summary, when a new message arrives on a clearly different topic, then the boundary detector classifies it as a topic shift
 - Given an active session with a conversation summary, when a new message arrives that could be interpreted as either a continuation or a new topic, then the boundary detector biases toward continuation — only clear, unambiguous topic shifts are classified as such
+- Given an active session with a conversation summary, when a short acknowledgment or confirmation message arrives (e.g., "yes", "ok", "go ahead", "sure", "no", "thanks"), then the boundary detector classifies it as a continuation regardless of the summary content — such messages lack enough topic content to establish a new topic
 - Given a boundary detection call, when the detector runs, then it operates independently of the active SDK conversation session
 - Given a boundary detection call, when the detector completes, then the detection itself adds no more than 1-2 seconds to message processing latency (excluding any await-pending time)
 - Given an active session with both summary and last_exchange, when boundary detection runs, then the prompt includes both the summary and a "Last assistant response" section with the most recent response
