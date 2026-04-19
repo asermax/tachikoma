@@ -19,7 +19,7 @@ from tachikoma.db_utils import ensure_utc
 # Domain types — public API
 # ---------------------------------------------------------------------------
 
-TaskStatus = Literal["pending", "running", "completed", "failed"]
+TaskStatus = Literal["pending", "running", "waiting", "completed", "failed"]
 TaskType = Literal["session", "background"]
 ScheduleType = Literal["cron", "once"]
 
@@ -121,6 +121,9 @@ class TaskInstance:
     started_at: datetime | None = None
     completed_at: datetime | None = None
     result: str | None = None
+    sdk_session_id: str | None = None
+    user_response: str | None = None
+    updated_at: datetime | None = None
     created_at: datetime | None = None
 
 
@@ -181,6 +184,14 @@ class TaskInstanceRecord(Base):
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     result: Mapped[str | None] = mapped_column(String, nullable=True)
+    sdk_session_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    user_response: Mapped[str | None] = mapped_column(String, nullable=True)
+    # Auto-stamped by SQLAlchemy on every UPDATE (onupdate) and INSERT (default)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(UTC),
+        onupdate=lambda: datetime.now(UTC),
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
     __table_args__ = (
@@ -200,5 +211,8 @@ class TaskInstanceRecord(Base):
             started_at=ensure_utc(self.started_at),
             completed_at=ensure_utc(self.completed_at),
             result=self.result,
+            sdk_session_id=self.sdk_session_id,
+            user_response=self.user_response,
+            updated_at=ensure_utc(self.updated_at),
             created_at=ensure_utc(self.created_at),
         )

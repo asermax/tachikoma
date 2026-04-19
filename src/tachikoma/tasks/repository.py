@@ -4,10 +4,10 @@ All callers receive frozen dataclasses — SQLAlchemy types never leak out
 of this module.
 """
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 from loguru import logger
-from sqlalchemy import select
+from sqlalchemy import and_, or_, select
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from tachikoma.tasks.errors import TaskRepositoryError
@@ -211,6 +211,9 @@ class TaskRepository:
                 started_at=instance.started_at,
                 completed_at=instance.completed_at,
                 result=instance.result,
+                sdk_session_id=instance.sdk_session_id,
+                user_response=instance.user_response,
+                updated_at=instance.updated_at,
                 created_at=instance.created_at or datetime.now(UTC),
             )
 
@@ -253,6 +256,57 @@ class TaskRepository:
         except Exception as exc:
             raise TaskRepositoryError(f"Failed to get pending {task_type} instances") from exc
 
+    async def get_ready_background_instances(self) -> list[TaskInstance]:
+        """Return background instances ready for execution.
+
+        Ready = pending OR (waiting AND user_response IS NOT NULL).
+        Both paths flow through the same semaphore-gated executor.
+        """
+        try:
+            async with self._session_factory() as db:
+                result = await db.execute(
+                    select(TaskInstanceRecord)
+                    .where(TaskInstanceRecord.task_type == "background")
+                    .where(
+                        or_(
+                            TaskInstanceRecord.status == "pending",
+                            and_(
+                                TaskInstanceRecord.status == "waiting",
+                                TaskInstanceRecord.user_response.is_not(None),
+                            ),
+                        )
+                    )
+                )
+                records = result.scalars().all()
+
+            return [r.to_domain() for r in records]
+
+        except Exception as exc:
+            raise TaskRepositoryError("Failed to get ready background instances") from exc
+
+    async def list_expired_waiting_instances(
+        self, timeout_seconds: int
+    ) -> list[TaskInstance]:
+        """Return waiting instances whose updated_at is older than timeout_seconds.
+
+        NULL updated_at (legacy rows pre-DLT-120) are excluded.
+        """
+        try:
+            threshold = datetime.now(UTC) - timedelta(seconds=timeout_seconds)
+            async with self._session_factory() as db:
+                result = await db.execute(
+                    select(TaskInstanceRecord)
+                    .where(TaskInstanceRecord.status == "waiting")
+                    .where(TaskInstanceRecord.updated_at.is_not(None))
+                    .where(TaskInstanceRecord.updated_at < threshold)
+                )
+                records = result.scalars().all()
+
+            return [r.to_domain() for r in records]
+
+        except Exception as exc:
+            raise TaskRepositoryError("Failed to list expired waiting instances") from exc
+
     async def get_active_instance_for_definition(
         self,
         definition_id: str,
@@ -280,12 +334,12 @@ class TaskRepository:
                     query = query.where(
                         TaskInstanceRecord.scheduled_for == scheduled_for,
                         TaskInstanceRecord.status.in_(  # noqa: S610
-                            ["pending", "running", "completed"]
+                            ["pending", "running", "waiting", "completed"]
                         ),
                     )
                 else:
                     query = query.where(
-                        TaskInstanceRecord.status.in_(["pending", "running"])  # noqa: S610
+                        TaskInstanceRecord.status.in_(["pending", "running", "waiting"])  # noqa: S610
                     )
 
                 result = await db.execute(query)
@@ -301,7 +355,8 @@ class TaskRepository:
     async def update_instance(self, instance_id: str, **fields) -> None:
         """Update arbitrary fields on a task instance by ID.
 
-        Accepted fields: status, started_at, completed_at, result.
+        Accepted fields: status, started_at, completed_at, result,
+        sdk_session_id, user_response, updated_at (auto-stamped by onupdate).
         """
         try:
             async with self._session_factory() as db:
