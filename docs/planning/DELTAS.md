@@ -539,13 +539,6 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 **Complexity**: Easy
 **Description**: Workflow steps are self-contained instruction bundles with no mechanism to declare which skills the agent needs to execute them. A step that involves git operations, API calls, or domain-specific knowledge relies on the skill classifier to infer this from the step instructions — which may fail for terse or technical steps. Allow workflow step authors to explicitly declare the skills required for a step. When the workflow engine activates a step, the declared skills and their transitive dependencies (via the skill dependency system) are loaded unconditionally into the agent's context, bypassing classification.
 
-### DLT-120: Pause background tasks to request user input
-**Status**: ✓ Implementation
-**Depends on**: None
-**Priority**: 2 (High)
-**Complexity**: Hard
-**Description**: Background tasks currently run to completion or failure in a single uninterrupted evaluator loop — there is no way for a task to pause mid-execution and ask the user a question. This delta adds a "waiting" state to the task lifecycle where the evaluator can suspend execution and send a notification requesting user input. When the user responds, the input is injected as the next turn in the suspended task's SDK session and execution resumes. This enables simple multi-step background work (e.g., "research this and ask me before proceeding") without requiring persistent agent sessions, progress reporting, or full lifecycle control.
-
 ### DLT-121: Git-friendly database storage for workspace versioning
 **Status**: ✗ Defined
 **Depends on**: None
@@ -618,7 +611,7 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 
 ### DLT-134: Extend background tasks at iteration limit
 **Status**: ✗ Defined
-**Depends on**: DLT-120
+**Depends on**: None
 **Priority**: 3 (Medium)
 **Complexity**: Medium
 **Description**: Background tasks currently hard-fail when they reach their maximum iteration count, even if they are making meaningful progress. This delta allows the assistant to escalate to the user when the iteration limit is reached instead of failing outright. The user is presented with the task's progress and the assistant's latest assessment, and can choose to grant additional iterations or abort. If extended, the task continues from where it left off with a fresh iteration budget. If aborted, the task is failed as today. The iteration limit before escalation is configurable per task definition, falling back to the global default. This prevents premature failure of tasks that are progressing slowly but productively, giving the user control over the cost/completion tradeoff.
@@ -653,11 +646,10 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 
 ### DLT-141: Pause background tasks on user activity
 **Status**: ✗ Defined
-**Depends on**: DLT-120
+**Depends on**: None
 **Priority**: 2 (High)
 **Complexity**: Medium
 **Description**: When a user message arrives at the coordinator during an active background task execution, signal the background task to pause so the main session receives full API attention and the task does not compete for resources. The paused task's SDK session is preserved and execution resumes automatically once the main session returns to idle. This covers the system-initiated pause triggered by user activity — distinct from task-initiated pauses where the background task itself requests user input. The pause mechanism integrates with the existing background task executor's evaluation loop: when a pause signal is received between iterations, the executor suspends the task, records the paused state in the task instance, and releases the semaphore slot. On resume, the executor reacquires a slot and continues from the preserved SDK session.
-
 
 ### DLT-145: Inject core context into skill classification
 **Status**: ✗ Defined
