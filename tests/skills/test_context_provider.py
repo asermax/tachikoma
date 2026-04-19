@@ -636,8 +636,8 @@ class TestProviderChainExpansion:
 
         skills_dir = tmp_path / "skills"
         skills_dir.mkdir(parents=True)
-        self._create_skill_with_deps(skills_dir, "A", "Desc A", ["B"])
-        self._create_skill_with_deps(skills_dir, "B", "Desc B")
+        self._create_skill_with_deps(skills_dir, "alpha", "Alpha skill", ["bravo"])
+        self._create_skill_with_deps(skills_dir, "bravo", "Bravo skill")
 
         mock_query.return_value = _make_query_result("NO_RELEVANT_SKILLS")
 
@@ -649,8 +649,8 @@ class TestProviderChainExpansion:
 
         call_args = mock_query.call_args
         prompt = call_args[1]["prompt"]
-        assert "A" in prompt
-        assert "B" in prompt
+        assert "- **alpha**" in prompt
+        assert "- **bravo**" in prompt
 
     async def test_emitted_entries_shape_identical_to_classification_loaded(
         self, mocker: MockerFixture, tmp_path: Path

@@ -895,10 +895,20 @@ class TestSkillDependsOnParsing:
             '---\ndescription: "Test"\ndepends_on: "not-a-list"\n---\n\nBody'
         )
 
-        registry = SkillRegistry([skills_dir])
+        warnings: list[str] = []
+        sink_id = logger.add(
+            lambda m: warnings.append(str(m)),
+            filter=lambda r: r["level"].no >= 30,
+        )
+
+        try:
+            registry = SkillRegistry([skills_dir])
+        finally:
+            logger.remove(sink_id)
 
         assert "my-skill" in registry.skills
         assert registry.skills["my-skill"].depends_on == ()
+        assert any("invalid depends_on" in w and "my-skill" in w for w in warnings)
 
     def test_depends_on_non_string_elements_warns_and_falls_back(self, tmp_path: Path) -> None:
         """AC: depends_on with non-string elements → skill loads with empty tuple."""
@@ -911,10 +921,20 @@ class TestSkillDependsOnParsing:
             '---\ndescription: "Test"\ndepends_on:\n  - foo\n  - 123\n---\n\nBody'
         )
 
-        registry = SkillRegistry([skills_dir])
+        warnings: list[str] = []
+        sink_id = logger.add(
+            lambda m: warnings.append(str(m)),
+            filter=lambda r: r["level"].no >= 30,
+        )
+
+        try:
+            registry = SkillRegistry([skills_dir])
+        finally:
+            logger.remove(sink_id)
 
         assert "my-skill" in registry.skills
         assert registry.skills["my-skill"].depends_on == ()
+        assert any("invalid depends_on" in w and "my-skill" in w for w in warnings)
 
     def test_depends_on_case_sensitive(self, tmp_path: Path) -> None:
         """AC: Case-sensitive names — Foo and foo are distinct, preserved verbatim."""
@@ -1183,6 +1203,36 @@ class TestValidateDeps:
 
         assert "my-skill" in registry.skills
         assert any("my-skill" in w and "missing-x" in w and "missing-y" in w for w in warnings)
+
+    def test_multiple_skills_each_get_one_warning(self, tmp_path: Path) -> None:
+        """AC: Two skills with missing deps → exactly two warnings, one per skill."""
+        skills_dir = tmp_path / "skills"
+        skills_dir.mkdir(parents=True)
+
+        (skills_dir / "skill-a").mkdir()
+        (skills_dir / "skill-a" / "SKILL.md").write_text(
+            '---\ndescription: "A"\ndepends_on:\n  - missing-1\n---\n\nBody'
+        )
+
+        (skills_dir / "skill-b").mkdir()
+        (skills_dir / "skill-b" / "SKILL.md").write_text(
+            '---\ndescription: "B"\ndepends_on:\n  - missing-2\n---\n\nBody'
+        )
+
+        warnings: list[str] = []
+        sink_id = logger.add(
+            lambda m: warnings.append(str(m)),
+            filter=lambda r: r["level"].no >= 30 and "unknown dependencies" in r["message"],
+        )
+
+        try:
+            SkillRegistry([skills_dir])
+        finally:
+            logger.remove(sink_id)
+
+        assert len(warnings) == 2
+        assert any("skill-a" in w and "missing-1" in w for w in warnings)
+        assert any("skill-b" in w and "missing-2" in w for w in warnings)
 
     def test_skill_with_all_valid_deps_no_warning(self, tmp_path: Path) -> None:
         """AC: Skill with only valid deps → no warning."""

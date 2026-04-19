@@ -322,6 +322,7 @@ class SkillRegistry:
         if raw_depends_on is None:
             depends_on: tuple[str, ...] = ()
         elif isinstance(raw_depends_on, list) and all(isinstance(d, str) for d in raw_depends_on):
+            # Per-element isinstance in the comprehension narrows `object` → `str` for ty.
             depends_on = tuple(d for d in raw_depends_on if isinstance(d, str))
         else:
             _log.warning(
