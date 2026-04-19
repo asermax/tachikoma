@@ -11,6 +11,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from aiogram.exceptions import TelegramAPIError, TelegramBadRequest, TelegramRetryAfter
 
+from tachikoma.buffer.events import BufferedDelivery
 from tachikoma.events import Error, ToolActivity
 from tachikoma.telegram import (
     TELEGRAM_TOOL_DISPLAY,
@@ -1375,7 +1376,6 @@ class TestHandleMedia:
         msg = self._make_media_message(photo=[photo])
         msg.caption = "Check this out"
 
-        channel._is_processing = False
         channel._process_through_coordinator = AsyncMock()
 
         await channel._handle_media(msg)
@@ -1405,7 +1405,6 @@ class TestHandleMedia:
         msg = self._make_media_message(voice=voice)
         msg.caption = None
 
-        channel._is_processing = False
         channel._process_through_coordinator = AsyncMock()
 
         await channel._handle_media(msg)
@@ -1465,30 +1464,6 @@ class TestHandleMedia:
         # Nothing enqueued
         channel._coordinator.enqueue.assert_not_called()
 
-    async def test_mid_stream_buffering(self) -> None:
-        """Media arriving mid-stream enqueues but doesn't process."""
-        channel = self._make_channel()
-        channel._bot.download = AsyncMock(return_value=None)
-
-        photo = MagicMock()
-        photo.file_id = "photo_123"
-        photo.width = 1280
-        photo.height = 720
-        photo.file_size = 250_000
-        photo.file_name = None
-
-        msg = self._make_media_message(photo=[photo])
-        channel._is_processing = True
-        channel._process_through_coordinator = AsyncMock()
-
-        await channel._handle_media(msg)
-
-        # Enqueued
-        channel._coordinator.enqueue.assert_called_once()
-
-        # But process_through_coordinator NOT called
-        channel._process_through_coordinator.assert_not_called()
-
     async def test_unresolvable_media_ignored(self) -> None:
         """Message with no resolvable media is silently ignored."""
         channel = self._make_channel()
@@ -1497,6 +1472,113 @@ class TestHandleMedia:
         await channel._handle_media(msg)
 
         channel._coordinator.enqueue.assert_not_called()
+
+
+class TestDeliveryLock:
+    """DLT-111 R2 / KD-5: entry points serialize via _delivery_lock."""
+
+    def _make_channel(self) -> TelegramChannel:
+        coordinator = MagicMock()
+        settings = MagicMock()
+        settings.bot_token = "123456:ABCdef"
+        settings.authorized_chat_id = 123
+        settings.push_notifications = False
+
+        with patch("tachikoma.telegram.Bot"):
+            channel = TelegramChannel(settings, workspace_path=Path("/tmp/test-workspace"))
+            channel._TelegramChannel__coordinator = coordinator
+
+        channel._bot = MagicMock()
+        return channel
+
+    async def test_handle_message_serializes_concurrent_calls(self) -> None:
+        """Two concurrent _handle_message calls run serially under the lock."""
+        channel = self._make_channel()
+        call_order: list[str] = []
+
+        async def _fake_process(*args, **kw):
+            call_order.append("enter")
+            await asyncio.sleep(0)
+            call_order.append("exit")
+
+        channel._process_through_coordinator = AsyncMock(side_effect=_fake_process)
+
+        msg1 = MagicMock(text="one")
+        msg2 = MagicMock(text="two")
+
+        await asyncio.gather(
+            channel._handle_message(msg1),
+            channel._handle_message(msg2),
+        )
+
+        assert call_order == ["enter", "exit", "enter", "exit"]
+
+    async def test_handle_message_blocks_when_lock_held(self) -> None:
+        """_handle_message awaits the lock when it is already held."""
+        channel = self._make_channel()
+        channel._process_through_coordinator = AsyncMock()
+
+        msg = MagicMock(text="hi")
+
+        await channel._delivery_lock.acquire()
+        try:
+            with pytest.raises(asyncio.TimeoutError):
+                await asyncio.wait_for(channel._handle_message(msg), timeout=0.05)
+        finally:
+            channel._delivery_lock.release()
+
+        channel._process_through_coordinator.assert_not_called()
+
+    async def test_handle_media_blocks_when_lock_held(self) -> None:
+        """_handle_media awaits the lock when it is already held."""
+        channel = self._make_channel()
+        channel._bot.download = AsyncMock(return_value=None)
+        channel._process_through_coordinator = AsyncMock()
+
+        photo = MagicMock()
+        photo.file_id = "photo_123"
+        photo.width = 100
+        photo.height = 100
+        photo.file_size = 50_000
+        photo.file_name = None
+
+        msg = MagicMock()
+        msg.photo = [photo]
+        msg.voice = None
+        msg.audio = None
+        msg.document = None
+        msg.sticker = None
+        msg.video = None
+        msg.video_note = None
+        msg.animation = None
+        msg.caption = None
+
+        await channel._delivery_lock.acquire()
+        try:
+            with pytest.raises(asyncio.TimeoutError):
+                await asyncio.wait_for(channel._handle_media(msg), timeout=0.05)
+        finally:
+            channel._delivery_lock.release()
+
+        channel._process_through_coordinator.assert_not_called()
+
+    async def test_handle_buffered_delivery_blocks_when_lock_held(self) -> None:
+        """_handle_buffered_delivery awaits the lock when it is already held."""
+        channel = self._make_channel()
+        channel._process_through_coordinator = AsyncMock()
+
+        event = BufferedDelivery(prompt="digest", items=[], is_shutdown_digest=False)
+
+        await channel._delivery_lock.acquire()
+        try:
+            with pytest.raises(asyncio.TimeoutError):
+                await asyncio.wait_for(
+                    channel._handle_buffered_delivery(event), timeout=0.05
+                )
+        finally:
+            channel._delivery_lock.release()
+
+        channel._process_through_coordinator.assert_not_called()
 
 
 class TestTelegramChannelBufferFlush:

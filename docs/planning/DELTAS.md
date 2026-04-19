@@ -497,13 +497,6 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 **Complexity**: Medium
 **Description**: The baseline sensor for the proactive nudge framework, using existing episodic memory data. Polls recent episodic memories with priority weighting for conversations that have open threads, upcoming events mentioned in past chats, or topics that have been discussed multiple times. Produces scored signals (data + relevance score + optional nudge suggestion) that feed into the nudge engine via the sensor framework. This is the first concrete sensor implementation and validates the sensor abstraction. Additional sensors (routine, calendar, time-based, geo-fencing, external events) follow the same pattern and are tracked separately.
 
-### DLT-111: Prevent message loss during response finalization
-**Status**: ✗ Defined
-**Depends on**: None
-**Priority**: 1 (Critical)
-**Complexity**: Medium
-**Description**: When the user sends a message at the exact moment a previous response is finalizing, the new message can be silently dropped. The coordinator consumes the message from the queue but loses it during the transition between completing the previous turn's post-processing and picking up the next turn. This delta eliminates that timing window so that every consumed message is guaranteed to be processed, even when it arrives during response finalization.
-
 ### DLT-116: Provide workflow tools to background tasks
 **Status**: ✗ Defined
 **Depends on**: None
@@ -611,7 +604,7 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 
 ### DLT-135: Serialize concurrent notification delivery and user message processing
 **Status**: ✗ Defined
-**Depends on**: DLT-111
+**Depends on**: None
 **Priority**: 2 (High)
 **Complexity**: Hard
 **Description**: When a background task notification is delivered at the exact moment a user sends a message, the two can collide at the coordinator's message queue — resulting in one being lost or the notification being silently swallowed. The existing message-loss prevention and notification buffering mechanisms handle their respective timing windows independently, but do not cover the case where both sources attempt to enqueue simultaneously. This delta adds serialization between the notification delivery path and the user message intake so that concurrent arrivals are safely ordered and neither is dropped.
