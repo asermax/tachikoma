@@ -125,6 +125,12 @@ async def has_uncommitted_changes(cwd: Path) -> bool:
     return bool(output)
 
 
+def _rebase_in_progress(cwd: Path) -> bool:
+    """Check if a rebase is currently in progress by inspecting git state dirs."""
+    git_dir = cwd / ".git"
+    return (git_dir / "rebase-merge").exists() or (git_dir / "rebase-apply").exists()
+
+
 async def _abort_stale_rebase(cwd: Path) -> bool:
     """Detect and abort any in-progress rebase.
 
@@ -137,13 +143,7 @@ async def _abort_stale_rebase(cwd: Path) -> bool:
     Returns:
         True if a stale rebase was aborted, False if clean.
     """
-    git_dir = cwd / ".git"
-
-    # Check for rebase-merge (interactive rebase) and rebase-apply (am rebase)
-    rebase_merge = git_dir / "rebase-merge"
-    rebase_apply = git_dir / "rebase-apply"
-
-    if not (rebase_merge.exists() or rebase_apply.exists()):
+    if not _rebase_in_progress(cwd):
         return False
 
     _log.warning("Stale rebase detected, aborting: path={path}", path=str(cwd))
@@ -235,14 +235,20 @@ async def _try_naive_rebase(cwd: Path, remote_branch: str) -> bool:
     if rc == 0:
         return True
 
-    # Rebase failed — abort to restore pre-rebase state
-    try:
-        await run_git("rebase", "--abort", cwd=cwd)
-    except Exception as e:
+    # Rebase failed — only abort if a rebase is actually in progress
+    if _rebase_in_progress(cwd):
+        try:
+            await run_git("rebase", "--abort", cwd=cwd)
+        except Exception as e:
+            _log.warning(
+                "Failed to abort rebase after conflict: path={path} err={err}",
+                path=str(cwd),
+                err=str(e),
+            )
+    else:
         _log.warning(
-            "Failed to abort rebase after conflict: path={path} err={err}",
+            "Rebase failed without starting (no conflicts): path={path}",
             path=str(cwd),
-            err=str(e),
         )
 
     return False
@@ -313,10 +319,7 @@ async def _agent_rebase(cwd: Path, remote_branch: str, agent_defaults: AgentDefa
         )
 
     # Check if rebase completed by inspecting filesystem state
-    rebase_merge = cwd / ".git" / "rebase-merge"
-    rebase_apply = cwd / ".git" / "rebase-apply"
-
-    if not (rebase_merge.exists() or rebase_apply.exists()):
+    if not _rebase_in_progress(cwd):
         _log.info("Conflict resolution agent completed rebase: path={path}", path=str(cwd))
         return True
 
@@ -396,9 +399,16 @@ async def smart_push(
                 )
                 return PUSH_RESULT["PUSH_FAILED"]
 
-        # Naive rebase failed — try agent resolution
+        # Naive rebase failed — only try agent if conflicts actually exist
         if agent_defaults is None:
             _log.warning("Rebase failed but no agent_defaults provided for conflict resolution")
+            return PUSH_RESULT["REBASE_FAILED"]
+
+        if not _rebase_in_progress(cwd):
+            _log.warning(
+                "Rebase failed but no conflicts detected, skipping agent resolution: path={path}",
+                path=str(cwd),
+            )
             return PUSH_RESULT["REBASE_FAILED"]
 
         if await _agent_rebase(cwd, remote_branch, agent_defaults):
@@ -499,9 +509,16 @@ async def smart_pull(
             changed = await _get_changed_files(cwd, old_head)
             return SYNC_RESULT["REBASE_SUCCEEDED"], changed
 
-        # Naive rebase failed — try agent resolution
+        # Naive rebase failed — only try agent if conflicts actually exist
         if agent_defaults is None:
             _log.warning("Rebase failed but no agent_defaults provided for conflict resolution")
+            return SYNC_RESULT["SYNC_FAILED"], []
+
+        if not _rebase_in_progress(cwd):
+            _log.warning(
+                "Rebase failed but no conflicts detected, skipping agent resolution: path={path}",
+                path=str(cwd),
+            )
             return SYNC_RESULT["SYNC_FAILED"], []
 
         if await _agent_rebase(cwd, remote_branch, agent_defaults):

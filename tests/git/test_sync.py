@@ -282,6 +282,9 @@ class TestTryNaiveRebase:
 
     async def test_returns_false_and_aborts_on_conflict(self, repo_path: Path) -> None:
         """Returns False when rebase fails, aborts the rebase."""
+        # Simulate rebase state dirs existing (conflicts detected)
+        (repo_path / ".git" / "rebase-merge").mkdir()
+
         calls = [
             AsyncSubprocessMock(returncode=1),  # rebase fails
             AsyncSubprocessMock(returncode=0),  # rebase --abort succeeds
@@ -297,6 +300,17 @@ class TestTryNaiveRebase:
             result = await _try_naive_rebase(repo_path, "origin/main")
         assert result is False
         assert call_idx[0] == 2  # Both rebase and abort called
+
+    async def test_returns_false_without_abort_when_no_conflict(self, repo_path: Path) -> None:
+        """Returns False without aborting when rebase fails but no rebase state exists."""
+        with patch(
+            "asyncio.create_subprocess_exec",
+            new_callable=AsyncMock,
+            return_value=AsyncSubprocessMock(returncode=1),
+        ):
+            result = await _try_naive_rebase(repo_path, "origin/main")
+        assert result is False
+        # Only rebase called (no abort since no rebase-merge/rebase-apply dirs)
 
 
 # --- Smart Push Tests ---
@@ -403,6 +417,10 @@ class TestSmartPush:
                 return_value=False,
             ),
             patch(
+                "tachikoma.git.sync._rebase_in_progress",
+                return_value=True,
+            ),
+            patch(
                 "tachikoma.git.sync._agent_rebase",
                 new_callable=AsyncMock,
                 return_value=True,
@@ -429,6 +447,10 @@ class TestSmartPush:
                 "tachikoma.git.sync._try_naive_rebase",
                 new_callable=AsyncMock,
                 return_value=False,
+            ),
+            patch(
+                "tachikoma.git.sync._rebase_in_progress",
+                return_value=True,
             ),
             patch(
                 "tachikoma.git.sync._agent_rebase",
@@ -492,6 +514,39 @@ class TestSmartPush:
         ):
             result = await smart_push(repo_path, agent_defaults=None)
         assert result == PUSH_RESULT["REBASE_FAILED"]
+
+    async def test_rebase_failed_without_conflicts(
+        self,
+        repo_path: Path,
+        agent_defaults: AgentDefaults,
+    ) -> None:
+        """Returns REBASE_FAILED without spawning agent when no rebase state exists."""
+        with (
+            patch("tachikoma.git.sync._abort_stale_rebase", new_callable=AsyncMock),
+            patch("tachikoma.git.sync.run_git", new_callable=AsyncMock),
+            patch(
+                "tachikoma.git.sync.detect_divergence",
+                new_callable=AsyncMock,
+                return_value=DIVERGENCE_STATUS["DIVERGED"],
+            ),
+            patch(
+                "tachikoma.git.sync._try_naive_rebase",
+                new_callable=AsyncMock,
+                return_value=False,
+            ),
+            patch(
+                "tachikoma.git.sync._rebase_in_progress",
+                return_value=False,
+            ),
+            patch(
+                "tachikoma.git.sync._agent_rebase",
+                new_callable=AsyncMock,
+                return_value=True,
+            ) as mock_agent,
+        ):
+            result = await smart_push(repo_path, agent_defaults=agent_defaults)
+        assert result == PUSH_RESULT["REBASE_FAILED"]
+        mock_agent.assert_not_called()
 
     async def test_catches_fetch_failure(
         self,
@@ -659,6 +714,10 @@ class TestSmartPull:
                 return_value=False,
             ),
             patch(
+                "tachikoma.git.sync._rebase_in_progress",
+                return_value=True,
+            ),
+            patch(
                 "tachikoma.git.sync._agent_rebase",
                 new_callable=AsyncMock,
                 return_value=True,
@@ -693,6 +752,10 @@ class TestSmartPull:
                 return_value=False,
             ),
             patch(
+                "tachikoma.git.sync._rebase_in_progress",
+                return_value=True,
+            ),
+            patch(
                 "tachikoma.git.sync._agent_rebase",
                 new_callable=AsyncMock,
                 return_value=False,
@@ -724,6 +787,53 @@ class TestSmartPull:
             result, changed = await smart_pull(repo_path, agent_defaults=agent_defaults)
         assert result == SYNC_RESULT["SYNC_FAILED"]
         assert changed == []
+
+    async def test_sync_failed_without_conflicts(
+        self,
+        repo_path: Path,
+        agent_defaults: AgentDefaults,
+    ) -> None:
+        """Returns SYNC_FAILED without spawning agent when no rebase state exists."""
+        with (
+            patch(
+                "tachikoma.git.sync.has_uncommitted_changes",
+                new_callable=AsyncMock,
+                return_value=False,
+            ),
+            patch("tachikoma.git.sync._abort_stale_rebase", new_callable=AsyncMock),
+            patch("tachikoma.git.sync.run_git", new_callable=AsyncMock),
+            patch(
+                "tachikoma.git.sync.run_git_capture",
+                new_callable=AsyncMock,
+                side_effect=[
+                    (0, "abc123"),
+                    (0, ""),
+                ],
+            ),
+            patch(
+                "tachikoma.git.sync.detect_divergence",
+                new_callable=AsyncMock,
+                return_value=DIVERGENCE_STATUS["DIVERGED"],
+            ),
+            patch(
+                "tachikoma.git.sync._try_naive_rebase",
+                new_callable=AsyncMock,
+                return_value=False,
+            ),
+            patch(
+                "tachikoma.git.sync._rebase_in_progress",
+                return_value=False,
+            ),
+            patch(
+                "tachikoma.git.sync._agent_rebase",
+                new_callable=AsyncMock,
+                return_value=True,
+            ) as mock_agent,
+        ):
+            result, changed = await smart_pull(repo_path, agent_defaults=agent_defaults)
+        assert result == SYNC_RESULT["SYNC_FAILED"]
+        assert changed == []
+        mock_agent.assert_not_called()
 
 
 # --- Agent Rebase Tests ---
