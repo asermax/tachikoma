@@ -39,6 +39,10 @@ class TestGitProcessor:
     async def test_calls_query_when_workspace_dirty(self, mocker: MockerFixture) -> None:
         """AC: Processor calls query_and_consume when workspace is dirty."""
         mocker.patch(
+            "tachikoma.git.processor.dump_database",
+            new_callable=AsyncMock,
+        )
+        mocker.patch(
             "tachikoma.git.processor.has_uncommitted_changes",
             new_callable=AsyncMock,
             side_effect=[True, False],  # First call: dirty, second call: clean
@@ -69,6 +73,10 @@ class TestGitProcessor:
     async def test_no_op_when_workspace_clean(self, mocker: MockerFixture) -> None:
         """AC: Processor returns no-op when workspace is clean (no agent spawned)."""
         mocker.patch(
+            "tachikoma.git.processor.dump_database",
+            new_callable=AsyncMock,
+        )
+        mocker.patch(
             "tachikoma.git.processor.has_uncommitted_changes",
             new_callable=AsyncMock,
             return_value=False,
@@ -85,6 +93,10 @@ class TestGitProcessor:
 
     async def test_logs_warning_if_changes_remain(self, mocker: MockerFixture) -> None:
         """AC: Processor runs post-agent git status check and logs warning if changes remain."""
+        mocker.patch(
+            "tachikoma.git.processor.dump_database",
+            new_callable=AsyncMock,
+        )
         mock_status = mocker.patch(
             "tachikoma.git.processor.has_uncommitted_changes",
             new_callable=AsyncMock,
@@ -108,6 +120,10 @@ class TestGitProcessor:
 
     async def test_calls_smart_push_after_commit(self, mocker: MockerFixture) -> None:
         """AC: Processor calls smart_push after committing (replaces bare push)."""
+        mocker.patch(
+            "tachikoma.git.processor.dump_database",
+            new_callable=AsyncMock,
+        )
         mocker.patch(
             "tachikoma.git.processor.has_uncommitted_changes",
             new_callable=AsyncMock,
@@ -137,6 +153,10 @@ class TestGitProcessor:
     async def test_handles_nothing_to_push(self, mocker: MockerFixture) -> None:
         """AC: Processor handles NOTHING_TO_PUSH gracefully."""
         mocker.patch(
+            "tachikoma.git.processor.dump_database",
+            new_callable=AsyncMock,
+        )
+        mocker.patch(
             "tachikoma.git.processor.has_uncommitted_changes",
             new_callable=AsyncMock,
             side_effect=[True, False],
@@ -156,6 +176,10 @@ class TestGitProcessor:
 
     async def test_handles_push_failure_gracefully(self, mocker: MockerFixture) -> None:
         """AC: Processor handles PUSH_FAILED/REBASE_FAILED gracefully."""
+        mocker.patch(
+            "tachikoma.git.processor.dump_database",
+            new_callable=AsyncMock,
+        )
         mocker.patch(
             "tachikoma.git.processor.has_uncommitted_changes",
             new_callable=AsyncMock,
@@ -177,6 +201,10 @@ class TestGitProcessor:
     async def test_no_push_when_workspace_clean(self, mocker: MockerFixture) -> None:
         """AC: No push attempted when workspace is clean (early return before push)."""
         mocker.patch(
+            "tachikoma.git.processor.dump_database",
+            new_callable=AsyncMock,
+        )
+        mocker.patch(
             "tachikoma.git.processor.has_uncommitted_changes",
             new_callable=AsyncMock,
             return_value=False,
@@ -190,6 +218,49 @@ class TestGitProcessor:
         await processor.process(_make_session())
 
         mock_smart_push.assert_not_awaited()
+
+    async def test_calls_dump_before_dirty_check(self, mocker: MockerFixture) -> None:
+        """AC: dump_database is called before has_uncommitted_changes."""
+        call_order: list[str] = []
+
+        async def mock_dump(*args: object, **kwargs: object) -> None:
+            call_order.append("dump")
+
+        async def mock_dirty(*args: object, **kwargs: object) -> bool:
+            call_order.append("dirty")
+            return False
+
+        mocker.patch(
+            "tachikoma.git.processor.dump_database",
+            new_callable=AsyncMock,
+            side_effect=mock_dump,
+        )
+        mocker.patch(
+            "tachikoma.git.processor.has_uncommitted_changes",
+            new_callable=AsyncMock,
+            side_effect=mock_dirty,
+        )
+
+        processor = GitProcessor(AgentDefaults(cwd=Path("/workspace")))
+        await processor.process(_make_session())
+
+        assert call_order == ["dump", "dirty"]
+
+    async def test_dump_failure_does_not_block(self, mocker: MockerFixture) -> None:
+        """AC: dump_database failure is logged but doesn't block processing."""
+        mocker.patch(
+            "tachikoma.git.processor.dump_database",
+            new_callable=AsyncMock,
+            side_effect=RuntimeError("sqlite-diffable not found"),
+        )
+        mocker.patch(
+            "tachikoma.git.processor.has_uncommitted_changes",
+            new_callable=AsyncMock,
+            return_value=False,
+        )
+
+        processor = GitProcessor(AgentDefaults(cwd=Path("/workspace")))
+        await processor.process(_make_session())  # Should not raise
 
 
 class TestQueryAndConsume:
