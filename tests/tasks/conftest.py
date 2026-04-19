@@ -50,6 +50,9 @@ def _make_instance(
     started_at: datetime | None = None,
     completed_at: datetime | None = None,
     result: str | None = None,
+    sdk_session_id: str | None = None,
+    user_response: str | None = None,
+    updated_at: datetime | None = None,
 ) -> TaskInstance:
     """Create a TaskInstance with sensible defaults."""
     return TaskInstance(
@@ -62,6 +65,9 @@ def _make_instance(
         started_at=started_at,
         completed_at=completed_at,
         result=result,
+        sdk_session_id=sdk_session_id,
+        user_response=user_response,
+        updated_at=updated_at,
         created_at=_utcnow(),
     )
 

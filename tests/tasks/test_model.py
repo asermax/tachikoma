@@ -264,3 +264,35 @@ class TestORMModels:
         assert domain.definition_id == "def-1"
         assert domain.status == "completed"
         assert domain.result == "Success"
+
+    def test_instance_with_waiting_fields(self) -> None:
+        """AC: TaskInstance constructs with waiting-related fields defaulted."""
+        instance = TaskInstance(
+            id="inst-wait",
+            task_type="background",
+            status="waiting",
+            prompt="Process notes",
+            scheduled_for=datetime.now(UTC),
+        )
+
+        assert instance.sdk_session_id is None
+        assert instance.user_response is None
+        assert instance.updated_at is None
+
+    def test_instance_with_explicit_waiting_fields(self) -> None:
+        """AC: TaskInstance accepts explicit waiting fields."""
+        now = datetime.now(UTC)
+        instance = TaskInstance(
+            id="inst-wait",
+            task_type="background",
+            status="waiting",
+            prompt="Process notes",
+            scheduled_for=now,
+            sdk_session_id="sdk-abc123",
+            user_response="Yes, proceed",
+            updated_at=now,
+        )
+
+        assert instance.sdk_session_id == "sdk-abc123"
+        assert instance.user_response == "Yes, proceed"
+        assert instance.updated_at == now

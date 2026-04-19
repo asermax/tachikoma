@@ -136,6 +136,13 @@ class TestRenderSystemPreamble:
         assert "# Your Identity" in result
         assert "**Invalid/Timezone**" in result
 
+    def test_preamble_includes_respond_to_task(self) -> None:
+        """AC (DLT-120): Preamble includes respond_to_task tool documentation."""
+        result = render_system_preamble(timezone="UTC")
+
+        assert "respond_to_task" in result
+        assert "task_instance_id" in result
+
 
 class TestLoadContextIntegration:
     """Integration tests for load_foundational_context + build_system_prompt together.

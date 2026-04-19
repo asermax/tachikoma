@@ -10,6 +10,7 @@ from bubus import EventBus
 from claude_agent_sdk.types import AssistantMessage, ResultMessage, TextBlock
 
 from tachikoma.agent_defaults import AgentDefaults
+from tachikoma.buffer.priority import Priority
 from tachikoma.config import TaskSettings
 from tachikoma.notifications import Notification, handle_send_notification
 from tachikoma.tasks.executor import (
@@ -20,7 +21,7 @@ from tachikoma.tasks.executor import (
 )
 from tachikoma.tasks.repository import TaskRepository
 
-from .conftest import _make_instance
+from .conftest import _make_instance, _utcnow
 
 
 def _mock_skill_registry() -> MagicMock:
@@ -549,8 +550,8 @@ class TestBackgroundTaskExecutor:
         assert "failed" in error_events[0].prompt.lower()
 
     @pytest.mark.asyncio
-    async def test_needs_input_injects_proceed_message(self, repo: TaskRepository) -> None:
-        """AC2: Executor injects proceed-without-user message on needs_input status."""
+    async def test_needs_input_transitions_to_waiting(self, repo: TaskRepository) -> None:
+        """AC (DLT-120): Executor transitions to waiting on needs_input."""
         instance = _make_instance(
             "inst-1",
             task_type="background",
@@ -559,9 +560,15 @@ class TestBackgroundTaskExecutor:
         )
         await repo.create_instance(instance)
 
-        settings = TaskSettings(max_iterations=3)
+        settings = TaskSettings()
         bus = EventBus()
-        bus.dispatch = AsyncMock()
+
+        dispatched_events = []
+
+        async def capture_dispatch(event):
+            dispatched_events.append(event)
+
+        bus.dispatch = AsyncMock(side_effect=capture_dispatch)
 
         executor = BackgroundTaskExecutor(
             repository=repo,
@@ -579,53 +586,37 @@ class TestBackgroundTaskExecutor:
             mock_client_class.return_value = mock_client
 
             mock_client.query = AsyncMock()
-
-            # First iteration: needs_input, second iteration: complete
-            call_count = 0
-
-            def make_response():
-                return _make_sdk_response(text="Working...")()
-
-            mock_client.receive_response = make_response
+            mock_client.receive_response = _make_sdk_response(
+                text="What format?",
+                session_id="sdk-session-456",
+            )
 
             with patch("tachikoma.sdk_query.stderr_aware_query") as mock_query:
+                mock_query.return_value = _make_eval_response(
+                    '{"status": "needs_input", "rationale": "What format should I use?"}',
+                )
 
-                def eval_side_effect(*args, **kwargs):
-                    nonlocal call_count
-                    call_count += 1
-
-                    if call_count == 1:
-                        return _make_eval_response(
-                            '{"status": "needs_input", "rationale": "What format should I use?"}'
-                        )
-
-                    return _make_eval_response('{"status": "complete", "rationale": "Done"}')
-
-                mock_query.side_effect = eval_side_effect
-
-                with (
-                    patch.object(
-                        executor,
-                        "_run_preprocessing",
-                        return_value=_mock_preproc_result(),
-                    ),
-                    patch.object(executor, "_run_postprocessing", return_value=None),
+                with patch.object(
+                    executor,
+                    "_run_preprocessing",
+                    return_value=_mock_preproc_result(),
                 ):
                     await executor.execute(instance)
 
-        # Verify instance completed (second iteration returned complete)
+        # Verify instance is waiting
         updated = await repo.get_instance("inst-1")
         assert updated is not None
-        assert updated.status == "completed"
+        assert updated.status == "waiting"
+        assert updated.sdk_session_id == "sdk-session-456"
 
-        # Verify the proceed-without-user message was injected
-        query_calls = mock_client.query.call_args_list
-
-        # First call is the initial task prompt, second is the proceed message
-        assert len(query_calls) >= 2
-        proceed_msg = query_calls[1][0][0]
-        assert "no user is available" in proceed_msg
-        assert "Proceed with your best judgment" in proceed_msg
+        # Verify respondable urgent notification was dispatched
+        assert len(dispatched_events) == 1
+        notif = dispatched_events[0]
+        assert isinstance(notif, Notification)
+        assert notif.priority == Priority.URGENT
+        assert notif.response_instance_id == "inst-1"
+        assert "respond_to_task" in notif.prompt
+        assert "What format should I use?" in notif.prompt
 
 
 class TestExecutorStderrCapture:
@@ -749,3 +740,332 @@ class TestBackgroundTaskSystemPrompt:
         assert "normal" in BACKGROUND_TASK_SYSTEM_PROMPT
         assert "low" in BACKGROUND_TASK_SYSTEM_PROMPT
         assert "priority" in BACKGROUND_TASK_SYSTEM_PROMPT
+
+    def test_mentions_asking_questions_section(self) -> None:
+        """AC (DLT-120): System prompt explains evaluator-mediated communication."""
+        assert "evaluator" in BACKGROUND_TASK_SYSTEM_PROMPT.lower()
+        assert "notification" in BACKGROUND_TASK_SYSTEM_PROMPT.lower()
+
+
+class TestExecutorResumePath:
+    """Tests for the resume path in executor (DLT-120)."""
+
+    @pytest.mark.asyncio
+    async def test_resume_with_response_completes(
+        self, repo: TaskRepository, tmp_path
+    ) -> None:
+        """AC: Waiting instance with response resumes and completes."""
+        instance = _make_instance(
+            "inst-1",
+            task_type="background",
+            status="waiting",
+            prompt="Test task",
+            sdk_session_id="sdk-session-456",
+            user_response="Yes, proceed",
+        )
+        await repo.create_instance(instance)
+
+        settings = TaskSettings()
+        bus = EventBus()
+        bus.dispatch = AsyncMock()
+
+        executor = BackgroundTaskExecutor(
+            repository=repo,
+            settings=settings,
+            bus=bus,
+            agent_defaults=AgentDefaults(cwd=Path("/tmp")),
+            skill_registry=_mock_skill_registry(),
+            session_registry=_mock_session_registry(),
+        )
+
+        with (
+            patch("tachikoma.tasks.executor.ClaudeSDKClient") as mock_client_class,
+            patch("tachikoma.tasks.executor._derive_transcript_path") as mock_derive,
+            patch("tachikoma.tasks.executor.Path") as mock_path_cls,
+        ):
+            mock_derive.return_value = "/fake/transcript.jsonl"
+            mock_path_instance = MagicMock()
+            mock_path_instance.exists.return_value = True
+            mock_path_cls.return_value = mock_path_instance
+
+            mock_client = AsyncMock()
+            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_client.__aexit__ = AsyncMock(return_value=None)
+            mock_client_class.return_value = mock_client
+
+            mock_client.query = AsyncMock()
+            mock_client.receive_response = _make_sdk_response(text="Done")
+
+            with patch("tachikoma.sdk_query.stderr_aware_query") as mock_query:
+                mock_query.return_value = _make_eval_response(
+                    '{"status": "complete", "rationale": "Done"}',
+                )
+
+                with (
+                    patch.object(
+                        executor,
+                        "_run_preprocessing",
+                        return_value=_mock_preproc_result(),
+                    ),
+                    patch.object(executor, "_run_postprocessing", return_value=None),
+                ):
+                    await executor.execute(instance)
+
+        # Verify instance completed
+        updated = await repo.get_instance("inst-1")
+        assert updated is not None
+        assert updated.status == "completed"
+
+        # Verify the SDK was called with resume= option
+        call_kwargs = mock_client_class.call_args
+        assert call_kwargs.kwargs.get("resume") == "sdk-session-456" or (
+            len(call_kwargs.args) > 0 and hasattr(call_kwargs.args[0], "resume")
+        )
+
+    @pytest.mark.asyncio
+    async def test_resume_with_missing_transcript_fails(
+        self, repo: TaskRepository
+    ) -> None:
+        """AC: Missing transcript file marks instance as failed."""
+        instance = _make_instance(
+            "inst-1",
+            task_type="background",
+            status="waiting",
+            prompt="Test task",
+            sdk_session_id="sdk-session-456",
+            user_response="Yes",
+        )
+        await repo.create_instance(instance)
+
+        settings = TaskSettings()
+        bus = EventBus()
+
+        dispatched_events = []
+
+        async def capture_dispatch(event):
+            dispatched_events.append(event)
+
+        bus.dispatch = AsyncMock(side_effect=capture_dispatch)
+
+        executor = BackgroundTaskExecutor(
+            repository=repo,
+            settings=settings,
+            bus=bus,
+            agent_defaults=AgentDefaults(cwd=Path("/tmp")),
+            skill_registry=_mock_skill_registry(),
+            session_registry=_mock_session_registry(),
+        )
+
+        with (
+            patch("tachikoma.tasks.executor._derive_transcript_path") as mock_derive,
+            patch("tachikoma.tasks.executor.Path") as mock_path_cls,
+        ):
+            mock_derive.return_value = "/nonexistent/transcript.jsonl"
+            mock_path_instance = MagicMock()
+            mock_path_instance.exists.return_value = False
+            mock_path_cls.return_value = mock_path_instance
+
+            await executor.execute(instance)
+
+        # Verify instance failed
+        updated = await repo.get_instance("inst-1")
+        assert updated is not None
+        assert updated.status == "failed"
+        assert "Transcript for resume not found" in (updated.result or "")
+
+        # Verify urgent non-respondable failure notification
+        assert len(dispatched_events) == 1
+        notif = dispatched_events[0]
+        assert isinstance(notif, Notification)
+        assert notif.response_instance_id is None
+
+    @pytest.mark.asyncio
+    async def test_resume_can_re_enter_waiting(self, repo: TaskRepository) -> None:
+        """AC: Resumed task can re-enter waiting on second needs_input."""
+        instance = _make_instance(
+            "inst-1",
+            task_type="background",
+            status="waiting",
+            prompt="Test task",
+            sdk_session_id="sdk-session-456",
+            user_response="First answer",
+        )
+        await repo.create_instance(instance)
+
+        settings = TaskSettings()
+        bus = EventBus()
+
+        dispatched_events = []
+
+        async def capture_dispatch(event):
+            dispatched_events.append(event)
+
+        bus.dispatch = AsyncMock(side_effect=capture_dispatch)
+
+        executor = BackgroundTaskExecutor(
+            repository=repo,
+            settings=settings,
+            bus=bus,
+            agent_defaults=AgentDefaults(cwd=Path("/tmp")),
+            skill_registry=_mock_skill_registry(),
+            session_registry=_mock_session_registry(),
+        )
+
+        with (
+            patch("tachikoma.tasks.executor.ClaudeSDKClient") as mock_client_class,
+            patch("tachikoma.tasks.executor._derive_transcript_path") as mock_derive,
+            patch("tachikoma.tasks.executor.Path") as mock_path_cls,
+        ):
+            mock_derive.return_value = "/fake/transcript.jsonl"
+            mock_path_instance = MagicMock()
+            mock_path_instance.exists.return_value = True
+            mock_path_cls.return_value = mock_path_instance
+
+            mock_client = AsyncMock()
+            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_client.__aexit__ = AsyncMock(return_value=None)
+            mock_client_class.return_value = mock_client
+
+            mock_client.query = AsyncMock()
+            mock_client.receive_response = _make_sdk_response(
+                text="Another question?",
+                session_id="sdk-session-789",
+            )
+
+            with patch("tachikoma.sdk_query.stderr_aware_query") as mock_query:
+                mock_query.return_value = _make_eval_response(
+                    '{"status": "needs_input", "rationale": "Another question?"}',
+                )
+
+                with patch.object(
+                    executor,
+                    "_run_preprocessing",
+                    return_value=_mock_preproc_result(),
+                ):
+                    await executor.execute(instance)
+
+        # Verify instance is back in waiting with updated session
+        updated = await repo.get_instance("inst-1")
+        assert updated is not None
+        assert updated.status == "waiting"
+        assert updated.sdk_session_id == "sdk-session-789"
+
+        # Verify new respondable notification
+        assert len(dispatched_events) == 1
+        notif = dispatched_events[0]
+        assert notif.response_instance_id == "inst-1"
+
+
+class TestRunnerTimeoutSweep:
+    """Tests for the runner timeout sweep (DLT-120 S8)."""
+
+    @pytest.mark.asyncio
+    async def test_expired_waiting_instance_swept(self, repo: TaskRepository) -> None:
+        """AC: Expired waiting instance is marked failed with notification."""
+        from datetime import timedelta
+
+        from tachikoma.tasks.executor import _sweep_expired_waiters
+
+        old_time = _utcnow() - timedelta(seconds=7210)
+        await repo.create_instance(
+            _make_instance(
+                "expired-1",
+                task_type="background",
+                status="waiting",
+                updated_at=old_time,
+            )
+        )
+
+        settings = TaskSettings(wait_timeout=7200)
+        bus = EventBus()
+
+        dispatched_events = []
+
+        async def capture_dispatch(event):
+            dispatched_events.append(event)
+
+        bus.dispatch = AsyncMock(side_effect=capture_dispatch)
+
+        await _sweep_expired_waiters(repo, settings, bus)
+
+        # Verify instance failed
+        updated = await repo.get_instance("expired-1")
+        assert updated is not None
+        assert updated.status == "failed"
+        assert "timed out" in (updated.result or "").lower()
+
+        # Verify urgent non-respondable notification
+        assert len(dispatched_events) == 1
+        notif = dispatched_events[0]
+        assert isinstance(notif, Notification)
+        assert notif.response_instance_id is None
+
+    @pytest.mark.asyncio
+    async def test_runner_uses_ready_instances(self, repo: TaskRepository) -> None:
+        """AC: Runner picks up both pending and waiting-with-response instances."""
+        await repo.create_instance(
+            _make_instance("pending-1", task_type="background", status="pending")
+        )
+        await repo.create_instance(
+            _make_instance(
+                "waiting-1",
+                task_type="background",
+                status="waiting",
+                user_response="Yes",
+            )
+        )
+
+        settings = TaskSettings(max_concurrent_background=2)
+        bus = EventBus()
+
+        executed_ids = []
+
+        async def mock_execute(self, inst):
+            executed_ids.append(inst.id)
+            await repo.update_instance(inst.id, status="completed")
+
+        with patch.object(BackgroundTaskExecutor, "execute", mock_execute):
+            task = asyncio.create_task(
+                background_task_runner(
+                    repo,
+                    settings,
+                    bus,
+                    AgentDefaults(cwd=Path("/tmp")),
+                    _mock_skill_registry(),
+                    _mock_session_registry(),
+                )
+            )
+            await asyncio.sleep(0.3)
+            task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
+
+        assert "pending-1" in executed_ids
+        assert "waiting-1" in executed_ids
+
+
+class TestCrashRecoveryWaiting:
+    """Tests for crash recovery with waiting instances (DLT-120 S9)."""
+
+    @pytest.mark.asyncio
+    async def test_waiting_survives_bootstrap(self, repo: TaskRepository) -> None:
+        """AC: Waiting instances are not affected by mark_running_as_failed."""
+        await repo.create_instance(
+            _make_instance("waiting-1", status="waiting", task_type="background")
+        )
+        await repo.create_instance(
+            _make_instance("running-1", status="running", task_type="background")
+        )
+
+        # Crash recovery only touches running instances
+        count = await repo.mark_running_as_failed("system restart")
+
+        assert count == 1
+
+        waiting = await repo.get_instance("waiting-1")
+        assert waiting is not None
+        assert waiting.status == "waiting"
+
+        running = await repo.get_instance("running-1")
+        assert running is not None
+        assert running.status == "failed"

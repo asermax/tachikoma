@@ -3,7 +3,7 @@
 Uses real SQLite databases in tmp_path (no mocking of the DB layer).
 """
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import select
 
@@ -411,3 +411,203 @@ class TestCorruptedScheduleIsolation:
             )
             record = result.scalar_one()
         assert record.enabled is False
+
+
+class TestGetReadyBackgroundInstances:
+    """Tests for get_ready_background_instances (DLT-120 S6)."""
+
+    async def test_returns_pending_background_instances(self, repo: TaskRepository) -> None:
+        """AC: Pending background instances are returned."""
+        await repo.create_instance(
+            _make_instance("pending-1", task_type="background", status="pending")
+        )
+
+        ready = await repo.get_ready_background_instances()
+
+        ids = {i.id for i in ready}
+        assert "pending-1" in ids
+
+    async def test_returns_waiting_with_response(self, repo: TaskRepository) -> None:
+        """AC: Waiting instances with user_response are returned."""
+        await repo.create_instance(
+            _make_instance(
+                "waiting-1",
+                task_type="background",
+                status="waiting",
+                user_response="Yes, proceed",
+            )
+        )
+
+        ready = await repo.get_ready_background_instances()
+
+        ids = {i.id for i in ready}
+        assert "waiting-1" in ids
+
+    async def test_excludes_waiting_without_response(self, repo: TaskRepository) -> None:
+        """AC: Waiting instances without user_response are excluded."""
+        await repo.create_instance(
+            _make_instance("waiting-no-resp", task_type="background", status="waiting")
+        )
+
+        ready = await repo.get_ready_background_instances()
+
+        ids = {i.id for i in ready}
+        assert "waiting-no-resp" not in ids
+
+    async def test_excludes_running_and_completed(self, repo: TaskRepository) -> None:
+        """AC: Running and completed instances are excluded."""
+        await repo.create_instance(
+            _make_instance("running-1", task_type="background", status="running")
+        )
+        await repo.create_instance(
+            _make_instance("completed-1", task_type="background", status="completed")
+        )
+
+        ready = await repo.get_ready_background_instances()
+
+        ids = {i.id for i in ready}
+        assert "running-1" not in ids
+        assert "completed-1" not in ids
+
+    async def test_excludes_session_instances(self, repo: TaskRepository) -> None:
+        """AC: Session-type instances are excluded."""
+        await repo.create_instance(
+            _make_instance("session-1", task_type="session", status="pending")
+        )
+
+        ready = await repo.get_ready_background_instances()
+
+        ids = {i.id for i in ready}
+        assert "session-1" not in ids
+
+
+class TestListExpiredWaitingInstances:
+    """Tests for list_expired_waiting_instances (DLT-120 S8)."""
+
+    async def test_returns_expired_waiting_instances(self, repo: TaskRepository) -> None:
+        """AC: Waiting instances older than timeout are returned."""
+        old_time = _utcnow() - timedelta(seconds=7210)
+        await repo.create_instance(
+            _make_instance(
+                "expired-1",
+                task_type="background",
+                status="waiting",
+                updated_at=old_time,
+            )
+        )
+
+        expired = await repo.list_expired_waiting_instances(7200)
+
+        ids = {i.id for i in expired}
+        assert "expired-1" in ids
+
+    async def test_excludes_fresh_waiting_instances(self, repo: TaskRepository) -> None:
+        """AC: Waiting instances within timeout are excluded."""
+        await repo.create_instance(
+            _make_instance(
+                "fresh-1",
+                task_type="background",
+                status="waiting",
+                updated_at=_utcnow(),
+            )
+        )
+
+        expired = await repo.list_expired_waiting_instances(7200)
+
+        ids = {i.id for i in expired}
+        assert "fresh-1" not in ids
+
+    async def test_excludes_non_waiting_instances(self, repo: TaskRepository) -> None:
+        """AC: Non-waiting instances are excluded even if old."""
+        old_time = _utcnow() - timedelta(seconds=7210)
+        await repo.create_instance(
+            _make_instance(
+                "running-old",
+                task_type="background",
+                status="running",
+                updated_at=old_time,
+            )
+        )
+
+        expired = await repo.list_expired_waiting_instances(7200)
+
+        ids = {i.id for i in expired}
+        assert "running-old" not in ids
+
+
+class TestGetActiveInstanceIncludesWaiting:
+    """Tests for get_active_instance_for_definition including 'waiting' (DLT-120 S9)."""
+
+    async def test_waiting_instance_prevents_duplicate_backward_compat(
+        self, repo: TaskRepository
+    ) -> None:
+        """AC: Waiting instance is returned in backward-compat path (no scheduled_for)."""
+        await repo.create_instance(
+            _make_instance(
+                "waiting-1", definition_id="def-1", status="waiting"
+            )
+        )
+
+        active = await repo.get_active_instance_for_definition("def-1")
+
+        assert active is not None
+        assert active.id == "waiting-1"
+
+    async def test_waiting_instance_prevents_duplicate_period_aware(
+        self, repo: TaskRepository
+    ) -> None:
+        """AC: Waiting instance is returned in period-aware path (with scheduled_for)."""
+        match_time = datetime(2026, 4, 4, 9, 0, tzinfo=UTC)
+        await repo.create_instance(
+            _make_instance(
+                "waiting-1",
+                definition_id="def-1",
+                status="waiting",
+                scheduled_for=match_time,
+            )
+        )
+
+        active = await repo.get_active_instance_for_definition(
+            "def-1", scheduled_for=match_time
+        )
+
+        assert active is not None
+        assert active.id == "waiting-1"
+
+
+class TestUpdatedAtAutoStamping:
+    """Tests for updated_at auto-stamping via SQLAlchemy onupdate."""
+
+    async def test_update_instance_refreshes_updated_at(
+        self, repo: TaskRepository
+    ) -> None:
+        """AC: Any persistence modification refreshes updated_at."""
+        await repo.create_instance(
+            _make_instance("inst-1", status="running")
+        )
+        original = await repo.get_instance("inst-1")
+        assert original is not None
+
+        import time
+
+        time.sleep(0.01)
+
+        await repo.update_instance("inst-1", sdk_session_id="sdk-123")
+
+        updated = await repo.get_instance("inst-1")
+        assert updated is not None
+        assert updated.updated_at is not None
+        assert updated.sdk_session_id == "sdk-123"
+
+    async def test_mark_running_as_failed_refreshes_updated_at(
+        self, repo: TaskRepository
+    ) -> None:
+        """AC: Crash recovery refreshes updated_at on failed instances."""
+        await repo.create_instance(_make_instance("running-1", status="running"))
+
+        await repo.mark_running_as_failed("system restart")
+
+        failed = await repo.get_instance("running-1")
+        assert failed is not None
+        assert failed.status == "failed"
+        assert failed.updated_at is not None
