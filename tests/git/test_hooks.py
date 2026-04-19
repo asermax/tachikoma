@@ -2,7 +2,7 @@
 
 Tests for DLT-020: Git module for workspace version tracking.
 Tests updated for DLT-097: workspace startup sync after init.
-Tests updated for sqlite-diffable DB dump/restore (replaces LFS).
+Tests updated for diffable DB dump/restore (replaces LFS).
 """
 
 import shutil

@@ -251,7 +251,7 @@ class TestGitProcessor:
         mocker.patch(
             "tachikoma.git.processor.dump_database",
             new_callable=AsyncMock,
-            side_effect=RuntimeError("sqlite-diffable not found"),
+            side_effect=RuntimeError("dump failed"),
         )
         mocker.patch(
             "tachikoma.git.processor.has_uncommitted_changes",

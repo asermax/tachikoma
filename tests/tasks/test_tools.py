@@ -18,9 +18,10 @@ from tachikoma.tasks.tools import (
     _format_schedule,
     _parse_schedule,
     create_task_tools_server,
+    handle_respond_to_task,
 )
 
-from .conftest import _make_definition
+from .conftest import _make_definition, _make_instance
 
 TZ_UTC = ZoneInfo("UTC")
 TZ_ART = ZoneInfo("America/Argentina/Buenos_Aires")
@@ -248,6 +249,31 @@ class TestCreateTaskToolsServer:
 
         # The server config exists and is valid
         assert server is not None
+
+    @pytest.mark.asyncio
+    async def test_exclude_respond_tool_for_background(self, repo: TaskRepository) -> None:
+        """AC (R8): Background sessions get a task-tools server without respond_to_task."""
+        server = create_task_tools_server(repo, TZ_UTC, include_respond_tool=False)
+        mcp_server = server["instance"]
+
+        list_handler = mcp_server.request_handlers[types.ListToolsRequest]
+        result = await list_handler(types.ListToolsRequest(method="tools/list"))
+
+        tool_names = {t.name for t in result.root.tools}
+        assert tool_names == {"list_tasks", "get_task", "create_task", "update_task", "delete_task"}
+        assert "respond_to_task" not in tool_names
+
+    @pytest.mark.asyncio
+    async def test_include_respond_tool_by_default(self, repo: TaskRepository) -> None:
+        """AC: Main conversation sessions get the full task-tools surface."""
+        server = create_task_tools_server(repo, TZ_UTC)
+        mcp_server = server["instance"]
+
+        list_handler = mcp_server.request_handlers[types.ListToolsRequest]
+        result = await list_handler(types.ListToolsRequest(method="tools/list"))
+
+        tool_names = {t.name for t in result.root.tools}
+        assert "respond_to_task" in tool_names
 
 
 class TestFutureCheckWithTzAware:
@@ -603,3 +629,102 @@ class TestUpdateTaskScheduleReset:
         text = result["content"][0]["text"]
         assert "future" in text.lower()
         assert "2020-01-01" in text
+
+
+class TestHandleRespondToTask:
+    """Tests for handle_respond_to_task (DLT-120 R3)."""
+
+    @pytest.mark.asyncio
+    async def test_success_saves_response(self, repo: TaskRepository) -> None:
+        """AC: Valid response is saved on a waiting instance."""
+        await repo.create_instance(
+            _make_instance("inst-1", status="waiting", task_type="background")
+        )
+
+        result = await handle_respond_to_task("inst-1", "Yes, proceed", repo)
+
+        assert "is_error" not in result
+        assert "Response sent." in result["content"][0]["text"]
+
+        updated = await repo.get_instance("inst-1")
+        assert updated is not None
+        assert updated.user_response == "Yes, proceed"
+
+    @pytest.mark.asyncio
+    async def test_rejects_empty_response(self, repo: TaskRepository) -> None:
+        """AC: Empty/whitespace-only response returns error."""
+        result = await handle_respond_to_task("inst-1", "   ", repo)
+
+        assert result["is_error"] is True
+        assert "empty" in result["content"][0]["text"].lower()
+
+    @pytest.mark.asyncio
+    async def test_rejects_not_found(self, repo: TaskRepository) -> None:
+        """AC: Nonexistent instance ID returns error."""
+        result = await handle_respond_to_task("ghost-id", "Yes", repo)
+
+        assert result["is_error"] is True
+        assert "not found" in result["content"][0]["text"].lower()
+
+    @pytest.mark.asyncio
+    async def test_rejects_not_waiting(self, repo: TaskRepository) -> None:
+        """AC: Instance not in 'waiting' status returns error."""
+        await repo.create_instance(
+            _make_instance("inst-1", status="completed", task_type="background")
+        )
+
+        result = await handle_respond_to_task("inst-1", "Yes", repo)
+
+        assert result["is_error"] is True
+        assert "not waiting" in result["content"][0]["text"].lower()
+
+    @pytest.mark.asyncio
+    async def test_rejects_already_responded(self, repo: TaskRepository) -> None:
+        """AC: Instance with existing user_response returns error."""
+        await repo.create_instance(
+            _make_instance(
+                "inst-1",
+                status="waiting",
+                task_type="background",
+                user_response="First response",
+            )
+        )
+
+        result = await handle_respond_to_task("inst-1", "Second response", repo)
+
+        assert result["is_error"] is True
+        assert "already pending" in result["content"][0]["text"].lower()
+
+    @pytest.mark.asyncio
+    async def test_trims_whitespace(self, repo: TaskRepository) -> None:
+        """AC: Response is trimmed before saving."""
+        await repo.create_instance(
+            _make_instance("inst-1", status="waiting", task_type="background")
+        )
+
+        result = await handle_respond_to_task("inst-1", "  Yes  ", repo)
+
+        assert "is_error" not in result
+        updated = await repo.get_instance("inst-1")
+        assert updated is not None
+        assert updated.user_response == "Yes"
+
+
+class TestRespondToTaskTool:
+    """Tests for the registered respond_to_task tool closure."""
+
+    @pytest.mark.asyncio
+    async def test_tool_registered_and_callable(self, repo: TaskRepository) -> None:
+        """AC: respond_to_task tool is registered and callable."""
+        await repo.create_instance(
+            _make_instance("inst-1", status="waiting", task_type="background")
+        )
+
+        call_tool = _call_tool(repo)
+        result = await call_tool(
+            "respond_to_task",
+            {"task_instance_id": "inst-1", "response": "Yes, go ahead"},
+        )
+
+        assert result.get("is_error") is not True
+        assert "Response sent." in result["content"][0]["text"]

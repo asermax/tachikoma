@@ -136,6 +136,13 @@ class TestRenderSystemPreamble:
         assert "# Your Identity" in result
         assert "**Invalid/Timezone**" in result
 
+    def test_preamble_includes_respond_to_task(self) -> None:
+        """AC (DLT-120): Preamble includes respond_to_task tool documentation."""
+        result = render_system_preamble(timezone="UTC")
+
+        assert "respond_to_task" in result
+        assert "task_instance_id" in result
+
     def test_detached_processes_section_present(self) -> None:
         """AC: Preamble includes Detached Processes section with all six tool names."""
         result = render_system_preamble(timezone="UTC")

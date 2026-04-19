@@ -313,3 +313,82 @@ class TestCreateNotificationServer:
         server = create_notification_server(bus, "Test Source", "id-1")
 
         assert server is not None
+
+
+class TestRespondableNotification:
+    """Tests for respondable notification behavior (DLT-120 R2, R2.1)."""
+
+    def test_prompt_includes_respondable_suffix_when_id_provided(self) -> None:
+        """AC: Prompt contains respond_to_task instructions when response_instance_id is set."""
+        result = build_notification_prompt(
+            "Background task: Daily digest",
+            "Should I commit these changes?",
+            response_instance_id="inst-abc123",
+        )
+
+        assert "respond_to_task" in result
+        assert "inst-abc123" in result
+        assert "waiting for user input" in result
+        assert "Should I commit these changes?" in result
+        assert "Background task: Daily digest" in result
+
+    def test_prompt_excludes_respondable_suffix_when_id_absent(self) -> None:
+        """AC: Standard notifications have no respond_to_task instructions."""
+        result = build_notification_prompt(
+            "Background task: Daily digest",
+            "Task completed successfully.",
+        )
+
+        assert "respond_to_task" not in result
+        assert "waiting for user input" not in result
+        assert "Deliver this notification to the user, keeping your message concise." in result
+
+    @pytest.mark.asyncio
+    async def test_dispatch_passes_response_instance_id_through(self) -> None:
+        """AC: dispatch_notification threads response_instance_id to both prompt and event."""
+        bus = EventBus()
+        dispatched_events: list = []
+
+        async def capture_dispatch(event):
+            dispatched_events.append(event)
+
+        bus.dispatch = AsyncMock(side_effect=capture_dispatch)
+
+        await dispatch_notification(
+            bus,
+            source="Background task: Test",
+            content="Should I proceed?",
+            severity="info",
+            source_id="inst-1",
+            priority=Priority.URGENT,
+            response_instance_id="inst-1",
+        )
+
+        event = dispatched_events[0]
+        assert event.response_instance_id == "inst-1"
+        assert "respond_to_task" in event.prompt
+        assert "inst-1" in event.prompt
+        assert event.priority == Priority.URGENT
+
+    @pytest.mark.asyncio
+    async def test_dispatch_without_response_instance_id_is_non_respondable(self) -> None:
+        """AC: dispatch_notification without response_instance_id produces non-respondable event."""
+        bus = EventBus()
+        dispatched_events: list = []
+
+        async def capture_dispatch(event):
+            dispatched_events.append(event)
+
+        bus.dispatch = AsyncMock(side_effect=capture_dispatch)
+
+        await dispatch_notification(
+            bus,
+            source="Background task: Test",
+            content="Task failed!",
+            severity="error",
+            source_id="inst-1",
+        )
+
+        event = dispatched_events[0]
+        assert event.response_instance_id is None
+        assert "respond_to_task" not in event.prompt

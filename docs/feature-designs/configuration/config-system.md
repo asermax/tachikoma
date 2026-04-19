@@ -96,6 +96,7 @@ Settings (root, frozen)
 │   ├── check_interval: int = 300              (session task check interval in seconds)
 │   ├── max_iterations: int = 10               (max evaluator iterations for background tasks)
 │   ├── max_concurrent_background: int = 3     (max parallel background tasks)
+│   ├── wait_timeout: int = 7200               (seconds a background task may pause awaiting user input before being failed with a timeout)
 │   └── timezone: str = ""                     (validate_default=True; validators resolve "" → system IANA key, then validate via ZoneInfo; invalid = startup error; also auto-injected as `TZ` in agent subprocess environments via `merge_env()` in `__main__.py`, overridable via `[agent.env]` without collision error)
 └── telegram: TelegramSettings | None = None
     ├── bot_token: str

@@ -23,6 +23,7 @@ Background tasks execute in isolated parallel sessions without interrupting the 
 | R5 | Concurrency gating via configurable limit (default 3); excess instances remain pending until a slot opens |
 | R6 | Stuck/looping agent detection — evaluator detects unproductive iterations and marks the task as failed |
 | R7 | Background task agents share the main agent's restricted git surface: a destructive-git deny hook blocks `git push`, `git reset`, `git checkout .`, `git restore .`, `git clean`, and mutating `git remote` subcommands; `push` and `sync` MCP tools are available for on-demand push/sync operations |
+| R8 | Background task agents have access to the task management MCP tools (`create_task`, `list_tasks`, `get_task`, `update_task`, `delete_task`) so they can schedule, inspect, update, and remove task definitions during autonomous execution |
 
 ## Behaviors
 
@@ -43,7 +44,7 @@ After each agent response, a lightweight model assesses the agent's workflow sta
 **Acceptance Criteria**:
 - Given a background task agent produces a response, then the evaluator assesses workflow completion using an ordered checklist: blocking error → complete → needs_input → continue
 - Given the evaluator determines the agent completed its workflow (announced completion, summarized results, or called `send_notification`), then the task instance is marked as `completed` — regardless of output quality
-- Given the evaluator detects the agent asked a clarifying question, then the executor injects a message telling the agent no user is available and to proceed with its best judgment (next iteration)
+- Given the evaluator detects the agent asked a clarifying question, then the executor transitions the instance to `waiting`, persists the current `sdk_session_id` for resume, and dispatches a respondable urgent `Notification` carrying the agent's question — on the next runner tick, if `user_response` is present, the task resumes in the same SDK session with the response as its next turn (see [task-management](../../feature-designs/tasks/task-management.md))
 - Given the evaluator detects the agent is stuck or looping, then the task instance is marked as `failed` and a notification is dispatched
 - Given the evaluator determines the agent is mid-workflow, then the agent receives feedback and continues working (next iteration)
 - Given the background task reaches the maximum iteration limit, then the task is marked as failed if not done
@@ -63,6 +64,15 @@ Background task agents can send notifications to the user during execution via t
 - Given the `send_notification` MCP tool, then it is only available within a background task agent session — it is not exposed to the main conversation
 - Given the background task system prompt, then it documents the available priority levels (Urgent for time-sensitive results, Normal for standard completion results, Low for informational updates) and the default (Normal)
 - Given a `Notification` event is dispatched on the bus, then the priority buffer enqueues it for idle-gated delivery — no channel subscribes to `Notification` directly
+
+### Task Scheduling (R8)
+
+Background task agents can schedule follow-up work via the same task management MCP tools available to the main agent. The system prompt explains when to use them — splitting a run into a separate scheduled pass, cleaning up existing schedules, or setting up recurring checks — and clarifies that newly scheduled tasks produce fresh isolated runs rather than nesting inside the current execution.
+
+**Acceptance Criteria**:
+- Given a background task instance is being executed, then the task-tools MCP server is registered in the SDK client's MCP servers alongside the notification and git-tools servers
+- Given the background task system prompt, then it documents the task management tools (`create_task`, `list_tasks`, `get_task`, `update_task`, `delete_task`) and states that scheduled tasks run in fresh isolated sessions when their schedule fires
+- Given a background task agent calls `create_task` during execution, then the new task definition is persisted identically to definitions created from the main conversation (same validation, same instance-generation behavior)
 
 ### Concurrency (R5)
 

@@ -222,6 +222,10 @@ class TaskSettings(BaseModel):
         default=3,
         description="Max concurrent background tasks",
     )
+    wait_timeout: int = Field(
+        default=7200,
+        description="Seconds a task may wait for user input before failing",
+    )
     timezone: str = Field(
         default="",
         validate_default=True,

@@ -77,23 +77,31 @@ def _user_message(content: str) -> dict[str, Any]:
 
 async def _message_source(
     initial: str,
-    buffer: asyncio.Queue[str],
+    inbox: asyncio.Queue[str],
 ) -> AsyncIterator[dict[str, Any]]:
-    """Long-lived generator feeding messages from buffer to SDK.
+    """Long-lived generator feeding messages from per-turn inbox to SDK.
 
-    Yields the enriched initial message first (pre-processed by send_message),
-    then reads subsequent messages from the buffer as they arrive.
-    Runs as a concurrent task managed by the SDK via ``connect()``.
-    Cancelled automatically when ``client.disconnect()`` tears down the
-    SDK's internal task group.
+    Yields the enriched initial message first, then reads subsequent
+    messages from the per-turn ``inbox`` queue.
+
+    If cancellation lands after ``inbox.get()`` returns but before the
+    ``yield`` commits, the locally held item is re-enqueued so it is
+    not dropped.
     """
     _log.debug("Message source: yielding initial message")
     yield _user_message(initial)
 
-    while True:
-        text = await buffer.get()
-        _log.debug("Message source: yielding buffered message")
-        yield _user_message(text)
+    pending: str | None = None
+    try:
+        while True:
+            pending = await inbox.get()
+            text_to_yield = pending
+            pending = None
+            _log.debug("Message source: yielding buffered message")
+            yield _user_message(text_to_yield)
+    finally:
+        if pending is not None:
+            inbox.put_nowait(pending)
 
 
 def _derive_transcript_path(sdk_session_id: str, cwd: Path | None) -> str:
@@ -539,9 +547,14 @@ class Coordinator:
         final_text_group: list[str] = []
         had_tool_activity = False
 
-        message_source = _message_source(text, self._message_buffer)
+        sdk_inbox: asyncio.Queue[str] = asyncio.Queue()
+        message_source = _message_source(text, sdk_inbox)
         transport = FilePromptTransport(prompt=message_source, options=options)
         client = ClaudeSDKClient(options, transport=transport)
+
+        forwarder_task: asyncio.Task[None] = asyncio.create_task(
+            self._forwarder(sdk_inbox),
+        )
 
         try:
             await client.connect(message_source)
@@ -597,7 +610,20 @@ class Coordinator:
             yield Error(message=sanitize_text(str(exc)), recoverable=True)
 
         finally:
+            # Cancel the forwarder before disconnecting so _message_buffer has
+            # no consumer during SDK teardown.
+            forwarder_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                try:
+                    await forwarder_task
+                except Exception:
+                    _log.exception("Forwarder failed")
+
             await client.disconnect()
+
+            # Drain-back and _client reset form a single synchronous block so
+            # has_pending_messages is accurate at the exact moment _client flips.
+            self._drain_back(sdk_inbox)
             self._client = None
 
         # Trigger per-message post-processing after response completes
@@ -901,6 +927,42 @@ providing context for what the user has been doing in the meantime.
                 "Failed to persist bridging context: err={err}",
                 err=str(exc),
             )
+
+    async def _forwarder(self, inbox: asyncio.Queue[str]) -> None:
+        """Forward items from _message_buffer to the per-turn SDK inbox.
+
+        The try/finally re-enqueues a held item on cancellation as
+        defence-in-depth — under the current code cancellation cannot
+        land between get() and the synchronous put_nowait(), but the
+        guard keeps the invariant robust to future edits.
+        """
+        pending: str | None = None
+        try:
+            while True:
+                pending = await self._message_buffer.get()
+                inbox.put_nowait(pending)
+                pending = None
+        finally:
+            if pending is not None:
+                self._message_buffer.put_nowait(pending)
+
+    def _drain_back(self, inbox: asyncio.Queue[str]) -> None:
+        """Recover items from per-turn inbox and re-populate _message_buffer in order.
+
+        Must be called after the forwarder has been cancelled and awaited
+        and after client.disconnect() has returned — otherwise either could
+        still consume from or push into the queues mid-drain.
+        """
+        recovered: list[str] = []
+        while not inbox.empty():
+            recovered.append(inbox.get_nowait())
+
+        pending: list[str] = []
+        while not self._message_buffer.empty():
+            pending.append(self._message_buffer.get_nowait())
+
+        for text in recovered + pending:
+            self._message_buffer.put_nowait(text)
 
     async def interrupt(self) -> None:
         """Interrupt the current agent response."""

@@ -30,7 +30,16 @@ and create cohesive, well-organized commits for ALL changes.
    - Changes in `$WORKSPACE/memories/facts/` → one commit
    - Changes in `$WORKSPACE/memories/preferences/` → one commit
    - Changes in `$WORKSPACE/context/` (core context files) → one commit
+   - Changes in `$WORKSPACE/.tachikoma/db-dump/` → one commit for database state
    - Other workspace files → group logically
+
+   About `.tachikoma/db-dump/`: this folder contains a diffable text dump
+   of the workspace SQLite database (one `.ndjson` + `.metadata.json` pair
+   per table, e.g. sessions, tasks). The binary DB itself is gitignored
+   — these text files are how DB state is version-controlled, so row-level
+   changes surface as readable diffs. The dump is regenerated before every
+   commit run, so diffs here reflect actual DB mutations from the session
+   that just ended.
 
 4. For each group, create a commit:
    - Use `git add <files>` to stage the files in that group
@@ -41,6 +50,8 @@ and create cohesive, well-organized commits for ALL changes.
    - Be descriptive but concise
    - Mention the type of change (e.g., "Update episodic memories", "Add new user preference")
    - Include the date for time-based files (e.g., "Update episodic memories for 2026-03-13")
+   - For db-dump commits, summarize what changed in DB state when possible
+     (e.g., "Record new session in DB dump", "Update task state in DB dump")
 
 ## Important Constraints
 

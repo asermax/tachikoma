@@ -13,4 +13,4 @@
 | [ADR-009](ADR-009-event-bus.md) | General-Purpose Event Bus via bubus | Accepted | 2026-03-22 |
 | [ADR-010](ADR-010-semantic-versioning.md) | Semantic Versioning via python-semantic-release | Accepted | 2026-03-29 |
 | [ADR-011](ADR-011-structured-metadata-on-context-entries.md) | Structured Metadata on Context Entries | Accepted | 2026-04-07 |
-| [ADR-012](ADR-012-diffable-db-tracking.md) | Diffable DB Tracking via sqlite-diffable | Accepted | 2026-04-18 |
+| [ADR-012](ADR-012-diffable-db-tracking.md) | Diffable DB Tracking via text dumps | Accepted | 2026-04-18 |
