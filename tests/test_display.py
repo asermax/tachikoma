@@ -111,12 +111,12 @@ class TestSummarizeMultipleTools:
     """Tests for multi-tool and aggregation (R3, R5)."""
 
     def test_two_reads_listed_individually(self) -> None:
-        """AC: 2 Reads listed individually with 'and'."""
+        """AC: 2 Reads listed individually with 'and', newest first."""
         activities = [
             ToolActivity(tool_name="Read", tool_input={"file_path": "/src/a.py"}),
             ToolActivity(tool_name="Read", tool_input={"file_path": "/src/b.py"}),
         ]
-        assert summarize_tool_activity(activities) == "Reading a.py and reading b.py"
+        assert summarize_tool_activity(activities) == "Reading b.py and reading a.py"
 
     def test_three_reads_aggregated(self) -> None:
         """AC: 3 Reads aggregated by count."""
@@ -128,17 +128,17 @@ class TestSummarizeMultipleTools:
         assert summarize_tool_activity(activities) == "Reading 3 files"
 
     def test_two_groups_joined_with_and(self) -> None:
-        """AC: 2 groups (aggregated + individual) joined with 'and'."""
+        """AC: 2 groups (aggregated + individual) joined with 'and', newest first."""
         activities = [
             ToolActivity(tool_name="Read", tool_input={"file_path": "/src/a.py"}),
             ToolActivity(tool_name="Read", tool_input={"file_path": "/src/b.py"}),
             ToolActivity(tool_name="Read", tool_input={"file_path": "/src/c.py"}),
             ToolActivity(tool_name="Grep", tool_input={"pattern": "pattern"}),
         ]
-        assert summarize_tool_activity(activities) == "Reading 3 files and searching for 'pattern'"
+        assert summarize_tool_activity(activities) == "Searching for 'pattern' and reading 3 files"
 
     def test_three_plus_groups_with_oxford_comma(self) -> None:
-        """AC: 3+ groups joined with commas and Oxford comma."""
+        """AC: 3+ groups joined with commas and Oxford comma, newest first."""
         activities = [
             ToolActivity(tool_name="Read", tool_input={"file_path": "/src/a.py"}),
             ToolActivity(tool_name="Grep", tool_input={"pattern": "pattern"}),
@@ -146,23 +146,23 @@ class TestSummarizeMultipleTools:
         ]
         assert (
             summarize_tool_activity(activities)
-            == "Reading a.py, searching for 'pattern', and run tests"
+            == "Run tests, searching for 'pattern', and reading a.py"
         )
 
-    def test_preserves_first_seen_order(self) -> None:
-        """AC: Tool groups preserve first-seen order."""
+    def test_preserves_newest_first_order(self) -> None:
+        """AC: Tool groups appear newest-first."""
         activities = [
             ToolActivity(tool_name="Bash", tool_input={"description": "First"}),
             ToolActivity(tool_name="Read", tool_input={"file_path": "/src/a.py"}),
             ToolActivity(tool_name="Bash", tool_input={"description": "Second"}),
         ]
-        # Bash comes first in first-seen order, so all Bash phrases come before Read
+        # Reversed: Bash("Second") comes first, then Read, then Bash("First")
+        # Groups: Bash (2 items: second, first), then Read
         result = summarize_tool_activity(activities)
-        # Bash group (2 items) listed as "first, second", then Read
-        assert result == "First, second, and reading a.py"
+        assert result == "Second, first, and reading a.py"
 
     def test_more_than_five_groups_capped(self) -> None:
-        """AC: >5 groups capped with 'and more' (no duplicated 'and')."""
+        """AC: >5 groups capped with 'and more' (no duplicated 'and'), newest first."""
         activities = [
             ToolActivity(tool_name="Read", tool_input={"file_path": "/src/a.py"}),
             ToolActivity(tool_name="Grep", tool_input={"pattern": "p1"}),
@@ -173,10 +173,10 @@ class TestSummarizeMultipleTools:
             ToolActivity(tool_name="ToolSearch", tool_input={"query": "q"}),
         ]
 
-        # Exact match catches the prior ", and and more" bug — the substring
-        # check "and more" passed on buggy output too, which is why it didn't.
+        # Reversed order: ToolSearch, Write, Edit, Bash, Glob, Grep, Read
+        # First 5 groups after truncation + "more"
         assert summarize_tool_activity(activities) == (
-            "Reading a.py, searching for 'p1', globbing '*.py', run, editing e.py, and more"
+            "Searching tools, writing f.py, editing e.py, run, globbing '*.py', and more"
         )
 
     def test_exactly_six_groups_truncates(self) -> None:
