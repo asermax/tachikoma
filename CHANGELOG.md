@@ -1,6 +1,170 @@
 # CHANGELOG
 
 
+<!-- version list -->
+
+## v1.36.0 (2026-04-19)
+
+### Documentation
+
+- **tasks**: Reconcile DLT-127 on-demand execution into feature docs ([`2eeb290`](https://github.com/asermax/tachikoma/commit/2eeb290b5c26f9b4821cedb272e533153cd5fc0e))
+
+### Features
+
+- **tasks**: Add run_task_now for immediate background task execution ([`1ac8bf2`](https://github.com/asermax/tachikoma/commit/1ac8bf22e242d8cf551a81c6de0497f431678f36))
+
+
+## v1.35.0 (2026-04-19)
+
+### Documentation
+
+- **deltas**: Add DLT-118 design for skill dependencies ([`e4e19dd`](https://github.com/asermax/tachikoma/commit/e4e19dd539961d0b767bd9023445d374ea50ab4a))
+
+- **deltas**: Add DLT-118 implementation plan ([`88cddab`](https://github.com/asermax/tachikoma/commit/88cddaba8b3d42949c9aaf147fee149c6f865e01))
+
+- **deltas**: Add DLT-118 spec for skill dependencies ([`27cade4`](https://github.com/asermax/tachikoma/commit/27cade4a4c3aab819c10feaee7667d9af2f6d833))
+
+- **deltas**: Advance DLT-118 status to design ([`cf74202`](https://github.com/asermax/tachikoma/commit/cf74202a2b7fbcff9f76b4aa0f25aa95515f0c79))
+
+- **deltas**: Advance DLT-118 status to plan ([`e0a6c68`](https://github.com/asermax/tachikoma/commit/e0a6c684fd91bd2ca58f3bfd79f6539b9b8e150a))
+
+- **deltas**: Advance DLT-118 to implementation and mark batches done ([`c22fae4`](https://github.com/asermax/tachikoma/commit/c22fae4780b50be81523af0bdacd3b0fa7e37ff6))
+
+- **deltas**: Approve DLT-118 design ([`856702d`](https://github.com/asermax/tachikoma/commit/856702dd1abb6ea846f83c7218a80faed0d9ee7a))
+
+- **deltas**: Expand DLT-118 design with problem context and rationale ([`54316d9`](https://github.com/asermax/tachikoma/commit/54316d9451e3cb6e0198c750ac5923081631627a))
+
+- **deltas**: Mark DLT-118 plan as approved ([`1f9f212`](https://github.com/asermax/tachikoma/commit/1f9f2120d5c2cd8ad7cc5bca2edaa6a4fecbe255))
+
+- **deltas**: Refine DLT-118 spec with memoization and workspace overrides ([`f05c883`](https://github.com/asermax/tachikoma/commit/f05c8837e33ab5239e4eb0b1cba0411650f30472))
+
+- **planning**: Add deltas DLT-157 through DLT-161 ([`b818973`](https://github.com/asermax/tachikoma/commit/b81897330d289fa4037c2336ee9fa5a2071549c3))
+
+- **planning**: Advance DLT-118 status to spec ([`652456c`](https://github.com/asermax/tachikoma/commit/652456ca561f74a812e5296addf5eca04a4713b2))
+
+- **skills**: Reconcile DLT-118 skill dependencies into feature docs ([`106492a`](https://github.com/asermax/tachikoma/commit/106492a84f5fe85237ea6d420956e06e50feba72))
+
+### Features
+
+- **skills**: Add depends_on field and transitive dependency resolution ([`f8f255f`](https://github.com/asermax/tachikoma/commit/f8f255f5d41a959625bbe586f0d1522aab42a790))
+
+- **skills**: Expand context provider to load transitive skill dependencies ([`49674b4`](https://github.com/asermax/tachikoma/commit/49674b445a869ab91a5f933fb277f453fc40ea24))
+
+### Refactoring
+
+- **skills**: Simplify dependency expansion dedup logic ([`21083d3`](https://github.com/asermax/tachikoma/commit/21083d3db2da4ba280ea3274e13c6cd3287a72e0))
+
+### Testing
+
+- **skills**: Strengthen depends_on warning and chain expansion assertions ([`9d4dbeb`](https://github.com/asermax/tachikoma/commit/9d4dbeb1ebf006e80189b04592c4292e688b0668))
+
+
+## v1.34.0 (2026-04-19)
+
+### Bug Fixes
+
+- **tasks**: Exclude respond_to_task from background task sessions ([`dd49c8c`](https://github.com/asermax/tachikoma/commit/dd49c8cda739df481210102dc4485ff063106acc))
+
+
+## v1.33.0 (2026-04-19)
+
+### Features
+
+- **tasks**: Expose task-tools MCP to background task agent ([`481b26a`](https://github.com/asermax/tachikoma/commit/481b26a17b8b69c090a8dee625b6a2f0dd1120d6))
+
+
+## v1.32.0 (2026-04-19)
+
+
+## v1.31.0 (2026-04-19)
+
+### Features
+
+- **post-processing**: Add sort to utility bash command whitelist ([`281aa0e`](https://github.com/asermax/tachikoma/commit/281aa0edde4d4dcf836db98a328ab7ed6ee5e49e))
+
+
+## v1.30.3 (2026-04-19)
+
+### Bug Fixes
+
+- **database**: Restore DB from dump on startup when DB is missing ([`2d9a67f`](https://github.com/asermax/tachikoma/commit/2d9a67f9355f62ef1eeec7dd86d6f2e8fc15ec56))
+
+### Documentation
+
+- Update feature docs and ADR-012 with missing-DB restore behavior ([`962dc2e`](https://github.com/asermax/tachikoma/commit/962dc2e5770aa42a1aee50418995696b31ef1718))
+
+
+## v1.30.2 (2026-04-19)
+
+### Bug Fixes
+
+- **git**: Replace sqlite-diffable CLI with inline stdlib implementation ([`537f1de`](https://github.com/asermax/tachikoma/commit/537f1de866d1fc8b9a04e3c875e16a32aac5e583))
+
+
+## v1.30.1 (2026-04-19)
+
+### Bug Fixes
+
+- **git**: Exclude sqlite_sequence from db dump ([`2f52cc7`](https://github.com/asermax/tachikoma/commit/2f52cc798d9a44b5f6d0b895c8ef4600117fffcf))
+
+- **git**: Resolve sqlite-diffable binary from tool venv ([`61cc2e5`](https://github.com/asermax/tachikoma/commit/61cc2e54177069e61b451cca8bdaeab582aa0185))
+
+### Documentation
+
+- **git**: Explain db-dump folder in commit agent prompt ([`72ceae3`](https://github.com/asermax/tachikoma/commit/72ceae3b8b1ebaac4216ac4221d0cd3f92c8c576))
+
+
+## v1.30.0 (2026-04-19)
+
+### Documentation
+
+- **channels**: Update telegram feature docs for newest-first ordering ([`093af36`](https://github.com/asermax/tachikoma/commit/093af36b7172fc02bb5804797c9a421c8e46a239))
+
+- **planning**: Broaden DLT-150 marker emission approach ([`d477294`](https://github.com/asermax/tachikoma/commit/d47729444ba0e9ed00d7f3b92deec6c047a1728c))
+
+### Features
+
+- **display**: Sort tool usage summary newest-first ([`47b2479`](https://github.com/asermax/tachikoma/commit/47b24790794f87d383ceaa8d7ae17b8359bdc456))
+
+
+## v1.29.0 (2026-04-19)
+
+### Code Style
+
+- Apply ruff formatting fixes ([`2e90725`](https://github.com/asermax/tachikoma/commit/2e907252fa118181c45dc01151c08e803dd3f48a))
+
+### Documentation
+
+- Update feature documentation for git tools and LFS ([`dbe3cd5`](https://github.com/asermax/tachikoma/commit/dbe3cd576e221930b67d54efdb5b0f6aa2097dba))
+
+- **adr**: Add ADR-012 for Git LFS on workspace binaries ([`2bdaf73`](https://github.com/asermax/tachikoma/commit/2bdaf73621bf729cd59688b666e0530fe2fc728a))
+
+- **adr**: Replace ADR-012 with sqlite-diffable decision ([`ea290c5`](https://github.com/asermax/tachikoma/commit/ea290c59f74cb7d12595136d4f664609bcf26c3b))
+
+- **deltas**: Add git guardrails and secrets store deltas ([`f3e3945`](https://github.com/asermax/tachikoma/commit/f3e3945dc62b773054ec19a6f5643884a34671b2))
+
+### Features
+
+- **git**: Add push/sync MCP tools and destructive-git deny hook ([`01f8f1e`](https://github.com/asermax/tachikoma/commit/01f8f1ed10a0850431c491daf75fa9f685b2af1b))
+
+- **git**: Configure LFS for workspace database on bootstrap ([`c153d74`](https://github.com/asermax/tachikoma/commit/c153d7483be4aaa808ba235230691a3b6b9791cd))
+
+- **git**: Replace LFS with sqlite-diffable for DB version tracking ([`669852f`](https://github.com/asermax/tachikoma/commit/669852f57bc01abf033402812b44bf9932d6cebf))
+
+### Testing
+
+- **git**: Update tests for sqlite-diffable DB tracking ([`c2dce10`](https://github.com/asermax/tachikoma/commit/c2dce1036ef2d79b2535a0a7f60c75b8957dde80))
+
+
+## v1.28.0 (2026-04-18)
+
+### Documentation
+
+- **changelog**: Backfill changelogs for v1.25.0-v1.27.0 ([`565e0b6`](https://github.com/asermax/tachikoma/commit/565e0b631c7e008ae9b051247c9793c1ef205227))
+
+- **planning**: Update DELTAS.md ([`86e1c48`](https://github.com/asermax/tachikoma/commit/86e1c4818a03c7d18a964496402823415cf0b703))
+
+
 ## v1.27.0 (2026-04-18)
 
 ### Features
