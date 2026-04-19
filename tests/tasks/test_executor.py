@@ -411,7 +411,7 @@ class TestBackgroundTaskExecutor:
     async def test_notification_server_registered_in_sdk_options(
         self, repo: TaskRepository
     ) -> None:
-        """AC: Notification MCP server is present in SDK options mcp_servers."""
+        """AC: Notification MCP server and injected extra servers are present in mcp_servers."""
         instance = _make_instance(
             "inst-1",
             task_type="background",
@@ -424,6 +424,9 @@ class TestBackgroundTaskExecutor:
         bus = EventBus()
         bus.dispatch = AsyncMock()
 
+        sentinel_git = MagicMock()
+        sentinel_tasks = MagicMock()
+
         executor = BackgroundTaskExecutor(
             repository=repo,
             settings=settings,
@@ -431,6 +434,7 @@ class TestBackgroundTaskExecutor:
             agent_defaults=AgentDefaults(cwd=Path("/tmp")),
             skill_registry=_mock_skill_registry(),
             session_registry=_mock_session_registry(),
+            extra_mcp_servers={"git-tools": sentinel_git, "task-tools": sentinel_tasks},
         )
 
         captured_mcp_servers = {}
@@ -463,8 +467,10 @@ class TestBackgroundTaskExecutor:
                 ):
                     await executor.execute(instance)
 
-        # Verify the notification server was added to mcp_servers
+        # Verify the per-execution notification server and always-on extra servers are merged
         assert "notifications" in captured_mcp_servers
+        assert captured_mcp_servers.get("git-tools") is sentinel_git
+        assert captured_mcp_servers.get("task-tools") is sentinel_tasks
 
     @pytest.mark.asyncio
     async def test_agent_notification_and_failure_both_delivered(

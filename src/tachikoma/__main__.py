@@ -298,7 +298,7 @@ async def run(
                         agent_defaults,
                         skill_registry,
                         registry,
-                        extra_mcp_servers={"git-tools": git_tools},
+                        extra_mcp_servers={"git-tools": git_tools, "task-tools": task_tools},
                         hooks=[destructive_git_deny_hook],
                     ),
                     name="background_task_runner",

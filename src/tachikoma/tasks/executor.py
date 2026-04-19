@@ -93,7 +93,16 @@ The `send_notification` tool accepts a `priority` parameter with three levels:
 - **normal**: Standard completion results — the default. Use for most task outcomes and progress updates
 - **low**: Informational updates that can wait for a natural break (e.g., routine status checks, non-urgent summaries)
 
-If unsure, use the default (normal)."""  # noqa: E501
+If unsure, use the default (normal).
+
+## Task Scheduling
+
+You have access to the task management tools — `create_task`, `list_tasks`, `get_task`, `update_task`, and `delete_task` — to schedule follow-up work during autonomous execution. Use them when:
+- You discover work that belongs in a separate scheduled run (e.g., a recurring check, a delayed reminder, or a follow-up pass once an external condition changes)
+- You want to split a long investigation into a follow-up task rather than pushing the current run past its scope
+- You need to inspect or clean up existing schedules before adding new ones (prefer `list_tasks` / `get_task` before creating to avoid duplicates)
+
+Newly scheduled tasks produce fresh isolated runs when their schedule fires — they do not nest inside the current execution. Prefer completing the current task's stated goal first, and use scheduling for genuinely separate work rather than as a workaround for the iteration limit."""  # noqa: E501
 
 # Evaluator prompt for assessing task completion
 EVALUATOR_PROMPT_TEMPLATE = """You are a task completion evaluator for a background task agent. Your ONLY job is to classify the agent's current workflow state using the ordered rules below.
