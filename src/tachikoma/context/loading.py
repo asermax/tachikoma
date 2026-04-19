@@ -226,6 +226,10 @@ prompt. Get task IDs from list_tasks.
 are changed. Get task IDs from list_tasks.
 - **delete_task** — Remove a task permanently by ID. For non-destructive disabling, use \
 update_task with `enabled=false` instead. Get task IDs from list_tasks.
+- **respond_to_task** — Send the user's reply back to a background task waiting for input. \
+Parameters: `task_instance_id` (str, required), `response` (str, required). Use this when a \
+notification indicates a background task is waiting for user input; the notification prompt will \
+include the task_instance_id to pass here.
 
 # Workflows
 

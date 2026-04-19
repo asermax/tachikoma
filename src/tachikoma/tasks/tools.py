@@ -60,6 +60,70 @@ class GetTaskArgs(BaseModel):
     task_id: str
 
 
+class RespondToTaskArgs(BaseModel):
+    task_instance_id: str
+    response: str
+
+
+async def handle_respond_to_task(
+    task_instance_id: str,
+    response: str,
+    repository: TaskRepository,
+) -> dict:
+    """Handle the respond_to_task tool invocation.
+
+    Validates the response and target task, then saves the response for
+    the runner to pick up on the next tick.
+
+    Validation order: empty → not-found → not-waiting → already-responded → success.
+    """
+    trimmed = response.strip()
+    if not trimmed:
+        return {
+            "is_error": True,
+            "content": [{"type": "text", "text": "Response cannot be empty."}],
+        }
+
+    try:
+        instance = await repository.get_instance(task_instance_id)
+
+    except TaskRepositoryError as exc:
+        cause = f" Cause: {exc.__cause__}" if exc.__cause__ else ""
+        return {"is_error": True, "content": [{"type": "text", "text": f"{exc}{cause}"}]}
+
+    if instance is None:
+        return {
+            "is_error": True,
+            "content": [
+                {"type": "text", "text": f"Task instance '{task_instance_id}' not found."}
+            ],
+        }
+
+    if instance.status != "waiting":
+        return {
+            "is_error": True,
+            "content": [{"type": "text", "text": "Task is not waiting for input."}],
+        }
+
+    if instance.user_response is not None:
+        return {
+            "is_error": True,
+            "content": [
+                {"type": "text", "text": "A response is already pending for this task."}
+            ],
+        }
+
+    try:
+        await repository.update_instance(task_instance_id, user_response=trimmed)
+    except TaskRepositoryError as exc:
+        cause = f" Cause: {exc.__cause__}" if exc.__cause__ else ""
+        return {"is_error": True, "content": [{"type": "text", "text": f"{exc}{cause}"}]}
+
+    return {
+        "content": [{"type": "text", "text": "Response sent."}],
+    }
+
+
 def create_task_tools_server(
     repository: TaskRepository,
     timezone: ZoneInfo,
@@ -473,9 +537,33 @@ def create_task_tools_server(
                 "content": [{"type": "text", "text": f"Unexpected error: {exc}"}],
             }
 
+    @tool(
+        "respond_to_task",
+        "Send the user's response back to a background task that is waiting for input.\n"
+        "\n"
+        "Parameters:\n"
+        "- task_instance_id (str, required): The ID of the waiting task instance,\n"
+        "  as provided in the notification's prompt text.\n"
+        "- response (str, required): The user's reply to relay to the task.\n"
+        "\n"
+        "Use this only when a notification explicitly indicates a background task is\n"
+        "waiting for user input. The tool enforces that the target task is in 'waiting'\n"
+        "status — calls against any other status return a clear error.",
+        RespondToTaskArgs.model_json_schema(),
+    )
+    async def respond_to_task(args: dict) -> dict:
+        try:
+            parsed = RespondToTaskArgs.model_validate(args)
+        except ValidationError as exc:
+            return {
+                "is_error": True,
+                "content": [{"type": "text", "text": f"Invalid arguments: {exc}"}],
+            }
+        return await handle_respond_to_task(parsed.task_instance_id, parsed.response, repository)
+
     return create_sdk_mcp_server(
         name="task-tools",
-        tools=[list_tasks, get_task, create_task, update_task, delete_task],
+        tools=[list_tasks, get_task, create_task, update_task, delete_task, respond_to_task],
     )
 
 
