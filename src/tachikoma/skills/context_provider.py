@@ -21,7 +21,7 @@ from tachikoma.sessions.model import SessionContextEntry
 if TYPE_CHECKING:
     from claude_agent_sdk.types import AgentDefinition
 
-from tachikoma.skills.registry import SkillRegistry
+from tachikoma.skills.registry import Skill, SkillRegistry
 
 _log = logger.bind(component="skills_context")
 
@@ -163,19 +163,46 @@ class SkillsContextProvider(MessageContextProvider):
         if not detected_names:
             return None
 
+        # Expand each detected skill into its transitive dependency chain.
+        # First-seen wins on overlap across sibling chains.
+        ordered_skills: list[Skill] = []
+        seen: set[str] = set()
+
+        for name in detected_names:
+            try:
+                chain = self._registry.resolve_chain(name)
+            except Exception as exc:
+                _log.exception(
+                    "Failed to resolve skill dependency chain: skill={skill}, err={err}",
+                    skill=name,
+                    err=str(exc),
+                )
+                continue
+
+            for skill in chain:
+                if skill.name in seen:
+                    continue
+                seen.add(skill.name)
+                ordered_skills.append(skill)
+
+        # Dedup against skills already loaded in this session
+        emitted_skills = [s for s in ordered_skills if s.name not in loaded_names]
+
+        if not emitted_skills:
+            return None
+
         results: list[ContextResult] = []
 
-        for skill_name in detected_names:
-            skill = self._registry.skills[skill_name]
+        for skill in emitted_skills:
             skill_block = (
-                f'<skill name="{skill_name}" directory="{skill.path}">\n{skill.body}\n</skill>'
+                f'<skill name="{skill.name}" directory="{skill.path}">\n{skill.body}\n</skill>'
             )
 
             results.append(
                 ContextResult(
                     tag=SKILLS_OWNER,
                     content=skill_block,
-                    metadata={SKILL_NAME_META_KEY: skill_name},
+                    metadata={SKILL_NAME_META_KEY: skill.name},
                 )
             )
 
