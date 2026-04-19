@@ -1,6 +1,6 @@
 [project]
 name = "tachikoma-agent"
-version = "1.27.0"
+version = "1.31.0"
 description = "A proactive personal assistant built on Claude Agent SDK"
 readme = "README.md"
 license = {text = "MIT"}
@@ -22,6 +22,7 @@ dependencies = [
     "aiosqlite>=0.20",
     "alembic>=1.13",
     "loguru>=0.7",
+    "psutil>=6.0",
     "aiogram>=3.20",
     "telegramify-markdown>=1.0",
     "cyclopts",

@@ -8,6 +8,7 @@ from claude_agent_sdk.types import HookMatcher
 from loguru import logger
 
 from tachikoma.agent_defaults import AgentDefaults
+from tachikoma.git.db_sync import dump_database
 from tachikoma.git.sync import PUSH_RESULT, PUSH_SUCCESS, has_uncommitted_changes, smart_push
 from tachikoma.post_processing import PostProcessor, build_permissions_settings, make_bash_gate_hook
 from tachikoma.sdk_query import stderr_aware_query
@@ -29,7 +30,16 @@ and create cohesive, well-organized commits for ALL changes.
    - Changes in `$WORKSPACE/memories/facts/` → one commit
    - Changes in `$WORKSPACE/memories/preferences/` → one commit
    - Changes in `$WORKSPACE/context/` (core context files) → one commit
+   - Changes in `$WORKSPACE/.tachikoma/db-dump/` → one commit for database state
    - Other workspace files → group logically
+
+   About `.tachikoma/db-dump/`: this folder contains a diffable text dump
+   of the workspace SQLite database (one `.ndjson` + `.metadata.json` pair
+   per table, e.g. sessions, tasks). The binary DB itself is gitignored
+   — these text files are how DB state is version-controlled, so row-level
+   changes surface as readable diffs. The dump is regenerated before every
+   commit run, so diffs here reflect actual DB mutations from the session
+   that just ended.
 
 4. For each group, create a commit:
    - Use `git add <files>` to stage the files in that group
@@ -40,6 +50,8 @@ and create cohesive, well-organized commits for ALL changes.
    - Be descriptive but concise
    - Mention the type of change (e.g., "Update episodic memories", "Add new user preference")
    - Include the date for time-based files (e.g., "Update episodic memories for 2026-03-13")
+   - For db-dump commits, summarize what changed in DB state when possible
+     (e.g., "Record new session in DB dump", "Update task state in DB dump")
 
 ## Important Constraints
 
@@ -168,6 +180,17 @@ class GitProcessor(PostProcessor):
             session: The closed session (not used, but required by interface).
         """
         _log.info("Processor started: processor=GitProcessor")
+
+        # Dump DB to diffable text files before checking for changes.
+        # Must happen before the dirty check because the DB binary is
+        # gitignored — only the dump files surface in git status.
+        db_path = self._cwd / ".tachikoma" / "tachikoma.db"
+        dump_dir = self._cwd / ".tachikoma" / "db-dump"
+
+        try:
+            await dump_database(db_path, dump_dir)
+        except Exception as e:
+            _log.warning("DB dump failed, continuing without it: err={err}", err=str(e))
 
         # Check if there are any uncommitted changes
         is_dirty = await has_uncommitted_changes(self._cwd)

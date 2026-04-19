@@ -30,7 +30,7 @@ Background-originated items historically reached the user through two independen
 A **Buffer subsystem** (`src/tachikoma/buffer/`) owns a priority queue of pending deliveries and a single asynchronous loop that wakes only when something could change the outcome: a new item is enqueued, the coordinator transitions busy→idle, or a per-cycle timer fires for the next actionable moment.
 
 The buffer is fed two ways:
-- **Notifications**: the buffer subscribes to the existing `Notification` event on the bus. Executor and `send_notification` MCP tool keep dispatching to the bus without knowing about the buffer.
+- **Notifications**: the buffer subscribes to the existing `Notification` event on the bus. All producers (the background-task executor, the agent-driven `send_notification` MCP tool, and the detached-process exit watcher) dispatch to the bus without knowing about the buffer.
 - **Session tasks**: the scheduler calls `buffer.enqueue(...)` directly. This lets the scheduler hand the `on_delivered` callback straight to the buffer item, and removes the scheduler's own idle gate.
 
 Delivery goes through a new `BufferedDelivery` event. Channels subscribe once and handle both single-item and shutdown-digest deliveries through the same code path.

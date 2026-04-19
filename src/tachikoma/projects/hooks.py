@@ -121,5 +121,5 @@ async def _sync_submodule(workspace_path: Path, path: str, agent_defaults: Agent
     await checkout_branch(submodule_path, default_branch)
 
     # Smart pull with divergence detection and conflict resolution
-    result = await smart_pull(submodule_path, "origin", default_branch, agent_defaults)
+    result, _ = await smart_pull(submodule_path, "origin", default_branch, agent_defaults)
     _log.info("Submodule sync: path={path} result={result}", path=path, result=result)

@@ -3,6 +3,7 @@
 Tests for database initialization, schema creation, and bootstrap hook.
 """
 
+import json
 from pathlib import Path
 
 import aiosqlite
@@ -187,4 +188,125 @@ class TestDatabaseHook:
         assert db_path.exists()
 
         # Cleanup
+        await ctx.extras["database"].close()
+
+    async def test_restores_from_dump_when_db_missing(
+        self, settings_manager: SettingsManager
+    ) -> None:
+        """AC1: DB missing + dump exists -> restores before init."""
+        ws = settings_manager.settings.workspace
+        ws.path.mkdir(parents=True, exist_ok=True)
+        ws.data_path.mkdir(exist_ok=True)
+
+        db_path = ws.data_path / "tachikoma.db"
+        dump_dir = ws.data_path / "db-dump"
+        dump_dir.mkdir()
+
+        # Create a dump with a sessions table containing one row
+        dump_dir.joinpath("sessions.metadata.json").write_text(
+            json.dumps({
+                "name": "sessions",
+                "columns": ["id", "sdk_session_id", "started_at"],
+                "schema": (
+                    "CREATE TABLE sessions ("
+                    "id TEXT PRIMARY KEY, "
+                    "sdk_session_id TEXT, "
+                    "started_at DATETIME"
+                    ")"
+                ),
+            })
+        )
+        dump_dir.joinpath("sessions.ndjson").write_text(
+            json.dumps(["test-id", "sdk-123", "2026-01-01T00:00:00"]) + "\n"
+        )
+
+        assert not db_path.exists()
+
+        ctx = BootstrapContext(settings_manager=settings_manager, prompt=input)
+        await database_hook(ctx)
+
+        # DB was restored and initialized
+        assert db_path.exists()
+
+        async with aiosqlite.connect(db_path) as db:
+            cursor = await db.execute("SELECT id FROM sessions")
+            rows = await cursor.fetchall()
+
+        assert rows == [("test-id",)]
+
+        await ctx.extras["database"].close()
+
+    async def test_skips_restore_when_db_exists(
+        self, settings_manager: SettingsManager
+    ) -> None:
+        """AC2: DB already exists -> no restore attempt."""
+        ws = settings_manager.settings.workspace
+        ws.path.mkdir(parents=True, exist_ok=True)
+        ws.data_path.mkdir(exist_ok=True)
+
+        db_path = ws.data_path / "tachikoma.db"
+        dump_dir = ws.data_path / "db-dump"
+        dump_dir.mkdir()
+
+        # Create a DB with a marker table
+        async with aiosqlite.connect(db_path) as db:
+            await db.execute("CREATE TABLE marker (v TEXT)")
+            await db.execute("INSERT INTO marker VALUES ('original')")
+            await db.commit()
+
+        # Create dump that would overwrite the marker
+        dump_dir.joinpath("marker.metadata.json").write_text(
+            json.dumps({
+                "name": "marker",
+                "columns": ["v"],
+                "schema": "CREATE TABLE marker (v TEXT)",
+            })
+        )
+        dump_dir.joinpath("marker.ndjson").write_text(
+            json.dumps(["from-dump"]) + "\n"
+        )
+
+        ctx = BootstrapContext(settings_manager=settings_manager, prompt=input)
+        await database_hook(ctx)
+
+        # Original data preserved — dump was NOT applied
+        async with aiosqlite.connect(db_path) as db:
+            cursor = await db.execute("SELECT v FROM marker")
+            rows = await cursor.fetchall()
+
+        assert rows == [("original",)]
+
+        await ctx.extras["database"].close()
+
+    async def test_creates_fresh_db_when_restore_fails(
+        self, settings_manager: SettingsManager
+    ) -> None:
+        """AC3: restore fails -> fresh DB created via create_all()."""
+        ws = settings_manager.settings.workspace
+        ws.path.mkdir(parents=True, exist_ok=True)
+        ws.data_path.mkdir(exist_ok=True)
+
+        db_path = ws.data_path / "tachikoma.db"
+        dump_dir = ws.data_path / "db-dump"
+        dump_dir.mkdir()
+
+        # Invalid dump that will cause restore to fail
+        dump_dir.joinpath("sessions.metadata.json").write_text("not valid json")
+
+        assert not db_path.exists()
+
+        ctx = BootstrapContext(settings_manager=settings_manager, prompt=input)
+        await database_hook(ctx)
+
+        # Fresh DB was created despite restore failure
+        assert db_path.exists()
+
+        async with aiosqlite.connect(db_path) as db:
+            cursor = await db.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'"
+            )
+            tables = {row[0] for row in await cursor.fetchall()}
+
+        assert "sessions" in tables
+
         await ctx.extras["database"].close()
