@@ -531,6 +531,36 @@ class TestDetectBoundary:
 
         assert result.resume_session_id is None
 
+    async def test_null_string_resume_id_treated_as_none(self, mocker: MockerFixture) -> None:
+        """AC: String "null" resume_session_id is converted to None."""
+
+        async def fake_query(*args, **kwargs):
+            yield ResultMessage(
+                subtype="success",
+                duration_ms=100,
+                duration_api_ms=80,
+                is_error=False,
+                num_turns=1,
+                session_id="test-session",
+                total_cost_usd=0.01,
+                usage={"input_tokens": 10},
+                structured_output={
+                    "continues_conversation": True,
+                    "resume_session_id": "null",
+                },
+            )
+
+        mocker.patch("tachikoma.boundary.detector.stderr_aware_query", side_effect=fake_query)
+
+        result = await detect_boundary(
+            message="Tell me more",
+            session=_make_session("Discussion about Python"),
+            agent_defaults=AgentDefaults(cwd=Path("/workspace")),
+        )
+
+        assert result.continues is True
+        assert result.resume_session_id is None
+
     async def test_includes_last_exchange_in_prompt_when_available(
         self, mocker: MockerFixture
     ) -> None:

@@ -153,7 +153,7 @@ async def detect_boundary(
                 continues = bool(sdk_message.structured_output.get("continues_conversation", True))
                 resume_id = sdk_message.structured_output.get("resume_session_id")
 
-                if not isinstance(resume_id, str) or resume_id == "":
+                if not isinstance(resume_id, str) or resume_id in ("", "null"):
                     resume_id = None
 
                 result = BoundaryResult(continues=continues, resume_session_id=resume_id)
