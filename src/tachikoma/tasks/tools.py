@@ -74,8 +74,6 @@ async def handle_respond_to_task(
 
     Validates the response and target task, then saves the response for
     the runner to pick up on the next tick.
-
-    Validation order: empty → not-found → not-waiting → already-responded → success.
     """
     trimmed = response.strip()
     if not trimmed:

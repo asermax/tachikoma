@@ -209,7 +209,7 @@ class Database:
                     "Schema migration: added 'metadata' column to session_context_entries table"
                 )
 
-            # Check if sdk_session_id column exists on task_instances table (added in DLT-120)
+            # Check if sdk_session_id column exists on task_instances table
             result = await conn.execute(
                 text(
                     "SELECT * FROM pragma_table_info('task_instances')"
@@ -224,7 +224,7 @@ class Database:
                     "Schema migration: added 'sdk_session_id' column to task_instances table"
                 )
 
-            # Check if user_response column exists on task_instances table (added in DLT-120)
+            # Check if user_response column exists on task_instances table
             result = await conn.execute(
                 text(
                     "SELECT * FROM pragma_table_info('task_instances')"
@@ -239,7 +239,7 @@ class Database:
                     "Schema migration: added 'user_response' column to task_instances table"
                 )
 
-            # Check if updated_at column exists on task_instances table (added in DLT-120)
+            # Check if updated_at column exists on task_instances table
             result = await conn.execute(
                 text(
                     "SELECT * FROM pragma_table_info('task_instances')"

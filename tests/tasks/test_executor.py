@@ -780,16 +780,7 @@ class TestExecutorResumePath:
             session_registry=_mock_session_registry(),
         )
 
-        with (
-            patch("tachikoma.tasks.executor.ClaudeSDKClient") as mock_client_class,
-            patch("tachikoma.tasks.executor._derive_transcript_path") as mock_derive,
-            patch("tachikoma.tasks.executor.Path") as mock_path_cls,
-        ):
-            mock_derive.return_value = "/fake/transcript.jsonl"
-            mock_path_instance = MagicMock()
-            mock_path_instance.exists.return_value = True
-            mock_path_cls.return_value = mock_path_instance
-
+        with patch("tachikoma.tasks.executor.ClaudeSDKClient") as mock_client_class:
             mock_client = AsyncMock()
             mock_client.__aenter__ = AsyncMock(return_value=mock_client)
             mock_client.__aexit__ = AsyncMock(return_value=None)
@@ -825,10 +816,10 @@ class TestExecutorResumePath:
         )
 
     @pytest.mark.asyncio
-    async def test_resume_with_missing_transcript_fails(
+    async def test_resume_surfaces_sdk_errors_as_failure(
         self, repo: TaskRepository
     ) -> None:
-        """AC: Missing transcript file marks instance as failed."""
+        """Errors raised by the SDK on resume mark the instance failed."""
         instance = _make_instance(
             "inst-1",
             task_type="background",
@@ -858,24 +849,21 @@ class TestExecutorResumePath:
             session_registry=_mock_session_registry(),
         )
 
-        with (
-            patch("tachikoma.tasks.executor._derive_transcript_path") as mock_derive,
-            patch("tachikoma.tasks.executor.Path") as mock_path_cls,
-        ):
-            mock_derive.return_value = "/nonexistent/transcript.jsonl"
-            mock_path_instance = MagicMock()
-            mock_path_instance.exists.return_value = False
-            mock_path_cls.return_value = mock_path_instance
+        with patch("tachikoma.tasks.executor.ClaudeSDKClient") as mock_client_class:
+            mock_client_class.side_effect = RuntimeError("transcript missing")
 
-            await executor.execute(instance)
+            with patch.object(
+                executor,
+                "_run_preprocessing",
+                return_value=_mock_preproc_result(),
+            ):
+                await executor.execute(instance)
 
-        # Verify instance failed
         updated = await repo.get_instance("inst-1")
         assert updated is not None
         assert updated.status == "failed"
-        assert "Transcript for resume not found" in (updated.result or "")
+        assert "transcript missing" in (updated.result or "")
 
-        # Verify urgent non-respondable failure notification
         assert len(dispatched_events) == 1
         notif = dispatched_events[0]
         assert isinstance(notif, Notification)
@@ -913,16 +901,7 @@ class TestExecutorResumePath:
             session_registry=_mock_session_registry(),
         )
 
-        with (
-            patch("tachikoma.tasks.executor.ClaudeSDKClient") as mock_client_class,
-            patch("tachikoma.tasks.executor._derive_transcript_path") as mock_derive,
-            patch("tachikoma.tasks.executor.Path") as mock_path_cls,
-        ):
-            mock_derive.return_value = "/fake/transcript.jsonl"
-            mock_path_instance = MagicMock()
-            mock_path_instance.exists.return_value = True
-            mock_path_cls.return_value = mock_path_instance
-
+        with patch("tachikoma.tasks.executor.ClaudeSDKClient") as mock_client_class:
             mock_client = AsyncMock()
             mock_client.__aenter__ = AsyncMock(return_value=mock_client)
             mock_client.__aexit__ = AsyncMock(return_value=None)

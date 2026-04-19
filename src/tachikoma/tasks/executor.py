@@ -9,7 +9,6 @@ import asyncio
 import json
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from bubus import EventBus
@@ -21,7 +20,6 @@ from tachikoma.adapter import sanitize_text
 from tachikoma.agent_defaults import AgentDefaults
 from tachikoma.buffer.priority import Priority
 from tachikoma.config import TaskSettings
-from tachikoma.coordinator import _derive_transcript_path
 from tachikoma.git.processor import GitProcessor
 from tachikoma.memory.context_provider import MemoryContextProvider
 from tachikoma.memory.episodic import EpisodicProcessor
@@ -307,40 +305,49 @@ class BackgroundTaskExecutor:
         self._session_registry = session_registry
 
     async def execute(self, instance: TaskInstance) -> None:
-        """Execute a background task instance.
+        """Execute a background task instance (fresh or resuming a waiter)."""
+        resuming = instance.status == "waiting"
 
-        Branches on entry status:
-        - "waiting": resume path (re-enter with saved SDK session + user response)
-        - "pending": fresh path (standard execution from scratch)
-        """
-        if instance.status == "waiting":
-            await self._execute_resume_path(instance)
+        if resuming and instance.sdk_session_id is None:
+            await self._fail_instance(instance.id, "Cannot resume — missing sdk_session_id")
+            await dispatch_notification(
+                self._bus,
+                f"Background task: {instance.prompt[:100]}",
+                "Task failed: no session to resume from",
+                "error",
+                instance.id,
+                priority=Priority.URGENT,
+            )
             return
 
-        await self._execute_fresh_path(instance)
+        if resuming:
+            initial_query = instance.user_response or ""
+            await self._repository.update_instance(
+                instance.id,
+                status="running",
+                user_response=None,
+                started_at=datetime.now(UTC),
+            )
+            _log.info(
+                "Resuming background task instance {inst_id} with sdk_session={sdk_id}",
+                inst_id=instance.id,
+                sdk_id=instance.sdk_session_id,
+            )
+        else:
+            await self._repository.update_instance(
+                instance.id,
+                status="running",
+                started_at=datetime.now(UTC),
+            )
+            _log.info(
+                "Executing background task instance {inst_id}",
+                inst_id=instance.id,
+            )
 
-    async def _execute_fresh_path(self, instance: TaskInstance) -> None:
-        """Execute a fresh (pending) background task instance."""
-        now_utc = datetime.now(UTC)
-
-        # Mark instance as running
-        await self._repository.update_instance(
-            instance.id,
-            status="running",
-            started_at=now_utc,
-        )
-
-        _log.info(
-            "Executing background task instance {inst_id}",
-            inst_id=instance.id,
-        )
-
-        # Initialized before try so the except block can safely inspect stderr
         stderr_acc = StderrAccumulator()
         notification_source = f"Background task: {instance.prompt[:100]}"
 
         try:
-            # Get the definition if available (for notification source naming)
             definition: TaskDefinition | None = None
             if instance.definition_id:
                 definition = await self._repository.get_definition(instance.definition_id)
@@ -351,15 +358,13 @@ class BackgroundTaskExecutor:
                 else f"Background task: {instance.prompt[:100]}"
             )
 
-            # Run pre-processing pipeline (memory, projects, skills context)
             preprocessing_result = await self._run_preprocessing(instance.prompt)
 
-            notification_server = create_notification_server(
+            preprocessing_result.mcp_servers["notifications"] = create_notification_server(
                 self._bus,
                 notification_source,
                 instance.id,
             )
-            preprocessing_result.mcp_servers["notifications"] = notification_server
 
             tz = get_timezone(self._settings)
             now = datetime.now(tz)
@@ -368,7 +373,6 @@ class BackgroundTaskExecutor:
             )
             system_prompt_text = datetime_line + "\n" + BACKGROUND_TASK_SYSTEM_PROMPT
 
-            # Build SDK options with adapted system prompt
             options = ClaudeAgentOptions(
                 cwd=self._agent_defaults.cwd,
                 cli_path=self._agent_defaults.cli_path,
@@ -381,19 +385,24 @@ class BackgroundTaskExecutor:
                 permission_mode="bypassPermissions",
                 mcp_servers=preprocessing_result.mcp_servers,
                 stderr=stderr_acc,
+                resume=instance.sdk_session_id if resuming else None,
             )
 
-            # Execute with evaluator loop
+            first_message = initial_query if resuming else preprocessing_result.prompt
+            # On resume, seed the evaluator with the known session id so the
+            # needs_input branch has a valid resume target even if the run
+            # errors before a ResultMessage is observed.
+            initial_sdk_session_id = instance.sdk_session_id if resuming else None
+
             async with ClaudeSDKClient(options) as client:
-                # Initial query
-                await client.query(preprocessing_result.prompt)
+                await client.query(first_message)
 
                 await self._run_evaluator_loop(
                     client,
                     instance,
                     notification_source,
                     stderr_acc,
-                    None,
+                    initial_sdk_session_id,
                 )
 
         except asyncio.CancelledError:
@@ -426,163 +435,6 @@ class BackgroundTaskExecutor:
                 priority=Priority.URGENT,
             )
 
-    async def _execute_resume_path(self, instance: TaskInstance) -> None:
-        """Resume a waiting task instance with the user's response.
-
-        Guards: missing user_response, missing sdk_session_id, missing transcript.
-        Atomically consumes the response and transitions to running.
-        """
-        # Defensive guards
-        if instance.user_response is None:
-            await self._fail_instance(
-                instance.id, "Resume path entered without a pending response"
-            )
-            await dispatch_notification(
-                self._bus,
-                f"Background task: {instance.prompt[:100]}",
-                "Task failed: internal error — no response to resume with",
-                "error",
-                instance.id,
-                priority=Priority.URGENT,
-            )
-            return
-
-        if instance.sdk_session_id is None:
-            await self._fail_instance(
-                instance.id, "Cannot resume — missing sdk_session_id"
-            )
-            await dispatch_notification(
-                self._bus,
-                f"Background task: {instance.prompt[:100]}",
-                "Task failed: no session to resume from",
-                "error",
-                instance.id,
-                priority=Priority.URGENT,
-            )
-            return
-
-        # Transcript existence guard
-        transcript_path = _derive_transcript_path(instance.sdk_session_id, self._cwd)
-        if not Path(transcript_path).exists():
-            reason = f"Transcript for resume not found: {transcript_path}"
-            await self._fail_instance(instance.id, reason)
-            await dispatch_notification(
-                self._bus,
-                f"Background task: {instance.prompt[:100]}",
-                f"Task failed: {reason}",
-                "error",
-                instance.id,
-                priority=Priority.URGENT,
-            )
-            return
-
-        # Atomically consume response and transition to running
-        consumed_response = instance.user_response
-        await self._repository.update_instance(
-            instance.id,
-            status="running",
-            user_response=None,
-            started_at=datetime.now(UTC),
-        )
-
-        _log.info(
-            "Resuming background task instance {inst_id} with sdk_session={sdk_id}",
-            inst_id=instance.id,
-            sdk_id=instance.sdk_session_id,
-        )
-
-        # Initialized before try so the except block can safely inspect stderr
-        stderr_acc = StderrAccumulator()
-        notification_source = f"Background task: {instance.prompt[:100]}"
-
-        try:
-            # Get the definition for notification source naming
-            definition: TaskDefinition | None = None
-            if instance.definition_id:
-                definition = await self._repository.get_definition(instance.definition_id)
-
-            notification_source = (
-                f"Background task: {definition.name}"
-                if definition
-                else f"Background task: {instance.prompt[:100]}"
-            )
-
-            # Run pre-processing for MCP server construction
-            preprocessing_result = await self._run_preprocessing(instance.prompt)
-
-            notification_server = create_notification_server(
-                self._bus,
-                notification_source,
-                instance.id,
-            )
-            preprocessing_result.mcp_servers["notifications"] = notification_server
-
-            tz = get_timezone(self._settings)
-            now = datetime.now(tz)
-            datetime_line = (
-                f"Current date and time: {now.strftime('%A, %B %d, %Y at %H:%M:%S')} {tz.key}\n"
-            )
-            system_prompt_text = datetime_line + "\n" + BACKGROUND_TASK_SYSTEM_PROMPT
-
-            options = ClaudeAgentOptions(
-                cwd=self._agent_defaults.cwd,
-                cli_path=self._agent_defaults.cli_path,
-                env=self._agent_defaults.env,
-                system_prompt=SystemPromptPreset(
-                    type="preset",
-                    preset="claude_code",
-                    append=system_prompt_text,
-                ),
-                permission_mode="bypassPermissions",
-                mcp_servers=preprocessing_result.mcp_servers,
-                stderr=stderr_acc,
-                resume=instance.sdk_session_id,
-            )
-
-            async with ClaudeSDKClient(options) as client:
-                await client.query(consumed_response)
-
-                # Seed the evaluator loop with the known session id — if the
-                # resumed run errors before a ResultMessage is observed, the
-                # needs_input branch still has a valid resume target.
-                await self._run_evaluator_loop(
-                    client,
-                    instance,
-                    notification_source,
-                    stderr_acc,
-                    instance.sdk_session_id,
-                )
-
-        except asyncio.CancelledError:
-            _log.info("Background task {inst_id} cancelled during resume", inst_id=instance.id)
-            await self._fail_instance(instance.id, "Task cancelled")
-            raise
-
-        except Exception as exc:
-            stderr = stderr_acc.get()
-            if stderr is not None:
-                _log.exception(
-                    "Background task {inst_id} failed during resume: {err}, stderr={stderr}",
-                    inst_id=instance.id,
-                    err=str(exc),
-                    stderr=stderr,
-                )
-            else:
-                _log.exception(
-                    "Background task {inst_id} failed during resume: {err}",
-                    inst_id=instance.id,
-                    err=str(exc),
-                )
-            await self._fail_instance(instance.id, str(exc))
-            await dispatch_notification(
-                self._bus,
-                f"Background task: {instance.prompt[:100]}",
-                f"Task failed with error: {exc}",
-                "error",
-                instance.id,
-                priority=Priority.URGENT,
-            )
-
     async def _run_evaluator_loop(
         self,
         client: ClaudeSDKClient,
@@ -591,10 +443,7 @@ class BackgroundTaskExecutor:
         stderr_acc: StderrAccumulator,
         initial_sdk_session_id: str | None,
     ) -> None:
-        """Run the evaluator loop until completion, failure, or waiting transition.
-
-        Shared by both fresh and resume paths.
-        """
+        """Run the evaluator loop until completion, failure, or waiting transition."""
         sdk_session_id = initial_sdk_session_id
         response_text = ""
         iteration = 0

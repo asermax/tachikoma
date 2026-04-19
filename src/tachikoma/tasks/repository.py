@@ -260,7 +260,6 @@ class TaskRepository:
         """Return background instances ready for execution.
 
         Ready = pending OR (waiting AND user_response IS NOT NULL).
-        Both paths flow through the same semaphore-gated executor.
         """
         try:
             async with self._session_factory() as db:
