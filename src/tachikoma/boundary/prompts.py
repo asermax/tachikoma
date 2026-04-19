@@ -19,6 +19,9 @@ A message CONTINUES the conversation when:
 - It provides more information about the current topic
 - It references something mentioned earlier in the conversation
 - The subject matter is related or adjacent to the current discussion
+- It is a short acknowledgment, confirmation, or brief response (e.g., "yes", "ok", "go ahead", "sure", "no", "thanks", "done", "correct") that plausibly responds to the conversation or the assistant's last message
+
+**Short messages with no independent topic content (under ~10 words, no specific subject matter) should ALWAYS be classified as continuation. They lack enough content to establish a new topic.**
 
 A message is a NEW TOPIC only when:
 - The subject matter is COMPLETELY unrelated to the current conversation
@@ -45,6 +48,9 @@ Current: Python debugging → New: "What should I cook for dinner?" → NEW TOPI
 Current: Project architecture → New: "Can you review this code?" → CONTINUATION
 Current: Work project → New: "Let's plan my vacation" → NEW TOPIC
 Current: API design → New: "How do I handle errors?" → CONTINUATION
+Current: API design → New: "yes" → CONTINUATION (short response, no new topic)
+Current: API design → New: "go ahead" → CONTINUATION (short confirmation)
+Current: API design → New: "ok thanks" → CONTINUATION (short acknowledgment)
 
 Current: API design → New: "Remember that Python debugging we did?" → NEW TOPIC + candidate match if available
 
