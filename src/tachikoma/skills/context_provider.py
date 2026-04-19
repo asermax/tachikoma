@@ -163,10 +163,8 @@ class SkillsContextProvider(MessageContextProvider):
         if not detected_names:
             return None
 
-        # Expand each detected skill into its transitive dependency chain.
-        # First-seen wins on overlap across sibling chains.
         ordered_skills: list[Skill] = []
-        seen: set[str] = set()
+        seen: set[str] = set(loaded_names)
 
         for name in detected_names:
             try:
@@ -185,15 +183,12 @@ class SkillsContextProvider(MessageContextProvider):
                 seen.add(skill.name)
                 ordered_skills.append(skill)
 
-        # Dedup against skills already loaded in this session
-        emitted_skills = [s for s in ordered_skills if s.name not in loaded_names]
-
-        if not emitted_skills:
+        if not ordered_skills:
             return None
 
         results: list[ContextResult] = []
 
-        for skill in emitted_skills:
+        for skill in ordered_skills:
             skill_block = (
                 f'<skill name="{skill.name}" directory="{skill.path}">\n{skill.body}\n</skill>'
             )

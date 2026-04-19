@@ -316,7 +316,6 @@ class SkillRegistry:
         # Store skill metadata (version from YAML is object, need to cast)
         version_str: str | None = version if isinstance(version, str) else None
 
-        # Parse depends_on: must be a list of strings, or missing/empty
         raw_depends_on = post.metadata.get("depends_on")
 
         if raw_depends_on is None:
