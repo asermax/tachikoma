@@ -37,6 +37,7 @@ Automatic git version tracking for all workspace file changes. Every modificatio
 | R18 | The workspace SQLite DB is dumped to diffable text files (`.ndjson` + `.metadata.json` per table) via `dump_database()` before the commit agent runs, so DB changes appear as dump-file diffs in `git status`. `sqlite_sequence` is excluded. |
 | R19 | After `smart_pull` succeeds with incoming changes that include dump file modifications, the DB is rebuilt from dumps via `restore_database()` (drops the existing DB file, re-runs each `CREATE TABLE` from the dump metadata, bulk-inserts the rows); restore failure is non-fatal (log warning, `database_hook` creates fresh DB) |
 | R20 | Bootstrap hook runs before `database_hook` so DB restore completes before the database engine opens; the DB path is derived from settings, not from `ctx.extras` |
+| R21 | On startup, if the database file is missing but dump files exist (e.g., fresh clone, deleted DB), `database_hook` restores the DB from dumps before initializing the engine; restore failure is non-fatal (log warning, fresh DB created via `create_all()`) |
 
 ## Behaviors
 

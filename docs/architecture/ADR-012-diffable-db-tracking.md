@@ -44,7 +44,12 @@ The git bootstrap hook runs *before* the database hook so that DB restore from d
 
 ### Restore flow
 
-`smart_pull()` captures HEAD before pulling and returns the list of changed files alongside the result. `_sync_workspace()` checks if any changed file is under `.tachikoma/db-dump/` and only rebuilds the DB when dump files actually changed. Restore failure is non-fatal — logs a warning and lets `database_hook` create a fresh empty DB via `create_all()` + migrations.
+Two complementary restore paths ensure the DB is rebuilt from dumps when needed:
+
+1. **Sync-triggered restore** (git hook): `smart_pull()` captures HEAD before pulling and returns the list of changed files alongside the result. `_sync_workspace()` checks if any changed file is under `.tachikoma/db-dump/` and only rebuilds the DB when dump files actually changed during the pull.
+2. **Missing-DB restore** (database hook): On startup, if the DB file is missing but dump files exist (e.g., fresh clone, deleted DB), `database_hook` calls `restore_database()` before initializing the engine. This covers cases where the git hook's sync didn't trigger a restore (dumps were already present, no pull needed) but the DB binary is absent.
+
+Both restore paths are non-fatal — logs a warning on failure and lets `database_hook` create a fresh empty DB via `create_all()` + migrations.
 
 ## Consequences
 

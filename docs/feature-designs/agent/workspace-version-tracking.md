@@ -46,6 +46,7 @@ The post-processor runs in the pipeline's **finalize phase**, ensuring all memor
 |-----------------|----------------|---------------|
 | `src/tachikoma/git/__init__.py` | Re-exports: `git_hook`, `GitProcessor`, sync utilities | Clean public API for the git package |
 | `src/tachikoma/git/hooks.py` | `git_hook`: initializes workspace as git repo + syncs with origin | Subsystem-owned hook pattern (DES-003); creates `.gitignore` on fresh init; delegates sync to `smart_pull`; restores DB from dumps when dump files changed during pull |
+| `src/tachikoma/database.py` | `database_hook`: initializes shared database | Restores DB from dump files if DB is missing but dumps exist (complements git_hook's sync-triggered restore); restore failure is non-fatal |
 | `src/tachikoma/git/db_sync.py` | `dump_database()`, `restore_database()` | Stdlib-only (`sqlite3` + `json`); on-disk format matches `simonw/sqlite-diffable` for backwards compatibility; dump clears stale files before writing; restore deletes DB and rebuilds from dumps |
 | `src/tachikoma/git/processor.py` | `GitProcessor(PostProcessor)` + `GIT_COMMIT_PROMPT` + `query_and_consume` helper | Dumps DB before dirty check so DB changes surface in `git status`; prompt co-located with processor; uses `$WORKSPACE` placeholders for directory paths (DES-008), replaced at call site before passing to `query_and_consume`; fresh `query()` (not fork); delegates push to `smart_push` from sync module |
 | `src/tachikoma/git/sync.py` | Shared sync utilities: `detect_divergence()`, `smart_push()`, `smart_pull()`, conflict resolution | Two-tier rebase (naive then agent); filesystem-based success detection; result enums; `smart_pull` returns changed files for dump-change detection |
@@ -342,6 +343,12 @@ git/tools.py
 **Given**: Workspace has `.git`
 **When**: Bootstrap runs the git hook
 **Then**: Init skipped (idempotent). Workspace synced with origin remote via `smart_pull`.
+
+### Scenario: Database file missing but dump files exist
+
+**Given**: The DB binary (`.tachikoma/tachikoma.db`) does not exist but `.tachikoma/db-dump/` contains dump files (e.g., fresh clone, manually deleted DB)
+**When**: Bootstrap runs the database hook
+**Then**: `database_hook` detects the missing DB and non-empty dump directory, calls `restore_database()` to rebuild the DB from dumps, then proceeds with normal engine initialization and schema migrations. If restore fails, a warning is logged and a fresh empty DB is created via `create_all()`.
 
 ## Notes
 
