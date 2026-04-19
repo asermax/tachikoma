@@ -539,13 +539,6 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 **Complexity**: Medium
 **Description**: Move content understanding into a dedicated preprocessor that generates a human-readable summary of incoming media files (e.g., "a screenshot of a USDC/ARS exchange rate showing 1 USDC = 1,463.85 ARS"). Currently, media arrives as metadata (file path + caption) with no actual content analysis. The preprocessor reads the media file from the message envelope's attachment metadata, dispatches modality-specific analysis (image description, audio transcription, document parsing), and appends the generated summary to the envelope. Every downstream component — boundary detection, context providers, the agent itself — then has a richer understanding of what the file contains without needing to analyze it independently.
 
-### DLT-127: Immediate background task execution
-**Status**: ✗ Defined
-**Depends on**: None
-**Priority**: 1 (Critical)
-**Complexity**: Easy
-**Description**: Allow firing a background task immediately on demand instead of only through scheduled triggers. Currently tasks can only be created with a cron expression or a future one-shot datetime — there is no way to say "run this task right now." Add an MCP tool or extend existing tools to trigger immediate execution of a task definition, bypassing the scheduler and running the task's prompt through the background task executor directly. Works alongside background task pause/resume — e.g., pause a long-running task, make changes, then re-run it immediately without setting up a new scheduled trigger.
-
 ### DLT-128: Surface running detached processes in agent context
 **Status**: ✗ Defined
 **Depends on**: None

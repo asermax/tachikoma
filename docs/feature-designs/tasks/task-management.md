@@ -38,7 +38,7 @@ The task management subsystem lives in `src/tachikoma/tasks/` as a self-containe
 | `src/tachikoma/tasks/__init__.py` | Public API re-exports | Clean package interface |
 | `src/tachikoma/tasks/model.py` | `TaskDefinition` and `TaskInstance` frozen dataclasses (domain types); `TaskDefinitionRecord` and `TaskInstanceRecord` ORM models; `TaskStatus` (`"pending" \| "running" \| "waiting" \| "completed" \| "failed"`) and `TaskType` constant maps; `ScheduleConfig` type. `TaskInstance` carries pause/resume state: `sdk_session_id` (resume target captured from the latest `ResultMessage`), `user_response` (pending reply from main agent), `updated_at` (auto-stamped, anchors the wait_timeout sweep) | Domain types frozen; ORM models internal to persistence; schedule stored as JSON column; `from_json` recovers legacy bare ISO datetime strings as one-shot schedules; all parse failures raise `ValueError` (never bare `JSONDecodeError` or `KeyError`); `TaskInstanceRecord.updated_at` uses SQLAlchemy Python-side `default=lambda: datetime.now(UTC)` + `onupdate=lambda: datetime.now(UTC)` (DES-009) so every repository write refreshes the value without caller involvement |
 | `src/tachikoma/tasks/repository.py` | `TaskRepository` — async SQLAlchemy CRUD for definitions and instances; `list_enabled_definitions()` and `list_disabled_definitions()` for filtered queries; `_to_domains_with_isolation()` for per-record error isolation with auto-disable; crash recovery (mark running as failed; leaves waiting untouched); `get_ready_background_instances()` returns the pending ∪ waiting-with-response union for the runner; `list_expired_waiting_instances(timeout_seconds)` feeds the wait_timeout sweep; `update_instance(id, **fields)` is the single field-agnostic write path — callers pass arbitrary column updates and `updated_at` auto-stamps via the ORM (DES-009) | Receives shared `async_sessionmaker` from `Database`; follows ADR-007 pattern; list methods auto-disable corrupted definitions instead of failing the entire query; ready-instance query is a single `select` with `OR` so fresh and resumable tasks flow through one code path; `list_expired_waiting_instances` filters out rows with `updated_at IS NULL` (legacy pre-DES-009 rows that have not been written since the column was added) |
-| `src/tachikoma/tasks/tools.py` | `create_task_tools_server(repository, timezone)` — MCP server factory receiving `ZoneInfo` at construction; `_parse_schedule(schedule, tz)` stamps naive datetimes with configured timezone, preserves aware as-is; `_format_schedule(schedule, tz)` converts display to configured timezone; `list_tasks` (defaults to enabled-only, `archived` parameter for disabled; output includes task ID for referencing in other tools, prompts excluded for compact output; `last_fired_at` converted to configured timezone), `get_task` (returns full details including complete prompt for a single task by ID; `last_fired_at` and `created_at` converted to configured timezone), `create_task`, `update_task` (supports `task_type` changes via `Literal` validation; resets `last_fired_at` on schedule change to enable one-shot re-scheduling; validates one-shot schedules are in the future consistent with `create_task`), `delete_task` with `cronsim` validation, and `respond_to_task` (routes a user's reply back to a `waiting` background task — enforces `instance.status == "waiting"` and `user_response is None` before persisting, returning an error otherwise); Pydantic `BaseModel` classes (`ListTasksArgs`, `GetTaskArgs`, `CreateTaskArgs`, `UpdateTaskArgs`, `DeleteTaskArgs`, `RespondToTaskArgs`) for arg validation and type coercion; enriched `@tool()` descriptions with parameter documentation including timezone-aware schedule formats | Factory receives `ZoneInfo`, passes to `_parse_schedule` and `_format_schedule` via closures; uses `replace(tzinfo=tz)` for naive, `astimezone(tz)` for display; all displayed timestamps (schedules, `last_fired_at`, `created_at`) converted to configured timezone; list/detail pattern: `list_tasks` is compact (no prompt), `get_task` returns full details; `update_task` resets `last_fired_at` when schedule changes (the old fire time is meaningless for a new schedule; for one-shot tasks, the instance generator requires `last_fired_at=None` to fire; for cron tasks, the anchor logic handles `None` by falling back to start-of-hour); `UpdateTaskArgs.task_type` uses `Literal["session", "background"]` for automatic validation; `respond_to_task` performs the status + already-responded check before writing (dual-gate authority — the tool enforces the invariant, the respondable-notification prompt is only a guidance hint); `TaskRepositoryError`-specific error handling surfaces root causes via `__cause__`; follows DES-006 |
+| `src/tachikoma/tasks/tools.py` | `create_task_tools_server(repository, timezone)` — MCP server factory receiving `ZoneInfo` at construction; `_parse_schedule(schedule, tz)` stamps naive datetimes with configured timezone, preserves aware as-is; `_format_schedule(schedule, tz)` converts display to configured timezone; `list_tasks` (defaults to enabled-only, `archived` parameter for disabled; output includes task ID for referencing in other tools, prompts excluded for compact output; `last_fired_at` converted to configured timezone), `get_task` (returns full details including complete prompt for a single task by ID; `last_fired_at` and `created_at` converted to configured timezone), `create_task`, `update_task` (supports `task_type` changes via `Literal` validation; resets `last_fired_at` on schedule change to enable one-shot re-scheduling; validates one-shot schedules are in the future consistent with `create_task`), `delete_task`, `run_task_now` (immediate background task execution — two modes: by-reference via `task_id` snapshots the definition's prompt without mutating it; ad-hoc via `prompt` creates a transient instance with `definition_id=None`; `RunTaskNowArgs` uses a `model_validator` to enforce exactly one of `task_id` or `prompt`, with optional `name` only valid with `prompt`; background-only for by-ref mode; no cross-instance concurrency gate), and `respond_to_task` (routes a user's reply back to a `waiting` background task — enforces `instance.status == "waiting"` and `user_response is None` before persisting, returning an error otherwise); Pydantic `BaseModel` classes (`ListTasksArgs`, `GetTaskArgs`, `CreateTaskArgs`, `UpdateTaskArgs`, `DeleteTaskArgs`, `RunTaskNowArgs`, `RespondToTaskArgs`) for arg validation and type coercion; enriched `@tool()` descriptions with parameter documentation including timezone-aware schedule formats | Factory receives `ZoneInfo`, passes to `_parse_schedule` and `_format_schedule` via closures; uses `replace(tzinfo=tz)` for naive, `astimezone(tz)` for display; all displayed timestamps (schedules, `last_fired_at`, `created_at`) converted to configured timezone; list/detail pattern: `list_tasks` is compact (no prompt), `get_task` returns full details; `update_task` resets `last_fired_at` when schedule changes (the old fire time is meaningless for a new schedule; for one-shot tasks, the instance generator requires `last_fired_at=None` to fire; for cron tasks, the anchor logic handles `None` by falling back to start-of-hour); `UpdateTaskArgs.task_type` uses `Literal["session", "background"]` for automatic validation; `respond_to_task` performs the status + already-responded check before writing (dual-gate authority — the tool enforces the invariant, the respondable-notification prompt is only a guidance hint); `run_task_now` is registered unconditionally (both with and without `respond_to_task`); `TaskRepositoryError`-specific error handling surfaces root causes via `__cause__`; follows DES-006 |
 | `src/tachikoma/tasks/hooks.py` | `tasks_hook` — bootstrap hook (DES-003): retrieves shared `Database` from extras, creates repository, runs crash recovery; stores `task_repository` in `bootstrap.extras` | Subsystem-owned hook; runs after `database_hook` |
 | `src/tachikoma/tasks/scheduler.py` | `instance_generator()` — async loop with strict cron firing and period-aware dedup; `_create_pending_instance()` helper for instance creation and logging; `get_timezone(settings)` — returns `ZoneInfo` from pre-validated settings string (shared utility used by scheduler, preamble rendering, and executor) | Plain async function started as `asyncio.Task`; `get_timezone` has no fallback logic — validation happens at config load |
 | `src/tachikoma/database.py` | Shared `Database` class with `Base(DeclarativeBase)`, `AsyncEngine`, `async_sessionmaker`; `database_hook` bootstrap hook | All ORM models share one `Base`; single engine for all subsystems |
@@ -235,6 +235,25 @@ Background tasks can cycle through `waiting` multiple times (each `needs_input` 
 5. Returns formatted detail view
 ```
 
+### On-demand execution flow
+
+```
+1. Agent calls run_task_now with either task_id or prompt (+ optional name)
+2. Pydantic model_validator enforces: exactly one of task_id or prompt;
+   name only valid with prompt
+3. If task_id provided (by-reference mode):
+   a. repository.get_definition(task_id) → if None, return "not found"
+   b. If definition.task_type != "background", return error
+   c. Build TaskInstance with definition_id=task_id, prompt=definition.prompt
+4. If prompt provided (ad-hoc mode):
+   a. Build transient TaskInstance with definition_id=None, prompt=args.prompt
+5. Common: repository.create_instance(instance) with error handling
+6. Log info line with instance ID, mode (by_ref/ad_hoc), source identifier
+7. Return success content with instance ID
+8. Background task runner's next tick picks up the pending instance via
+   get_ready_background_instances() (filters on status only, not scheduled_for)
+```
+
 ## Key Decisions
 
 ### Shared database file
@@ -352,6 +371,44 @@ Background tasks can cycle through `waiting` multiple times (each `needs_input` 
 - Con: The definition is disabled (not deleted), so the user must manually clean up or re-create
 - Con: If the disable write itself fails, it is logged and skipped (fail-open to preserve other definitions)
 
+### Pending-instance handoff for on-demand execution
+
+**Choice**: `run_task_now` creates a pending `TaskInstance` and returns immediately; the existing background task runner picks it up on its next tick (~30s).
+**Why**: Pending instances are the canonical handoff to the runner. Every other instance-creation path (cron, one-shot) goes through this shape, so the runner's concurrency gating (semaphore), crash recovery, and queuing semantics apply uniformly. Calling into the executor directly would bypass the semaphore and require bespoke error handling.
+**Consequences**:
+- Pro: No new execution surface; the runner/executor code is untouched
+- Pro: Uniform queuing — if `max_concurrent_background` is saturated, `run_task_now`-created instances wait alongside scheduler-created ones
+- Pro: Crash recovery (`mark_running_as_failed`) covers them for free
+- Con: Up to ~30s delay between tool call and task start
+
+### Transient instances for ad-hoc mode
+
+**Choice**: Ad-hoc `run_task_now` creates a transient `TaskInstance` with `definition_id=None` instead of a throwaway one-shot definition.
+**Why**: `TaskInstance.definition_id` is already nullable — existing code (notifications) already uses `definition_id=None`. The executor's `notification_source` falls back gracefully to `prompt[:100]` when the definition lookup fails. Creating a throwaway definition would pollute the definitions table, require cleanup logic, and surface ephemeral entries in `list_tasks`.
+**Consequences**:
+- Pro: No definition-table pollution; `list_tasks` stays clean
+- Pro: No cleanup/garbage-collection logic needed
+- Pro: Reuses existing executor fallback path
+- Con: Ad-hoc instances are not re-runnable by `task_id` — the caller re-issues the prompt
+
+### Single Pydantic model with root validator for argument exclusivity
+
+**Choice**: `RunTaskNowArgs` uses a single model with optional `task_id`, `prompt`, `name` and a `@model_validator` that enforces exactly one of `task_id` or `prompt`, with `name` only valid alongside `prompt`.
+**Why**: Two separate arg models would require either two tool registrations or a `Union` schema — both add MCP schema complexity. A single model with a validator keeps the MCP tool signature simple (one tool, three optional fields, clear validation errors).
+**Consequences**:
+- Pro: Single MCP tool entry; simpler schema for the agent
+- Pro: Error messages are explicit about what combination is valid
+- Con: Slightly more complex Pydantic model (one validator) — negligible
+
+### No cross-instance concurrency gate in run_task_now
+
+**Choice**: `run_task_now` does not check for existing running/waiting instances — concurrency is bounded only by `max_concurrent_background` in the runner.
+**Why**: `get_active_instance_for_definition` is deliberately not called (unlike the cron/one-shot paths in the scheduler, which use it for period-aware dedup). Adding a tool-level gate would create an asymmetric surface for an edge case; pause-then-rerun scenarios are expected to resolve the waiter first via `respond_to_task`.
+**Consequences**:
+- Pro: Simple handler; uniform with scheduler-created pending instances
+- Pro: Semaphore already prevents resource exhaustion
+- Con: Callers wanting serialization must coordinate externally
+
 ## System Behavior
 
 ### Scenario: Agent creates a recurring task
@@ -407,6 +464,30 @@ Background tasks can cycle through `waiting` multiple times (each `needs_input` 
 **Given**: An enabled task definition has a malformed schedule value in the database
 **When**: The repository lists enabled definitions
 **Then**: The corrupted definition is disabled (enabled=false), a warning is logged with the definition ID and error, and all other valid definitions are returned normally.
+
+### Scenario: On-demand by-reference execution
+
+**Given**: A background task definition exists (enabled or disabled)
+**When**: The agent calls `run_task_now` with its `task_id`
+**Then**: A pending `TaskInstance` is created with the definition's prompt snapshotted at call time. The definition's `enabled`, `last_fired_at`, and schedule are unchanged. The runner picks up the instance on its next tick.
+
+### Scenario: On-demand ad-hoc execution
+
+**Given**: The agent needs to run a one-off background task
+**When**: The agent calls `run_task_now` with `prompt` (and optional `name`)
+**Then**: A transient `TaskInstance` is created with `definition_id=None`. No `TaskDefinition` is persisted. The runner picks up the instance and the executor uses its `prompt[:100]` fallback for the notification source.
+
+### Scenario: On-demand rejects session-type definition
+
+**Given**: A session-type task definition exists
+**When**: The agent calls `run_task_now` with its `task_id`
+**Then**: The tool returns an error containing "Only background tasks support on-demand execution" and no instance is created.
+
+### Scenario: On-demand with concurrent instance
+
+**Given**: A running instance exists for a background task definition
+**When**: The agent calls `run_task_now` with the same `task_id`
+**Then**: A new pending instance is created. The runner's semaphore gates actual execution concurrency.
 
 ## Notes
 

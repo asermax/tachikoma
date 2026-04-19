@@ -12,6 +12,7 @@ Note: The workflow subsystem provides a separate set of MCP tools (`start_workfl
 
 - As a user, I want to ask Tachikoma to do something on a schedule so that it proactively reminds me, processes information, and follows up without me having to manually trigger every action
 - As a user, I want Tachikoma to manage task definitions (create, list, update, delete) through natural conversation so that scheduling feels like talking to an assistant
+- As a user, I want to trigger a background task immediately (either an existing definition or a one-off prompt) without waiting for its schedule so that urgent work gets done on demand
 
 ## Requirements
 
@@ -28,6 +29,7 @@ Note: The workflow subsystem provides a separate set of MCP tools (`start_workfl
 | R8 | Bootstrap step to initialize task database tables and run crash recovery |
 | R9 | Base system prompt preamble includes a Tasks section (rendered with the configured timezone) so the agent has foundational awareness of the task system regardless of whether tasks currently exist |
 | R10 | Schedule deserialization is robust to malformed data — legacy bare ISO datetime strings are recovered as one-shot schedules, and corrupted definitions are auto-disabled |
+| R11 | On-demand background task execution via `run_task_now` MCP tool — supports both by-reference (existing definition) and ad-hoc (transient instance with no definition) modes |
 
 ## Behaviors
 
@@ -86,7 +88,7 @@ The base system prompt preamble includes a timezone-aware Tasks section that giv
 - Given the system prompt is assembled, then the preamble Tasks section describes task types (session and background) and when to use each
 - Given the preamble Tasks section, then it explains scheduling formats (cron expressions and ISO datetimes) including timezone behavior (bare datetimes interpreted in configured timezone, explicit offsets preserved)
 - Given the preamble Tasks section, then it includes a Date and Time subsection showing the configured timezone and a date command for current time lookup
-- Given the preamble Tasks section, then it lists each MCP tool with parameter types, required/optional indicators, valid values, and behavioral notes
+- Given the preamble Tasks section, then it lists each MCP tool with parameter types, required/optional indicators, valid values, and behavioral notes — including `run_task_now` with its two modes (by-reference and ad-hoc) and background-only restriction
 - Given the preamble Tasks section, then tool descriptions include cross-references between tools (e.g., "get task IDs from list_tasks" for update_task and delete_task)
 - Given the preamble Tasks section, then it states that background tasks can send notifications to the user during execution via the `send_notification` tool, and that failures are automatically notified
 
@@ -99,6 +101,23 @@ Schedule deserialization handles malformed data gracefully, preventing corrupted
 - Given a task definition with completely invalid data in the schedule column, when `from_json` is called, then it raises `ValueError` (not `JSONDecodeError`) with the malformed input in the message
 - Given a task definition with structurally valid JSON but an unexpected type (e.g., array), when `from_json` is called, then it raises `ValueError` describing the unexpected type
 - Given multiple enabled definitions where one has a corrupted schedule, when the repository lists enabled definitions, then valid definitions are returned and the corrupted definition is auto-disabled (logged as warning)
+
+### On-demand Execution (R11)
+
+The agent can trigger a background task immediately via the `run_task_now` MCP tool, bypassing the scheduler. The tool supports two modes: by-reference (re-run an existing background definition) and ad-hoc (fire a one-off prompt without creating a definition). Both modes create a pending `TaskInstance` that the existing background task runner picks up on its next tick.
+
+**Acceptance Criteria**:
+- Given a background task definition exists, when the agent calls `run_task_now` with its `task_id`, then a new pending `TaskInstance` is created with `definition_id` set to the task ID, `prompt` snapshotted from the definition, `task_type="background"`, and all execution-state fields null. The tool response includes the new instance ID. The definition's `enabled`, `last_fired_at`, and schedule remain unchanged.
+- Given a pending instance created by `run_task_now`, when the runner's next tick runs, then the instance transitions through the standard `pending → running → completed|failed|waiting` lifecycle without modifying the parent definition.
+- Given a disabled background task definition (e.g., an auto-disabled one-shot), when the agent calls `run_task_now`, then a pending instance is created and the definition stays disabled with `last_fired_at` untouched.
+- Given a session-type task definition, when the agent calls `run_task_now` with `task_id`, then the tool returns an error containing "Only background tasks support on-demand execution" and no instance is created.
+- Given an unknown `task_id`, when the agent calls `run_task_now`, then the tool returns a "not found" error.
+- Given the agent calls `run_task_now` with both `task_id` and `prompt`, or with neither, then the tool returns a validation error and no instance is created. `name` is only valid with `prompt`.
+- Given the agent calls `run_task_now` with only `prompt` (and optional `name`), then a transient `TaskInstance` is created with `definition_id=None` and the caller-supplied prompt. No `TaskDefinition` is persisted. The instance is picked up by the runner and completes the standard lifecycle.
+- Given the agent calls `run_task_now` with `prompt` and `name`, then the instance is created as above, and `name` appears in the log as the source label.
+- Given a running or waiting instance for the same definition already exists, when the agent calls `run_task_now`, then a new pending instance is still created — the tool performs no cross-instance concurrency check; gating is left to the runner's `max_concurrent_background` semaphore.
+- Given a successful call, the tool emits an info-level log line including the instance ID, the mode (`by_ref` or `ad_hoc`), and the source identifier (definition ID + name for by-ref; `name` or prompt preview for ad-hoc).
+- Given the background task-tools server (without `respond_to_task`), when it is inspected, then `run_task_now` is present and behaves identically to the main-server copy.
 
 ## Requires
 
