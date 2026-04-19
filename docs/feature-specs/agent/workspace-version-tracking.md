@@ -34,8 +34,8 @@ Automatic git version tracking for all workspace file changes. Every modificatio
 | R15 | PreToolUse deny hook on every non-git-processor agent surface that blocks destructive bash git commands: `git push`, `git reset`, `git checkout .`, `git restore .`, `git clean`, and mutating `git remote` subcommands |
 | R16 | The deny hook splits compound commands (`&&`, `||`, `|`, `;`) and checks each sub-command independently |
 | R17 | Read-only git commands (`status`, `log`, `diff`, `show`, `fetch`, `branch`, `remote -v`) and `git clone` pass through the deny hook unimpeded |
-| R18 | The workspace SQLite DB is dumped to diffable text files (`.ndjson` + `.metadata.json` per table) via `sqlite-diffable dump --all` before the commit agent runs, so DB changes appear as dump-file diffs in `git status` |
-| R19 | After `smart_pull` succeeds with incoming changes that include dump file modifications, the DB is rebuilt from dumps via `sqlite-diffable load --replace`; restore failure is non-fatal (log warning, `database_hook` creates fresh DB) |
+| R18 | The workspace SQLite DB is dumped to diffable text files (`.ndjson` + `.metadata.json` per table) via `dump_database()` before the commit agent runs, so DB changes appear as dump-file diffs in `git status`. `sqlite_sequence` is excluded. |
+| R19 | After `smart_pull` succeeds with incoming changes that include dump file modifications, the DB is rebuilt from dumps via `restore_database()` (drops the existing DB file, re-runs each `CREATE TABLE` from the dump metadata, bulk-inserts the rows); restore failure is non-fatal (log warning, `database_hook` creates fresh DB) |
 | R20 | Bootstrap hook runs before `database_hook` so DB restore completes before the database engine opens; the DB path is derived from settings, not from `ctx.extras` |
 
 ## Behaviors

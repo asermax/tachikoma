@@ -33,9 +33,9 @@ and create cohesive, well-organized commits for ALL changes.
    - Changes in `$WORKSPACE/.tachikoma/db-dump/` → one commit for database state
    - Other workspace files → group logically
 
-   About `.tachikoma/db-dump/`: this folder contains a `sqlite-diffable` text
-   dump of the workspace SQLite database (one `.ndjson` + `.metadata.json`
-   pair per table, e.g. sessions, tasks). The binary DB itself is gitignored
+   About `.tachikoma/db-dump/`: this folder contains a diffable text dump
+   of the workspace SQLite database (one `.ndjson` + `.metadata.json` pair
+   per table, e.g. sessions, tasks). The binary DB itself is gitignored
    — these text files are how DB state is version-controlled, so row-level
    changes surface as readable diffs. The dump is regenerated before every
    commit run, so diffs here reflect actual DB mutations from the session
