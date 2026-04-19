@@ -371,6 +371,72 @@ def make_bash_gate_hook(allowed_prefixes: list[str]) -> HookMatcher:
     return HookMatcher(matcher="Bash", hooks=[_hook])
 
 
+def make_bash_deny_hook(denied_patterns: list[re.Pattern[str]]) -> HookMatcher:
+    """Create a PreToolUse hook that denies Bash commands matching any destructive pattern.
+
+    Inverse polarity of :func:`make_bash_gate_hook` — that hook only allows
+    matching commands, this one denies matching commands and passes
+    everything else through.
+
+    Compound commands (joined by ``&&``, ``||``, ``|``, or ``;``) are
+    split and each sub-command is checked independently against every
+    pattern. If *any* sub-command matches *any* pattern, the entire
+    command is denied. Otherwise the hook returns an empty decision and
+    the command is handled normally by the CLI's permission system.
+
+    Patterns are matched against each split sub-command via ``pattern.match()``
+    (anchored at the start of the sub-command). Compound splitting already
+    strips surrounding whitespace per sub-command.
+
+    Args:
+        denied_patterns: Compiled regex patterns. A match on any sub-command
+            triggers denial.
+
+    Returns:
+        A ``HookMatcher`` targeting the Bash tool with one hook callback.
+    """
+
+    async def _hook(
+        input: HookInput,
+        tool_use_id: str | None,
+        context: HookContext,
+    ) -> HookJSONOutput:
+        command = input.get("tool_input", {}).get("command", "")
+
+        # Split compound commands by shell operators
+        parts = _COMPOUND_SPLIT_RE.split(command)
+
+        for part in parts:
+            part = part.strip()
+            if not part:
+                continue
+
+            for pattern in denied_patterns:
+                if pattern.match(part):
+                    _log.warning(
+                        "Bash denied by deny hook: command={cmd} denied_part={part} "
+                        "pattern={pattern}",
+                        cmd=command[:80],
+                        part=part[:80],
+                        pattern=pattern.pattern,
+                    )
+                    return {
+                        "hookSpecificOutput": {
+                            "hookEventName": "PreToolUse",
+                            "permissionDecision": "deny",
+                            "permissionDecisionReason": (
+                                f"Sub-command '{part}' matches destructive "
+                                f"pattern {pattern.pattern}"
+                            ),
+                        },
+                    }
+
+        # No sub-command matched any deny pattern
+        return {}
+
+    return HookMatcher(matcher="Bash", hooks=[_hook])
+
+
 # Utility-only Bash prefixes shared by processors that need filesystem inspection
 # commands but not git. Used by memory processors and CoreContextProcessor.
 UTILITY_BASH_PREFIXES = [

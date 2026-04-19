@@ -31,7 +31,12 @@ from tachikoma.detached_processes import (
     event_driven_watcher,
     polling_watcher,
 )
-from tachikoma.git import GitProcessor, git_hook
+from tachikoma.git import (
+    DESTRUCTIVE_GIT_DENY_PATTERNS,
+    GitProcessor,
+    create_git_tools_server,
+    git_hook,
+)
 from tachikoma.logging import logging_hook
 from tachikoma.media import media_hook
 from tachikoma.memory import (
@@ -44,7 +49,12 @@ from tachikoma.memory import (
 )
 from tachikoma.message_post_processing import MessagePostProcessingPipeline
 from tachikoma.per_message_pre_processing import MessagePreProcessingPipeline
-from tachikoma.post_processing import FINALIZE_PHASE, PRE_FINALIZE_PHASE, PostProcessingPipeline
+from tachikoma.post_processing import (
+    FINALIZE_PHASE,
+    PRE_FINALIZE_PHASE,
+    PostProcessingPipeline,
+    make_bash_deny_hook,
+)
 from tachikoma.pre_processing import PreProcessingPipeline
 from tachikoma.projects import ProjectsContextProvider, ProjectsProcessor, projects_hook
 from tachikoma.repl import Repl
@@ -191,6 +201,11 @@ async def run(
         detached_log_dir,
         ZoneInfo(settings.tasks.timezone),
     )
+    git_tools = create_git_tools_server(settings.workspace.path, agent_defaults)
+
+    # Shared deny hook: blocks destructive bash git commands on every
+    # non-git-processor agent surface (main coordinator and task executor).
+    destructive_git_deny_hook = make_bash_deny_hook(DESTRUCTIVE_GIT_DENY_PATTERNS)
 
     # Create channel before coordinator to extract capabilities. The buffer is
     # attached after coordinator startup (see below) since it depends on the
@@ -222,6 +237,7 @@ async def run(
         "task-tools": task_tools,
         "workflow-tools": workflow_tools,
         "detached-process-tools": detached_process_tools,
+        "git-tools": git_tools,
         **channel_mcp,
     }
 
@@ -247,6 +263,7 @@ async def run(
             mcp_servers=all_mcp_servers,
             timezone=settings.tasks.timezone,
             bus=bus,
+            hooks=[destructive_git_deny_hook],
         ) as coordinator:
             buffer = await create_and_start_buffer(
                 bus=bus,
@@ -281,6 +298,8 @@ async def run(
                         agent_defaults,
                         skill_registry,
                         registry,
+                        extra_mcp_servers={"git-tools": git_tools},
+                        hooks=[destructive_git_deny_hook],
                     ),
                     name="background_task_runner",
                 )

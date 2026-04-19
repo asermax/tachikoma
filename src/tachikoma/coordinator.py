@@ -24,7 +24,12 @@ from claude_agent_sdk import (
     McpSdkServerConfig,
     ProcessError,
 )
-from claude_agent_sdk.types import AgentDefinition, PermissionMode, SystemPromptPreset
+from claude_agent_sdk.types import (
+    AgentDefinition,
+    HookMatcher,
+    PermissionMode,
+    SystemPromptPreset,
+)
 from loguru import logger
 
 from tachikoma.adapter import adapt, is_encoding_error, sanitize_text
@@ -141,6 +146,7 @@ class Coordinator:
         mcp_servers: dict[str, McpSdkServerConfig] | None = None,
         timezone: str = "",
         bus: EventBus | None = None,
+        hooks: list[HookMatcher] | None = None,
     ) -> None:
         # Store individual options for building ClaudeAgentOptions per message
         self._allowed_tools = allowed_tools or []
@@ -152,6 +158,7 @@ class Coordinator:
         self._permission_mode = permission_mode
         self._base_mcp_servers: dict[str, McpSdkServerConfig] = mcp_servers or {}
         self._timezone = timezone
+        self._hooks: list[HookMatcher] = hooks or []
 
         # Session resumption configuration
         self._session_resume_window = session_resume_window
@@ -322,6 +329,9 @@ class Coordinator:
             resume=resume,
             mcp_servers=all_mcp_servers,
         )
+
+        if self._hooks:
+            options.hooks = {"PreToolUse": self._hooks}
 
         return options
 
