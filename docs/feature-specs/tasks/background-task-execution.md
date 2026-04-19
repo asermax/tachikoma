@@ -23,6 +23,7 @@ Background tasks execute in isolated parallel sessions without interrupting the 
 | R5 | Concurrency gating via configurable limit (default 3); excess instances remain pending until a slot opens |
 | R6 | Stuck/looping agent detection — evaluator detects unproductive iterations and marks the task as failed |
 | R7 | Background task agents share the main agent's restricted git surface: a destructive-git deny hook blocks `git push`, `git reset`, `git checkout .`, `git restore .`, `git clean`, and mutating `git remote` subcommands; `push` and `sync` MCP tools are available for on-demand push/sync operations |
+| R8 | Background task agents have access to the task management MCP tools (`create_task`, `list_tasks`, `get_task`, `update_task`, `delete_task`) so they can schedule, inspect, update, and remove task definitions during autonomous execution |
 
 ## Behaviors
 
@@ -63,6 +64,15 @@ Background task agents can send notifications to the user during execution via t
 - Given the `send_notification` MCP tool, then it is only available within a background task agent session — it is not exposed to the main conversation
 - Given the background task system prompt, then it documents the available priority levels (Urgent for time-sensitive results, Normal for standard completion results, Low for informational updates) and the default (Normal)
 - Given a `Notification` event is dispatched on the bus, then the priority buffer enqueues it for idle-gated delivery — no channel subscribes to `Notification` directly
+
+### Task Scheduling (R8)
+
+Background task agents can schedule follow-up work via the same task management MCP tools available to the main agent. The system prompt explains when to use them — splitting a run into a separate scheduled pass, cleaning up existing schedules, or setting up recurring checks — and clarifies that newly scheduled tasks produce fresh isolated runs rather than nesting inside the current execution.
+
+**Acceptance Criteria**:
+- Given a background task instance is being executed, then the task-tools MCP server is registered in the SDK client's MCP servers alongside the notification and git-tools servers
+- Given the background task system prompt, then it documents the task management tools (`create_task`, `list_tasks`, `get_task`, `update_task`, `delete_task`) and states that scheduled tasks run in fresh isolated sessions when their schedule fires
+- Given a background task agent calls `create_task` during execution, then the new task definition is persisted identically to definitions created from the main conversation (same validation, same instance-generation behavior)
 
 ### Concurrency (R5)
 

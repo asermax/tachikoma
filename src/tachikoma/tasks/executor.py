@@ -140,6 +140,15 @@ The `send_notification` tool accepts a `priority` parameter with three levels:
 
 If unsure, use the default (normal).
 
+## Task Scheduling
+
+You have access to the task management tools — `create_task`, `list_tasks`, `get_task`, `update_task`, and `delete_task` — to schedule follow-up work during autonomous execution. Use them when:
+- You discover work that belongs in a separate scheduled run (e.g., a recurring check, a delayed reminder, or a follow-up pass once an external condition changes)
+- You want to split a long investigation into a follow-up task rather than pushing the current run past its scope
+- You need to inspect or clean up existing schedules before adding new ones (prefer `list_tasks` / `get_task` before creating to avoid duplicates)
+
+Newly scheduled tasks produce fresh isolated runs when their schedule fires — they do not nest inside the current execution. Prefer completing the current task's stated goal first, and use scheduling for genuinely separate work rather than as a workaround for the iteration limit.
+
 ## Asking questions
 
 Your messages are not delivered directly to the user — they pass through an evaluator that classifies your output. If you genuinely need user input to proceed, ask your question clearly in plain text. The evaluator will route your question to the user via a notification, and the user's response will arrive as the next conversation turn. You can ask questions multiple times if needed."""  # noqa: E501
