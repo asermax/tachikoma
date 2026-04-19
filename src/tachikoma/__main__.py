@@ -190,6 +190,11 @@ async def run(
     msg_pipeline.register(LastExchangeProcessor(registry=registry))
 
     task_tools = create_task_tools_server(task_repository, ZoneInfo(settings.tasks.timezone))
+    background_task_tools = create_task_tools_server(
+        task_repository,
+        ZoneInfo(settings.tasks.timezone),
+        include_respond_tool=False,
+    )
     workflow_tools = create_workflow_tools_server(
         workflow_repository,
         skill_registry,
@@ -298,7 +303,10 @@ async def run(
                         agent_defaults,
                         skill_registry,
                         registry,
-                        extra_mcp_servers={"git-tools": git_tools, "task-tools": task_tools},
+                        extra_mcp_servers={
+                            "git-tools": git_tools,
+                            "task-tools": background_task_tools,
+                        },
                         hooks=[destructive_git_deny_hook],
                     ),
                     name="background_task_runner",

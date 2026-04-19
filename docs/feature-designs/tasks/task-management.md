@@ -36,9 +36,9 @@ The task management subsystem lives in `src/tachikoma/tasks/` as a self-containe
 | Layer/Component | Responsibility | Key Decisions |
 |-----------------|----------------|---------------|
 | `src/tachikoma/tasks/__init__.py` | Public API re-exports | Clean package interface |
-| `src/tachikoma/tasks/model.py` | `TaskDefinition` and `TaskInstance` frozen dataclasses (domain types); `TaskDefinitionRecord` and `TaskInstanceRecord` ORM models; `TaskStatus` and `TaskType` constant maps; `ScheduleConfig` type | Domain types frozen; ORM models internal to persistence; schedule stored as JSON column; `from_json` recovers legacy bare ISO datetime strings as one-shot schedules; all parse failures raise `ValueError` (never bare `JSONDecodeError` or `KeyError`) |
-| `src/tachikoma/tasks/repository.py` | `TaskRepository` — async SQLAlchemy CRUD for definitions and instances; `list_enabled_definitions()` and `list_disabled_definitions()` for filtered queries; `_to_domains_with_isolation()` for per-record error isolation with auto-disable; crash recovery (mark running as failed) | Receives shared `async_sessionmaker` from `Database`; follows ADR-007 pattern; list methods auto-disable corrupted definitions instead of failing the entire query |
-| `src/tachikoma/tasks/tools.py` | `create_task_tools_server(repository, timezone)` — MCP server factory receiving `ZoneInfo` at construction; `_parse_schedule(schedule, tz)` stamps naive datetimes with configured timezone, preserves aware as-is; `_format_schedule(schedule, tz)` converts display to configured timezone; `list_tasks` (defaults to enabled-only, `archived` parameter for disabled; output includes task ID for referencing in other tools, prompts excluded for compact output; `last_fired_at` converted to configured timezone), `get_task` (returns full details including complete prompt for a single task by ID; `last_fired_at` and `created_at` converted to configured timezone), `create_task`, `update_task` (supports `task_type` changes via `Literal` validation; resets `last_fired_at` on schedule change to enable one-shot re-scheduling; validates one-shot schedules are in the future consistent with `create_task`), `delete_task` with `cronsim` validation; Pydantic `BaseModel` classes (`ListTasksArgs`, `GetTaskArgs`, `CreateTaskArgs`, `UpdateTaskArgs`, `DeleteTaskArgs`) for arg validation and type coercion; enriched `@tool()` descriptions with parameter documentation including timezone-aware schedule formats | Factory receives `ZoneInfo`, passes to `_parse_schedule` and `_format_schedule` via closures; uses `replace(tzinfo=tz)` for naive, `astimezone(tz)` for display; all displayed timestamps (schedules, `last_fired_at`, `created_at`) converted to configured timezone; list/detail pattern: `list_tasks` is compact (no prompt), `get_task` returns full details; `update_task` resets `last_fired_at` when schedule changes (the old fire time is meaningless for a new schedule; for one-shot tasks, the instance generator requires `last_fired_at=None` to fire; for cron tasks, the anchor logic handles `None` by falling back to start-of-hour); `UpdateTaskArgs.task_type` uses `Literal["session", "background"]` for automatic validation; `TaskRepositoryError`-specific error handling surfaces root causes via `__cause__`; follows DES-006 |
+| `src/tachikoma/tasks/model.py` | `TaskDefinition` and `TaskInstance` frozen dataclasses (domain types); `TaskDefinitionRecord` and `TaskInstanceRecord` ORM models; `TaskStatus` (`"pending" \| "running" \| "waiting" \| "completed" \| "failed"`) and `TaskType` constant maps; `ScheduleConfig` type. `TaskInstance` carries pause/resume state: `sdk_session_id` (resume target captured from the latest `ResultMessage`), `user_response` (pending reply from main agent), `updated_at` (auto-stamped, anchors the wait_timeout sweep) | Domain types frozen; ORM models internal to persistence; schedule stored as JSON column; `from_json` recovers legacy bare ISO datetime strings as one-shot schedules; all parse failures raise `ValueError` (never bare `JSONDecodeError` or `KeyError`); `TaskInstanceRecord.updated_at` uses SQLAlchemy Python-side `default=lambda: datetime.now(UTC)` + `onupdate=lambda: datetime.now(UTC)` (DES-009) so every repository write refreshes the value without caller involvement |
+| `src/tachikoma/tasks/repository.py` | `TaskRepository` — async SQLAlchemy CRUD for definitions and instances; `list_enabled_definitions()` and `list_disabled_definitions()` for filtered queries; `_to_domains_with_isolation()` for per-record error isolation with auto-disable; crash recovery (mark running as failed; leaves waiting untouched); `get_ready_background_instances()` returns the pending ∪ waiting-with-response union for the runner; `list_expired_waiting_instances(timeout_seconds)` feeds the wait_timeout sweep; `update_instance(id, **fields)` is the single field-agnostic write path — callers pass arbitrary column updates and `updated_at` auto-stamps via the ORM (DES-009) | Receives shared `async_sessionmaker` from `Database`; follows ADR-007 pattern; list methods auto-disable corrupted definitions instead of failing the entire query; ready-instance query is a single `select` with `OR` so fresh and resumable tasks flow through one code path; `list_expired_waiting_instances` filters out rows with `updated_at IS NULL` (legacy pre-DES-009 rows that have not been written since the column was added) |
+| `src/tachikoma/tasks/tools.py` | `create_task_tools_server(repository, timezone)` — MCP server factory receiving `ZoneInfo` at construction; `_parse_schedule(schedule, tz)` stamps naive datetimes with configured timezone, preserves aware as-is; `_format_schedule(schedule, tz)` converts display to configured timezone; `list_tasks` (defaults to enabled-only, `archived` parameter for disabled; output includes task ID for referencing in other tools, prompts excluded for compact output; `last_fired_at` converted to configured timezone), `get_task` (returns full details including complete prompt for a single task by ID; `last_fired_at` and `created_at` converted to configured timezone), `create_task`, `update_task` (supports `task_type` changes via `Literal` validation; resets `last_fired_at` on schedule change to enable one-shot re-scheduling; validates one-shot schedules are in the future consistent with `create_task`), `delete_task` with `cronsim` validation, and `respond_to_task` (routes a user's reply back to a `waiting` background task — enforces `instance.status == "waiting"` and `user_response is None` before persisting, returning an error otherwise); Pydantic `BaseModel` classes (`ListTasksArgs`, `GetTaskArgs`, `CreateTaskArgs`, `UpdateTaskArgs`, `DeleteTaskArgs`, `RespondToTaskArgs`) for arg validation and type coercion; enriched `@tool()` descriptions with parameter documentation including timezone-aware schedule formats | Factory receives `ZoneInfo`, passes to `_parse_schedule` and `_format_schedule` via closures; uses `replace(tzinfo=tz)` for naive, `astimezone(tz)` for display; all displayed timestamps (schedules, `last_fired_at`, `created_at`) converted to configured timezone; list/detail pattern: `list_tasks` is compact (no prompt), `get_task` returns full details; `update_task` resets `last_fired_at` when schedule changes (the old fire time is meaningless for a new schedule; for one-shot tasks, the instance generator requires `last_fired_at=None` to fire; for cron tasks, the anchor logic handles `None` by falling back to start-of-hour); `UpdateTaskArgs.task_type` uses `Literal["session", "background"]` for automatic validation; `respond_to_task` performs the status + already-responded check before writing (dual-gate authority — the tool enforces the invariant, the respondable-notification prompt is only a guidance hint); `TaskRepositoryError`-specific error handling surfaces root causes via `__cause__`; follows DES-006 |
 | `src/tachikoma/tasks/hooks.py` | `tasks_hook` — bootstrap hook (DES-003): retrieves shared `Database` from extras, creates repository, runs crash recovery; stores `task_repository` in `bootstrap.extras` | Subsystem-owned hook; runs after `database_hook` |
 | `src/tachikoma/tasks/scheduler.py` | `instance_generator()` — async loop with strict cron firing and period-aware dedup; `_create_pending_instance()` helper for instance creation and logging; `get_timezone(settings)` — returns `ZoneInfo` from pre-validated settings string (shared utility used by scheduler, preamble rendering, and executor) | Plain async function started as `asyncio.Task`; `get_timezone` has no fallback logic — validation happens at config load |
 | `src/tachikoma/database.py` | Shared `Database` class with `Base(DeclarativeBase)`, `AsyncEngine`, `async_sessionmaker`; `database_hook` bootstrap hook | All ORM models share one `Base`; single engine for all subsystems |
@@ -98,12 +98,15 @@ TaskInstance (frozen dataclass)
 ├── id: str                          (UUID)
 ├── definition_id: str | None        (FK → task_definitions.id, null for transient)
 ├── task_type: str                   ("session" or "background", copied from definition)
-├── status: str                      ("pending", "running", "completed", "failed")
+├── status: str                      ("pending", "running", "waiting", "completed", "failed")
 ├── prompt: str                      (copied from definition at creation time)
 ├── scheduled_for: datetime          (cron match time for cron tasks; schedule.at for one-shot tasks)
 ├── started_at: datetime | None      (when execution began)
 ├── completed_at: datetime | None    (when execution finished)
 ├── result: str | None               (completion/failure summary)
+├── sdk_session_id: str | None       (SDK session to resume when pausing; set on needs_input)
+├── user_response: str | None        (pending reply from main agent; consumed atomically on resume)
+├── updated_at: datetime | None      (auto-stamped via DES-009; anchors the wait_timeout sweep)
 └── created_at: datetime             (creation timestamp)
 ```
 
@@ -141,6 +144,9 @@ erDiagram
         datetime started_at
         datetime completed_at
         string result
+        string sdk_session_id
+        string user_response
+        datetime updated_at
         datetime created_at
     }
 ```
@@ -155,9 +161,14 @@ stateDiagram-v2
     pending --> running: execution starts
     running --> completed: evaluator marks done
     running --> failed: stuck/error/max iterations
+    running --> waiting: evaluator returns needs_input
+    waiting --> running: user_response set + runner tick picks up
+    waiting --> failed: wait_timeout expired
     completed --> [*]
     failed --> [*]
 ```
+
+Background tasks can cycle through `waiting` multiple times (each `needs_input` pause stores the latest `sdk_session_id`). The `waiting` state is only reachable for background tasks — session tasks run inside the main conversation and don't use the evaluator loop.
 
 ## Data Flow
 
@@ -306,6 +317,30 @@ stateDiagram-v2
 - Pro: Cron schedule changes get a fresh anchor point
 - Pro: Re-enabling without schedule change is safe (stale schedules don't fire)
 
+### Auto-stamped `updated_at` for pause/resume timeout anchoring
+
+**Choice**: `TaskInstanceRecord.updated_at` is declared with SQLAlchemy Python-side `default=lambda: datetime.now(UTC)` and `onupdate=lambda: datetime.now(UTC)` (DES-009). No repository caller passes `updated_at` — the ORM stamps it on every INSERT and UPDATE.
+**Why**: The `wait_timeout` sweep needs a reliable "last activity" anchor per waiting instance. If callers had to stamp `updated_at` manually on the waiting-transition write (and on the consume-on-pickup write, and on any future write path), a missed stamp would make the sweep either too aggressive (missing updates → appears stale) or silently incorrect. Pushing the invariant to the ORM layer means new write paths (crash recovery, future admin tools, batch updates) inherit the behavior automatically. Python-side lambdas (not `func.now()`) preserve tz-aware datetimes on SQLite, which the rest of the codebase requires.
+
+**Consequences**:
+- Pro: Every write path refreshes the anchor — impossible to forget
+- Pro: `list_expired_waiting_instances` can trust `updated_at` as the sole timeout driver
+- Pro: Same pattern is now available to migrate other manually-stamped timestamps (see DES-009 Scope)
+- Con: `updated_at IS NULL` rows exist in older databases created before the column was added — `list_expired_waiting_instances` explicitly excludes them so legacy data doesn't get aggressively expired
+
+### respond_to_task tool — dual-gate via status check
+
+**Choice**: Register `respond_to_task` on the same task-tools MCP server as the CRUD tools, but only when the server is built for the main conversation — the `create_task_tools_server` factory accepts an `include_respond_tool` flag, and `__main__.py` passes `False` when building the server injected into `background_task_runner` via `extra_mcp_servers`. The handler enforces two preconditions before writing: `instance.status == "waiting"` and `instance.user_response is None`. Only then does it persist the response via `update_instance(task_instance_id, user_response=trimmed)` — which also auto-stamps `updated_at`.
+**Why**: The respondable notification prompt tells the main agent to call `respond_to_task`, but prompt instructions are only guidance — the agent could hallucinate a call against a non-waiting instance, be manipulated by injected content, or race with another response. The tool-level status + already-responded check is the authoritative gate: a call against the wrong row returns an error and changes nothing. This keeps `respond_to_task` safe to expose in every main-conversation turn; the tool itself is the enforcer, not the prompt.
+
+**Consequences**:
+- Pro: Prompt instructions can evolve without changing the safety envelope
+- Pro: A second (race) response returns a clear "already pending" error instead of overwriting
+- Pro: Calls against running/completed/failed instances are cleanly rejected
+- Pro: Excluding the tool from background sessions closes the one gap the status guard cannot cover — a concurrent background task fabricating a response to another agent's waiting instance
+- Con: Two lookups (get + update) per call; acceptable for an interactive operation
+- Con: Two task-tools server instances must be built at startup — one with `respond_to_task`, one without — a small startup cost for clear capability scoping
+
 ### Corrupted definition auto-disable
 
 **Choice**: When a repository list method encounters a record with an unparseable schedule, log a warning and disable the definition rather than failing the entire query.
@@ -378,4 +413,5 @@ stateDiagram-v2
 - `cronsim` is used for cron expression evaluation (lightweight, timezone-aware)
 - Task `type` is copied from definition to instance at creation time to enable direct queries without joins
 - Background task notifications are agent-driven — the executor registers a `send_notification` MCP tool per background task execution (via DES-006 factory), and the agent calls it to deliver messages; failure notifications are automatic via the shared `dispatch_notification()` from `tachikoma.notifications`
+- Background tasks that enter the `waiting` state are picked up on the next runner tick once `user_response` is set (see [background-task-execution design](background-task-execution.md)). The `respond_to_task` tool — registered here on the task-tools MCP server — is the write-side of that handoff; the runner's `get_ready_background_instances()` query is the read-side. No direct coupling exists between the two subsystems beyond the instance row
 - Task MCP tools ("task-tools" server) and workflow MCP tools ("workflow-tools" server) are distinct systems registered independently in the coordinator's `mcp_servers`. Task tools manage cron-scheduled definitions; workflow tools manage ordered step sequences within skills. See [workflows design](../workflows/workflow-state-machine.md).

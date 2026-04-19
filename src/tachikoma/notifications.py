@@ -38,33 +38,53 @@ class Notification(BaseEvent[None]):
 
     priority: Priority = Priority.NORMAL
 
+    # When set, this notification is respondable — the main agent should call
+    # respond_to_task(task_instance_id=<this id>, response=...) after delivery.
+    response_instance_id: str | None = None
+
 
 # ---------------------------------------------------------------------------
 # Prompt builder
 # ---------------------------------------------------------------------------
 
 
-def build_notification_prompt(source: str, content: str) -> str:
+def build_notification_prompt(
+    source: str,
+    content: str,
+    response_instance_id: str | None = None,
+) -> str:
     """Build a structured notification prompt.
 
     Args:
         source: Identifier for the notification source (e.g. "Background task: Daily digest").
         content: The notification message body.
+        response_instance_id: When set, appends respondable instructions so the
+            main agent knows to route the user's reply via respond_to_task.
 
     Returns:
         A formatted prompt string with source, timestamp, and content.
     """
     timestamp = datetime.now(UTC).strftime("%Y-%m-%d %H:%M UTC")
 
-    return (
+    prompt = (
         "--- Notification ---\n"
         f"Source: {source}\n"
         f"Time: {timestamp}\n"
         "\n"
         f"{content}\n"
-        "\n"
-        "Deliver this notification to the user, keeping your message concise."
     )
+
+    if response_instance_id is not None:
+        prompt += (
+            "\n"
+            "This background task is waiting for user input. Deliver the question above, "
+            f"then use respond_to_task(task_instance_id=\"{response_instance_id}\", "
+            "response=\"<user's reply>\") to route the user's response back to the task.\n"
+        )
+    else:
+        prompt += "\nDeliver this notification to the user, keeping your message concise.\n"
+
+    return prompt
 
 
 # ---------------------------------------------------------------------------
@@ -79,6 +99,7 @@ async def dispatch_notification(
     severity: Literal["info", "error"],
     source_id: str | None = None,
     priority: Priority = Priority.NORMAL,
+    response_instance_id: str | None = None,
 ) -> None:
     """Build a notification prompt and dispatch it as a Notification event.
 
@@ -89,13 +110,16 @@ async def dispatch_notification(
         severity: Severity level — "info" for informational, "error" for failures.
         source_id: Optional ID of the originating entity (e.g. task instance ID).
         priority: Delivery priority — defaults to Normal.
+        response_instance_id: When set, the notification is respondable — includes
+            respond_to_task usage instructions for the main agent.
     """
-    prompt = build_notification_prompt(source, content)
+    prompt = build_notification_prompt(source, content, response_instance_id)
     event = Notification(
         prompt=prompt,
         source_id=source_id,
         severity=severity,
         priority=priority,
+        response_instance_id=response_instance_id,
     )
 
     await bus.dispatch(event)
