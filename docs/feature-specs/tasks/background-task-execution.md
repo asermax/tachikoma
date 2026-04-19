@@ -44,7 +44,7 @@ After each agent response, a lightweight model assesses the agent's workflow sta
 **Acceptance Criteria**:
 - Given a background task agent produces a response, then the evaluator assesses workflow completion using an ordered checklist: blocking error → complete → needs_input → continue
 - Given the evaluator determines the agent completed its workflow (announced completion, summarized results, or called `send_notification`), then the task instance is marked as `completed` — regardless of output quality
-- Given the evaluator detects the agent asked a clarifying question, then the executor injects a message telling the agent no user is available and to proceed with its best judgment (next iteration)
+- Given the evaluator detects the agent asked a clarifying question, then the executor transitions the instance to `waiting`, persists the current `sdk_session_id` for resume, and dispatches a respondable urgent `Notification` carrying the agent's question — on the next runner tick, if `user_response` is present, the task resumes in the same SDK session with the response as its next turn (see [task-management](../../feature-designs/tasks/task-management.md))
 - Given the evaluator detects the agent is stuck or looping, then the task instance is marked as `failed` and a notification is dispatched
 - Given the evaluator determines the agent is mid-workflow, then the agent receives feedback and continues working (next iteration)
 - Given the background task reaches the maximum iteration limit, then the task is marked as failed if not done

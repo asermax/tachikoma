@@ -330,14 +330,16 @@ Background tasks can cycle through `waiting` multiple times (each `needs_input` 
 
 ### respond_to_task tool — dual-gate via status check
 
-**Choice**: Register `respond_to_task` on the same task-tools MCP server as the CRUD tools (available in the main conversation only — not inside background task sessions). The handler enforces two preconditions before writing: `instance.status == "waiting"` and `instance.user_response is None`. Only then does it persist the response via `update_instance(task_instance_id, user_response=trimmed)` — which also auto-stamps `updated_at`.
+**Choice**: Register `respond_to_task` on the same task-tools MCP server as the CRUD tools, but only when the server is built for the main conversation — the `create_task_tools_server` factory accepts an `include_respond_tool` flag, and `__main__.py` passes `False` when building the server injected into `background_task_runner` via `extra_mcp_servers`. The handler enforces two preconditions before writing: `instance.status == "waiting"` and `instance.user_response is None`. Only then does it persist the response via `update_instance(task_instance_id, user_response=trimmed)` — which also auto-stamps `updated_at`.
 **Why**: The respondable notification prompt tells the main agent to call `respond_to_task`, but prompt instructions are only guidance — the agent could hallucinate a call against a non-waiting instance, be manipulated by injected content, or race with another response. The tool-level status + already-responded check is the authoritative gate: a call against the wrong row returns an error and changes nothing. This keeps `respond_to_task` safe to expose in every main-conversation turn; the tool itself is the enforcer, not the prompt.
 
 **Consequences**:
 - Pro: Prompt instructions can evolve without changing the safety envelope
 - Pro: A second (race) response returns a clear "already pending" error instead of overwriting
 - Pro: Calls against running/completed/failed instances are cleanly rejected
+- Pro: Excluding the tool from background sessions closes the one gap the status guard cannot cover — a concurrent background task fabricating a response to another agent's waiting instance
 - Con: Two lookups (get + update) per call; acceptable for an interactive operation
+- Con: Two task-tools server instances must be built at startup — one with `respond_to_task`, one without — a small startup cost for clear capability scoping
 
 ### Corrupted definition auto-disable
 

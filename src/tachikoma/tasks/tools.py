@@ -125,12 +125,17 @@ async def handle_respond_to_task(
 def create_task_tools_server(
     repository: TaskRepository,
     timezone: ZoneInfo,
+    include_respond_tool: bool = True,
 ) -> McpSdkServerConfig:
     """Create an MCP server exposing task management tools.
 
     Args:
         repository: The TaskRepository to use for persistence.
         timezone: The configured timezone for interpreting bare datetimes.
+        include_respond_tool: Whether to include `respond_to_task`. Main
+            conversation sessions pass True; background task sessions pass
+            False so background agents cannot respond to other agents'
+            waiting instances.
 
     Returns:
         McpSdkServerConfig for registration with ClaudeAgentOptions.mcp_servers.
@@ -559,9 +564,13 @@ def create_task_tools_server(
             }
         return await handle_respond_to_task(parsed.task_instance_id, parsed.response, repository)
 
+    tools = [list_tasks, get_task, create_task, update_task, delete_task]
+    if include_respond_tool:
+        tools.append(respond_to_task)
+
     return create_sdk_mcp_server(
         name="task-tools",
-        tools=[list_tasks, get_task, create_task, update_task, delete_task, respond_to_task],
+        tools=tools,
     )
 
 

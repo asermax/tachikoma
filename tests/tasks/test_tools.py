@@ -250,6 +250,31 @@ class TestCreateTaskToolsServer:
         # The server config exists and is valid
         assert server is not None
 
+    @pytest.mark.asyncio
+    async def test_exclude_respond_tool_for_background(self, repo: TaskRepository) -> None:
+        """AC (R8): Background sessions get a task-tools server without respond_to_task."""
+        server = create_task_tools_server(repo, TZ_UTC, include_respond_tool=False)
+        mcp_server = server["instance"]
+
+        list_handler = mcp_server.request_handlers[types.ListToolsRequest]
+        result = await list_handler(types.ListToolsRequest(method="tools/list"))
+
+        tool_names = {t.name for t in result.root.tools}
+        assert tool_names == {"list_tasks", "get_task", "create_task", "update_task", "delete_task"}
+        assert "respond_to_task" not in tool_names
+
+    @pytest.mark.asyncio
+    async def test_include_respond_tool_by_default(self, repo: TaskRepository) -> None:
+        """AC: Main conversation sessions get the full task-tools surface."""
+        server = create_task_tools_server(repo, TZ_UTC)
+        mcp_server = server["instance"]
+
+        list_handler = mcp_server.request_handlers[types.ListToolsRequest]
+        result = await list_handler(types.ListToolsRequest(method="tools/list"))
+
+        tool_names = {t.name for t in result.root.tools}
+        assert "respond_to_task" in tool_names
+
 
 class TestFutureCheckWithTzAware:
     """Tests for future-check validation with timezone-aware datetimes (R2).
