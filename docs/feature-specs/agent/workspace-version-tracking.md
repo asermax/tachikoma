@@ -24,7 +24,7 @@ Automatic git version tracking for all workspace file changes. Every modificatio
 | R5 | Bootstrap hook initializes workspace as a git repo on first run (idempotent) |
 | R6 | Commits use a fixed identity via repo-local git config (no global config dependency) |
 | R7 | Linear history on a single branch — no branch operations |
-| R8 | Bootstrap does not create a .gitignore — all workspace content is tracked by default |
+| R8 | Bootstrap creates `.gitignore` with `.tachikoma/*.db` to exclude the DB binary from git tracking; the `.tachikoma/db-dump/` directory (diffable text dumps) is tracked by git |
 | R9 | After committing, push committed changes to the `origin` remote with divergence detection and conflict resolution; on divergence, rebase local changes on top of remote before pushing |
 | R10 | If no `origin` remote is configured, skip pushing silently (no-op) |
 | R11 | On push failure (rebase failed, push failed after rebase), log a warning with the failure reason and continue; committed changes remain intact and will be retried on next sync |
@@ -34,9 +34,9 @@ Automatic git version tracking for all workspace file changes. Every modificatio
 | R15 | PreToolUse deny hook on every non-git-processor agent surface that blocks destructive bash git commands: `git push`, `git reset`, `git checkout .`, `git restore .`, `git clean`, and mutating `git remote` subcommands |
 | R16 | The deny hook splits compound commands (`&&`, `||`, `|`, `;`) and checks each sub-command independently |
 | R17 | Read-only git commands (`status`, `log`, `diff`, `show`, `fetch`, `branch`, `remote -v`) and `git clone` pass through the deny hook unimpeded |
-| R18 | Git LFS tracks `.tachikoma/*.db` in workspace repos to prevent binary bloat from repeated DB commits (ADR-012) |
-| R19 | Bootstrap requires `git-lfs` on PATH; fails fast with install hint if missing |
-| R20 | Fresh init configures LFS (`git lfs install --local`, `.gitattributes` commit); existing repos without LFS log a warning but do not auto-migrate |
+| R18 | The workspace SQLite DB is dumped to diffable text files (`.ndjson` + `.metadata.json` per table) via `sqlite-diffable dump --all` before the commit agent runs, so DB changes appear as dump-file diffs in `git status` |
+| R19 | After `smart_pull` succeeds with incoming changes that include dump file modifications, the DB is rebuilt from dumps via `sqlite-diffable load --replace`; restore failure is non-fatal (log warning, `database_hook` creates fresh DB) |
+| R20 | Bootstrap hook runs before `database_hook` so DB restore completes before the database engine opens; the DB path is derived from settings, not from `ctx.extras` |
 
 ## Behaviors
 
@@ -70,19 +70,14 @@ The Haiku agent inspects the workspace and creates well-organized commits using 
 
 ### Git Repo Initialization (R5, R6, R8, R14, R15, R16)
 
-A bootstrap hook initializes the workspace as a git repo on first run and configures Git LFS for the database binary.
-
-**Prerequisites**: `git-lfs` ≥ 3.x must be installed on the host.
+A bootstrap hook initializes the workspace as a git repo on first run, creates `.gitignore` for the DB binary, and syncs with the remote.
 
 **Acceptance Criteria**:
 - Given no `.git` directory in the workspace, when the git bootstrap hook runs, then a git repo is initialized with an initial empty commit
 - Given a fresh init, when the hook completes, then repo-local `user.name` and `user.email` are configured with a fixed identity
-- Given a fresh init, when the hook completes, then no `.gitignore` file is created
-- Given a fresh init, when the hook completes, then `git lfs install --local` has been run, `.gitattributes` contains `.tachikoma/*.db filter=lfs diff=lfs merge=lfs -text`, and the `.gitattributes` file is committed
-- Given a fresh init with a pre-existing `.gitattributes`, when the hook runs, then the LFS line is appended without clobbering existing content
-- Given an existing `.git` directory with LFS already configured, when the hook runs, then it does not rewrite `.gitattributes` or re-install LFS (idempotent)
-- Given an existing `.git` directory without LFS tracking, when the hook runs, then a warning is logged and no automatic migration is attempted
-- Given `git-lfs` is not on PATH, when the hook runs, then a `RuntimeError` is raised with an actionable install hint
+- Given a fresh init, when the hook completes, then `.gitignore` contains `.tachikoma/*.db` and the file is committed
+- Given a fresh init with a pre-existing `.gitignore`, when the hook runs, then the DB binary pattern is appended without clobbering existing content
+- Given an existing `.git` directory, when the hook runs, then it does not rewrite `.gitignore` (idempotent)
 - Given git init fails, when the hook runs, then a clear exception propagates with the failure reason
 
 ### Push/Sync MCP Tools (R14)

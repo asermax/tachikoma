@@ -18,7 +18,7 @@ Workspace changes (memories, context files, configuration) happen as side effect
 - Must not depend on gitpython — the agent uses bash git commands directly
 - Must work on a fresh workspace with no prior git history
 - No global git config dependency — committer identity configured per-repo
-- Requires `git-lfs` on PATH for binary size management (ADR-012)
+- Requires `sqlite-diffable` (Python package) for DB dump/restore — the DB binary is gitignored, only diffable text files are tracked
 
 **Interactions:**
 - Post-processing pipeline: git processor registers in the `finalize` phase (see [pipeline design](post-processing-pipeline.md))
@@ -31,8 +31,8 @@ Workspace changes (memories, context files, configuration) happen as side effect
 Three independent components, plus a system prompt section:
 
 1. A **system prompt preamble** "Git Management" section (`context/loading.py`) that instructs the assistant about the automatic commit system, the destructive-git deny rules, the safe bash git surface, and the available `push`/`sync` MCP tools
-2. A **git bootstrap hook** that initializes the workspace as a git repo on first run (idempotent), configures Git LFS for `.tachikoma/*.db` (see [ADR-012](../../architecture/ADR-012-git-lfs-for-workspace-binaries.md)), then syncs with the origin remote
-3. A **git post-processor** that spawns a lightweight Haiku agent to inspect, group, and commit workspace changes after each session, then pushes to the `origin` remote with divergence detection and conflict resolution
+2. A **git bootstrap hook** that initializes the workspace as a git repo on first run (idempotent), creates `.gitignore` for the DB binary, then syncs with the origin remote. After a successful pull that changed dump files, rebuilds the DB from `sqlite-diffable` dumps
+3. A **git post-processor** that dumps the workspace DB to diffable text files (`.ndjson` + `.metadata.json` per table) via `sqlite-diffable dump --all`, then spawns a lightweight Haiku agent to inspect, group, and commit workspace changes after each session, then pushes to the `origin` remote with divergence detection and conflict resolution
 4. **MCP tools** (`push`, `sync`) that expose the sync module's `smart_push`/`smart_pull` to the main coordinator and task executor agents, targeting the workspace or registered project submodules
 5. A **destructive-git deny hook** (`make_bash_deny_hook` + `DESTRUCTIVE_GIT_DENY_PATTERNS`) installed on every non-git-processor agent surface, blocking `git push`, `git reset`, `git checkout .`, `git restore .`, `git clean`, and mutating `git remote` subcommands
 
@@ -45,9 +45,10 @@ The post-processor runs in the pipeline's **finalize phase**, ensuring all memor
 | Layer/Component | Responsibility | Key Decisions |
 |-----------------|----------------|---------------|
 | `src/tachikoma/git/__init__.py` | Re-exports: `git_hook`, `GitProcessor`, sync utilities | Clean public API for the git package |
-| `src/tachikoma/git/hooks.py` | `git_hook`: initializes workspace as git repo + syncs with origin | Subsystem-owned hook pattern (DES-003); delegates sync to `smart_pull` from sync module |
-| `src/tachikoma/git/processor.py` | `GitProcessor(PostProcessor)` + `GIT_COMMIT_PROMPT` + `query_and_consume` helper | Prompt co-located with processor; uses `$WORKSPACE` placeholders for directory paths (DES-008), replaced at call site before passing to `query_and_consume`; fresh `query()` (not fork); delegates push to `smart_push` from sync module |
-| `src/tachikoma/git/sync.py` | Shared sync utilities: `detect_divergence()`, `smart_push()`, `smart_pull()`, conflict resolution | Two-tier rebase (naive then agent); filesystem-based success detection; result enums |
+| `src/tachikoma/git/hooks.py` | `git_hook`: initializes workspace as git repo + syncs with origin | Subsystem-owned hook pattern (DES-003); creates `.gitignore` on fresh init; delegates sync to `smart_pull`; restores DB from dumps when dump files changed during pull |
+| `src/tachikoma/git/db_sync.py` | `dump_database()`, `restore_database()` | Wraps `sqlite-diffable` CLI via subprocess; dump clears stale files before writing; restore deletes DB and rebuilds from dumps |
+| `src/tachikoma/git/processor.py` | `GitProcessor(PostProcessor)` + `GIT_COMMIT_PROMPT` + `query_and_consume` helper | Dumps DB before dirty check so DB changes surface in `git status`; prompt co-located with processor; uses `$WORKSPACE` placeholders for directory paths (DES-008), replaced at call site before passing to `query_and_consume`; fresh `query()` (not fork); delegates push to `smart_push` from sync module |
+| `src/tachikoma/git/sync.py` | Shared sync utilities: `detect_divergence()`, `smart_push()`, `smart_pull()`, conflict resolution | Two-tier rebase (naive then agent); filesystem-based success detection; result enums; `smart_pull` returns changed files for dump-change detection |
 | `src/tachikoma/git/tools.py` | MCP tool server factory (DES-006): `push` and `sync` tools + `DESTRUCTIVE_GIT_DENY_PATTERNS` | Extracted handlers for testability; targets workspace or project submodules via `type`/`target` args; deny patterns co-located with tools |
 
 ### Cross-Layer Contracts
