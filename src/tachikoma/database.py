@@ -226,14 +226,32 @@ async def database_hook(ctx: BootstrapContext) -> None:
     Creates the Database instance, runs migrations, and stores it in
     ctx.extras for retrieval by downstream hooks and __main__.py.
 
+    If the DB file is missing but dump files exist (e.g., fresh clone,
+    deleted DB), restores from dump before initializing the engine.
+
     Keys written to ctx.extras:
         "database" -> Database instance
     """
     _log.info("Database hook started")
 
     data_path = ctx.settings_manager.settings.workspace.data_path
+    db_path = data_path / "tachikoma.db"
+    dump_dir = data_path / "db-dump"
 
-    database = Database(data_path / "tachikoma.db")
+    # Restore from dump if DB is missing but dumps exist
+    if not db_path.exists() and dump_dir.exists() and any(dump_dir.iterdir()):
+        try:
+            from tachikoma.git.db_sync import restore_database  # noqa: PLC0415
+
+            _log.info("DB file missing, restoring from dump files")
+            await restore_database(db_path, dump_dir)
+        except Exception as e:
+            _log.warning(
+                "DB restore from dump failed, will create fresh DB: err={err}",
+                err=str(e),
+            )
+
+    database = Database(db_path)
     await database.initialize()
 
     ctx.extras["database"] = database
