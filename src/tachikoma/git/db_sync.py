@@ -75,9 +75,7 @@ def _dump_sync(db_path: Path, dump_dir: Path) -> None:
 
             meta_path = dump_dir / f"{safe_name}.metadata.json"
             meta_path.write_text(
-                json.dumps(
-                    {"name": table, "columns": columns, "schema": schema}, indent=4
-                )
+                json.dumps({"name": table, "columns": columns, "schema": schema}, indent=4)
             )
     finally:
         conn.close()
@@ -100,17 +98,13 @@ def _restore_sync(db_path: Path, dump_dir: Path) -> None:
             # Fresh DB: no need to DROP, just CREATE
             conn.execute(schema)
 
-            ndjson_path = meta_path.parent / meta_path.stem.replace(
-                ".metadata", ".ndjson"
-            )
+            ndjson_path = meta_path.parent / meta_path.stem.replace(".metadata", ".ndjson")
             if not ndjson_path.exists():
                 continue
 
             placeholders = ", ".join("?" for _ in columns)
             quoted_cols = ", ".join(f'"{c}"' for c in columns)
-            insert_sql = (
-                f'INSERT INTO "{table}" ({quoted_cols}) VALUES ({placeholders})'
-            )
+            insert_sql = f'INSERT INTO "{table}" ({quoted_cols}) VALUES ({placeholders})'
 
             with ndjson_path.open() as f:
                 rows = (json.loads(line) for line in f if line.strip())

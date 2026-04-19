@@ -9,9 +9,7 @@ from tachikoma.git.db_sync import dump_database, restore_database
 
 def _make_db(path: Path) -> None:
     conn = sqlite3.connect(path)
-    conn.execute(
-        "CREATE TABLE items (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, blob BLOB)"
-    )
+    conn.execute("CREATE TABLE items (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, blob BLOB)")
     conn.execute("CREATE TABLE tags (label TEXT)")
     conn.executemany(
         "INSERT INTO items (name, blob) VALUES (?, ?)",
@@ -113,9 +111,7 @@ class TestRestoreDatabase:
         # Valid (empty) sqlite file, not the garbage text
         conn = sqlite3.connect(db_path)
         try:
-            tables = conn.execute(
-                "SELECT name FROM sqlite_master WHERE type='table'"
-            ).fetchall()
+            tables = conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()
         finally:
             conn.close()
         assert tables == []

@@ -979,11 +979,14 @@ class TestResolveChain:
         skills_dir = tmp_path / "skills"
         skills_dir.mkdir(parents=True)
 
-        self._build_skills(skills_dir, {
-            "A": ("Desc A", ["B"]),
-            "B": ("Desc B", ["C"]),
-            "C": ("Desc C", []),
-        })
+        self._build_skills(
+            skills_dir,
+            {
+                "A": ("Desc A", ["B"]),
+                "B": ("Desc B", ["C"]),
+                "C": ("Desc C", []),
+            },
+        )
 
         registry = SkillRegistry([skills_dir])
         chain = registry.resolve_chain("A")
@@ -996,10 +999,13 @@ class TestResolveChain:
         skills_dir = tmp_path / "skills"
         skills_dir.mkdir(parents=True)
 
-        self._build_skills(skills_dir, {
-            "A": ("Desc A", ["B"]),
-            "B": ("Desc B", ["A"]),
-        })
+        self._build_skills(
+            skills_dir,
+            {
+                "A": ("Desc A", ["B"]),
+                "B": ("Desc B", ["A"]),
+            },
+        )
 
         registry = SkillRegistry([skills_dir])
         chain = registry.resolve_chain("A")
@@ -1014,9 +1020,12 @@ class TestResolveChain:
         skills_dir = tmp_path / "skills"
         skills_dir.mkdir(parents=True)
 
-        self._build_skills(skills_dir, {
-            "A": ("Desc A", ["A"]),
-        })
+        self._build_skills(
+            skills_dir,
+            {
+                "A": ("Desc A", ["A"]),
+            },
+        )
 
         registry = SkillRegistry([skills_dir])
         chain = registry.resolve_chain("A")
@@ -1028,12 +1037,15 @@ class TestResolveChain:
         skills_dir = tmp_path / "skills"
         skills_dir.mkdir(parents=True)
 
-        self._build_skills(skills_dir, {
-            "A": ("Desc A", ["B", "C"]),
-            "B": ("Desc B", ["D"]),
-            "C": ("Desc C", ["D"]),
-            "D": ("Desc D", []),
-        })
+        self._build_skills(
+            skills_dir,
+            {
+                "A": ("Desc A", ["B", "C"]),
+                "B": ("Desc B", ["D"]),
+                "C": ("Desc C", ["D"]),
+                "D": ("Desc D", []),
+            },
+        )
 
         registry = SkillRegistry([skills_dir])
         chain = registry.resolve_chain("A")
@@ -1049,9 +1061,12 @@ class TestResolveChain:
         skills_dir = tmp_path / "skills"
         skills_dir.mkdir(parents=True)
 
-        self._build_skills(skills_dir, {
-            "A": ("Desc A", []),
-        })
+        self._build_skills(
+            skills_dir,
+            {
+                "A": ("Desc A", []),
+            },
+        )
 
         registry = SkillRegistry([skills_dir])
         chain = registry.resolve_chain("A")
@@ -1063,9 +1078,12 @@ class TestResolveChain:
         skills_dir = tmp_path / "skills"
         skills_dir.mkdir(parents=True)
 
-        self._build_skills(skills_dir, {
-            "A": ("Desc A", ["missing-x"]),
-        })
+        self._build_skills(
+            skills_dir,
+            {
+                "A": ("Desc A", ["missing-x"]),
+            },
+        )
 
         registry = SkillRegistry([skills_dir])
         chain = registry.resolve_chain("A")
@@ -1077,10 +1095,13 @@ class TestResolveChain:
         skills_dir = tmp_path / "skills"
         skills_dir.mkdir(parents=True)
 
-        self._build_skills(skills_dir, {
-            "A": ("Desc A", ["missing-x", "real-b"]),
-            "real-b": ("Desc B", []),
-        })
+        self._build_skills(
+            skills_dir,
+            {
+                "A": ("Desc A", ["missing-x", "real-b"]),
+                "real-b": ("Desc B", []),
+            },
+        )
 
         registry = SkillRegistry([skills_dir])
         chain = registry.resolve_chain("A")
@@ -1092,10 +1113,13 @@ class TestResolveChain:
         skills_dir = tmp_path / "skills"
         skills_dir.mkdir(parents=True)
 
-        self._build_skills(skills_dir, {
-            "A": ("Desc A", ["B"]),
-            "B": ("Desc B", []),
-        })
+        self._build_skills(
+            skills_dir,
+            {
+                "A": ("Desc A", ["B"]),
+                "B": ("Desc B", []),
+            },
+        )
 
         registry = SkillRegistry([skills_dir])
         first = registry.resolve_chain("A")
@@ -1120,18 +1144,30 @@ class TestResolveChain:
         source1.mkdir()
         source2.mkdir()
 
-        self._build_skills(source1, {
-            "foo": ("Built-in", ["a"]),
-        })
-        self._build_skills(source2, {
-            "foo": ("Workspace", ["b"]),
-        })
-        self._build_skills(source1, {
-            "a": ("A", []),
-        })
-        self._build_skills(source2, {
-            "b": ("B", []),
-        })
+        self._build_skills(
+            source1,
+            {
+                "foo": ("Built-in", ["a"]),
+            },
+        )
+        self._build_skills(
+            source2,
+            {
+                "foo": ("Workspace", ["b"]),
+            },
+        )
+        self._build_skills(
+            source1,
+            {
+                "a": ("A", []),
+            },
+        )
+        self._build_skills(
+            source2,
+            {
+                "b": ("B", []),
+            },
+        )
 
         registry = SkillRegistry([source1, source2])
         chain = registry.resolve_chain("foo")
@@ -1146,12 +1182,18 @@ class TestResolveChain:
         source1.mkdir()
         source2.mkdir()
 
-        self._build_skills(source1, {
-            "foo": ("Built-in", ["bar"]),
-        })
-        self._build_skills(source2, {
-            "bar": ("Workspace-only", []),
-        })
+        self._build_skills(
+            source1,
+            {
+                "foo": ("Built-in", ["bar"]),
+            },
+        )
+        self._build_skills(
+            source2,
+            {
+                "bar": ("Workspace-only", []),
+            },
+        )
 
         registry = SkillRegistry([source1, source2])
         chain = registry.resolve_chain("foo")
@@ -1164,10 +1206,13 @@ class TestResolveChain:
         skills_dir = tmp_path / "skills"
         skills_dir.mkdir(parents=True)
 
-        self._build_skills(skills_dir, {
-            "Foo": ("Upper", ["foo"]),
-            "foo": ("Lower", []),
-        })
+        self._build_skills(
+            skills_dir,
+            {
+                "Foo": ("Upper", ["foo"]),
+                "foo": ("Lower", []),
+            },
+        )
 
         registry = SkillRegistry([skills_dir])
         chain = registry.resolve_chain("Foo")
@@ -1240,9 +1285,7 @@ class TestValidateDeps:
         skills_dir.mkdir(parents=True)
 
         (skills_dir / "dep-skill").mkdir(parents=True)
-        (skills_dir / "dep-skill" / "SKILL.md").write_text(
-            '---\ndescription: "Dep"\n---\n\nBody'
-        )
+        (skills_dir / "dep-skill" / "SKILL.md").write_text('---\ndescription: "Dep"\n---\n\nBody')
 
         skill_dir2 = skills_dir / "my-skill"
         skill_dir2.mkdir()

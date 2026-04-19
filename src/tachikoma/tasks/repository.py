@@ -283,9 +283,7 @@ class TaskRepository:
         except Exception as exc:
             raise TaskRepositoryError("Failed to get ready background instances") from exc
 
-    async def list_expired_waiting_instances(
-        self, timeout_seconds: int
-    ) -> list[TaskInstance]:
+    async def list_expired_waiting_instances(self, timeout_seconds: int) -> list[TaskInstance]:
         """Return waiting instances whose updated_at is older than timeout_seconds.
 
         NULL updated_at (legacy rows pre-DLT-120) are excluded.

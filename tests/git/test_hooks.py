@@ -285,9 +285,7 @@ class TestWorkspaceSync:
                 new_callable=AsyncMock,
             ) as mock_restore,
         ):
-            await _sync_workspace(
-                workspace_path, settings_manager.settings
-            )
+            await _sync_workspace(workspace_path, settings_manager.settings)
 
         mock_restore.assert_awaited_once_with(workspace_path)
 
@@ -318,8 +316,6 @@ class TestWorkspaceSync:
                 new_callable=AsyncMock,
             ) as mock_restore,
         ):
-            await _sync_workspace(
-                workspace_path, settings_manager.settings
-            )
+            await _sync_workspace(workspace_path, settings_manager.settings)
 
         mock_restore.assert_not_awaited()

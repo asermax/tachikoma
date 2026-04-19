@@ -204,17 +204,19 @@ class TestDatabaseHook:
 
         # Create a dump with a sessions table containing one row
         dump_dir.joinpath("sessions.metadata.json").write_text(
-            json.dumps({
-                "name": "sessions",
-                "columns": ["id", "sdk_session_id", "started_at"],
-                "schema": (
-                    "CREATE TABLE sessions ("
-                    "id TEXT PRIMARY KEY, "
-                    "sdk_session_id TEXT, "
-                    "started_at DATETIME"
-                    ")"
-                ),
-            })
+            json.dumps(
+                {
+                    "name": "sessions",
+                    "columns": ["id", "sdk_session_id", "started_at"],
+                    "schema": (
+                        "CREATE TABLE sessions ("
+                        "id TEXT PRIMARY KEY, "
+                        "sdk_session_id TEXT, "
+                        "started_at DATETIME"
+                        ")"
+                    ),
+                }
+            )
         )
         dump_dir.joinpath("sessions.ndjson").write_text(
             json.dumps(["test-id", "sdk-123", "2026-01-01T00:00:00"]) + "\n"
@@ -236,9 +238,7 @@ class TestDatabaseHook:
 
         await ctx.extras["database"].close()
 
-    async def test_skips_restore_when_db_exists(
-        self, settings_manager: SettingsManager
-    ) -> None:
+    async def test_skips_restore_when_db_exists(self, settings_manager: SettingsManager) -> None:
         """AC2: DB already exists -> no restore attempt."""
         ws = settings_manager.settings.workspace
         ws.path.mkdir(parents=True, exist_ok=True)
@@ -256,15 +256,15 @@ class TestDatabaseHook:
 
         # Create dump that would overwrite the marker
         dump_dir.joinpath("marker.metadata.json").write_text(
-            json.dumps({
-                "name": "marker",
-                "columns": ["v"],
-                "schema": "CREATE TABLE marker (v TEXT)",
-            })
+            json.dumps(
+                {
+                    "name": "marker",
+                    "columns": ["v"],
+                    "schema": "CREATE TABLE marker (v TEXT)",
+                }
+            )
         )
-        dump_dir.joinpath("marker.ndjson").write_text(
-            json.dumps(["from-dump"]) + "\n"
-        )
+        dump_dir.joinpath("marker.ndjson").write_text(json.dumps(["from-dump"]) + "\n")
 
         ctx = BootstrapContext(settings_manager=settings_manager, prompt=input)
         await database_hook(ctx)
@@ -302,9 +302,7 @@ class TestDatabaseHook:
         assert db_path.exists()
 
         async with aiosqlite.connect(db_path) as db:
-            cursor = await db.execute(
-                "SELECT name FROM sqlite_master WHERE type='table'"
-            )
+            cursor = await db.execute("SELECT name FROM sqlite_master WHERE type='table'")
             tables = {row[0] for row in await cursor.fetchall()}
 
         assert "sessions" in tables

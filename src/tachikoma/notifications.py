@@ -66,19 +66,13 @@ def build_notification_prompt(
     """
     timestamp = datetime.now(UTC).strftime("%Y-%m-%d %H:%M UTC")
 
-    prompt = (
-        "--- Notification ---\n"
-        f"Source: {source}\n"
-        f"Time: {timestamp}\n"
-        "\n"
-        f"{content}\n"
-    )
+    prompt = f"--- Notification ---\nSource: {source}\nTime: {timestamp}\n\n{content}\n"
 
     if response_instance_id is not None:
         prompt += (
             "\n"
             "This background task is waiting for user input. Deliver the question above, "
-            f"then use respond_to_task(task_instance_id=\"{response_instance_id}\", "
+            f'then use respond_to_task(task_instance_id="{response_instance_id}", '
             "response=\"<user's reply>\") to route the user's response back to the task.\n"
         )
     else:

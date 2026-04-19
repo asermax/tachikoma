@@ -759,9 +759,7 @@ class TestExecutorResumePath:
     """Tests for the resume path in executor (DLT-120)."""
 
     @pytest.mark.asyncio
-    async def test_resume_with_response_completes(
-        self, repo: TaskRepository, tmp_path
-    ) -> None:
+    async def test_resume_with_response_completes(self, repo: TaskRepository, tmp_path) -> None:
         """AC: Waiting instance with response resumes and completes."""
         instance = _make_instance(
             "inst-1",
@@ -822,9 +820,7 @@ class TestExecutorResumePath:
         )
 
     @pytest.mark.asyncio
-    async def test_resume_surfaces_sdk_errors_as_failure(
-        self, repo: TaskRepository
-    ) -> None:
+    async def test_resume_surfaces_sdk_errors_as_failure(self, repo: TaskRepository) -> None:
         """Errors raised by the SDK on resume mark the instance failed."""
         instance = _make_instance(
             "inst-1",

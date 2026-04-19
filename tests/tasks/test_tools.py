@@ -7,6 +7,7 @@ import mcp.types as types
 import pytest
 from pydantic import ValidationError
 
+from tachikoma.tasks import tools as tools_module
 from tachikoma.tasks.errors import TaskRepositoryError
 from tachikoma.tasks.model import ScheduleConfig, TaskDefinition
 from tachikoma.tasks.repository import TaskRepository
@@ -14,6 +15,7 @@ from tachikoma.tasks.tools import (
     CreateTaskArgs,
     DeleteTaskArgs,
     ListTasksArgs,
+    RunTaskNowArgs,
     UpdateTaskArgs,
     _format_schedule,
     _parse_schedule,
@@ -260,7 +262,14 @@ class TestCreateTaskToolsServer:
         result = await list_handler(types.ListToolsRequest(method="tools/list"))
 
         tool_names = {t.name for t in result.root.tools}
-        assert tool_names == {"list_tasks", "get_task", "create_task", "update_task", "delete_task"}
+        assert tool_names == {
+            "list_tasks",
+            "get_task",
+            "create_task",
+            "update_task",
+            "delete_task",
+            "run_task_now",
+        }
         assert "respond_to_task" not in tool_names
 
     @pytest.mark.asyncio
@@ -728,3 +737,320 @@ class TestRespondToTaskTool:
 
         assert result.get("is_error") is not True
         assert "Response sent." in result["content"][0]["text"]
+
+
+class TestRunTaskNowArgs:
+    """Tests for RunTaskNowArgs validation."""
+
+    def test_task_id_only(self) -> None:
+        parsed = RunTaskNowArgs.model_validate({"task_id": "abc-123"})
+        assert parsed.task_id == "abc-123"
+        assert parsed.prompt is None
+        assert parsed.name is None
+
+    def test_prompt_only(self) -> None:
+        parsed = RunTaskNowArgs.model_validate({"prompt": "Do something"})
+        assert parsed.prompt == "Do something"
+        assert parsed.task_id is None
+        assert parsed.name is None
+
+    def test_prompt_with_name(self) -> None:
+        parsed = RunTaskNowArgs.model_validate({"prompt": "Do something", "name": "Quick task"})
+        assert parsed.prompt == "Do something"
+        assert parsed.name == "Quick task"
+
+    def test_both_task_id_and_prompt_rejected(self) -> None:
+        with pytest.raises(ValueError, match="exactly one"):
+            RunTaskNowArgs.model_validate({"task_id": "abc", "prompt": "Do it"})
+
+    def test_neither_rejected(self) -> None:
+        with pytest.raises(ValueError, match="required"):
+            RunTaskNowArgs.model_validate({})
+
+    def test_name_with_task_id_rejected(self) -> None:
+        with pytest.raises(ValueError, match="name.*prompt"):
+            RunTaskNowArgs.model_validate({"task_id": "abc", "name": "Label"})
+
+
+class TestRunTaskNow:
+    """Tests for run_task_now MCP tool handler."""
+
+    @pytest.mark.asyncio
+    async def test_by_ref_creates_pending_instance(self, repo: TaskRepository) -> None:
+        """AC1: by-ref mode creates pending instance with snapshotted prompt."""
+        await repo.create_definition(
+            _make_definition(
+                definition_id="bg-1",
+                name="BG Task",
+                task_type="background",
+                prompt="Original prompt",
+            )
+        )
+
+        call_tool = _call_tool(repo)
+        result = await call_tool("run_task_now", {"task_id": "bg-1"})
+
+        assert result.get("is_error") is not True
+        text = result["content"][0]["text"]
+        assert "Instance ID:" in text
+
+        # Extract instance ID from response
+        inst_id = text.split("Instance ID: ")[1].strip()
+        instance = await repo.get_instance(inst_id)
+
+        assert instance is not None
+        assert instance.status == "pending"
+        assert instance.task_type == "background"
+        assert instance.definition_id == "bg-1"
+        assert instance.prompt == "Original prompt"
+        assert abs((instance.scheduled_for - datetime.now(UTC)).total_seconds()) < 5
+        assert instance.started_at is None
+        assert instance.completed_at is None
+        assert instance.result is None
+        assert instance.sdk_session_id is None
+        assert instance.user_response is None
+
+    @pytest.mark.asyncio
+    async def test_by_ref_runner_pickup(self, repo: TaskRepository) -> None:
+        """AC2: Created instance appears in get_ready_background_instances."""
+        await repo.create_definition(_make_definition(definition_id="bg-2", task_type="background"))
+
+        call_tool = _call_tool(repo)
+        result = await call_tool("run_task_now", {"task_id": "bg-2"})
+
+        inst_id = result["content"][0]["text"].split("Instance ID: ")[1].strip()
+        ready = await repo.get_ready_background_instances()
+        ready_ids = [i.id for i in ready]
+
+        assert inst_id in ready_ids
+
+    @pytest.mark.asyncio
+    async def test_disabled_definition_ok(self, repo: TaskRepository) -> None:
+        """AC3: Disabled definition still creates instance; definition untouched."""
+        await repo.create_definition(
+            _make_definition(
+                definition_id="disabled-1",
+                task_type="background",
+                enabled=False,
+            )
+        )
+
+        call_tool = _call_tool(repo)
+        result = await call_tool("run_task_now", {"task_id": "disabled-1"})
+
+        assert result.get("is_error") is not True
+
+        definition = await repo.get_definition("disabled-1")
+        assert definition is not None
+        assert definition.enabled is False
+        assert definition.last_fired_at is None
+
+    @pytest.mark.asyncio
+    async def test_rejects_session_type(self, repo: TaskRepository) -> None:
+        """AC4: Session-type definition returns error with required substring."""
+        await repo.create_definition(_make_definition(definition_id="sess-1", task_type="session"))
+
+        call_tool = _call_tool(repo)
+        result = await call_tool("run_task_now", {"task_id": "sess-1"})
+
+        text = result["content"][0]["text"]
+        assert "Only background tasks support on-demand execution" in text
+        # No instance created
+        instances = await repo.get_ready_background_instances()
+        assert not any(i.definition_id == "sess-1" for i in instances)
+
+    @pytest.mark.asyncio
+    async def test_unknown_id(self, repo: TaskRepository) -> None:
+        """AC5: Unknown task_id returns not-found error."""
+        call_tool = _call_tool(repo)
+        result = await call_tool("run_task_now", {"task_id": "nonexistent"})
+
+        assert "not found" in result["content"][0]["text"]
+
+    @pytest.mark.asyncio
+    async def test_repository_error(self, repo: TaskRepository, mocker) -> None:
+        """AC6: TaskRepositoryError during create_instance surfaces with cause."""
+        await repo.create_definition(
+            _make_definition(definition_id="bg-err", task_type="background")
+        )
+
+        root_cause = RuntimeError("database is locked")
+        exc = TaskRepositoryError("DB write failed")
+        exc.__cause__ = root_cause
+
+        mocker.patch.object(repo, "create_instance", side_effect=exc)
+
+        call_tool = _call_tool(repo)
+        result = await call_tool("run_task_now", {"task_id": "bg-err"})
+
+        text = result["content"][0]["text"]
+        assert "DB write failed" in text
+        assert "database is locked" in text
+
+    @pytest.mark.asyncio
+    async def test_allows_concurrent_instance(self, repo: TaskRepository) -> None:
+        """AC7: New pending instance created even if running instance exists."""
+        await repo.create_definition(
+            _make_definition(definition_id="concurrent-1", task_type="background")
+        )
+        await repo.create_instance(
+            _make_instance(
+                "running-inst",
+                definition_id="concurrent-1",
+                status="running",
+                task_type="background",
+            )
+        )
+
+        call_tool = _call_tool(repo)
+        result = await call_tool("run_task_now", {"task_id": "concurrent-1"})
+
+        assert result.get("is_error") is not True
+        inst_id = result["content"][0]["text"].split("Instance ID: ")[1].strip()
+        instance = await repo.get_instance(inst_id)
+        assert instance is not None
+        assert instance.status == "pending"
+
+    @pytest.mark.asyncio
+    async def test_argument_exclusivity_both(self, repo: TaskRepository) -> None:
+        """AC8: Both task_id and prompt returns error, no repo calls."""
+        call_tool = _call_tool(repo)
+        result = await call_tool("run_task_now", {"task_id": "x", "prompt": "y"})
+
+        assert "exactly one" in result["content"][0]["text"].lower()
+
+    @pytest.mark.asyncio
+    async def test_argument_exclusivity_neither(self, repo: TaskRepository) -> None:
+        """AC8: Neither task_id nor prompt returns error."""
+        call_tool = _call_tool(repo)
+        result = await call_tool("run_task_now", {})
+
+        assert "required" in result["content"][0]["text"].lower()
+
+    @pytest.mark.asyncio
+    async def test_argument_exclusivity_name_with_task_id(self, repo: TaskRepository) -> None:
+        """AC8: name with task_id returns error."""
+        call_tool = _call_tool(repo)
+        result = await call_tool("run_task_now", {"task_id": "x", "name": "Label"})
+
+        assert "name" in result["content"][0]["text"].lower()
+
+    @pytest.mark.asyncio
+    async def test_prompt_snapshot_immutability(self, repo: TaskRepository) -> None:
+        """AC10: Instance prompt stays snapshotted after definition update."""
+        await repo.create_definition(
+            _make_definition(
+                definition_id="snap-1",
+                task_type="background",
+                prompt="Original",
+            )
+        )
+
+        call_tool = _call_tool(repo)
+        result = await call_tool("run_task_now", {"task_id": "snap-1"})
+
+        inst_id = result["content"][0]["text"].split("Instance ID: ")[1].strip()
+
+        # Update definition prompt
+        await call_tool("update_task", {"task_id": "snap-1", "prompt": "Changed"})
+
+        instance = await repo.get_instance(inst_id)
+        assert instance is not None
+        assert instance.prompt == "Original"
+
+    @pytest.mark.asyncio
+    async def test_logs_creation_by_ref(self, repo: TaskRepository, mocker) -> None:
+        """AC11: Info log emitted with instance ID, def ID, and name."""
+        await repo.create_definition(
+            _make_definition(
+                definition_id="log-1",
+                name="LogTest",
+                task_type="background",
+            )
+        )
+
+        mock_log = mocker.patch.object(tools_module._log, "info")
+
+        call_tool = _call_tool(repo)
+        result = await call_tool("run_task_now", {"task_id": "log-1"})
+
+        assert result.get("is_error") is not True
+        inst_id = result["content"][0]["text"].split("Instance ID: ")[1].strip()
+
+        mock_log.assert_called_once()
+        call_str = str(mock_log.call_args)
+        assert inst_id in call_str
+        assert "log-1" in call_str
+        assert "LogTest" in call_str
+        assert "by_ref" in call_str
+
+    @pytest.mark.asyncio
+    async def test_ad_hoc_creates_transient_instance(self, repo: TaskRepository) -> None:
+        """AC12: Ad-hoc mode creates transient instance with definition_id=None."""
+        call_tool = _call_tool(repo)
+        result = await call_tool("run_task_now", {"prompt": "Quick check"})
+
+        assert result.get("is_error") is not True
+        text = result["content"][0]["text"]
+        assert "Instance ID:" in text
+
+        inst_id = text.split("Instance ID: ")[1].strip()
+        instance = await repo.get_instance(inst_id)
+
+        assert instance is not None
+        assert instance.status == "pending"
+        assert instance.task_type == "background"
+        assert instance.definition_id is None
+        assert instance.prompt == "Quick check"
+        assert abs((instance.scheduled_for - datetime.now(UTC)).total_seconds()) < 5
+        assert instance.started_at is None
+        assert instance.completed_at is None
+        assert instance.result is None
+        assert instance.sdk_session_id is None
+        assert instance.user_response is None
+
+        # No definition was created
+        defs = await repo.list_enabled_definitions()
+        assert len(defs) == 0
+
+    @pytest.mark.asyncio
+    async def test_ad_hoc_with_name(self, repo: TaskRepository, mocker) -> None:
+        """AC13: Ad-hoc with name uses name in log as source label."""
+        mock_log = mocker.patch.object(tools_module._log, "info")
+
+        call_tool = _call_tool(repo)
+        result = await call_tool(
+            "run_task_now", {"prompt": "Quick check", "name": "My Ad-Hoc Task"}
+        )
+
+        assert result.get("is_error") is not True
+
+        mock_log.assert_called_once()
+        call_str = str(mock_log.call_args)
+        assert "My Ad-Hoc Task" in call_str
+        assert "ad_hoc" in call_str
+
+    @pytest.mark.asyncio
+    async def test_ad_hoc_runner_pickup(self, repo: TaskRepository) -> None:
+        """AC14: Ad-hoc transient instance picked up by get_ready_background_instances."""
+        call_tool = _call_tool(repo)
+        result = await call_tool("run_task_now", {"prompt": "Fire and forget"})
+
+        inst_id = result["content"][0]["text"].split("Instance ID: ")[1].strip()
+        ready = await repo.get_ready_background_instances()
+        ready_ids = [i.id for i in ready]
+
+        assert inst_id in ready_ids
+
+    @pytest.mark.asyncio
+    async def test_run_task_now_registered_without_respond_tool(self, repo: TaskRepository) -> None:
+        """AC9: run_task_now present in server built without respond_to_task."""
+        server = create_task_tools_server(repo, TZ_UTC, include_respond_tool=False)
+        mcp_server = server["instance"]
+
+        list_handler = mcp_server.request_handlers[types.ListToolsRequest]
+        result = await list_handler(types.ListToolsRequest(method="tools/list"))
+
+        tool_names = {t.name for t in result.root.tools}
+        assert "run_task_now" in tool_names
+        assert "respond_to_task" not in tool_names

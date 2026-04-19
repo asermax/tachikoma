@@ -17,10 +17,10 @@ from claude_agent_sdk import McpSdkServerConfig, create_sdk_mcp_server, tool
 from cronsim import CronSim
 from cronsim.cronsim import CronSimError
 from loguru import logger
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel, ValidationError, model_validator
 
 from tachikoma.tasks.errors import TaskRepositoryError
-from tachikoma.tasks.model import ScheduleConfig, TaskDefinition
+from tachikoma.tasks.model import ScheduleConfig, TaskDefinition, TaskInstance
 from tachikoma.tasks.repository import TaskRepository
 
 _log = logger.bind(component="task_tools")
@@ -65,6 +65,32 @@ class RespondToTaskArgs(BaseModel):
     response: str
 
 
+class RunTaskNowArgs(BaseModel):
+    """Args for run_task_now — exactly one of task_id or prompt required."""
+
+    task_id: str | None = None
+    prompt: str | None = None
+    name: str | None = None
+
+    @model_validator(mode="after")
+    def _validate_exclusivity(self) -> "RunTaskNowArgs":
+        has_task_id = self.task_id is not None
+        has_prompt = self.prompt is not None
+        has_name = self.name is not None
+
+        if has_task_id and has_prompt:
+            msg = "Provide exactly one of 'task_id' or 'prompt', not both."
+            raise ValueError(msg)
+        if not has_task_id and not has_prompt:
+            msg = "Either 'task_id' or 'prompt' is required."
+            raise ValueError(msg)
+        if has_name and has_task_id:
+            msg = "'name' can only be used with 'prompt', not with 'task_id'."
+            raise ValueError(msg)
+
+        return self
+
+
 async def handle_respond_to_task(
     task_instance_id: str,
     response: str,
@@ -92,9 +118,7 @@ async def handle_respond_to_task(
     if instance is None:
         return {
             "is_error": True,
-            "content": [
-                {"type": "text", "text": f"Task instance '{task_instance_id}' not found."}
-            ],
+            "content": [{"type": "text", "text": f"Task instance '{task_instance_id}' not found."}],
         }
 
     if instance.status != "waiting":
@@ -106,9 +130,7 @@ async def handle_respond_to_task(
     if instance.user_response is not None:
         return {
             "is_error": True,
-            "content": [
-                {"type": "text", "text": "A response is already pending for this task."}
-            ],
+            "content": [{"type": "text", "text": "A response is already pending for this task."}],
         }
 
     try:
@@ -564,7 +586,138 @@ def create_task_tools_server(
             }
         return await handle_respond_to_task(parsed.task_instance_id, parsed.response, repository)
 
-    tools = [list_tasks, get_task, create_task, update_task, delete_task]
+    @tool(
+        "run_task_now",
+        "Run a background task immediately, bypassing the schedule.\n"
+        "\n"
+        "Two modes:\n"
+        "1. By-reference: pass 'task_id' of an existing background task definition.\n"
+        "   The prompt is snapshotted at call time; the definition is not mutated\n"
+        "   (enabled, last_fired_at, and schedule remain unchanged — works even\n"
+        "   for auto-disabled one-shot tasks).\n"
+        "2. Ad-hoc: pass 'prompt' directly to fire a one-off background task without\n"
+        "   creating a reusable definition. Optionally pass 'name' for a readable label\n"
+        "   in logs and notifications (otherwise the prompt preview is used).\n"
+        "\n"
+        "Parameters:\n"
+        "- task_id (str, optional): ID of an existing background task definition\n"
+        "- prompt (str, optional): Ad-hoc instruction for a one-off background task\n"
+        "- name (str, optional): Human-readable label (ad-hoc mode only)\n"
+        "\n"
+        "Exactly one of 'task_id' or 'prompt' is required. 'name' is only valid with\n"
+        "'prompt'. Background tasks only — session-type definitions are rejected.",
+        RunTaskNowArgs.model_json_schema(),
+    )
+    async def run_task_now(args: dict) -> dict:
+        """Create a pending background instance for immediate runner pickup."""
+        try:
+            parsed = RunTaskNowArgs.model_validate(args)
+        except (ValidationError, ValueError) as exc:
+            return {
+                "is_error": True,
+                "content": [{"type": "text", "text": f"Invalid arguments: {exc}"}],
+            }
+
+        now_utc = datetime.now(UTC)
+
+        # Branch A: by-reference
+        if parsed.task_id is not None:
+            try:
+                definition = await repository.get_definition(parsed.task_id)
+            except TaskRepositoryError as exc:
+                cause = f" Cause: {exc.__cause__}" if exc.__cause__ else ""
+                return {
+                    "is_error": True,
+                    "content": [{"type": "text", "text": f"{exc}{cause}"}],
+                }
+
+            if definition is None:
+                return {
+                    "is_error": True,
+                    "content": [{"type": "text", "text": f"Task '{parsed.task_id}' not found."}],
+                }
+
+            if definition.task_type != "background":
+                return {
+                    "is_error": True,
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": (
+                                f"Task '{definition.name}' is a {definition.task_type} task."
+                                " Only background tasks support on-demand execution."
+                            ),
+                        }
+                    ],
+                }
+
+            instance = TaskInstance(
+                id=str(uuid4()),
+                definition_id=parsed.task_id,
+                task_type="background",
+                status="pending",
+                prompt=definition.prompt,
+                scheduled_for=now_utc,
+                started_at=None,
+                completed_at=None,
+                result=None,
+                sdk_session_id=None,
+                user_response=None,
+                created_at=now_utc,
+            )
+
+        # Branch B: ad-hoc
+        else:
+            instance = TaskInstance(
+                id=str(uuid4()),
+                definition_id=None,
+                task_type="background",
+                status="pending",
+                prompt=parsed.prompt or "",  # validated non-None by model_validator
+                scheduled_for=now_utc,
+                started_at=None,
+                completed_at=None,
+                result=None,
+                sdk_session_id=None,
+                user_response=None,
+                created_at=now_utc,
+            )
+
+        try:
+            await repository.create_instance(instance)
+        except TaskRepositoryError as exc:
+            cause = f" Cause: {exc.__cause__}" if exc.__cause__ else ""
+            return {"is_error": True, "content": [{"type": "text", "text": f"{exc}{cause}"}]}
+        except Exception as exc:
+            _log.exception("Unexpected error running task: {err}", err=str(exc))
+            return {
+                "is_error": True,
+                "content": [{"type": "text", "text": f"Unexpected error: {exc}"}],
+            }
+
+        # Logging
+        if parsed.task_id is not None:
+            _log.info(
+                "On-demand run queued: inst_id={inst_id} mode=by_ref def_id={def_id} name={name}",
+                inst_id=instance.id,
+                def_id=parsed.task_id,
+                name=definition.name,
+            )
+        else:
+            source_label = parsed.name or parsed.prompt[:80]  # type: ignore[union-attr]
+            _log.info(
+                "On-demand run queued: inst_id={inst_id} mode=ad_hoc name={name}",
+                inst_id=instance.id,
+                name=source_label,
+            )
+
+        return {
+            "content": [
+                {"type": "text", "text": f"Background task queued. Instance ID: {instance.id}"}
+            ],
+        }
+
+    tools = [list_tasks, get_task, create_task, update_task, delete_task, run_task_now]
     if include_respond_tool:
         tools.append(respond_to_task)
 

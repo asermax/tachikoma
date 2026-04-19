@@ -677,6 +677,6 @@ class TestProviderChainExpansion:
         for entry in result:
             assert entry.tag == "skills"
             assert "skill_name" in entry.metadata
-            assert '<skill name=' in entry.content
+            assert "<skill name=" in entry.content
             assert "directory=" in entry.content
             assert entry.agents is None

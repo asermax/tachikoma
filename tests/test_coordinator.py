@@ -4081,9 +4081,7 @@ class TestCoordinatorTeardownRace:
 
         assert [m["message"]["content"] for m in yielded] == ["initial", "x", "y"]
 
-    async def test_buffer_preserved_on_connection_error_during_teardown(
-        self, mock_sdk
-    ) -> None:
+    async def test_buffer_preserved_on_connection_error_during_teardown(self, mock_sdk) -> None:
         """R0-AC4: CLIConnectionError teardown path still runs drain-back."""
         client, _ = mock_sdk
 

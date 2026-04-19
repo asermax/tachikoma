@@ -544,9 +544,7 @@ class TestGetActiveInstanceIncludesWaiting:
     ) -> None:
         """AC: Waiting instance is returned in backward-compat path (no scheduled_for)."""
         await repo.create_instance(
-            _make_instance(
-                "waiting-1", definition_id="def-1", status="waiting"
-            )
+            _make_instance("waiting-1", definition_id="def-1", status="waiting")
         )
 
         active = await repo.get_active_instance_for_definition("def-1")
@@ -568,9 +566,7 @@ class TestGetActiveInstanceIncludesWaiting:
             )
         )
 
-        active = await repo.get_active_instance_for_definition(
-            "def-1", scheduled_for=match_time
-        )
+        active = await repo.get_active_instance_for_definition("def-1", scheduled_for=match_time)
 
         assert active is not None
         assert active.id == "waiting-1"
@@ -579,13 +575,9 @@ class TestGetActiveInstanceIncludesWaiting:
 class TestUpdatedAtAutoStamping:
     """Tests for updated_at auto-stamping via SQLAlchemy onupdate."""
 
-    async def test_update_instance_refreshes_updated_at(
-        self, repo: TaskRepository
-    ) -> None:
+    async def test_update_instance_refreshes_updated_at(self, repo: TaskRepository) -> None:
         """AC: Any persistence modification refreshes updated_at."""
-        await repo.create_instance(
-            _make_instance("inst-1", status="running")
-        )
+        await repo.create_instance(_make_instance("inst-1", status="running"))
         original = await repo.get_instance("inst-1")
         assert original is not None
 
@@ -598,9 +590,7 @@ class TestUpdatedAtAutoStamping:
         assert updated.updated_at is not None
         assert updated.sdk_session_id == "sdk-123"
 
-    async def test_mark_running_as_failed_refreshes_updated_at(
-        self, repo: TaskRepository
-    ) -> None:
+    async def test_mark_running_as_failed_refreshes_updated_at(self, repo: TaskRepository) -> None:
         """AC: Crash recovery refreshes updated_at on failed instances."""
         await repo.create_instance(_make_instance("running-1", status="running"))
 

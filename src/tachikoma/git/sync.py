@@ -432,9 +432,7 @@ async def _get_changed_files(cwd: Path, old_head: str) -> list[str]:
     Returns:
         List of file paths changed between old_head and HEAD.
     """
-    _, output = await run_git_capture(
-        "diff", "--name-only", old_head, "HEAD", cwd=cwd
-    )
+    _, output = await run_git_capture("diff", "--name-only", old_head, "HEAD", cwd=cwd)
     return output.splitlines() if output else []
 
 

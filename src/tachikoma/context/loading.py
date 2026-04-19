@@ -256,6 +256,11 @@ prompt. Get task IDs from list_tasks.
 are changed. Get task IDs from list_tasks.
 - **delete_task** — Remove a task permanently by ID. For non-destructive disabling, use \
 update_task with `enabled=false` instead. Get task IDs from list_tasks.
+- **run_task_now** — Run a background task immediately, bypassing the schedule. Two modes: \
+pass `task_id` to re-run an existing background definition (works even for disabled one-shots; \
+the definition is not mutated — enabled, last_fired_at, and schedule remain unchanged), or \
+pass `prompt` (with optional `name`) to fire a one-off background task without creating a \
+reusable definition. Exactly one of `task_id` or `prompt` is required. Background tasks only.
 - **respond_to_task** — Send the user's reply back to a background task waiting for input. \
 Parameters: `task_instance_id` (str, required), `response` (str, required). Use this when a \
 notification indicates a background task is waiting for user input; the notification prompt will \

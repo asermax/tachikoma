@@ -213,47 +213,32 @@ class Database:
             # Check if sdk_session_id column exists on task_instances table
             result = await conn.execute(
                 text(
-                    "SELECT * FROM pragma_table_info('task_instances')"
-                    " WHERE name='sdk_session_id'"
+                    "SELECT * FROM pragma_table_info('task_instances') WHERE name='sdk_session_id'"
                 )
             )
             if result.fetchone() is None:
                 await conn.execute(
                     text("ALTER TABLE task_instances ADD COLUMN sdk_session_id TEXT")
                 )
-                _log.info(
-                    "Schema migration: added 'sdk_session_id' column to task_instances table"
-                )
+                _log.info("Schema migration: added 'sdk_session_id' column to task_instances table")
 
             # Check if user_response column exists on task_instances table
             result = await conn.execute(
-                text(
-                    "SELECT * FROM pragma_table_info('task_instances')"
-                    " WHERE name='user_response'"
-                )
+                text("SELECT * FROM pragma_table_info('task_instances') WHERE name='user_response'")
             )
             if result.fetchone() is None:
-                await conn.execute(
-                    text("ALTER TABLE task_instances ADD COLUMN user_response TEXT")
-                )
-                _log.info(
-                    "Schema migration: added 'user_response' column to task_instances table"
-                )
+                await conn.execute(text("ALTER TABLE task_instances ADD COLUMN user_response TEXT"))
+                _log.info("Schema migration: added 'user_response' column to task_instances table")
 
             # Check if updated_at column exists on task_instances table
             result = await conn.execute(
-                text(
-                    "SELECT * FROM pragma_table_info('task_instances')"
-                    " WHERE name='updated_at'"
-                )
+                text("SELECT * FROM pragma_table_info('task_instances') WHERE name='updated_at'")
             )
             if result.fetchone() is None:
                 await conn.execute(
                     text("ALTER TABLE task_instances ADD COLUMN updated_at DATETIME")
                 )
-                _log.info(
-                    "Schema migration: added 'updated_at' column to task_instances table"
-                )
+                _log.info("Schema migration: added 'updated_at' column to task_instances table")
 
         _log.debug("Schema migrations completed: db_path={path}", path=self._db_path)
 

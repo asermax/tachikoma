@@ -1572,9 +1572,7 @@ class TestDeliveryLock:
         await channel._delivery_lock.acquire()
         try:
             with pytest.raises(asyncio.TimeoutError):
-                await asyncio.wait_for(
-                    channel._handle_buffered_delivery(event), timeout=0.05
-                )
+                await asyncio.wait_for(channel._handle_buffered_delivery(event), timeout=0.05)
         finally:
             channel._delivery_lock.release()
 
