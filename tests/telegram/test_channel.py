@@ -1375,7 +1375,6 @@ class TestHandleMedia:
         msg = self._make_media_message(photo=[photo])
         msg.caption = "Check this out"
 
-        channel._is_processing = False
         channel._process_through_coordinator = AsyncMock()
 
         await channel._handle_media(msg)
@@ -1405,7 +1404,6 @@ class TestHandleMedia:
         msg = self._make_media_message(voice=voice)
         msg.caption = None
 
-        channel._is_processing = False
         channel._process_through_coordinator = AsyncMock()
 
         await channel._handle_media(msg)
@@ -1465,29 +1463,31 @@ class TestHandleMedia:
         # Nothing enqueued
         channel._coordinator.enqueue.assert_not_called()
 
-    async def test_mid_stream_buffering(self) -> None:
-        """Media arriving mid-stream enqueues but doesn't process."""
+    async def test_serializes_concurrent_messages(self) -> None:
+        """DLT-111 KD-5: two handler calls serialize via _delivery_lock."""
         channel = self._make_channel()
-        channel._bot.download = AsyncMock(return_value=None)
+        call_order: list[str] = []
 
-        photo = MagicMock()
-        photo.file_id = "photo_123"
-        photo.width = 1280
-        photo.height = 720
-        photo.file_size = 250_000
-        photo.file_name = None
+        async def _fake_process(*args, **kw):
+            call_order.append("enter")
+            await asyncio.sleep(0)
+            call_order.append("exit")
 
-        msg = self._make_media_message(photo=[photo])
-        channel._is_processing = True
-        channel._process_through_coordinator = AsyncMock()
+        channel._process_through_coordinator = AsyncMock(side_effect=_fake_process)
 
-        await channel._handle_media(msg)
+        msg1 = MagicMock()
+        msg1.text = "one"
+        msg2 = MagicMock()
+        msg2.text = "two"
 
-        # Enqueued
-        channel._coordinator.enqueue.assert_called_once()
+        # Fire two _handle_message calls concurrently
+        await asyncio.gather(
+            channel._handle_message(msg1),
+            channel._handle_message(msg2),
+        )
 
-        # But process_through_coordinator NOT called
-        channel._process_through_coordinator.assert_not_called()
+        # Serialized execution: no interleave
+        assert call_order == ["enter", "exit", "enter", "exit"]
 
     async def test_unresolvable_media_ignored(self) -> None:
         """Message with no resolvable media is silently ignored."""

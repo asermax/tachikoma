@@ -372,9 +372,7 @@ class TestReplBufferIntegration:
         mocker.patch("tachikoma.repl.signal.getsignal", return_value=None)
         mocker.patch("tachikoma.repl.signal.signal")
 
-        flush_outer: asyncio.Task[bool] = asyncio.ensure_future(
-            repl._flush_buffer_on_shutdown()
-        )
+        flush_outer: asyncio.Task[bool] = asyncio.ensure_future(repl._flush_buffer_on_shutdown())
         await asyncio.sleep(0.01)
 
         assert "handler" in captured, "SIGINT handler should be registered during flush"

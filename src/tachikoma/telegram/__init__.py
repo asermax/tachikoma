@@ -530,7 +530,7 @@ class TelegramChannel(Channel):
         self._dispatcher = Dispatcher()
         self._router = Router()
         self._active_renderer: ResponseRenderer | None = None
-        self._is_processing: bool = False
+        self._delivery_lock: asyncio.Lock = asyncio.Lock()
         self._bus = bus
         self._buffer: Buffer | None = buffer
 
@@ -680,9 +680,7 @@ class TelegramChannel(Channel):
         def _force_exit_during_flush(sig: signal.Signals) -> None:
             nonlocal force_exit_triggered, interrupt_task
             force_exit_triggered = True
-            _log.warning(
-                "Second {sig} during shutdown flush — abandoning digest", sig=sig.name
-            )
+            _log.warning("Second {sig} during shutdown flush — abandoning digest", sig=sig.name)
             flush_task.cancel()
             interrupt_task = asyncio.create_task(self._coordinator.interrupt())
 
@@ -710,13 +708,9 @@ class TelegramChannel(Channel):
             return
 
         text = message.text.strip()
-        self._coordinator.enqueue(text)
-
-        if self._is_processing:
-            _log.debug("Buffered mid-stream message")
-            return
-
-        await self._process_through_coordinator()
+        async with self._delivery_lock:
+            self._coordinator.enqueue(text)
+            await self._process_through_coordinator()
 
     async def _handle_media(self, message: Message) -> None:
         """Handle an incoming media message from the authorized user."""
@@ -756,13 +750,9 @@ class TelegramChannel(Channel):
             message.caption,
         )
 
-        self._coordinator.enqueue(description)
-
-        if self._is_processing:
-            _log.debug("Buffered mid-stream media message")
-            return
-
-        await self._process_through_coordinator()
+        async with self._delivery_lock:
+            self._coordinator.enqueue(description)
+            await self._process_through_coordinator()
 
     async def _on_shutdown(self) -> None:
         """Send partial response on shutdown if one is active."""
@@ -793,50 +783,39 @@ class TelegramChannel(Channel):
             if event.is_shutdown_digest and self._buffer is not None:
                 self._buffer.resolve_shutdown()
 
-        self._coordinator.enqueue(event.prompt)
-
-        if self._is_processing:
-            _log.debug("Buffered delivery mid-stream")
-            return
-
-        await self._process_through_coordinator(on_complete=on_complete)
+        async with self._delivery_lock:
+            self._coordinator.enqueue(event.prompt)
+            await self._process_through_coordinator(on_complete=on_complete)
 
     async def _process_through_coordinator(
         self,
         on_complete: Callable[[], Awaitable[None]] | None = None,
     ) -> None:
-        """Process buffered messages through the coordinator and render responses.
+        """Process one buffered message through the coordinator.
 
-        Drains the coordinator's message buffer in a loop.  Each iteration
-        calls ``send_message()`` which runs the full pipeline (boundary
-        detection, pre-processing, SDK session).  The loop continues until
-        the buffer is empty.
-
-        Args:
-            on_complete: Optional callback invoked after the buffer is drained.
+        Serialization is provided by the caller's _delivery_lock (DLT-111/KD-5).
+        Follow-up messages queue on the lock and become the next call.
         """
         chat_id = self._settings.authorized_chat_id
-        self._is_processing = True
         self._active_renderer = ResponseRenderer(
             self._bot, chat_id, push_notifications=self._settings.push_notifications
         )
 
         try:
             async with ChatActionSender(bot=self._bot, chat_id=chat_id, action="typing"):
-                while self._coordinator.has_pending_messages:
-                    async for event in self._coordinator.send_message():
-                        if isinstance(event, Status):
-                            await self._active_renderer.handle_status(event.message)
-                        elif isinstance(event, TextChunk):
-                            await self._active_renderer.handle_text(event.text)
-                        elif isinstance(event, ToolActivity):
-                            await self._active_renderer.handle_tool(event)
-                        elif isinstance(event, Error):
-                            await self._active_renderer.handle_error(event)
-                        elif isinstance(event, Result):
-                            await self._active_renderer.finalize()
-                            await self._active_renderer.notify()
-                            self._active_renderer.reset()
+                async for event in self._coordinator.send_message():
+                    if isinstance(event, Status):
+                        await self._active_renderer.handle_status(event.message)
+                    elif isinstance(event, TextChunk):
+                        await self._active_renderer.handle_text(event.text)
+                    elif isinstance(event, ToolActivity):
+                        await self._active_renderer.handle_tool(event)
+                    elif isinstance(event, Error):
+                        await self._active_renderer.handle_error(event)
+                    elif isinstance(event, Result):
+                        await self._active_renderer.finalize()
+                        await self._active_renderer.notify()
+                        self._active_renderer.reset()
 
             if on_complete is not None:
                 await on_complete()
@@ -861,7 +840,6 @@ class TelegramChannel(Channel):
                 )
 
         finally:
-            self._is_processing = False
             self._active_renderer = None
 
 
