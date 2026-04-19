@@ -9,6 +9,7 @@ import asyncio
 import json
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from bubus import EventBus
@@ -20,6 +21,7 @@ from tachikoma.adapter import sanitize_text
 from tachikoma.agent_defaults import AgentDefaults
 from tachikoma.buffer.priority import Priority
 from tachikoma.config import TaskSettings
+from tachikoma.coordinator import _derive_transcript_path
 from tachikoma.git.processor import GitProcessor
 from tachikoma.memory.context_provider import MemoryContextProvider
 from tachikoma.memory.episodic import EpisodicProcessor
@@ -65,6 +67,51 @@ _log = logger.bind(component="task_executor")
 # How often the background task runner checks for pending instances
 RUNNER_CHECK_INTERVAL_SECONDS = 30
 
+
+async def _sweep_expired_waiters(
+    repository: TaskRepository,
+    settings: TaskSettings,
+    bus: EventBus,
+) -> None:
+    """Fail waiting instances that have exceeded the wait_timeout."""
+    expired = await repository.list_expired_waiting_instances(settings.wait_timeout)
+
+    for instance in expired:
+        reason = f"Task timed out waiting for user input after {settings.wait_timeout}s"
+
+        # Resolve notification source
+        definition = (
+            await repository.get_definition(instance.definition_id)
+            if instance.definition_id
+            else None
+        )
+        source = (
+            f"Background task: {definition.name}"
+            if definition
+            else f"Background task: {instance.prompt[:100]}"
+        )
+
+        await repository.update_instance(
+            instance.id,
+            status="failed",
+            completed_at=datetime.now(UTC),
+            result=reason,
+        )
+        await dispatch_notification(
+            bus,
+            source,
+            f"Task failed: {reason}",
+            "error",
+            instance.id,
+            priority=Priority.URGENT,
+        )
+
+    if expired:
+        _log.info(
+            "Expired {count} waiting instances past timeout",
+            count=len(expired),
+        )
+
 # Background task system prompt
 BACKGROUND_TASK_SYSTEM_PROMPT = """You are a background task agent. You are executing a scheduled task autonomously. Complete the task described below. Your work will be saved automatically.
 
@@ -86,7 +133,11 @@ The `send_notification` tool accepts a `priority` parameter with three levels:
 - **normal**: Standard completion results — the default. Use for most task outcomes and progress updates
 - **low**: Informational updates that can wait for a natural break (e.g., routine status checks, non-urgent summaries)
 
-If unsure, use the default (normal)."""  # noqa: E501
+If unsure, use the default (normal).
+
+## Asking questions
+
+Your messages are not delivered directly to the user — they pass through an evaluator that classifies your output. If you genuinely need user input to proceed, ask your question clearly in plain text. The evaluator will route your question to the user via a notification, and the user's response will arrive as the next conversation turn. You can ask questions multiple times if needed."""  # noqa: E501
 
 # Evaluator prompt for assessing task completion
 EVALUATOR_PROMPT_TEMPLATE = """You are a task completion evaluator for a background task agent. Your ONLY job is to classify the agent's current workflow state using the ordered rules below.
@@ -152,10 +203,13 @@ async def background_task_runner(
 
     while True:
         try:
-            # Query pending background instances
-            pending_instances = await repository.get_pending_instances("background")
+            # Sweep expired waiting instances
+            await _sweep_expired_waiters(repository, settings, bus)
 
-            for instance in pending_instances:
+            # Query ready instances (pending + waiting-with-response)
+            ready_instances = await repository.get_ready_background_instances()
+
+            for instance in ready_instances:
                 # Skip if already running
                 if instance.id in running_tasks:
                     continue
@@ -255,9 +309,18 @@ class BackgroundTaskExecutor:
     async def execute(self, instance: TaskInstance) -> None:
         """Execute a background task instance.
 
-        Args:
-            instance: The TaskInstance to execute
+        Branches on entry status:
+        - "waiting": resume path (re-enter with saved SDK session + user response)
+        - "pending": fresh path (standard execution from scratch)
         """
+        if instance.status == "waiting":
+            await self._execute_resume_path(instance)
+            return
+
+        await self._execute_fresh_path(instance)
+
+    async def _execute_fresh_path(self, instance: TaskInstance) -> None:
+        """Execute a fresh (pending) background task instance."""
         now_utc = datetime.now(UTC)
 
         # Mark instance as running
@@ -318,103 +381,16 @@ class BackgroundTaskExecutor:
             )
 
             # Execute with evaluator loop
-            sdk_session_id: str | None = None
-            response_text = ""
-            iteration = 0
-            max_iterations = self._settings.max_iterations
-
             async with ClaudeSDKClient(options) as client:
                 # Initial query
                 await client.query(preprocessing_result.prompt)
 
-                while iteration < max_iterations:
-                    iteration += 1
-
-                    # Collect response
-                    response_chunks: list[str] = []
-                    async for sdk_message in client.receive_response():
-                        # Extract session ID from result message
-                        if isinstance(sdk_message, ResultMessage) and sdk_message.session_id:
-                            sdk_session_id = sdk_message.session_id
-
-                        # Collect text content
-                        if isinstance(sdk_message, AssistantMessage):
-                            for block in sdk_message.content:
-                                if isinstance(block, TextBlock):
-                                    response_chunks.append(sanitize_text(block.text))
-
-                    response_text = "".join(response_chunks)
-
-                    # Run evaluator
-                    eval_result = await self._run_evaluator(
-                        instance.prompt,
-                        response_text,
-                    )
-
-                    status = eval_result.get("status", "continue")
-                    rationale = eval_result.get("rationale", "")
-
-                    _log.debug(
-                        "Evaluator result for {inst_id}: status={status}",
-                        inst_id=instance.id,
-                        status=status,
-                    )
-
-                    if status == "complete":
-                        # Agent controls notifications via send_notification tool
-                        await self._complete_instance(instance.id, rationale)
-                        await self._run_postprocessing(sdk_session_id)
-                        return
-
-                    if status == "stuck":
-                        # Agent is stuck
-                        await self._fail_instance(instance.id, f"Agent stuck: {rationale}")
-                        await dispatch_notification(
-                            self._bus,
-                            notification_source,
-                            f"Task failed: {rationale}",
-                            "error",
-                            instance.id,
-                            priority=Priority.URGENT,
-                        )
-                        return
-
-                    if status == "needs_input":
-                        # Agent asked a clarifying question — no user available
-                        _log.debug(
-                            "Agent asked clarifying question for {inst_id},"
-                            " injecting proceed message",
-                            inst_id=instance.id,
-                        )
-                        proceed_message = (
-                            "You asked a question, but this is a background task"
-                            " — no user is available to respond."
-                            " Proceed with your best judgment,"
-                            " or skip this step if it's not essential."
-                        )
-                        await client.query(proceed_message)
-                        continue
-
-                    # Continue: inject the evaluator's factual rationale as the agent's
-                    # next user-turn so it can re-orient against its own stated plan.
-                    await client.query(rationale)
-
-                # Max iterations reached
-                _log.warning(
-                    "Background task {inst_id} reached max iterations",
-                    inst_id=instance.id,
-                )
-                await self._fail_instance(
-                    instance.id,
-                    f"Max iterations ({max_iterations}) reached without completion",
-                )
-                await dispatch_notification(
-                    self._bus,
+                await self._run_evaluator_loop(
+                    client,
+                    instance,
                     notification_source,
-                    f"Task failed: reached max iterations ({max_iterations})",
-                    "error",
-                    instance.id,
-                    priority=Priority.URGENT,
+                    stderr_acc,
+                    None,
                 )
 
         except asyncio.CancelledError:
@@ -446,6 +422,281 @@ class BackgroundTaskExecutor:
                 instance.id,
                 priority=Priority.URGENT,
             )
+
+    async def _execute_resume_path(self, instance: TaskInstance) -> None:
+        """Resume a waiting task instance with the user's response.
+
+        Guards: missing user_response, missing sdk_session_id, missing transcript.
+        Atomically consumes the response and transitions to running.
+        """
+        # Defensive guards
+        if instance.user_response is None:
+            await self._fail_instance(
+                instance.id, "Resume path entered without a pending response"
+            )
+            await dispatch_notification(
+                self._bus,
+                f"Background task: {instance.prompt[:100]}",
+                "Task failed: internal error — no response to resume with",
+                "error",
+                instance.id,
+                priority=Priority.URGENT,
+            )
+            return
+
+        if instance.sdk_session_id is None:
+            await self._fail_instance(
+                instance.id, "Cannot resume — missing sdk_session_id"
+            )
+            await dispatch_notification(
+                self._bus,
+                f"Background task: {instance.prompt[:100]}",
+                "Task failed: no session to resume from",
+                "error",
+                instance.id,
+                priority=Priority.URGENT,
+            )
+            return
+
+        # Transcript existence guard
+        transcript_path = _derive_transcript_path(instance.sdk_session_id, self._cwd)
+        if not Path(transcript_path).exists():
+            reason = f"Transcript for resume not found: {transcript_path}"
+            await self._fail_instance(instance.id, reason)
+            await dispatch_notification(
+                self._bus,
+                f"Background task: {instance.prompt[:100]}",
+                f"Task failed: {reason}",
+                "error",
+                instance.id,
+                priority=Priority.URGENT,
+            )
+            return
+
+        # Atomically consume response and transition to running
+        consumed_response = instance.user_response
+        await self._repository.update_instance(
+            instance.id,
+            status="running",
+            user_response=None,
+            started_at=datetime.now(UTC),
+        )
+
+        _log.info(
+            "Resuming background task instance {inst_id} with sdk_session={sdk_id}",
+            inst_id=instance.id,
+            sdk_id=instance.sdk_session_id,
+        )
+
+        try:
+            # Get the definition for notification source naming
+            definition: TaskDefinition | None = None
+            if instance.definition_id:
+                definition = await self._repository.get_definition(instance.definition_id)
+
+            notification_source = (
+                f"Background task: {definition.name}"
+                if definition
+                else f"Background task: {instance.prompt[:100]}"
+            )
+
+            # Run pre-processing for MCP server construction
+            preprocessing_result = await self._run_preprocessing(instance.prompt)
+
+            notification_server = create_notification_server(
+                self._bus,
+                notification_source,
+                instance.id,
+            )
+            preprocessing_result.mcp_servers["notifications"] = notification_server
+
+            tz = get_timezone(self._settings)
+            now = datetime.now(tz)
+            datetime_line = (
+                f"Current date and time: {now.strftime('%A, %B %d, %Y at %H:%M:%S')} {tz.key}\n"
+            )
+            system_prompt_text = datetime_line + "\n" + BACKGROUND_TASK_SYSTEM_PROMPT
+
+            stderr_acc = StderrAccumulator()
+            options = ClaudeAgentOptions(
+                cwd=self._agent_defaults.cwd,
+                cli_path=self._agent_defaults.cli_path,
+                env=self._agent_defaults.env,
+                system_prompt=SystemPromptPreset(
+                    type="preset",
+                    preset="claude_code",
+                    append=system_prompt_text,
+                ),
+                permission_mode="bypassPermissions",
+                mcp_servers=preprocessing_result.mcp_servers,
+                stderr=stderr_acc,
+                resume=instance.sdk_session_id,
+            )
+
+            sdk_session_id: str | None = None
+
+            async with ClaudeSDKClient(options) as client:
+                await client.query(consumed_response)
+
+                await self._run_evaluator_loop(
+                    client,
+                    instance,
+                    notification_source,
+                    stderr_acc,
+                    sdk_session_id,
+                )
+
+        except asyncio.CancelledError:
+            _log.info("Background task {inst_id} cancelled during resume", inst_id=instance.id)
+            await self._fail_instance(instance.id, "Task cancelled")
+            raise
+
+        except Exception as exc:
+            stderr = stderr_acc.get()
+            if stderr is not None:
+                _log.exception(
+                    "Background task {inst_id} failed during resume: {err}, stderr={stderr}",
+                    inst_id=instance.id,
+                    err=str(exc),
+                    stderr=stderr,
+                )
+            else:
+                _log.exception(
+                    "Background task {inst_id} failed during resume: {err}",
+                    inst_id=instance.id,
+                    err=str(exc),
+                )
+            await self._fail_instance(instance.id, str(exc))
+            await dispatch_notification(
+                self._bus,
+                f"Background task: {instance.prompt[:100]}",
+                f"Task failed with error: {exc}",
+                "error",
+                instance.id,
+                priority=Priority.URGENT,
+            )
+
+    async def _run_evaluator_loop(
+        self,
+        client: ClaudeSDKClient,
+        instance: TaskInstance,
+        notification_source: str,
+        stderr_acc: StderrAccumulator,
+        initial_sdk_session_id: str | None,
+    ) -> None:
+        """Run the evaluator loop until completion, failure, or waiting transition.
+
+        Shared by both fresh and resume paths.
+        """
+        sdk_session_id = initial_sdk_session_id
+        response_text = ""
+        iteration = 0
+        max_iterations = self._settings.max_iterations
+
+        while iteration < max_iterations:
+            iteration += 1
+
+            # Collect response
+            response_chunks: list[str] = []
+            async for sdk_message in client.receive_response():
+                if isinstance(sdk_message, ResultMessage) and sdk_message.session_id:
+                    sdk_session_id = sdk_message.session_id
+
+                if isinstance(sdk_message, AssistantMessage):
+                    for block in sdk_message.content:
+                        if isinstance(block, TextBlock):
+                            response_chunks.append(sanitize_text(block.text))
+
+            response_text = "".join(response_chunks)
+
+            # Run evaluator
+            eval_result = await self._run_evaluator(
+                instance.prompt,
+                response_text,
+            )
+
+            status = eval_result.get("status", "continue")
+            rationale = eval_result.get("rationale", "")
+
+            _log.debug(
+                "Evaluator result for {inst_id}: status={status}",
+                inst_id=instance.id,
+                status=status,
+            )
+
+            if status == "complete":
+                await self._complete_instance(instance.id, rationale)
+                await self._run_postprocessing(sdk_session_id)
+                return
+
+            if status == "stuck":
+                await self._fail_instance(instance.id, f"Agent stuck: {rationale}")
+                await dispatch_notification(
+                    self._bus,
+                    notification_source,
+                    f"Task failed: {rationale}",
+                    "error",
+                    instance.id,
+                    priority=Priority.URGENT,
+                )
+                return
+
+            if status == "needs_input":
+                if sdk_session_id is None:
+                    await self._fail_instance(
+                        instance.id,
+                        "Cannot pause — no SDK session ID captured yet",
+                    )
+                    await dispatch_notification(
+                        self._bus,
+                        notification_source,
+                        "Task failed: no session to resume from",
+                        "error",
+                        instance.id,
+                        priority=Priority.URGENT,
+                    )
+                    return
+
+                _log.info(
+                    "Agent requested input for {inst_id}, transitioning to waiting",
+                    inst_id=instance.id,
+                )
+                await self._repository.update_instance(
+                    instance.id,
+                    status="waiting",
+                    sdk_session_id=sdk_session_id,
+                )
+                await dispatch_notification(
+                    self._bus,
+                    notification_source,
+                    rationale,
+                    "info",
+                    instance.id,
+                    priority=Priority.URGENT,
+                    response_instance_id=instance.id,
+                )
+                return
+
+            # Continue: inject the evaluator's factual rationale
+            await client.query(rationale)
+
+        # Max iterations reached
+        _log.warning(
+            "Background task {inst_id} reached max iterations",
+            inst_id=instance.id,
+        )
+        await self._fail_instance(
+            instance.id,
+            f"Max iterations ({max_iterations}) reached without completion",
+        )
+        await dispatch_notification(
+            self._bus,
+            notification_source,
+            f"Task failed: reached max iterations ({max_iterations})",
+            "error",
+            instance.id,
+            priority=Priority.URGENT,
+        )
 
     async def _run_preprocessing(self, prompt: str) -> _PreprocessingResult:
         """Run pre-processing pipeline for context injection.
