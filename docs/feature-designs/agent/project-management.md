@@ -116,6 +116,8 @@ Output: ContextResult(
 
 **Submodule commit prompt**: The processor uses a dedicated `SUBMODULE_COMMIT_PROMPT` constant (not the workspace-specific `GIT_COMMIT_PROMPT`). The submodule prompt instructs the Haiku agent to: (1) read recent `git log` entries to learn the project's commit style and conventions, (2) check for any commit instructions in the repo (CONTRIBUTING.md, CLAUDE.md, etc.), (3) inspect `git status` and `git diff`, (4) group changes by purpose/directory, (5) create descriptive commits following the project's own commit style. Unlike the workspace prompt, it does **not** reference workspace-specific directories (`memories/`, `context/`).
 
+**On-demand push/sync**: Project submodules can also be pushed/synced on demand via the `push` and `sync` MCP tools from `git/tools.py` (see [workspace-version-tracking design](workspace-version-tracking.md)). The tools accept `type="project"` with `target=<project-name>` to target a specific submodule. This complements the session-end auto-push by allowing the main coordinator and task executor agents to push/sync mid-session. The git-tools MCP server is registered workspace-wide in `__main__.py` and threaded through to the task executor alongside the existing project MCP tools.
+
 ## Modeling
 
 No database entities. Project state is entirely filesystem-derived:

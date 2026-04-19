@@ -31,6 +31,7 @@ Git authentication (SSH keys, personal access tokens, etc.) is the user's respon
 | R5 | Main workspace git history tracks submodule reference updates (existing GitProcessor runs after projects processor) |
 | R6 | Inject project context and MCP tools at session start via pre-processing context provider; MCP tools are always available even when no projects are registered |
 | R7 | Deregister/remove a project (MCP tool); warn and require confirmation when uncommitted changes exist |
+| R8 | Project submodules can be pushed/synced on demand via the `push` and `sync` MCP tools (targeting `type="project"`, `target=<name>`) in addition to the session-end auto-push |
 
 ## Behaviors
 

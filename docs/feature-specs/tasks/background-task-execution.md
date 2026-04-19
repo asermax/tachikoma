@@ -22,6 +22,7 @@ Background tasks execute in isolated parallel sessions without interrupting the 
 | R4 | Agent-driven success notifications via `send_notification` MCP tool during background task execution; automatic failure notifications dispatched by the executor. Notifications carry a priority field (Urgent/Normal/Low); `send_notification` accepts an optional priority (default Normal) and automatic failure notifications use Urgent. Delivery to the user is handled by the priority buffer (see [delivery/priority-buffer](../delivery/priority-buffer.md)) |
 | R5 | Concurrency gating via configurable limit (default 3); excess instances remain pending until a slot opens |
 | R6 | Stuck/looping agent detection — evaluator detects unproductive iterations and marks the task as failed |
+| R7 | Background task agents share the main agent's restricted git surface: a destructive-git deny hook blocks `git push`, `git reset`, `git checkout .`, `git restore .`, `git clean`, and mutating `git remote` subcommands; `push` and `sync` MCP tools are available for on-demand push/sync operations |
 
 ## Behaviors
 

@@ -539,13 +539,6 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 **Complexity**: Hard
 **Description**: Background tasks currently run to completion or failure in a single uninterrupted evaluator loop — there is no way for a task to pause mid-execution and ask the user a question. This delta adds a "waiting" state to the task lifecycle where the evaluator can suspend execution and send a notification requesting user input. When the user responds, the input is injected as the next turn in the suspended task's SDK session and execution resumes. This enables simple multi-step background work (e.g., "research this and ask me before proceeding") without requiring persistent agent sessions, progress reporting, or full lifecycle control.
 
-### DLT-121: Git-friendly database storage for workspace versioning
-**Status**: ✗ Defined
-**Depends on**: None
-**Priority**: 2 (High)
-**Complexity**: Medium
-**Description**: The SQLite database file is committed to the workspace git repository on every session close, but as a binary file it produces opaque diffs that bloat the git history over time — each commit stores a full copy of the database rather than meaningful deltas. Replace the current storage approach with one that produces human-readable, diffable representations of the database state so that changes are trackable in git history with the same fidelity as memory files and context documents. Approaches to evaluate during speccing include replacing SQLite with a git-native database like Dolt, exporting SQLite tables to diffable text formats (SQL dumps, sorted CSV/TSV via tools like sqlite-diffable) alongside or instead of the binary file, or other mechanisms that preserve queryable database access while making commits meaningful. The chosen approach must support the existing async query patterns used throughout the codebase.
-
 ### DLT-122: Evaluate alternatives to Claude Agent SDK
 **Status**: ✗ Defined
 **Depends on**: None
@@ -716,18 +709,11 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 **Description**: Allow session tasks to fire immediately as steering messages into the active conversation, bypassing the idle wait. Currently, session tasks are gated by an idle check — they only fire when the user has been inactive for a configured period. This delta adds an optional immediate mode to session tasks that, when enabled, skips the idle check and injects the task's content as a steering message into the active conversation at the earliest opportunity. This enables reminder-like behavior where time-sensitive prompts reach the user without waiting for idle. The mode is configured per task definition and uses the existing steering message infrastructure.
 
 ### DLT-154: Role-based git permission guardrails
-**Status**: ✗ Defined
+**Status**: ✓ Reconciled (subsumed by DLT-155)
 **Depends on**: None
 **Priority**: 3 (Medium)
 **Complexity**: Medium
 **Description**: Agents operating inside Tachikoma (main user-driven agent, background tasks, post-processors, sub-agents spawned by pre/post-processing) currently share a single git access surface with no role-based restrictions, so any of them can commit, push, or otherwise mutate repository state. This is risky for non-user-driven roles: a runaway background task or a misbehaving post-processor could publish unintended commits or corrupt remote history before the user sees what happened. Introduce a permission layer that scopes git access by agent role — at minimum, background tasks, post-processors, and forked sub-agents must be read-only on git (no `commit`, no `push`, no `git` subcommand that mutates the working tree or refs), while the main agent retains the full surface. The layer should live at the permission/deny-rule level so restrictions apply regardless of whether the agent reaches git through bash, an MCP tool, or the auto-commit system. The delta delivers the role classification, the deny-rule enforcement, and sensible defaults per role.
-
-### DLT-155: Project push/sync MCP tools with git deny rules
-**Status**: ✗ Defined
-**Depends on**: None
-**Priority**: 1 (Critical)
-**Complexity**: Easy
-**Description**: The agent currently reaches git through raw bash, which means it either has too much power (destructive operations like `git push --force`, `git reset --hard`, `git checkout .`, `git clean`, and `git remote` changes are all reachable) or too little guidance (no clear primitives for pushing and syncing workspace and project submodules). This delta narrows the surface: expose two dedicated MCP tools — `push` (push the current branch to its remote) and `sync` (pull then push) — both aware of workspace and project submodules, and simultaneously add bash deny rules for destructive git operations (`git push --force`, `git reset --hard`, `git checkout .`, `git clean`, `git remote` modifications). No commit tool is exposed; the existing auto-commit system remains the sole way to create commits. The net result is a small, safe git surface the agent can rely on while anything that could cause irrecoverable damage is locked down.
 
 ### DLT-156: Encrypted token store for repo-committed secrets
 **Status**: ✗ Defined
