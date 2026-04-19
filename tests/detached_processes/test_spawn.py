@@ -22,7 +22,8 @@ from .conftest import _make_record
 async def test_is_alive_fresh_process():
     """A freshly spawned short-lived process is alive immediately."""
     proc = await asyncio.create_subprocess_exec(
-        "sleep", "5",
+        "sleep",
+        "5",
         start_new_session=True,
         stdout=asyncio.subprocess.DEVNULL,
         stderr=asyncio.subprocess.DEVNULL,
@@ -56,7 +57,8 @@ async def test_is_alive_dead_process():
 async def test_is_alive_pid_reuse_mismatch():
     """Mismatched create_time returns False even if PID exists."""
     proc = await asyncio.create_subprocess_exec(
-        "sleep", "5",
+        "sleep",
+        "5",
         start_new_session=True,
         stdout=asyncio.subprocess.DEVNULL,
         stderr=asyncio.subprocess.DEVNULL,
@@ -110,7 +112,6 @@ async def test_spawn_happy_path(tmp_path, repo):
     finally:
         # Clean up
         with contextlib.suppress(ProcessLookupError, PermissionError):
-
             os.killpg(os.getpgid(record.pid), signal.SIGKILL)
 
 
@@ -189,7 +190,6 @@ async def test_spawn_shell_features(tmp_path, repo):
             assert "world" in content
     finally:
         with contextlib.suppress(ProcessLookupError, PermissionError):
-
             os.killpg(os.getpgid(record.pid), signal.SIGKILL)
 
 
@@ -215,7 +215,6 @@ async def test_spawn_env_overrides(tmp_path, repo):
             assert "hello_from_test" in content
     finally:
         with contextlib.suppress(ProcessLookupError, PermissionError):
-
             os.killpg(os.getpgid(record.pid), signal.SIGKILL)
 
 
@@ -284,7 +283,6 @@ async def test_terminate_timeout_zero(tmp_path, repo):
         # Just verify no exception was raised
     finally:
         with contextlib.suppress(ProcessLookupError, PermissionError):
-
             os.killpg(os.getpgid(record.pid), signal.SIGKILL)
 
 

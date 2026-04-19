@@ -680,9 +680,7 @@ class TelegramChannel(Channel):
         def _force_exit_during_flush(sig: signal.Signals) -> None:
             nonlocal force_exit_triggered, interrupt_task
             force_exit_triggered = True
-            _log.warning(
-                "Second {sig} during shutdown flush — abandoning digest", sig=sig.name
-            )
+            _log.warning("Second {sig} during shutdown flush — abandoning digest", sig=sig.name)
             flush_task.cancel()
             interrupt_task = asyncio.create_task(self._coordinator.interrupt())
 
