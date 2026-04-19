@@ -6,11 +6,22 @@ per table) for git tracking, and restores the DB from those dumps on sync.
 
 import asyncio
 import shutil
+import sys
 from pathlib import Path
 
 from loguru import logger
 
 _log = logger.bind(component="git.db_sync")
+
+
+def _sqlite_diffable_bin() -> str:
+    # When tachikoma is installed via `uv tool install`, dep CLIs are not
+    # symlinked to ~/.local/bin — they only exist in the tool venv's bin dir
+    # alongside our python. Resolve the sibling first, fall back to PATH for
+    # editable/system installs.
+    candidate = Path(sys.executable).parent / "sqlite-diffable"
+
+    return str(candidate) if candidate.exists() else "sqlite-diffable"
 
 
 async def _run_sqlite_diffable(*args: str) -> None:
@@ -23,7 +34,7 @@ async def _run_sqlite_diffable(*args: str) -> None:
         RuntimeError: If sqlite-diffable exits with non-zero code.
     """
     proc = await asyncio.create_subprocess_exec(
-        "sqlite-diffable",
+        _sqlite_diffable_bin(),
         *args,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,

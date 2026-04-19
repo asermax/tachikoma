@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from tachikoma.git.db_sync import dump_database, restore_database
+from tachikoma.git.db_sync import _sqlite_diffable_bin, dump_database, restore_database
 
 
 class AsyncSubprocessMock:
@@ -103,7 +103,7 @@ class TestDumpDatabase:
             await dump_database(db_path, dump_dir)
 
         mock_exec.assert_called_once_with(
-            "sqlite-diffable",
+            _sqlite_diffable_bin(),
             "dump",
             str(db_path),
             str(dump_dir),
@@ -179,7 +179,7 @@ class TestRestoreDatabase:
             await restore_database(db_path, dump_dir)
 
         mock_exec.assert_called_once_with(
-            "sqlite-diffable",
+            _sqlite_diffable_bin(),
             "load",
             str(db_path),
             str(dump_dir),
