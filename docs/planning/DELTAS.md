@@ -401,10 +401,10 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 
 ### DLT-088: Scheduled memory store maintenance
 **Status**: ✗ Defined
-**Depends on**: DLT-147
+**Depends on**: None
 **Priority**: 4 (Low)
 **Complexity**: Medium
-**Description**: A scheduled system task that periodically reviews and cleans up the memory store. The task runs on a cron schedule using the silent-maintenance task execution path, evaluating stored memories against maintenance criteria — such as staleness, redundancy, relevance decay, or excessive granularity in episodic entries — and consolidating, archiving, or removing entries that no longer provide value. The specific criteria and cleanup strategies should be investigated during speccing by analyzing real memory data for common patterns worth addressing.
+**Description**: Periodically review and clean up the memory store, evaluating stored memories against maintenance criteria — such as staleness, redundancy, relevance decay, or excessive granularity in episodic entries — and consolidating, archiving, or removing entries that no longer provide value. The specific criteria and cleanup strategies should be investigated during speccing by analyzing real memory data for common patterns worth addressing.
 
 ### DLT-089: Abort tool execution on stop steering message
 **Status**: ✗ Defined
@@ -433,13 +433,6 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 **Priority**: 4 (Low)
 **Complexity**: Medium
 **Description**: Developers need to debug failed background tasks and understand execution history, but task instances currently record only status, timestamps, and a free-text result — with no link to the SDK session that ran, no transcript reference, and no structured error context. This delta enriches the task instance model and execution flow with traceability data: recording the SDK session ID and transcript path for each background execution, capturing structured error context (error type, message, tool calls leading to failure) on failure using the error classification from the structured error handling subsystem, and computing execution duration as a first-class field. These fields enable querying past executions by session, inspecting failure artifacts, and displaying execution metrics without manual timestamp arithmetic. The scope is limited to the tasks subsystem — background jobs are not interactive conversations, but they still require an audit trail linking execution to its artifacts and outcomes.
-
-### DLT-102: Prevent stale cron from firing on create/update
-**Status**: ✗ Defined
-**Depends on**: None
-**Priority**: 1 (Critical)
-**Complexity**: Easy
-**Description**: When a cron task is created or updated with a schedule time that has already passed today, the instance generator fires it immediately to "catch up" instead of waiting for the next scheduled occurrence. For example: a task runs at 4 PM, you update it to 8 AM at noon, it fires right away instead of waiting until tomorrow. Add a `since` timestamp field to `task_definitions` that gets set to `now()` on every create and update operation. The instance generator should only create instances for cron matches that fall after the `since` timestamp, ensuring schedule changes never trigger retroactive firings. This addresses a distinct problem from preventing duplicate instances within the same cron period — here the issue is newly-created or recently-updated tasks firing retroactively for past schedule matches.
 
 ### DLT-104: Auto-cleanup of completed one-shot tasks
 **Status**: ✗ Defined
@@ -594,13 +587,6 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 **Priority**: 2 (High)
 **Complexity**: Medium
 **Description**: When a user message arrives at the coordinator during an active background task execution, signal the background task to pause so the main session receives full API attention and the task does not compete for resources. The paused task's SDK session is preserved and execution resumes automatically once the main session returns to idle. This covers the system-initiated pause triggered by user activity — distinct from task-initiated pauses where the background task itself requests user input. The pause mechanism integrates with the existing background task executor's evaluation loop: when a pause signal is received between iterations, the executor suspends the task, records the paused state in the task instance, and releases the semaphore slot. On resume, the executor reacquires a slot and continues from the preserved SDK session.
-
-### DLT-147: System task type for silent maintenance operations
-**Status**: ✗ Defined
-**Depends on**: None
-**Priority**: 1 (Critical)
-**Complexity**: Medium
-**Description**: Task definitions currently support `session` (idle-gated) and `background` (notifies user on completion/failure) types, both assuming user-facing work. Maintenance operations — memory reconciliation, stale task cleanup, vault consistency checks, log rotation — don't warrant user-visible notifications but still need the same scheduling infrastructure. Add a third `system` task type that reuses the background execution path but suppresses all notification dispatch (success, failure, and explicit `send_notification` calls made by the task itself). System tasks remain discoverable through existing task history tools so operators can inspect their runs. Scheduling triggers can be cron-based or condition-driven (e.g., "run reconciliation when N sessions have accumulated"); the trigger mechanism should be evaluated during speccing.
 
 ### DLT-148: Sharpen scope boundaries across post-processor prompts
 **Status**: ✗ Defined

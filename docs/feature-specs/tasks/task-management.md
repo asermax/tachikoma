@@ -30,6 +30,7 @@ Note: The workflow subsystem provides a separate set of MCP tools (`start_workfl
 | R9 | Base system prompt preamble includes a Tasks section (rendered with the configured timezone) so the agent has foundational awareness of the task system regardless of whether tasks currently exist |
 | R10 | Schedule deserialization is robust to malformed data — legacy bare ISO datetime strings are recovered as one-shot schedules, and corrupted definitions are auto-disabled |
 | R11 | On-demand background task execution via `run_task_now` MCP tool — supports both by-reference (existing definition) and ad-hoc (transient instance with no definition) modes |
+| R12 | Stale-cron prevention — a `since` timestamp auto-stamped on every create and update prevents newly-created or recently-updated task definitions from firing retroactively for cron matches before the definition was last modified |
 
 ## Behaviors
 
@@ -69,6 +70,16 @@ An async loop continuously evaluates enabled definitions and creates pending ins
 - Given a one-shot task definition that already has a pending or running instance, then no duplicate instance is created
 - Given the system restarts, then the instance generator resumes and creates at most one catch-up instance per definition that was missed during downtime (using `last_fired_at` to determine what was missed)
 - Given cron expressions are evaluated, then they use the user's configured timezone (via `cronsim` + stdlib `zoneinfo`)
+
+### Stale-Cron Prevention (R12)
+
+The instance generator uses a `since` timestamp (auto-stamped on every INSERT and UPDATE via SQLAlchemy) to prevent cron matches from before the definition was last modified from triggering instances.
+
+**Acceptance Criteria**:
+- Given a newly created cron task definition, when the cron match time is before the creation timestamp (`since`), then no instance is created and the generator waits for the next occurrence after creation
+- Given an updated cron task definition, when the cron match time is before the update timestamp (`since`), then no instance is created
+- Given a cron task where the first cron match is before `since`, the generator advances the CronSim anchor past `since` to find the next valid occurrence rather than skipping the task entirely
+- Given a cron task that has just fired, when the next generator tick evaluates the definition, then the updated `since` timestamp does not prevent the next naturally-occurring cron match from firing
 
 ### Persistence and Recovery (R7, R8)
 
