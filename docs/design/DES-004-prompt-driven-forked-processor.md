@@ -74,7 +74,7 @@ await query_and_consume(
 )
 ```
 
-The hook inspects the `command` field in the tool input before execution and denies non-matching commands with a descriptive reason. The hook supports compound commands — commands joined by `&&`, `||`, `|`, or `;` are split and each sub-command is validated independently. If any sub-command fails, the entire command is denied.
+The hook inspects the `command` field in the tool input before execution and denies non-matching commands with a descriptive reason. The hook supports compound commands — commands joined by `&&`, `||`, `|`, or `;` are split and each sub-command is validated independently. The splitting respects shell quoting: operators inside single quotes, double quotes, or after a backslash are treated as literal characters and do not trigger a split. If any sub-command fails, the entire command is denied.
 
 The hook compiles the allowed prefixes into a single regex at creation time. A command matches if it exactly equals a prefix, or starts with a prefix followed by a space and arguments (e.g., `"cd"` matches both `cd` and `cd /path`, but not `cdeject`). Prefixes are deduplicated and sorted longest-first to ensure correct regex alternation.
 

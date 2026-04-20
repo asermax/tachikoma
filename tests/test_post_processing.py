@@ -20,6 +20,7 @@ from tachikoma.post_processing import (
     PostProcessingPipeline,
     PostProcessor,
     PromptDrivenProcessor,
+    _split_compound_commands,
     fork_and_capture,
     fork_and_consume,
     make_bash_deny_hook,
@@ -993,6 +994,122 @@ class TestPromptDrivenProcessor:
         )
 
 
+class TestSplitCompoundCommands:
+    """Tests for _split_compound_commands quoting-aware splitting."""
+
+    def test_single_command_no_split(self) -> None:
+        assert _split_compound_commands("git status") == ["git status"]
+
+    def test_single_command_with_args_no_split(self) -> None:
+        assert _split_compound_commands("ls -la /workspace") == ["ls -la /workspace"]
+
+    @pytest.mark.parametrize(
+        "command, expected_count",
+        [
+            ("git status | head -5", 2),
+            ("git status && git diff", 2),
+            ("git status || git diff", 2),
+            ("git status; git diff", 2),
+            ("git status && git diff || git log", 3),
+        ],
+    )
+    def test_splits_on_real_operators(self, command: str, expected_count: int) -> None:
+        parts = _split_compound_commands(command)
+        assert len(parts) == expected_count
+
+    def test_double_quoted_pipe_not_split(self) -> None:
+        assert _split_compound_commands('grep -E "pattern1|pattern2" file.txt') == [
+            'grep -E "pattern1|pattern2" file.txt',
+        ]
+
+    def test_multiple_pipes_in_double_quotes_not_split(self) -> None:
+        assert _split_compound_commands('grep -E "a|b|c" file.txt') == [
+            'grep -E "a|b|c" file.txt',
+        ]
+
+    def test_single_quoted_pipe_not_split(self) -> None:
+        assert _split_compound_commands("grep -E 'pattern1|pattern2' file.txt") == [
+            "grep -E 'pattern1|pattern2' file.txt",
+        ]
+
+    def test_single_quoted_semicolon_not_split(self) -> None:
+        assert _split_compound_commands("echo 'hello ; world'") == [
+            "echo 'hello ; world'",
+        ]
+
+    def test_double_quoted_and_not_split(self) -> None:
+        assert _split_compound_commands('echo "hello && goodbye"') == [
+            'echo "hello && goodbye"',
+        ]
+
+    def test_single_quote_inside_double_quotes(self) -> None:
+        assert _split_compound_commands("echo \"it's | fine\"") == [
+            "echo \"it's | fine\"",
+        ]
+
+    def test_double_quote_inside_single_quotes(self) -> None:
+        assert _split_compound_commands("echo 'he said \"hello | world\"'") == [
+            'echo \'he said "hello | world"\'',
+        ]
+
+    def test_escaped_semicolon_not_split(self) -> None:
+        assert _split_compound_commands("echo hello \\; world") == [
+            "echo hello \\; world",
+        ]
+
+    def test_escaped_pipe_not_split(self) -> None:
+        assert _split_compound_commands("grep \\|\\| file.txt") == [
+            "grep \\|\\| file.txt",
+        ]
+
+    def test_escaped_backslash_before_operator(self) -> None:
+        parts = _split_compound_commands("echo test \\\\; echo oops")
+        assert len(parts) == 2
+        assert parts[0] == "echo test \\\\"
+        assert parts[1] == "echo oops"
+
+    def test_mixed_quoted_pipe_and_real_pipe(self) -> None:
+        parts = _split_compound_commands('grep "a|b" | wc -l')
+        assert len(parts) == 2
+        assert parts[0] == 'grep "a|b"'
+        assert parts[1] == "wc -l"
+
+    def test_mixed_single_quoted_and_real_pipe(self) -> None:
+        parts = _split_compound_commands("grep 'a|b' | wc -l")
+        assert len(parts) == 2
+        assert parts[0] == "grep 'a|b'"
+        assert parts[1] == "wc -l"
+
+    def test_empty_string_returns_empty(self) -> None:
+        assert _split_compound_commands("") == []
+
+    def test_whitespace_only_returns_empty(self) -> None:
+        assert _split_compound_commands("   ") == []
+
+    def test_trailing_operator_strips_empty_part(self) -> None:
+        assert _split_compound_commands("git status &&") == ["git status"]
+
+    def test_unmatched_double_quote_no_split(self) -> None:
+        assert _split_compound_commands('grep "pattern') == [
+            'grep "pattern',
+        ]
+
+    def test_unmatched_single_quote_no_split(self) -> None:
+        assert _split_compound_commands("grep 'pattern") == [
+            "grep 'pattern",
+        ]
+
+    def test_trailing_backslash_treated_as_literal(self) -> None:
+        assert _split_compound_commands("echo hello\\") == [
+            "echo hello\\",
+        ]
+
+    def test_backslash_escaped_double_quote_inside_double_quotes(self) -> None:
+        assert _split_compound_commands('echo "hello \\" ; still quoted"') == [
+            'echo "hello \\" ; still quoted"',
+        ]
+
+
 class TestMakeBashDenyHook:
     """Tests for make_bash_deny_hook (DLT-155)."""
 
@@ -1073,5 +1190,12 @@ class TestMakeBashDenyHook:
         hook = deny_hook.hooks[0]
 
         result = await hook({"tool_input": {}}, None, MagicMock())
+
+        assert result == {}
+
+    async def test_pipe_inside_quotes_not_split(self, deny_hook) -> None:
+        result = await self._run_hook(
+            deny_hook, 'grep -E "pattern1|pattern2" file.txt'
+        )
 
         assert result == {}

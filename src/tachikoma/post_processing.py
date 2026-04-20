@@ -289,9 +289,79 @@ def abs_rule(tool: str, path: Path) -> str:
     return f"{tool}(//{str(path.resolve())[1:]}/**)"
 
 
-# Regex for splitting compound Bash commands by shell operators.
-# Order matters: && and || (two-char) are tried before | and ; (one-char).
-_COMPOUND_SPLIT_RE = re.compile(r"\s*(?:&&|\|\||[;|])\s*")
+def _split_compound_commands(command: str) -> list[str]:
+    """Split a shell command on compound operators, respecting quoting.
+
+    Splits on ``&&``, ``||``, ``|``, and ``;`` only when they appear
+    outside single quotes, double quotes, and backslash escapes.
+    This avoids false splits on characters like ``|`` inside quoted
+    arguments (e.g. ``grep -E "pattern1|pattern2"``).
+    """
+    parts: list[str] = []
+    current: list[str] = []
+    in_single_quote = False
+    in_double_quote = False
+    i = 0
+
+    while i < len(command):
+        char = command[i]
+
+        if in_single_quote:
+            current.append(char)
+            if char == "'":
+                in_single_quote = False
+
+        elif in_double_quote:
+            if char == "\\":
+                current.append(char)
+                if i + 1 < len(command):
+                    i += 1
+                    current.append(command[i])
+                i += 1
+                continue
+            current.append(char)
+            if char == '"':
+                in_double_quote = False
+
+        else:
+            if char == "'":
+                current.append(char)
+                in_single_quote = True
+
+            elif char == '"':
+                current.append(char)
+                in_double_quote = True
+
+            elif char == "\\":
+                current.append(char)
+                if i + 1 < len(command):
+                    i += 1
+                    current.append(command[i])
+                i += 1
+                continue
+
+            elif (
+                char in ("|", ";")
+                or (char == "&" and i + 1 < len(command) and command[i + 1] == "&")
+            ):
+                part = "".join(current).strip()
+                if part:
+                    parts.append(part)
+                current = []
+                # Two-char operators (&&, ||): skip the second character
+                if char in ("&", "|") and i + 1 < len(command) and command[i + 1] == char:
+                    i += 1
+
+            else:
+                current.append(char)
+
+        i += 1
+
+    part = "".join(current).strip()
+    if part:
+        parts.append(part)
+
+    return parts
 
 
 def make_bash_gate_hook(allowed_prefixes: list[str]) -> HookMatcher:
@@ -305,10 +375,9 @@ def make_bash_gate_hook(allowed_prefixes: list[str]) -> HookMatcher:
     and each sub-command is checked independently. If any sub-command does
     not match an allowed prefix, the entire command is denied.
 
-    The splitting is intentionally simple — it does not parse shell quoting.
-    This is a conservative security tradeoff: commands with shell operators
-    inside quoted strings will be incorrectly split, but this is unlikely
-    in practice for the constrained agents that use this hook.
+    The splitting respects shell quoting — operators inside single quotes,
+    double quotes, or after a backslash are treated as literal characters
+    and do not trigger a split.
 
     Args:
         allowed_prefixes: Command prefixes to allow (e.g. ``["git "]``).
@@ -339,7 +408,7 @@ def make_bash_gate_hook(allowed_prefixes: list[str]) -> HookMatcher:
         command = input.get("tool_input", {}).get("command", "")
 
         # Split compound commands by shell operators
-        parts = _COMPOUND_SPLIT_RE.split(command)
+        parts = _split_compound_commands(command)
 
         for part in parts:
             part = part.strip()
@@ -384,6 +453,10 @@ def make_bash_deny_hook(denied_patterns: list[re.Pattern[str]]) -> HookMatcher:
     command is denied. Otherwise the hook returns an empty decision and
     the command is handled normally by the CLI's permission system.
 
+    The splitting respects shell quoting — operators inside single quotes,
+    double quotes, or after a backslash are treated as literal characters
+    and do not trigger a split.
+
     Patterns are matched against each split sub-command via ``pattern.match()``
     (anchored at the start of the sub-command). Compound splitting already
     strips surrounding whitespace per sub-command.
@@ -404,7 +477,7 @@ def make_bash_deny_hook(denied_patterns: list[re.Pattern[str]]) -> HookMatcher:
         command = input.get("tool_input", {}).get("command", "")
 
         # Split compound commands by shell operators
-        parts = _COMPOUND_SPLIT_RE.split(command)
+        parts = _split_compound_commands(command)
 
         for part in parts:
             part = part.strip()

@@ -452,3 +452,25 @@ class TestGitBashHookCompoundCommands:
             None,
         )
         assert result["hookSpecificOutput"]["permissionDecision"] == "deny"
+
+    async def test_pipe_in_quoted_echo_pattern_not_split(self) -> None:
+        """Pipe inside quoted argument is not split as a compound operator."""
+        hook_fn = GIT_BASH_HOOK.hooks[0]
+        result = await hook_fn(
+            {"tool_input": {"command": 'echo "pattern1|pattern2"'}},
+            None,
+            None,
+        )
+
+        assert result == {}
+
+    async def test_actual_pipe_after_quoted_arg_splits(self) -> None:
+        """Real pipe operator after a quoted argument still splits correctly."""
+        hook_fn = GIT_BASH_HOOK.hooks[0]
+        result = await hook_fn(
+            {"tool_input": {"command": 'echo "a|b" | cat'}},
+            None,
+            None,
+        )
+
+        assert result == {}
