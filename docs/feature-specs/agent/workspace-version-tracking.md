@@ -29,7 +29,7 @@ Automatic git version tracking for all workspace file changes. Every modificatio
 | R10 | If no `origin` remote is configured, skip pushing silently (no-op) |
 | R11 | On push failure (rebase failed, push failed after rebase), log a warning with the failure reason and continue; committed changes remain intact and will be retried on next sync |
 | R12 | System prompt preamble instructs the assistant that workspace changes are pushed automatically when a remote is configured |
-| R13 | Sync/push operations skip repositories with uncommitted changes to avoid data loss; on `smart_push`, when naive rebase fails due to a dirty working tree, changes are stashed, the rebase is retried, and the stash is restored regardless of outcome |
+| R13 | `smart_pull` skips repositories with uncommitted changes to avoid data loss. `smart_push` runs `git rebase --autostash` so tracked dirty changes are transparently stashed and restored across the rebase (and across an agent-driven conflict resolution if one is needed). |
 | R14 | `push` and `sync` MCP tools that wrap `smart_push` / `smart_pull` for the workspace (and registered project submodules); always available to the main coordinator agent and the task executor agent |
 | R15 | PreToolUse deny hook on every non-git-processor agent surface that blocks destructive bash git commands: `git push`, `git reset`, `git checkout .`, `git restore .`, `git clean`, and mutating `git remote` subcommands |
 | R16 | The deny hook splits compound commands (`&&`, `||`, `|`, `;`) and checks each sub-command independently |
@@ -59,8 +59,8 @@ After all main-phase processors complete (memory extraction writes files), the g
 - Given the remote has diverged and naive rebase fails, when divergence is detected, then a Haiku agent is spawned to resolve conflicts and complete the push
 - Given naive rebase succeeds, when the rebase completes, then no merge commits exist and the history is linear (R7)
 - Given conflict resolution succeeds, when the agent completes the rebase, then no merge commits exist and the history is linear (R7)
-- Given a diverged remote and a dirty working tree during `smart_push`, when the naive rebase fails without starting, then dirty changes are stashed, the rebase is retried, and the stash is restored regardless of outcome (R13)
-- Given stash-assisted rebase succeeds, when the push completes, then the stash has been restored and the result is REBASE_SUCCEEDED (R13)
+- Given a diverged remote and dirty tracked files during `smart_push`, when the rebase runs with `--autostash`, then git stashes the tracked changes, completes the rebase, restores the stash, and the push succeeds with REBASE_SUCCEEDED (R13)
+- Given a diverged remote and an untracked file that would be overwritten by the rebase, when `git rebase --autostash` refuses to start, then `smart_push` returns REBASE_FAILED with no rebase state left behind and committed changes are preserved for the next attempt (R13)
 
 ### Commit Agent Behavior (R3, R7)
 

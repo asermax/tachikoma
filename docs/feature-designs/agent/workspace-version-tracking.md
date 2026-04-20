@@ -79,21 +79,10 @@ sequenceDiagram
             Sync->>Remote: git push origin HEAD
             Sync-->>Git: PUSHED
         else DIVERGED
-            Sync->>Sync: naive rebase attempt
+            Sync->>Sync: git rebase --autostash (handles dirty tracked changes)
             alt clean rebase
                 Sync->>Remote: git push origin HEAD
                 Sync-->>Git: REBASE_SUCCEEDED
-            else dirty tree (rebase didn't start)
-                Sync->>Sync: stash dirty changes
-                Sync->>Sync: retry rebase
-                alt stash retry succeeded
-                    Sync->>Sync: stash pop (restore)
-                    Sync->>Remote: git push origin HEAD
-                    Sync-->>Git: REBASE_SUCCEEDED
-                else stash retry failed
-                    Sync->>Sync: stash pop (restore)
-                    Sync-->>Git: REBASE_FAILED (local preserved)
-                end
             else conflicts
                 Sync->>Agent: spawn Haiku for conflict resolution
                 alt agent succeeded
@@ -102,6 +91,8 @@ sequenceDiagram
                 else agent failed
                     Sync-->>Git: REBASE_FAILED (local preserved)
                 end
+            else rebase refused to start (e.g. untracked files in the way)
+                Sync-->>Git: REBASE_FAILED (local preserved)
             end
         end
         Git->>Git: git status --porcelain (verify)
@@ -153,8 +144,7 @@ git/sync.py (stateless functions)
 ├── detect_divergence(cwd, remote, branch) → DivergenceStatus
 ├── smart_push(cwd, remote, branch, agent_defaults) → PushResult
 ├── smart_pull(cwd, remote, branch, agent_defaults) → SyncResult
-├── _try_naive_rebase(cwd, remote_branch) → bool
-├── _retry_rebase_with_stash(cwd, remote_branch) → bool
+├── _try_naive_rebase(cwd, remote_branch) → bool   # uses --autostash
 ├── _agent_rebase(cwd, remote_branch, agent_defaults) → bool
 ├── _abort_stale_rebase(cwd) → bool
 └── _has_uncommitted_changes(cwd) → bool
@@ -325,17 +315,17 @@ git/tools.py
 **When**: `smart_push` detects divergence and both naive and agent rebase fail
 **Then**: REBASE_FAILED logged as warning. Local commits preserved. Will be retried on next sync.
 
-### Scenario: Push with divergence — dirty tree, stash retry succeeds
+### Scenario: Push with divergence — dirty tracked files, autostash handles it
 
-**Given**: Origin remote has diverged and the working tree has uncommitted changes (e.g., active log file)
-**When**: Naive rebase fails without starting due to dirty tree
-**Then**: `smart_push` stashes dirty changes, retries the rebase, restores the stash, and pushes. Result is REBASE_SUCCEEDED.
+**Given**: Origin remote has diverged and the working tree has uncommitted changes to tracked files (e.g., active log file)
+**When**: `smart_push` runs `git rebase --autostash`
+**Then**: Git stashes dirty changes, rebases, restores the stash, and pushes. Result is REBASE_SUCCEEDED.
 
-### Scenario: Push with divergence — dirty tree, stash retry also fails
+### Scenario: Push with divergence — rebase refuses to start
 
-**Given**: Origin remote has diverged, working tree is dirty, and stash-assisted rebase also fails
-**When**: Stash retry returns False
-**Then**: Stash is restored, REBASE_FAILED logged as warning. Local commits preserved.
+**Given**: Origin remote has diverged and an untracked file in the workspace would be overwritten by the rebase (so even autostash can't make the rebase start)
+**When**: `_try_naive_rebase` returns False without leaving rebase state behind
+**Then**: REBASE_FAILED logged as warning. Local commits preserved. Operator must clear the offending untracked file.
 
 ### Scenario: Session ends with workspace changes, no origin remote
 
