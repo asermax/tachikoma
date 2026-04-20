@@ -2,6 +2,33 @@
 
 <!-- version list -->
 
+## v1.37.2 (2026-04-20)
+
+### Bug Fixes
+
+- **git**: Add active log gitignore and stash retry for dirty-tree rebase
+  ([`715d3f4`](https://github.com/asermax/tachikoma/commit/715d3f45e30d0a8249d34311e15299dc986d735b))
+
+- **git**: Derive bash hook prefixes from shared list
+  ([`5e03f38`](https://github.com/asermax/tachikoma/commit/5e03f3877a726cf066ef7b8b278e6fc6e44bf418))
+
+### Documentation
+
+- Reconcile feature docs for gitignore and stash retry changes
+  ([`86f1748`](https://github.com/asermax/tachikoma/commit/86f1748f91d9a26e247c39ef67d2b3a326535c16))
+
+- Update delivery and channel docs for non-blocking pattern
+  ([`5fe94fb`](https://github.com/asermax/tachikoma/commit/5fe94fb1b1b82ec2e6d9f543cd73458a00d51969))
+
+- Update DES-004 code example to match derived pattern
+  ([`fefedf3`](https://github.com/asermax/tachikoma/commit/fefedf36b544f52f7be28c301060c31b2ce18fe6))
+
+### Refactoring
+
+- **delivery**: Make buffered delivery non-blocking to free EventBus
+  ([`abb9055`](https://github.com/asermax/tachikoma/commit/abb9055bdbe82fb9298867eec7449c99eda0251d))
+
+
 ## v1.37.1 (2026-04-20)
 
 ### Bug Fixes
