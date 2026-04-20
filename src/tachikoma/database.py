@@ -240,7 +240,7 @@ class Database:
                 )
                 _log.info("Schema migration: added 'updated_at' column to task_instances table")
 
-            # Check if since column exists on task_definitions table (DLT-102)
+            # Check if since column exists on task_definitions table
             result = await conn.execute(
                 text("SELECT * FROM pragma_table_info('task_definitions') WHERE name='since'")
             )

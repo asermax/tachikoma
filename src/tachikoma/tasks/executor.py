@@ -238,16 +238,6 @@ class BackgroundTaskRunner:
             if instance.id in self._running_tasks:
                 continue
 
-            if (
-                self._semaphore.locked()
-                and len(self._running_tasks) >= self._settings.max_concurrent_background
-            ):
-                _log.debug(
-                    "Max concurrent tasks reached, skipping instance {inst_id}",
-                    inst_id=instance.id,
-                )
-                continue
-
             task = asyncio.create_task(
                 self._run_with_semaphore(instance),
                 name=f"bg-exec:{instance.id}",

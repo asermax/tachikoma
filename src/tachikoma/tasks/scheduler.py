@@ -93,8 +93,7 @@ async def instance_generator_tick(
 
             if schedule.type == "cron" and schedule.expression:
                 try:
-                    # Compute anchor in evaluation timezone
-                    # See DLT-090 design: last_fired_at is UTC, must convert to tz
+                    # last_fired_at is stored UTC, so convert to the evaluation tz
                     if definition.last_fired_at is None:
                         anchor_tz = now_tz.replace(
                             minute=0,
@@ -116,13 +115,11 @@ async def instance_generator_tick(
                         except (CronSimError, StopIteration):
                             continue
 
-                    # Strict firing: only when cron time has definitively passed (R1)
                     if next_fire > now_tz:
                         continue
 
                     cron_match_utc = next_fire.astimezone(UTC)
 
-                    # Period-aware duplicate check (S2)
                     active = await repository.get_active_instance_for_definition(
                         definition.id,
                         scheduled_for=cron_match_utc,
@@ -135,7 +132,6 @@ async def instance_generator_tick(
                         )
                         continue
 
-                    # Create instance with scheduled_for=cron_match_utc (S1)
                     await _create_pending_instance(
                         repository,
                         definition,
@@ -144,7 +140,7 @@ async def instance_generator_tick(
                     )
 
                     # Advance last_fired_at so next cycle's CronSim anchor
-                    # produces a future time, preventing catch-up duplicates (R4)
+                    # produces a future time, preventing catch-up duplicates
                     await repository.update_definition(
                         definition.id,
                         last_fired_at=now_utc,
@@ -167,7 +163,6 @@ async def instance_generator_tick(
                 and definition.last_fired_at is None
                 and schedule.at <= now_utc
             ):
-                # One-shot: fire if target time passed and hasn't fired yet (R5)
                 active = await repository.get_active_instance_for_definition(
                     definition.id,
                 )
@@ -244,7 +239,18 @@ async def session_task_scheduler_tick(
                 updated_instance,
                 on_delivered=on_complete,
             )
-            await buffer.enqueue(item)
+
+            try:
+                await buffer.enqueue(item)
+            except Exception:
+                # Roll back the running transition so the next tick retries —
+                # otherwise the row is stuck running with no executor attached
+                await repository.update_instance(
+                    instance.id,
+                    status="pending",
+                    started_at=None,
+                )
+                raise
 
             _log.info(
                 "Enqueued session task into buffer: inst_id={id}",
