@@ -1,6 +1,6 @@
 """Shared fixtures for task tests."""
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -26,6 +26,7 @@ def _make_definition(
     prompt: str = "Test prompt",
     enabled: bool = True,
     last_fired_at: datetime | None = None,
+    since: datetime | None = None,
 ) -> TaskDefinition:
     """Create a TaskDefinition with sensible defaults."""
     return TaskDefinition(
@@ -36,6 +37,7 @@ def _make_definition(
         prompt=prompt,
         enabled=enabled,
         last_fired_at=last_fired_at,
+        since=since or (_utcnow() - timedelta(hours=1)),
         created_at=_utcnow(),
     )
 

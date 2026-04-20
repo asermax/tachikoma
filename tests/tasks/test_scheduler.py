@@ -422,9 +422,10 @@ class TestInstanceGenerator:
         # 2026-04-05 is a Sunday. Cron `0 13 * * 0` fires at 13:00 on Sundays.
         tz = ZoneInfo("UTC")
         sunday_13_00_30 = datetime(2026, 4, 5, 13, 0, 30, tzinfo=tz)
+        sunday_12_00 = datetime(2026, 4, 5, 12, 0, 0, tzinfo=tz)
 
         schedule = ScheduleConfig(type="cron", expression="0 13 * * 0")
-        definition = _make_definition("def-1", schedule=schedule)
+        definition = _make_definition("def-1", schedule=schedule, since=sunday_12_00)
         await repo.create_definition(definition)
 
         settings = TaskSettings(timezone="UTC")
@@ -481,9 +482,10 @@ class TestInstanceGenerator:
         """AC3: Non-hour-boundary cron behavior unchanged by the fix."""
         tz = ZoneInfo("UTC")
         sunday_13_30_30 = datetime(2026, 4, 5, 13, 30, 30, tzinfo=tz)
+        sunday_12_00 = datetime(2026, 4, 5, 12, 0, 0, tzinfo=tz)
 
         schedule = ScheduleConfig(type="cron", expression="30 13 * * 0")
-        definition = _make_definition("def-1", schedule=schedule)
+        definition = _make_definition("def-1", schedule=schedule, since=sunday_12_00)
         await repo.create_definition(definition)
 
         settings = TaskSettings(timezone="UTC")
@@ -512,12 +514,14 @@ class TestInstanceGenerator:
         tz = ZoneInfo("UTC")
         sunday_13_00_30 = datetime(2026, 4, 5, 13, 0, 30, tzinfo=tz)
         prev_sunday_13_00 = datetime(2026, 3, 29, 13, 0, 0, tzinfo=UTC)
+        prev_sunday_12_00 = datetime(2026, 3, 29, 12, 0, 0, tzinfo=tz)
 
         schedule = ScheduleConfig(type="cron", expression="0 13 * * 0")
         definition = _make_definition(
             "def-1",
             schedule=schedule,
             last_fired_at=prev_sunday_13_00,
+            since=prev_sunday_12_00,
         )
         await repo.create_definition(definition)
 
@@ -537,6 +541,137 @@ class TestInstanceGenerator:
 
         instances = await repo.get_pending_instances("session")
         assert len(instances) == 1
+        assert instances[0].scheduled_for == datetime(2026, 4, 5, 13, 0, 0, tzinfo=tz)
+
+
+class TestStaleCronPrevention:
+    """Tests for DLT-102: since-based stale cron prevention."""
+
+    async def test_no_fire_when_cron_match_before_since_on_create(
+        self,
+        repo: TaskRepository,
+        time_machine,
+    ) -> None:
+        """AC1: Newly created task with since after the cron match does not fire."""
+        # Freeze at 8:05 AM — cron match would be 8:00 AM, but since = 8:05 AM
+        tz = ZoneInfo("UTC")
+        now = datetime(2026, 4, 5, 8, 5, 0, tzinfo=tz)
+        time_machine.move_to(now, tick=False)
+
+        schedule = ScheduleConfig(type="cron", expression="0 8 * * *")
+        definition = _make_definition(
+            "def-1",
+            schedule=schedule,
+            since=now,
+        )
+        await repo.create_definition(definition)
+
+        settings = TaskSettings(timezone="UTC")
+        task = asyncio.create_task(instance_generator(repo, settings))
+        await asyncio.sleep(0.1)
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
+
+        instances = await repo.get_pending_instances("session")
+        assert len(instances) == 0
+
+    async def test_no_fire_when_cron_match_before_since_on_update(
+        self,
+        repo: TaskRepository,
+        time_machine,
+    ) -> None:
+        """AC2: Updated task with since after the cron match does not fire."""
+        tz = ZoneInfo("UTC")
+        # Cron fires at minute 30; freeze at 12:00 (after the 11:30 match)
+        now = datetime(2026, 4, 5, 12, 0, 0, tzinfo=tz)
+        time_machine.move_to(now, tick=False)
+
+        schedule = ScheduleConfig(type="cron", expression="30 * * * *")
+        # since is after the 11:30 match but before the 12:30 match
+        since_time = datetime(2026, 4, 5, 11, 45, 0, tzinfo=tz)
+        definition = _make_definition(
+            "def-1",
+            schedule=schedule,
+            since=since_time,
+        )
+        await repo.create_definition(definition)
+
+        settings = TaskSettings(timezone="UTC")
+        task = asyncio.create_task(instance_generator(repo, settings))
+        await asyncio.sleep(0.1)
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
+
+        instances = await repo.get_pending_instances("session")
+        assert len(instances) == 0
+
+    async def test_advance_past_since_finds_next_occurrence(
+        self,
+        repo: TaskRepository,
+        time_machine,
+    ) -> None:
+        """AC5: Stale match is advanced past since to find the next valid occurrence."""
+        tz = ZoneInfo("UTC")
+        # Freeze at 12:05 — cron fires at :00, since is at 12:03
+        # First match from start-of-hour anchor is 12:00 (stale, before since)
+        # Advanced match should be 13:00 (future, skip)
+        now = datetime(2026, 4, 5, 12, 5, 0, tzinfo=tz)
+        time_machine.move_to(now, tick=False)
+
+        schedule = ScheduleConfig(type="cron", expression="0 * * * *")
+        since_time = datetime(2026, 4, 5, 12, 3, 0, tzinfo=tz)
+        definition = _make_definition(
+            "def-1",
+            schedule=schedule,
+            since=since_time,
+        )
+        await repo.create_definition(definition)
+
+        settings = TaskSettings(timezone="UTC")
+        task = asyncio.create_task(instance_generator(repo, settings))
+        await asyncio.sleep(0.1)
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
+
+        # No instance because 13:00 hasn't arrived yet
+        instances = await repo.get_pending_instances("session")
+        assert len(instances) == 0
+
+    async def test_advance_past_since_fires_if_next_match_passed(
+        self,
+        repo: TaskRepository,
+        time_machine,
+    ) -> None:
+        """AC5: Advanced match fires if it has already passed."""
+        tz = ZoneInfo("UTC")
+        # Freeze at 13:05 — cron fires at :00 and :30
+        # since is at 12:03, so the 12:00 match is stale
+        # Advanced match is 13:00, which has passed → fire
+        now = datetime(2026, 4, 5, 13, 5, 0, tzinfo=tz)
+        time_machine.move_to(now, tick=False)
+
+        schedule = ScheduleConfig(type="cron", expression="0 * * * *")
+        since_time = datetime(2026, 4, 5, 12, 3, 0, tzinfo=tz)
+        definition = _make_definition(
+            "def-1",
+            schedule=schedule,
+            since=since_time,
+        )
+        await repo.create_definition(definition)
+
+        settings = TaskSettings(timezone="UTC")
+        task = asyncio.create_task(instance_generator(repo, settings))
+        await asyncio.sleep(0.1)
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
+
+        instances = await repo.get_pending_instances("session")
+        assert len(instances) == 1
+        # Should fire for 13:00 (the advanced match), not 12:00 (the stale one)
         assert instances[0].scheduled_for == datetime(2026, 4, 5, 13, 0, 0, tzinfo=tz)
 
 

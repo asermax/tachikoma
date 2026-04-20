@@ -88,6 +88,6 @@ class WorkflowStateRecord(Base):
             definition_snapshot=json.loads(self.definition_snapshot),
             scratchpad_path=self.scratchpad_path,
             deleted_at=ensure_utc(self.deleted_at),
-            created_at=ensure_utc(self.created_at),  # type: ignore[arg-type]
-            updated_at=ensure_utc(self.updated_at),  # type: ignore[arg-type]
+            created_at=ensure_utc(self.created_at),
+            updated_at=ensure_utc(self.updated_at),
         )

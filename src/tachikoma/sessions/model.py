@@ -124,7 +124,7 @@ class SessionRecord(Base):
             transcript_path=self.transcript_path,
             summary=self.summary,
             last_exchange=self.last_exchange,
-            started_at=ensure_utc(self.started_at),  # type: ignore[arg-type]
+            started_at=ensure_utc(self.started_at),
             ended_at=ensure_utc(self.ended_at),
             last_resumed_at=ensure_utc(self.last_resumed_at),
             processed_at=ensure_utc(self.processed_at),
@@ -152,8 +152,8 @@ class SessionResumptionRecord(Base):
         """Convert ORM record to domain dataclass."""
         return SessionResumption(
             session_id=self.session_id,
-            resumed_at=ensure_utc(self.resumed_at),  # type: ignore[arg-type]
-            previous_ended_at=ensure_utc(self.previous_ended_at),  # type: ignore[arg-type]
+            resumed_at=ensure_utc(self.resumed_at),
+            previous_ended_at=ensure_utc(self.previous_ended_at),
         )
 
 

@@ -232,6 +232,7 @@ class TestORMModels:
             prompt="Test prompt",
             enabled=True,
             last_fired_at=None,
+            since=now,
             created_at=now,
         )
 

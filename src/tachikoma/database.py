@@ -240,6 +240,19 @@ class Database:
                 )
                 _log.info("Schema migration: added 'updated_at' column to task_instances table")
 
+            # Check if since column exists on task_definitions table (DLT-102)
+            result = await conn.execute(
+                text("SELECT * FROM pragma_table_info('task_definitions') WHERE name='since'")
+            )
+            if result.fetchone() is None:
+                await conn.execute(
+                    text(
+                        "ALTER TABLE task_definitions ADD COLUMN since DATETIME"
+                        " NOT NULL DEFAULT CURRENT_TIMESTAMP"
+                    )
+                )
+                _log.info("Schema migration: added 'since' column to task_definitions table")
+
         _log.debug("Schema migrations completed: db_path={path}", path=self._db_path)
 
     async def close(self) -> None:

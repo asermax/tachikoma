@@ -112,6 +112,16 @@ async def instance_generator(
 
                             next_fire = next(CronSim(schedule.expression, anchor_tz))
 
+                            # Stale-cron prevention: if the match is before `since`,
+                            # advance past `since` to find the next valid occurrence
+                            since_tz = definition.since.astimezone(tz)
+                            if next_fire <= since_tz:
+                                advanced_anchor = since_tz + timedelta(seconds=1)
+                                try:
+                                    next_fire = next(CronSim(schedule.expression, advanced_anchor))
+                                except (CronSimError, StopIteration):
+                                    continue
+
                             # Strict firing: only when cron time has definitively passed (R1)
                             if next_fire > now_tz:
                                 continue

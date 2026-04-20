@@ -1,6 +1,15 @@
 """Shared database utilities for the persistence layer."""
 
 from datetime import UTC, datetime
+from typing import overload
+
+
+@overload
+def ensure_utc(dt: datetime) -> datetime: ...
+
+
+@overload
+def ensure_utc(dt: None) -> None: ...
 
 
 def ensure_utc(dt: datetime | None) -> datetime | None:

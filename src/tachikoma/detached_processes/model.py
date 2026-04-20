@@ -70,7 +70,7 @@ class ProcessRecordRow(Base):
             process_create_time=self.process_create_time,
             log_path=self.log_path,
             status=self.status,  # type: ignore[arg-type]
-            started_at=ensure_utc(self.started_at),  # type: ignore[arg-type]
+            started_at=ensure_utc(self.started_at),
             exited_at=ensure_utc(self.exited_at),
             exit_code=self.exit_code,
         )

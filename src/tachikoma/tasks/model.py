@@ -5,7 +5,7 @@ the persistence layer. Callers work exclusively with frozen dataclasses.
 """
 
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Literal
 
@@ -101,6 +101,7 @@ class TaskDefinition:
     prompt: str
     enabled: bool = True
     last_fired_at: datetime | None = None
+    since: datetime = field(default_factory=lambda: datetime.now(UTC))
     created_at: datetime | None = None
 
 
@@ -148,6 +149,13 @@ class TaskDefinitionRecord(Base):
     prompt: Mapped[str] = mapped_column(String, nullable=False)
     enabled: Mapped[bool] = mapped_column(default=True)
     last_fired_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # Auto-stamped on every INSERT and UPDATE — anchors stale-cron prevention
+    since: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(UTC),
+        onupdate=lambda: datetime.now(UTC),
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
     def to_domain(self) -> TaskDefinition:
@@ -160,6 +168,7 @@ class TaskDefinitionRecord(Base):
             prompt=self.prompt,
             enabled=self.enabled,
             last_fired_at=ensure_utc(self.last_fired_at),
+            since=ensure_utc(self.since),
             created_at=ensure_utc(self.created_at),
         )
 
@@ -207,7 +216,7 @@ class TaskInstanceRecord(Base):
             task_type=self.task_type,  # type: ignore[arg-type]
             status=self.status,  # type: ignore[arg-type]
             prompt=self.prompt,
-            scheduled_for=ensure_utc(self.scheduled_for),  # type: ignore[arg-type]
+            scheduled_for=ensure_utc(self.scheduled_for),
             started_at=ensure_utc(self.started_at),
             completed_at=ensure_utc(self.completed_at),
             result=self.result,

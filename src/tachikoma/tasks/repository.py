@@ -51,6 +51,7 @@ class TaskRepository:
                 prompt=definition.prompt,
                 enabled=definition.enabled,
                 last_fired_at=definition.last_fired_at,
+                since=definition.since,
                 created_at=definition.created_at or datetime.now(UTC),
             )
 
