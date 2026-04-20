@@ -247,8 +247,15 @@ class TestSystemDisallowedTools:
 
     def test_constant_contains_audited_tools(self) -> None:
         """AC (R1): SYSTEM_DISALLOWED_TOOLS contains all audited tools."""
-        expected = {"Skill", "CronCreate", "CronDelete", "CronList",
-                    "RemoteTrigger", "ScheduleWakeup", "PushNotification"}
+        expected = {
+            "Skill",
+            "CronCreate",
+            "CronDelete",
+            "CronList",
+            "RemoteTrigger",
+            "ScheduleWakeup",
+            "PushNotification",
+        }
         assert expected == SYSTEM_DISALLOWED_TOOLS
 
 
