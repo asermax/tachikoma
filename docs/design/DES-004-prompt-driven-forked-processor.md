@@ -195,18 +195,39 @@ The base `process()` method automatically calls `augment_prompt_for_resumption(s
 
 **Subclasses that override `process()` must also call `augment_prompt_for_resumption()`** before passing the prompt to `fork_and_consume()`. This is a convention, not an enforced contract — but omitting it means the forked agent will re-extract content from the pre-resumption part of the conversation.
 
+### Context Summary Injection Contract
+
+The pipeline builds a summary of session context entries (loaded memories, active skills, foundational context, projects) and passes it to all processors via the `extra` dict on `process(session, *, extra=None)`. The base `process()` method automatically injects `extra["context_summary"]` into the prompt before forking.
+
+**Subclasses that override `process()` must also inject the context summary** by reading `extra["context_summary"]` and appending it to the prompt:
+
+```python
+context_summary = (extra or {}).get("context_summary")
+if context_summary is not None:
+    prompt = f"{prompt}\n\n{context_summary}"
+```
+
+This follows the same pattern as resumption augmentation — a convention, not an enforced contract. Omitting it means the forked agent won't know what context was already available, potentially re-extracting information from loaded memories or skills.
+
+### Override Example
+
 ```python
 from tachikoma.post_processing import (
     PromptDrivenProcessor, augment_prompt_for_resumption, fork_and_consume,
 )
 
 class ComplexProcessor(PromptDrivenProcessor):
-    async def process(self, session: Session) -> None:
+    async def process(self, session: Session, *, extra: dict | None = None) -> None:
         # Pre-step
         await some_pre_step()
 
         # Apply resumption augmentation before forking
         prompt = augment_prompt_for_resumption(self._prompt, session)
+
+        # Inject context summary from extra dict
+        context_summary = (extra or {}).get("context_summary")
+        if context_summary is not None:
+            prompt = f"{prompt}\n\n{context_summary}"
 
         # Fork with custom tools — pass through tools/allow/hooks from __init__
         await fork_and_consume(
@@ -224,7 +245,7 @@ class ComplexProcessor(PromptDrivenProcessor):
 
 When a processor needs radically different forking behavior (e.g., different session handling, custom options beyond `mcp_servers`), it may be appropriate to extend `PostProcessor` directly. However, consider whether the base class can be extended to support the new use case first.
 
-When a processor needs pre/post steps around the fork, override `process()` entirely, call `augment_prompt_for_resumption()` on the prompt, then call `fork_and_consume()` directly (see example above).
+When a processor needs pre/post steps around the fork, override `process()` entirely, call `augment_prompt_for_resumption()` on the prompt, inject the context summary from `extra`, then call `fork_and_consume()` directly (see example above).
 
 ---
 

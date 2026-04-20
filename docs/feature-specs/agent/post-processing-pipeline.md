@@ -28,6 +28,7 @@ A parallel concept — the `MessagePostProcessingPipeline` — follows a similar
 | R8 | Pipeline tracks processing state: a transient `is_processing` flag prevents concurrent re-entry, and `mark_processed` is called on the session registry after all phases complete |
 | R9 | Pipeline exposes `needs_processing(session, last_message_time)` to determine whether processing is needed (returns False when already processing or already processed since last message) |
 | R10 | Sub-agents spawned by fork/query helpers declare explicit tool restrictions and allow-only permission rules via `dontAsk` mode; each processor defines the exact tools and paths its agent needs (DES-004) |
+| R11 | Context summary distribution: before running phases, the pipeline builds a summary of session context entries (names/paths only) and passes it to all processors via an `extra` dict so prompt-driven processors can avoid re-extracting information already captured in loaded memories or skills |
 
 ## Behaviors
 
@@ -64,7 +65,7 @@ Concurrent pipeline invocations are serialized to prevent interleaving.
 The `PostProcessor` ABC defines the processor contract without SDK coupling.
 
 **Acceptance Criteria**:
-- Given a class implements `PostProcessor`, when it defines `process(session)`, then it can register with the pipeline
+- Given a class implements `PostProcessor`, when it defines `process(session, *, extra=None)`, then it can register with the pipeline
 - Given the `PostProcessor` ABC, then it has no dependency on the Claude Agent SDK
 
 ### Prompt-Driven Processor Base (R6)
@@ -106,3 +107,14 @@ Sub-agents spawned by processors declare explicit tool restrictions and allow-on
 - Given a processor configured with tools and allow rules, when `fork_and_consume` constructs the agent options, then `dontAsk` mode and the allow rules are set instead of `bypassPermissions`
 - Given a processor configured with allow rules restricting Edit/Write to a specific path, when its forked agent writes within that path, then the write succeeds
 - Given a processor configured with allow rules restricting Edit/Write to a specific path, when its forked agent writes outside that path, then the write is auto-denied
+
+### Context Summary Distribution (R11)
+
+Before running phases, the pipeline loads session context entries from the registry, builds a concise summary (names/paths only, not full content), and passes it to all processors via an `extra` keyword argument on `process()`. Prompt-driven processors append the summary to their fork prompt with actionable instructions.
+
+**Acceptance Criteria**:
+- Given a session with loaded memory files and active skills, when the pipeline runs, then all prompt-driven processors receive a context summary listing those memories and skills
+- Given a session with no context entries, when the pipeline runs, then `extra=None` is passed and processors behave exactly as before
+- Given the registry fails to load context entries, when the pipeline runs, then processors run without a summary and no error is raised
+- Given a loaded memory file that already captures a fact from the conversation, when the facts processor runs, then the summary instructs it to update the existing file rather than create a duplicate
+- Given a non-prompt processor (git, projects, cleanup), when the pipeline runs, then it receives the `extra` dict but ignores it

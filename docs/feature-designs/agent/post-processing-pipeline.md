@@ -58,7 +58,7 @@ A standalone `fork_and_consume()` helper encapsulates the SDK session forking pa
 
 | Layer/Component | Responsibility | Key Decisions |
 |-----------------|----------------|---------------|
-| `src/tachikoma/post_processing.py` | `PostProcessor` ABC (interface only), `PromptDrivenProcessor` base class (DES-004, accepts `tools`/`allow` for permission scoping), `PostProcessingPipeline` class (with phased execution), `_build_permissions_settings(allow)` helper for serializing allow rules to settings JSON, `fork_and_consume` standalone helper (with optional `mcp_servers`, `system_prompt_append`, `tools`, `allow`), `fork_and_capture` standalone helper (same parameters, returns captured text), `augment_prompt_for_resumption(prompt, session)` shared helper, phase constants | Separate module from any processor domain; ABC has no SDK coupling; `PromptDrivenProcessor` standardizes the fork pattern with built-in resumption awareness and permission scoping; fork helpers use standalone `query()` with `dontAsk` mode when tools/allow are provided; pipeline supports sequential phases for ordering dependencies |
+| `src/tachikoma/post_processing.py` | `PostProcessor` ABC (interface with optional `extra` dict), `PromptDrivenProcessor` base class (DES-004, accepts `tools`/`allow` for permission scoping, injects context summary from `extra` into prompt), `PostProcessingPipeline` class (with phased execution and context summary distribution), `build_context_summary(entries)` helper for summarizing session context entries, `_build_permissions_settings(allow)` helper for serializing allow rules to settings JSON, `fork_and_consume` standalone helper (with optional `mcp_servers`, `system_prompt_append`, `tools`, `allow`), `fork_and_capture` standalone helper (same parameters, returns captured text), `augment_prompt_for_resumption(prompt, session)` shared helper, phase constants | Separate module from any processor domain; ABC has no SDK coupling; `PromptDrivenProcessor` standardizes the fork pattern with built-in resumption awareness, permission scoping, and context summary injection; fork helpers use standalone `query()` with `dontAsk` mode when tools/allow are provided; pipeline builds context summary before phases and distributes via `extra` dict |
 
 ### Cross-Layer Contracts
 
@@ -105,8 +105,9 @@ sequenceDiagram
 
 ### Shared Logic
 
-- **`PostProcessor` ABC** (`post_processing.py`): shared interface between all processors. Defines only the `process()` contract.
-- **`PromptDrivenProcessor`** (`post_processing.py`): base class for processors that fork the SDK session with a prompt (DES-004). Stores `_prompt`, `_cwd`, `_tools`, `_allow`, and `_model`, implements `process()` via `augment_prompt_for_resumption()` + `fork_and_consume()`. At construction time, replaces `$WORKSPACE` placeholders in the prompt with the absolute workspace path (`str(agent_defaults.cwd)`). When `tools` and `allow` are provided, the forked agent uses `dontAsk` permission mode with explicit allow rules instead of `bypassPermissions`. The optional `model` constructor parameter lets a subclass pick a specific role-based tier from `agent_defaults` (typically `agent_defaults.processor_model` for post-processors); when omitted, the fork inherits the parent session's model. Simple subclasses inherit `process()`; complex subclasses override it for pre/post steps and must call `augment_prompt_for_resumption()` before `fork_and_consume()` to maintain resumption awareness, and pass `tools=self._tools, allow=self._allow, model=self._model` to maintain permission scoping and model selection.
+- **`PostProcessor` ABC** (`post_processing.py`): shared interface between all processors. Defines `process(session, *, extra=None)` — the `extra` dict carries optional context like the session context summary.
+- **`PromptDrivenProcessor`** (`post_processing.py`): base class for processors that fork the SDK session with a prompt (DES-004). Stores `_prompt`, `_cwd`, `_tools`, `_allow`, and `_model`, implements `process()` via `augment_prompt_for_resumption()` + context summary injection from `extra["context_summary"]` + `fork_and_consume()`. At construction time, replaces `$WORKSPACE` placeholders in the prompt with the absolute workspace path (`str(agent_defaults.cwd)`). When `tools` and `allow` are provided, the forked agent uses `dontAsk` permission mode with explicit allow rules instead of `bypassPermissions`. The optional `model` constructor parameter lets a subclass pick a specific role-based tier from `agent_defaults` (typically `agent_defaults.processor_model` for post-processors); when omitted, the fork inherits the parent session's model. Simple subclasses inherit `process()`; complex subclasses override it for pre/post steps and must call `augment_prompt_for_resumption()` and inject context summary from `extra` before `fork_and_consume()` to maintain resumption awareness and context awareness, and pass `tools=self._tools, allow=self._allow, model=self._model` to maintain permission scoping and model selection.
+- **`build_context_summary` function** (`post_processing.py`): builds a concise summary from session context entries, grouped by owner (foundational, memories, skills, projects, previous-summary, bridging-context). Returns `None` when no meaningful content exists. The summary includes actionable instructions: supplement (not replace) search, allow updates to existing entries, allow creating new entries.
 - **`augment_prompt_for_resumption` function** (`post_processing.py`): standalone helper that appends a resumption boundary instruction to a prompt when `session.last_resumed_at` is set. Used by `PromptDrivenProcessor.process()` automatically; must be called explicitly by subclasses that override `process()`.
 - **`_build_permissions_settings` function** (`post_processing.py`): serializes allow-only permission rules into a JSON string suitable for `ClaudeAgentOptions.settings`. Used by `fork_and_consume`, `fork_and_capture`, and `query_and_consume`.
 - **`fork_and_consume` function** (`post_processing.py`): standalone helper encapsulating SDK `query()` forking pattern. Accepts optional `mcp_servers`, `system_prompt_append`, `tools`, `allow`, and `model` parameters. When `tools`/`allow` are provided, switches from `bypassPermissions` to `dontAsk` mode with the allow rules set as settings. When `model` is provided, that model alias is set on the forked `ClaudeAgentOptions`; otherwise the fork inherits the parent session's model. All post-processors (memory extractors, `CoreContextProcessor`, per-message `SummaryProcessor`) pass `agent_defaults.processor_model` so their mechanical work runs on the configured processor tier (default `"haiku"`) — see DES-004 for the role taxonomy.
@@ -126,17 +127,19 @@ PostProcessingPipeline
 ├── is_processing: property                  (exposes _is_processing)
 ├── needs_processing(session, last_message_time) → bool  (False if processing or processed_at >= last_message_time)
 ├── register(processor, phase="main") → None (validates phase, appends)
-└── run(session: Session) → None             (sets is_processing, phases sequential, processors parallel, mark_processed on completion)
+└── run(session: Session) → None             (sets is_processing, loads context entries, builds summary, phases sequential with extra dict, processors parallel, mark_processed on completion)
 
 PostProcessor (ABC)
-└── process(session: Session) → None     (abstract)
+└── process(session: Session, *, extra: dict | None = None) → None     (abstract)
+
+build_context_summary(entries: list[SessionContextEntry]) → str | None  (standalone helper)
 
 PromptDrivenProcessor(PostProcessor)                    [DES-004]
 ├── _prompt: str                    ($WORKSPACE replaced with absolute path at __init__)
 ├── _cwd: Path
 ├── _tools: list[str] | None       (tool restriction list)
 ├── _allow: list[str] | None       (allow-only permission rules)
-└── process(session) → augment_prompt_for_resumption(prompt, session) + fork_and_consume(session, prompt, defaults, tools, allow)
+└── process(session, extra) → augment_prompt_for_resumption(prompt, session) + inject context_summary from extra + fork_and_consume(session, prompt, defaults, tools, allow)
 
 augment_prompt_for_resumption(prompt: str, session: Session) → str  (standalone helper)
 └── If session.last_resumed_at is set, appends resumption boundary instruction
@@ -163,13 +166,18 @@ erDiagram
 
 ```
 1. pipeline.run(session) acquires asyncio.Lock
-2. For each phase in ["main", "pre_finalize", "finalize"]:
+2. Build context summary:
+   a. Load context entries via registry.load_context_entries(session.id)
+   b. Build summary via build_context_summary(entries) → str | None
+   c. If summary is not None, set extra = {"context_summary": summary}
+   d. If loading fails, log exception and set extra = None
+3. For each phase in ["main", "pre_finalize", "finalize"]:
    a. Collect processors registered for this phase
    b. If none → skip phase
-   c. Run all via asyncio.gather(return_exceptions=True)
+   c. Run all via asyncio.gather(return_exceptions=True), passing extra dict
    d. Log exceptions per-processor with phase context (DES-002):
       "Processor failed: processor={name} phase={phase} err={err}"
-3. Releases lock
+4. Releases lock
 ```
 
 ## Key Decisions
@@ -220,6 +228,20 @@ erDiagram
 - Pro: `PostProcessor` ABC is truly generic — no SDK coupling
 - Pro: `fork_and_consume` available to any processor
 - Pro: Future processors can implement `process()` without inheriting forking behavior
+
+### Context summary via `extra` dict parameter
+
+**Choice**: Pass context summary to processors via an `extra: dict | None = None` keyword parameter on `PostProcessor.process()`.
+**Why**: The `extra` dict is extensible — future enrichments add keys without changing the ABC signature again. Keyword-only with default `None` is backward-compatible. Instance state (setter methods, attributes) would require pipeline-level distribution and cleanup code, coupling the pipeline to processor internals.
+**Alternatives Considered**:
+- Instance state on `PromptDrivenProcessor` (`_context_summary` attribute + setter): requires distribution/cleanup code in pipeline, couples pipeline to processor internals
+- `system_prompt_append`: summary would be invisible to forked agent's prompt; prompt injection is more actionable
+
+**Consequences**:
+- Pro: Extensible — new context types just add keys to `extra`
+- Pro: Non-prompt processors ignore `extra` naturally
+- Pro: No lifecycle management (set/clear) needed
+- Con: Processors that override `process()` must read `extra` explicitly
 
 ### PromptDrivenProcessor convenience base class
 
@@ -286,6 +308,20 @@ erDiagram
 **Then**: The cleanup processor soft-deletes the stale workflow record and deletes its scratchpad file, committed atomically with the session's git commit
 **Rationale**: Stale cleanup piggybacks on existing post-processing lifecycle, running in `pre_finalize` to ensure cleanup is committed before the git commit in `finalize`.
 
+### Scenario: Context summary distribution to processors
+
+**Given**: A session where memory files, skills, and projects were loaded during the conversation
+**When**: The post-processing pipeline runs
+**Then**: The pipeline loads session context entries, builds a summary (names/paths only), and passes it to all processors via `extra={"context_summary": ...}`. Prompt-driven processors (memory extractors, core context) append the summary to their fork prompt. Non-prompt processors (git, projects, cleanup) receive the `extra` dict but ignore it. The summary includes instructions to supplement (not replace) existing search, allow updates to existing entries, and allow creating new entries.
+**Rationale**: Without the summary, processors re-extract information already captured in loaded memories or provided by active skills. The summary tells processors what was already available, reducing duplication while still allowing updates when the conversation adds new details.
+
+### Scenario: Context summary graceful degradation
+
+**Given**: A session where `load_context_entries` raises an exception
+**When**: The post-processing pipeline runs
+**Then**: The pipeline logs the exception, passes `extra=None` to all processors, and continues normally. Processors run without a summary — equivalent to the pre-DLT-146 behavior.
+**Rationale**: Context summary is an optimization, not a critical path. Failures in loading entries should never prevent post-processing from running.
+
 ## Notes
 
 - The pipeline's `asyncio.Lock` serialization prevents overlapping runs. The `is_processing` flag provides a non-blocking check for callers who want to skip rather than wait.
@@ -293,3 +329,5 @@ erDiagram
 - `mark_processed` is called inside the lock block — if an unexpected error exits the lock early, the session is not incorrectly marked as processed.
 - `fork_and_consume` fully consumes the async iterator, ensuring the forked session ends cleanly.
 - The background task executor (`tasks/executor.py`) creates a separate `PostProcessingPipeline` instance with only `EpisodicProcessor` (main phase) and `GitProcessor` (finalize phase) — this is a distinct pipeline from the main conversation pipeline assembled in `__main__.py`. For synthetic sessions (background tasks), `mark_processed` is a no-op (session ID not in the database). See [background task execution design](../tasks/background-task-execution.md).
+- Context summary is built once before phases start and distributed to all processors. If `load_context_entries` fails, processors run without a summary. The summary is injected into prompt text (not `system_prompt_append`) so the forked agent sees it as actionable instructions.
+- The `extra` dict on `PostProcessor.process()` is keyword-only with default `None` — backward-compatible. Future enrichments can add additional keys to `extra` without changing the ABC signature again.
