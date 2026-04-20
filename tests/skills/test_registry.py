@@ -1328,6 +1328,84 @@ class TestValidateDeps:
 
         assert not any("unknown dependencies" in w for w in warnings)
 
+    def test_workflow_step_unknown_required_skills_warns(self, tmp_path: Path) -> None:
+        """AC: Workflow step declaring unknown required_skills gets a warning
+        listing the step and missing names (DLT-119).
+        """
+        skills_dir = tmp_path / "skills"
+        skills_dir.mkdir(parents=True)
+
+        skill_dir = skills_dir / "my-skill"
+        skill_dir.mkdir()
+        (skill_dir / "SKILL.md").write_text('---\ndescription: "Test"\n---\n\nBody')
+
+        step_dir = skill_dir / "workflows" / "my-workflow" / "01-plan"
+        step_dir.mkdir(parents=True)
+        (step_dir / "instructions.md").write_text(
+            "---\n"
+            "title: Plan\n"
+            "required_skills:\n"
+            "  - missing-a\n"
+            "  - missing-b\n"
+            "---\n"
+            "Body."
+        )
+
+        warnings: list[str] = []
+        sink_id = logger.add(
+            lambda m: warnings.append(str(m)),
+            filter=lambda r: r["level"].no >= 30 and "required_skills" in r["message"],
+        )
+
+        try:
+            SkillRegistry([skills_dir])
+        finally:
+            logger.remove(sink_id)
+
+        assert any(
+            "my-skill" in w
+            and "my-workflow" in w
+            and "01-plan" in w
+            and "missing-a" in w
+            and "missing-b" in w
+            for w in warnings
+        )
+
+    def test_workflow_step_valid_required_skills_no_warning(self, tmp_path: Path) -> None:
+        """AC: Workflow step with required_skills that all exist → no warning."""
+        skills_dir = tmp_path / "skills"
+        skills_dir.mkdir(parents=True)
+
+        # Register both skills
+        (skills_dir / "my-skill").mkdir()
+        (skills_dir / "my-skill" / "SKILL.md").write_text(
+            '---\ndescription: "Owner"\n---\n\nBody'
+        )
+
+        (skills_dir / "helper").mkdir()
+        (skills_dir / "helper" / "SKILL.md").write_text(
+            '---\ndescription: "Helper"\n---\n\nBody'
+        )
+
+        step_dir = skills_dir / "my-skill" / "workflows" / "my-workflow" / "01-plan"
+        step_dir.mkdir(parents=True)
+        (step_dir / "instructions.md").write_text(
+            "---\ntitle: Plan\nrequired_skills:\n  - helper\n---\nBody."
+        )
+
+        warnings: list[str] = []
+        sink_id = logger.add(
+            lambda m: warnings.append(str(m)),
+            filter=lambda r: r["level"].no >= 30 and "required_skills" in r["message"],
+        )
+
+        try:
+            SkillRegistry([skills_dir])
+        finally:
+            logger.remove(sink_id)
+
+        assert not any("unknown required_skills" in w for w in warnings)
+
 
 class TestCacheInvalidation:
     """Tests for chain cache invalidation on refresh/add_source (DLT-118)."""

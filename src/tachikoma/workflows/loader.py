@@ -183,7 +183,29 @@ def _load_step(
         )
         return None
 
-    properties = {k: v for k, v in post.metadata.items() if k not in ("title", "skippable")}
+    raw_required_skills = post.metadata.get("required_skills")
+
+    if raw_required_skills is None:
+        required_skills: tuple[str, ...] = ()
+    elif isinstance(raw_required_skills, list) and all(
+        isinstance(s, str) for s in raw_required_skills
+    ):
+        required_skills = tuple(s for s in raw_required_skills if isinstance(s, str))
+    else:
+        _log.warning(
+            "Step has invalid required_skills (expected list of strings), treating as empty: "
+            "skill={skill}, workflow={workflow}, step={step}",
+            skill=skill_name,
+            workflow=workflow_name,
+            step=step_dir.name,
+        )
+        required_skills = ()
+
+    properties = {
+        k: v
+        for k, v in post.metadata.items()
+        if k not in ("title", "skippable", "required_skills")
+    }
 
     references_path = step_dir / "references"
     if not references_path.exists() or not references_path.is_dir():
@@ -200,6 +222,7 @@ def _load_step(
         references_path=references_path,
         scripts_path=scripts_path,
         skippable=skippable,
+        required_skills=required_skills,
         properties=properties,
     )
 

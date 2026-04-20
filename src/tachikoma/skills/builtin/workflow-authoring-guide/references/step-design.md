@@ -238,6 +238,28 @@ skippable: true
 ---
 ```
 
+**required_skills** (list of strings, optional, default: empty)
+- Names of skills the agent needs to execute this step
+- On step activation, the declared skills — and their transitive
+  dependencies via each skill's `depends_on` — are resolved through
+  the skill registry and appended to the tool response, bypassing
+  the normal skill classifier
+- Use this for steps whose instructions are too terse or technical
+  for the classifier to reliably infer the right foundations (git
+  operations, API clients, domain-specific knowledge)
+- Unknown skill names are warned about at workflow-load time and
+  silently skipped at activation
+- Shared transitive deps across declared skills are emitted once
+
+```yaml
+---
+title: "Open a Pull Request"
+required_skills:
+  - git-operations
+  - github-api
+---
+```
+
 **Custom Fields** (any, optional)
 - Workflow-specific metadata
 - Can be used by the step logic or for documentation

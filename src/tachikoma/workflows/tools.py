@@ -102,6 +102,7 @@ def _step_to_snapshot(step: StepDefinition) -> dict:
         "title": step.title,
         "skippable": step.skippable,
         "path": str(step.instructions_path.parent),
+        "required_skills": list(step.required_skills),
     }
 
 
@@ -143,6 +144,52 @@ def _read_step_instructions(step_info: dict) -> str | None:
         return instructions_path.read_text()
     except (FileNotFoundError, PermissionError, OSError):
         return None
+
+
+def _render_required_skills(step_info: dict, registry: SkillRegistry) -> str:
+    """Render declared skills for a step's tool-response injection.
+
+    Reads `required_skills` from the step snapshot, resolves each anchor
+    through `SkillRegistry.resolve_chain` (deps-first, cycle-tolerant,
+    unknown-dep-tolerant, memoized), and deduplicates across anchors so
+    shared transitive deps appear once.
+
+    Returns a trailing markdown block with one XML-tagged skill per
+    resolved chain entry, or an empty string when no skills resolve
+    (no declarations, or all anchors unknown).
+    """
+    required = step_info.get("required_skills") or []
+
+    if not required:
+        return ""
+
+    seen: set[str] = set()
+    ordered_blocks: list[str] = []
+
+    for anchor in required:
+        try:
+            chain = registry.resolve_chain(anchor)
+        except KeyError:
+            _log.debug(
+                "Step declares unknown required skill, skipping: anchor={anchor}",
+                anchor=anchor,
+            )
+            continue
+
+        for skill in chain:
+            if skill.name in seen:
+                continue
+            seen.add(skill.name)
+            ordered_blocks.append(
+                f'<skill name="{skill.name}" directory="{skill.path}">\n'
+                f"{skill.body}\n"
+                f"</skill>"
+            )
+
+    if not ordered_blocks:
+        return ""
+
+    return "\n\n---\n\n## Required Skills\n\n" + "\n\n".join(ordered_blocks)
 
 
 # ---------------------------------------------------------------------------
@@ -324,6 +371,7 @@ async def handle_update_workflow_state(
     step: str,
     action: Literal["start", "complete", "skip"],
     repository: WorkflowStateRepository,
+    skill_registry: SkillRegistry,
 ) -> dict:
     """Handle update_workflow_state: transition a step's state."""
 
@@ -398,6 +446,8 @@ async def handle_update_workflow_state(
         if instructions:
             step_text += f"\n\n{instructions}"
 
+        step_text += _render_required_skills(step_info, skill_registry)
+
         if step_path:
             step_text += f"\n\n---\n*Step path: `{step_path}`*"
 
@@ -416,6 +466,8 @@ async def handle_update_workflow_state(
 
         if next_instructions:
             next_text += f"\n\n{next_instructions}"
+
+        next_text += _render_required_skills(next_info, skill_registry)
 
         if next_path:
             next_text += f"\n\n---\n*Step path: `{next_path}`*"
@@ -593,6 +645,7 @@ def create_workflow_tools_server(
             parsed.step,
             parsed.action,
             repository,
+            skill_registry,
         )
 
     @tool(

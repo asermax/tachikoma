@@ -191,7 +191,9 @@ class SkillRegistry:
         self._validate_deps()
 
     def _validate_deps(self) -> None:
-        """Log one warning per dependent skill whose depends_on contains unknown names."""
+        """Log one warning per dependent skill whose depends_on contains unknown names,
+        and one warning per workflow step whose required_skills contains unknown names.
+        """
         for name, skill in self._skills.items():
             if not skill.depends_on:
                 continue
@@ -202,6 +204,21 @@ class SkillRegistry:
                     skill=name,
                     missing=missing,
                 )
+
+        for workflow_def in self._workflows.values():
+            for step in workflow_def.steps:
+                if not step.required_skills:
+                    continue
+                missing_required = [s for s in step.required_skills if s not in self._skills]
+                if missing_required:
+                    _log.warning(
+                        "Workflow step declares unknown required_skills: "
+                        "skill={skill}, workflow={workflow}, step={step}, missing={missing}",
+                        skill=workflow_def.skill_name,
+                        workflow=workflow_def.workflow_name,
+                        step=step.id,
+                        missing=missing_required,
+                    )
 
     def refresh(self) -> None:
         """Re-scan skills directory if dirty, using swap-on-success.

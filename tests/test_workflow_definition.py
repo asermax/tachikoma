@@ -68,6 +68,31 @@ class TestStepDefinition:
 
         assert step.properties == {}
 
+    def test_default_required_skills_is_empty_tuple(self) -> None:
+        """StepDefinition defaults required_skills to empty tuple."""
+        step = StepDefinition(
+            id="01-step",
+            title="Step",
+            instructions_path=Path("/instructions.md"),
+            references_path=None,
+            scripts_path=None,
+        )
+
+        assert step.required_skills == ()
+
+    def test_required_skills_accepts_tuple_of_strings(self) -> None:
+        """StepDefinition accepts required_skills as tuple of skill names."""
+        step = StepDefinition(
+            id="01-step",
+            title="Step",
+            instructions_path=Path("/instructions.md"),
+            references_path=None,
+            scripts_path=None,
+            required_skills=("skill-a", "skill-b"),
+        )
+
+        assert step.required_skills == ("skill-a", "skill-b")
+
     def test_properties_can_contain_extensible_fields(self) -> None:
         """StepDefinition accepts extensible properties."""
         step = StepDefinition(
@@ -303,6 +328,114 @@ Instructions."""
 
         step = result["test-workflow"].steps[0]
         assert step.skippable is False
+
+    def test_parses_required_skills(self, tmp_path: Path) -> None:
+        """Parses required_skills from frontmatter into a tuple of strings."""
+        skill_dir = tmp_path / "test-skill"
+        workflow_dir = skill_dir / "workflows" / "test-workflow"
+        step_dir = workflow_dir / "01-step"
+        step_dir.mkdir(parents=True)
+
+        (step_dir / "instructions.md").write_text(
+            """---
+title: Step
+required_skills:
+  - skill-a
+  - skill-b
+---
+Instructions."""
+        )
+
+        result = load_workflows(skill_dir, "test-skill")
+
+        step = result["test-workflow"].steps[0]
+        assert step.required_skills == ("skill-a", "skill-b")
+
+    def test_default_required_skills_when_missing(self, tmp_path: Path) -> None:
+        """Defaults required_skills to empty tuple when absent from frontmatter."""
+        skill_dir = tmp_path / "test-skill"
+        workflow_dir = skill_dir / "workflows" / "test-workflow"
+        step_dir = workflow_dir / "01-step"
+        step_dir.mkdir(parents=True)
+
+        (step_dir / "instructions.md").write_text(
+            """---
+title: Step
+---
+Instructions."""
+        )
+
+        result = load_workflows(skill_dir, "test-skill")
+
+        step = result["test-workflow"].steps[0]
+        assert step.required_skills == ()
+
+    def test_malformed_required_skills_falls_back_to_empty(self, tmp_path: Path) -> None:
+        """Malformed required_skills produces a warning and falls back to empty tuple."""
+        skill_dir = tmp_path / "test-skill"
+        workflow_dir = skill_dir / "workflows" / "test-workflow"
+        step_dir = workflow_dir / "01-step"
+        step_dir.mkdir(parents=True)
+
+        # required_skills as a string instead of a list
+        (step_dir / "instructions.md").write_text(
+            """---
+title: Step
+required_skills: not-a-list
+---
+Instructions."""
+        )
+
+        result = load_workflows(skill_dir, "test-skill")
+
+        step = result["test-workflow"].steps[0]
+        assert step.required_skills == ()
+        assert step.title == "Step"
+
+    def test_malformed_required_skills_non_string_entries(self, tmp_path: Path) -> None:
+        """required_skills with non-string entries falls back to empty tuple."""
+        skill_dir = tmp_path / "test-skill"
+        workflow_dir = skill_dir / "workflows" / "test-workflow"
+        step_dir = workflow_dir / "01-step"
+        step_dir.mkdir(parents=True)
+
+        (step_dir / "instructions.md").write_text(
+            """---
+title: Step
+required_skills:
+  - 123
+  - skill-b
+---
+Instructions."""
+        )
+
+        result = load_workflows(skill_dir, "test-skill")
+
+        step = result["test-workflow"].steps[0]
+        assert step.required_skills == ()
+
+    def test_required_skills_excluded_from_properties(self, tmp_path: Path) -> None:
+        """required_skills field is not passed through as an extensible property."""
+        skill_dir = tmp_path / "test-skill"
+        workflow_dir = skill_dir / "workflows" / "test-workflow"
+        step_dir = workflow_dir / "01-step"
+        step_dir.mkdir(parents=True)
+
+        (step_dir / "instructions.md").write_text(
+            """---
+title: Step
+required_skills:
+  - skill-a
+custom_field: keep-me
+---
+Instructions."""
+        )
+
+        result = load_workflows(skill_dir, "test-skill")
+
+        step = result["test-workflow"].steps[0]
+        assert "required_skills" not in step.properties
+        assert step.properties == {"custom_field": "keep-me"}
 
     def test_parses_extensible_frontmatter_fields(self, tmp_path: Path) -> None:
         """Parses extensible fields from frontmatter into properties."""

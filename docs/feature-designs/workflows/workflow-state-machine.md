@@ -128,6 +128,13 @@ list_active_workflows()
 - Any action on a completed/skipped step: error with explanation
 - All actions update `updated_at` on the workflow state record
 
+**Required-skill expansion at activation** (applied in both the explicit `start` branch and the auto-start branch after `complete`/`skip`):
+- `_render_required_skills(step_info, skill_registry)` reads `step_info["required_skills"]` from the step's snapshot entry
+- Each declared anchor is expanded via `SkillRegistry.resolve_chain(name)` (deps-first, anchor-last, cycle-tolerant, unknown-tolerant, memoized)
+- A `KeyError` from `resolve_chain` (anchor name not registered) is swallowed with a debug log — matching the silent-skip posture at resolution time
+- A cross-anchor `seen: set[str]` dedups shared transitive deps so each skill's `<skill name="X" directory="...">…</skill>` block is emitted exactly once per activation response
+- When no skills resolve (no declarations, or all anchors unknown), the helper returns an empty string — activation responses match the pre-existing format
+
 **Integration Points**:
 - MCP tools call skill registry to resolve skill_name -> workflow definition
 - MCP tools call workflow state repository for all DB operations
@@ -159,7 +166,9 @@ StepDefinition (filesystem):
   references_path: Path | None
   scripts_path: Path | None
   skippable: bool (default false)
-  properties: dict (extensible frontmatter fields)
+  required_skills: tuple[str, ...] (declared skills resolved via the registry at activation;
+                                    list of strings or warn-and-fall-back-to-empty)
+  properties: dict (extensible frontmatter fields; `required_skills` excluded)
 
 WorkflowState (database — table: `workflow_states`):
   id: str (UUID, PK)
@@ -311,6 +320,21 @@ To abort mid-workflow: `end_workflow(id, "abort")` at any point.
 **Consequences**:
 - Pro: Guidance adapts as agent behavior is observed in practice
 - Pro: No additional infrastructure needed
+
+### Step-declared required skills injected via tool response
+
+**Choice**: Steps declare their required skills via a `required_skills: [names]` frontmatter field. At activation (explicit `start` or auto-start after `complete`/`skip`), the update tool resolves each declared skill's transitive chain through `SkillRegistry.resolve_chain` and appends the resolved skill bodies to the tool response — bypassing the skill classifier. Skills are NOT persisted as `SessionContextEntry`.
+**Why**: The classifier infers relevant skills from the user message and can miss foundations a step silently relies on (git operations, API clients, domain knowledge) when instructions are terse. Declarative activation guarantees the required skills are present at the moment the step begins executing. Reusing `resolve_chain` means deps-first ordering, cycle tolerance, unknown-dep tolerance, and memoization are all inherited rather than reimplemented in the workflow subsystem.
+
+**Why tool response, not `SessionContextEntry` persistence**: The MCP tool handler runs mid-SDK-session; it has no access to the `SessionRegistry`. Persisting skills as entries would require threading session state through the handler and reasoning about transactional semantics during a tool call. Injecting the skill content in the tool response is minimal and correct for the activation-moment use case — the agent sees the skills immediately and they flow into the transcript naturally. If the same skill is re-activated by a subsequent step or message, the skills context provider's per-message classifier continues to handle persistence independently. A follow-up delta can add persistence if practice shows it is needed.
+
+**Consequences**:
+- Pro: Reliable foundation loading at step activation — independent of classifier phrasing sensitivity
+- Pro: Zero new traversal code in `workflows/` — reuses the existing skill dependency resolver
+- Pro: Unknown-dep tolerance and cross-anchor dedup inherited from the resolver
+- Pro: Load-time validation lives in `SkillRegistry._validate_deps`, co-located with skill `depends_on` validation
+- Con: Skills injected via the tool response do not become `SessionContextEntry` records, so their agents are not derived by `derive_agents_from_entries` for the current exchange (classification still can pick them up on subsequent messages)
+- Con: Injected bodies are re-emitted on every activation of a declared step (acceptable — activation is a deliberate, infrequent event)
 
 ### Auto-start and auto-finalize on complete/skip
 

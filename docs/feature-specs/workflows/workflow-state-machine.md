@@ -37,6 +37,7 @@ A workflow construct within skills that maps multi-step processes to directory t
 | R16 | `get_workflow_state` MCP tool for read-only state lookup (resuming after context loss) |
 | R17 | Step ordering uses alphabetical sort of directory names (convention: prefix with `01-`, `02-`, etc.) |
 | R18 | `list_active_workflows` MCP tool returns all active workflows for recovery after context loss |
+| R19 | Step instructions frontmatter may declare a `required_skills` list; at step activation the workflow tool resolves each declared skill's transitive chain via the skill registry and appends the resolved skill content to the tool response, bypassing classification |
 
 ## Behaviors
 
@@ -51,6 +52,9 @@ Workflows are optional subdirectories within skills (`workflows/<name>/`), each 
 - Given a step directory, when it contains an `instructions.md` file with YAML frontmatter, then the frontmatter is parsed for step properties (title, skippable, and extensible fields)
 - Given a step directory, when it contains a `references/` subdirectory, then those files are available as supporting data for the step
 - Given a step directory, when it contains a `scripts/` subdirectory, then those scripts are available as tools for the step
+- Given a step's frontmatter contains `required_skills: [skill-a, skill-b]`, when the workflow definition is loaded, then the step's `required_skills` is preserved as a tuple of declared skill names
+- Given a step's frontmatter contains a `required_skills` value that is not a list of strings, when the workflow definition is loaded, then a warning is logged and the step's `required_skills` is empty (the step still loads)
+- Given a step declares a `required_skills` name that is not registered in the skill registry, when the registry finishes loading the workflow, then a single warning is logged naming the skill, workflow, step, and missing name
 - Given a step without `references/` or `scripts/`, when the workflow runs, then the step functions normally (both are optional)
 - Given a step directory without an `instructions.md`, when the workflow definition is loaded, then the step is rejected and a warning is logged
 - Given a step with invalid YAML frontmatter, when the workflow definition is loaded, then a warning is logged identifying the step and the invalid field
@@ -85,6 +89,9 @@ The agent discovers workflows by reading a skill's SKILL.md content, which descr
 - Given an invalid workflow ID, when `update_workflow_state` is called, then the tool returns an error indicating the workflow is not active
 - Given a valid workflow ID but an invalid step identifier, when `update_workflow_state` is called, then the tool returns an error listing the valid step identifiers
 - Given a completed workflow, when `update_workflow_state` is called, then the tool returns an error indicating the workflow is no longer active
+- Given a step whose definition snapshot includes `required_skills`, when the step is activated (either via explicit `action="start"` or via auto-start after `complete`/`skip`), then the tool response includes the transitive skill chain for each declared skill, deps-first with each anchor last, with shared transitive deps emitted exactly once across anchors
+- Given a step with no `required_skills` (or a snapshot that predates the field), when the step is activated, then the tool response matches the pre-existing format with no empty skills section or extra whitespace
+- Given a step whose `required_skills` includes an unknown skill name, when the step is activated, then the unknown name is silently skipped at resolution and known skills are still included
 
 ### MCP Tools — get_workflow_state (R16)
 

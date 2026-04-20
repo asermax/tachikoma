@@ -178,6 +178,7 @@ Skills declare direct dependencies on other skills via a `depends_on` list in SK
 - Given a skill's declared dep is unknown at resolution time, when the resolver runs, then the unknown name is silently skipped and the remaining real deps are still resolved
 - Given a built-in skill and a workspace skill with the same name but different `depends_on`, when the resolver is called, then the workspace version's dependencies are used (R17 last-wins)
 - Given a dep edge crosses sources (built-in → workspace or the reverse), when the resolver is called, then the dep is resolved normally — the registry is a single flat namespace
+- Given a workflow step declares `required_skills`, when the workflow tool activates the step, then the resolver is called for each declared skill and the resolved chains are injected into the step's tool response (see [workflow state machine](../workflows/workflow-state-machine.md))
 
 ### Skill Content Injection (R10, R27, R32)
 
