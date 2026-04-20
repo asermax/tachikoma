@@ -15,10 +15,9 @@ from zoneinfo import ZoneInfo
 import tomlkit
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
-CONFIG_PATH = Path.home() / ".config" / "tachikoma" / "config.toml"
+from tachikoma.agent_defaults import SYSTEM_DISALLOWED_TOOLS
 
-# System-level tools that are always blocked regardless of user config.
-SYSTEM_DISALLOWED_TOOLS = frozenset({"Skill"})
+CONFIG_PATH = Path.home() / ".config" / "tachikoma" / "config.toml"
 
 
 def _detect_system_timezone() -> str:
@@ -81,7 +80,7 @@ class AgentSettings(BaseModel):
         description="Tools the agent is allowed to use",
     )
     disallowed_tools: list[str] = Field(
-        default=["AskUserQuestion", "CronCreate", "CronDelete", "CronList"],
+        default=["AskUserQuestion"],
         validate_default=True,
         description="Tools the agent is blocked from using",
     )
@@ -230,6 +229,15 @@ class TaskSettings(BaseModel):
         default="",
         validate_default=True,
         description="Timezone for cron evaluation (empty = system tz)",
+    )
+    cleanup_retention_hours: int = Field(
+        default=48,
+        ge=0,
+        description="Hours to retain completed one-shot tasks before cleanup",
+    )
+    maintenance_interval: int = Field(
+        default=60,
+        description="Seconds between maintenance scheduler ticks",
     )
 
     @field_validator("timezone", mode="before")

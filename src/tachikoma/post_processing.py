@@ -743,6 +743,7 @@ async def fork_and_consume(
         cwd=agent_defaults.cwd,
         cli_path=agent_defaults.cli_path,
         env=agent_defaults.env,
+        disallowed_tools=list(agent_defaults.disallowed_tools),
         resume=session.sdk_session_id,
         fork_session=True,
     )
@@ -822,6 +823,7 @@ async def fork_and_capture(
         cwd=agent_defaults.cwd,
         cli_path=agent_defaults.cli_path,
         env=agent_defaults.env,
+        disallowed_tools=list(agent_defaults.disallowed_tools),
         resume=session.sdk_session_id,
         fork_session=True,
     )

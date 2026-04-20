@@ -132,6 +132,7 @@ async def query_and_consume(
         cwd=agent_defaults.cwd,
         cli_path=agent_defaults.cli_path,
         env=agent_defaults.env,
+        disallowed_tools=list(agent_defaults.disallowed_tools),
     )
 
     if model is not None:

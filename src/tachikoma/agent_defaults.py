@@ -10,6 +10,22 @@ from pathlib import Path
 HARDCODED_ENV = {"CLAUDE_CODE_DISABLE_AUTO_MEMORY": "1"}
 """Environment variables that are always set and cannot be overridden via config."""
 
+SYSTEM_DISALLOWED_TOOLS = frozenset({
+    "Skill",
+    "CronCreate", "CronDelete", "CronList",
+    "RemoteTrigger",
+    "ScheduleWakeup",
+    "PushNotification",
+})
+"""Built-in Claude Code tools blocked across all agent roles.
+
+These tools either duplicate Tachikoma's own subsystems or produce
+session-only state that silently vanishes on restart.  The constant is
+imported by config.py so the Pydantic validator merges it into the
+user-visible ``disallowed_tools`` field — users can add to this list
+but cannot shrink it.
+"""
+
 
 @dataclass(frozen=True)
 class AgentDefaults:
@@ -25,6 +41,10 @@ class AgentDefaults:
             (memory/context/git extraction, per-message summary, rebase resolver).
         classifier_model: Model for sub-agents doing rule-based classification
             (task evaluator).
+        disallowed_tools: Built-in tools blocked on every agent role.
+            Defaults to :data:`SYSTEM_DISALLOWED_TOOLS`.  Sub-agents always
+            get the system floor; only the main coordinator receives the
+            config-merged list (user additions + system floor).
     """
 
     cwd: Path
@@ -33,6 +53,7 @@ class AgentDefaults:
     searcher_model: str = "opus"
     processor_model: str = "haiku"
     classifier_model: str = "haiku"
+    disallowed_tools: frozenset[str] = SYSTEM_DISALLOWED_TOOLS
 
 
 def agent_defaults_from_settings(settings) -> AgentDefaults:
@@ -59,6 +80,7 @@ def agent_defaults_from_settings(settings) -> AgentDefaults:
         searcher_model=settings.agent.searcher_model,
         processor_model=settings.agent.processor_model,
         classifier_model=settings.agent.classifier_model,
+        disallowed_tools=SYSTEM_DISALLOWED_TOOLS,
     )
 
 

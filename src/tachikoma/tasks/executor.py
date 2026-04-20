@@ -411,6 +411,7 @@ class BackgroundTaskExecutor:
                 cwd=self._agent_defaults.cwd,
                 cli_path=self._agent_defaults.cli_path,
                 env=self._agent_defaults.env,
+                disallowed_tools=list(self._agent_defaults.disallowed_tools),
                 system_prompt=SystemPromptPreset(
                     type="preset",
                     preset="claude_code",

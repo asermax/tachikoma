@@ -296,6 +296,7 @@ async def _agent_rebase(cwd: Path, remote_branch: str, agent_defaults: AgentDefa
         cwd=cwd,
         cli_path=agent_defaults.cli_path,
         env=agent_defaults.env,
+        disallowed_tools=list(agent_defaults.disallowed_tools),
         permission_mode="bypassPermissions",
     )
 
