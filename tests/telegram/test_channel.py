@@ -12,7 +12,7 @@ import pytest
 from aiogram.exceptions import TelegramAPIError, TelegramBadRequest, TelegramRetryAfter
 
 from tachikoma.buffer.events import BufferedDelivery
-from tachikoma.events import Error, ToolActivity
+from tachikoma.events import Error, Result, ToolActivity
 from tachikoma.telegram import (
     TELEGRAM_TOOL_DISPLAY,
     TELEGRAM_TOOL_SUMMARY,
@@ -1077,6 +1077,83 @@ class TestProcessThroughCoordinatorNotify:
         await renderer.notify()
 
         bot.copy_message.assert_not_called()
+
+
+class TestProcessThroughCoordinatorDrain:
+    """Tests for the drain loop in _process_through_coordinator."""
+
+    async def test_drain_loop_picks_up_stranded_message(self) -> None:
+        """Messages enqueued during the lock window post-send_message are drained.
+
+        When a user message lands in _message_buffer after the SDK exchange has
+        torn down but before _delivery_lock is released, the drain loop must
+        run another send_message() in the same call so the message is never
+        stranded.
+        """
+        bot = MagicMock()
+        bot.send_message = AsyncMock(return_value=MockMessage(message_id=1))
+        bot.edit_message_text = AsyncMock()
+
+        coordinator = MagicMock()
+        # has_pending_messages is True initially (the call's initial message)
+        # and after the first exchange (the stranded message), then False.
+        pending_states = iter([True, True, False])
+        type(coordinator).has_pending_messages = property(
+            lambda _self: next(pending_states),
+        )
+
+        send_call_count = 0
+
+        async def _fake_send_message():
+            nonlocal send_call_count
+            send_call_count += 1
+            yield Result(session_id="sdk-1", total_cost_usd=0.0)
+
+        coordinator.send_message = _fake_send_message
+
+        settings = MagicMock()
+        settings.authorized_chat_id = 123
+        settings.push_notifications = False
+
+        with patch("tachikoma.telegram.Bot"):
+            channel = TelegramChannel(settings, workspace_path=Path("/tmp/test-workspace"))
+            channel._TelegramChannel__coordinator = coordinator
+        channel._bot = bot
+
+        await channel._process_through_coordinator()
+
+        # Drain loop ran send_message twice: initial message + stranded.
+        assert send_call_count == 2
+
+    async def test_drain_loop_exits_when_buffer_empty(self) -> None:
+        """The drain loop does not call send_message when the buffer is empty."""
+        bot = MagicMock()
+        bot.send_message = AsyncMock(return_value=MockMessage(message_id=1))
+
+        coordinator = MagicMock()
+        coordinator.has_pending_messages = False
+
+        send_called = False
+
+        async def _fake_send_message():
+            nonlocal send_called
+            send_called = True
+            yield Result(session_id="sdk-1", total_cost_usd=0.0)
+
+        coordinator.send_message = _fake_send_message
+
+        settings = MagicMock()
+        settings.authorized_chat_id = 123
+        settings.push_notifications = False
+
+        with patch("tachikoma.telegram.Bot"):
+            channel = TelegramChannel(settings, workspace_path=Path("/tmp/test-workspace"))
+            channel._TelegramChannel__coordinator = coordinator
+        channel._bot = bot
+
+        await channel._process_through_coordinator()
+
+        assert send_called is False
 
 
 class TestCodeWrap:
