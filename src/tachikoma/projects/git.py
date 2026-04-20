@@ -23,7 +23,7 @@ async def list_submodules(workspace: Path) -> list[str]:
     Returns:
         List of submodule paths (e.g., ["projects/my-app"]).
     """
-    rc, output, _ = await run_git_capture("submodule", "status", "--recursive", cwd=workspace)
+    rc, output = await run_git_capture("submodule", "status", "--recursive", cwd=workspace)
 
     if rc != 0:
         return []
@@ -65,7 +65,7 @@ async def resolve_default_branch(submodule_path: Path) -> str:
     Returns:
         The default branch name (e.g., "main", "master").
     """
-    rc, output, _ = await run_git_capture(
+    rc, output = await run_git_capture(
         "symbolic-ref",
         "refs/remotes/origin/HEAD",
         cwd=submodule_path,
@@ -75,7 +75,7 @@ async def resolve_default_branch(submodule_path: Path) -> str:
         return output[len("refs/remotes/origin/") :]
 
     # Fallback: network call via remote show
-    rc, output, _ = await run_git_capture("remote", "show", "origin", cwd=submodule_path)
+    rc, output = await run_git_capture("remote", "show", "origin", cwd=submodule_path)
 
     if rc == 0:
         for line in output.splitlines():
@@ -135,7 +135,7 @@ async def has_uncommitted_changes_detail(submodule_path: Path) -> str | None:
     Returns:
         The git status --porcelain output, or None if clean.
     """
-    _, output, _ = await run_git_capture("status", "--porcelain", cwd=submodule_path)
+    _, output = await run_git_capture("status", "--porcelain", cwd=submodule_path)
     return output if output else None
 
 
@@ -210,7 +210,7 @@ async def current_branch(submodule_path: Path) -> str | None:
     Returns:
         The branch name, or None if in detached HEAD state.
     """
-    rc, output, _ = await run_git_capture("symbolic-ref", "--short", "HEAD", cwd=submodule_path)
+    rc, output = await run_git_capture("symbolic-ref", "--short", "HEAD", cwd=submodule_path)
 
     if rc != 0:
         return None
@@ -227,7 +227,7 @@ async def current_commit_short(submodule_path: Path) -> str:
     Returns:
         The short commit hash (e.g., "abc1234").
     """
-    rc, output, _ = await run_git_capture("rev-parse", "--short", "HEAD", cwd=submodule_path)
+    rc, output = await run_git_capture("rev-parse", "--short", "HEAD", cwd=submodule_path)
 
     if rc != 0:
         return "unknown"
