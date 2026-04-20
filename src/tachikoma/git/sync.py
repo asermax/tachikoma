@@ -125,9 +125,31 @@ async def has_uncommitted_changes(cwd: Path) -> bool:
     return bool(output)
 
 
+def _resolve_git_dir(cwd: Path) -> Path:
+    """Resolve the real .git directory, following a gitlink file if present.
+
+    Submodules and worktrees store ``.git`` as a file containing
+    ``gitdir: <path>`` rather than a directory. Reading the file keeps
+    rebase-state checks working for those layouts.
+    """
+    git_path = cwd / ".git"
+    if git_path.is_file():
+        try:
+            content = git_path.read_text().strip()
+        except OSError:
+            return git_path
+
+        prefix = "gitdir:"
+        if content.startswith(prefix):
+            target = Path(content[len(prefix) :].strip())
+            return target if target.is_absolute() else (cwd / target).resolve()
+
+    return git_path
+
+
 def _rebase_in_progress(cwd: Path) -> bool:
     """Check if a rebase is currently in progress by inspecting git state dirs."""
-    git_dir = cwd / ".git"
+    git_dir = _resolve_git_dir(cwd)
     return (git_dir / "rebase-merge").exists() or (git_dir / "rebase-apply").exists()
 
 
