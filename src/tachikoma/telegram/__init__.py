@@ -709,6 +709,15 @@ class TelegramChannel(Channel):
             return
 
         text = message.text.strip()
+
+        # Mid-response: enqueue-only so the coordinator's forwarder steers
+        # the live SDK exchange. Going through the lock would queue this as
+        # a new turn instead.
+        if self._coordinator.in_exchange:
+            _log.debug("Mid-stream steering message")
+            self._coordinator.enqueue(text)
+            return
+
         async with self._delivery_lock:
             self._coordinator.enqueue(text)
             await self._process_through_coordinator()
@@ -750,6 +759,14 @@ class TelegramChannel(Channel):
             dest_path,
             message.caption,
         )
+
+        # Mid-response: enqueue-only so the coordinator's forwarder steers
+        # the live SDK exchange. Going through the lock would queue this as
+        # a new turn instead.
+        if self._coordinator.in_exchange:
+            _log.debug("Mid-stream steering media message")
+            self._coordinator.enqueue(description)
+            return
 
         async with self._delivery_lock:
             self._coordinator.enqueue(description)
@@ -803,6 +820,7 @@ class TelegramChannel(Channel):
 
     def _build_on_complete(self, event: BufferedDelivery) -> Callable[[], Awaitable[None]]:
         """Build the on_complete callback for a buffered delivery."""
+
         async def on_complete() -> None:
             for item in event.items:
                 if item.on_delivered is not None:

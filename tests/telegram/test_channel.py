@@ -1332,6 +1332,9 @@ class TestHandleMedia:
     def _make_channel(self) -> TelegramChannel:
         """Build a TelegramChannel with mocked dependencies."""
         coordinator = MagicMock()
+        # Default to "no live exchange" so handlers take the lock-based path
+        # rather than the steering-only branch.
+        coordinator.in_exchange = False
         settings = MagicMock()
         settings.bot_token = "123456:ABCdef"
         settings.authorized_chat_id = 123
@@ -1479,6 +1482,9 @@ class TestDeliveryLock:
 
     def _make_channel(self) -> TelegramChannel:
         coordinator = MagicMock()
+        # Default to "no live exchange" so handlers take the lock-based path
+        # rather than the steering-only branch.
+        coordinator.in_exchange = False
         settings = MagicMock()
         settings.bot_token = "123456:ABCdef"
         settings.authorized_chat_id = 123
@@ -1560,6 +1566,59 @@ class TestDeliveryLock:
         finally:
             channel._delivery_lock.release()
 
+        channel._process_through_coordinator.assert_not_called()
+
+    async def test_handle_message_steers_when_exchange_active(self) -> None:
+        """User messages mid-response enqueue-only and skip the delivery lock."""
+        channel = self._make_channel()
+        channel._coordinator.in_exchange = True
+        channel._process_through_coordinator = AsyncMock()
+
+        msg = MagicMock(text="hey")
+
+        await channel._delivery_lock.acquire()
+        try:
+            # With the lock held by another exchange, the steering branch
+            # must still enqueue immediately and return without blocking.
+            await asyncio.wait_for(channel._handle_message(msg), timeout=0.05)
+        finally:
+            channel._delivery_lock.release()
+
+        channel._coordinator.enqueue.assert_called_once_with("hey")
+        channel._process_through_coordinator.assert_not_called()
+
+    async def test_handle_media_steers_when_exchange_active(self) -> None:
+        """Media messages mid-response enqueue-only and skip the delivery lock."""
+        channel = self._make_channel()
+        channel._coordinator.in_exchange = True
+        channel._bot.download = AsyncMock(return_value=None)
+        channel._process_through_coordinator = AsyncMock()
+
+        photo = MagicMock()
+        photo.file_id = "photo_steer"
+        photo.width = 100
+        photo.height = 100
+        photo.file_size = 50_000
+        photo.file_name = None
+
+        msg = MagicMock()
+        msg.photo = [photo]
+        msg.voice = None
+        msg.audio = None
+        msg.document = None
+        msg.sticker = None
+        msg.video = None
+        msg.video_note = None
+        msg.animation = None
+        msg.caption = None
+
+        await channel._delivery_lock.acquire()
+        try:
+            await asyncio.wait_for(channel._handle_media(msg), timeout=0.5)
+        finally:
+            channel._delivery_lock.release()
+
+        channel._coordinator.enqueue.assert_called_once()
         channel._process_through_coordinator.assert_not_called()
 
     async def test_handle_buffered_delivery_returns_immediately_when_lock_held(self) -> None:

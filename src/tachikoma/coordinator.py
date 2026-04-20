@@ -1068,6 +1068,16 @@ providing context for what the user has been doing in the meantime.
         return not self._message_buffer.empty()
 
     @property
+    def in_exchange(self) -> bool:
+        """Whether an SDK client is currently connected for a live exchange.
+
+        When True, messages enqueued via ``enqueue()`` will be forwarded onto
+        the live per-turn ``sdk_inbox`` and delivered to the SDK as mid-stream
+        steering messages instead of starting a new exchange.
+        """
+        return self._client is not None
+
+    @property
     def is_busy(self) -> bool:
         """Whether the coordinator is actively processing.
 
