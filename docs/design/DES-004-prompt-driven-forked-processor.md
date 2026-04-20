@@ -142,15 +142,11 @@ class MyProcessor(PromptDrivenProcessor):
 ### Do This — Git Agent (query_and_consume)
 
 ```python
-from tachikoma.post_processing import make_bash_gate_hook
+from tachikoma.post_processing import make_bash_gate_hook, UTILITY_BASH_PREFIXES
 
 GIT_TOOLS = ["Read", "Glob", "Grep", "Bash", "Edit", "Write"]
 GIT_ALLOW = ["Read", "Glob", "Grep", "Edit", "Write", "Bash(git *)"]
-GIT_BASH_HOOK = make_bash_gate_hook([
-    "git ", "ls ", "find ", "file ", "echo ",
-    "date ", "cat ", "head ", "sort ", "tail ", "wc ",
-    "stat ", "cd", "pwd",
-])
+GIT_BASH_HOOK = make_bash_gate_hook(["git ", *UTILITY_BASH_PREFIXES])
 
 await query_and_consume(
     prompt, agent_defaults,
