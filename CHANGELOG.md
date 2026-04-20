@@ -2,6 +2,14 @@
 
 <!-- version list -->
 
+## v1.38.1 (2026-04-20)
+
+### Bug Fixes
+
+- **git**: Surface git stderr when rebase refuses to start
+  ([`38d4389`](https://github.com/asermax/tachikoma/commit/38d43893355975eeba64d07769903bc6fe3a2b97))
+
+
 ## v1.38.0 (2026-04-20)
 
 ### Bug Fixes
