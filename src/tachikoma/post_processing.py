@@ -686,10 +686,10 @@ def build_permissions_settings(allow: list[str]) -> str:
     return json.dumps({"permissions": {"allow": allow}})
 
 
-async def fork_and_consume(
+def _build_fork_options(
     session: Session,
-    prompt: str,
     agent_defaults: AgentDefaults,
+    *,
     mcp_servers: dict[
         str,
         McpStdioServerConfig | McpSSEServerConfig | McpHttpServerConfig | McpSdkServerConfig,
@@ -700,53 +700,26 @@ async def fork_and_consume(
     allow: list[str] | None = None,
     pre_tool_use_hooks: list[HookMatcher] | None = None,
     model: str | None = None,
-) -> None:
-    """Fork the SDK session and consume the agent's response.
+) -> tuple[ClaudeAgentOptions, str]:
+    """Build the ``ClaudeAgentOptions`` shared by every fork helper.
 
-    Creates a forked session using the standalone query() function,
-    which operates independently of the coordinator's ClaudeSDKClient.
+    When ``tools`` and ``allow`` are both provided, the forked agent runs
+    under ``dontAsk`` mode with explicit allow rules; otherwise it runs
+    under ``bypassPermissions``.
 
-    When ``tools`` and ``allow`` are provided, the forked agent uses
-    ``dontAsk`` permission mode with explicit allow rules instead of
-    ``bypassPermissions``. This restricts the agent to only the
-    specified tools and paths.
-
-    Args:
-        session: The session to fork (must have sdk_session_id).
-        prompt: The extraction prompt to send to the forked agent.
-        agent_defaults: Common SDK options (cwd, cli_path, env).
-        mcp_servers: Optional MCP servers to provide to the forked agent.
-            Can include in-process SDK MCP servers (from create_sdk_mcp_server())
-            or external server configs.
-        system_prompt_append: Optional text to append to the system prompt.
-            When provided, the forked agent receives this context in addition
-            to the default Claude Code system prompt.
-        tools: Optional tool restriction list for the forked agent.
-        allow: Optional allow-only permission rules for path scoping.
-            When provided (along with tools), the forked agent uses
-            ``dontAsk`` mode instead of ``bypassPermissions``.
-        pre_tool_use_hooks: Optional PreToolUse hook matchers for
-            programmatic enforcement (e.g. Bash command gating).
-        model: Optional model override for the forked agent. When None
-            (the default), the fork inherits the parent session's model.
-            Pass a model alias (e.g. ``"haiku"``) to downgrade the fork
-            for cheap mechanical tasks.
-
-    Raises:
-        RuntimeError: If session has no sdk_session_id.
-        Propagates: SDK errors from the query() call.
+    Returns the options together with the validated ``sdk_session_id`` so
+    callers can emit debug logs without re-narrowing.
     """
-    if session.sdk_session_id is None:
+    sdk_session_id = session.sdk_session_id
+    if sdk_session_id is None:
         raise RuntimeError(f"Cannot fork session {session.id}: no sdk_session_id available")
-
-    _log.debug("Forking session: sdk_session_id={sid}", sid=session.sdk_session_id[:8])
 
     options = ClaudeAgentOptions(
         cwd=agent_defaults.cwd,
         cli_path=agent_defaults.cli_path,
         env=agent_defaults.env,
         disallowed_tools=list(agent_defaults.disallowed_tools),
-        resume=session.sdk_session_id,
+        resume=sdk_session_id,
         fork_session=True,
     )
 
@@ -773,11 +746,64 @@ async def fork_and_consume(
             append=system_prompt_append,
         )
 
-    # Fully consume the async iterator to ensure the forked session ends cleanly
+    return options, sdk_session_id
+
+
+async def fork_and_consume(
+    session: Session,
+    prompt: str,
+    agent_defaults: AgentDefaults,
+    mcp_servers: dict[
+        str,
+        McpStdioServerConfig | McpSSEServerConfig | McpHttpServerConfig | McpSdkServerConfig,
+    ]
+    | None = None,
+    system_prompt_append: str | None = None,
+    tools: list[str] | None = None,
+    allow: list[str] | None = None,
+    pre_tool_use_hooks: list[HookMatcher] | None = None,
+    model: str | None = None,
+) -> None:
+    """Fork the SDK session and drain the agent's response stream.
+
+    Creates a forked session via the standalone ``query()`` function,
+    independent of the coordinator's ClaudeSDKClient.
+
+    Args:
+        session: The session to fork (must have sdk_session_id).
+        prompt: The extraction prompt to send to the forked agent.
+        agent_defaults: Common SDK options (cwd, cli_path, env).
+        mcp_servers: Optional MCP servers to provide to the forked agent.
+        system_prompt_append: Optional text appended to the Claude Code
+            preset system prompt.
+        tools: Optional tool restriction list for the forked agent.
+        allow: Optional allow-only permission rules. When paired with
+            ``tools``, enables ``dontAsk`` mode instead of
+            ``bypassPermissions``.
+        pre_tool_use_hooks: Optional PreToolUse hook matchers.
+        model: Optional model override; defaults to the parent session's.
+
+    Raises:
+        RuntimeError: If session has no sdk_session_id.
+        Propagates: SDK errors from the query() call.
+    """
+    options, sdk_session_id = _build_fork_options(
+        session,
+        agent_defaults,
+        mcp_servers=mcp_servers,
+        system_prompt_append=system_prompt_append,
+        tools=tools,
+        allow=allow,
+        pre_tool_use_hooks=pre_tool_use_hooks,
+        model=model,
+    )
+
+    _log.debug("Forking session: sdk_session_id={sid}", sid=sdk_session_id[:8])
+
     async for _ in stderr_aware_query(prompt=prompt, options=options):
         pass
 
-    _log.debug("Fork completed: sdk_session_id={sid}", sid=session.sdk_session_id[:8])
+    _log.debug("Fork completed: sdk_session_id={sid}", sid=sdk_session_id[:8])
 
 
 async def fork_and_capture(
@@ -790,67 +816,28 @@ async def fork_and_capture(
     pre_tool_use_hooks: list[HookMatcher] | None = None,
     model: str | None = None,
 ) -> str:
-    """Fork the SDK session and capture the agent's text response.
+    """Fork the SDK session and return the concatenated text response.
 
-    Same fork pattern as fork_and_consume but captures and returns the
-    concatenated text content from all content blocks in the response
-    stream. Returns empty string if no text is produced.
-
-    Args:
-        session: The session to fork (must have sdk_session_id).
-        prompt: The prompt to send to the forked agent.
-        agent_defaults: Common SDK options (cwd, cli_path, env).
-        system_prompt_append: Optional text to append to the system prompt.
-            When provided, the forked agent receives this context in addition
-            to the default Claude Code system prompt.
-        tools: Optional tool restriction list for the forked agent.
-        allow: Optional allow-only permission rules for path scoping.
-        pre_tool_use_hooks: Optional PreToolUse hook matchers.
-        model: Optional model override for the forked agent. When None
-            (the default), the fork inherits the parent session's model.
-
-    Returns:
-        Concatenated text from all content blocks in the response.
+    Same shape as :func:`fork_and_consume` but captures and returns the
+    text content from every block in the response stream. Returns an
+    empty string if no text is produced.
 
     Raises:
         RuntimeError: If session has no sdk_session_id.
         Propagates: SDK errors from the query() call.
     """
-    if session.sdk_session_id is None:
-        raise RuntimeError(f"Cannot fork session {session.id}: no sdk_session_id available")
-
-    _log.debug("Forking session for capture: sdk_session_id={sid}", sid=session.sdk_session_id[:8])
-
-    options = ClaudeAgentOptions(
-        cwd=agent_defaults.cwd,
-        cli_path=agent_defaults.cli_path,
-        env=agent_defaults.env,
-        disallowed_tools=list(agent_defaults.disallowed_tools),
-        resume=session.sdk_session_id,
-        fork_session=True,
+    options, sdk_session_id = _build_fork_options(
+        session,
+        agent_defaults,
+        system_prompt_append=system_prompt_append,
+        tools=tools,
+        allow=allow,
+        pre_tool_use_hooks=pre_tool_use_hooks,
+        model=model,
     )
 
-    if model is not None:
-        options.model = model
+    _log.debug("Forking session for capture: sdk_session_id={sid}", sid=sdk_session_id[:8])
 
-    if tools is not None and allow is not None:
-        options.tools = tools
-        options.settings = build_permissions_settings(allow)
-        options.extra_args = {"permission-mode": "dontAsk"}
-    else:
-        options.permission_mode = "bypassPermissions"
-
-    if pre_tool_use_hooks is not None:
-        options.hooks = {"PreToolUse": pre_tool_use_hooks}
-
-    if system_prompt_append is not None:
-        options.system_prompt = SystemPromptPreset(
-            type="preset",
-            preset="claude_code",
-            append=system_prompt_append,
-        )
-
-    # Fully consume the async iterator per DES-005, capturing text content
     chunks: list[str] = []
 
     async for message in stderr_aware_query(prompt=prompt, options=options):
@@ -863,7 +850,7 @@ async def fork_and_capture(
     result = "".join(chunks)
     _log.debug(
         "Fork capture completed: sdk_session_id={sid}, text_length={length}",
-        sid=session.sdk_session_id[:8],
+        sid=sdk_session_id[:8],
         length=len(result),
     )
 
