@@ -276,13 +276,15 @@ The `enqueue()` method allows channels to buffer user messages at any time (sync
 10. If new session: save foundational context entries to DB (best-effort).
     If pre_pipeline is set: pre-processing pipeline runs context providers in parallel
     as a background task drained through _drain_status_while_running; each
-    provider emits its status_message() via on_status before its provide() call,
-    so the coordinator yields N Status events without blocking provider parallelism.
+    provider emits status_message() via on_status before its provide() call
+    and status_message(result) after, so the coordinator yields 2N Status events
+    (start + completion per provider) without blocking provider parallelism.
     Successful results saved to DB as context entries (owner=result.tag, content=result.content);
     coordinator extracts and merges mcp_servers and agent definitions from all results, stores per-session
 11. If msg_pre_pipeline is set: per-message pre-processing runs as a background
     task drained through _drain_status_while_running with on_status; each
-    per-message provider emits its status_message() before its provide() call.
+    per-message provider emits status_message() before its provide() call
+    and status_message(result) after.
 12. Load context entries from DB, call build_system_prompt(entries, timezone=self._timezone) → system_prompt_append.
     Coordinator builds ClaudeAgentOptions via _build_options(resume=sdk_session_id or None, system_prompt_append=...) — includes self._agents and self._mcp_servers
 13. Creates fresh ClaudeSDKClient via `async with ClaudeSDKClient(options)`

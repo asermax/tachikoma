@@ -250,7 +250,7 @@ erDiagram
 **Why**: The provider knows best what it does — it owns the user-facing description for both phases. The completion message reflects the result (e.g., "Found 3 relevant memories" vs "No relevant memories found"), giving the user visibility into what happened. Making it abstract ensures every provider explicitly defines its messages.
 **Alternatives Considered**:
 - Two separate methods (`status_message` + `completion_message`): adds more surface area for a simple concern; one method with a parameter is simpler
-- Default humanized class name: removed to force providers to explicitly define user-facing messages
+- Default humanized class name: rejected to force providers to explicitly define user-facing messages
 - Emit statuses before `asyncio.gather`: regresses provider parallelism
 
 **Consequences**:
