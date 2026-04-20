@@ -490,7 +490,7 @@ The `Result` event serves as a turn boundary signal. The channel finalizes the c
 
 **Given**: The bot is streaming a response to message A
 **When**: The user sends message B
-**Then**: The channel calls `coordinator.enqueue("B")`. The message source generator picks up B from the buffer and yields it to the SDK session. B's response streams back through the same session or is processed as a new session after A completes. The channel renders B's response as a new message in the chat.
+**Then**: `_handle_message` checks `coordinator.in_exchange`. Because A's exchange is still live, it calls `coordinator.enqueue("B")` directly (bypassing `_delivery_lock`) and returns. The forwarder moves B onto the per-turn `sdk_inbox` and the message source yields it to the SDK as a steering message — B influences A's in-flight response rather than being held back as a separate turn.
 
 ### Scenario: Message splitting at paragraph boundary
 

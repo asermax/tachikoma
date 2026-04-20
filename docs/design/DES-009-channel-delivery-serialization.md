@@ -2,7 +2,7 @@
 
 **Scope**: Python / Channels
 **Date**: 2026-04-19
-**Last Updated**: 2026-04-20
+**Last Updated**: 2026-04-20 (steering branch via `Coordinator.in_exchange`)
 **First Used**: DLT-112 (REPL), DLT-111 (Telegram)
 
 ## Problem
@@ -27,7 +27,7 @@ Include the coordinator's teardown inside the critical section by keeping `_proc
 
 ### When NOT to Use
 
-- If you want a second entry point to *steer* the current exchange (push a mid-stream message into the still-active SDK session), do not put that path under the same lock — use the coordinator's `enqueue()` alone (the `_forwarder` will move it onto the live `_sdk_inbox`). The lock serializes distinct *exchanges*, not items within one.
+- If you want a second entry point to *steer* the current exchange (push a mid-stream message into the still-active SDK session), do not put that path under the same lock — use the coordinator's `enqueue()` alone (the `_forwarder` will move it onto the live `_sdk_inbox`). The lock serializes distinct *exchanges*, not items within one. Gate this with `coordinator.in_exchange` so the entry point only takes the steering branch when an SDK client is actually connected; otherwise fall back to the lock-based new-exchange path.
 - Channels with a single entry point don't need this pattern.
 
 ## Example
@@ -72,12 +72,24 @@ class TelegramChannel:
 
     async def _handle_message(self, message: Message) -> None:
         text = message.text.strip()
+
+        # Mid-response: enqueue-only so the coordinator's forwarder steers
+        # the live SDK exchange. Skipping the lock is required — taking it
+        # would queue the message as a new turn after the response ends.
+        if self._coordinator.in_exchange:
+            self._coordinator.enqueue(text)
+            return
+
         async with self._delivery_lock:
             self._coordinator.enqueue(text)
             await self._process_through_coordinator()
 
     async def _handle_media(self, message: Message) -> None:
         # ...download and build description first (outside the lock)...
+        if self._coordinator.in_exchange:
+            self._coordinator.enqueue(description)
+            return
+
         async with self._delivery_lock:
             self._coordinator.enqueue(description)
             await self._process_through_coordinator()
@@ -110,7 +122,7 @@ class TelegramChannel:
 
 **Don't**
 - Don't clear a boolean flag around the delivery call — transitions and teardown are not atomic, leaving a race window.
-- Don't try to push mid-stream steering messages under this lock — they should go through the coordinator's queue without blocking on the lock.
+- Don't try to push mid-stream steering messages under this lock — they should go through the coordinator's queue without blocking on the lock. Use `coordinator.in_exchange` as the gate so user-input handlers steer mid-response and only acquire the lock when starting a fresh exchange.
 - Don't hold the lock while awaiting user-visible I/O that can block indefinitely (e.g. external network calls unrelated to the exchange).
 
 ## Consequences
