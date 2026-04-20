@@ -714,3 +714,10 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 **Complexity**: Medium
 **Description**: Complex workflows tend to contain sub-sequences that are genuinely reusable across multiple parent workflows — for example a "process inbox note" sequence that both the weekly review and the daily review want to run. Currently there is no way to share them without duplicating steps in each parent. Add a composition mechanism where a step can declare an inline reference to another workflow; when the engine reaches such a step it pauses the parent workflow, runs the referenced workflow to completion (honouring the full step-level semantics — mandatory-step enforcement, conditional skipping, and loop iteration — just as it would when run standalone), then resumes the parent at the next step. Scope covers: the frontmatter field that names the target workflow, nested workflow-state persistence so the engine can track both layers during execution, scratchpad isolation vs sharing rules between parent and child (decided during speccing), cycle detection so a workflow cannot recursively include itself, and the tool-layer UX so the agent can see which workflow it is currently executing. Out of scope: parameter passing between parent and child workflows (can be revisited once the basic composition works).
 
+### DLT-162: Reverse tool usage display to chronological order with oldest-entry truncation
+**Status**: ✗ Defined
+**Depends on**: None
+**Priority**: 3 (Medium)
+**Complexity**: Easy
+**Description**: The tool usage summary displays entries in reverse chronological order, which reads unnaturally when scanning activity history. This delta reverses the display to chronological (oldest-first) order and changes the truncation strategy to drop the oldest entries when the display limit (currently 5 entries) is exceeded, instead of dropping the newest. This ensures the display reads naturally while always preserving the most recent tool activity context. Scope: tool activity summary rendering in the shared display module.
+
