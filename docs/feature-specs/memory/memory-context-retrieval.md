@@ -4,7 +4,7 @@
 
 ## Overview
 
-A per-message context provider that searches stored memories for information relevant to the current user message (formerly ran only on the first message of a session). Runs on every message using the per-message pre-processing pipeline. When an SDK session ID is available (subsequent messages), the provider forks the session so the search agent has full conversation context for informed relevance decisions. On the first message (no session ID yet), it operates as a standalone query. Returns one context entry per relevant memory file with metadata identifying the file path for deduplication. DLT-009 (embedding-based semantic search) is a potential future upgrade to the retrieval mechanism.
+A per-message context provider that searches stored memories for information relevant to the current user message. Runs on every message using the per-message pre-processing pipeline. Receives the session's summary and last assistant exchange for conversation context, enabling informed relevance decisions. On the first message (no summary yet), it operates without conversation context. Returns one context entry per relevant memory file with metadata identifying the file path for deduplication. DLT-009 (embedding-based semantic search) is a potential future upgrade to the retrieval mechanism.
 
 ## User Stories
 
@@ -20,7 +20,7 @@ A per-message context provider that searches stored memories for information rel
 | R2 | Return one context entry per relevant memory file, each with the "memories" tag and metadata identifying the file path |
 | R3 | If no relevant memories are found (including when directories are empty), return no context without error |
 | R4 | Errors during memory search are caught and logged — never propagated to block the message |
-| R5 | When an SDK session ID is available, fork the session so the search agent has full conversation context to make informed relevance decisions |
+| R5 | Receive the session's summary and last exchange as conversation context for informed relevance decisions |
 | R6 | Check existing context entries' metadata to skip memories already present — never remove, only append |
 | R7 | Validate agent-returned file paths to ensure they are within the memories/ directory |
 
@@ -58,16 +58,17 @@ When no relevant memories exist, the provider returns nothing and the message pr
 Provider errors are isolated — they never block the conversation.
 
 **Acceptance Criteria**:
-- Given the memory search agent fails (e.g., SDK connection error, fork failure), when the provider catches the error, then it logs the failure and returns None
+- Given the memory search agent fails (e.g., SDK connection error, timeout), when the provider catches the error, then it logs the failure and returns None
 - Given the memory search agent returns an `is_error=True` result for any reason, when the provider processes the response, then it logs a warning and returns None without populating any entries
 
-### Session Forking (R5)
+### Conversation Context (R5)
 
-When conversation context is available, the provider forks the current session so the search agent can make informed decisions about whether new memories are needed.
+When the session has a summary and last exchange, the provider includes them in the search prompt so the agent can make informed decisions about whether new memories are needed.
 
 **Acceptance Criteria**:
-- Given a session with an existing SDK session ID, when the memory provider runs, then it forks the session so the search agent has full conversation context
-- Given the first message of a new session (no SDK session ID yet), when the memory provider runs, then it operates as a standalone query without forking
+- Given a session with a summary and last exchange, when the memory provider runs, then the search prompt includes a "## Conversation Context" section with both
+- Given the first message of a new session (no summary yet), when the memory provider runs, then no conversation context section appears in the prompt
+- Given a session with a summary but no last exchange, when the memory provider runs, then the prompt includes the summary but omits the "Last assistant response" subsection
 
 ### Deduplication (R6)
 

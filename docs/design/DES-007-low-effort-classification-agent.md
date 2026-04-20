@@ -6,7 +6,7 @@
 
 ## Pattern
 
-Pre-processing context providers that need to classify or search before returning context should use a standalone `query()` call with `model="opus"` and `effort="low"`. When conversation context is needed for informed decisions, the forking variant adds `fork_session=True` + `resume=sdk_session_id` so the agent sees the full conversation transcript. This is the pre-processing counterpart to DES-004 (which covers post-processing via `fork_and_consume()`).
+Pre-processing context providers that need to classify or search before returning context should use a standalone `query()` call with `model="opus"` and `effort="low"`. When conversation context is needed for informed decisions, the pipeline threads the session's summary and last exchange to providers, which render them into the prompt via the shared `render_conversation_context()` helper. This is the pre-processing counterpart to DES-004 (which covers post-processing via `fork_and_consume()`).
 
 ## Rationale
 
@@ -27,7 +27,7 @@ Codifying the invariant core ensures consistency across providers while document
 
 **Variable parts** (differ per provider):
 - Tool access and permission mode (see "Disabling Tools" section below)
-- Session forking (see "Forking Variant" section below)
+- Conversation context rendering (see "Conversation Context" section below)
 - Prompt content and result parsing logic
 - Sentinel string value
 
@@ -102,49 +102,36 @@ return None
 
 **Why**: Without a sentinel, the provider can't distinguish "classified and found nothing" from "agent error or unparseable response." The sentinel enables different logging and handling for each case.
 
-## Forking Variant
+## Conversation Context
 
-When a classification agent needs conversation context to make informed decisions, it can fork the coordinator's session instead of running standalone. This gives the agent access to the full conversation transcript, enabling it to determine whether the current message introduces new topics or continues existing ones.
+When a classification agent needs conversation context to make informed decisions, the pipeline threads the session's summary and last exchange to providers. Providers render them into their prompts via the shared `render_conversation_context()` helper (defined in `per_message_pre_processing.py`).
 
-**When to use forking**:
+**When to include conversation context**:
 - The agent's classification depends on what has already been discussed (e.g., "does this message introduce a topic not already covered?")
 - The agent should skip work when the conversation context already suffices (e.g., returning a sentinel because "the conversation already covers what's needed")
 
-**When to use standalone** (default):
-- The agent classifies based solely on the current message (e.g., "which of these items match this message?")
-- No conversation context is needed for the decision
+**When to omit conversation context** (first message):
+- No session summary is available yet — the `render_conversation_context()` helper returns an empty string
+- The agent classifies based solely on the current message
 
-**Configuration differences from standalone**:
+**Rendering pattern**:
 
 ```python
-# Forking variant — conditional based on session ID availability
-options = ClaudeAgentOptions(
-    model=agent_defaults.searcher_model,  # Opus by default via AgentDefaults (DES-004)
-    effort="low",
-    max_turns=8,                        # More turns — agent may search files
-    allowed_tools=["Read", "Glob", "Grep"],
-    permission_mode="bypassPermissions",
-    cwd=agent_defaults.cwd,
-    cli_path=agent_defaults.cli_path,
-    env=agent_defaults.env,
-    # Fork-specific options:
-    resume=sdk_session_id,             # Resume the coordinator's session
-    fork_session=True,                  # Fork so the main session is unaffected
+from tachikoma.per_message_pre_processing import render_conversation_context
+
+# In provider.provide():
+conversation_context_section = render_conversation_context(
+    session_summary, session_last_exchange
+)
+prompt = TEMPLATE.format(
+    conversation_context_section=conversation_context_section,
+    message=message,
 )
 ```
 
-**Key differences from standalone DES-007**:
-- `fork_session=True` + `resume=sdk_session_id` — forks the session for read-only conversation context
-- `sdk_session_id` may be `None` (first message) — the provider must handle the fallback to standalone gracefully
-- `env=agent_defaults.env` — env is passed through for consistency with the forked session
+The helper returns a "## Conversation Context" section with the summary and an optional "Last assistant response" subsection, or an empty string when no summary exists.
 
-**Key differences from post-processing forking (DES-004)**:
-- DES-004 takes a `Session` object and requires `sdk_session_id` (raises if missing) — it always runs after session close
-- DES-007 forking takes `sdk_session_id` as a string and handles the `None` case gracefully — it runs on every message including the first
-- DES-004 uses shared helpers (`fork_and_consume`, `fork_and_capture`) — DES-007 forking is inline because the provider needs custom model/effort/tools settings and result parsing
-- DES-004 agents have full tool access — DES-007 forking agents use restricted tool sets
-
-**Implementation**: See `memory/context_provider.py` for the first instance of this variant.
+**Implementation**: See `memory/context_provider.py` and `skills/context_provider.py` for examples of conversation context rendering.
 
 ## Disabling Tools
 
@@ -176,6 +163,6 @@ options = ClaudeAgentOptions(
 - See also: [DES-004](DES-004-prompt-driven-forked-processor.md) - Post-processing counterpart (uses `fork_and_consume()` on existing sessions). DES-007's forking variant adapts DES-004's fork pattern for pre-processing.
 - See also: [DES-005](DES-005-sdk-query-generator-consumption.md) - Generator consumption requirement for standalone `query()`
 - See also: [DES-002](DES-002-logging-conventions.md) - Logging conventions for error handling
-- Related feature: [../feature-designs/memory/memory-context-retrieval.md](../feature-designs/memory/memory-context-retrieval.md) - Memory context provider (first instance, uses forking variant)
-- Related feature: [../feature-designs/agent/skills.md](../feature-designs/agent/skills.md) - Skills context provider (second instance, uses standalone variant)
+- Related feature: [../feature-designs/memory/memory-context-retrieval.md](../feature-designs/memory/memory-context-retrieval.md) - Memory context provider (standalone with tools, uses conversation context)
+- Related feature: [../feature-designs/agent/skills.md](../feature-designs/agent/skills.md) - Skills context provider (standalone without tools, uses conversation context)
 - Related feature: [../feature-designs/agent/boundary-detection.md](../feature-designs/agent/boundary-detection.md) - Boundary detector uses same standalone `query()` with Opus low effort pattern (not a context provider, but same technical approach)

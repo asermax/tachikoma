@@ -629,7 +629,7 @@ SkillsChanged(BaseEvent[None])
 
 ### Scenario: Classification agent fails
 
-**Given**: Provider runs but the forked Opus agent fails (SDK error, timeout)
+**Given**: Provider runs but the classification agent fails (SDK error, timeout)
 **When**: Exception is caught
 **Then**: Provider logs the error (DES-002), returns None. No agents loaded, no skills context. Other providers (memory) complete normally.
 **Rationale**: Detection failures never block the message.
@@ -701,7 +701,7 @@ SkillsChanged(BaseEvent[None])
 
 - The SDK orchestrator makes delegation decisions opaquely. The application provides agents; the SDK decides how to use them.
 - Tool scoping via agent definition's tools field is enforced by the SDK at invocation time.
-- The classification prompt design is an implementation detail — it embeds all skill names + descriptions, the user message, and the session's `agents` entry (from AGENTS.md) so the classifier sees the same operational conventions that inform the main agent's judgment, asking which skills are relevant. Only the `agents` entry is injected (not `soul`/`user`): AGENTS.md carries the rules and workflow preferences that shape relevance decisions, while SOUL.md (tone) and USER.md (identity) are low-signal for the classifier. The injection goes into the user prompt rather than `options.system_prompt` to keep the change local to the forked query and match how `{skills}` / `{message}` are already threaded.
+- The classification prompt design is an implementation detail — it embeds all skill names + descriptions, the user message, the session's `agents` entry (from AGENTS.md), and conversation context (session summary + last exchange) so the classifier sees the same operational conventions and conversation state that inform the main agent's judgment, asking which skills are relevant. Only the `agents` entry is injected (not `soul`/`user`): AGENTS.md carries the rules and workflow preferences that shape relevance decisions, while SOUL.md (tone) and USER.md (identity) are low-signal for the classifier. Conversation context uses `render_conversation_context()` (shared across all per-message providers) to conditionally render a "## Conversation Context" section — omitted entirely on the first message (no summary), and with an optional "Last assistant response" subsection when the last exchange is available. The injection goes into the user prompt rather than `options.system_prompt` to keep the change local to the classification query and match how `{skills}` / `{message}` are already threaded.
 - The `NO_RELEVANT_SKILLS` sentinel pattern (consistent with `MemoryContextProvider`'s `NO_RELEVANT_MEMORIES`) distinguishes "classified and found nothing" from "agent error."
 - `watchfiles` is a project dependency (added to `pyproject.toml`), maintained by the pydantic team (Samuel Colvin) and used by `uvicorn` for auto-reload.
 - Workflow definitions are discovered alongside skills during registry loading. The `workflows/` directory is optional — skills without workflows incur no overhead. See [workflow state machine design](../workflows/workflow-state-machine.md) for the full workflow subsystem.
