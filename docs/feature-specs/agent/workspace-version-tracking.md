@@ -24,12 +24,12 @@ Automatic git version tracking for all workspace file changes. Every modificatio
 | R5 | Bootstrap hook initializes workspace as a git repo on first run (idempotent) |
 | R6 | Commits use a fixed identity via repo-local git config (no global config dependency) |
 | R7 | Linear history on a single branch — no branch operations |
-| R8 | Bootstrap creates `.gitignore` with `.tachikoma/*.db` to exclude the DB binary from git tracking; the `.tachikoma/db-dump/` directory (diffable text dumps) is tracked by git |
+| R8 | Bootstrap creates `.gitignore` with `.tachikoma/*.db` and `.tachikoma/logs/tachikoma.log` to exclude the DB binary and active log file from git tracking; the `.tachikoma/db-dump/` directory (diffable text dumps) and rotated log files (`.tachikoma/logs/tachikoma.<timestamp>.log`) are tracked by git. On every startup, missing gitignore entries are appended without committing (idempotent) |
 | R9 | After committing, push committed changes to the `origin` remote with divergence detection and conflict resolution; on divergence, rebase local changes on top of remote before pushing |
 | R10 | If no `origin` remote is configured, skip pushing silently (no-op) |
 | R11 | On push failure (rebase failed, push failed after rebase), log a warning with the failure reason and continue; committed changes remain intact and will be retried on next sync |
 | R12 | System prompt preamble instructs the assistant that workspace changes are pushed automatically when a remote is configured |
-| R13 | Sync/push operations skip repositories with uncommitted changes to avoid data loss |
+| R13 | Sync/push operations skip repositories with uncommitted changes to avoid data loss; on `smart_push`, when naive rebase fails due to a dirty working tree, changes are stashed, the rebase is retried, and the stash is restored regardless of outcome |
 | R14 | `push` and `sync` MCP tools that wrap `smart_push` / `smart_pull` for the workspace (and registered project submodules); always available to the main coordinator agent and the task executor agent |
 | R15 | PreToolUse deny hook on every non-git-processor agent surface that blocks destructive bash git commands: `git push`, `git reset`, `git checkout .`, `git restore .`, `git clean`, and mutating `git remote` subcommands |
 | R16 | The deny hook splits compound commands (`&&`, `||`, `|`, `;`) and checks each sub-command independently |
@@ -59,6 +59,8 @@ After all main-phase processors complete (memory extraction writes files), the g
 - Given the remote has diverged and naive rebase fails, when divergence is detected, then a Haiku agent is spawned to resolve conflicts and complete the push
 - Given naive rebase succeeds, when the rebase completes, then no merge commits exist and the history is linear (R7)
 - Given conflict resolution succeeds, when the agent completes the rebase, then no merge commits exist and the history is linear (R7)
+- Given a diverged remote and a dirty working tree during `smart_push`, when the naive rebase fails without starting, then dirty changes are stashed, the rebase is retried, and the stash is restored regardless of outcome (R13)
+- Given stash-assisted rebase succeeds, when the push completes, then the stash has been restored and the result is REBASE_SUCCEEDED (R13)
 
 ### Commit Agent Behavior (R3, R7)
 
@@ -76,9 +78,10 @@ A bootstrap hook initializes the workspace as a git repo on first run, creates `
 **Acceptance Criteria**:
 - Given no `.git` directory in the workspace, when the git bootstrap hook runs, then a git repo is initialized with an initial empty commit
 - Given a fresh init, when the hook completes, then repo-local `user.name` and `user.email` are configured with a fixed identity
-- Given a fresh init, when the hook completes, then `.gitignore` contains `.tachikoma/*.db` and the file is committed
-- Given a fresh init with a pre-existing `.gitignore`, when the hook runs, then the DB binary pattern is appended without clobbering existing content
+- Given a fresh init, when the hook completes, then `.gitignore` contains `.tachikoma/*.db` and `.tachikoma/logs/tachikoma.log`, and the file is committed
+- Given a fresh init with a pre-existing `.gitignore`, when the hook runs, then the DB binary and log patterns are appended without clobbering existing content
 - Given an existing `.git` directory, when the hook runs, then it does not rewrite `.gitignore` (idempotent)
+- Given an existing `.git` directory where `.gitignore` is missing the log entry, when the hook runs, then the missing entry is appended without committing (the commit agent picks it up)
 - Given git init fails, when the hook runs, then a clear exception propagates with the failure reason
 
 ### Push/Sync MCP Tools (R14)

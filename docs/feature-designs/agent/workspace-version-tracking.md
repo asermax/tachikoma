@@ -45,7 +45,7 @@ The post-processor runs in the pipeline's **finalize phase**, ensuring all memor
 | Layer/Component | Responsibility | Key Decisions |
 |-----------------|----------------|---------------|
 | `src/tachikoma/git/__init__.py` | Re-exports: `git_hook`, `GitProcessor`, sync utilities | Clean public API for the git package |
-| `src/tachikoma/git/hooks.py` | `git_hook`: initializes workspace as git repo + syncs with origin | Subsystem-owned hook pattern (DES-003); creates `.gitignore` on fresh init; delegates sync to `smart_pull`; restores DB from dumps when dump files changed during pull |
+| `src/tachikoma/git/hooks.py` | `git_hook`: initializes workspace as git repo + syncs with origin | Subsystem-owned hook pattern (DES-003); creates `.gitignore` with DB binary and active log exclusions on fresh init; ensures missing gitignore entries on every startup (idempotent, no commit); delegates sync to `smart_pull`; restores DB from dumps when dump files changed during pull |
 | `src/tachikoma/database.py` | `database_hook`: initializes shared database | Restores DB from dump files if DB is missing but dumps exist (complements git_hook's sync-triggered restore); restore failure is non-fatal |
 | `src/tachikoma/git/db_sync.py` | `dump_database()`, `restore_database()` | Stdlib-only (`sqlite3` + `json`); on-disk format matches `simonw/sqlite-diffable` for backwards compatibility; dump clears stale files before writing; restore deletes DB and rebuilds from dumps |
 | `src/tachikoma/git/processor.py` | `GitProcessor(PostProcessor)` + `GIT_COMMIT_PROMPT` + `query_and_consume` helper | Dumps DB before dirty check so DB changes surface in `git status`; prompt co-located with processor; uses `$WORKSPACE` placeholders for directory paths (DES-008), replaced at call site before passing to `query_and_consume`; fresh `query()` (not fork); delegates push to `smart_push` from sync module |
@@ -83,6 +83,17 @@ sequenceDiagram
             alt clean rebase
                 Sync->>Remote: git push origin HEAD
                 Sync-->>Git: REBASE_SUCCEEDED
+            else dirty tree (rebase didn't start)
+                Sync->>Sync: stash dirty changes
+                Sync->>Sync: retry rebase
+                alt stash retry succeeded
+                    Sync->>Sync: stash pop (restore)
+                    Sync->>Remote: git push origin HEAD
+                    Sync-->>Git: REBASE_SUCCEEDED
+                else stash retry failed
+                    Sync->>Sync: stash pop (restore)
+                    Sync-->>Git: REBASE_FAILED (local preserved)
+                end
             else conflicts
                 Sync->>Agent: spawn Haiku for conflict resolution
                 alt agent succeeded
@@ -130,6 +141,12 @@ GitProcessor(PostProcessor)
 
 git_hook(ctx: BootstrapContext) → None
 
+git/hooks.py (gitignore management)
+├── _GITIGNORE_ENTRIES: list[str]
+├── _create_gitignore(workspace_path) → None
+├── _ensure_gitignore_entries(workspace_path) → None
+└── _append_missing_entries(existing) → str
+
 query_and_consume(prompt, agent_defaults) → None
 
 git/sync.py (stateless functions)
@@ -137,6 +154,7 @@ git/sync.py (stateless functions)
 ├── smart_push(cwd, remote, branch, agent_defaults) → PushResult
 ├── smart_pull(cwd, remote, branch, agent_defaults) → SyncResult
 ├── _try_naive_rebase(cwd, remote_branch) → bool
+├── _retry_rebase_with_stash(cwd, remote_branch) → bool
 ├── _agent_rebase(cwd, remote_branch, agent_defaults) → bool
 ├── _abort_stale_rebase(cwd) → bool
 └── _has_uncommitted_changes(cwd) → bool
@@ -157,23 +175,22 @@ git/tools.py
 1. __main__.py registers git_hook after workspace hook
 2. bootstrap.run() executes hooks in registration order
 3. git_hook(ctx) runs:
-   a. Pre-flight: check `git-lfs` is on PATH (raises RuntimeError with install hint if missing)
-   b. Read workspace_path from ctx.settings_manager.settings
-   c. Check if workspace_path / ".git" exists
-      ├─ exists → skip init, check LFS tracking
-      │  ├─ .gitattributes has `.tachikoma/*.db filter=lfs` → no-op
-      │  └─ no LFS tracking → log warning (no auto-migration)
+   a. Read workspace_path from ctx.settings_manager.settings
+   b. Check if workspace_path / ".git" exists
+      ├─ exists → skip init
       └─ doesn't exist → continue
-   d. Run: git init
-   e. Run: git config user.name "Tachikoma"
-   f. Run: git config user.email "tachikoma@local"
-   g. Run: git commit --allow-empty -m "Initial commit"
-   h. Run: git lfs install --local
-   i. Write `.tachikoma/*.db filter=lfs diff=lfs merge=lfs -text` to .gitattributes (append, don't clobber)
-   j. Run: git add .gitattributes && git commit -m "Configure LFS for database"
-   k. If any subprocess returns non-zero → raise with stderr output
-4. Sync workspace with remote:
-   a. Check if origin remote exists: _run_git("remote", "get-url", "origin")
+   c. Run: git init
+   d. Run: git config user.name "Tachikoma"
+   e. Run: git config user.email "tachikoma@local"
+   f. Run: git commit --allow-empty -m "Initial commit"
+   g. Create .gitignore with .tachikoma/*.db and .tachikoma/logs/tachikoma.log (append to existing)
+   h. Run: git add .gitignore && git commit -m "Add gitignore for workspace exclusions"
+   i. If any subprocess returns non-zero → raise with stderr output
+4. Ensure gitignore entries (runs on every startup, idempotent):
+   a. _ensure_gitignore_entries(workspace_path)
+   b. Appends any missing entries to .gitignore without committing
+5. Sync workspace with remote:
+   a. Check if origin remote exists: run_git("remote", "get-url", "origin")
       ├─ no origin → debug log, skip sync
       └─ origin exists → smart_pull(workspace_path, "origin", "HEAD", agent_defaults)
          ├─ DIRTY_SKIPPED → warning log
@@ -308,6 +325,18 @@ git/tools.py
 **When**: `smart_push` detects divergence and both naive and agent rebase fail
 **Then**: REBASE_FAILED logged as warning. Local commits preserved. Will be retried on next sync.
 
+### Scenario: Push with divergence — dirty tree, stash retry succeeds
+
+**Given**: Origin remote has diverged and the working tree has uncommitted changes (e.g., active log file)
+**When**: Naive rebase fails without starting due to dirty tree
+**Then**: `smart_push` stashes dirty changes, retries the rebase, restores the stash, and pushes. Result is REBASE_SUCCEEDED.
+
+### Scenario: Push with divergence — dirty tree, stash retry also fails
+
+**Given**: Origin remote has diverged, working tree is dirty, and stash-assisted rebase also fails
+**When**: Stash retry returns False
+**Then**: Stash is restored, REBASE_FAILED logged as warning. Local commits preserved.
+
 ### Scenario: Session ends with workspace changes, no origin remote
 
 **Given**: Memory extraction processors wrote files; no origin remote configured
@@ -336,7 +365,7 @@ git/tools.py
 
 **Given**: Workspace exists but has no `.git` directory
 **When**: Bootstrap runs the git hook
-**Then**: Repo initialized, identity configured, initial empty commit created. No `.gitignore`.
+**Then**: Repo initialized, identity configured, initial empty commit created, `.gitignore` with `.tachikoma/*.db` and `.tachikoma/logs/tachikoma.log` committed.
 
 ### Scenario: Subsequent launch — git repo exists
 
@@ -354,5 +383,5 @@ git/tools.py
 
 - The git processor establishes a second post-processor pattern: fork-based (memory) vs. fresh-query (git). Future processors can follow either pattern.
 - Agent guardrails are enforced in two layers: (1) prompt instructions describe the allowed commands (git + a curated set of read-only inspection and navigation utilities), and (2) a `PreToolUse` hook built from `make_bash_gate_hook()` (`GIT_BASH_HOOK`) programmatically gates every `Bash` tool call to the allowed prefix list (`git`, `ls`, `find`, `file`, `echo`, `date`, `cat`, `head`, `tail`, `wc`, `stat`, `cd`, `pwd`). The hook compiles these into a single regex that matches exact command names or command names followed by a space and arguments — preventing partial matches (e.g., `cd` matches `cd /path` but not `cdeject`). Compound commands (joined by `&&`, `||`, `|`, or `;`) are split before validation; each sub-command must pass independently, or the entire command is denied. See [DES-004](../../design/DES-004-prompt-driven-forked-processor.md) for the hook's design.
-- No `.gitignore` is created — all workspace content is tracked by default. Users can add their own if desired.
+- `.gitignore` is created on fresh init with `.tachikoma/*.db` and `.tachikoma/logs/tachikoma.log` exclusions. On every startup, `_ensure_gitignore_entries` appends any missing entries without committing. Rotated log files (`.tachikoma/logs/tachikoma.<timestamp>.log`) remain tracked.
 - Known consolidation opportunities: `_run_git`/`_run_git_capture` duplicated between `git/sync.py` and `projects/git.py`; `_check_git_status` in processor.py vs `_has_uncommitted_changes` in sync.py are functionally identical; `AgentDefaults` construction from settings duplicated in both hooks (only 2 call sites).
