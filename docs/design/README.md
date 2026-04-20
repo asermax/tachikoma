@@ -11,3 +11,4 @@
 | [DES-007](DES-007-low-effort-classification-agent.md) | Low-Effort Classification Agent | Project-wide | 2026-03-21 |
 | [DES-008](DES-008-workspace-path-placeholder.md) | Workspace Path Placeholder in Agent Prompts | Project-wide | 2026-04-12 |
 | [DES-009](DES-009-channel-delivery-serialization.md) | Channel Delivery Serialization via asyncio.Lock | Python / Channels | 2026-04-19 |
+| [DES-010](DES-010-central-scheduler.md) | Central Scheduler for Time-Based Recurring Work | Python / Architecture | 2026-04-19 |

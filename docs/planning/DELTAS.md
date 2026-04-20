@@ -427,13 +427,6 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 **Complexity**: Medium
 **Description**: Developers need to debug failed background tasks and understand execution history, but task instances currently record only status, timestamps, and a free-text result — with no link to the SDK session that ran, no transcript reference, and no structured error context. This delta enriches the task instance model and execution flow with traceability data: recording the SDK session ID and transcript path for each background execution, capturing structured error context (error type, message, tool calls leading to failure) on failure using the error classification from the structured error handling subsystem, and computing execution duration as a first-class field. These fields enable querying past executions by session, inspecting failure artifacts, and displaying execution metrics without manual timestamp arithmetic. The scope is limited to the tasks subsystem — background jobs are not interactive conversations, but they still require an audit trail linking execution to its artifacts and outcomes.
 
-### DLT-104: Auto-cleanup of completed one-shot tasks
-**Status**: ✗ Defined
-**Depends on**: None
-**Priority**: 1 (Critical)
-**Complexity**: Easy
-**Description**: One-shot tasks (reading list nudges, reminders) accumulate in the database after they fire and auto-disable — 14 accumulated in just two weeks of usage. The task system should automatically delete completed one-shot task definitions after a configurable retention period (default 24-48 hours). Only one-shot tasks whose instances have all reached terminal status (completed or failed) are eligible for cleanup. Recurring cron tasks are excluded from this cleanup regardless of instance status. The cleanup runs as part of the existing instance generator polling loop, checking for expired one-shot definitions on each evaluation cycle.
-
 ### DLT-105: Agent-driven episodic memory search
 **Status**: ✗ Defined
 **Depends on**: None

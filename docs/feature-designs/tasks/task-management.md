@@ -17,6 +17,7 @@ Tachikoma needs persistent task definitions that the agent can create and manage
 - SQLAlchemy async + aiosqlite is the established persistence pattern (ADR-007)
 - Bootstrap hooks (DES-003) are the initialization mechanism
 - MCP tools follow the existing SDK MCP Tool Server Factory pattern (DES-006)
+- Recurring time-based work goes through the central scheduler (DES-010) as Jobs with interval or cron triggers
 - Task data must be independent of the sessions subsystem
 
 **Interactions:**
@@ -40,7 +41,9 @@ The task management subsystem lives in `src/tachikoma/tasks/` as a self-containe
 | `src/tachikoma/tasks/repository.py` | `TaskRepository` — async SQLAlchemy CRUD for definitions and instances; `list_enabled_definitions()` and `list_disabled_definitions()` for filtered queries; `_to_domains_with_isolation()` for per-record error isolation with auto-disable; crash recovery (mark running as failed; leaves waiting untouched); `get_ready_background_instances()` returns the pending ∪ waiting-with-response union for the runner; `list_expired_waiting_instances(timeout_seconds)` feeds the wait_timeout sweep; `update_instance(id, **fields)` is the single field-agnostic write path — callers pass arbitrary column updates and `updated_at` auto-stamps via the ORM (DES-009) | Receives shared `async_sessionmaker` from `Database`; follows ADR-007 pattern; list methods auto-disable corrupted definitions instead of failing the entire query; ready-instance query is a single `select` with `OR` so fresh and resumable tasks flow through one code path; `list_expired_waiting_instances` filters out rows with `updated_at IS NULL` (legacy pre-DES-009 rows that have not been written since the column was added) |
 | `src/tachikoma/tasks/tools.py` | `create_task_tools_server(repository, timezone)` — MCP server factory receiving `ZoneInfo` at construction; `_parse_schedule(schedule, tz)` stamps naive datetimes with configured timezone, preserves aware as-is; `_format_schedule(schedule, tz)` converts display to configured timezone; `list_tasks` (defaults to enabled-only, `archived` parameter for disabled; output includes task ID for referencing in other tools, prompts excluded for compact output; `last_fired_at` converted to configured timezone), `get_task` (returns full details including complete prompt for a single task by ID; `last_fired_at` and `created_at` converted to configured timezone), `create_task`, `update_task` (supports `task_type` changes via `Literal` validation; resets `last_fired_at` on schedule change to enable one-shot re-scheduling; validates one-shot schedules are in the future consistent with `create_task`), `delete_task`, `run_task_now` (immediate background task execution — two modes: by-reference via `task_id` snapshots the definition's prompt without mutating it; ad-hoc via `prompt` creates a transient instance with `definition_id=None`; `RunTaskNowArgs` uses a `model_validator` to enforce exactly one of `task_id` or `prompt`, with optional `name` only valid with `prompt`; background-only for by-ref mode; no cross-instance concurrency gate), and `respond_to_task` (routes a user's reply back to a `waiting` background task — enforces `instance.status == "waiting"` and `user_response is None` before persisting, returning an error otherwise); Pydantic `BaseModel` classes (`ListTasksArgs`, `GetTaskArgs`, `CreateTaskArgs`, `UpdateTaskArgs`, `DeleteTaskArgs`, `RunTaskNowArgs`, `RespondToTaskArgs`) for arg validation and type coercion; enriched `@tool()` descriptions with parameter documentation including timezone-aware schedule formats | Factory receives `ZoneInfo`, passes to `_parse_schedule` and `_format_schedule` via closures; uses `replace(tzinfo=tz)` for naive, `astimezone(tz)` for display; all displayed timestamps (schedules, `last_fired_at`, `created_at`) converted to configured timezone; list/detail pattern: `list_tasks` is compact (no prompt), `get_task` returns full details; `update_task` resets `last_fired_at` when schedule changes (the old fire time is meaningless for a new schedule; for one-shot tasks, the instance generator requires `last_fired_at=None` to fire; for cron tasks, the anchor logic handles `None` by falling back to start-of-hour); `UpdateTaskArgs.task_type` uses `Literal["session", "background"]` for automatic validation; `respond_to_task` performs the status + already-responded check before writing (dual-gate authority — the tool enforces the invariant, the respondable-notification prompt is only a guidance hint); `run_task_now` is registered unconditionally (both with and without `respond_to_task`); `TaskRepositoryError`-specific error handling surfaces root causes via `__cause__`; follows DES-006 |
 | `src/tachikoma/tasks/hooks.py` | `tasks_hook` — bootstrap hook (DES-003): retrieves shared `Database` from extras, creates repository, runs crash recovery; stores `task_repository` in `bootstrap.extras` | Subsystem-owned hook; runs after `database_hook` |
-| `src/tachikoma/tasks/scheduler.py` | `instance_generator()` — async loop with strict cron firing, stale-cron prevention via `since`, and period-aware dedup; `_create_pending_instance()` helper for instance creation and logging; `get_timezone(settings)` — returns `ZoneInfo` from pre-validated settings string (shared utility used by scheduler, preamble rendering, and executor) | Plain async function started as `asyncio.Task`; `get_timezone` has no fallback logic — validation happens at config load; stale-cron check advances CronSim anchor past `since` to find the next valid occurrence |
+| `src/tachikoma/tasks/scheduler.py` | Tick entry points driven by the central scheduler (DES-010): `instance_generator_tick()` (strict cron firing, stale-cron prevention via `since`, period-aware dedup), `session_task_scheduler_tick()` (enqueues pending session instances into the buffer), `one_shot_cleanup_tick()` (thin wrapper around `repository.cleanup_expired_one_shot_definitions`). Plus `_create_pending_instance()` helper and `get_timezone(settings)` shared utility | Each tick is a single pass — no `while` loop, no sleep, no top-level try/except (owned by the central scheduler per DES-010); `get_timezone` has no fallback logic — validation happens at config load; stale-cron check advances CronSim anchor past `since` to find the next valid occurrence |
+| `src/tachikoma/tasks/executor.py` | `BackgroundTaskRunner` (stateful-tick class per DES-010: holds the semaphore and in-flight executor dict across ticks; `tick()` queries ready instances and spawns `BackgroundTaskExecutor` tasks under the semaphore; `shutdown()` drains in-flight executor tasks on application shutdown); `expired_waiter_sweep()` (standalone Job that fails waiting instances past `wait_timeout`); `BackgroundTaskExecutor` | Stateful tick uses a class because the semaphore and executor-task dict must persist across ticks; `shutdown()` is called from `__main__.py`'s finally block *after* the scheduler task is cancelled so in-flight executors get a chance to cancel cleanly; waiter sweep extracted from the runner into its own Job so its cadence is independent of the runner tick |
+| `src/tachikoma/tasks/repository.py` (cleanup extension) | `cleanup_expired_one_shot_definitions(retention_hours)` — deletes fired one-shot definitions (`schedule.type == "once"` AND `last_fired_at IS NOT NULL`) whose associated instances are all terminal and whose retention anchor (`max(instance.completed_at)`, falling back to `last_fired_at` for zero-instance defs) is older than the threshold; deletes instances first, then definition | Single repository method — the Job wrapper stays thin; JSON substring match on `'"type": "once"'` relies on `to_json` serialization with a space after the colon; retention anchor composes latest instance completion with `last_fired_at` fallback so zero-instance-but-fired definitions are also eligible |
 | `src/tachikoma/database.py` | Shared `Database` class with `Base(DeclarativeBase)`, `AsyncEngine`, `async_sessionmaker`; `database_hook` bootstrap hook | All ORM models share one `Base`; single engine for all subsystems |
 | `src/tachikoma/context/loading.py` (`SYSTEM_PREAMBLE_TEMPLATE`) | Timezone-aware tasks documentation in the system prompt preamble: task types, scheduling formats with timezone behavior, Date and Time section, MCP tool descriptions with parameter documentation, cross-references, and `send_notification` tool description for background tasks | `SYSTEM_PREAMBLE_TEMPLATE` with `{timezone}` placeholder; `render_system_preamble(timezone)` resolves and formats; follows ADR-008 append pattern |
 
@@ -195,6 +198,22 @@ Background tasks can cycle through `waiting` multiple times (each `needs_input` 
       - Create TaskInstance(status="pending", scheduled_for=schedule.at)
       - Update definition.last_fired_at, set definition.enabled=false
 4. Sleep until next tick
+```
+
+### One-shot cleanup flow
+
+```
+1. Central scheduler (DES-010) fires the one_shot_cleanup Job on its cron trigger (0 3 * * *)
+2. Job calls repository.cleanup_expired_one_shot_definitions(retention_hours)
+3. Repository selects candidate definitions: schedule contains '"type": "once"', last_fired_at IS NOT NULL,
+   no instance with status NOT IN ('completed', 'failed') (NOT EXISTS subquery)
+4. For each candidate:
+   a. Query max(completed_at) over that definition's instances
+   b. Anchor = max completed_at if any instance exists, else definition.last_fired_at
+   c. If anchor >= threshold (now - retention_hours), skip
+   d. Delete all instances for that definition
+   e. Delete the definition
+5. Commit. Return deleted count. Job logs the count.
 ```
 
 ### Task creation flow
@@ -516,6 +535,35 @@ Note: `since` is declared non-nullable (`Mapped[datetime]`) because it is introd
 **Given**: A running instance exists for a background task definition
 **When**: The agent calls `run_task_now` with the same `task_id`
 **Then**: A new pending instance is created. The runner's semaphore gates actual execution concurrency.
+
+### Scenario: Fired one-shot is cleaned up after retention
+
+**Given**: A one-shot task fired, auto-disabled, and its instance completed more than `cleanup_retention_hours` ago
+**When**: The `one_shot_cleanup` Job fires (daily at 3 AM via DES-010)
+**Then**: The definition and its instances are deleted in one transaction. Recurring cron definitions are never touched even if disabled with all instances terminal.
+
+### Scenario: Cleanup blocked by in-flight instance
+
+**Given**: A fired one-shot whose instance is still `running` or `waiting`
+**When**: The cleanup Job fires
+**Then**: The definition is preserved — the `NOT EXISTS` subquery excludes it. Cleanup will re-evaluate on the next daily run.
+
+### Scenario: Cleanup of zero-instance fired one-shot
+
+**Given**: A fired one-shot definition has `last_fired_at` older than the retention window but no instance rows (e.g. the instance was manually deleted, or the fire predates the instance schema)
+**When**: The cleanup Job fires
+**Then**: The definition is deleted — the retention anchor falls back to `last_fired_at` when no instance exists.
+
+### Design decision: One-shot cleanup via Job + repository method
+
+**Choice**: Run cleanup as a cron-triggered Job in the central scheduler (`"0 3 * * *"`), backed by a single repository method `cleanup_expired_one_shot_definitions(retention_hours)`. Retention is configurable via `TaskSettings.cleanup_retention_hours` (default 48h, ge=0).
+
+**Why**: Daily cadence fits DES-010's `CronTrigger` naturally and keeps cleanup off the hot 60s instance-generator tick. Encapsulating find+delete in a single transactional repository method avoids N+1 queries and keeps the Job a one-liner. JSON substring match on `'"type": "once"'` is tightly coupled to `to_json()` serialization but acceptable given it's the only serializer and is covered by tests. The retention anchor composes `max(instance.completed_at)` with a `last_fired_at` fallback so zero-instance-but-fired definitions are also eligible — otherwise a partially corrupted state would accumulate forever.
+
+**Consequences**:
+- Pro: New cadences slot in without touching `instance_generator`; DLT-147-style system-maintenance operations (future) register as additional Jobs
+- Pro: Cleanup failures are isolated per DES-010 and log without affecting other jobs
+- Con: JSON substring filter will need adjustment if `ScheduleConfig.to_json()` changes serialization
 
 ## Notes
 

@@ -31,6 +31,7 @@ Note: The workflow subsystem provides a separate set of MCP tools (`start_workfl
 | R10 | Schedule deserialization is robust to malformed data — legacy bare ISO datetime strings are recovered as one-shot schedules, and corrupted definitions are auto-disabled |
 | R11 | On-demand background task execution via `run_task_now` MCP tool — supports both by-reference (existing definition) and ad-hoc (transient instance with no definition) modes |
 | R12 | Stale-cron prevention — a `since` timestamp auto-stamped on every create and update prevents newly-created or recently-updated task definitions from firing retroactively for cron matches before the definition was last modified |
+| R13 | Auto-cleanup of fired one-shot definitions — once the retention window has elapsed since the one-shot's last terminal instance (or since `last_fired_at` for zero-instance definitions), the definition and any associated instances are deleted. Recurring cron definitions are never cleaned up. |
 
 ## Behaviors
 
@@ -80,6 +81,20 @@ The instance generator uses a `since` timestamp (auto-stamped on every INSERT an
 - Given an updated cron task definition, when the cron match time is before the update timestamp (`since`), then no instance is created
 - Given a cron task where the first cron match is before `since`, the generator advances the CronSim anchor past `since` to find the next valid occurrence rather than skipping the task entirely
 - Given a cron task that has just fired, when the next generator tick evaluates the definition, then the updated `since` timestamp does not prevent the next naturally-occurring cron match from firing
+
+### One-Shot Cleanup (R13)
+
+Fired one-shot task definitions accumulate in the database once they auto-disable. A daily cleanup pass deletes one-shots whose retention window has elapsed, along with their associated instances. Recurring cron definitions are excluded.
+
+**Acceptance Criteria**:
+- Given a one-shot definition with `last_fired_at` set and all instances in terminal status, when the latest completion is older than the configured retention window, then the definition and its instances are deleted atomically
+- Given a one-shot definition with any pending, running, or waiting instance, then cleanup is blocked regardless of retention
+- Given a one-shot definition whose latest instance completed within the retention window, then the definition is preserved
+- Given a never-fired one-shot definition (`last_fired_at IS NULL`), then the definition is preserved regardless of age
+- Given a cron-based definition, then it is never cleaned up even if disabled with all instances terminal
+- Given a one-shot definition that fired but generated no instance rows, when `last_fired_at` is older than the retention window, then the definition is deleted
+- Given the retention window is changed via `cleanup_retention_hours`, then subsequent cleanup passes honor the new value
+- Given cleanup encounters an error, then the error is logged and the scheduler continues running other jobs
 
 ### Persistence and Recovery (R7, R8)
 
