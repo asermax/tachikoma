@@ -99,7 +99,7 @@ PreProcessingPipeline
 
 ContextProvider (ABC)
 ├── provide(message: str) → ContextResult | None  (abstract)
-└── status_message() → str  (default: humanized class name; overridable)
+└── status_message(result: ContextResult | None = None) → str  (abstract; no result → start message, with result → completion message)
 
 ContextResult (dataclass)
 ├── tag: str                                           (validated: non-empty + valid XML tag name via regex)
@@ -110,8 +110,6 @@ ContextResult (dataclass)
 
 assemble_context(results: list[ContextResult], message: str) → str  (standalone, handles text only)
 
-_humanize_provider_name(class_name: str) → str   (strips trailing ContextProvider/Provider, splits CamelCase)
-
 MessagePreProcessingPipeline                           [runs on every message, not session-gated]
 ├── _providers: list[MessageContextProvider]
 ├── _lock: asyncio.Lock                                (serializes concurrent invocations)
@@ -120,7 +118,7 @@ MessagePreProcessingPipeline                           [runs on every message, n
 
 MessageContextProvider (ABC)                            [standalone, not extending ContextProvider]
 ├── provide(message: str, *, existing_entries: list[SessionContextEntry] | None, sdk_session_id: str | None) → list[ContextResult] | None
-└── status_message() → str  (default: humanized class name; overridable)
+└── status_message(result: list[ContextResult] | None = None) → str  (abstract; no result → start message, with result → completion message)
 ```
 
 ``StatusCallback = Callable[[str], Awaitable[None]]`` is defined in ``tachikoma.events`` alongside the ``Status`` AgentEvent.
@@ -248,18 +246,19 @@ erDiagram
 
 ### Provider-Owned Status Messages
 
-**Choice**: Add `status_message() -> str` on both `ContextProvider` and `MessageContextProvider` ABCs (non-abstract, with a humanizing default). Pipelines accept an optional `on_status` callback and invoke `await on_status(provider.status_message())` from *inside* a per-provider gather wrapper, immediately before awaiting `provide()`.
-**Why**: The provider knows best what it does — it owns the user-facing description. Emission from inside the gather wrapper preserves the existing concurrent-start semantics; emitting all statuses *before* `asyncio.gather` would serialize N await hops before any provider began actual work. Error isolation is also preserved: if a provider raises, its status has already been emitted before the exception reached `asyncio.gather(return_exceptions=True)`.
+**Choice**: Add abstract `status_message(result=None) -> str` on both `ContextProvider` and `MessageContextProvider` ABCs. Pipelines accept an optional `on_status` callback and invoke `await on_status(provider.status_message())` (start) and `await on_status(provider.status_message(result))` (completion) from *inside* a per-provider gather wrapper. The start call precedes `provide()`; the completion call follows it. If `provide()` raises, the completion call is never reached.
+**Why**: The provider knows best what it does — it owns the user-facing description for both phases. The completion message reflects the result (e.g., "Found 3 relevant memories" vs "No relevant memories found"), giving the user visibility into what happened. Making it abstract ensures every provider explicitly defines its messages.
 **Alternatives Considered**:
-- Async generator `run()` yielding Status events interleaved with results: forces every consumer to distinguish events from results, breaks existing signatures
-- Pipeline derives status from class name only: loses the ability to show user-friendly messages like "Searching memories..."
+- Two separate methods (`status_message` + `completion_message`): adds more surface area for a simple concern; one method with a parameter is simpler
+- Default humanized class name: removed to force providers to explicitly define user-facing messages
 - Emit statuses before `asyncio.gather`: regresses provider parallelism
 
 **Consequences**:
 - Pro: Callback is additive and opt-in — existing callers unchanged
-- Pro: Default humanized message is always available; overrides are bespoke
+- Pro: Abstract method ensures every provider explicitly defines its messages
 - Pro: Emission order roughly matches provider start order (non-deterministic but acceptable — the channel renders the most recent message)
-- Pro: Status emission is independent of `provide()` success — failed providers still communicate intent
+- Pro: Start emission is independent of `provide()` success — failed providers still communicate intent
+- Pro: Completion messages give users visibility into what providers found
 
 ## System Behavior
 
@@ -293,11 +292,11 @@ erDiagram
 **When**: A message arrives
 **Then**: Pre-processing step is skipped entirely. Behavior is identical to before pre-processing was added.
 
-### Scenario: Granular status emission
+### Scenario: Granular status emission with completion messages
 
-**Given**: Multiple providers registered, each overriding `status_message()` with a bespoke description, and the coordinator invokes `run()` with an `on_status` callback.
+**Given**: Multiple providers registered, each implementing `status_message()` with start and completion messages, and the coordinator invokes `run()` with an `on_status` callback.
 **When**: The pipeline runs.
-**Then**: Each provider's status message is pushed through the callback before its `provide()` call starts. Providers still begin concurrently — the emission is localized inside each provider's gather wrapper.
+**Then**: Each provider emits a start message (via `status_message()`) before its `provide()` call starts, and a completion message (via `status_message(result)`) after it returns. Providers still begin concurrently — the emission is localized inside each provider's gather wrapper. If a provider raises, only its start message is emitted (completion is unreachable).
 
 ## Notes
 

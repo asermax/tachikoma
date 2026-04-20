@@ -294,8 +294,13 @@ class TestMessagePreProcessingPipeline:
 
 
 class _NamedMessageProvider(MessageContextProvider):
-    def __init__(self, message: str | None = None) -> None:
-        self._message = message
+    def __init__(
+        self,
+        start: str = "Loading context...",
+        completion: str = "Loaded context",
+    ) -> None:
+        self._start = start
+        self._completion = completion
 
     async def provide(
         self,
@@ -304,12 +309,12 @@ class _NamedMessageProvider(MessageContextProvider):
         existing_entries=None,
         sdk_session_id=None,
     ) -> list[ContextResult] | None:
-        return None
+        return []
 
-    def status_message(self) -> str:
-        if self._message is not None:
-            return self._message
-        return super().status_message()
+    def status_message(self, result: list[ContextResult] | None = None) -> str:
+        if result is not None:
+            return self._completion
+        return self._start
 
 
 class TestStatusCallback:
@@ -317,8 +322,14 @@ class TestStatusCallback:
 
     async def test_emits_status_per_provider(self) -> None:
         pipeline = MessagePreProcessingPipeline()
-        pipeline.register(_NamedMessageProvider("Searching memories..."))
-        pipeline.register(_NamedMessageProvider("Detecting relevant skills..."))
+        pipeline.register(_NamedMessageProvider(
+            start="Searching memories...",
+            completion="No relevant memories found",
+        ))
+        pipeline.register(_NamedMessageProvider(
+            start="Detecting relevant skills...",
+            completion="No relevant skills detected",
+        ))
 
         received: list[str] = []
 
@@ -327,20 +338,14 @@ class TestStatusCallback:
 
         await pipeline.run("hi", on_status=on_status)
 
-        assert set(received) == {"Searching memories...", "Detecting relevant skills..."}
-
-    async def test_default_status_message_uses_humanized_class_name(self) -> None:
-        class AnotherPerMessageProvider(MessageContextProvider):
-            async def provide(
-                self,
-                message: str,
-                *,
-                existing_entries=None,
-                sdk_session_id=None,
-            ) -> list[ContextResult] | None:
-                return None
-
-        assert AnotherPerMessageProvider().status_message() == "another per message..."
+        # Each provider emits start + completion (2 messages each).
+        assert len(received) == 4
+        assert set(received) == {
+            "Searching memories...",
+            "No relevant memories found",
+            "Detecting relevant skills...",
+            "No relevant skills detected",
+        }
 
     async def test_without_callback_runs_cleanly(self) -> None:
         pipeline = MessagePreProcessingPipeline()

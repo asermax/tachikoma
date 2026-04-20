@@ -194,7 +194,7 @@ AgentEvent (base)
 - **TextChunk**: `text: str` — one fragment of the agent's response
 - **ToolActivity**: `tool_name: str`, `tool_input: dict`, `result: str` — a tool invocation by the agent
 - **Result**: `session_id: str | None`, `total_cost_usd: float | None`, `usage: dict | None` — signals response completion with observability metadata
-- **Status**: `message: str` — a transient, granular status update forwarded by the coordinator. Boundary detection, the session-gated pre-processing pipeline, and the per-message pre-processing pipeline each emit their own user-facing description (e.g. `"Detecting topic shift..."`, `"Searching memories..."`, `"Detecting relevant skills..."`) via a `StatusCallback`; the coordinator yields those as `Status` events on the stream while the originating work runs concurrently in a background task
+- **Status**: `message: str` — a transient, granular status update forwarded by the coordinator. Boundary detection, the session-gated pre-processing pipeline, and the per-message pre-processing pipeline each emit their own user-facing description (e.g. `"Analyzing message..."`, `"Searching memories..."`, `"Detecting relevant skills..."`) via a `StatusCallback`; the coordinator yields those as `Status` events on the stream while the originating work runs concurrently in a background task. Providers emit both start and completion messages (e.g. `"Searching memories..."` → `"Found 3 relevant memories"`)
 - **Error**: `message: str`, `recoverable: bool` — something went wrong; recoverable errors let the conversation continue, non-recoverable errors signal exit
 
 ### SDK Message → AgentEvent mapping
@@ -259,7 +259,7 @@ The `enqueue()` method allows channels to buffer user messages at any time (sync
    and cancels the task if the consumer abandons the generator.
 5. Coordinator checks for active session; creates one via registry if needed — sets is_new_session flag
 6. If no active session: cold-start resume attempt runs as a background task;
-   its internal detect_boundary call emits "Detecting topic shift..." through
+   its internal detect_boundary call emits "Analyzing message..." through
    on_status, the coordinator forwards it as Status.
 7. If active session has a summary AND cwd is not None:
    a. Fetch recent closed session candidates via registry.get_recent_closed()
@@ -267,7 +267,7 @@ The `enqueue()` method allows channels to buffer user messages at any time (sync
    b. Build SessionCandidate list from sessions
    c. Call detect_boundary(text, session, agent_defaults, candidates=candidates, on_status=on_status)
       as a background task drained through _drain_status_while_running;
-      the detector emits "Detecting topic shift..." once before its query.
+      the detector emits "Analyzing message..." once before its query.
       → returns BoundaryResult(continues, resume_session_id)
 8. If topic shift → run _handle_transition(active, resume_session_id=result.resume_session_id)
    → returns bool (True=resumed, False=fresh); set is_new_session = not resumed;

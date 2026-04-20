@@ -701,7 +701,7 @@ class TestOnStatusCallback:
             on_status=on_status,
         )
 
-        assert order == ["status:Detecting topic shift...", "query"]
+        assert order == ["status:Analyzing message...", "query"]
 
     async def test_no_callback_behaves_as_before(self, mocker: MockerFixture) -> None:
         async def fake_query(*args, **kwargs):

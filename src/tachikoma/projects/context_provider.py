@@ -33,8 +33,11 @@ class ProjectsContextProvider(ContextProvider):
         self._workspace_path = workspace_path
         self._server = create_projects_server(workspace_path)
 
-    def status_message(self) -> str:
-        return "Loading project context..."
+    def status_message(self, result: "ContextResult | None" = None) -> str:
+        if result is None:
+            return "Loading project context..."
+
+        return "Loaded project context"
 
     async def provide(self, message: str) -> ContextResult | None:
         """Provide context about registered projects.

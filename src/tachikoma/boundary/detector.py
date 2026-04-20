@@ -140,7 +140,7 @@ async def detect_boundary(
         user_prompt = f"{user_prompt}\n\n{candidates_text}"
 
     if on_status is not None:
-        await on_status("Detecting topic shift...")
+        await on_status("Analyzing message...")
 
     # Fully consume the query() generator to ensure proper SDK cleanup.
     # Default: fail-open (continues=True, no resume)

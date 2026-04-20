@@ -212,8 +212,16 @@ class MemoryContextProvider(MessageContextProvider):
         """
         self._agent_defaults = agent_defaults
 
-    def status_message(self) -> str:
-        return "Searching memories..."
+    def status_message(self, result: list[ContextResult] | None = None) -> str:
+        if result is None:
+            return "Searching memories..."
+
+        count = len(result) if result else 0
+
+        if count:
+            return f"Found {count} relevant memories"
+
+        return "No relevant memories found"
 
     async def provide(
         self,

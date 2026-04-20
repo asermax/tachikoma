@@ -28,8 +28,9 @@ In addition to the session-gated pipeline (which runs on the first message of a 
 | R8 | Per-message pipeline runs registered MessageContextProvider instances on every message (not just first message of session), receiving the session's existing context entries |
 | R9 | Context results can optionally carry structured metadata (JSON dict) for provider-specific data that the coordinator persists alongside the entry without interpretation |
 | R10 | Per-message pipeline passes SDK session ID to providers, enabling session forking for providers that need conversation context |
-| R11 | Both pipelines accept an optional async status callback on `run()`; before each provider's `provide()` is awaited, the pipeline emits that provider's `status_message()` via the callback. Providers run concurrently — the emission happens inside each provider's gather wrapper, not before the gather, so parallelism is preserved |
-| R12 | Both `ContextProvider` and `MessageContextProvider` ABCs expose `status_message() -> str` with a default derived from the class name (strips trailing `ContextProvider`/`Provider`, splits CamelCase, lowercases, appends an ellipsis). Concrete providers override with user-facing descriptions |
+| R11 | Both pipelines accept an optional async status callback on `run()`; before each provider's `provide()` is awaited, the pipeline emits that provider's `status_message()` via the callback, and after `provide()` completes, emits `status_message(result)` as a completion message. Providers run concurrently — the emission happens inside each provider's gather wrapper, not before the gather, so parallelism is preserved |
+| R12 | Both `ContextProvider` and `MessageContextProvider` ABCs expose abstract `status_message(result=None) -> str` — called with no args at start (returns start message) and with the `provide()` result at completion (returns completion message). Every concrete provider must implement it |
+| R13 | Provider status messages include both start (before `provide()`) and completion (after `provide()`) emissions. The completion message reflects the result (e.g., "Found N relevant memories" vs "No relevant memories found"). If `provide()` raises, no completion message is emitted |
 
 ## Behaviors
 
@@ -103,14 +104,13 @@ Context results can carry structured metadata that the coordinator persists alon
 - Given a provider does not set metadata (defaults to None), when the result is persisted, then the entry has no metadata — backward compatible
 - Given the skills provider returns one result per detected skill, when each result has metadata identifying the skill name, then the coordinator persists it without interpreting the content
 
-### Status Emission (R11, R12)
+### Status Emission (R11, R12, R13)
 
-Both pipelines emit granular, provider-driven status messages so the coordinator can forward them to the active channel as `Status` AgentEvents while pre-processing runs.
+Both pipelines emit granular, provider-driven status messages so the coordinator can forward them to the active channel as `Status` AgentEvents while pre-processing runs. Each provider emits two messages: a start message before `provide()` runs, and a completion message after it returns.
 
 **Acceptance Criteria**:
-- Given N providers are registered and a pipeline is run with `on_status`, when the pipeline executes, then the callback is invoked exactly once per provider with that provider's `status_message()`
-- Given a provider does not override `status_message()`, when status is emitted, then the message is a humanized form of the class name
-- Given a provider overrides `status_message()`, when status is emitted, then the override is used verbatim
-- Given a provider raises inside `provide()`, when the pipeline runs, then its status was still emitted (emission precedes the provider call), its exception is logged per DES-002, and sibling providers complete normally
+- Given N providers are registered and a pipeline is run with `on_status`, when the pipeline executes, then the callback is invoked twice per provider: once with `status_message()` (start) and once with `status_message(result)` (completion)
+- Given a provider's `provide()` returns results, when the completion message is emitted, then `status_message(result)` returns a message reflecting the result (e.g., "Found 3 relevant memories" or "No relevant memories found")
+- Given a provider raises inside `provide()`, when the pipeline runs, then only the start message was emitted (completion is unreachable because the exception propagates past the completion code), the exception is logged per DES-002, and sibling providers complete normally
 - Given a pipeline has zero registered providers, when `run()` is called with or without `on_status`, then no status callback invocations occur
 - Given a pipeline is run without `on_status`, when it executes, then no callback invocations occur — the parameter is optional

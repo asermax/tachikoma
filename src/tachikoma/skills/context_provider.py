@@ -106,8 +106,16 @@ class SkillsContextProvider(MessageContextProvider):
         self._agent_defaults = agent_defaults
         self._registry = registry
 
-    def status_message(self) -> str:
-        return "Detecting relevant skills..."
+    def status_message(self, result: list[ContextResult] | None = None) -> str:
+        if result is None:
+            return "Detecting relevant skills..."
+
+        count = len(result) if result else 0
+
+        if count:
+            return f"Loaded {count} skills"
+
+        return "No relevant skills detected"
 
     async def provide(
         self,

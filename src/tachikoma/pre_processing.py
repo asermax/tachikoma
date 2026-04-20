@@ -35,28 +35,6 @@ McpServerConfig = (
 # letters, numbers, hyphens, or underscores
 _XML_TAG_PATTERN = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_-]*$")
 
-# Splits CamelCase boundaries — used to humanize provider class names.
-_CAMEL_SPLIT_PATTERN = re.compile(r"(?<=[a-z0-9])(?=[A-Z])|(?<=[A-Z])(?=[A-Z][a-z])")
-
-_PROVIDER_SUFFIXES = ("ContextProvider", "Provider")
-
-
-def _humanize_provider_name(class_name: str) -> str:
-    """Derive a default status message from a provider class name.
-
-    Strips a trailing ``ContextProvider``/``Provider`` suffix, splits CamelCase
-    into words, lowercases everything, and appends an ellipsis.
-    """
-    trimmed = class_name
-    for suffix in _PROVIDER_SUFFIXES:
-        if trimmed.endswith(suffix) and trimmed != suffix:
-            trimmed = trimmed[: -len(suffix)]
-            break
-
-    words = _CAMEL_SPLIT_PATTERN.split(trimmed)
-    humanized = " ".join(w for w in words if w).lower() or class_name.lower()
-    return f"{humanized}..."
-
 
 @dataclass
 class ContextResult:
@@ -108,14 +86,15 @@ class ContextProvider(ABC):
         """
         ...
 
-    def status_message(self) -> str:
-        """Short message describing what this provider does while it runs.
+    @abstractmethod
+    def status_message(self, result: "ContextResult | None" = None) -> str:
+        """Short message describing provider status.
 
-        Emitted by the pipeline as a ``Status`` AgentEvent before ``provide()``
-        is awaited. Subclasses should override with a user-facing description
-        (e.g. ``"Searching memories..."``). The default humanizes the class name.
+        Called twice by the pipeline: once with no args (start) and once
+        with the result of ``provide()`` (completion). Must always return
+        a non-None string.
         """
-        return _humanize_provider_name(self.__class__.__name__)
+        ...
 
 
 class PreProcessingPipeline:
@@ -174,7 +153,10 @@ class PreProcessingPipeline:
         async def _run_one(provider: ContextProvider) -> ContextResult | None:
             if on_status is not None:
                 await on_status(provider.status_message())
-            return await provider.provide(message)
+            result = await provider.provide(message)
+            if on_status is not None:
+                await on_status(provider.status_message(result))
+            return result
 
         results = await asyncio.gather(
             *[_run_one(p) for p in self._providers],

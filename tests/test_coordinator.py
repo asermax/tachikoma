@@ -3749,7 +3749,7 @@ class TestColdStartResume:
 
         async def fake_detect(*args, on_status=None, **kwargs):
             if on_status is not None:
-                await on_status("Detecting topic shift...")
+                await on_status("Analyzing message...")
             return BoundaryResult(continues=False, resume_session_id=None)
 
         mocker.patch("tachikoma.coordinator.detect_boundary", side_effect=fake_detect)
@@ -3761,7 +3761,7 @@ class TestColdStartResume:
             events = await _send(coord, "hello")
 
         status_events = [e for e in events if isinstance(e, Status)]
-        assert any(e.message == "Detecting topic shift..." for e in status_events)
+        assert any(e.message == "Analyzing message..." for e in status_events)
 
     async def test_sets_sdk_session_id_on_resume(self, mock_sdk, mocker) -> None:
         """AC: After cold-start resume, SDK options use the resumed session's ID."""

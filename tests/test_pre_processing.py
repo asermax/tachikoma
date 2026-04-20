@@ -24,6 +24,12 @@ class _FakeProvider(ContextProvider):
     async def provide(self, message: str) -> ContextResult | None:
         return None
 
+    def status_message(self, result: ContextResult | None = None) -> str:
+        if result is None:
+            return "Loading context..."
+
+        return "Loaded context"
+
 
 def _make_mock_provider() -> _FakeProvider:
     """Create a provider with mockable provide method."""
@@ -309,33 +315,44 @@ class TestAssembleContext:
 class _NamedProvider(ContextProvider):
     """Provider whose status_message is overridable per-test."""
 
-    def __init__(self, result: ContextResult | None, message: str | None = None) -> None:
+    def __init__(
+        self,
+        result: ContextResult | None,
+        message: str | None = None,
+        completion: str = "Done",
+    ) -> None:
         self._result = result
         self._message = message
+        self._completion = completion
 
     async def provide(self, message: str) -> ContextResult | None:
         return self._result
 
-    def status_message(self) -> str:
+    def status_message(self, result: ContextResult | None = None) -> str:
+        if result is not None:
+            return self._completion
         if self._message is not None:
             return self._message
-        return super().status_message()
+        return "Loading context..."
 
 
 class LoadingProjectsProvider(ContextProvider):
     async def provide(self, message: str) -> ContextResult | None:
         return None
 
-    def status_message(self) -> str:
-        return "Loading projects..."
+    def status_message(self, result: ContextResult | None = None) -> str:
+        if result is None:
+            return "Loading projects..."
+        return "Loaded projects"
 
 
 class TestStatusCallback:
     """DLT-031: pipeline emits provider status via callback."""
 
     async def test_pipeline_emits_status_per_provider(self) -> None:
-        p1 = _NamedProvider(None, message="Searching memories...")
-        p2 = _NamedProvider(None, message="Loading projects...")
+        ctx = ContextResult(tag="test", content="data")
+        p1 = _NamedProvider(ctx, message="Searching memories...", completion="Found 1 memory")
+        p2 = _NamedProvider(ctx, message="Loading projects...", completion="Loaded project context")
 
         pipeline = PreProcessingPipeline()
         pipeline.register(p1)
@@ -348,8 +365,14 @@ class TestStatusCallback:
 
         await pipeline.run("hi", on_status=on_status)
 
-        # Both providers should have emitted status (order may vary).
-        assert set(received) == {"Searching memories...", "Loading projects..."}
+        # Each provider emits start + completion (2 messages each).
+        assert len(received) == 4
+        assert set(received) == {
+            "Searching memories...",
+            "Found 1 memory",
+            "Loading projects...",
+            "Loaded project context",
+        }
 
     async def test_pipeline_without_callback_does_not_fail(self) -> None:
         pipeline = PreProcessingPipeline()
@@ -359,29 +382,23 @@ class TestStatusCallback:
         results = await pipeline.run("hi")
         assert results == []
 
-    async def test_default_status_message_humanizes_class_name(self) -> None:
-        class SomeCamelCaseProvider(ContextProvider):
-            async def provide(self, message: str) -> ContextResult | None:
-                return None
-
-        assert SomeCamelCaseProvider().status_message() == "some camel case..."
-
-    async def test_default_strips_context_provider_suffix(self) -> None:
-        class WeatherContextProvider(ContextProvider):
-            async def provide(self, message: str) -> ContextResult | None:
-                return None
-
-        assert WeatherContextProvider().status_message() == "weather..."
-
     async def test_override_takes_precedence(self) -> None:
-        assert LoadingProjectsProvider().status_message() == "Loading projects..."
+        provider = LoadingProjectsProvider()
+        assert provider.status_message() == "Loading projects..."
+
+    async def test_completion_message_with_result(self) -> None:
+        ctx = ContextResult(tag="test", content="data")
+
+        result = LoadingProjectsProvider().status_message(result=ctx)
+
+        assert result == "Loaded projects"
 
     async def test_pipeline_emits_status_even_when_provider_raises(self) -> None:
         class _Boom(ContextProvider):
             async def provide(self, message: str) -> ContextResult | None:
                 raise RuntimeError("boom")
 
-            def status_message(self) -> str:
+            def status_message(self, result: ContextResult | None = None) -> str:
                 return "Running boom..."
 
         pipeline = PreProcessingPipeline()

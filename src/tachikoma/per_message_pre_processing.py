@@ -14,7 +14,7 @@ from abc import ABC, abstractmethod
 from loguru import logger
 
 from tachikoma.events import StatusCallback
-from tachikoma.pre_processing import ContextResult, _humanize_provider_name
+from tachikoma.pre_processing import ContextResult
 from tachikoma.sessions.model import SessionContextEntry
 
 _log = logger.bind(component="per_message_pre_processing")
@@ -49,13 +49,15 @@ class MessageContextProvider(ABC):
         """
         ...
 
-    def status_message(self) -> str:
-        """Short message describing what this provider does while it runs.
+    @abstractmethod
+    def status_message(self, result: list[ContextResult] | None = None) -> str:
+        """Short message describing provider status.
 
-        Emitted by the pipeline as a ``Status`` AgentEvent before ``provide()``
-        is awaited. Subclasses should override with a user-facing description.
+        Called twice by the pipeline: once with no args (start) and once
+        with the result of ``provide()`` (completion). Must always return
+        a non-None string.
         """
-        return _humanize_provider_name(self.__class__.__name__)
+        ...
 
 
 class MessagePreProcessingPipeline:
@@ -122,11 +124,14 @@ class MessagePreProcessingPipeline:
             ) -> list[ContextResult] | ContextResult | None:
                 if on_status is not None:
                     await on_status(provider.status_message())
-                return await provider.provide(
+                result = await provider.provide(
                     message,
                     existing_entries=entries,
                     sdk_session_id=sdk_session_id,
                 )
+                if on_status is not None:
+                    await on_status(provider.status_message(result))
+                return result
 
             results = await asyncio.gather(
                 *[_run_one(p) for p in self._providers],
