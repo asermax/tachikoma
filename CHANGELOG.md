@@ -2,6 +2,100 @@
 
 <!-- version list -->
 
+## v1.37.0 (2026-04-20)
+
+### Bug Fixes
+
+- **boundary**: Normalize LLM-returned string "null" to None for resume_session_id
+  ([`df17b80`](https://github.com/asermax/tachikoma/commit/df17b808cf939c6c10d4e0a0d6d47fe085ef38ae))
+
+- **display**: Reverse tool usage display to chronological order
+  ([`82ed7d3`](https://github.com/asermax/tachikoma/commit/82ed7d30fd6d7e76369c106913923cf3315db836))
+
+- **git**: Handle gitlink files for rebase detection
+  ([`51d16c7`](https://github.com/asermax/tachikoma/commit/51d16c72f28901ad0baca74b014e33cc740ce763))
+
+- **git-sync**: Avoid spurious rebase abort and unnecessary agent spawn
+  ([`954727b`](https://github.com/asermax/tachikoma/commit/954727b1bb622e81f54df7f7cb15fa015fe68f24))
+
+- **post-processing**: Respect shell quoting in compound command splitting
+  ([`25818bc`](https://github.com/asermax/tachikoma/commit/25818bc43c47c9314ce73a50fa3880fd656b38c5))
+
+- **tasks**: Add rollback on enqueue failure and simplify concurrency logic
+  ([`17059ab`](https://github.com/asermax/tachikoma/commit/17059ab3902339e7b4288ffa69c527e1b007cc98))
+
+### Documentation
+
+- Reconcile DLT-146 context summary into feature docs
+  ([`6073714`](https://github.com/asermax/tachikoma/commit/60737146ae206b506d1c1274b5a90a30e68f2d35))
+
+- **agent**: Reconcile granular pre-processing status into feature docs
+  ([`ac1aff3`](https://github.com/asermax/tachikoma/commit/ac1aff320fa12d85cbec444c3ba8e587763b9abf))
+
+- **channels**: Update feature docs for chronological tool activity ordering
+  ([`69593fd`](https://github.com/asermax/tachikoma/commit/69593fdd02a6ad0b7eb09c9b52a53f5c1f62690f))
+
+- **config**: Document per-skill configuration convention
+  ([`20f8cf5`](https://github.com/asermax/tachikoma/commit/20f8cf5d82cfb304e0a845544121086c92f69d4b))
+
+- **planning**: Add DLT-162 for display order reversal
+  ([`62c43a1`](https://github.com/asermax/tachikoma/commit/62c43a1d1cbdd4924ff28b87076b9f188b2998b3))
+
+- **planning**: Remove completed DLT-146 and DLT-162 from delta inventory
+  ([`a428039`](https://github.com/asermax/tachikoma/commit/a42803933690f8c34f04d64e901c2395d97509b3))
+
+- **planning**: Remove reconciled DLT-031 from delta inventory
+  ([`adeeb95`](https://github.com/asermax/tachikoma/commit/adeeb9579586aec7ce6a15b7f9740e596922a4ce))
+
+- **planning**: Remove reconciled DLT-157 from delta inventory
+  ([`c96ad09`](https://github.com/asermax/tachikoma/commit/c96ad094c7ee93e368e30c5d065d6762b4e9b29c))
+
+- **tasks**: Reconcile central scheduler and one-shot cleanup
+  ([`9628b41`](https://github.com/asermax/tachikoma/commit/9628b415b993f4a43cf3e0c6e77a890ca362430a))
+
+- **tasks**: Reconcile stale-cron prevention into feature docs
+  ([`ca70baa`](https://github.com/asermax/tachikoma/commit/ca70baa9fa2da8af6d88c7502d6c90ae407fa577))
+
+### Features
+
+- **agent**: Centralize disallowed tools in AgentDefaults
+  ([`f5769eb`](https://github.com/asermax/tachikoma/commit/f5769eb0eda3a3160d1c588b57fd44edf7af1571))
+
+- **agent**: Component-driven status updates during pre-processing
+  ([`a371dac`](https://github.com/asermax/tachikoma/commit/a371dac3f50b34fcd88a93636ce59c66e7ad96d2))
+
+- **post-processing**: Surface context entries to post-processors
+  ([`6feb5fc`](https://github.com/asermax/tachikoma/commit/6feb5fc39e863e5e97163dcfa4f97874696a8790))
+
+- **skills**: Inject AGENTS.md into classifier prompt
+  ([`5fd7f7d`](https://github.com/asermax/tachikoma/commit/5fd7f7d7830be7e739ce725f3a7a5123b06d1f08))
+
+- **tasks**: Add central scheduler and migrate recurring jobs
+  ([`e3c97c9`](https://github.com/asermax/tachikoma/commit/e3c97c9b86fad8d670be3168540e4c67b99c87a9))
+
+- **tasks**: Prevent stale cron from firing on create/update
+  ([`2b30981`](https://github.com/asermax/tachikoma/commit/2b309813cd18441ba49071b0917b55386b102c20))
+
+- **workflows**: Declare required skills for workflow steps
+  ([`a5c4ad3`](https://github.com/asermax/tachikoma/commit/a5c4ad3e1d024571c3bdc86e496c1ebc3f49a0cf))
+
+### Refactoring
+
+- **post-processing**: Extract _build_fork_options from fork helpers
+  ([`c602305`](https://github.com/asermax/tachikoma/commit/c60230570a0936d474d5058db692261179d9c6a7))
+
+- **skills**: Extract render_skill_block to shared helper
+  ([`fc45d83`](https://github.com/asermax/tachikoma/commit/fc45d83162b8d63083b4feb10d4631803b76b1ce))
+
+### Testing
+
+- **config**: Fix disallowed tools assertions for frozenset order
+  ([`712818b`](https://github.com/asermax/tachikoma/commit/712818b90ff0fe5c816eb3d027d990a90504d655))
+
+- **config**: Update disallowed tools tests for centralized constant
+  ([`5ff6702`](https://github.com/asermax/tachikoma/commit/5ff6702f8df37fe4ba84600066b975d690729d49))
+
+
 ## v1.36.1 (2026-04-19)
 
 ### Bug Fixes
