@@ -1167,7 +1167,10 @@ class TestCoordinatorPreProcessing:
         async with Coordinator(registry=registry, pre_pipeline=pre_pipeline) as coord:
             _ = await _send(coord, "hello")
 
-        pre_pipeline.run.assert_awaited_once_with("hello")
+        pre_pipeline.run.assert_awaited_once()
+        call = pre_pipeline.run.await_args
+        assert call.args == ("hello",)
+        assert "on_status" in call.kwargs
 
         # Verify pre-processing results were saved to DB (3-tuples: owner, content, metadata)
         found_memories = False
@@ -3391,7 +3394,9 @@ class TestPerMessagePreProcessingIntegration:
 
         call_count = 0
 
-        async def counting_run(message, *, existing_entries=None, sdk_session_id=None):
+        async def counting_run(
+            message, *, existing_entries=None, sdk_session_id=None, on_status=None
+        ):
             nonlocal call_count
             call_count += 1
             return []
@@ -3428,11 +3433,13 @@ class TestPerMessagePreProcessingIntegration:
 
         call_order: list[str] = []
 
-        async def track_pre_run(message):
+        async def track_pre_run(message, *, on_status=None):
             call_order.append("session_gated")
             return [ContextResult(tag="memories", content="some memory")]
 
-        async def track_msg_pre_run(message, *, existing_entries=None, sdk_session_id=None):
+        async def track_msg_pre_run(
+            message, *, existing_entries=None, sdk_session_id=None, on_status=None
+        ):
             call_order.append("per_message")
             return []
 
@@ -3722,8 +3729,8 @@ class TestColdStartResume:
         text_events = [e for e in events if isinstance(e, TextChunk)]
         assert text_events[0].text == "hi"
 
-    async def test_yields_thinking_status(self, mock_sdk, mocker) -> None:
-        """AC: Status('Thinking...') is yielded before cold-start resume check."""
+    async def test_forwards_boundary_status(self, mock_sdk, mocker) -> None:
+        """AC (DLT-031): Status from detect_boundary is forwarded on the stream."""
         client, _ = mock_sdk
         client.receive_response.return_value = _mock_messages(
             make_assistant([TextBlock(text="hi")]),
@@ -3740,10 +3747,12 @@ class TestColdStartResume:
         registry = _make_mock_registry(active_session=None)
         registry.get_recent_closed.return_value = [candidate]
 
-        mocker.patch(
-            "tachikoma.coordinator.detect_boundary",
-            return_value=BoundaryResult(continues=False, resume_session_id=None),
-        )
+        async def fake_detect(*args, on_status=None, **kwargs):
+            if on_status is not None:
+                await on_status("Detecting topic shift...")
+            return BoundaryResult(continues=False, resume_session_id=None)
+
+        mocker.patch("tachikoma.coordinator.detect_boundary", side_effect=fake_detect)
 
         async with Coordinator(
             registry=registry,
@@ -3752,7 +3761,7 @@ class TestColdStartResume:
             events = await _send(coord, "hello")
 
         status_events = [e for e in events if isinstance(e, Status)]
-        assert any(e.message == "Thinking..." for e in status_events)
+        assert any(e.message == "Detecting topic shift..." for e in status_events)
 
     async def test_sets_sdk_session_id_on_resume(self, mock_sdk, mocker) -> None:
         """AC: After cold-start resume, SDK options use the resumed session's ID."""

@@ -1,5 +1,8 @@
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any
+
+StatusCallback = Callable[[str], Awaitable[None]]
 
 
 @dataclass
@@ -34,7 +37,12 @@ class Result(AgentEvent):
 
 @dataclass
 class Status(AgentEvent):
-    """A transient status update from the coordinator (e.g. "Thinking...")."""
+    """A transient, component-driven status update forwarded by the coordinator.
+
+    Emitted by boundary detection and the pre-processing pipelines via
+    ``StatusCallback`` so users see what work is in flight before the agent
+    starts streaming its response.
+    """
 
     message: str
 

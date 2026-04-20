@@ -17,6 +17,7 @@ from tachikoma.boundary.prompts import (
     BOUNDARY_DETECTION_USER_PROMPT,
     CANDIDATES_SECTION_TEMPLATE,
 )
+from tachikoma.events import StatusCallback
 from tachikoma.sdk_query import stderr_aware_query
 from tachikoma.sessions.model import Session
 
@@ -59,6 +60,7 @@ async def detect_boundary(
     agent_defaults: AgentDefaults,
     *,
     candidates: list[SessionCandidate] | None = None,
+    on_status: StatusCallback | None = None,
 ) -> BoundaryResult:
     """Detect whether a message continues the current conversation or starts a new topic.
 
@@ -78,6 +80,8 @@ async def detect_boundary(
         agent_defaults: Common SDK options (cwd, cli_path, env).
         candidates: Optional list of candidate sessions for resumption matching.
             Each candidate has an ID, summary, and optional last_exchange for matching.
+        on_status: Optional async callback invoked once with a short progress
+            message before the detection query runs.
 
     Returns:
         BoundaryResult with:
@@ -134,6 +138,9 @@ async def detect_boundary(
             candidates=_format_candidates(candidates)
         )
         user_prompt = f"{user_prompt}\n\n{candidates_text}"
+
+    if on_status is not None:
+        await on_status("Detecting topic shift...")
 
     # Fully consume the query() generator to ensure proper SDK cleanup.
     # Default: fail-open (continues=True, no resume)

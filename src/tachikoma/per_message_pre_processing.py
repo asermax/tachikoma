@@ -13,7 +13,8 @@ from abc import ABC, abstractmethod
 
 from loguru import logger
 
-from tachikoma.pre_processing import ContextResult
+from tachikoma.events import StatusCallback
+from tachikoma.pre_processing import ContextResult, _humanize_provider_name
 from tachikoma.sessions.model import SessionContextEntry
 
 _log = logger.bind(component="per_message_pre_processing")
@@ -48,6 +49,14 @@ class MessageContextProvider(ABC):
         """
         ...
 
+    def status_message(self) -> str:
+        """Short message describing what this provider does while it runs.
+
+        Emitted by the pipeline as a ``Status`` AgentEvent before ``provide()``
+        is awaited. Subclasses should override with a user-facing description.
+        """
+        return _humanize_provider_name(self.__class__.__name__)
+
 
 class MessagePreProcessingPipeline:
     """Runs registered MessageContextProvider instances in parallel with error isolation.
@@ -80,6 +89,7 @@ class MessagePreProcessingPipeline:
         *,
         existing_entries: list[SessionContextEntry] | None = None,
         sdk_session_id: str | None = None,
+        on_status: StatusCallback | None = None,
     ) -> list[ContextResult]:
         """Run all registered providers in parallel.
 
@@ -91,6 +101,9 @@ class MessagePreProcessingPipeline:
             message: The user's message text.
             existing_entries: The session's current context entries.
             sdk_session_id: The current SDK session ID, if available.
+            on_status: Optional async callback. If provided, the pipeline
+                emits each provider's ``status_message()`` immediately before
+                awaiting its ``provide()`` call.
 
         Returns:
             List of successful, non-None ContextResult instances (flattened from lists).
@@ -104,15 +117,19 @@ class MessagePreProcessingPipeline:
             names = [p.__class__.__name__ for p in self._providers]
             _log.info("Pipeline started: providers={names}", names=names)
 
+            async def _run_one(
+                provider: MessageContextProvider,
+            ) -> list[ContextResult] | ContextResult | None:
+                if on_status is not None:
+                    await on_status(provider.status_message())
+                return await provider.provide(
+                    message,
+                    existing_entries=entries,
+                    sdk_session_id=sdk_session_id,
+                )
+
             results = await asyncio.gather(
-                *[
-                    p.provide(
-                        message,
-                        existing_entries=entries,
-                        sdk_session_id=sdk_session_id,
-                    )
-                    for p in self._providers
-                ],
+                *[_run_one(p) for p in self._providers],
                 return_exceptions=True,
             )
 

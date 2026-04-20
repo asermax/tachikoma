@@ -212,6 +212,9 @@ class MemoryContextProvider(MessageContextProvider):
         """
         self._agent_defaults = agent_defaults
 
+    def status_message(self) -> str:
+        return "Searching memories..."
+
     async def provide(
         self,
         message: str,

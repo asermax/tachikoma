@@ -37,7 +37,15 @@ from tachikoma.agent_defaults import AgentDefaults
 from tachikoma.boundary import BoundaryResult, SessionCandidate, detect_boundary
 from tachikoma.buffer.events import CoordinatorIdle
 from tachikoma.context.assembly import build_system_prompt
-from tachikoma.events import AgentEvent, Error, Result, Status, TextChunk, ToolActivity
+from tachikoma.events import (
+    AgentEvent,
+    Error,
+    Result,
+    Status,
+    StatusCallback,
+    TextChunk,
+    ToolActivity,
+)
 from tachikoma.message_post_processing import MessagePostProcessingPipeline
 from tachikoma.per_message_pre_processing import MessagePreProcessingPipeline
 from tachikoma.post_processing import PostProcessingPipeline
@@ -102,6 +110,51 @@ async def _message_source(
     finally:
         if pending is not None:
             inbox.put_nowait(pending)
+
+
+async def _drain_status_while_running(
+    task: "asyncio.Task[Any]",
+    queue: "asyncio.Queue[str]",
+) -> AsyncIterator[Status]:
+    """Yield Status events from the queue while the background task runs.
+
+    Concurrently waits for the task to finish or a new status message to
+    arrive, yielding the message as a Status event. When the task finishes,
+    drains any remaining queued messages and exits.
+
+    If the consumer abandons this generator, the background ``task`` is
+    cancelled to match the cancellation semantics of a direct ``await`` —
+    without this, cancellation would stop at the drain helper and leave the
+    SDK call running orphaned.
+    """
+    getter: asyncio.Task[str] | None = None
+    try:
+        while not task.done():
+            getter = asyncio.create_task(queue.get())
+            done, _ = await asyncio.wait(
+                {task, getter},
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+            if getter in done:
+                yield Status(message=getter.result())
+            else:
+                getter.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await getter
+            getter = None
+
+        while not queue.empty():
+            yield Status(message=queue.get_nowait())
+
+    finally:
+        if getter is not None and not getter.done():
+            getter.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await getter
+        if not task.done():
+            task.cancel()
+            with contextlib.suppress(asyncio.CancelledError, Exception):
+                await task
 
 
 def _derive_transcript_path(sdk_session_id: str, cwd: Path | None) -> str:
@@ -363,6 +416,14 @@ class Coordinator:
         # Track last message time for idle gating
         self._last_message_time = datetime.now(UTC)
 
+        # Shared status plumbing: pipeline components push granular status
+        # messages onto the queue; _drain_status_while_running yields them as
+        # Status AgentEvents concurrently with the background work.
+        status_queue: asyncio.Queue[str] = asyncio.Queue()
+
+        async def on_status(msg: str) -> None:
+            await status_queue.put(msg)
+
         # Await any pending per-message post-processing task before proceeding
         if self._pending_msg_task is not None:
             try:
@@ -385,8 +446,12 @@ class Coordinator:
                 active = await self._registry.get_active_session()
 
                 if active is None:
-                    yield Status(message="Thinking...")
-                    active = await self._attempt_cold_start_resume(text)
+                    cold_start_task = asyncio.create_task(
+                        self._attempt_cold_start_resume(text, on_status=on_status)
+                    )
+                    async for event in _drain_status_while_running(cold_start_task, status_queue):
+                        yield event
+                    active = cold_start_task.result()
                     cold_start_resumed = active is not None
 
                 if active is None:
@@ -397,20 +462,13 @@ class Coordinator:
                 # Session tracking failures are logged but never crash the conversation
                 _log.exception("Failed to create session: err={err}", err=str(exc))
 
-        # Signal "Thinking..." when boundary detection or pipelines will run
+        # Boundary detection: check if the message continues the current topic
         will_detect_boundary = (
             active is not None
             and active.summary is not None
             and self._cwd is not None
             and not cold_start_resumed
         )
-        will_preprocess = is_new_session and self._pre_pipeline is not None
-        will_msg_preprocess = self._msg_pre_pipeline is not None
-
-        if will_detect_boundary or will_preprocess or will_msg_preprocess:
-            yield Status(message="Thinking...")
-
-        # Boundary detection: check if the message continues the current topic
         if will_detect_boundary:
             assert active is not None and active.summary is not None
             assert self._registry is not None
@@ -418,12 +476,18 @@ class Coordinator:
             try:
                 candidates = await self._query_resume_candidates()
 
-                result: BoundaryResult = await detect_boundary(
-                    text,
-                    active,
-                    self._agent_defaults,
-                    candidates=candidates,
+                boundary_task: asyncio.Task[BoundaryResult] = asyncio.create_task(
+                    detect_boundary(
+                        text,
+                        active,
+                        self._agent_defaults,
+                        candidates=candidates,
+                        on_status=on_status,
+                    )
                 )
+                async for event in _drain_status_while_running(boundary_task, status_queue):
+                    yield event
+                result: BoundaryResult = boundary_task.result()
                 if result.resume_session_id is not None:
                     # resume_id is authoritative — always transition to resume
                     _log.info(
@@ -465,7 +529,10 @@ class Coordinator:
         # Run session-gated pre-processing pipeline on first message of new session
         if is_new_session and self._pre_pipeline is not None:
             try:
-                results = await self._pre_pipeline.run(text)
+                pre_task = asyncio.create_task(self._pre_pipeline.run(text, on_status=on_status))
+                async for event in _drain_status_while_running(pre_task, status_queue):
+                    yield event
+                results = pre_task.result()
                 if results:
                     # Merge mcp_servers from all results (session-scoped, not persisted)
                     merged: dict[str, McpServerConfig] = {}
@@ -501,11 +568,17 @@ class Coordinator:
 
         if self._msg_pre_pipeline is not None and active is not None:
             try:
-                pp_results = await self._msg_pre_pipeline.run(
-                    text,
-                    existing_entries=entries,
-                    sdk_session_id=self._sdk_session_id,
+                msg_pre_task = asyncio.create_task(
+                    self._msg_pre_pipeline.run(
+                        text,
+                        existing_entries=entries,
+                        sdk_session_id=self._sdk_session_id,
+                        on_status=on_status,
+                    )
                 )
+                async for event in _drain_status_while_running(msg_pre_task, status_queue):
+                    yield event
+                pp_results = msg_pre_task.result()
                 if pp_results and self._registry is not None:
                     pp_tuples = [(r.tag, r.content, r.metadata) for r in pp_results if r.content]
 
@@ -682,7 +755,12 @@ class Coordinator:
                     err=str(exc),
                 )
 
-    async def _attempt_cold_start_resume(self, message: str) -> Session | None:
+    async def _attempt_cold_start_resume(
+        self,
+        message: str,
+        *,
+        on_status: StatusCallback | None = None,
+    ) -> Session | None:
         """Try to match a cold-start message against recent closed sessions.
 
         On fresh startup with no active session, queries recent closed sessions
@@ -710,6 +788,7 @@ class Coordinator:
                 Session(id="", started_at=datetime.now(UTC), summary=_COLD_START_SUMMARY),
                 self._agent_defaults,
                 candidates=candidates,
+                on_status=on_status,
             )
 
             if result.resume_session_id is None:

@@ -291,3 +291,60 @@ class TestMessagePreProcessingPipeline:
 
         _, kwargs = provider.provide.call_args
         assert kwargs["sdk_session_id"] is None
+
+
+class _NamedMessageProvider(MessageContextProvider):
+    def __init__(self, message: str | None = None) -> None:
+        self._message = message
+
+    async def provide(
+        self,
+        message: str,
+        *,
+        existing_entries=None,
+        sdk_session_id=None,
+    ) -> list[ContextResult] | None:
+        return None
+
+    def status_message(self) -> str:
+        if self._message is not None:
+            return self._message
+        return super().status_message()
+
+
+class TestStatusCallback:
+    """DLT-031: per-message pipeline emits provider status via callback."""
+
+    async def test_emits_status_per_provider(self) -> None:
+        pipeline = MessagePreProcessingPipeline()
+        pipeline.register(_NamedMessageProvider("Searching memories..."))
+        pipeline.register(_NamedMessageProvider("Detecting relevant skills..."))
+
+        received: list[str] = []
+
+        async def on_status(msg: str) -> None:
+            received.append(msg)
+
+        await pipeline.run("hi", on_status=on_status)
+
+        assert set(received) == {"Searching memories...", "Detecting relevant skills..."}
+
+    async def test_default_status_message_uses_humanized_class_name(self) -> None:
+        class AnotherPerMessageProvider(MessageContextProvider):
+            async def provide(
+                self,
+                message: str,
+                *,
+                existing_entries=None,
+                sdk_session_id=None,
+            ) -> list[ContextResult] | None:
+                return None
+
+        assert AnotherPerMessageProvider().status_message() == "another per message..."
+
+    async def test_without_callback_runs_cleanly(self) -> None:
+        pipeline = MessagePreProcessingPipeline()
+        pipeline.register(_NamedMessageProvider("Searching..."))
+
+        results = await pipeline.run("hi")
+        assert results == []

@@ -106,6 +106,9 @@ class SkillsContextProvider(MessageContextProvider):
         self._agent_defaults = agent_defaults
         self._registry = registry
 
+    def status_message(self) -> str:
+        return "Detecting relevant skills..."
+
     async def provide(
         self,
         message: str,

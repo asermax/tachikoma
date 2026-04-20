@@ -667,3 +667,61 @@ class TestDetectBoundary:
         assert "session-456" in prompt
         # session-456 has no last_exchange, so it should still appear with summary only
         assert "Discussion about databases" in prompt
+
+
+class TestOnStatusCallback:
+    """DLT-031: detect_boundary emits a Status message before the query runs."""
+
+    async def test_emits_single_status_before_query(self, mocker: MockerFixture) -> None:
+        order: list[str] = []
+
+        async def fake_query(*args, **kwargs):
+            order.append("query")
+            yield ResultMessage(
+                subtype="success",
+                duration_ms=1,
+                duration_api_ms=1,
+                is_error=False,
+                num_turns=1,
+                session_id="s",
+                total_cost_usd=0.0,
+                usage={},
+                structured_output={"continues_conversation": True, "resume_session_id": None},
+            )
+
+        mocker.patch("tachikoma.boundary.detector.stderr_aware_query", side_effect=fake_query)
+
+        async def on_status(msg: str) -> None:
+            order.append(f"status:{msg}")
+
+        await detect_boundary(
+            message="hi",
+            session=_make_session("discussing python"),
+            agent_defaults=AgentDefaults(cwd=Path("/workspace")),
+            on_status=on_status,
+        )
+
+        assert order == ["status:Detecting topic shift...", "query"]
+
+    async def test_no_callback_behaves_as_before(self, mocker: MockerFixture) -> None:
+        async def fake_query(*args, **kwargs):
+            yield ResultMessage(
+                subtype="success",
+                duration_ms=1,
+                duration_api_ms=1,
+                is_error=False,
+                num_turns=1,
+                session_id="s",
+                total_cost_usd=0.0,
+                usage={},
+                structured_output={"continues_conversation": True, "resume_session_id": None},
+            )
+
+        mocker.patch("tachikoma.boundary.detector.stderr_aware_query", side_effect=fake_query)
+
+        result = await detect_boundary(
+            message="hi",
+            session=_make_session("discussing python"),
+            agent_defaults=AgentDefaults(cwd=Path("/workspace")),
+        )
+        assert result.continues is True

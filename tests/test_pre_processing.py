@@ -304,3 +304,108 @@ class TestAssembleContext:
         memories_pos = enriched.find("<memories>")
         message_pos = enriched.find("User message")
         assert memories_pos < message_pos
+
+
+class _NamedProvider(ContextProvider):
+    """Provider whose status_message is overridable per-test."""
+
+    def __init__(self, result: ContextResult | None, message: str | None = None) -> None:
+        self._result = result
+        self._message = message
+
+    async def provide(self, message: str) -> ContextResult | None:
+        return self._result
+
+    def status_message(self) -> str:
+        if self._message is not None:
+            return self._message
+        return super().status_message()
+
+
+class LoadingProjectsProvider(ContextProvider):
+    async def provide(self, message: str) -> ContextResult | None:
+        return None
+
+    def status_message(self) -> str:
+        return "Loading projects..."
+
+
+class TestStatusCallback:
+    """DLT-031: pipeline emits provider status via callback."""
+
+    async def test_pipeline_emits_status_per_provider(self) -> None:
+        p1 = _NamedProvider(None, message="Searching memories...")
+        p2 = _NamedProvider(None, message="Loading projects...")
+
+        pipeline = PreProcessingPipeline()
+        pipeline.register(p1)
+        pipeline.register(p2)
+
+        received: list[str] = []
+
+        async def on_status(msg: str) -> None:
+            received.append(msg)
+
+        await pipeline.run("hi", on_status=on_status)
+
+        # Both providers should have emitted status (order may vary).
+        assert set(received) == {"Searching memories...", "Loading projects..."}
+
+    async def test_pipeline_without_callback_does_not_fail(self) -> None:
+        pipeline = PreProcessingPipeline()
+        pipeline.register(_NamedProvider(None))
+
+        # No on_status — must succeed unchanged.
+        results = await pipeline.run("hi")
+        assert results == []
+
+    async def test_default_status_message_humanizes_class_name(self) -> None:
+        class SomeCamelCaseProvider(ContextProvider):
+            async def provide(self, message: str) -> ContextResult | None:
+                return None
+
+        assert SomeCamelCaseProvider().status_message() == "some camel case..."
+
+    async def test_default_strips_context_provider_suffix(self) -> None:
+        class WeatherContextProvider(ContextProvider):
+            async def provide(self, message: str) -> ContextResult | None:
+                return None
+
+        assert WeatherContextProvider().status_message() == "weather..."
+
+    async def test_override_takes_precedence(self) -> None:
+        assert LoadingProjectsProvider().status_message() == "Loading projects..."
+
+    async def test_pipeline_emits_status_even_when_provider_raises(self) -> None:
+        class _Boom(ContextProvider):
+            async def provide(self, message: str) -> ContextResult | None:
+                raise RuntimeError("boom")
+
+            def status_message(self) -> str:
+                return "Running boom..."
+
+        pipeline = PreProcessingPipeline()
+        pipeline.register(_Boom())
+
+        received: list[str] = []
+
+        async def on_status(msg: str) -> None:
+            received.append(msg)
+
+        results = await pipeline.run("hi", on_status=on_status)
+
+        # Status emitted before provide() ran, provider failure isolated.
+        assert received == ["Running boom..."]
+        assert results == []
+
+    async def test_pipeline_without_providers_emits_nothing(self) -> None:
+        pipeline = PreProcessingPipeline()
+
+        received: list[str] = []
+
+        async def on_status(msg: str) -> None:
+            received.append(msg)
+
+        results = await pipeline.run("hi", on_status=on_status)
+        assert received == []
+        assert results == []

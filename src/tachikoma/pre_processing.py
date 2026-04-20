@@ -19,6 +19,8 @@ from claude_agent_sdk.types import (
 )
 from loguru import logger
 
+from tachikoma.events import StatusCallback
+
 if TYPE_CHECKING:
     from claude_agent_sdk.types import AgentDefinition
 
@@ -32,6 +34,28 @@ McpServerConfig = (
 # Valid XML tag name pattern: must start with letter/underscore, followed by
 # letters, numbers, hyphens, or underscores
 _XML_TAG_PATTERN = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_-]*$")
+
+# Splits CamelCase boundaries — used to humanize provider class names.
+_CAMEL_SPLIT_PATTERN = re.compile(r"(?<=[a-z0-9])(?=[A-Z])|(?<=[A-Z])(?=[A-Z][a-z])")
+
+_PROVIDER_SUFFIXES = ("ContextProvider", "Provider")
+
+
+def _humanize_provider_name(class_name: str) -> str:
+    """Derive a default status message from a provider class name.
+
+    Strips a trailing ``ContextProvider``/``Provider`` suffix, splits CamelCase
+    into words, lowercases everything, and appends an ellipsis.
+    """
+    trimmed = class_name
+    for suffix in _PROVIDER_SUFFIXES:
+        if trimmed.endswith(suffix) and trimmed != suffix:
+            trimmed = trimmed[: -len(suffix)]
+            break
+
+    words = _CAMEL_SPLIT_PATTERN.split(trimmed)
+    humanized = " ".join(w for w in words if w).lower() or class_name.lower()
+    return f"{humanized}..."
 
 
 @dataclass
@@ -84,6 +108,15 @@ class ContextProvider(ABC):
         """
         ...
 
+    def status_message(self) -> str:
+        """Short message describing what this provider does while it runs.
+
+        Emitted by the pipeline as a ``Status`` AgentEvent before ``provide()``
+        is awaited. Subclasses should override with a user-facing description
+        (e.g. ``"Searching memories..."``). The default humanizes the class name.
+        """
+        return _humanize_provider_name(self.__class__.__name__)
+
 
 class PreProcessingPipeline:
     """Runs registered ContextProvider instances in parallel with error isolation.
@@ -109,7 +142,12 @@ class PreProcessingPipeline:
         """
         self._providers.append(provider)
 
-    async def run(self, message: str) -> list[ContextResult]:
+    async def run(
+        self,
+        message: str,
+        *,
+        on_status: StatusCallback | None = None,
+    ) -> list[ContextResult]:
         """Run all registered providers in parallel.
 
         If no providers are registered, returns an empty list immediately.
@@ -119,6 +157,10 @@ class PreProcessingPipeline:
 
         Args:
             message: The user's message text.
+            on_status: Optional async callback. If provided, the pipeline
+                emits each provider's ``status_message()`` immediately before
+                awaiting its ``provide()`` call, so all providers still start
+                concurrently.
 
         Returns:
             List of successful, non-None ContextResult instances.
@@ -129,8 +171,13 @@ class PreProcessingPipeline:
         names = [p.__class__.__name__ for p in self._providers]
         _log.info("Pipeline started: providers={names}", names=names)
 
+        async def _run_one(provider: ContextProvider) -> ContextResult | None:
+            if on_status is not None:
+                await on_status(provider.status_message())
+            return await provider.provide(message)
+
         results = await asyncio.gather(
-            *[p.provide(message) for p in self._providers],
+            *[_run_one(p) for p in self._providers],
             return_exceptions=True,
         )
 
