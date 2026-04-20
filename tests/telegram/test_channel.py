@@ -1562,8 +1562,9 @@ class TestDeliveryLock:
 
         channel._process_through_coordinator.assert_not_called()
 
-    async def test_handle_buffered_delivery_blocks_when_lock_held(self) -> None:
-        """_handle_buffered_delivery awaits the lock when it is already held."""
+    async def test_handle_buffered_delivery_returns_immediately_when_lock_held(self) -> None:
+        """_handle_buffered_delivery returns immediately even when the lock is held,
+        spawning a detached task that queues on the lock."""
         channel = self._make_channel()
         channel._process_through_coordinator = AsyncMock()
 
@@ -1571,12 +1572,17 @@ class TestDeliveryLock:
 
         await channel._delivery_lock.acquire()
         try:
-            with pytest.raises(asyncio.TimeoutError):
-                await asyncio.wait_for(channel._handle_buffered_delivery(event), timeout=0.05)
+            # Handler should return immediately — it just spawns a task
+            await asyncio.wait_for(channel._handle_buffered_delivery(event), timeout=0.05)
         finally:
             channel._delivery_lock.release()
 
-        channel._process_through_coordinator.assert_not_called()
+        # Wait for the spawned delivery task to complete
+        tasks = list(channel._delivery_tasks)
+        for task in tasks:
+            await task
+
+        channel._process_through_coordinator.assert_called_once()
 
 
 class TestTelegramChannelBufferFlush:

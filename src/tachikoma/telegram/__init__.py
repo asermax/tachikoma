@@ -531,6 +531,7 @@ class TelegramChannel(Channel):
         self._router = Router()
         self._active_renderer: ResponseRenderer | None = None
         self._delivery_lock: asyncio.Lock = asyncio.Lock()
+        self._delivery_tasks: set[asyncio.Task] = set()
         self._bus = bus
         self._buffer: Buffer | None = buffer
 
@@ -766,26 +767,48 @@ class TelegramChannel(Channel):
     async def _handle_buffered_delivery(self, event: BufferedDelivery) -> None:
         """Handle a BufferedDelivery event from the priority buffer.
 
-        Routes the delivery prompt through the coordinator pipeline.
-        If the user is currently in a conversation, the message is buffered.
+        Spawns a detached task for the delivery work so the EventBus is freed
+        immediately. The task acquires the delivery lock and processes through
+        the coordinator pipeline.
         """
         _log.info(
-            "Processing buffered delivery: items={count}, shutdown={is_shutdown}",
+            "Spawning delivery task: items={count}, shutdown={is_shutdown}",
             count=len(event.items),
             is_shutdown=event.is_shutdown_digest,
         )
 
+        task = asyncio.create_task(self._deliver(event))
+
+        self._delivery_tasks.add(task)
+        task.add_done_callback(self._delivery_tasks.discard)
+
+    async def _deliver(self, event: BufferedDelivery) -> None:
+        """Execute a buffered delivery through the coordinator pipeline.
+
+        Runs as a detached task spawned by _handle_buffered_delivery.
+        """
+        try:
+            async with self._delivery_lock:
+                self._coordinator.enqueue(event.prompt)
+                await self._process_through_coordinator(on_complete=self._build_on_complete(event))
+        except Exception:
+            _log.exception(
+                "Error in detached delivery task: items={count}, shutdown={is_shutdown}",
+                count=len(event.items),
+                is_shutdown=event.is_shutdown_digest,
+            )
+        finally:
+            if event.is_shutdown_digest and self._buffer is not None:
+                self._buffer.resolve_shutdown()
+
+    def _build_on_complete(self, event: BufferedDelivery) -> Callable[[], Awaitable[None]]:
+        """Build the on_complete callback for a buffered delivery."""
         async def on_complete() -> None:
             for item in event.items:
                 if item.on_delivered is not None:
                     await item.on_delivered()
 
-            if event.is_shutdown_digest and self._buffer is not None:
-                self._buffer.resolve_shutdown()
-
-        async with self._delivery_lock:
-            self._coordinator.enqueue(event.prompt)
-            await self._process_through_coordinator(on_complete=on_complete)
+        return on_complete
 
     async def _process_through_coordinator(
         self,

@@ -334,6 +334,11 @@ class TestReplBufferIntegration:
 
         await repl._handle_buffered_delivery(event)
 
+        # Wait for the spawned delivery task to complete
+        tasks = list(repl._delivery_tasks)
+        for task in tasks:
+            await task
+
         coordinator.enqueue.assert_called_with("from-buffer")
 
     async def test_second_sigint_cancels_flush_and_interrupts(
