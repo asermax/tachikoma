@@ -10,7 +10,12 @@ from loguru import logger
 from tachikoma.agent_defaults import AgentDefaults
 from tachikoma.git.db_sync import dump_database
 from tachikoma.git.sync import PUSH_RESULT, PUSH_SUCCESS, has_uncommitted_changes, smart_push
-from tachikoma.post_processing import PostProcessor, build_permissions_settings, make_bash_gate_hook
+from tachikoma.post_processing import (
+    UTILITY_BASH_PREFIXES,
+    PostProcessor,
+    build_permissions_settings,
+    make_bash_gate_hook,
+)
 from tachikoma.sdk_query import stderr_aware_query
 from tachikoma.sessions.model import Session
 
@@ -74,28 +79,14 @@ messages help understand what changed and when.
 
 You can read and modify files anywhere in the workspace. For Bash, `git` \
 commands and read-only inspection commands (`ls`, `find`, `file`, `echo`, \
-`date`, `cat`, `head`, `tail`, `wc`, `stat`) are allowed — other commands \
+`date`, `cat`, `grep`, `head`, `tail`, `wc`, `stat`) are allowed — other commands \
 will be denied. Navigation commands (`cd`, `pwd`) are also allowed."""
 
 
 GIT_TOOLS = ["Read", "Glob", "Grep", "Bash", "Edit", "Write"]
 GIT_ALLOW = ["Read", "Glob", "Grep", "Edit", "Write", "Bash(git *)"]
 GIT_BASH_HOOK = make_bash_gate_hook(
-    [
-        "git ",
-        "ls ",
-        "find ",
-        "file ",
-        "echo ",
-        "date ",
-        "cat ",
-        "head ",
-        "tail ",
-        "wc ",
-        "stat ",
-        "cd",
-        "pwd",
-    ]
+    ["git ", *UTILITY_BASH_PREFIXES],
 )
 
 
