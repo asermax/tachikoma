@@ -82,11 +82,12 @@ class ProjectsProcessor(PostProcessor):
         self._agent_defaults = agent_defaults
         self._cwd = agent_defaults.cwd
 
-    async def process(self, session: Session) -> None:
+    async def process(self, session: Session, *, extra: dict | None = None) -> None:
         """Process dirty submodules: commit and push changes.
 
         Args:
             session: The closed session (not used, but required by interface).
+            extra: Optional dict with additional context (unused by this processor).
         """
         _log.info("Processor started: processor=ProjectsProcessor")
 

@@ -36,7 +36,7 @@ class StaleWorkflowCleanupProcessor(PostProcessor):
         self._repository = repository
         self._threshold = threshold
 
-    async def process(self, session: Session) -> None:
+    async def process(self, session: Session, *, extra: dict | None = None) -> None:
         """Find and clean up stale workflow states."""
         try:
             stale = await self._repository.list_stale(self._threshold)

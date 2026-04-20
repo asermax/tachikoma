@@ -29,7 +29,7 @@ from loguru import logger
 from tachikoma.adapter import sanitize_text
 from tachikoma.agent_defaults import AgentDefaults
 from tachikoma.sdk_query import stderr_aware_query
-from tachikoma.sessions.model import Session
+from tachikoma.sessions.model import Session, SessionContextEntry
 from tachikoma.sessions.registry import SessionRegistry
 
 _log = logger.bind(component="post_processing")
@@ -50,11 +50,15 @@ class PostProcessor(ABC):
     """
 
     @abstractmethod
-    async def process(self, session: Session) -> None:
+    async def process(self, session: Session, *, extra: dict | None = None) -> None:
         """Process a closed session.
 
         Args:
             session: The closed session with sdk_session_id for forking.
+            extra: Optional dict carrying additional context for processors.
+                Keys are defined by the pipeline; current keys:
+                - ``"context_summary"`` (str): Summary of context entries loaded
+                  during the session.
         """
         ...
 
@@ -105,20 +109,28 @@ class PromptDrivenProcessor(PostProcessor):
         self._pre_tool_use_hooks = pre_tool_use_hooks
         self._model = model
 
-    async def process(self, session: Session) -> None:
+    async def process(self, session: Session, *, extra: dict | None = None) -> None:
         """Process by forking the SDK session with the configured prompt.
 
         If the session was resumed from a previous conversation (indicated by
         last_resumed_at), an augmentation is appended to the prompt to provide
-        context to the forked agent.
+        context to the forked agent. If ``extra`` contains a ``context_summary``,
+        it is appended to give the forked agent awareness of what context was
+        active during the conversation.
 
         Args:
             session: The closed session to process.
+            extra: Optional dict with additional context for processors.
         """
         name = self.__class__.__name__
         _log.info("Processor started: processor={name}", name=name)
 
         prompt = augment_prompt_for_resumption(self._prompt, session)
+
+        context_summary = (extra or {}).get("context_summary")
+        if context_summary is not None:
+            prompt = f"{prompt}\n\n{context_summary}"
+
         await fork_and_consume(
             session,
             prompt,
@@ -143,6 +155,118 @@ def augment_prompt_for_resumption(prompt: str, session: Session) -> str:
         f"returning to a topic they discussed earlier. Keep this "
         f"context in mind when processing."
     )
+
+
+def build_context_summary(entries: list[SessionContextEntry]) -> str | None:
+    """Build a context summary from session context entries.
+
+    Groups entries by owner and produces a concise summary (names/paths only,
+    not full content) that tells post-processors what was active during the
+    conversation. Returns None when there are no entries to summarize.
+
+    Args:
+        entries: Session context entries to summarize.
+
+    Returns:
+        Formatted summary string, or None if nothing to report.
+    """
+    if not entries:
+        return None
+
+    by_owner: dict[str, list[SessionContextEntry]] = {}
+    for e in entries:
+        by_owner.setdefault(e.owner, []).append(e)
+
+    lines = [
+        "## Session Context", "",
+        "The following context was active during this conversation:", "",
+    ]
+    has_content = False
+
+    # Foundational: soul, user, agents
+    foundational = [o for o in ("soul", "user", "agents") if o in by_owner]
+    if foundational:
+        has_content = True
+        names = [f"{o.upper()}.md" for o in foundational]
+        lines.append(f"**Foundational Context:** {', '.join(names)}")
+
+    # Memories: extract file paths from metadata
+    memory_entries = by_owner.get("memories", [])
+    if memory_entries:
+        paths = sorted({
+            e.metadata.get("memory_path")
+            for e in memory_entries
+            if e.metadata and e.metadata.get("memory_path")
+        })
+        if paths:
+            has_content = True
+            lines.append(f"**Loaded Memories:** {', '.join(paths)}")
+
+    # Skills: extract names from metadata
+    skill_entries = by_owner.get("skills", [])
+    if skill_entries:
+        names = sorted({
+            e.metadata.get("skill_name")
+            for e in skill_entries
+            if e.metadata and e.metadata.get("skill_name")
+        })
+        if names:
+            has_content = True
+            lines.append(f"**Active Skills:** {', '.join(names)}")
+
+    # Projects: parse names from content lines like "- name: branch"
+    project_entries = by_owner.get("projects", [])
+    if project_entries:
+        project_names: set[str] = set()
+        for entry in project_entries:
+            for line in entry.content.splitlines():
+                stripped = line.strip()
+                if stripped.startswith("- "):
+                    name_part = stripped[2:].split(":")[0].strip()
+                    if name_part:
+                        project_names.add(name_part)
+
+        if project_names:
+            has_content = True
+            lines.append(f"**Projects:** {', '.join(sorted(project_names))}")
+
+    # Previous summary
+    if "previous-summary" in by_owner:
+        has_content = True
+        lines.append("**Previous Conversation:** summary from previous session")
+
+    # Bridging context
+    bridging = by_owner.get("bridging-context", [])
+    if bridging:
+        has_content = True
+        count = len(bridging)
+        word = "summary" if count == 1 else "summaries"
+        lines.append(f"**Bridging Context:** {count} intermediate session {word}")
+
+    if not has_content:
+        return None
+
+    lines.append("")
+    lines.append(
+        "This context was already available to the agent. You should still "
+        "search for existing files before creating or updating them (this "
+        "list does not replace that search). Use this information to:"
+    )
+    lines.append(
+        "- Skip re-extracting information that is already fully covered by "
+        "loaded memory files — but do update those files if the conversation "
+        "adds new details or corrections"
+    )
+    lines.append(
+        "- Avoid duplicating content that was provided by active skills into "
+        "memory files"
+    )
+    lines.append(
+        "- Understand that foundational context (SOUL/USER/AGENTS) shaped "
+        "the agent's behavior during the conversation"
+    )
+
+    return "\n".join(lines)
 
 
 class PostProcessingPipeline:
@@ -230,6 +354,21 @@ class PostProcessingPipeline:
             async with self._lock:
                 _log.info("Pipeline started: session={sid}", sid=session.id[:8])
 
+                # Build context summary from session entries
+                extra: dict | None = None
+                try:
+                    entries = await self._registry.load_context_entries(session.id)
+                    context_summary = build_context_summary(entries)
+                    if context_summary is not None:
+                        extra = {"context_summary": context_summary}
+                except Exception as exc:
+                    _log.exception(
+                        "Failed to build context summary (processors will run "
+                        "without it): session={sid} err={err}",
+                        sid=session.id[:8],
+                        err=str(exc),
+                    )
+
                 for phase in self._phase_order:
                     processors = self._phases[phase]
                     if not processors:
@@ -243,7 +382,7 @@ class PostProcessingPipeline:
                     )
 
                     results = await asyncio.gather(
-                        *[p.process(session) for p in processors],
+                        *[p.process(session, extra=extra) for p in processors],
                         return_exceptions=True,
                     )
 

@@ -29,7 +29,7 @@ class TranscriptArchiveProcessor(PostProcessor):
     def __init__(self, agent_defaults: AgentDefaults) -> None:
         self._cwd = agent_defaults.cwd
 
-    async def process(self, session: Session) -> None:
+    async def process(self, session: Session, *, extra: dict | None = None) -> None:
         if session.transcript_path is None or session.sdk_session_id is None:
             _log.debug(
                 "Skipping transcript archive: missing fields session={sid} "

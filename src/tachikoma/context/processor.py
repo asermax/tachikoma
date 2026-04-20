@@ -249,7 +249,7 @@ class CoreContextProcessor(PromptDrivenProcessor):
         )
         self._data_dir = agent_defaults.cwd / ".tachikoma"
 
-    async def process(self, session: Session) -> None:
+    async def process(self, session: Session, *, extra: dict | None = None) -> None:
         """Process the session and update context files.
 
         This override adds pre/post steps around the fork:
@@ -261,6 +261,7 @@ class CoreContextProcessor(PromptDrivenProcessor):
 
         Args:
             session: The closed session to process.
+            extra: Optional dict with additional context for processors.
         """
         _log.info("Processor started: processor=CoreContextProcessor")
 
@@ -289,6 +290,10 @@ class CoreContextProcessor(PromptDrivenProcessor):
                 mtimes_before[filename] = None
 
         prompt = augment_prompt_for_resumption(formatted_prompt, session)
+
+        context_summary = (extra or {}).get("context_summary")
+        if context_summary is not None:
+            prompt = f"{prompt}\n\n{context_summary}"
 
         # Fork session with pending signals tools
         await fork_and_consume(

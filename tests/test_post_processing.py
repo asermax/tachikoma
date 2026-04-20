@@ -21,24 +21,26 @@ from tachikoma.post_processing import (
     PostProcessor,
     PromptDrivenProcessor,
     _split_compound_commands,
+    build_context_summary,
     fork_and_capture,
     fork_and_consume,
     make_bash_deny_hook,
 )
-from tachikoma.sessions.model import Session
+from tachikoma.sessions.model import Session, SessionContextEntry
 
 
 def _make_mock_registry():
     """Create a mock SessionRegistry for pipeline tests."""
     registry = MagicMock()
     registry.mark_processed = AsyncMock()
+    registry.load_context_entries = AsyncMock(return_value=[])
     return registry
 
 
 class _FakeProcessor(PostProcessor):
     """Concrete processor for testing - methods overridden per-test."""
 
-    async def process(self, session: Session) -> None:
+    async def process(self, session: Session, *, extra: dict | None = None) -> None:
         pass
 
 
@@ -59,6 +61,137 @@ def _make_session(sdk_session_id: str | None = "sdk-123") -> Session:
     )
 
 
+def _make_entry(owner: str, content: str = "", metadata: dict | None = None) -> SessionContextEntry:
+    """Create a test context entry."""
+    return SessionContextEntry(
+        id=1,
+        session_id="session-1",
+        owner=owner,
+        content=content,
+        metadata=metadata,
+    )
+
+
+class TestBuildContextSummary:
+    """Tests for build_context_summary()."""
+
+    def test_returns_none_for_empty_entries(self) -> None:
+        result = build_context_summary([])
+        assert result is None
+
+    def test_returns_none_for_unknown_owners_only(self) -> None:
+        entries = [_make_entry("unknown-tag", "some content")]
+        result = build_context_summary(entries)
+        assert result is None
+
+    def test_includes_foundational_context(self) -> None:
+        entries = [
+            _make_entry("soul", "personality"),
+            _make_entry("user", "user info"),
+            _make_entry("agents", "instructions"),
+        ]
+        result = build_context_summary(entries)
+        assert result is not None
+        assert "**Foundational Context:** SOUL.md, USER.md, AGENTS.md" in result
+
+    def test_includes_memory_paths_from_metadata(self) -> None:
+        entries = [
+            _make_entry(
+                "memories", "content", metadata={"memory_path": "memories/facts/python.md"},
+            ),
+            _make_entry(
+                "memories", "content", metadata={"memory_path": "memories/facts/infra.md"},
+            ),
+        ]
+        result = build_context_summary(entries)
+        assert result is not None
+        assert "memories/facts/infra.md" in result
+        assert "memories/facts/python.md" in result
+        assert "**Loaded Memories:**" in result
+
+    def test_skips_memory_entries_without_metadata(self) -> None:
+        entries = [_make_entry("memories", "content")]
+        result = build_context_summary(entries)
+        assert result is None
+
+    def test_includes_skill_names_from_metadata(self) -> None:
+        entries = [
+            _make_entry("skills", "content", metadata={"skill_name": "reading-list"}),
+            _make_entry("skills", "content", metadata={"skill_name": "code-review"}),
+        ]
+        result = build_context_summary(entries)
+        assert result is not None
+        assert "**Active Skills:** code-review, reading-list" in result
+
+    def test_parses_project_names_from_content(self) -> None:
+        content = "## Registered Projects\n\n- tachikoma: main\n- filadd: abc1234 (detached)"
+        entries = [_make_entry("projects", content)]
+        result = build_context_summary(entries)
+        assert result is not None
+        assert "**Projects:** filadd, tachikoma" in result
+
+    def test_handles_empty_project_content(self) -> None:
+        entries = [_make_entry("projects", "No projects registered.")]
+        result = build_context_summary(entries)
+        assert result is None
+
+    def test_notes_previous_summary_presence(self) -> None:
+        entries = [_make_entry("previous-summary", "summary text")]
+        result = build_context_summary(entries)
+        assert result is not None
+        assert "**Previous Conversation:**" in result
+
+    def test_counts_bridging_context(self) -> None:
+        entries = [
+            _make_entry("bridging-context", "summary 1"),
+            _make_entry("bridging-context", "summary 2"),
+        ]
+        result = build_context_summary(entries)
+        assert result is not None
+        assert "**Bridging Context:** 2" in result
+
+    def test_full_mixed_summary(self) -> None:
+        entries = [
+            _make_entry("soul", "personality"),
+            _make_entry("user", "user info"),
+            _make_entry(
+                "memories", "content", metadata={"memory_path": "memories/facts/python.md"},
+            ),
+            _make_entry(
+                "skills", "content", metadata={"skill_name": "reading-list"},
+            ),
+            _make_entry("projects", "- tachikoma: main"),
+            _make_entry("previous-summary", "summary"),
+        ]
+        result = build_context_summary(entries)
+        assert result is not None
+        assert "**Foundational Context:** SOUL.md, USER.md" in result
+        assert "**Loaded Memories:** memories/facts/python.md" in result
+        assert "**Active Skills:** reading-list" in result
+        assert "**Projects:** tachikoma" in result
+        assert "**Previous Conversation:**" in result
+        assert "Skip re-extracting information" in result
+        assert "still search for existing files" in result
+
+    def test_deduplicates_memory_paths(self) -> None:
+        entries = [
+            _make_entry("memories", "content", metadata={"memory_path": "memories/facts/x.md"}),
+            _make_entry("memories", "content", metadata={"memory_path": "memories/facts/x.md"}),
+        ]
+        result = build_context_summary(entries)
+        assert result is not None
+        assert result.count("memories/facts/x.md") == 1
+
+    def test_deduplicates_skill_names(self) -> None:
+        entries = [
+            _make_entry("skills", "content", metadata={"skill_name": "skill-a"}),
+            _make_entry("skills", "content", metadata={"skill_name": "skill-a"}),
+        ]
+        result = build_context_summary(entries)
+        assert result is not None
+        assert result.count("skill-a") == 1
+
+
 class TestPostProcessingPipeline:
     """Tests for PostProcessingPipeline."""
 
@@ -74,8 +207,58 @@ class TestPostProcessingPipeline:
 
         await pipeline.run(session)
 
-        processor1.process.assert_awaited_once_with(session)
-        processor2.process.assert_awaited_once_with(session)
+        processor1.process.assert_awaited_once_with(session, extra=None)
+        processor2.process.assert_awaited_once_with(session, extra=None)
+
+    async def test_passes_context_summary_as_extra(self) -> None:
+        """AC: Pipeline builds summary from entries and passes it via extra dict."""
+        processor = _make_mock_processor()
+        session = _make_session()
+
+        entries = [
+            _make_entry("memories", "c", metadata={"memory_path": "memories/facts/x.md"}),
+        ]
+        registry = _make_mock_registry()
+        registry.load_context_entries = AsyncMock(return_value=entries)
+
+        pipeline = PostProcessingPipeline(registry)
+        pipeline.register(processor)
+        await pipeline.run(session)
+
+        processor.process.assert_awaited_once()
+        call_kwargs = processor.process.call_args
+        extra = call_kwargs.kwargs.get("extra") or call_kwargs[1].get("extra")
+        assert extra is not None
+        assert "context_summary" in extra
+        assert "memories/facts/x.md" in extra["context_summary"]
+
+    async def test_passes_extra_none_when_no_entries(self) -> None:
+        """AC: Pipeline passes extra=None when entries are empty."""
+        processor = _make_mock_processor()
+        session = _make_session()
+
+        registry = _make_mock_registry()
+        registry.load_context_entries = AsyncMock(return_value=[])
+
+        pipeline = PostProcessingPipeline(registry)
+        pipeline.register(processor)
+        await pipeline.run(session)
+
+        processor.process.assert_awaited_once_with(session, extra=None)
+
+    async def test_passes_extra_none_when_load_fails(self) -> None:
+        """AC: Pipeline passes extra=None when load_context_entries raises."""
+        processor = _make_mock_processor()
+        session = _make_session()
+
+        registry = _make_mock_registry()
+        registry.load_context_entries = AsyncMock(side_effect=RuntimeError("db error"))
+
+        pipeline = PostProcessingPipeline(registry)
+        pipeline.register(processor)
+        await pipeline.run(session)
+
+        processor.process.assert_awaited_once_with(session, extra=None)
 
     async def test_error_isolation_continues_other_processors(self) -> None:
         """AC: One processor failure doesn't prevent others from completing."""
@@ -113,12 +296,12 @@ class TestPostProcessingPipeline:
         """AC: Pipeline awaits all processors before returning."""
         call_order: list[str] = []
 
-        async def slow_process(session: Session) -> None:
+        async def slow_process(session: Session, **_kwargs: object) -> None:
             call_order.append("slow_start")
             await asyncio.sleep(0.05)
             call_order.append("slow_end")
 
-        async def fast_process(session: Session) -> None:
+        async def fast_process(session: Session, **_kwargs: object) -> None:
             call_order.append("fast_start")
             await asyncio.sleep(0.01)
             call_order.append("fast_end")
@@ -142,7 +325,7 @@ class TestPostProcessingPipeline:
         """AC: Concurrent run() calls execute sequentially (lock test)."""
         call_times: list[tuple[float, str]] = []
 
-        async def track_process(session: Session) -> None:
+        async def track_process(session: Session, **_kwargs: object) -> None:
             call_times.append((asyncio.get_event_loop().time(), "start"))
             await asyncio.sleep(0.05)
             call_times.append((asyncio.get_event_loop().time(), "end"))
@@ -191,12 +374,12 @@ class TestPhasedPipelineExecution:
         """AC: Finalize-phase processors run after main-phase processors complete."""
         call_order: list[str] = []
 
-        async def track_main(session: Session) -> None:
+        async def track_main(session: Session, **_kwargs: object) -> None:
             call_order.append("main_start")
             await asyncio.sleep(0.02)
             call_order.append("main_end")
 
-        async def track_finalize(session: Session) -> None:
+        async def track_finalize(session: Session, **_kwargs: object) -> None:
             call_order.append("finalize_start")
             call_order.append("finalize_end")
 
@@ -258,12 +441,12 @@ class TestPhasedPipelineExecution:
         """AC: Multiple finalize processors run in parallel (same as main-phase)."""
         call_order: list[str] = []
 
-        async def slow_finalize(session: Session) -> None:
+        async def slow_finalize(session: Session, **_kwargs: object) -> None:
             call_order.append("slow_start")
             await asyncio.sleep(0.05)
             call_order.append("slow_end")
 
-        async def fast_finalize(session: Session) -> None:
+        async def fast_finalize(session: Session, **_kwargs: object) -> None:
             call_order.append("fast_start")
             await asyncio.sleep(0.01)
             call_order.append("fast_end")
@@ -293,17 +476,17 @@ class TestPhasedPipelineExecution:
         """AC: Pre-finalize phase runs after main but before finalize."""
         call_order: list[str] = []
 
-        async def track_main(session: Session) -> None:
+        async def track_main(session: Session, **_kwargs: object) -> None:
             call_order.append("main_start")
             await asyncio.sleep(0.01)
             call_order.append("main_end")
 
-        async def track_pre_finalize(session: Session) -> None:
+        async def track_pre_finalize(session: Session, **_kwargs: object) -> None:
             call_order.append("pre_finalize_start")
             await asyncio.sleep(0.01)
             call_order.append("pre_finalize_end")
 
-        async def track_finalize(session: Session) -> None:
+        async def track_finalize(session: Session, **_kwargs: object) -> None:
             call_order.append("finalize_start")
             call_order.append("finalize_end")
 
@@ -348,12 +531,12 @@ class TestPhasedPipelineExecution:
         """AC: Multiple pre-finalize processors run in parallel within the phase."""
         call_order: list[str] = []
 
-        async def slow_pre_finalize(session: Session) -> None:
+        async def slow_pre_finalize(session: Session, **_kwargs: object) -> None:
             call_order.append("slow_start")
             await asyncio.sleep(0.05)
             call_order.append("slow_end")
 
-        async def fast_pre_finalize(session: Session) -> None:
+        async def fast_pre_finalize(session: Session, **_kwargs: object) -> None:
             call_order.append("fast_start")
             await asyncio.sleep(0.01)
             call_order.append("fast_end")
@@ -455,7 +638,7 @@ class TestMarkProcessed:
 
         processor = _make_mock_processor()
 
-        async def capture_state(session):
+        async def capture_state(session, **_kwargs):
             observed_during.append(pipeline.is_processing)
 
         processor.process.side_effect = capture_state
@@ -993,8 +1176,38 @@ class TestPromptDrivenProcessor:
             model="haiku",
         )
 
+    async def test_appends_context_summary_to_prompt(self, mocker: MockerFixture) -> None:
+        """AC: Context summary from extra dict is appended to the prompt."""
+        mock_fork = mocker.patch(
+            "tachikoma.post_processing.fork_and_consume", new_callable=AsyncMock
+        )
+        session = _make_session()
+        prompt = "Test prompt"
+        defaults = AgentDefaults(cwd=Path("/workspace"))
 
-class TestSplitCompoundCommands:
+        processor = PromptDrivenProcessor(prompt=prompt, agent_defaults=defaults)
+        summary = "## Session Context\n\n**Loaded Memories:** memories/facts/x.md"
+        await processor.process(session, extra={"context_summary": summary})
+
+        actual_prompt = mock_fork.call_args[0][1]
+        assert prompt in actual_prompt
+        assert summary in actual_prompt
+        assert actual_prompt.index(prompt) < actual_prompt.index(summary)
+
+    async def test_no_append_when_extra_is_none(self, mocker: MockerFixture) -> None:
+        """AC: No context summary appended when extra is None."""
+        mock_fork = mocker.patch(
+            "tachikoma.post_processing.fork_and_consume", new_callable=AsyncMock
+        )
+        session = _make_session()
+        prompt = "Test prompt"
+        defaults = AgentDefaults(cwd=Path("/workspace"))
+
+        processor = PromptDrivenProcessor(prompt=prompt, agent_defaults=defaults)
+        await processor.process(session)
+
+        actual_prompt = mock_fork.call_args[0][1]
+        assert actual_prompt == prompt
     """Tests for _split_compound_commands quoting-aware splitting."""
 
     def test_single_command_no_split(self) -> None:
