@@ -243,7 +243,9 @@ async def detect_divergence(
 async def _try_naive_rebase(cwd: Path, remote_branch: str) -> bool:
     """Attempt a naive git rebase. Returns True if clean, False if conflicts.
 
-    On failure, immediately aborts the rebase to restore clean state.
+    Uses --autostash so git transparently stashes and restores tracked
+    uncommitted changes around the rebase. On failure, immediately aborts
+    the rebase to restore clean state.
 
     Args:
         cwd: The repository directory.
@@ -252,7 +254,7 @@ async def _try_naive_rebase(cwd: Path, remote_branch: str) -> bool:
     Returns:
         True if rebase succeeded cleanly, False if conflicts detected.
     """
-    rc, _ = await run_git_capture("rebase", remote_branch, cwd=cwd)
+    rc, _ = await run_git_capture("rebase", "--autostash", remote_branch, cwd=cwd)
 
     if rc == 0:
         return True
@@ -276,46 +278,9 @@ async def _try_naive_rebase(cwd: Path, remote_branch: str) -> bool:
     return False
 
 
-async def _retry_rebase_with_stash(cwd: Path, remote_branch: str) -> bool:
-    """Stash dirty changes, retry rebase, and always restore the stash.
-
-    Used when rebase fails without starting (likely dirty tree).
-    The stash is restored on all exit paths via try/finally.
-
-    Args:
-        cwd: The repository directory.
-        remote_branch: The remote branch ref (e.g., "origin/main").
-
-    Returns:
-        True if the stash-assisted rebase succeeded, False otherwise.
-    """
-    _log.info("Stashing dirty changes before rebase retry: path={path}", path=str(cwd))
-
-    try:
-        await run_git("stash", cwd=cwd)
-    except Exception as e:
-        _log.warning("Stash failed: path={path} err={err}", path=str(cwd), err=str(e))
-        return False
-
-    rebase_ok = False
-    try:
-        rebase_ok = await _try_naive_rebase(cwd, remote_branch)
-    finally:
-        try:
-            await run_git("stash", "pop", cwd=cwd)
-        except Exception as e:
-            _log.warning(
-                "Stash pop failed: path={path} err={err}",
-                path=str(cwd),
-                err=str(e),
-            )
-
-    return rebase_ok
-
-
 CONFLICT_RESOLUTION_PROMPT = """You are resolving git conflicts during a rebase operation.
 
-Run: GIT_EDITOR=true git rebase {remote_branch}
+Run: GIT_EDITOR=true git rebase --autostash {remote_branch}
 
 If conflicts are detected:
 1. Read each conflicted file to understand the content
@@ -465,21 +430,8 @@ async def smart_push(
             return PUSH_RESULT["REBASE_FAILED"]
 
         if not _rebase_in_progress(cwd):
-            # Rebase failed without starting — try stash and retry if dirty
-            if await has_uncommitted_changes(cwd) and await _retry_rebase_with_stash(
-                cwd, remote_branch,
-            ):
-                try:
-                    await run_git("push", remote, "HEAD", cwd=cwd)
-                    return PUSH_RESULT["REBASE_SUCCEEDED"]
-                except Exception as e:
-                    _log.warning(
-                        "Push failed after stash-assisted rebase: path={path} err={err}",
-                        path=str(cwd),
-                        err=str(e),
-                    )
-                    return PUSH_RESULT["PUSH_FAILED"]
-
+            # Rebase refused to start (e.g. untracked files in the way, detached HEAD).
+            # Autostash already handled tracked dirty changes, so there's nothing else to try.
             _log.warning(
                 "Rebase failed but no conflicts detected, skipping agent resolution: path={path}",
                 path=str(cwd),
