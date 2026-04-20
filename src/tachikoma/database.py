@@ -5,6 +5,7 @@ engine lifecycle. All ORM models inherit from Base; all repositories
 receive the shared session_factory.
 """
 
+from datetime import UTC, datetime
 from pathlib import Path
 
 from loguru import logger
@@ -245,10 +246,11 @@ class Database:
                 text("SELECT * FROM pragma_table_info('task_definitions') WHERE name='since'")
             )
             if result.fetchone() is None:
+                since_default = datetime.now(UTC).isoformat()
                 await conn.execute(
                     text(
                         "ALTER TABLE task_definitions ADD COLUMN since DATETIME"
-                        " NOT NULL DEFAULT CURRENT_TIMESTAMP"
+                        f" NOT NULL DEFAULT '{since_default}'"
                     )
                 )
                 _log.info("Schema migration: added 'since' column to task_definitions table")
