@@ -159,6 +159,8 @@ On each message, the skills context provider classifies which skills are relevan
 - Given no skills exist in the registry, when the provider runs, then it returns immediately with no context and no agents (no LLM call made)
 - Given all skills in the registry are already in context, when a new message arrives, then classification is skipped entirely (no LLM call)
 - Given the classification code path, when comparing initial evaluation vs subsequent evaluation, then the same classification process is used (unified)
+- Given a session has a persisted `agents` context entry (from AGENTS.md), when the classifier runs, then the prompt includes an `<agents>` block before the candidate skill list so relevance decisions benefit from the main agent's operational conventions; `soul` and `user` entries are intentionally not injected — AGENTS.md is the file whose content shapes relevance judgments (workflow preferences, domain-specific rules) while SOUL.md (tone) and USER.md (identity) are low-signal for classification
+- Given no `agents` entry is present in the session's context, when the classifier prompt is built, then a neutral placeholder is emitted in place of the agents block and the prompt remains well-formed
 
 ### Dependency Resolution (R32)
 

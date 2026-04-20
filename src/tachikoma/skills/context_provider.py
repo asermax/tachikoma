@@ -27,8 +27,19 @@ _log = logger.bind(component="skills_context")
 
 _NO_RELEVANT_SKILLS = "NO_RELEVANT_SKILLS"
 
+_AGENTS_OWNER = "agents"
+_NO_AGENTS_CONTEXT = "(No agent instructions available.)"
+
 SKILL_CLASSIFICATION_PROMPT = """You are a skill classification agent. Your task is to \
 determine which skills are relevant to the user's current message.
+
+## Agent Instructions
+
+The main agent operates under the following operational conventions. Use them to \
+inform relevance judgments — e.g., workflow preferences and domain-specific rules \
+that make some skills obviously more applicable than others.
+
+{agents_context}
 
 ## Available Skills
 
@@ -57,6 +68,26 @@ determine which skills are relevant to the user's current message.
 
 Return the relevant skill names (one per line), or NO_RELEVANT_SKILLS if none apply.
 """
+
+
+def render_agents_context(entries: list[SessionContextEntry]) -> str:
+    """Render the session's `agents` entries as XML blocks for the classifier prompt.
+
+    Filters to entries whose owner is `agents` (from AGENTS.md), preserving ID order,
+    and wraps each in `<agents>...</agents>`. Returns a neutral placeholder when no
+    `agents` entries exist so the prompt's structure stays stable.
+    """
+    agents_entries = sorted(
+        (e for e in entries if e.owner == _AGENTS_OWNER),
+        key=lambda e: e.id,
+    )
+
+    if not agents_entries:
+        return _NO_AGENTS_CONTEXT
+
+    return "\n\n".join(
+        f"<{_AGENTS_OWNER}>\n{e.content}\n</{_AGENTS_OWNER}>" for e in agents_entries
+    )
 
 
 class SkillsContextProvider(MessageContextProvider):
@@ -99,7 +130,9 @@ class SkillsContextProvider(MessageContextProvider):
         skills_list = "\n".join(
             f"- **{name}**: {skill.description}" for name, skill in unloaded_skills.items()
         )
+        agents_context = render_agents_context(existing_entries or [])
         prompt = SKILL_CLASSIFICATION_PROMPT.format(
+            agents_context=agents_context,
             skills=skills_list,
             message=message,
         )

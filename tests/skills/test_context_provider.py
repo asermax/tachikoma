@@ -16,6 +16,7 @@ from tachikoma.sessions.model import SessionContextEntry
 from tachikoma.skills.context_provider import (
     SKILL_CLASSIFICATION_PROMPT,
     SkillsContextProvider,
+    render_agents_context,
 )
 from tachikoma.skills.registry import SkillRegistry
 
@@ -61,6 +62,10 @@ class TestSkillClassificationPrompt:
     def test_prompt_instructs_no_relevant_skills_when_none_match(self) -> None:
         """AC: Prompt instructs what to return when no skills match."""
         assert "no skills are relevant" in SKILL_CLASSIFICATION_PROMPT.lower()
+
+    def test_prompt_has_agents_context_placeholder(self) -> None:
+        """AC (DLT-145): Prompt has {agents_context} placeholder for AGENTS.md injection."""
+        assert "{agents_context}" in SKILL_CLASSIFICATION_PROMPT
 
 
 class TestSkillsContextProvider:
@@ -680,3 +685,149 @@ class TestProviderChainExpansion:
             assert "<skill name=" in entry.content
             assert "directory=" in entry.content
             assert entry.agents is None
+
+
+class TestRenderAgentsContext:
+    """Tests for render_agents_context helper (DLT-145)."""
+
+    def test_empty_entries_returns_placeholder(self) -> None:
+        """AC3: Empty list → neutral placeholder."""
+        assert render_agents_context([]) == "(No agent instructions available.)"
+
+    def test_soul_and_user_only_returns_placeholder(self) -> None:
+        """AC2: soul/user entries without agents → placeholder (soul/user are not injected)."""
+        entries = [
+            SessionContextEntry(id=1, session_id="s1", owner="soul", content="Personality"),
+            SessionContextEntry(id=2, session_id="s1", owner="user", content="About the user"),
+        ]
+        rendered = render_agents_context(entries)
+        assert rendered == "(No agent instructions available.)"
+        assert "<soul>" not in rendered
+        assert "<user>" not in rendered
+
+    def test_agents_entry_wrapped_in_xml(self) -> None:
+        """AC1: agents entry → `<agents>\\n{content}\\n</agents>`."""
+        entries = [
+            SessionContextEntry(id=5, session_id="s1", owner="agents", content="Use X then Y"),
+        ]
+        assert render_agents_context(entries) == "<agents>\nUse X then Y\n</agents>"
+
+    def test_multiple_agents_entries_emitted_in_id_order(self) -> None:
+        """R2: Multiple agents entries → each in its own block, ordered by id."""
+        entries = [
+            SessionContextEntry(id=3, session_id="s1", owner="agents", content="Second"),
+            SessionContextEntry(id=1, session_id="s1", owner="agents", content="First"),
+        ]
+        rendered = render_agents_context(entries)
+        assert rendered == "<agents>\nFirst\n</agents>\n\n<agents>\nSecond\n</agents>"
+
+    def test_non_agents_entries_are_ignored(self) -> None:
+        """Only owner=='agents' contributes to the rendered block."""
+        entries = [
+            SessionContextEntry(id=1, session_id="s1", owner="soul", content="SoulContent"),
+            SessionContextEntry(id=2, session_id="s1", owner="agents", content="AgentContent"),
+            SessionContextEntry(id=3, session_id="s1", owner="user", content="UserContent"),
+            SessionContextEntry(id=4, session_id="s1", owner="skills", content="SkillsContent"),
+        ]
+        rendered = render_agents_context(entries)
+        assert rendered == "<agents>\nAgentContent\n</agents>"
+        assert "SoulContent" not in rendered
+        assert "UserContent" not in rendered
+        assert "SkillsContent" not in rendered
+
+
+class TestAgentsContextInjection:
+    """Tests for AGENTS.md injection into the classifier prompt (DLT-145)."""
+
+    def _make_provider(self, tmp_path: Path) -> SkillsContextProvider:
+        defaults = AgentDefaults(cwd=tmp_path)
+        registry = SkillRegistry([tmp_path / "skills"])
+        return SkillsContextProvider(defaults, registry)
+
+    def _seed_skill(self, tmp_path: Path, name: str = "example") -> None:
+        skill_dir = tmp_path / "skills" / name
+        skill_dir.mkdir(parents=True)
+        (skill_dir / "SKILL.md").write_text(f"---\ndescription: Example\n---\n\nBody for {name}")
+
+    async def test_agents_context_rendered_when_entry_present(
+        self, mocker: MockerFixture, tmp_path: Path
+    ) -> None:
+        """AC1: agents entry → `<agents>…</agents>` appears in the captured prompt."""
+        mock_query = mocker.patch("tachikoma.skills.context_provider.stderr_aware_query")
+        self._seed_skill(tmp_path)
+        mock_query.return_value = _make_query_result("NO_RELEVANT_SKILLS")
+
+        existing = [
+            SessionContextEntry(
+                id=1,
+                session_id="s1",
+                owner="agents",
+                content="Always prefer workflow W when user says Z.",
+            ),
+        ]
+
+        provider = self._make_provider(tmp_path)
+        await provider.provide("hello", existing_entries=existing)
+
+        prompt = mock_query.call_args[1]["prompt"]
+        assert "<agents>\nAlways prefer workflow W when user says Z.\n</agents>" in prompt
+
+    async def test_soul_and_user_entries_are_not_injected(
+        self, mocker: MockerFixture, tmp_path: Path
+    ) -> None:
+        """AC2: soul/user entries present but no agents → placeholder, and no soul/user blocks."""
+        mock_query = mocker.patch("tachikoma.skills.context_provider.stderr_aware_query")
+        self._seed_skill(tmp_path)
+        mock_query.return_value = _make_query_result("NO_RELEVANT_SKILLS")
+
+        existing = [
+            SessionContextEntry(id=1, session_id="s1", owner="soul", content="SoulBody"),
+            SessionContextEntry(id=2, session_id="s1", owner="user", content="UserBody"),
+        ]
+
+        provider = self._make_provider(tmp_path)
+        await provider.provide("hello", existing_entries=existing)
+
+        prompt = mock_query.call_args[1]["prompt"]
+        assert "<soul>" not in prompt
+        assert "<user>" not in prompt
+        assert "SoulBody" not in prompt
+        assert "UserBody" not in prompt
+        assert "(No agent instructions available.)" in prompt
+
+    async def test_empty_entries_uses_placeholder(
+        self, mocker: MockerFixture, tmp_path: Path
+    ) -> None:
+        """AC3: No existing entries → placeholder rendered, no unsubstituted placeholder."""
+        mock_query = mocker.patch("tachikoma.skills.context_provider.stderr_aware_query")
+        self._seed_skill(tmp_path)
+        mock_query.return_value = _make_query_result("NO_RELEVANT_SKILLS")
+
+        provider = self._make_provider(tmp_path)
+        await provider.provide("hello")
+
+        prompt = mock_query.call_args[1]["prompt"]
+        assert "(No agent instructions available.)" in prompt
+        assert "{agents_context}" not in prompt
+
+    async def test_agents_block_precedes_available_skills(
+        self, mocker: MockerFixture, tmp_path: Path
+    ) -> None:
+        """AC4: Agents block appears before '## Available Skills' in the rendered prompt."""
+        mock_query = mocker.patch("tachikoma.skills.context_provider.stderr_aware_query")
+        self._seed_skill(tmp_path)
+        mock_query.return_value = _make_query_result("NO_RELEVANT_SKILLS")
+
+        existing = [
+            SessionContextEntry(
+                id=1, session_id="s1", owner="agents", content="Convention body"
+            ),
+        ]
+
+        provider = self._make_provider(tmp_path)
+        await provider.provide("hello", existing_entries=existing)
+
+        prompt = mock_query.call_args[1]["prompt"]
+        agents_idx = prompt.index("<agents>")
+        skills_idx = prompt.index("## Available Skills")
+        assert agents_idx < skills_idx

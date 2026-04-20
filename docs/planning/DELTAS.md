@@ -595,13 +595,6 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 **Complexity**: Medium
 **Description**: When a user message arrives at the coordinator during an active background task execution, signal the background task to pause so the main session receives full API attention and the task does not compete for resources. The paused task's SDK session is preserved and execution resumes automatically once the main session returns to idle. This covers the system-initiated pause triggered by user activity — distinct from task-initiated pauses where the background task itself requests user input. The pause mechanism integrates with the existing background task executor's evaluation loop: when a pause signal is received between iterations, the executor suspends the task, records the paused state in the task instance, and releases the semaphore slot. On resume, the executor reacquires a slot and continues from the preserved SDK session.
 
-### DLT-145: Inject core context into skill classification
-**Status**: ✗ Defined
-**Depends on**: None
-**Priority**: 1 (Critical)
-**Complexity**: Easy
-**Description**: The skills context provider classifies which skills are relevant to an incoming message via a lightweight sub-agent whose prompt currently sees only the unloaded skill descriptions and the user message. Inject the foundational context (SOUL.md, USER.md, AGENTS.md) — the agent's personality, user knowledge, and agent guidelines that already inform the main loop — into the classifier's prompt so relevance decisions benefit from the same nuance the main agent has (e.g., the user's domain expertise or agent conventions that make some skills obviously more applicable than others).
-
 ### DLT-147: System task type for silent maintenance operations
 **Status**: ✗ Defined
 **Depends on**: None
