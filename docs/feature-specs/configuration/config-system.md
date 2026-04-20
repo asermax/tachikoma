@@ -26,6 +26,7 @@ The `ANTHROPIC_API_KEY` is not managed by this system — the Claude SDK reads i
 | R7 | Telegram configuration: optional `[telegram]` section for bot token and authorized chat ID |
 | R8 | CLI override capability: runtime-only overrides via CLI flags without file persistence |
 | R9 | Task scheduler configuration: `[tasks]` section for idle window, check interval, max iterations, max concurrent background, and timezone |
+| R10 | Skill and script configuration: per-skill config directories under `.tachikoma/config/<skill-name>/` |
 
 ## Behaviors
 
@@ -111,3 +112,30 @@ CLI flags can override configuration values at runtime without modifying the con
 - Given `tachikoma run --channel telegram`, when the application starts, then `settings.channel` is "telegram" for that session regardless of TOML config
 - Given a CLI override, when the application is running, then the override value is used but the config file is not modified
 - Given a CLI override is applied, when `settings_manager.reload()` is called, then the frozen Settings snapshot reflects the merged result
+
+### Skill and Script Configuration (R10)
+
+Skills and scripts that need configuration store it in per-skill subdirectories under `.tachikoma/config/` within the workspace. This is distinct from the main application config at `~/.config/tachikoma/config.toml` — the main config holds operational parameters for Tachikoma itself, while `.tachikoma/config/` holds skill-specific settings that vary per workspace.
+
+**Directory structure**:
+```
+.tachikoma/config/
+├── my-skill/
+│   └── config.toml
+└── another-skill/
+    └── config.toml
+```
+
+**Conventions**:
+- Each skill gets its own subdirectory named after the skill (matching the skill folder name)
+- Configuration files use TOML format (loadable via `tomllib` from stdlib)
+- The primary config file is named `config.toml`
+- Skills must create their config directory on first use if it doesn't exist
+
+**Separation from state**: Configuration (`.tachikoma/config/`) holds user-defined settings. Runtime state (`.tachikoma/state/`) holds data the skill produces during operation. Skills must not read or write inside their own skill directory — skill directories are authoring artifacts.
+
+**Acceptance Criteria**:
+- Given a skill that needs configuration, when the skill runs, then it reads config from `.tachikoma/config/<skill-name>/config.toml`
+- Given a skill's config directory doesn't exist, when the skill runs for the first time, then it creates the directory and any default config file
+- Given the main application config at `~/.config/tachikoma/config.toml`, when a skill reads config, then it does not read from or write to the main config file
+- Given a skill that needs persistent state, when the skill writes state, then it writes to `.tachikoma/state/<skill-name>/` not `.tachikoma/config/<skill-name>/`

@@ -574,13 +574,6 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 **Complexity**: Hard
 **Description**: When a background task notification is delivered at the exact moment a user sends a message, the two can collide at the coordinator's message queue — resulting in one being lost or the notification being silently swallowed. The existing message-loss prevention and notification buffering mechanisms handle their respective timing windows independently, but do not cover the case where both sources attempt to enqueue simultaneously. This delta adds serialization between the notification delivery path and the user message intake so that concurrent arrivals are safely ordered and neither is dropped.
 
-### DLT-136: Document `.tachikoma/config/` as the standard location for skill and script configuration
-**Status**: ✗ Defined
-**Depends on**: None
-**Priority**: 3 (Medium)
-**Complexity**: Easy
-**Description**: The `.tachikoma/config/` directory is the established location for storing configuration files consumed by skills and scripts, using a per-skill subdirectory pattern (`.tachikoma/config/<skill-name>/config.toml`). This convention is not documented anywhere, so new skills and scripts don't follow it consistently. Document the `.tachikoma/config/` directory as the standard configuration location, including the subdirectory pattern, loading conventions, and integration with the skill authoring guide.
-
 ### DLT-137: API rate limit detection and retry with backoff
 **Status**: ✗ Defined
 **Depends on**: None

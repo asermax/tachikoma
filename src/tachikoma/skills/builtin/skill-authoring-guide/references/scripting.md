@@ -140,7 +140,78 @@ Both forms produce the same result — the shim is just a pre-filled `--project`
 
 ## Configuration and State
 
-If the skill needs configuration or persistent state, store it under `.tachikoma/config/<skill-name>/` and `.tachikoma/state/<skill-name>/` respectively. Do not read or write inside the skill directory itself — skill directories are authoring artifacts, not writable state.
+Skills that need configuration or persistent state must store them under the workspace's `.tachikoma/` directory, not inside the skill directory itself. Skill directories are authoring artifacts — they contain prompts, agents, and code, not mutable runtime data.
+
+### Directory Layout
+
+```
+.tachikoma/
+├── config/                    # User-configurable settings
+│   ├── my-skill/
+│   │   └── config.toml
+│   └── another-skill/
+│       └── config.toml
+└── state/                     # Runtime state (not user-configurable)
+    ├── my-skill/
+    │   └── cache.db
+    └── another-skill/
+        └── history.json
+```
+
+Each skill gets its own subdirectory under both `config/` and `state/`, named to match the skill folder (hyphenated).
+
+### Config vs State
+
+| Aspect | Config (`config/`) | State (`state/`) |
+|--------|--------------------|--------------------|
+| Purpose | User-defined settings | Runtime data produced by the skill |
+| Examples | API endpoints, thresholds, preferences | Caches, history, session data |
+| Who writes | User (manually) or skill (first-run defaults) | Skill (automatically) |
+| Format | TOML (`config.toml`) | Any format the skill chooses |
+
+### Loading Configuration
+
+Skills load their config using Python's stdlib `tomllib`:
+
+```python
+import tomllib
+from pathlib import Path
+
+
+def load_skill_config(skill_name: str) -> dict:
+    config_path = Path(f".tachikoma/config/{skill_name}/config.toml")
+    if not config_path.exists():
+        return {}
+    with open(config_path, "rb") as f:
+        return tomllib.load(f)
+```
+
+The skill should create the config directory and write defaults on first run if the file doesn't exist. Use `pathlib.Path.mkdir(parents=True, exist_ok=True)` for directory creation.
+
+### Config File Format
+
+Use TOML with clear section names and comments:
+
+```toml
+# .tachikoma/config/my-skill/config.toml
+
+# API settings
+[api]
+endpoint = "https://api.example.com"
+timeout = 30
+
+# Processing options
+[processing]
+batch_size = 100
+verbose = false
+```
+
+### Conventions
+
+- **Subdirectory name**: Matches the skill folder name (hyphenated, e.g., `my-skill`)
+- **Primary config file**: `config.toml` — additional files are acceptable for complex configs
+- **First-run behavior**: Create directory and write defaults if config doesn't exist
+- **Never modify the main config**: Do not read from or write to `~/.config/tachikoma/config.toml`
 
 ## Documenting the CLI in SKILL.md
 

@@ -32,6 +32,7 @@ Consumers (`__main__.py`, `Coordinator`, `Repl`) receive the frozen `Settings` i
 | Layer/Component | Responsibility | Key Decisions |
 |-----------------|----------------|---------------|
 | `src/tachikoma/config.py` | Settings model, TOML loading, default generation, SettingsManager for read-write access | Plain Pydantic + tomllib for reading, tomlkit for writing defaults and write-back |
+| `.tachikoma/config/<skill-name>/` | Per-skill configuration directory | Managed by individual skills, not the core config system; TOML files loaded via stdlib `tomllib` |
 
 ### Cross-Layer Contracts
 
@@ -178,6 +179,21 @@ flowchart TD
 ```
 
 ## Key Decisions
+
+### Per-skill configuration under `.tachikoma/config/`
+
+**Choice**: Skills store configuration in `.tachikoma/config/<skill-name>/config.toml` rather than in the main config file or inside the skill directory
+**Why**: Skill directories are authoring artifacts (managed by the user or plugin system) and should not contain mutable state. The main config file manages Tachikoma's operational parameters, not skill-specific settings. A per-skill subdirectory under `.tachikoma/` keeps skill config close to the workspace data while maintaining clear ownership boundaries.
+**Alternatives Considered**:
+- Add skill sections to the main config file: Couples skill config to Tachikoma's config system; skills would need access to SettingsManager
+- Store config inside the skill directory: Skill directories are authoring artifacts, not writable state
+- Single flat directory: No namespacing, risk of collision between skills
+
+**Consequences**:
+- Pro: Skills own their config lifecycle independently
+- Pro: Clear separation between operational config (main) and skill config (per-skill)
+- Pro: Workspace-relative — config travels with the workspace
+- Con: Each skill must implement its own config loading (mitigated by the convention being documented)
 
 ### Plain Pydantic BaseModel over pydantic-settings
 

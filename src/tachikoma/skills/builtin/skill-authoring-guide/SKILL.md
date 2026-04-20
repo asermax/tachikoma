@@ -85,6 +85,16 @@ The standard layout pairs a hyphenated skill folder (`my-skill/`) with an unders
 
 **Format**: See `references/scripting.md` for the full directory anatomy, naming rules, shim template, and base `pyproject.toml` wiring.
 
+### Configuration
+
+**When to use**: The skill needs user-configurable settings (API keys, thresholds, preferences, paths).
+
+Skills store configuration in `.tachikoma/config/<skill-name>/config.toml` within the workspace. This is separate from the main application config at `~/.config/tachikoma/config.toml`. Skills own their config lifecycle — they create the directory on first use and load settings via stdlib `tomllib`.
+
+For persistent runtime state (not user-configurable), use `.tachikoma/state/<skill-name>/` instead. Never read or write inside the skill directory itself.
+
+**Format**: See `references/scripting.md` for the config directory layout, loading pattern, and config/state distinction.
+
 ### Other Subdirectories
 
 Organize additional content as needed:
