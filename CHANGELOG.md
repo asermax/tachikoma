@@ -2,6 +2,44 @@
 
 <!-- version list -->
 
+## v1.38.0 (2026-04-20)
+
+### Bug Fixes
+
+- **git**: Use rebase --autostash instead of manual stash/pop dance
+  ([`8618d68`](https://github.com/asermax/tachikoma/commit/8618d6805cd962130bd51cbb945f0accd74b72cd))
+
+- **telegram**: Restore mid-response steering for user messages
+  ([`09d508a`](https://github.com/asermax/tachikoma/commit/09d508aee71baa2dadead16240ea62d67f06e80f))
+
+### Code Style
+
+- **tests**: Reformat SYSTEM_DISALLOWED_TOOLS expectation set
+  ([`f2c2ed8`](https://github.com/asermax/tachikoma/commit/f2c2ed824b2cf17bcb1a38dd9d0c52626b2a6237))
+
+### Documentation
+
+- Reconcile feature docs for session context changes
+  ([`7be2c6b`](https://github.com/asermax/tachikoma/commit/7be2c6be03406b1f27f2aa53fe8af292289d4125))
+
+- Reconcile spec and design docs with completion message changes
+  ([`06f6373`](https://github.com/asermax/tachikoma/commit/06f63737732b4fe17cf6ca5497610322de34202a))
+
+- **channels**: Reconcile steering branch into telegram and DES-009
+  ([`a703474`](https://github.com/asermax/tachikoma/commit/a7034748ffae9301f3b835e1b243335e7c9200cc))
+
+- **git**: Describe autostash flow in workspace-version-tracking
+  ([`150bddc`](https://github.com/asermax/tachikoma/commit/150bddcad2f9cfad562d1c43cfa8f22a57a2f7e3))
+
+### Features
+
+- **pipeline**: Thread session context to skill and memory providers
+  ([`f552e10`](https://github.com/asermax/tachikoma/commit/f552e1040b63b43417b6395cecc25b0035a7e23b))
+
+- **status**: Add completion messages to pre-session steps and rename boundary detection message
+  ([`0f3cf20`](https://github.com/asermax/tachikoma/commit/0f3cf20887f37d575006f7b8bcf600272297eeab))
+
+
 ## v1.37.2 (2026-04-20)
 
 ### Bug Fixes
