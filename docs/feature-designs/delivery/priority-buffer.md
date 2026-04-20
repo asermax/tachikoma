@@ -90,12 +90,26 @@ Invocation sites:
 
 **Channel handler contract:**
 
+The handler spawns a detached `asyncio.Task` for the delivery work and returns immediately, freeing the EventBus to process other events. The task acquires the delivery lock, processes through the coordinator, fires callbacks, and resolves shutdown in a `finally` block.
+
 ```python
 async def _handle_buffered_delivery(self, event: BufferedDelivery) -> None:
-    # 1. (Optional) render chrome based on event.is_shutdown_digest / items' kinds
-    # 2. coordinator.enqueue(event.prompt)
-    # 3. async for ev in coordinator.send_message(): render(ev)
-    # 4. For each item in event.items: if item.on_delivered: await item.on_delivered()
+    # Spawns a detached task; returns immediately so the bus is freed
+    task = asyncio.create_task(self._deliver(event))
+    self._delivery_tasks.add(task)
+    task.add_done_callback(self._delivery_tasks.discard)
+
+async def _deliver(self, event: BufferedDelivery) -> None:
+    try:
+        async with self._delivery_lock:
+            # 1. coordinator.enqueue(event.prompt)
+            # 2. async for ev in coordinator.send_message(): render(ev)
+            # 3. For each item: if item.on_delivered: await item.on_delivered()
+    except Exception:
+        # 4. Log error; callbacks skipped on failure
+    finally:
+        if event.is_shutdown_digest:
+            buffer.resolve_shutdown()  # ensures flush_on_shutdown completes
 ```
 
 **Integration Points:**

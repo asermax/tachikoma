@@ -2,7 +2,7 @@
 
 **Scope**: Python / Channels
 **Date**: 2026-04-19
-**Last Updated**: 2026-04-19
+**Last Updated**: 2026-04-20
 **First Used**: DLT-112 (REPL), DLT-111 (Telegram)
 
 ## Problem
@@ -38,11 +38,23 @@ Include the coordinator's teardown inside the critical section by keeping `_proc
 class Repl:
     def __init__(self) -> None:
         self._delivery_lock: asyncio.Lock = asyncio.Lock()
+        self._delivery_tasks: set[asyncio.Task] = set()
 
-    async def _on_buffered_delivery(self, event: BufferedDelivery) -> None:
-        async with self._delivery_lock:
-            self._coordinator.enqueue(event.prompt)
-            await self._process_through_coordinator()
+    async def _handle_buffered_delivery(self, event: BufferedDelivery) -> None:
+        # Non-blocking: spawn task so the EventBus is freed immediately
+        task = asyncio.create_task(self._deliver(event))
+        self._delivery_tasks.add(task)
+        task.add_done_callback(self._delivery_tasks.discard)
+
+    async def _deliver(self, event: BufferedDelivery) -> None:
+        try:
+            async with self._delivery_lock:
+                await self._execute_buffered_delivery(event)
+        except Exception:
+            _log.exception("Error in detached delivery task")
+        finally:
+            if event.is_shutdown_digest and self._buffer is not None:
+                self._buffer.resolve_shutdown()
 
     async def _handle_user_input(self, text: str) -> None:
         async with self._delivery_lock:
@@ -56,6 +68,7 @@ class Repl:
 class TelegramChannel:
     def __init__(self) -> None:
         self._delivery_lock: asyncio.Lock = asyncio.Lock()
+        self._delivery_tasks: set[asyncio.Task] = set()
 
     async def _handle_message(self, message: Message) -> None:
         text = message.text.strip()
@@ -70,9 +83,21 @@ class TelegramChannel:
             await self._process_through_coordinator()
 
     async def _handle_buffered_delivery(self, event: BufferedDelivery) -> None:
-        async with self._delivery_lock:
-            self._coordinator.enqueue(event.prompt)
-            await self._process_through_coordinator(on_complete=on_complete)
+        # Non-blocking: spawn task so the EventBus is freed immediately
+        task = asyncio.create_task(self._deliver(event))
+        self._delivery_tasks.add(task)
+        task.add_done_callback(self._delivery_tasks.discard)
+
+    async def _deliver(self, event: BufferedDelivery) -> None:
+        try:
+            async with self._delivery_lock:
+                self._coordinator.enqueue(event.prompt)
+                await self._process_through_coordinator(on_complete=self._build_on_complete(event))
+        except Exception:
+            _log.exception("Error in detached delivery task")
+        finally:
+            if event.is_shutdown_digest and self._buffer is not None:
+                self._buffer.resolve_shutdown()
 ```
 
 ## Do / Don't
@@ -81,6 +106,7 @@ class TelegramChannel:
 - Acquire the lock *before* `enqueue` so the caller cannot race a concurrent `send_message()`.
 - Keep the `_process_through_coordinator()` call inside the critical section so teardown is serialized with the next acquisition.
 - Do long-running work that is not delivery-related (e.g. downloading a media file) *outside* the lock.
+- Spawn a detached task for bus-dispatched handlers (`_handle_buffered_delivery`) so the EventBus is freed immediately. Store task references in a `set[asyncio.Task]` with `add_done_callback(discard)` cleanup.
 
 **Don't**
 - Don't clear a boolean flag around the delivery call — transitions and teardown are not atomic, leaving a race window.
