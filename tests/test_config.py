@@ -10,8 +10,8 @@ from zoneinfo import ZoneInfo
 import pytest
 from pydantic import ValidationError
 
+from tachikoma.agent_defaults import SYSTEM_DISALLOWED_TOOLS
 from tachikoma.config import (
-    SYSTEM_DISALLOWED_TOOLS,
     BufferSettings,
     LoggingSettings,
     SendFileSettings,
@@ -62,7 +62,10 @@ class TestSettingsModel:
         """AC (AC1): agent.disallowed_tools defaults to user defaults + system tools."""
         settings = Settings()
 
-        expected = ["AskUserQuestion", "CronCreate", "CronDelete", "CronList", "Skill"]
+        expected = [
+            "AskUserQuestion", "Skill", "CronCreate", "CronDelete", "CronList",
+            "RemoteTrigger", "ScheduleWakeup", "PushNotification",
+        ]
         assert settings.agent.disallowed_tools == expected
 
     def test_default_session_resume_window(self) -> None:
@@ -207,13 +210,19 @@ class TestSystemDisallowedTools:
             {"agent": {"disallowed_tools": ["AskUserQuestion", "WebSearch"]}}
         )
 
-        assert settings.agent.disallowed_tools == ["AskUserQuestion", "WebSearch", "Skill"]
+        assert settings.agent.disallowed_tools == [
+            "AskUserQuestion", "WebSearch", "Skill", "CronCreate", "CronDelete",
+            "CronList", "RemoteTrigger", "ScheduleWakeup", "PushNotification",
+        ]
 
     def test_system_tools_present_with_empty_list(self) -> None:
         """AC (R2): System tools present even when user sets empty list."""
         settings = Settings.model_validate({"agent": {"disallowed_tools": []}})
 
-        assert settings.agent.disallowed_tools == ["Skill"]
+        assert settings.agent.disallowed_tools == [
+            "Skill", "CronCreate", "CronDelete", "CronList",
+            "RemoteTrigger", "ScheduleWakeup", "PushNotification",
+        ]
 
     def test_system_tools_no_duplicate_when_user_includes(self) -> None:
         """AC (R2): No duplicate when user already includes a system tool."""
@@ -221,7 +230,10 @@ class TestSystemDisallowedTools:
             {"agent": {"disallowed_tools": ["AskUserQuestion", "Skill"]}}
         )
 
-        assert settings.agent.disallowed_tools == ["AskUserQuestion", "Skill"]
+        assert settings.agent.disallowed_tools == [
+            "AskUserQuestion", "Skill", "CronCreate", "CronDelete", "CronList",
+            "RemoteTrigger", "ScheduleWakeup", "PushNotification",
+        ]
 
     def test_system_tools_user_order_preserved(self) -> None:
         """AC (R3): User entry order preserved, system tools appended."""
@@ -229,11 +241,20 @@ class TestSystemDisallowedTools:
             {"agent": {"disallowed_tools": ["WebSearch", "AskUserQuestion"]}}
         )
 
-        assert settings.agent.disallowed_tools == ["WebSearch", "AskUserQuestion", "Skill"]
+        assert settings.agent.disallowed_tools == [
+            "WebSearch", "AskUserQuestion", "Skill", "CronCreate", "CronDelete",
+            "CronList", "RemoteTrigger", "ScheduleWakeup", "PushNotification",
+        ]
 
     def test_constant_contains_skill(self) -> None:
         """SYSTEM_DISALLOWED_TOOLS contains 'Skill'."""
         assert "Skill" in SYSTEM_DISALLOWED_TOOLS
+
+    def test_constant_contains_audited_tools(self) -> None:
+        """AC (R1): SYSTEM_DISALLOWED_TOOLS contains all audited tools."""
+        expected = {"Skill", "CronCreate", "CronDelete", "CronList",
+                    "RemoteTrigger", "ScheduleWakeup", "PushNotification"}
+        assert SYSTEM_DISALLOWED_TOOLS == expected
 
 
 class TestDefaultConfigGeneration:
@@ -271,7 +292,7 @@ class TestDefaultConfigGeneration:
         assert "console" in content
 
     def test_generated_file_contains_disallowed_tools(self, tmp_path: Path) -> None:
-        """AC (AC3): Generated file contains disallowed_tools with all blocked tools."""
+        """AC (AC3): Generated file contains disallowed_tools with user defaults."""
         config_path = tmp_path / "config.toml"
         _generate_default_config(config_path)
 
@@ -279,10 +300,6 @@ class TestDefaultConfigGeneration:
 
         assert "disallowed_tools" in content
         assert '"AskUserQuestion"' in content
-        assert '"CronCreate"' in content
-        assert '"CronDelete"' in content
-        assert '"CronList"' in content
-        assert '"Skill"' in content
 
     def test_explicit_disallowed_tools_override_keeps_system_tools(self, tmp_path: Path) -> None:
         """AC (AC3): Explicit override replaces user defaults but system tools persist."""
@@ -291,7 +308,10 @@ class TestDefaultConfigGeneration:
 
         settings = load_settings(config_file)
 
-        assert settings.agent.disallowed_tools == ["AskUserQuestion", "Skill"]
+        assert settings.agent.disallowed_tools == [
+            "AskUserQuestion", "Skill", "CronCreate", "CronDelete", "CronList",
+            "RemoteTrigger", "ScheduleWakeup", "PushNotification",
+        ]
 
     def test_generated_file_contains_session_resume_window(self, tmp_path: Path) -> None:
         """AC (DLT-028): Generated file contains session_resume_window with int format."""
