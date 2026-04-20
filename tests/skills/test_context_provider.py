@@ -12,6 +12,7 @@ from claude_agent_sdk.types import ResultMessage
 from pytest_mock import MockerFixture
 
 from tachikoma.agent_defaults import AgentDefaults
+from tachikoma.per_message_pre_processing import render_conversation_context
 from tachikoma.sessions.model import SessionContextEntry
 from tachikoma.skills.context_provider import (
     SKILL_CLASSIFICATION_PROMPT,
@@ -66,6 +67,10 @@ class TestSkillClassificationPrompt:
     def test_prompt_has_agents_context_placeholder(self) -> None:
         """AC (DLT-145): Prompt has {agents_context} placeholder for AGENTS.md injection."""
         assert "{agents_context}" in SKILL_CLASSIFICATION_PROMPT
+
+    def test_prompt_has_conversation_context_placeholder(self) -> None:
+        """AC: Prompt has {conversation_context_section} placeholder for session context."""
+        assert "{conversation_context_section}" in SKILL_CLASSIFICATION_PROMPT
 
 
 class TestSkillsContextProvider:
@@ -829,3 +834,98 @@ class TestAgentsContextInjection:
         agents_idx = prompt.index("<agents>")
         skills_idx = prompt.index("## Available Skills")
         assert agents_idx < skills_idx
+
+
+class TestRenderConversationContext:
+    """Tests for render_conversation_context helper."""
+
+    def test_no_summary_returns_empty_string(self) -> None:
+        """AC2: No summary (first exchange) → entire section omitted."""
+        assert render_conversation_context(None, None) == ""
+
+    def test_no_summary_ignores_last_exchange(self) -> None:
+        """AC2: No summary but last_exchange provided → still empty."""
+        assert render_conversation_context(None, "Some response") == ""
+
+    def test_summary_only_omits_last_exchange(self) -> None:
+        """AC3: Summary without last_exchange → section present but no 'Last assistant response'."""
+        result = render_conversation_context("We discussed X", None)
+        assert "## Conversation Context" in result
+        assert "We discussed X" in result
+        assert "Last assistant response" not in result
+
+    def test_summary_and_last_exchange_includes_both(self) -> None:
+        """AC1: Both provided → full section with summary and last exchange."""
+        result = render_conversation_context("We discussed restaurants", "I like Italian food")
+        assert "## Conversation Context" in result
+        assert "We discussed restaurants" in result
+        assert "Last assistant response" in result
+        assert "I like Italian food" in result
+
+
+class TestConversationContextInjection:
+    """Tests for session context injection into the classifier prompt."""
+
+    def _make_provider(self, tmp_path: Path) -> SkillsContextProvider:
+        defaults = AgentDefaults(cwd=tmp_path)
+        registry = SkillRegistry([tmp_path / "skills"])
+        return SkillsContextProvider(defaults, registry)
+
+    def _seed_skill(self, tmp_path: Path, name: str = "example") -> None:
+        skill_dir = tmp_path / "skills" / name
+        skill_dir.mkdir(parents=True)
+        (skill_dir / "SKILL.md").write_text(f"---\ndescription: Example\n---\n\nBody for {name}")
+
+    async def test_conversation_context_in_prompt_when_summary_provided(
+        self, mocker: MockerFixture, tmp_path: Path
+    ) -> None:
+        """AC1: Summary + last exchange → prompt contains Conversation Context section."""
+        mock_query = mocker.patch("tachikoma.skills.context_provider.stderr_aware_query")
+        self._seed_skill(tmp_path)
+        mock_query.return_value = _make_query_result("NO_RELEVANT_SKILLS")
+
+        provider = self._make_provider(tmp_path)
+        await provider.provide(
+            "hello",
+            session_summary="We discussed restaurants",
+            session_last_exchange="I like Italian food",
+        )
+
+        prompt = mock_query.call_args[1]["prompt"]
+        assert "## Conversation Context" in prompt
+        assert "We discussed restaurants" in prompt
+        assert "Last assistant response" in prompt
+        assert "I like Italian food" in prompt
+
+    async def test_no_conversation_context_when_no_summary(
+        self, mocker: MockerFixture, tmp_path: Path
+    ) -> None:
+        """AC2: No summary (first exchange) → no Conversation Context section."""
+        mock_query = mocker.patch("tachikoma.skills.context_provider.stderr_aware_query")
+        self._seed_skill(tmp_path)
+        mock_query.return_value = _make_query_result("NO_RELEVANT_SKILLS")
+
+        provider = self._make_provider(tmp_path)
+        await provider.provide("hello")
+
+        prompt = mock_query.call_args[1]["prompt"]
+        assert "## Conversation Context" not in prompt
+
+    async def test_summary_without_last_exchange(
+        self, mocker: MockerFixture, tmp_path: Path
+    ) -> None:
+        """AC3: Summary but no last_exchange → section present but no 'Last assistant response'."""
+        mock_query = mocker.patch("tachikoma.skills.context_provider.stderr_aware_query")
+        self._seed_skill(tmp_path)
+        mock_query.return_value = _make_query_result("NO_RELEVANT_SKILLS")
+
+        provider = self._make_provider(tmp_path)
+        await provider.provide(
+            "hello",
+            session_summary="We discussed restaurants",
+        )
+
+        prompt = mock_query.call_args[1]["prompt"]
+        assert "## Conversation Context" in prompt
+        assert "We discussed restaurants" in prompt
+        assert "Last assistant response" not in prompt

@@ -3395,7 +3395,13 @@ class TestPerMessagePreProcessingIntegration:
         call_count = 0
 
         async def counting_run(
-            message, *, existing_entries=None, sdk_session_id=None, on_status=None
+            message,
+            *,
+            existing_entries=None,
+            sdk_session_id=None,
+            on_status=None,
+            session_summary=None,
+            session_last_exchange=None,
         ):
             nonlocal call_count
             call_count += 1
@@ -3438,7 +3444,13 @@ class TestPerMessagePreProcessingIntegration:
             return [ContextResult(tag="memories", content="some memory")]
 
         async def track_msg_pre_run(
-            message, *, existing_entries=None, sdk_session_id=None, on_status=None
+            message,
+            *,
+            existing_entries=None,
+            sdk_session_id=None,
+            on_status=None,
+            session_summary=None,
+            session_last_exchange=None,
         ):
             call_order.append("per_message")
             return []

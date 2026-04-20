@@ -1,9 +1,8 @@
 """Memory context provider for per-message pre-processing pipeline.
 
 Uses an Opus agent to search stored memories for context relevant
-to the current user message. Runs on every message, using session
-forking when conversation context is available to make informed
-relevance decisions.
+to the current user message. Runs on every message, receiving the
+session summary and last exchange for informed relevance decisions.
 
 Returns one ContextResult per relevant memory file, with metadata
 identifying the file path for deduplication. Episodic memories
@@ -19,7 +18,10 @@ from claude_agent_sdk.types import ResultMessage
 from loguru import logger
 
 from tachikoma.agent_defaults import AgentDefaults
-from tachikoma.per_message_pre_processing import MessageContextProvider
+from tachikoma.per_message_pre_processing import (
+    MessageContextProvider,
+    render_conversation_context,
+)
 from tachikoma.post_processing import abs_rule, build_permissions_settings
 from tachikoma.pre_processing import ContextResult
 from tachikoma.sdk_query import stderr_aware_query
@@ -34,15 +36,7 @@ _NO_RELEVANT_MEMORIES = "NO_RELEVANT_MEMORIES"
 MEMORY_SEARCH_PROMPT = """\
 You are a memory search agent. Your task is to search the \
 workspace's stored memories and find information relevant to the user's current message.
-
-## Conversation Context
-
-If you can see previous conversation messages above this prompt, use them \
-to evaluate whether the latest message introduces topics not already covered \
-by the conversation. If the existing conversation context already covers what's \
-needed, respond with NO_RELEVANT_MEMORIES. If no previous messages are visible, \
-search based solely on the user's message below.
-
+{conversation_context_section}
 ## Search Strategy
 
 1. Search the following directories for relevant memories:
@@ -196,9 +190,8 @@ class MemoryContextProvider(MessageContextProvider):
     """Context provider that searches stored memories for relevant context.
 
     Uses an Opus agent with low effort and file search tools to find
-    memories relevant to the current user message. Forks the current
-    SDK session when available so the search agent has full conversation
-    context for informed relevance decisions.
+    memories relevant to the current user message. Receives the session
+    summary and last exchange for informed relevance decisions.
 
     Returns one ContextResult per relevant memory file, each with
     metadata identifying the file path for deduplication.
@@ -229,13 +222,17 @@ class MemoryContextProvider(MessageContextProvider):
         *,
         existing_entries: list[SessionContextEntry] | None = None,
         sdk_session_id: str | None = None,
+        session_summary: str | None = None,
+        session_last_exchange: str | None = None,
     ) -> list[ContextResult] | None:
         """Search memories for context relevant to the message.
 
         Args:
             message: The user's message text.
             existing_entries: The session's current context entries.
-            sdk_session_id: The current SDK session ID for forking.
+            sdk_session_id: The current SDK session ID (unused, kept for ABC compat).
+            session_summary: The active session's rolling summary, if available.
+            session_last_exchange: The active session's last assistant response, if available.
 
         Returns:
             List of ContextResult instances (one per memory file), or None.
@@ -243,7 +240,12 @@ class MemoryContextProvider(MessageContextProvider):
         loaded_paths = extract_memory_paths(existing_entries or [])
 
         workspace = str(self._agent_defaults.cwd)
-        prompt = MEMORY_SEARCH_PROMPT.replace("$WORKSPACE", workspace).format(message=message)
+        conversation_context_section = render_conversation_context(
+            session_summary, session_last_exchange
+        )
+        prompt = MEMORY_SEARCH_PROMPT.replace("$WORKSPACE", workspace).format(
+            message=message, conversation_context_section=conversation_context_section
+        )
 
         options = ClaudeAgentOptions(
             model=self._agent_defaults.searcher_model,
@@ -261,8 +263,6 @@ class MemoryContextProvider(MessageContextProvider):
             cwd=self._agent_defaults.cwd,
             cli_path=self._agent_defaults.cli_path,
             env=self._agent_defaults.env,
-            resume=sdk_session_id if sdk_session_id is not None else None,
-            fork_session=sdk_session_id is not None,
         )
 
         # Fully consume the query() generator per DES-005 — no early

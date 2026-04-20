@@ -191,6 +191,8 @@ class TestMessagePreProcessingPipeline:
             "hello",
             existing_entries=entries,
             sdk_session_id=None,
+            session_summary=None,
+            session_last_exchange=None,
         )
 
     async def test_parallel_execution(self) -> None:
@@ -261,6 +263,8 @@ class TestMessagePreProcessingPipeline:
             "hello",
             existing_entries=[],
             sdk_session_id=None,
+            session_summary=None,
+            session_last_exchange=None,
         )
 
     async def test_passes_sdk_session_id_to_provider(self) -> None:
@@ -277,6 +281,8 @@ class TestMessagePreProcessingPipeline:
             "hello",
             existing_entries=[],
             sdk_session_id="test-session-123",
+            session_summary=None,
+            session_last_exchange=None,
         )
 
     async def test_default_sdk_session_id_is_none(self) -> None:
@@ -291,6 +297,42 @@ class TestMessagePreProcessingPipeline:
 
         _, kwargs = provider.provide.call_args
         assert kwargs["sdk_session_id"] is None
+
+    async def test_passes_session_summary_to_provider(self) -> None:
+        """AC: session_summary is passed through to providers."""
+        provider = AsyncMock(spec=MessageContextProvider)
+        provider.provide.return_value = None
+
+        pipeline = MessagePreProcessingPipeline()
+        pipeline.register(provider)
+
+        await pipeline.run(
+            "hello",
+            session_summary="We discussed restaurants",
+            session_last_exchange="I like Italian food",
+        )
+
+        provider.provide.assert_called_once_with(
+            "hello",
+            existing_entries=[],
+            sdk_session_id=None,
+            session_summary="We discussed restaurants",
+            session_last_exchange="I like Italian food",
+        )
+
+    async def test_default_session_context_is_none(self) -> None:
+        """AC: When session context not passed, provider gets None for both."""
+        provider = AsyncMock(spec=MessageContextProvider)
+        provider.provide.return_value = None
+
+        pipeline = MessagePreProcessingPipeline()
+        pipeline.register(provider)
+
+        await pipeline.run("hello")
+
+        _, kwargs = provider.provide.call_args
+        assert kwargs["session_summary"] is None
+        assert kwargs["session_last_exchange"] is None
 
 
 class _NamedMessageProvider(MessageContextProvider):
@@ -308,6 +350,8 @@ class _NamedMessageProvider(MessageContextProvider):
         *,
         existing_entries=None,
         sdk_session_id=None,
+        session_summary=None,
+        session_last_exchange=None,
     ) -> list[ContextResult] | None:
         return []
 
@@ -322,14 +366,18 @@ class TestStatusCallback:
 
     async def test_emits_status_per_provider(self) -> None:
         pipeline = MessagePreProcessingPipeline()
-        pipeline.register(_NamedMessageProvider(
-            start="Searching memories...",
-            completion="No relevant memories found",
-        ))
-        pipeline.register(_NamedMessageProvider(
-            start="Detecting relevant skills...",
-            completion="No relevant skills detected",
-        ))
+        pipeline.register(
+            _NamedMessageProvider(
+                start="Searching memories...",
+                completion="No relevant memories found",
+            )
+        )
+        pipeline.register(
+            _NamedMessageProvider(
+                start="Detecting relevant skills...",
+                completion="No relevant skills detected",
+            )
+        )
 
         received: list[str] = []
 

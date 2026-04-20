@@ -20,6 +20,33 @@ from tachikoma.sessions.model import SessionContextEntry
 _log = logger.bind(component="per_message_pre_processing")
 
 
+def render_conversation_context(
+    session_summary: str | None,
+    session_last_exchange: str | None,
+) -> str:
+    """Render the conversation context section for classifier prompts.
+
+    Returns an empty string when no summary is available (first exchange),
+    so the entire section is omitted from the prompt. When a summary exists,
+    includes it along with an optional "Last assistant response" subsection
+    when the last exchange is non-None.
+    """
+    if session_summary is None:
+        return ""
+
+    last_exchange_section = (
+        f"\nLast assistant response:\n{session_last_exchange}\n"
+        if session_last_exchange is not None
+        else ""
+    )
+
+    return (
+        f"\n## Conversation Context\n\n"
+        f"Current conversation summary:\n{session_summary}\n"
+        f"{last_exchange_section}"
+    )
+
+
 class MessageContextProvider(ABC):
     """Abstract base class for per-message context providers.
 
@@ -35,6 +62,8 @@ class MessageContextProvider(ABC):
         *,
         existing_entries: list[SessionContextEntry] | None = None,
         sdk_session_id: str | None = None,
+        session_summary: str | None = None,
+        session_last_exchange: str | None = None,
     ) -> list[ContextResult] | None:
         """Provide context relevant to the user message.
 
@@ -42,7 +71,8 @@ class MessageContextProvider(ABC):
             message: The user's message text.
             existing_entries: The session's current context entries.
             sdk_session_id: The current SDK session ID, if available.
-                Providers can use this to fork the session for conversation context.
+            session_summary: The active session's rolling summary, if available.
+            session_last_exchange: The active session's last assistant response, if available.
 
         Returns:
             A list of ContextResult instances, or None if no relevant context.
@@ -92,6 +122,8 @@ class MessagePreProcessingPipeline:
         existing_entries: list[SessionContextEntry] | None = None,
         sdk_session_id: str | None = None,
         on_status: StatusCallback | None = None,
+        session_summary: str | None = None,
+        session_last_exchange: str | None = None,
     ) -> list[ContextResult]:
         """Run all registered providers in parallel.
 
@@ -106,6 +138,8 @@ class MessagePreProcessingPipeline:
             on_status: Optional async callback. If provided, the pipeline
                 emits each provider's ``status_message()`` immediately before
                 awaiting its ``provide()`` call.
+            session_summary: The active session's rolling summary, if available.
+            session_last_exchange: The active session's last assistant response, if available.
 
         Returns:
             List of successful, non-None ContextResult instances (flattened from lists).
@@ -128,6 +162,8 @@ class MessagePreProcessingPipeline:
                     message,
                     existing_entries=entries,
                     sdk_session_id=sdk_session_id,
+                    session_summary=session_summary,
+                    session_last_exchange=session_last_exchange,
                 )
                 if on_status is not None:
                     await on_status(provider.status_message(result))

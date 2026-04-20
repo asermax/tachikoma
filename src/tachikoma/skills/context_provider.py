@@ -13,7 +13,10 @@ from claude_agent_sdk.types import ResultMessage
 from loguru import logger
 
 from tachikoma.agent_defaults import AgentDefaults
-from tachikoma.per_message_pre_processing import MessageContextProvider
+from tachikoma.per_message_pre_processing import (
+    MessageContextProvider,
+    render_conversation_context,
+)
 from tachikoma.pre_processing import ContextResult
 from tachikoma.sdk_query import stderr_aware_query
 from tachikoma.sessions.model import SessionContextEntry
@@ -40,7 +43,7 @@ inform relevance judgments — e.g., workflow preferences and domain-specific ru
 that make some skills obviously more applicable than others.
 
 {agents_context}
-
+{conversation_context_section}
 ## Available Skills
 
 {skills}
@@ -123,6 +126,8 @@ class SkillsContextProvider(MessageContextProvider):
         *,
         existing_entries: list[SessionContextEntry] | None = None,
         sdk_session_id: str | None = None,
+        session_summary: str | None = None,
+        session_last_exchange: str | None = None,
     ) -> list[ContextResult] | None:
         self._registry.refresh()
 
@@ -142,8 +147,12 @@ class SkillsContextProvider(MessageContextProvider):
             f"- **{name}**: {skill.description}" for name, skill in unloaded_skills.items()
         )
         agents_context = render_agents_context(existing_entries or [])
+        conversation_context_section = render_conversation_context(
+            session_summary, session_last_exchange
+        )
         prompt = SKILL_CLASSIFICATION_PROMPT.format(
             agents_context=agents_context,
+            conversation_context_section=conversation_context_section,
             skills=skills_list,
             message=message,
         )

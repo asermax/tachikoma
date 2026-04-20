@@ -574,6 +574,8 @@ class Coordinator:
                         existing_entries=entries,
                         sdk_session_id=self._sdk_session_id,
                         on_status=on_status,
+                        session_summary=active.summary,
+                        session_last_exchange=active.last_exchange,
                     )
                 )
                 async for event in _drain_status_while_running(msg_pre_task, status_queue):

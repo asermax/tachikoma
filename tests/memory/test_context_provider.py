@@ -113,12 +113,12 @@ class TestExtractMemoryPaths:
 class TestMemoryContextProvider:
     """Tests for MemoryContextProvider."""
 
-    async def test_standalone_query_without_session_id(
+    async def test_standalone_query_without_forking(
         self,
         mocker: MockerFixture,
         tmp_path: Path,
     ) -> None:
-        """AC: When sdk_session_id is None, query() is called without fork/resume."""
+        """AC: Provider runs as standalone agent — no fork_session or resume."""
         mock_query = mocker.patch("tachikoma.memory.context_provider.stderr_aware_query")
         mock_query.return_value = _make_query_result(_NO_RELEVANT_MEMORIES)
 
@@ -131,25 +131,6 @@ class TestMemoryContextProvider:
 
         assert not options.fork_session
         assert options.resume is None
-
-    async def test_fork_query_with_session_id(
-        self,
-        mocker: MockerFixture,
-        tmp_path: Path,
-    ) -> None:
-        """AC: When sdk_session_id provided, options include fork_session=True and resume=id."""
-        mock_query = mocker.patch("tachikoma.memory.context_provider.stderr_aware_query")
-        mock_query.return_value = _make_query_result(_NO_RELEVANT_MEMORIES)
-
-        provider = MemoryContextProvider(AgentDefaults(cwd=tmp_path))
-        await provider.provide("Hello", sdk_session_id="session-123")
-
-        mock_query.assert_called_once()
-        call_kwargs = mock_query.call_args[1]
-        options = call_kwargs["options"]
-
-        assert options.fork_session is True
-        assert options.resume == "session-123"
 
     async def test_returns_per_file_results(
         self,
@@ -391,9 +372,9 @@ class TestMemorySearchPrompt:
         """AC: Prompt mentions NO_RELEVANT_MEMORIES sentinel."""
         assert "NO_RELEVANT_MEMORIES" in MEMORY_SEARCH_PROMPT
 
-    def test_prompt_includes_conversation_context_guidance(self) -> None:
-        """AC: Prompt includes guidance for evaluating conversation context."""
-        assert "previous conversation messages" in MEMORY_SEARCH_PROMPT.lower()
+    def test_prompt_includes_conversation_context_section(self) -> None:
+        """AC: Prompt has {conversation_context_section} placeholder for session context."""
+        assert "{conversation_context_section}" in MEMORY_SEARCH_PROMPT
 
     def test_prompt_includes_message_placeholder(self) -> None:
         """AC: Prompt has {message} placeholder for embedding user message."""
@@ -650,3 +631,67 @@ class TestSnippetBehavior:
         result = await provider.provide("Hello")
 
         assert result is None
+
+
+class TestConversationContextInjection:
+    """Tests for session context injection into the memory search prompt."""
+
+    async def test_conversation_context_in_prompt_when_summary_provided(
+        self,
+        mocker: MockerFixture,
+        tmp_path: Path,
+    ) -> None:
+        """AC1: Summary + last exchange → prompt contains Conversation Context section."""
+        mock_query = mocker.patch("tachikoma.memory.context_provider.stderr_aware_query")
+        mock_query.return_value = _make_query_result(_NO_RELEVANT_MEMORIES)
+
+        provider = MemoryContextProvider(AgentDefaults(cwd=tmp_path))
+        await provider.provide(
+            "Hello",
+            session_summary="We discussed restaurants",
+            session_last_exchange="I like Italian food",
+        )
+
+        mock_query.assert_called_once()
+        call_kwargs = mock_query.call_args[1]
+        prompt = call_kwargs["prompt"]
+        assert "## Conversation Context" in prompt
+        assert "We discussed restaurants" in prompt
+        assert "Last assistant response" in prompt
+        assert "I like Italian food" in prompt
+
+    async def test_no_conversation_context_when_no_summary(
+        self,
+        mocker: MockerFixture,
+        tmp_path: Path,
+    ) -> None:
+        """AC2: No summary (first exchange) → no Conversation Context section."""
+        mock_query = mocker.patch("tachikoma.memory.context_provider.stderr_aware_query")
+        mock_query.return_value = _make_query_result(_NO_RELEVANT_MEMORIES)
+
+        provider = MemoryContextProvider(AgentDefaults(cwd=tmp_path))
+        await provider.provide("Hello")
+
+        mock_query.assert_called_once()
+        call_kwargs = mock_query.call_args[1]
+        prompt = call_kwargs["prompt"]
+        assert "## Conversation Context" not in prompt
+
+    async def test_no_fork_session_in_options(
+        self,
+        mocker: MockerFixture,
+        tmp_path: Path,
+    ) -> None:
+        """AC4: Provider never passes fork_session or resume to ClaudeAgentOptions."""
+        mock_query = mocker.patch("tachikoma.memory.context_provider.stderr_aware_query")
+        mock_query.return_value = _make_query_result(_NO_RELEVANT_MEMORIES)
+
+        provider = MemoryContextProvider(AgentDefaults(cwd=tmp_path))
+        await provider.provide("Hello", sdk_session_id="session-123")
+
+        mock_query.assert_called_once()
+        call_kwargs = mock_query.call_args[1]
+        options = call_kwargs["options"]
+
+        assert not options.fork_session
+        assert options.resume is None
