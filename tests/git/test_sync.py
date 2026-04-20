@@ -26,10 +26,10 @@ from tachikoma.git.sync import (
 def _mock_git_capture(*args: str, cwd: Path | None = None) -> AsyncMock:
     """Helper to mock run_git_capture for HEAD capture and diff."""
     if "rev-parse" in args:
-        return AsyncMock(return_value=(0, "abc123"))
+        return AsyncMock(return_value=(0, "abc123", ""))
     if "diff" in args:
-        return AsyncMock(return_value=(0, ""))
-    return AsyncMock(return_value=(0, ""))
+        return AsyncMock(return_value=(0, "", ""))
+    return AsyncMock(return_value=(0, "", ""))
 
 
 class AsyncSubprocessMock:
@@ -639,8 +639,8 @@ class TestSmartPull:
                 "tachikoma.git.sync.run_git_capture",
                 new_callable=AsyncMock,
                 side_effect=[
-                    (0, "abc123"),  # rev-parse HEAD
-                    (0, "file1.txt\nfile2.txt"),  # diff --name-only
+                    (0, "abc123", ""),  # rev-parse HEAD
+                    (0, "file1.txt\nfile2.txt", ""),  # diff --name-only
                 ],
             ),
             patch(
@@ -671,8 +671,8 @@ class TestSmartPull:
                 "tachikoma.git.sync.run_git_capture",
                 new_callable=AsyncMock,
                 side_effect=[
-                    (0, "abc123"),  # rev-parse HEAD
-                    (0, ".tachikoma/db-dump/sessions.ndjson"),  # diff --name-only
+                    (0, "abc123", ""),  # rev-parse HEAD
+                    (0, ".tachikoma/db-dump/sessions.ndjson", ""),  # diff --name-only
                 ],
             ),
             patch(
@@ -708,8 +708,8 @@ class TestSmartPull:
                 "tachikoma.git.sync.run_git_capture",
                 new_callable=AsyncMock,
                 side_effect=[
-                    (0, "abc123"),  # rev-parse HEAD
-                    (0, ""),  # diff --name-only (empty)
+                    (0, "abc123", ""),  # rev-parse HEAD
+                    (0, "", ""),  # diff --name-only (empty)
                 ],
             ),
             patch(
@@ -815,8 +815,8 @@ class TestSmartPull:
                 "tachikoma.git.sync.run_git_capture",
                 new_callable=AsyncMock,
                 side_effect=[
-                    (0, "abc123"),
-                    (0, ""),
+                    (0, "abc123", ""),
+                    (0, "", ""),
                 ],
             ),
             patch(

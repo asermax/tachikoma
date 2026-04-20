@@ -90,15 +90,15 @@ async def run_git(*args: str, cwd: Path) -> None:
         raise RuntimeError(f"git {' '.join(args)} failed: {error_msg}")
 
 
-async def run_git_capture(*args: str, cwd: Path) -> tuple[int, str]:
-    """Run a git command and return exit code + stdout.
+async def run_git_capture(*args: str, cwd: Path) -> tuple[int, str, str]:
+    """Run a git command and return exit code + stdout + stderr.
 
     Args:
         *args: Git command arguments.
         cwd: Working directory for the command.
 
     Returns:
-        Tuple of (returncode, stdout as decoded string).
+        Tuple of (returncode, stdout, stderr) as decoded strings.
     """
     proc = await asyncio.create_subprocess_exec(
         "git",
@@ -108,8 +108,8 @@ async def run_git_capture(*args: str, cwd: Path) -> tuple[int, str]:
         stderr=asyncio.subprocess.PIPE,
     )
 
-    stdout, _ = await proc.communicate()
-    return proc.returncode or 0, stdout.decode().strip()
+    stdout, stderr = await proc.communicate()
+    return proc.returncode or 0, stdout.decode().strip(), stderr.decode().strip()
 
 
 async def has_uncommitted_changes(cwd: Path) -> bool:
@@ -121,7 +121,7 @@ async def has_uncommitted_changes(cwd: Path) -> bool:
     Returns:
         True if there are uncommitted changes, False if clean.
     """
-    _, output = await run_git_capture("status", "--porcelain", cwd=cwd)
+    _, output, _ = await run_git_capture("status", "--porcelain", cwd=cwd)
     return bool(output)
 
 
@@ -211,7 +211,7 @@ async def detect_divergence(
     remote_ref = f"{remote}/{branch}"
 
     # Is remote/branch an ancestor of HEAD? (local is at least AHEAD)
-    rc_remote_ancestor, _ = await run_git_capture(
+    rc_remote_ancestor, _, _ = await run_git_capture(
         "merge-base",
         "--is-ancestor",
         remote_ref,
@@ -221,7 +221,7 @@ async def detect_divergence(
     remote_is_ancestor = rc_remote_ancestor == 0
 
     # Is HEAD an ancestor of remote/branch? (local is at least BEHIND)
-    rc_head_ancestor, _ = await run_git_capture(
+    rc_head_ancestor, _, _ = await run_git_capture(
         "merge-base",
         "--is-ancestor",
         "HEAD",
@@ -254,7 +254,12 @@ async def _try_naive_rebase(cwd: Path, remote_branch: str) -> bool:
     Returns:
         True if rebase succeeded cleanly, False if conflicts detected.
     """
-    rc, _ = await run_git_capture("rebase", "--autostash", remote_branch, cwd=cwd)
+    rc, stdout, stderr = await run_git_capture(
+        "rebase",
+        "--autostash",
+        remote_branch,
+        cwd=cwd,
+    )
 
     if rc == 0:
         return True
@@ -270,9 +275,14 @@ async def _try_naive_rebase(cwd: Path, remote_branch: str) -> bool:
                 err=str(e),
             )
     else:
+        # Surface git's actual error so we can diagnose why it refused to start
+        # (untracked files in the way, submodule conflicts, detached HEAD, etc.)
         _log.warning(
-            "Rebase failed without starting (no conflicts): path={path}",
+            "Rebase failed without starting (no conflicts): "
+            "path={path} stderr={stderr} stdout={stdout}",
             path=str(cwd),
+            stderr=stderr or "<empty>",
+            stdout=stdout or "<empty>",
         )
 
     return False
@@ -469,7 +479,7 @@ async def _get_changed_files(cwd: Path, old_head: str) -> list[str]:
     Returns:
         List of file paths changed between old_head and HEAD.
     """
-    _, output = await run_git_capture("diff", "--name-only", old_head, "HEAD", cwd=cwd)
+    _, output, _ = await run_git_capture("diff", "--name-only", old_head, "HEAD", cwd=cwd)
     return output.splitlines() if output else []
 
 
@@ -513,7 +523,7 @@ async def smart_pull(
         await _abort_stale_rebase(cwd)
 
         # Capture HEAD before pull for change detection
-        _, old_head = await run_git_capture("rev-parse", "HEAD", cwd=cwd)
+        _, old_head, _ = await run_git_capture("rev-parse", "HEAD", cwd=cwd)
 
         # Always fetch first (R8)
         await run_git("fetch", remote, cwd=cwd)
