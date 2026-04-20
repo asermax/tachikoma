@@ -866,9 +866,7 @@ class TestUpdateWorkflowState:
         assert "body-b" in text
 
     @pytest.mark.asyncio
-    async def test_skip_auto_start_injects_next_step_required_skills(
-        self, repository, tmp_path
-    ):
+    async def test_skip_auto_start_injects_next_step_required_skills(self, repository, tmp_path):
         snapshot = [
             {
                 "id": "01-plan",

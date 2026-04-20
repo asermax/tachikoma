@@ -10,13 +10,17 @@ from pathlib import Path
 HARDCODED_ENV = {"CLAUDE_CODE_DISABLE_AUTO_MEMORY": "1"}
 """Environment variables that are always set and cannot be overridden via config."""
 
-SYSTEM_DISALLOWED_TOOLS = frozenset({
-    "Skill",
-    "CronCreate", "CronDelete", "CronList",
-    "RemoteTrigger",
-    "ScheduleWakeup",
-    "PushNotification",
-})
+SYSTEM_DISALLOWED_TOOLS = frozenset(
+    {
+        "Skill",
+        "CronCreate",
+        "CronDelete",
+        "CronList",
+        "RemoteTrigger",
+        "ScheduleWakeup",
+        "PushNotification",
+    }
+)
 """Built-in Claude Code tools blocked across all agent roles.
 
 These tools either duplicate Tachikoma's own subsystems or produce

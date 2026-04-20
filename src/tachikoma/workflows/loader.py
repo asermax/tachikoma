@@ -202,9 +202,7 @@ def _load_step(
         required_skills = ()
 
     properties = {
-        k: v
-        for k, v in post.metadata.items()
-        if k not in ("title", "skippable", "required_skills")
+        k: v for k, v in post.metadata.items() if k not in ("title", "skippable", "required_skills")
     }
 
     references_path = step_dir / "references"

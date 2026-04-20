@@ -600,3 +600,203 @@ class TestUpdatedAtAutoStamping:
         assert failed is not None
         assert failed.status == "failed"
         assert failed.updated_at is not None
+
+
+class TestCleanupExpiredOneShotDefinitions:
+    """Tests for cleanup_expired_one_shot_definitions (DLT-104)."""
+
+    async def test_ac1_deletes_fired_one_shot_past_retention(self, repo: TaskRepository) -> None:
+        """AC1: Fired one-shot with terminal instances past retention is deleted."""
+        last_fired = _utcnow() - timedelta(hours=50)
+        definition = _make_definition(
+            "one-shot-1",
+            schedule=ScheduleConfig(
+                type="once",
+                at=_utcnow() - timedelta(hours=51),
+            ),
+            enabled=False,
+            last_fired_at=last_fired,
+        )
+        await repo.create_definition(definition)
+        await repo.create_instance(
+            _make_instance(
+                "inst-1",
+                definition_id="one-shot-1",
+                status="completed",
+                completed_at=_utcnow() - timedelta(hours=49),
+            )
+        )
+
+        count = await repo.cleanup_expired_one_shot_definitions(retention_hours=48)
+
+        assert count == 1
+        assert await repo.get_definition("one-shot-1") is None
+        assert await repo.get_instance("inst-1") is None
+
+    async def test_ac2_running_instance_blocks_cleanup(self, repo: TaskRepository) -> None:
+        """AC2: Fired one-shot with a running instance is preserved."""
+        definition = _make_definition(
+            "one-shot-2",
+            schedule=ScheduleConfig(type="once", at=_utcnow() - timedelta(hours=51)),
+            enabled=False,
+            last_fired_at=_utcnow() - timedelta(hours=50),
+        )
+        await repo.create_definition(definition)
+        await repo.create_instance(
+            _make_instance("inst-2", definition_id="one-shot-2", status="running")
+        )
+
+        count = await repo.cleanup_expired_one_shot_definitions(retention_hours=48)
+
+        assert count == 0
+        assert await repo.get_definition("one-shot-2") is not None
+
+    async def test_ac2_waiting_instance_blocks_cleanup(self, repo: TaskRepository) -> None:
+        """AC2: Fired one-shot with a waiting instance is preserved."""
+        definition = _make_definition(
+            "one-shot-2b",
+            schedule=ScheduleConfig(type="once", at=_utcnow() - timedelta(hours=51)),
+            enabled=False,
+            last_fired_at=_utcnow() - timedelta(hours=50),
+        )
+        await repo.create_definition(definition)
+        await repo.create_instance(
+            _make_instance("inst-2b", definition_id="one-shot-2b", status="waiting")
+        )
+
+        count = await repo.cleanup_expired_one_shot_definitions(retention_hours=48)
+
+        assert count == 0
+        assert await repo.get_definition("one-shot-2b") is not None
+
+    async def test_ac3_recent_completion_not_cleaned(self, repo: TaskRepository) -> None:
+        """AC3: Fired one-shot whose instance completed recently is preserved."""
+        definition = _make_definition(
+            "one-shot-3",
+            schedule=ScheduleConfig(type="once", at=_utcnow() - timedelta(hours=2)),
+            enabled=False,
+            last_fired_at=_utcnow() - timedelta(hours=1),
+        )
+        await repo.create_definition(definition)
+        await repo.create_instance(
+            _make_instance(
+                "inst-3",
+                definition_id="one-shot-3",
+                status="completed",
+                completed_at=_utcnow() - timedelta(hours=1),
+            )
+        )
+
+        count = await repo.cleanup_expired_one_shot_definitions(retention_hours=48)
+
+        assert count == 0
+        assert await repo.get_definition("one-shot-3") is not None
+
+    async def test_ac4_never_fired_not_cleaned(self, repo: TaskRepository) -> None:
+        """AC4: Enabled one-shot that never fired is preserved."""
+        definition = _make_definition(
+            "one-shot-4",
+            schedule=ScheduleConfig(type="once", at=_utcnow() + timedelta(hours=1)),
+            enabled=True,
+            last_fired_at=None,
+        )
+        await repo.create_definition(definition)
+
+        count = await repo.cleanup_expired_one_shot_definitions(retention_hours=48)
+
+        assert count == 0
+        assert await repo.get_definition("one-shot-4") is not None
+
+    async def test_ac5_cron_definitions_never_cleaned(self, repo: TaskRepository) -> None:
+        """AC5: Cron definitions are excluded even if disabled with terminal instances."""
+        definition = _make_definition(
+            "cron-1",
+            schedule=ScheduleConfig(type="cron", expression="0 9 * * *"),
+            enabled=False,
+            last_fired_at=_utcnow() - timedelta(hours=50),
+        )
+        await repo.create_definition(definition)
+        await repo.create_instance(
+            _make_instance(
+                "inst-cron-1",
+                definition_id="cron-1",
+                status="completed",
+                completed_at=_utcnow() - timedelta(hours=49),
+            )
+        )
+
+        count = await repo.cleanup_expired_one_shot_definitions(retention_hours=48)
+
+        assert count == 0
+        assert await repo.get_definition("cron-1") is not None
+
+    async def test_ac7_zero_instance_uses_last_fired_at(self, repo: TaskRepository) -> None:
+        """AC7: Zero-instance one-shot with last_fired_at past retention is deleted."""
+        definition = _make_definition(
+            "one-shot-7",
+            schedule=ScheduleConfig(type="once", at=_utcnow() - timedelta(hours=51)),
+            enabled=False,
+            last_fired_at=_utcnow() - timedelta(hours=50),
+        )
+        await repo.create_definition(definition)
+
+        count = await repo.cleanup_expired_one_shot_definitions(retention_hours=48)
+
+        assert count == 1
+        assert await repo.get_definition("one-shot-7") is None
+
+    async def test_ac7_zero_instance_recent_fire_preserved(self, repo: TaskRepository) -> None:
+        """AC7 negative: Zero-instance one-shot fired recently is preserved."""
+        definition = _make_definition(
+            "one-shot-7b",
+            schedule=ScheduleConfig(type="once", at=_utcnow() - timedelta(hours=11)),
+            enabled=False,
+            last_fired_at=_utcnow() - timedelta(hours=10),
+        )
+        await repo.create_definition(definition)
+
+        count = await repo.cleanup_expired_one_shot_definitions(retention_hours=48)
+
+        assert count == 0
+        assert await repo.get_definition("one-shot-7b") is not None
+
+    async def test_ac8_custom_retention_window(self, repo: TaskRepository) -> None:
+        """AC8: Non-default retention window is honored."""
+        definition = _make_definition(
+            "one-shot-8",
+            schedule=ScheduleConfig(type="once", at=_utcnow() - timedelta(hours=31)),
+            enabled=False,
+            last_fired_at=_utcnow() - timedelta(hours=30),
+        )
+        await repo.create_definition(definition)
+        await repo.create_instance(
+            _make_instance(
+                "inst-8",
+                definition_id="one-shot-8",
+                status="completed",
+                completed_at=_utcnow() - timedelta(hours=30),
+            )
+        )
+
+        count = await repo.cleanup_expired_one_shot_definitions(retention_hours=24)
+
+        assert count == 1
+        assert await repo.get_definition("one-shot-8") is None
+
+    async def test_multiple_candidates_counted(self, repo: TaskRepository) -> None:
+        """Multiple eligible definitions return combined count."""
+        for i in range(3):
+            definition = _make_definition(
+                f"multi-{i}",
+                schedule=ScheduleConfig(
+                    type="once",
+                    at=_utcnow() - timedelta(hours=100),
+                ),
+                enabled=False,
+                last_fired_at=_utcnow() - timedelta(hours=50),
+            )
+            await repo.create_definition(definition)
+
+        count = await repo.cleanup_expired_one_shot_definitions(retention_hours=48)
+
+        assert count == 3

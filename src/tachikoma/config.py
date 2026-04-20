@@ -233,11 +233,7 @@ class TaskSettings(BaseModel):
     cleanup_retention_hours: int = Field(
         default=48,
         ge=0,
-        description="Hours to retain completed one-shot tasks before cleanup",
-    )
-    maintenance_interval: int = Field(
-        default=60,
-        description="Seconds between maintenance scheduler ticks",
+        description="Hours to retain completed one-shot task definitions before deletion",
     )
 
     @field_validator("timezone", mode="before")

@@ -1,7 +1,8 @@
 """Background task execution for task subsystem.
 
 This module contains:
-- background_task_runner: async loop that picks up and executes pending background tasks
+- BackgroundTaskRunner: tick-driven dispatcher that spawns executor tasks for ready instances
+- expired_waiter_sweep: fails waiting instances that have exceeded the wait_timeout
 - BackgroundTaskExecutor: executes a single background task with evaluator loop
 """
 
@@ -69,11 +70,11 @@ class _PreprocessingResult:
 
 _log = logger.bind(component="task_executor")
 
-# How often the background task runner checks for pending instances
+# Cadence at which BackgroundTaskRunner.tick is driven by the central scheduler
 RUNNER_CHECK_INTERVAL_SECONDS = 30
 
 
-async def _sweep_expired_waiters(
+async def expired_waiter_sweep(
     repository: TaskRepository,
     settings: TaskSettings,
     bus: EventBus,
@@ -188,120 +189,119 @@ The `rationale` field explains why you chose this classification and must descri
 Respond with ONLY a JSON object (no other text, no markdown formatting)."""  # noqa: E501
 
 
-async def background_task_runner(
-    repository: TaskRepository,
-    settings: TaskSettings,
-    bus: EventBus,
-    agent_defaults: AgentDefaults,
-    skill_registry: "SkillRegistry",
-    session_registry: SessionRegistry,
-    extra_mcp_servers: dict[str, McpSdkServerConfig] | None = None,
-    hooks: list[HookMatcher] | None = None,
-) -> None:
-    """Async loop that picks up and executes pending background tasks.
+class BackgroundTaskRunner:
+    """Tick-driven dispatcher for background task instances.
 
-    Gated by asyncio.Semaphore for concurrency limiting.
-    Spawns BackgroundTaskExecutor for each instance.
+    State (semaphore, currently running executor tasks) lives on the
+    runner instance and persists across ticks. Each ``tick()`` call is
+    one pass: query ready instances, spawn executors under the
+    semaphore, prune completed tasks.
 
-    Args:
-        repository: TaskRepository for persistence
-        settings: TaskSettings with max_concurrent_background and other config
-        bus: EventBus for dispatching Notification events
-        agent_defaults: Common SDK options (cwd, cli_path, env)
-        skill_registry: Shared skill registry for SkillsContextProvider
-        session_registry: SessionRegistry for post-processing pipeline
-        extra_mcp_servers: Optional MCP servers always injected into the
-            task executor's ``ClaudeAgentOptions`` (e.g. git-tools)
-        hooks: Optional PreToolUse hooks (e.g. destructive-git deny hook)
+    Call ``shutdown()`` during application shutdown (after the central
+    scheduler has been cancelled) to cancel any executor tasks still
+    running and await their completion.
     """
-    semaphore = asyncio.Semaphore(settings.max_concurrent_background)
-    running_tasks: dict[str, asyncio.Task[None]] = {}
 
-    _log.info(
-        "Background task runner started (max_concurrent={max})",
-        max=settings.max_concurrent_background,
-    )
+    def __init__(
+        self,
+        repository: TaskRepository,
+        settings: TaskSettings,
+        bus: EventBus,
+        agent_defaults: AgentDefaults,
+        skill_registry: "SkillRegistry",
+        session_registry: SessionRegistry,
+        extra_mcp_servers: dict[str, McpSdkServerConfig] | None = None,
+        hooks: list[HookMatcher] | None = None,
+    ) -> None:
+        self._repository = repository
+        self._settings = settings
+        self._bus = bus
+        self._agent_defaults = agent_defaults
+        self._skill_registry = skill_registry
+        self._session_registry = session_registry
+        self._extra_mcp_servers = extra_mcp_servers
+        self._hooks = hooks
 
-    while True:
-        try:
-            # Sweep expired waiting instances
-            await _sweep_expired_waiters(repository, settings, bus)
+        self._semaphore = asyncio.Semaphore(settings.max_concurrent_background)
+        self._running_tasks: dict[str, asyncio.Task[None]] = {}
 
-            # Query ready instances (pending + waiting-with-response)
-            ready_instances = await repository.get_ready_background_instances()
+        _log.info(
+            "Background task runner initialized (max_concurrent={max})",
+            max=settings.max_concurrent_background,
+        )
 
-            for instance in ready_instances:
-                # Skip if already running
-                if instance.id in running_tasks:
-                    continue
+    async def tick(self) -> None:
+        """Query ready instances, spawn executors, prune completed tasks."""
+        ready_instances = await self._repository.get_ready_background_instances()
 
-                # Check if we can acquire semaphore (non-blocking check)
-                if semaphore.locked() and len(running_tasks) >= settings.max_concurrent_background:
-                    _log.debug(
-                        "Max concurrent tasks reached, skipping instance {inst_id}",
-                        inst_id=instance.id,
-                    )
-                    continue
+        for instance in ready_instances:
+            if instance.id in self._running_tasks:
+                continue
 
-                # Create executor task
-                async def run_with_semaphore(inst: TaskInstance) -> None:
-                    async with semaphore:
-                        executor = BackgroundTaskExecutor(
-                            repository=repository,
-                            settings=settings,
-                            bus=bus,
-                            agent_defaults=agent_defaults,
-                            skill_registry=skill_registry,
-                            session_registry=session_registry,
-                            extra_mcp_servers=extra_mcp_servers,
-                            hooks=hooks,
-                        )
-                        await executor.execute(inst)
-
-                task = asyncio.create_task(run_with_semaphore(instance))
-                running_tasks[instance.id] = task
-
-                _log.info(
-                    "Started execution of background instance {inst_id}",
+            if (
+                self._semaphore.locked()
+                and len(self._running_tasks) >= self._settings.max_concurrent_background
+            ):
+                _log.debug(
+                    "Max concurrent tasks reached, skipping instance {inst_id}",
                     inst_id=instance.id,
                 )
+                continue
 
-            # Prune completed tasks
-            completed = [inst_id for inst_id, task in running_tasks.items() if task.done()]
-            for inst_id in completed:
-                task = running_tasks.pop(inst_id)
-                # Check for exceptions
-                try:
-                    task.result()
-                except Exception as exc:
-                    _log.exception(
-                        "Background task {inst_id} failed: {err}",
-                        inst_id=inst_id,
-                        err=str(exc),
-                    )
+            task = asyncio.create_task(
+                self._run_with_semaphore(instance),
+                name=f"bg-exec:{instance.id}",
+            )
+            self._running_tasks[instance.id] = task
 
-        except asyncio.CancelledError:
-            _log.info("Background task runner cancelled")
-            # Cancel all running tasks
-            for task in running_tasks.values():
-                task.cancel()
-            # Wait for all to complete
-            if running_tasks:
-                await asyncio.gather(*running_tasks.values(), return_exceptions=True)
-            raise
-
-        except Exception as exc:
-            _log.exception(
-                "Background task runner loop error: {err}",
-                err=str(exc),
+            _log.info(
+                "Started execution of background instance {inst_id}",
+                inst_id=instance.id,
             )
 
-        # Sleep until next check
-        try:
-            await asyncio.sleep(RUNNER_CHECK_INTERVAL_SECONDS)
-        except asyncio.CancelledError:
-            _log.info("Background task runner stopped")
-            raise
+        completed = [inst_id for inst_id, task in self._running_tasks.items() if task.done()]
+        for inst_id in completed:
+            task = self._running_tasks.pop(inst_id)
+            try:
+                task.result()
+            except asyncio.CancelledError:
+                pass
+            except Exception as exc:
+                _log.exception(
+                    "Background task {inst_id} failed: {err}",
+                    inst_id=inst_id,
+                    err=str(exc),
+                )
+
+    async def shutdown(self) -> None:
+        """Cancel in-flight executor tasks and await their completion."""
+        if not self._running_tasks:
+            return
+
+        _log.info(
+            "Cancelling {count} running background executors",
+            count=len(self._running_tasks),
+        )
+
+        for task in self._running_tasks.values():
+            task.cancel()
+
+        await asyncio.gather(*self._running_tasks.values(), return_exceptions=True)
+        self._running_tasks.clear()
+
+    async def _run_with_semaphore(self, instance: TaskInstance) -> None:
+        async with self._semaphore:
+            executor = BackgroundTaskExecutor(
+                repository=self._repository,
+                settings=self._settings,
+                bus=self._bus,
+                agent_defaults=self._agent_defaults,
+                skill_registry=self._skill_registry,
+                session_registry=self._session_registry,
+                extra_mcp_servers=self._extra_mcp_servers,
+                hooks=self._hooks,
+            )
+            await executor.execute(instance)
 
 
 class BackgroundTaskExecutor:

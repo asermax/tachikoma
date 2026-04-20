@@ -178,8 +178,10 @@ def build_context_summary(entries: list[SessionContextEntry]) -> str | None:
         by_owner.setdefault(e.owner, []).append(e)
 
     lines = [
-        "## Session Context", "",
-        "The following context was active during this conversation:", "",
+        "## Session Context",
+        "",
+        "The following context was active during this conversation:",
+        "",
     ]
     has_content = False
 
@@ -193,11 +195,13 @@ def build_context_summary(entries: list[SessionContextEntry]) -> str | None:
     # Memories: extract file paths from metadata
     memory_entries = by_owner.get("memories", [])
     if memory_entries:
-        paths = sorted({
-            e.metadata.get("memory_path")
-            for e in memory_entries
-            if e.metadata and e.metadata.get("memory_path")
-        })
+        paths = sorted(
+            {
+                e.metadata.get("memory_path")
+                for e in memory_entries
+                if e.metadata and e.metadata.get("memory_path")
+            }
+        )
         if paths:
             has_content = True
             lines.append(f"**Loaded Memories:** {', '.join(paths)}")
@@ -205,11 +209,13 @@ def build_context_summary(entries: list[SessionContextEntry]) -> str | None:
     # Skills: extract names from metadata
     skill_entries = by_owner.get("skills", [])
     if skill_entries:
-        names = sorted({
-            e.metadata.get("skill_name")
-            for e in skill_entries
-            if e.metadata and e.metadata.get("skill_name")
-        })
+        names = sorted(
+            {
+                e.metadata.get("skill_name")
+                for e in skill_entries
+                if e.metadata and e.metadata.get("skill_name")
+            }
+        )
         if names:
             has_content = True
             lines.append(f"**Active Skills:** {', '.join(names)}")
@@ -257,10 +263,7 @@ def build_context_summary(entries: list[SessionContextEntry]) -> str | None:
         "loaded memory files — but do update those files if the conversation "
         "adds new details or corrections"
     )
-    lines.append(
-        "- Avoid duplicating content that was provided by active skills into "
-        "memory files"
-    )
+    lines.append("- Avoid duplicating content that was provided by active skills into memory files")
     lines.append(
         "- Understand that foundational context (SOUL/USER/AGENTS) shaped "
         "the agent's behavior during the conversation"
@@ -479,9 +482,8 @@ def _split_compound_commands(command: str) -> list[str]:
                 i += 1
                 continue
 
-            elif (
-                char in ("|", ";")
-                or (char == "&" and i + 1 < len(command) and command[i + 1] == "&")
+            elif char in ("|", ";") or (
+                char == "&" and i + 1 < len(command) and command[i + 1] == "&"
             ):
                 part = "".join(current).strip()
                 if part:

@@ -58,16 +58,26 @@ from tachikoma.post_processing import (
 from tachikoma.pre_processing import PreProcessingPipeline
 from tachikoma.projects import ProjectsContextProvider, ProjectsProcessor, projects_hook
 from tachikoma.repl import Repl
+from tachikoma.scheduler import CronTrigger, IntervalTrigger, Job, scheduler
 from tachikoma.sessions import session_recovery_hook
 from tachikoma.skills import SkillRegistry, SkillsContextProvider, skills_hook, watch_skills
 from tachikoma.tasks import (
     TaskRepository,
-    background_task_runner,
     create_task_tools_server,
-    instance_generator,
-    session_task_scheduler,
+)
+from tachikoma.tasks.executor import (
+    RUNNER_CHECK_INTERVAL_SECONDS,
+    BackgroundTaskRunner,
+    expired_waiter_sweep,
 )
 from tachikoma.tasks.hooks import tasks_hook
+from tachikoma.tasks.scheduler import (
+    GENERATION_INTERVAL_SECONDS,
+    get_timezone,
+    instance_generator_tick,
+    one_shot_cleanup_tick,
+    session_task_scheduler_tick,
+)
 from tachikoma.telegram import TelegramChannel, telegram_hook
 from tachikoma.workflows.cleanup import StaleWorkflowCleanupProcessor
 from tachikoma.workflows.hooks import workflows_hook
@@ -248,6 +258,7 @@ async def run(
 
     scheduler_tasks: list[asyncio.Task[None]] = []
     buffer: Buffer | None = None
+    background_runner: BackgroundTaskRunner | None = None
 
     try:
         async with Coordinator(
@@ -276,42 +287,52 @@ async def run(
                 settings=settings.buffer,
             )
 
-            scheduler_tasks.append(
-                asyncio.create_task(
-                    instance_generator(task_repository, settings.tasks),
+            background_runner = BackgroundTaskRunner(
+                repository=task_repository,
+                settings=settings.tasks,
+                bus=bus,
+                agent_defaults=agent_defaults,
+                skill_registry=skill_registry,
+                session_registry=registry,
+                extra_mcp_servers={
+                    "git-tools": git_tools,
+                    "task-tools": background_task_tools,
+                },
+                hooks=[destructive_git_deny_hook],
+            )
+
+            tz = get_timezone(settings.tasks)
+            jobs = [
+                Job(
                     name="instance_generator",
-                )
-            )
-
-            scheduler_tasks.append(
-                asyncio.create_task(
-                    session_task_scheduler(
-                        task_repository,
-                        settings.tasks,
-                        buffer,
-                    ),
+                    trigger=IntervalTrigger(GENERATION_INTERVAL_SECONDS),
+                    run=lambda: instance_generator_tick(task_repository, settings.tasks),
+                ),
+                Job(
                     name="session_task_scheduler",
-                )
-            )
-
-            scheduler_tasks.append(
-                asyncio.create_task(
-                    background_task_runner(
-                        task_repository,
-                        settings.tasks,
-                        bus,
-                        agent_defaults,
-                        skill_registry,
-                        registry,
-                        extra_mcp_servers={
-                            "git-tools": git_tools,
-                            "task-tools": background_task_tools,
-                        },
-                        hooks=[destructive_git_deny_hook],
+                    trigger=IntervalTrigger(settings.tasks.check_interval),
+                    run=lambda: session_task_scheduler_tick(
+                        task_repository, settings.tasks, buffer
                     ),
+                ),
+                Job(
                     name="background_task_runner",
-                )
-            )
+                    trigger=IntervalTrigger(RUNNER_CHECK_INTERVAL_SECONDS),
+                    run=background_runner.tick,
+                ),
+                Job(
+                    name="expired_waiter_sweep",
+                    trigger=IntervalTrigger(120),
+                    run=lambda: expired_waiter_sweep(task_repository, settings.tasks, bus),
+                ),
+                Job(
+                    name="one_shot_cleanup",
+                    trigger=CronTrigger("0 3 * * *", tz),
+                    run=lambda: one_shot_cleanup_tick(task_repository, settings.tasks),
+                ),
+            ]
+
+            scheduler_tasks.append(asyncio.create_task(scheduler(jobs), name="scheduler"))
 
             scheduler_tasks.append(
                 asyncio.create_task(
@@ -374,6 +395,13 @@ async def run(
                         i=i,
                         err=str(result),
                     )
+
+        # Drain any in-flight background executor tasks spawned by the runner
+        if background_runner is not None:
+            try:
+                await background_runner.shutdown()
+            except Exception:
+                _log.exception("Background runner shutdown failed")
 
         # Stop the event bus
         await bus.stop()

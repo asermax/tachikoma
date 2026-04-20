@@ -97,10 +97,14 @@ class TestBuildContextSummary:
     def test_includes_memory_paths_from_metadata(self) -> None:
         entries = [
             _make_entry(
-                "memories", "content", metadata={"memory_path": "memories/facts/python.md"},
+                "memories",
+                "content",
+                metadata={"memory_path": "memories/facts/python.md"},
             ),
             _make_entry(
-                "memories", "content", metadata={"memory_path": "memories/facts/infra.md"},
+                "memories",
+                "content",
+                metadata={"memory_path": "memories/facts/infra.md"},
             ),
         ]
         result = build_context_summary(entries)
@@ -155,10 +159,14 @@ class TestBuildContextSummary:
             _make_entry("soul", "personality"),
             _make_entry("user", "user info"),
             _make_entry(
-                "memories", "content", metadata={"memory_path": "memories/facts/python.md"},
+                "memories",
+                "content",
+                metadata={"memory_path": "memories/facts/python.md"},
             ),
             _make_entry(
-                "skills", "content", metadata={"skill_name": "reading-list"},
+                "skills",
+                "content",
+                metadata={"skill_name": "reading-list"},
             ),
             _make_entry("projects", "- tachikoma: main"),
             _make_entry("previous-summary", "summary"),
@@ -1208,6 +1216,7 @@ class TestPromptDrivenProcessor:
 
         actual_prompt = mock_fork.call_args[0][1]
         assert actual_prompt == prompt
+
     """Tests for _split_compound_commands quoting-aware splitting."""
 
     def test_single_command_no_split(self) -> None:
@@ -1256,13 +1265,13 @@ class TestPromptDrivenProcessor:
         ]
 
     def test_single_quote_inside_double_quotes(self) -> None:
-        assert _split_compound_commands("echo \"it's | fine\"") == [
-            "echo \"it's | fine\"",
+        assert _split_compound_commands('echo "it\'s | fine"') == [
+            'echo "it\'s | fine"',
         ]
 
     def test_double_quote_inside_single_quotes(self) -> None:
         assert _split_compound_commands("echo 'he said \"hello | world\"'") == [
-            'echo \'he said "hello | world"\'',
+            "echo 'he said \"hello | world\"'",
         ]
 
     def test_escaped_semicolon_not_split(self) -> None:
@@ -1407,8 +1416,6 @@ class TestMakeBashDenyHook:
         assert result == {}
 
     async def test_pipe_inside_quotes_not_split(self, deny_hook) -> None:
-        result = await self._run_hook(
-            deny_hook, 'grep -E "pattern1|pattern2" file.txt'
-        )
+        result = await self._run_hook(deny_hook, 'grep -E "pattern1|pattern2" file.txt')
 
         assert result == {}

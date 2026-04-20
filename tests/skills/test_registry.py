@@ -1342,13 +1342,7 @@ class TestValidateDeps:
         step_dir = skill_dir / "workflows" / "my-workflow" / "01-plan"
         step_dir.mkdir(parents=True)
         (step_dir / "instructions.md").write_text(
-            "---\n"
-            "title: Plan\n"
-            "required_skills:\n"
-            "  - missing-a\n"
-            "  - missing-b\n"
-            "---\n"
-            "Body."
+            "---\ntitle: Plan\nrequired_skills:\n  - missing-a\n  - missing-b\n---\nBody."
         )
 
         warnings: list[str] = []
@@ -1378,14 +1372,10 @@ class TestValidateDeps:
 
         # Register both skills
         (skills_dir / "my-skill").mkdir()
-        (skills_dir / "my-skill" / "SKILL.md").write_text(
-            '---\ndescription: "Owner"\n---\n\nBody'
-        )
+        (skills_dir / "my-skill" / "SKILL.md").write_text('---\ndescription: "Owner"\n---\n\nBody')
 
         (skills_dir / "helper").mkdir()
-        (skills_dir / "helper" / "SKILL.md").write_text(
-            '---\ndescription: "Helper"\n---\n\nBody'
-        )
+        (skills_dir / "helper" / "SKILL.md").write_text('---\ndescription: "Helper"\n---\n\nBody')
 
         step_dir = skills_dir / "my-skill" / "workflows" / "my-workflow" / "01-plan"
         step_dir.mkdir(parents=True)

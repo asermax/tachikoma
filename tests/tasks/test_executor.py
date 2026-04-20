@@ -1,7 +1,6 @@
 """Tests for background task executor."""
 
 import asyncio
-import contextlib
 from datetime import timedelta
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -17,9 +16,9 @@ from tachikoma.notifications import Notification, handle_send_notification
 from tachikoma.tasks.executor import (
     BACKGROUND_TASK_SYSTEM_PROMPT,
     BackgroundTaskExecutor,
+    BackgroundTaskRunner,
     _PreprocessingResult,
-    _sweep_expired_waiters,
-    background_task_runner,
+    expired_waiter_sweep,
 )
 from tachikoma.tasks.repository import TaskRepository
 
@@ -70,8 +69,30 @@ def _make_eval_response(text: str = '{"status": "complete", "rationale": "Done"}
     return _stream()
 
 
+def _make_runner(
+    repo: TaskRepository,
+    settings: TaskSettings,
+    bus: EventBus,
+) -> BackgroundTaskRunner:
+    return BackgroundTaskRunner(
+        repository=repo,
+        settings=settings,
+        bus=bus,
+        agent_defaults=AgentDefaults(cwd=Path("/tmp")),
+        skill_registry=_mock_skill_registry(),
+        session_registry=_mock_session_registry(),
+    )
+
+
+async def _drain_runner(runner: BackgroundTaskRunner) -> None:
+    """Await any in-flight executor tasks the runner spawned (without cancelling)."""
+    tasks = list(runner._running_tasks.values())  # noqa: SLF001
+    if tasks:
+        await asyncio.gather(*tasks, return_exceptions=True)
+
+
 class TestBackgroundTaskRunner:
-    """Tests for the background_task_runner async function."""
+    """Tests for the BackgroundTaskRunner.tick dispatch."""
 
     @pytest.mark.asyncio
     async def test_picks_up_pending_instances(self, repo: TaskRepository) -> None:
@@ -93,20 +114,9 @@ class TestBackgroundTaskRunner:
             await repo.update_instance(inst.id, status="completed")
 
         with patch.object(BackgroundTaskExecutor, "execute", mock_execute):
-            task = asyncio.create_task(
-                background_task_runner(
-                    repo,
-                    settings,
-                    bus,
-                    AgentDefaults(cwd=Path("/tmp")),
-                    _mock_skill_registry(),
-                    _mock_session_registry(),
-                )
-            )
-            await asyncio.sleep(0.2)
-            task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await task
+            runner = _make_runner(repo, settings, bus)
+            await runner.tick()
+            await _drain_runner(runner)
 
         assert "inst-1" in executed_instances
 
@@ -131,25 +141,17 @@ class TestBackgroundTaskRunner:
             nonlocal concurrent_count, max_concurrent
             concurrent_count += 1
             max_concurrent = max(max_concurrent, concurrent_count)
-            await asyncio.sleep(0.1)
+            await asyncio.sleep(0.05)
             await repo.update_instance(inst.id, status="completed")
             concurrent_count -= 1
 
         with patch.object(BackgroundTaskExecutor, "execute", mock_execute):
-            task = asyncio.create_task(
-                background_task_runner(
-                    repo,
-                    settings,
-                    bus,
-                    AgentDefaults(cwd=Path("/tmp")),
-                    _mock_skill_registry(),
-                    _mock_session_registry(),
-                )
-            )
-            await asyncio.sleep(0.5)
-            task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await task
+            runner = _make_runner(repo, settings, bus)
+            # Multiple ticks let the runner pick up instances as prior ones complete
+            for _ in range(5):
+                await runner.tick()
+                await asyncio.sleep(0.1)
+            await _drain_runner(runner)
 
         assert max_concurrent <= 2
 
@@ -165,20 +167,9 @@ class TestBackgroundTaskRunner:
             execute_called.append(inst.id)
 
         with patch.object(BackgroundTaskExecutor, "execute", mock_execute):
-            task = asyncio.create_task(
-                background_task_runner(
-                    repo,
-                    settings,
-                    bus,
-                    AgentDefaults(cwd=Path("/tmp")),
-                    _mock_skill_registry(),
-                    _mock_session_registry(),
-                )
-            )
-            await asyncio.sleep(0.2)
-            task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await task
+            runner = _make_runner(repo, settings, bus)
+            await runner.tick()
+            await runner.shutdown()
 
         assert len(execute_called) == 0
 
@@ -965,7 +956,7 @@ class TestRunnerTimeoutSweep:
 
         bus.dispatch = AsyncMock(side_effect=capture_dispatch)
 
-        await _sweep_expired_waiters(repo, settings, bus)
+        await expired_waiter_sweep(repo, settings, bus)
 
         # Verify instance failed
         updated = await repo.get_instance("expired-1")
@@ -1004,20 +995,9 @@ class TestRunnerTimeoutSweep:
             await repo.update_instance(inst.id, status="completed")
 
         with patch.object(BackgroundTaskExecutor, "execute", mock_execute):
-            task = asyncio.create_task(
-                background_task_runner(
-                    repo,
-                    settings,
-                    bus,
-                    AgentDefaults(cwd=Path("/tmp")),
-                    _mock_skill_registry(),
-                    _mock_session_registry(),
-                )
-            )
-            await asyncio.sleep(0.3)
-            task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await task
+            runner = _make_runner(repo, settings, bus)
+            await runner.tick()
+            await _drain_runner(runner)
 
         assert "pending-1" in executed_ids
         assert "waiting-1" in executed_ids

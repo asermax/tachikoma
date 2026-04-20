@@ -5,12 +5,17 @@ Provides:
 - TaskDefinition, TaskInstance: Domain dataclasses
 - ScheduleConfig: Schedule configuration (cron or one-shot)
 - TaskStatus, TaskType: Literal type aliases
-- instance_generator, session_task_scheduler: Async scheduling loops
-- background_task_runner, BackgroundTaskExecutor: Background task execution
+- instance_generator_tick, session_task_scheduler_tick, one_shot_cleanup_tick:
+  scheduler tick entry points
+- BackgroundTaskRunner, BackgroundTaskExecutor, expired_waiter_sweep: background task execution
 """
 
 from tachikoma.tasks.errors import TaskRepositoryError
-from tachikoma.tasks.executor import BackgroundTaskExecutor, background_task_runner
+from tachikoma.tasks.executor import (
+    BackgroundTaskExecutor,
+    BackgroundTaskRunner,
+    expired_waiter_sweep,
+)
 from tachikoma.tasks.model import (
     ScheduleConfig,
     TaskDefinition,
@@ -19,11 +24,16 @@ from tachikoma.tasks.model import (
     TaskType,
 )
 from tachikoma.tasks.repository import TaskRepository
-from tachikoma.tasks.scheduler import instance_generator, session_task_scheduler
+from tachikoma.tasks.scheduler import (
+    instance_generator_tick,
+    one_shot_cleanup_tick,
+    session_task_scheduler_tick,
+)
 from tachikoma.tasks.tools import create_task_tools_server
 
 __all__ = [
     "BackgroundTaskExecutor",
+    "BackgroundTaskRunner",
     "ScheduleConfig",
     "TaskDefinition",
     "TaskInstance",
@@ -31,8 +41,9 @@ __all__ = [
     "TaskRepositoryError",
     "TaskStatus",
     "TaskType",
-    "background_task_runner",
     "create_task_tools_server",
-    "instance_generator",
-    "session_task_scheduler",
+    "expired_waiter_sweep",
+    "instance_generator_tick",
+    "one_shot_cleanup_tick",
+    "session_task_scheduler_tick",
 ]

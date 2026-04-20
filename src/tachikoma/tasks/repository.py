@@ -7,9 +7,10 @@ of this module.
 from datetime import UTC, datetime, timedelta
 
 from loguru import logger
-from sqlalchemy import and_, or_, select
+from sqlalchemy import and_, delete, func, or_, select
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
+from tachikoma.db_utils import ensure_utc
 from tachikoma.tasks.errors import TaskRepositoryError
 from tachikoma.tasks.model import (
     TaskDefinition,
@@ -431,3 +432,68 @@ class TaskRepository:
 
         except Exception as exc:
             raise TaskRepositoryError("Failed to mark running instances as failed") from exc
+
+    async def cleanup_expired_one_shot_definitions(self, retention_hours: int) -> int:
+        """Delete one-shot definitions whose retention window has expired.
+
+        Eligible definitions are type=once AND last_fired_at IS NOT NULL AND
+        every associated instance is terminal (completed or failed). The
+        retention anchor is ``max(instance.completed_at)`` when any instance
+        exists, otherwise ``last_fired_at``. Instances are deleted before
+        the definition to respect FK constraints.
+
+        Returns the number of definitions deleted.
+        """
+        try:
+            threshold = datetime.now(UTC) - timedelta(hours=retention_hours)
+            deleted = 0
+
+            async with self._session_factory() as db:
+                # Candidate one-shots: fired at least once, no active instances
+                # (json.dumps serialization produces `"type": "once"` with a space)
+                non_terminal_exists = (
+                    select(TaskInstanceRecord.id)
+                    .where(TaskInstanceRecord.definition_id == TaskDefinitionRecord.id)
+                    .where(TaskInstanceRecord.status.not_in(["completed", "failed"]))  # noqa: S610
+                    .exists()
+                )
+
+                candidates_result = await db.execute(
+                    select(TaskDefinitionRecord)
+                    .where(TaskDefinitionRecord.schedule.contains('"type": "once"'))
+                    .where(TaskDefinitionRecord.last_fired_at.is_not(None))
+                    .where(~non_terminal_exists)
+                )
+                candidates = candidates_result.scalars().all()
+
+                for record in candidates:
+                    latest_completed = await db.scalar(
+                        select(func.max(TaskInstanceRecord.completed_at)).where(
+                            TaskInstanceRecord.definition_id == record.id
+                        )
+                    )
+                    anchor = ensure_utc(latest_completed) or ensure_utc(record.last_fired_at)
+
+                    if anchor is None or anchor >= threshold:
+                        continue
+
+                    await db.execute(
+                        delete(TaskInstanceRecord).where(
+                            TaskInstanceRecord.definition_id == record.id
+                        )
+                    )
+                    await db.delete(record)
+                    deleted += 1
+
+                await db.commit()
+
+            if deleted > 0:
+                _log.info(
+                    "Cleaned up {count} expired one-shot definitions",
+                    count=deleted,
+                )
+
+            return deleted
+
+        except Exception as exc:
+            raise TaskRepositoryError("Failed to cleanup expired one-shot definitions") from exc

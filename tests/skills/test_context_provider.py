@@ -819,9 +819,7 @@ class TestAgentsContextInjection:
         mock_query.return_value = _make_query_result("NO_RELEVANT_SKILLS")
 
         existing = [
-            SessionContextEntry(
-                id=1, session_id="s1", owner="agents", content="Convention body"
-            ),
+            SessionContextEntry(id=1, session_id="s1", owner="agents", content="Convention body"),
         ]
 
         provider = self._make_provider(tmp_path)

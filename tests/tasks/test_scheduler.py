@@ -3,8 +3,6 @@
 See: docs/delta-specs/DLT-090.md (R0–R6 acceptance criteria)
 """
 
-import asyncio
-import contextlib
 from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, patch
 from zoneinfo import ZoneInfo
@@ -16,7 +14,10 @@ from tachikoma.buffer.items import BufferedItem
 from tachikoma.config import TaskSettings
 from tachikoma.tasks.model import ScheduleConfig
 from tachikoma.tasks.repository import TaskRepository
-from tachikoma.tasks.scheduler import instance_generator, session_task_scheduler
+from tachikoma.tasks.scheduler import (
+    instance_generator_tick,
+    session_task_scheduler_tick,
+)
 
 from .conftest import _make_definition, _make_instance
 
@@ -42,11 +43,7 @@ class TestInstanceGenerator:
 
         settings = TaskSettings(timezone="UTC")
 
-        task = asyncio.create_task(instance_generator(repo, settings))
-        await asyncio.sleep(0.2)
-        task.cancel()
-        with contextlib.suppress(asyncio.CancelledError):
-            await task
+        await instance_generator_tick(repo, settings)
 
         instances = await repo.get_pending_instances("session")
         assert len(instances) == 1
@@ -58,11 +55,7 @@ class TestInstanceGenerator:
         definition = _make_definition("def-1", schedule=schedule)
         await repo.create_definition(definition)
 
-        task = asyncio.create_task(instance_generator(repo, TaskSettings(timezone="UTC")))
-        await asyncio.sleep(0.2)
-        task.cancel()
-        with contextlib.suppress(asyncio.CancelledError):
-            await task
+        await instance_generator_tick(repo, TaskSettings(timezone="UTC"))
 
         instances = await repo.get_pending_instances("session")
         assert len(instances) == 1
@@ -78,11 +71,7 @@ class TestInstanceGenerator:
 
         settings = TaskSettings(timezone="UTC")
 
-        task = asyncio.create_task(instance_generator(repo, settings))
-        await asyncio.sleep(0.1)
-        task.cancel()
-        with contextlib.suppress(asyncio.CancelledError):
-            await task
+        await instance_generator_tick(repo, settings)
 
         instances = await repo.get_pending_instances("session")
         assert len(instances) == 0
@@ -111,11 +100,7 @@ class TestInstanceGenerator:
         )
 
         settings = TaskSettings(timezone="UTC")
-        task = asyncio.create_task(instance_generator(repo, settings))
-        await asyncio.sleep(0.1)
-        task.cancel()
-        with contextlib.suppress(asyncio.CancelledError):
-            await task
+        await instance_generator_tick(repo, settings)
 
         # Should still only have the original instance
         instances = await repo.get_pending_instances("session")
@@ -144,11 +129,7 @@ class TestInstanceGenerator:
         )
 
         settings = TaskSettings(timezone="UTC")
-        task = asyncio.create_task(instance_generator(repo, settings))
-        await asyncio.sleep(0.1)
-        task.cancel()
-        with contextlib.suppress(asyncio.CancelledError):
-            await task
+        await instance_generator_tick(repo, settings)
 
         # A new pending instance should be created despite the failed one
         instances = await repo.get_pending_instances("session")
@@ -178,11 +159,7 @@ class TestInstanceGenerator:
         )
 
         settings = TaskSettings(timezone="UTC")
-        task = asyncio.create_task(instance_generator(repo, settings))
-        await asyncio.sleep(0.1)
-        task.cancel()
-        with contextlib.suppress(asyncio.CancelledError):
-            await task
+        await instance_generator_tick(repo, settings)
 
         # Should still only have one instance
         pending = await repo.get_pending_instances("session")
@@ -217,11 +194,7 @@ class TestInstanceGenerator:
         )
 
         settings = TaskSettings(timezone="UTC")
-        task = asyncio.create_task(instance_generator(repo, settings))
-        await asyncio.sleep(0.1)
-        task.cancel()
-        with contextlib.suppress(asyncio.CancelledError):
-            await task
+        await instance_generator_tick(repo, settings)
 
         # A new instance should be created for the current period
         instances = await repo.get_pending_instances("session")
@@ -242,11 +215,7 @@ class TestInstanceGenerator:
         await repo.create_definition(definition)
 
         settings = TaskSettings(timezone="UTC")
-        task = asyncio.create_task(instance_generator(repo, settings))
-        await asyncio.sleep(0.1)
-        task.cancel()
-        with contextlib.suppress(asyncio.CancelledError):
-            await task
+        await instance_generator_tick(repo, settings)
 
         # Should not fire because frozen minute (30) hasn't reached 59
         instances = await repo.get_pending_instances("session")
@@ -261,11 +230,7 @@ class TestInstanceGenerator:
 
         settings = TaskSettings(timezone="UTC")
 
-        task = asyncio.create_task(instance_generator(repo, settings))
-        await asyncio.sleep(0.1)
-        task.cancel()
-        with contextlib.suppress(asyncio.CancelledError):
-            await task
+        await instance_generator_tick(repo, settings)
 
         updated_def = await repo.get_definition("def-1")
         assert updated_def is not None
@@ -287,11 +252,7 @@ class TestInstanceGenerator:
 
         settings = TaskSettings(timezone="UTC")
 
-        task = asyncio.create_task(instance_generator(repo, settings))
-        await asyncio.sleep(0.1)
-        task.cancel()
-        with contextlib.suppress(asyncio.CancelledError):
-            await task
+        await instance_generator_tick(repo, settings)
 
         instances = await repo.get_pending_instances("session")
         assert len(instances) == 0
@@ -307,11 +268,7 @@ class TestInstanceGenerator:
         await repo.create_definition(definition)
 
         settings = TaskSettings(timezone="UTC")
-        task = asyncio.create_task(instance_generator(repo, settings))
-        await asyncio.sleep(0.1)
-        task.cancel()
-        with contextlib.suppress(asyncio.CancelledError):
-            await task
+        await instance_generator_tick(repo, settings)
 
         instances = await repo.get_pending_instances("session")
         assert len(instances) == 1
@@ -336,11 +293,7 @@ class TestInstanceGenerator:
         await repo.create_definition(definition)
 
         settings = TaskSettings(timezone="UTC")
-        task = asyncio.create_task(instance_generator(repo, settings))
-        await asyncio.sleep(0.1)
-        task.cancel()
-        with contextlib.suppress(asyncio.CancelledError):
-            await task
+        await instance_generator_tick(repo, settings)
 
         # Only one instance should be created (not one per missed period)
         instances = await repo.get_pending_instances("session")
@@ -380,11 +333,7 @@ class TestInstanceGenerator:
         )
 
         settings = TaskSettings(timezone="UTC")
-        task = asyncio.create_task(instance_generator(repo, settings))
-        await asyncio.sleep(0.1)
-        task.cancel()
-        with contextlib.suppress(asyncio.CancelledError):
-            await task
+        await instance_generator_tick(repo, settings)
 
         # Only the existing instance should exist
         instances = await repo.get_pending_instances("session")
@@ -403,11 +352,7 @@ class TestInstanceGenerator:
         await repo.create_definition(definition)
 
         settings = TaskSettings(timezone=tz_str)
-        task = asyncio.create_task(instance_generator(repo, settings))
-        await asyncio.sleep(0.1)
-        task.cancel()
-        with contextlib.suppress(asyncio.CancelledError):
-            await task
+        await instance_generator_tick(repo, settings)
 
         instances = await repo.get_pending_instances("session")
         assert len(instances) == 1
@@ -436,11 +381,7 @@ class TestInstanceGenerator:
         with patch("tachikoma.tasks.scheduler.datetime") as mock_dt:
             mock_dt.now = mock_now
             mock_dt.UTC = UTC
-            task = asyncio.create_task(instance_generator(repo, settings))
-            await asyncio.sleep(0.2)
-            task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await task
+            await instance_generator_tick(repo, settings)
 
         instances = await repo.get_pending_instances("session")
         assert len(instances) == 1
@@ -466,11 +407,7 @@ class TestInstanceGenerator:
         with patch("tachikoma.tasks.scheduler.datetime") as mock_dt:
             mock_dt.now = mock_now
             mock_dt.UTC = UTC
-            task = asyncio.create_task(instance_generator(repo, settings))
-            await asyncio.sleep(0.1)
-            task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await task
+            await instance_generator_tick(repo, settings)
 
         instances = await repo.get_pending_instances("session")
         assert len(instances) == 0
@@ -496,11 +433,7 @@ class TestInstanceGenerator:
         with patch("tachikoma.tasks.scheduler.datetime") as mock_dt:
             mock_dt.now = mock_now
             mock_dt.UTC = UTC
-            task = asyncio.create_task(instance_generator(repo, settings))
-            await asyncio.sleep(0.1)
-            task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await task
+            await instance_generator_tick(repo, settings)
 
         instances = await repo.get_pending_instances("session")
         assert len(instances) == 1
@@ -533,11 +466,7 @@ class TestInstanceGenerator:
         with patch("tachikoma.tasks.scheduler.datetime") as mock_dt:
             mock_dt.now = mock_now
             mock_dt.UTC = UTC
-            task = asyncio.create_task(instance_generator(repo, settings))
-            await asyncio.sleep(0.1)
-            task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await task
+            await instance_generator_tick(repo, settings)
 
         instances = await repo.get_pending_instances("session")
         assert len(instances) == 1
@@ -567,11 +496,7 @@ class TestStaleCronPrevention:
         await repo.create_definition(definition)
 
         settings = TaskSettings(timezone="UTC")
-        task = asyncio.create_task(instance_generator(repo, settings))
-        await asyncio.sleep(0.1)
-        task.cancel()
-        with contextlib.suppress(asyncio.CancelledError):
-            await task
+        await instance_generator_tick(repo, settings)
 
         instances = await repo.get_pending_instances("session")
         assert len(instances) == 0
@@ -598,11 +523,7 @@ class TestStaleCronPrevention:
         await repo.create_definition(definition)
 
         settings = TaskSettings(timezone="UTC")
-        task = asyncio.create_task(instance_generator(repo, settings))
-        await asyncio.sleep(0.1)
-        task.cancel()
-        with contextlib.suppress(asyncio.CancelledError):
-            await task
+        await instance_generator_tick(repo, settings)
 
         instances = await repo.get_pending_instances("session")
         assert len(instances) == 0
@@ -630,11 +551,7 @@ class TestStaleCronPrevention:
         await repo.create_definition(definition)
 
         settings = TaskSettings(timezone="UTC")
-        task = asyncio.create_task(instance_generator(repo, settings))
-        await asyncio.sleep(0.1)
-        task.cancel()
-        with contextlib.suppress(asyncio.CancelledError):
-            await task
+        await instance_generator_tick(repo, settings)
 
         # No instance because 13:00 hasn't arrived yet
         instances = await repo.get_pending_instances("session")
@@ -663,11 +580,7 @@ class TestStaleCronPrevention:
         await repo.create_definition(definition)
 
         settings = TaskSettings(timezone="UTC")
-        task = asyncio.create_task(instance_generator(repo, settings))
-        await asyncio.sleep(0.1)
-        task.cancel()
-        with contextlib.suppress(asyncio.CancelledError):
-            await task
+        await instance_generator_tick(repo, settings)
 
         instances = await repo.get_pending_instances("session")
         assert len(instances) == 1
@@ -695,11 +608,7 @@ class TestSessionTaskScheduler:
         mock_buffer = AsyncMock()
         mock_buffer.enqueue = AsyncMock(side_effect=lambda item: enqueued_items.append(item))
 
-        task = asyncio.create_task(session_task_scheduler(repo, settings, mock_buffer))
-        await asyncio.sleep(0.1)
-        task.cancel()
-        with contextlib.suppress(asyncio.CancelledError):
-            await task
+        await session_task_scheduler_tick(repo, settings, mock_buffer)
 
         assert len(enqueued_items) == 1
         assert enqueued_items[0].kind == "session_task"
@@ -713,11 +622,7 @@ class TestSessionTaskScheduler:
 
         mock_buffer = AsyncMock()
 
-        task = asyncio.create_task(session_task_scheduler(repo, settings, mock_buffer))
-        await asyncio.sleep(0.1)
-        task.cancel()
-        with contextlib.suppress(asyncio.CancelledError):
-            await task
+        await session_task_scheduler_tick(repo, settings, mock_buffer)
 
         mock_buffer.enqueue.assert_not_called()
 
@@ -738,11 +643,7 @@ class TestSessionTaskScheduler:
         mock_buffer = AsyncMock()
         mock_buffer.enqueue = AsyncMock(side_effect=lambda item: enqueued_items.append(item))
 
-        task = asyncio.create_task(session_task_scheduler(repo, settings, mock_buffer))
-        await asyncio.sleep(0.1)
-        task.cancel()
-        with contextlib.suppress(asyncio.CancelledError):
-            await task
+        await session_task_scheduler_tick(repo, settings, mock_buffer)
 
         assert len(enqueued_items) == 1
         item = enqueued_items[0]

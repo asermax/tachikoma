@@ -181,9 +181,7 @@ def _render_required_skills(step_info: dict, registry: SkillRegistry) -> str:
                 continue
             seen.add(skill.name)
             ordered_blocks.append(
-                f'<skill name="{skill.name}" directory="{skill.path}">\n'
-                f"{skill.body}\n"
-                f"</skill>"
+                f'<skill name="{skill.name}" directory="{skill.path}">\n{skill.body}\n</skill>'
             )
 
     if not ordered_blocks:
