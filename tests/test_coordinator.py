@@ -3089,34 +3089,6 @@ class TestIsBusy:
         coord._pending_msg_task = None  # Clear so coordinator doesn't await it
 
 
-class TestInExchange:
-    """Tests for the in_exchange property used by channels for steering."""
-
-    async def test_false_when_no_client(self, mock_sdk) -> None:
-        """No active SDK client → not in an exchange."""
-        async with Coordinator() as coord:
-            assert coord.in_exchange is False
-
-    async def test_true_when_client_active(self, mock_sdk) -> None:
-        """_client set means an exchange is in flight."""
-        async with Coordinator() as coord:
-            coord._client = MagicMock()
-
-            assert coord.in_exchange is True
-
-    async def test_false_when_only_messages_pending(self) -> None:
-        """Pending buffered messages without an active client are not an exchange.
-
-        in_exchange is narrower than is_busy: it only flips when there is a
-        live SDK client to steer into.
-        """
-        async with Coordinator() as coord:
-            coord.enqueue("pending message")
-
-            assert coord.has_pending_messages is True
-            assert coord.in_exchange is False
-
-
 class TestIdlePostProcess:
     """Tests for _idle_post_process() method behavior."""
 

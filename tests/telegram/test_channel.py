@@ -1332,9 +1332,6 @@ class TestHandleMedia:
     def _make_channel(self) -> TelegramChannel:
         """Build a TelegramChannel with mocked dependencies."""
         coordinator = MagicMock()
-        # Default to "no live exchange" so handlers take the lock-based path
-        # rather than the steering-only branch.
-        coordinator.in_exchange = False
         settings = MagicMock()
         settings.bot_token = "123456:ABCdef"
         settings.authorized_chat_id = 123
@@ -1482,9 +1479,6 @@ class TestDeliveryLock:
 
     def _make_channel(self) -> TelegramChannel:
         coordinator = MagicMock()
-        # Default to "no live exchange" so handlers take the lock-based path
-        # rather than the steering-only branch.
-        coordinator.in_exchange = False
         settings = MagicMock()
         settings.bot_token = "123456:ABCdef"
         settings.authorized_chat_id = 123
@@ -1497,8 +1491,14 @@ class TestDeliveryLock:
         channel._bot = MagicMock()
         return channel
 
-    async def test_handle_message_serializes_concurrent_calls(self) -> None:
-        """Two concurrent _handle_message calls run serially under the lock."""
+    async def test_handle_message_concurrent_second_call_steers(self) -> None:
+        """Two concurrent _handle_message calls: first processes, second steers.
+
+        Under the lock-as-gate semantics the lock is released only after the
+        in-flight exchange ends, so any concurrent user message that arrives
+        meanwhile takes the steering branch (enqueue-only) instead of starting
+        a second exchange.
+        """
         channel = self._make_channel()
         call_order: list[str] = []
 
@@ -1517,61 +1517,20 @@ class TestDeliveryLock:
             channel._handle_message(msg2),
         )
 
-        assert call_order == ["enter", "exit", "enter", "exit"]
+        # Only one exchange runs; the second call enqueued and returned.
+        assert call_order == ["enter", "exit"]
+        enqueued = [args[0][0] for args in channel._coordinator.enqueue.call_args_list]
+        assert sorted(enqueued) == ["one", "two"]
 
-    async def test_handle_message_blocks_when_lock_held(self) -> None:
-        """_handle_message awaits the lock when it is already held."""
+    async def test_handle_message_steers_when_lock_held(self) -> None:
+        """User messages mid-exchange enqueue-only and skip the delivery lock.
+
+        The lock-held check covers every phase of the in-flight exchange
+        (boundary detection, pre-processing, SDK streaming, teardown), so a
+        message arriving during pre-processing is also routed through the
+        coordinator's forwarder onto the live sdk_inbox.
+        """
         channel = self._make_channel()
-        channel._process_through_coordinator = AsyncMock()
-
-        msg = MagicMock(text="hi")
-
-        await channel._delivery_lock.acquire()
-        try:
-            with pytest.raises(asyncio.TimeoutError):
-                await asyncio.wait_for(channel._handle_message(msg), timeout=0.05)
-        finally:
-            channel._delivery_lock.release()
-
-        channel._process_through_coordinator.assert_not_called()
-
-    async def test_handle_media_blocks_when_lock_held(self) -> None:
-        """_handle_media awaits the lock when it is already held."""
-        channel = self._make_channel()
-        channel._bot.download = AsyncMock(return_value=None)
-        channel._process_through_coordinator = AsyncMock()
-
-        photo = MagicMock()
-        photo.file_id = "photo_123"
-        photo.width = 100
-        photo.height = 100
-        photo.file_size = 50_000
-        photo.file_name = None
-
-        msg = MagicMock()
-        msg.photo = [photo]
-        msg.voice = None
-        msg.audio = None
-        msg.document = None
-        msg.sticker = None
-        msg.video = None
-        msg.video_note = None
-        msg.animation = None
-        msg.caption = None
-
-        await channel._delivery_lock.acquire()
-        try:
-            with pytest.raises(asyncio.TimeoutError):
-                await asyncio.wait_for(channel._handle_media(msg), timeout=0.05)
-        finally:
-            channel._delivery_lock.release()
-
-        channel._process_through_coordinator.assert_not_called()
-
-    async def test_handle_message_steers_when_exchange_active(self) -> None:
-        """User messages mid-response enqueue-only and skip the delivery lock."""
-        channel = self._make_channel()
-        channel._coordinator.in_exchange = True
         channel._process_through_coordinator = AsyncMock()
 
         msg = MagicMock(text="hey")
@@ -1579,7 +1538,7 @@ class TestDeliveryLock:
         await channel._delivery_lock.acquire()
         try:
             # With the lock held by another exchange, the steering branch
-            # must still enqueue immediately and return without blocking.
+            # must enqueue immediately and return without blocking.
             await asyncio.wait_for(channel._handle_message(msg), timeout=0.05)
         finally:
             channel._delivery_lock.release()
@@ -1587,10 +1546,9 @@ class TestDeliveryLock:
         channel._coordinator.enqueue.assert_called_once_with("hey")
         channel._process_through_coordinator.assert_not_called()
 
-    async def test_handle_media_steers_when_exchange_active(self) -> None:
-        """Media messages mid-response enqueue-only and skip the delivery lock."""
+    async def test_handle_media_steers_when_lock_held(self) -> None:
+        """Media messages mid-exchange enqueue-only and skip the delivery lock."""
         channel = self._make_channel()
-        channel._coordinator.in_exchange = True
         channel._bot.download = AsyncMock(return_value=None)
         channel._process_through_coordinator = AsyncMock()
 

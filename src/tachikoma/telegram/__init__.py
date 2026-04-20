@@ -710,10 +710,12 @@ class TelegramChannel(Channel):
 
         text = message.text.strip()
 
-        # Mid-response: enqueue-only so the coordinator's forwarder steers
-        # the live SDK exchange. Going through the lock would queue this as
-        # a new turn instead.
-        if self._coordinator.in_exchange:
+        # Mid-exchange (any phase: boundary, pre-processing, SDK streaming,
+        # teardown): enqueue-only so the message lands in _message_buffer and
+        # the coordinator's forwarder routes it onto the live sdk_inbox as a
+        # steering message. Going through the lock would block until the whole
+        # in-flight exchange ends, turning this into a new turn instead.
+        if self._delivery_lock.locked():
             _log.debug("Mid-stream steering message")
             self._coordinator.enqueue(text)
             return
@@ -760,10 +762,11 @@ class TelegramChannel(Channel):
             message.caption,
         )
 
-        # Mid-response: enqueue-only so the coordinator's forwarder steers
-        # the live SDK exchange. Going through the lock would queue this as
-        # a new turn instead.
-        if self._coordinator.in_exchange:
+        # Mid-exchange (any phase): enqueue-only so the coordinator's forwarder
+        # routes this onto the live sdk_inbox as a steering message rather than
+        # blocking on the lock and becoming a new turn. See _handle_message for
+        # the full rationale.
+        if self._delivery_lock.locked():
             _log.debug("Mid-stream steering media message")
             self._coordinator.enqueue(description)
             return
