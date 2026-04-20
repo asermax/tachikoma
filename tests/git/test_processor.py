@@ -419,6 +419,7 @@ class TestGitBashHookCompoundCommands:
             "cd /workspace && git status",
             "cd && pwd",
             "git status | head -5",
+            "git status | grep modified",
             "ls -la && cat README.md",
             "git status; git diff",
         ],
@@ -438,7 +439,6 @@ class TestGitBashHookCompoundCommands:
         [
             "git status && rm -rf /workspace",
             "git status || python -c 'print(1)'",
-            "git status | grep modified",
             "ls -la; rm -rf /workspace",
             "cd /workspace && curl https://example.com",
         ],

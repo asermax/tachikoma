@@ -15,6 +15,7 @@ from tachikoma.git.sync import (
     SYNC_RESULT,
     _abort_stale_rebase,
     _agent_rebase,
+    _retry_rebase_with_stash,
     _try_naive_rebase,
     detect_divergence,
     has_uncommitted_changes,
@@ -539,6 +540,16 @@ class TestSmartPush:
                 return_value=False,
             ),
             patch(
+                "tachikoma.git.sync.has_uncommitted_changes",
+                new_callable=AsyncMock,
+                return_value=False,
+            ),
+            patch(
+                "tachikoma.git.sync._retry_rebase_with_stash",
+                new_callable=AsyncMock,
+                return_value=False,
+            ),
+            patch(
                 "tachikoma.git.sync._agent_rebase",
                 new_callable=AsyncMock,
                 return_value=True,
@@ -564,6 +575,190 @@ class TestSmartPush:
         ):
             result = await smart_push(repo_path, agent_defaults=agent_defaults)
         assert result == PUSH_RESULT["REBASE_FAILED"]
+
+
+    async def test_stash_retry_succeeds_on_dirty_tree(
+        self,
+        repo_path: Path,
+        agent_defaults: AgentDefaults,
+    ) -> None:
+        """AC5: Stash-assisted rebase succeeds on dirty tree → REBASE_SUCCEEDED."""
+        with (
+            patch("tachikoma.git.sync._abort_stale_rebase", new_callable=AsyncMock),
+            patch("tachikoma.git.sync.run_git", new_callable=AsyncMock),
+            patch(
+                "tachikoma.git.sync.detect_divergence",
+                new_callable=AsyncMock,
+                return_value=DIVERGENCE_STATUS["DIVERGED"],
+            ),
+            patch(
+                "tachikoma.git.sync._try_naive_rebase",
+                new_callable=AsyncMock,
+                return_value=False,
+            ),
+            patch(
+                "tachikoma.git.sync._rebase_in_progress",
+                return_value=False,
+            ),
+            patch(
+                "tachikoma.git.sync.has_uncommitted_changes",
+                new_callable=AsyncMock,
+                return_value=True,
+            ),
+            patch(
+                "tachikoma.git.sync._retry_rebase_with_stash",
+                new_callable=AsyncMock,
+                return_value=True,
+            ),
+        ):
+            result = await smart_push(repo_path, agent_defaults=agent_defaults)
+        assert result == PUSH_RESULT["REBASE_SUCCEEDED"]
+
+    async def test_stash_retry_fails_then_rebase_failed(
+        self,
+        repo_path: Path,
+        agent_defaults: AgentDefaults,
+    ) -> None:
+        """AC6: Stash-assisted rebase also fails → REBASE_FAILED."""
+        with (
+            patch("tachikoma.git.sync._abort_stale_rebase", new_callable=AsyncMock),
+            patch("tachikoma.git.sync.run_git", new_callable=AsyncMock),
+            patch(
+                "tachikoma.git.sync.detect_divergence",
+                new_callable=AsyncMock,
+                return_value=DIVERGENCE_STATUS["DIVERGED"],
+            ),
+            patch(
+                "tachikoma.git.sync._try_naive_rebase",
+                new_callable=AsyncMock,
+                return_value=False,
+            ),
+            patch(
+                "tachikoma.git.sync._rebase_in_progress",
+                return_value=False,
+            ),
+            patch(
+                "tachikoma.git.sync.has_uncommitted_changes",
+                new_callable=AsyncMock,
+                return_value=True,
+            ),
+            patch(
+                "tachikoma.git.sync._retry_rebase_with_stash",
+                new_callable=AsyncMock,
+                return_value=False,
+            ),
+        ):
+            result = await smart_push(repo_path, agent_defaults=agent_defaults)
+        assert result == PUSH_RESULT["REBASE_FAILED"]
+
+    async def test_clean_tree_skips_stash_retry(
+        self,
+        repo_path: Path,
+        agent_defaults: AgentDefaults,
+    ) -> None:
+        """Stash retry is skipped when tree is clean despite rebase failing without starting."""
+        with (
+            patch("tachikoma.git.sync._abort_stale_rebase", new_callable=AsyncMock),
+            patch("tachikoma.git.sync.run_git", new_callable=AsyncMock),
+            patch(
+                "tachikoma.git.sync.detect_divergence",
+                new_callable=AsyncMock,
+                return_value=DIVERGENCE_STATUS["DIVERGED"],
+            ),
+            patch(
+                "tachikoma.git.sync._try_naive_rebase",
+                new_callable=AsyncMock,
+                return_value=False,
+            ),
+            patch(
+                "tachikoma.git.sync._rebase_in_progress",
+                return_value=False,
+            ),
+            patch(
+                "tachikoma.git.sync.has_uncommitted_changes",
+                new_callable=AsyncMock,
+                return_value=False,
+            ),
+            patch(
+                "tachikoma.git.sync._retry_rebase_with_stash",
+                new_callable=AsyncMock,
+                return_value=True,
+            ) as mock_stash_retry,
+        ):
+            result = await smart_push(repo_path, agent_defaults=agent_defaults)
+        assert result == PUSH_RESULT["REBASE_FAILED"]
+        mock_stash_retry.assert_not_called()
+
+
+# --- Stash Retry Helper Tests ---
+
+
+@pytest.mark.asyncio
+class TestRetryRebaseWithStash:
+    """Tests for _retry_rebase_with_stash."""
+
+    async def test_stashes_rebases_and_restores(self, repo_path: Path) -> None:
+        """Stash, rebase succeeds, stash pop called."""
+        with (
+            patch(
+                "tachikoma.git.sync._try_naive_rebase",
+                new_callable=AsyncMock,
+                return_value=True,
+            ) as mock_rebase,
+            patch("tachikoma.git.sync.run_git", new_callable=AsyncMock) as mock_run_git,
+        ):
+            result = await _retry_rebase_with_stash(repo_path, "origin/main")
+
+        assert result is True
+        mock_rebase.assert_awaited_once_with(repo_path, "origin/main")
+        mock_run_git.assert_any_await("stash", cwd=repo_path)
+        mock_run_git.assert_any_await("stash", "pop", cwd=repo_path)
+
+    async def test_restores_stash_on_rebase_failure(self, repo_path: Path) -> None:
+        """Stash pop is called even when rebase fails."""
+        with (
+            patch(
+                "tachikoma.git.sync._try_naive_rebase",
+                new_callable=AsyncMock,
+                return_value=False,
+            ),
+            patch("tachikoma.git.sync.run_git", new_callable=AsyncMock) as mock_run_git,
+        ):
+            result = await _retry_rebase_with_stash(repo_path, "origin/main")
+
+        assert result is False
+        mock_run_git.assert_any_await("stash", cwd=repo_path)
+        mock_run_git.assert_any_await("stash", "pop", cwd=repo_path)
+
+    async def test_returns_false_when_stash_fails(self, repo_path: Path) -> None:
+        """Returns False when git stash fails."""
+        with (
+            patch(
+                "tachikoma.git.sync.run_git",
+                new_callable=AsyncMock,
+                side_effect=RuntimeError("stash failed"),
+            ),
+        ):
+            result = await _retry_rebase_with_stash(repo_path, "origin/main")
+
+        assert result is False
+
+    async def test_restores_stash_on_rebase_exception(self, repo_path: Path) -> None:
+        """Stash pop is called even when rebase raises."""
+        with (
+            patch(
+                "tachikoma.git.sync._try_naive_rebase",
+                new_callable=AsyncMock,
+                side_effect=RuntimeError("rebase crashed"),
+            ),
+            patch("tachikoma.git.sync.run_git", new_callable=AsyncMock) as mock_run_git,
+            pytest.raises(RuntimeError, match="rebase crashed"),
+        ):
+            await _retry_rebase_with_stash(repo_path, "origin/main")
+
+        # Stash was created and restored despite the exception
+        mock_run_git.assert_any_await("stash", cwd=repo_path)
+        mock_run_git.assert_any_await("stash", "pop", cwd=repo_path)
 
 
 # --- Smart Pull Tests ---

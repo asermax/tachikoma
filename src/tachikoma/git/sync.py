@@ -276,6 +276,43 @@ async def _try_naive_rebase(cwd: Path, remote_branch: str) -> bool:
     return False
 
 
+async def _retry_rebase_with_stash(cwd: Path, remote_branch: str) -> bool:
+    """Stash dirty changes, retry rebase, and always restore the stash.
+
+    Used when rebase fails without starting (likely dirty tree).
+    The stash is restored on all exit paths via try/finally.
+
+    Args:
+        cwd: The repository directory.
+        remote_branch: The remote branch ref (e.g., "origin/main").
+
+    Returns:
+        True if the stash-assisted rebase succeeded, False otherwise.
+    """
+    _log.info("Stashing dirty changes before rebase retry: path={path}", path=str(cwd))
+
+    try:
+        await run_git("stash", cwd=cwd)
+    except Exception as e:
+        _log.warning("Stash failed: path={path} err={err}", path=str(cwd), err=str(e))
+        return False
+
+    rebase_ok = False
+    try:
+        rebase_ok = await _try_naive_rebase(cwd, remote_branch)
+    finally:
+        try:
+            await run_git("stash", "pop", cwd=cwd)
+        except Exception as e:
+            _log.warning(
+                "Stash pop failed: path={path} err={err}",
+                path=str(cwd),
+                err=str(e),
+            )
+
+    return rebase_ok
+
+
 CONFLICT_RESOLUTION_PROMPT = """You are resolving git conflicts during a rebase operation.
 
 Run: GIT_EDITOR=true git rebase {remote_branch}
@@ -377,7 +414,7 @@ async def smart_push(
     2. Fetch from remote
     3. Detect divergence
     4. If ahead → push directly
-    5. If diverged → try naive rebase → try agent rebase → push
+    5. If diverged → try naive rebase → stash and retry if dirty → agent rebase → push
     6. All failures are caught and returned as result enums
 
     Args:
@@ -428,6 +465,21 @@ async def smart_push(
             return PUSH_RESULT["REBASE_FAILED"]
 
         if not _rebase_in_progress(cwd):
+            # Rebase failed without starting — try stash and retry if dirty
+            if await has_uncommitted_changes(cwd) and await _retry_rebase_with_stash(
+                cwd, remote_branch,
+            ):
+                try:
+                    await run_git("push", remote, "HEAD", cwd=cwd)
+                    return PUSH_RESULT["REBASE_SUCCEEDED"]
+                except Exception as e:
+                    _log.warning(
+                        "Push failed after stash-assisted rebase: path={path} err={err}",
+                        path=str(cwd),
+                        err=str(e),
+                    )
+                    return PUSH_RESULT["PUSH_FAILED"]
+
             _log.warning(
                 "Rebase failed but no conflicts detected, skipping agent resolution: path={path}",
                 path=str(cwd),

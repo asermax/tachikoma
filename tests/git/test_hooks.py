@@ -14,7 +14,7 @@ import pytest
 
 from tachikoma.bootstrap import BootstrapContext
 from tachikoma.config import SettingsManager
-from tachikoma.git.hooks import _sync_workspace, git_hook
+from tachikoma.git.hooks import _ensure_gitignore_entries, _sync_workspace, git_hook
 from tachikoma.git.sync import SYNC_RESULT
 
 
@@ -128,7 +128,7 @@ class TestGitHook:
     async def test_fresh_init_creates_gitignore(
         self, ctx: BootstrapContext, settings_manager: SettingsManager
     ) -> None:
-        """AC1: Fresh init creates .gitignore with DB binary pattern and commits it."""
+        """AC1: Fresh init creates .gitignore with DB binary and logs patterns, commits it."""
         workspace_path = settings_manager.settings.workspace.path
 
         with patch(
@@ -139,17 +139,18 @@ class TestGitHook:
 
         gitignore = (workspace_path / ".gitignore").read_text()
         assert ".tachikoma/*.db" in gitignore
+        assert ".tachikoma/logs/tachikoma.log" in gitignore
 
         # .gitignore was committed as a second commit after the initial empty one
         log = subprocess.check_output(["git", "log", "--format=%s"], cwd=workspace_path, text=True)
-        assert "Add gitignore for database binary" in log
+        assert "Add gitignore for workspace exclusions" in log
         assert "Initial commit" in log
 
     async def test_fresh_init_appends_to_existing_gitignore(
         self, ctx: BootstrapContext, settings_manager: SettingsManager
     ) -> None:
-        """AC: If the workspace was pre-populated with a .gitignore, the DB line
-        is appended without clobbering."""
+        """AC: If the workspace was pre-populated with a .gitignore, all entries
+        are appended without clobbering."""
         workspace_path = settings_manager.settings.workspace.path
         gitignore = workspace_path / ".gitignore"
         gitignore.write_text("*.log\n")
@@ -163,6 +164,7 @@ class TestGitHook:
         content = gitignore.read_text()
         assert "*.log" in content
         assert ".tachikoma/*.db" in content
+        assert ".tachikoma/logs/tachikoma.log" in content
 
     async def test_existing_repo_with_gitignore_noop(
         self, ctx: BootstrapContext, settings_manager: SettingsManager
@@ -187,6 +189,91 @@ class TestGitHook:
             ["git", "rev-list", "--count", "HEAD"], cwd=workspace_path, text=True
         ).strip()
         assert commit_count == "2"
+
+
+class TestEnsureGitignoreEntries:
+    """Tests for _ensure_gitignore_entries (AC2, AC3)."""
+
+    async def test_appends_missing_logs_entry(
+        self, ctx: BootstrapContext, settings_manager: SettingsManager
+    ) -> None:
+        """AC2: Appends .tachikoma/logs/ to existing workspace without committing."""
+        workspace_path = settings_manager.settings.workspace.path
+        gitignore = workspace_path / ".gitignore"
+
+        with patch(
+            "tachikoma.git.hooks._sync_workspace",
+            new_callable=AsyncMock,
+        ):
+            # First init creates .gitignore with both entries
+            await git_hook(ctx)
+
+        # Simulate existing workspace: remove the logs entry
+        gitignore.write_text(".tachikoma/*.db\n")
+
+        with patch(
+            "tachikoma.git.hooks._sync_workspace",
+            new_callable=AsyncMock,
+        ):
+            # Second run should append logs entry
+            await git_hook(ctx)
+
+        content = gitignore.read_text()
+        assert ".tachikoma/*.db" in content
+        assert ".tachikoma/logs/tachikoma.log" in content
+
+    async def test_noop_when_entries_exist(
+        self, ctx: BootstrapContext, settings_manager: SettingsManager
+    ) -> None:
+        """AC3: No modification when all entries already present."""
+        workspace_path = settings_manager.settings.workspace.path
+        gitignore = workspace_path / ".gitignore"
+
+        with patch(
+            "tachikoma.git.hooks._sync_workspace",
+            new_callable=AsyncMock,
+        ):
+            await git_hook(ctx)
+
+        snapshot = gitignore.read_text()
+
+        # Second run on existing repo
+        with patch(
+            "tachikoma.git.hooks._sync_workspace",
+            new_callable=AsyncMock,
+        ):
+            await git_hook(ctx)
+
+        assert gitignore.read_text() == snapshot
+
+    def test_ensure_appends_to_existing_file(self, tmp_path: Path) -> None:
+        """AC2: _ensure_gitignore_entries appends missing entry to existing file."""
+        gitignore = tmp_path / ".gitignore"
+        gitignore.write_text(".tachikoma/*.db\n")
+
+        _ensure_gitignore_entries(tmp_path)
+
+        content = gitignore.read_text()
+        assert ".tachikoma/*.db" in content
+        assert ".tachikoma/logs/tachikoma.log" in content
+
+    def test_ensure_is_noop_when_complete(self, tmp_path: Path) -> None:
+        """AC3: _ensure_gitignore_entries is no-op when all entries exist."""
+        gitignore = tmp_path / ".gitignore"
+        gitignore.write_text(".tachikoma/*.db\n.tachikoma/logs/tachikoma.log\n")
+
+        _ensure_gitignore_entries(tmp_path)
+
+        assert gitignore.read_text() == ".tachikoma/*.db\n.tachikoma/logs/tachikoma.log\n"
+
+    def test_ensure_creates_file_if_missing(self, tmp_path: Path) -> None:
+        """AC2: _ensure_gitignore_entries creates .gitignore if it doesn't exist."""
+        _ensure_gitignore_entries(tmp_path)
+
+        gitignore = tmp_path / ".gitignore"
+        content = gitignore.read_text()
+        assert ".tachikoma/*.db" in content
+        assert ".tachikoma/logs/tachikoma.log" in content
 
 
 @pytest.mark.asyncio

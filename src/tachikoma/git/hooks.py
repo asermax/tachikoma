@@ -20,8 +20,11 @@ _log = logger.bind(component="git")
 _COMMITTER_NAME = "Tachikoma"
 _COMMITTER_EMAIL = "tachikoma@local"
 
-# DB binary pattern added to .gitignore on fresh init
-_DB_GITIGNORE_LINE = ".tachikoma/*.db\n"
+# Gitignore entries ensured on every startup
+_GITIGNORE_ENTRIES = [
+    ".tachikoma/*.db\n",
+    ".tachikoma/logs/tachikoma.log\n",
+]
 
 # Dump directory path relative to workspace root
 _DUMP_DIR_RELATIVE = ".tachikoma/db-dump"
@@ -56,26 +59,53 @@ async def git_hook(ctx: BootstrapContext) -> None:
 
         _log.info("Git repo initialized successfully")
 
+    # Ensure gitignore entries on every startup (idempotent)
+    _ensure_gitignore_entries(workspace_path)
+
     # Sync block: always runs after init check
     await _sync_workspace(workspace_path, ctx.settings_manager.settings)
 
 
 async def _create_gitignore(workspace_path: Path) -> None:
-    """Create .gitignore with DB binary exclusion on fresh init.
+    """Create .gitignore with required exclusions on fresh init.
 
-    Writes the gitignore line, appends if the file already exists,
+    Writes all gitignore entries, appends if the file already exists,
     and commits the .gitignore as a second commit after the initial
     empty one.
     """
     gitignore_path = workspace_path / ".gitignore"
     existing = gitignore_path.read_text() if gitignore_path.exists() else ""
 
-    if _DB_GITIGNORE_LINE not in existing:
-        separator = "" if not existing or existing.endswith("\n") else "\n"
-        gitignore_path.write_text(existing + separator + _DB_GITIGNORE_LINE)
+    new_content = _append_missing_entries(existing)
+    if new_content != existing:
+        gitignore_path.write_text(new_content)
 
     await run_git("add", ".gitignore", cwd=workspace_path)
-    await run_git("commit", "-m", "Add gitignore for database binary", cwd=workspace_path)
+    await run_git("commit", "-m", "Add gitignore for workspace exclusions", cwd=workspace_path)
+
+
+def _ensure_gitignore_entries(workspace_path: Path) -> None:
+    """Append any missing gitignore entries without committing.
+
+    Called on every startup to ensure existing workspaces receive
+    new entries. The commit agent picks up the change.
+    """
+    gitignore_path = workspace_path / ".gitignore"
+    existing = gitignore_path.read_text() if gitignore_path.exists() else ""
+
+    new_content = _append_missing_entries(existing)
+    if new_content != existing:
+        gitignore_path.write_text(new_content)
+
+
+def _append_missing_entries(existing: str) -> str:
+    """Append any missing gitignore entries to existing content."""
+    content = existing
+    for entry in _GITIGNORE_ENTRIES:
+        if entry not in content:
+            separator = "" if not content or content.endswith("\n") else "\n"
+            content += separator + entry
+    return content
 
 
 async def _sync_workspace(workspace_path: Path, settings) -> None:
