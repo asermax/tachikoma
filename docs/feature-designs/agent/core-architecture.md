@@ -187,14 +187,14 @@ AgentEvent (base)
 ├── TextChunk       — a piece of streamed text content
 ├── ToolActivity    — agent used a tool (name + input + result)
 ├── Result          — response complete (session, cost, usage metadata)
-├── Status          — transient coordinator status update (e.g. "Thinking...")
+├── Status          — transient, component-driven status update forwarded by the coordinator
 └── Error           — error occurred (message, recoverable flag)
 ```
 
 - **TextChunk**: `text: str` — one fragment of the agent's response
 - **ToolActivity**: `tool_name: str`, `tool_input: dict`, `result: str` — a tool invocation by the agent
 - **Result**: `session_id: str | None`, `total_cost_usd: float | None`, `usage: dict | None` — signals response completion with observability metadata
-- **Status**: `message: str` — a transient status update from the coordinator, yielded before boundary detection and pre-processing to inform channels of pending work
+- **Status**: `message: str` — a transient, granular status update forwarded by the coordinator. Boundary detection, the session-gated pre-processing pipeline, and the per-message pre-processing pipeline each emit their own user-facing description (e.g. `"Detecting topic shift..."`, `"Searching memories..."`, `"Detecting relevant skills..."`) via a `StatusCallback`; the coordinator yields those as `Status` events on the stream while the originating work runs concurrently in a background task
 - **Error**: `message: str`, `recoverable: bool` — something went wrong; recoverable errors let the conversation continue, non-recoverable errors signal exit
 
 ### SDK Message → AgentEvent mapping
@@ -252,34 +252,49 @@ The `enqueue()` method allows channels to buffer user messages at any time (sync
 1. Channel receives user input
 2. Channel calls coordinator.send_message()
 3. Coordinator awaits any pending per-message task (logs errors, doesn't propagate)
-4. Coordinator checks for active session; creates one via registry if needed — sets is_new_session flag
-5. If boundary detection or pre-processing will run, yield Status("Thinking...")
-6. If active session has a summary AND cwd is not None:
+4. Coordinator builds a shared status_queue and an on_status callback that
+   pushes messages onto it. Each emitter phase below runs as an asyncio.Task
+   drained concurrently by _drain_status_while_running(task, status_queue),
+   which yields Status AgentEvents on the stream while the task is running
+   and cancels the task if the consumer abandons the generator.
+5. Coordinator checks for active session; creates one via registry if needed — sets is_new_session flag
+6. If no active session: cold-start resume attempt runs as a background task;
+   its internal detect_boundary call emits "Detecting topic shift..." through
+   on_status, the coordinator forwards it as Status.
+7. If active session has a summary AND cwd is not None:
    a. Fetch recent closed session candidates via registry.get_recent_closed()
       (fail-open: if query fails, candidates=None)
    b. Build SessionCandidate list from sessions
-   c. Call detect_boundary(text, session.summary, cwd, candidates=candidates, cli_path=cli_path)
+   c. Call detect_boundary(text, session, agent_defaults, candidates=candidates, on_status=on_status)
+      as a background task drained through _drain_status_while_running;
+      the detector emits "Detecting topic shift..." once before its query.
       → returns BoundaryResult(continues, resume_session_id)
-7. If topic shift → run _handle_transition(active, resume_session_id=result.resume_session_id)
+8. If topic shift → run _handle_transition(active, resume_session_id=result.resume_session_id)
    → returns bool (True=resumed, False=fresh); set is_new_session = not resumed;
    re-fetch active session
-8. If continuation or detection error → proceed normally
-9. If new session: save foundational context entries to DB (best-effort).
-   If pre_pipeline is set: pre-processing pipeline runs context providers in parallel;
-   successful results saved to DB as context entries (owner=result.tag, content=result.content);
-   coordinator extracts and merges mcp_servers and agent definitions from all results, stores per-session
-10. Load context entries from DB, call build_system_prompt(entries, timezone=self._timezone) → system_prompt_append.
+9. If continuation or detection error → proceed normally
+10. If new session: save foundational context entries to DB (best-effort).
+    If pre_pipeline is set: pre-processing pipeline runs context providers in parallel
+    as a background task drained through _drain_status_while_running; each
+    provider emits its status_message() via on_status before its provide() call,
+    so the coordinator yields N Status events without blocking provider parallelism.
+    Successful results saved to DB as context entries (owner=result.tag, content=result.content);
+    coordinator extracts and merges mcp_servers and agent definitions from all results, stores per-session
+11. If msg_pre_pipeline is set: per-message pre-processing runs as a background
+    task drained through _drain_status_while_running with on_status; each
+    per-message provider emits its status_message() before its provide() call.
+12. Load context entries from DB, call build_system_prompt(entries, timezone=self._timezone) → system_prompt_append.
     Coordinator builds ClaudeAgentOptions via _build_options(resume=sdk_session_id or None, system_prompt_append=...) — includes self._agents and self._mcp_servers
-11. Creates fresh ClaudeSDKClient via `async with ClaudeSDKClient(options)`
-12. Calls client.query(text) (enriched or original)
-13. Coordinator iterates client.receive_response(), accumulating response text
-14. For each SDK Message, adapter maps to AgentEvent(s) or filters out
-15. Coordinator yields AgentEvent(s)
-16. TextChunk events are also accumulated for per-message post-processing
-17. On Result event, sdk_session_id stored on coordinator, session metadata updated
-18. Client context exits (disposed)
-19. Re-fetch active session, launch per-message pipeline as background task
-20. Stream ends
+13. Creates fresh ClaudeSDKClient via `async with ClaudeSDKClient(options)`
+14. Calls client.query(text) (enriched or original)
+15. Coordinator iterates client.receive_response(), accumulating response text
+16. For each SDK Message, adapter maps to AgentEvent(s) or filters out
+17. Coordinator yields AgentEvent(s)
+18. TextChunk events are also accumulated for per-message post-processing
+19. On Result event, sdk_session_id stored on coordinator, session metadata updated
+20. Client context exits (disposed)
+21. Re-fetch active session, launch per-message pipeline as background task
+22. Stream ends
 ```
 
 **Streaming granularity:** The SDK's `receive_response()` yields complete `Message` objects and stops at `ResultMessage`. Text appears in message-level chunks rather than token-by-token. This is simpler (adapter handles complete, well-typed objects) and still responsive since messages arrive as the agent produces them. The `AgentEvent` contract with channels remains unchanged if finer granularity is needed later.
@@ -544,3 +559,4 @@ The `Result` event serves as a turn boundary. Channels can detect it to reset th
 - The coordinator's `_build_options()` accepts a pre-built `system_prompt_append` string from `build_system_prompt(entries, timezone=...)`. It no longer assembles context inline — the database is the canonical source of context entries, and `build_system_prompt()` (in `context/assembly.py`) handles assembly from the loaded entries. The preamble is rendered dynamically via `render_system_preamble(timezone)` from `SYSTEM_PREAMBLE_TEMPLATE`. The date command in the preamble does not include a `TZ=` prefix — timezone is set in the subprocess environment via the auto-injected `TZ` env var.
 - `sdk_query.py` provides `StderrAccumulator` and `stderr_aware_query()` for capturing SDK subprocess stderr output on error. All standalone `query()` consumers use `stderr_aware_query()` as a drop-in replacement. The coordinator and background task executor create their own accumulator instances directly. The accumulator uses tail-truncation (default 10KB) to prevent log explosion while preserving the most diagnostic content. `stderr_aware_query()` catches broad `Exception` (not just `ProcessError`) because the SDK's internal message reader re-wraps transport errors as plain `Exception` via `Query.receive_messages()`.
 - Logging configuration suppresses noisy third-party loggers (`sqlalchemy.engine`, `aiosqlite`, `aiogram`, `markdown_it`, `claude_agent_sdk`) to WARNING level. Per-session log rotation renames the previous session's log file on startup. `logger.remove()` is called at the start of `main()` to prevent console leaks before the logging bootstrap hook runs.
+- Granular status forwarding in `send_message()`: a single `asyncio.Queue[str]` plus an `on_status` closure is built once per exchange. Each emitter phase (cold-start resume, active-session boundary detection, session-gated pre-processing pipeline, per-message pre-processing pipeline) runs as an `asyncio.Task` and is drained through `_drain_status_while_running(task, queue)`, which yields `Status` AgentEvents until the task completes, drains the remaining queued messages, and — importantly — cancels the task on consumer cancellation so it does not leak past an abandoned generator. `StatusCallback = Callable[[str], Awaitable[None]]` is defined alongside the `Status` event in `events.py`.

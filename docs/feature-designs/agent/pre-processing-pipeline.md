@@ -95,10 +95,11 @@ sequenceDiagram
 PreProcessingPipeline
 ├── _providers: list[ContextProvider]
 ├── register(provider: ContextProvider) → None
-└── run(message: str) → list[ContextResult]
+└── run(message: str, *, on_status: StatusCallback | None = None) → list[ContextResult]
 
 ContextProvider (ABC)
-└── provide(message: str) → ContextResult | None  (abstract)
+├── provide(message: str) → ContextResult | None  (abstract)
+└── status_message() → str  (default: humanized class name; overridable)
 
 ContextResult (dataclass)
 ├── tag: str                                           (validated: non-empty + valid XML tag name via regex)
@@ -109,15 +110,20 @@ ContextResult (dataclass)
 
 assemble_context(results: list[ContextResult], message: str) → str  (standalone, handles text only)
 
+_humanize_provider_name(class_name: str) → str   (strips trailing ContextProvider/Provider, splits CamelCase)
+
 MessagePreProcessingPipeline                           [runs on every message, not session-gated]
 ├── _providers: list[MessageContextProvider]
 ├── _lock: asyncio.Lock                                (serializes concurrent invocations)
 ├── register(provider: MessageContextProvider) → None
-└── run(message: str, *, existing_entries: list[SessionContextEntry] | None, sdk_session_id: str | None) → list[ContextResult]
+└── run(message: str, *, existing_entries: list[SessionContextEntry] | None, sdk_session_id: str | None, on_status: StatusCallback | None = None) → list[ContextResult]
 
 MessageContextProvider (ABC)                            [standalone, not extending ContextProvider]
-└── provide(message: str, *, existing_entries: list[SessionContextEntry] | None, sdk_session_id: str | None) → list[ContextResult] | None
+├── provide(message: str, *, existing_entries: list[SessionContextEntry] | None, sdk_session_id: str | None) → list[ContextResult] | None
+└── status_message() → str  (default: humanized class name; overridable)
 ```
+
+``StatusCallback = Callable[[str], Awaitable[None]]`` is defined in ``tachikoma.events`` alongside the ``Status`` AgentEvent.
 
 ```mermaid
 erDiagram
@@ -240,6 +246,21 @@ erDiagram
 - Pro: Coordinator passes metadata through without interpretation
 - Con: Requires DB schema change (nullable TEXT column)
 
+### Provider-Owned Status Messages
+
+**Choice**: Add `status_message() -> str` on both `ContextProvider` and `MessageContextProvider` ABCs (non-abstract, with a humanizing default). Pipelines accept an optional `on_status` callback and invoke `await on_status(provider.status_message())` from *inside* a per-provider gather wrapper, immediately before awaiting `provide()`.
+**Why**: The provider knows best what it does — it owns the user-facing description. Emission from inside the gather wrapper preserves the existing concurrent-start semantics; emitting all statuses *before* `asyncio.gather` would serialize N await hops before any provider began actual work. Error isolation is also preserved: if a provider raises, its status has already been emitted before the exception reached `asyncio.gather(return_exceptions=True)`.
+**Alternatives Considered**:
+- Async generator `run()` yielding Status events interleaved with results: forces every consumer to distinguish events from results, breaks existing signatures
+- Pipeline derives status from class name only: loses the ability to show user-friendly messages like "Searching memories..."
+- Emit statuses before `asyncio.gather`: regresses provider parallelism
+
+**Consequences**:
+- Pro: Callback is additive and opt-in — existing callers unchanged
+- Pro: Default humanized message is always available; overrides are bespoke
+- Pro: Emission order roughly matches provider start order (non-deterministic but acceptable — the channel renders the most recent message)
+- Pro: Status emission is independent of `provide()` success — failed providers still communicate intent
+
 ## System Behavior
 
 ### Scenario: Normal parallel execution
@@ -271,6 +292,12 @@ erDiagram
 **Given**: Coordinator created without a pre-processing pipeline (`pre_pipeline=None`)
 **When**: A message arrives
 **Then**: Pre-processing step is skipped entirely. Behavior is identical to before pre-processing was added.
+
+### Scenario: Granular status emission
+
+**Given**: Multiple providers registered, each overriding `status_message()` with a bespoke description, and the coordinator invokes `run()` with an `on_status` callback.
+**When**: The pipeline runs.
+**Then**: Each provider's status message is pushed through the callback before its `provide()` call starts. Providers still begin concurrently — the emission is localized inside each provider's gather wrapper.
 
 ## Notes
 

@@ -36,6 +36,7 @@ Detects whether an incoming message continues the current conversation or starts
 | R17 | Store the last assistant response on the session, updated by the per-message pipeline after each exchange (nullable — null until first exchange processed) |
 | R18 | Include the last assistant response in boundary detection prompts for both the current session and candidate sessions, providing improved recency signal alongside summaries |
 | R19 | Short messages that serve as acknowledgments, confirmations, or brief responses (e.g., "yes", "ok", "go ahead", "sure", "no", "thanks") must be classified as continuations — they lack enough independent topic content to establish a new topic |
+| R20 | `detect_boundary()` accepts an optional async status callback and emits a single progress message (`"Detecting topic shift..."`) once, before the underlying classification query is issued |
 
 ## Behaviors
 

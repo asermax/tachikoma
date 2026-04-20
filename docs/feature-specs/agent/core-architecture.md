@@ -46,7 +46,7 @@ The coordinator receives a text message, forwards it to the SDK client, and yiel
 **Acceptance Criteria**:
 - Given a user message, when passed to the coordinator, then the agent responds via the Claude model and the response streams as domain events
 - Given a conversation in progress, when the user sends a follow-up message, then the agent has context from prior messages in the same session (R3)
-- Given a user message, when boundary detection or pre-processing will run, then a Status event is yielded to inform the channel of the pending work before proceeding
+- Given a user message, when boundary detection or a pre-processing pipeline runs, then each component reports what it is doing via a status callback and the coordinator forwards those messages as granular `Status` AgentEvents on the stream before the SDK response begins (e.g. `"Detecting topic shift..."`, `"Searching memories..."`, `"Detecting relevant skills..."`)
 - Given a user message, when boundary detection is active and a topic shift is detected, then a session transition occurs before the message is processed in a fresh context (R10)
 - Given a conversation, when the user asks about files in the working directory, then the agent can explore and report on them
 

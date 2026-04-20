@@ -28,6 +28,8 @@ In addition to the session-gated pipeline (which runs on the first message of a 
 | R8 | Per-message pipeline runs registered MessageContextProvider instances on every message (not just first message of session), receiving the session's existing context entries |
 | R9 | Context results can optionally carry structured metadata (JSON dict) for provider-specific data that the coordinator persists alongside the entry without interpretation |
 | R10 | Per-message pipeline passes SDK session ID to providers, enabling session forking for providers that need conversation context |
+| R11 | Both pipelines accept an optional async status callback on `run()`; before each provider's `provide()` is awaited, the pipeline emits that provider's `status_message()` via the callback. Providers run concurrently — the emission happens inside each provider's gather wrapper, not before the gather, so parallelism is preserved |
+| R12 | Both `ContextProvider` and `MessageContextProvider` ABCs expose `status_message() -> str` with a default derived from the class name (strips trailing `ContextProvider`/`Provider`, splits CamelCase, lowercases, appends an ellipsis). Concrete providers override with user-facing descriptions |
 
 ## Behaviors
 
@@ -100,3 +102,15 @@ Context results can carry structured metadata that the coordinator persists alon
 - Given a provider sets metadata on its ContextResult, when the coordinator persists the result, then the metadata is stored with the context entry
 - Given a provider does not set metadata (defaults to None), when the result is persisted, then the entry has no metadata — backward compatible
 - Given the skills provider returns one result per detected skill, when each result has metadata identifying the skill name, then the coordinator persists it without interpreting the content
+
+### Status Emission (R11, R12)
+
+Both pipelines emit granular, provider-driven status messages so the coordinator can forward them to the active channel as `Status` AgentEvents while pre-processing runs.
+
+**Acceptance Criteria**:
+- Given N providers are registered and a pipeline is run with `on_status`, when the pipeline executes, then the callback is invoked exactly once per provider with that provider's `status_message()`
+- Given a provider does not override `status_message()`, when status is emitted, then the message is a humanized form of the class name
+- Given a provider overrides `status_message()`, when status is emitted, then the override is used verbatim
+- Given a provider raises inside `provide()`, when the pipeline runs, then its status was still emitted (emission precedes the provider call), its exception is logged per DES-002, and sibling providers complete normally
+- Given a pipeline has zero registered providers, when `run()` is called with or without `on_status`, then no status callback invocations occur
+- Given a pipeline is run without `on_status`, when it executes, then no callback invocations occur — the parameter is optional
