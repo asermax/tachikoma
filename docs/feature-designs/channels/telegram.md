@@ -488,9 +488,9 @@ The `Result` event serves as a turn boundary signal. The channel finalizes the c
 
 ### Scenario: Buffering mid-stream
 
-**Given**: The bot is streaming a response to message A
+**Given**: An exchange for message A is in flight (any phase: boundary detection, pre-processing, SDK streaming, or teardown — not just streaming)
 **When**: The user sends message B
-**Then**: `_handle_message` checks `coordinator.in_exchange`. Because A's exchange is still live, it calls `coordinator.enqueue("B")` directly (bypassing `_delivery_lock`) and returns. The forwarder moves B onto the per-turn `sdk_inbox` and the message source yields it to the SDK as a steering message — B influences A's in-flight response rather than being held back as a separate turn.
+**Then**: `_handle_message` checks `self._delivery_lock.locked()`. Because the lock is held by A's `_process_through_coordinator()` call, it calls `coordinator.enqueue("B")` directly (bypassing the lock) and returns. The message lands in `_message_buffer`. As soon as the coordinator's forwarder is alive (after pre-processing completes), it moves B onto the per-turn `sdk_inbox` and the message source yields it to the SDK as a steering message — B influences A's in-flight response rather than being held back as a separate turn. If B arrives after `coordinator.send_message()` has already returned (forwarder gone, `sdk_inbox` torn down) but before the lock is released, the drain loop in `_process_through_coordinator` picks B up and runs it as a follow-up exchange in the same call, so B is never stranded in the buffer.
 
 ### Scenario: Message splitting at paragraph boundary
 

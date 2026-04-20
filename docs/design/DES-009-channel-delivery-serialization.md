@@ -2,7 +2,7 @@
 
 **Scope**: Python / Channels
 **Date**: 2026-04-19
-**Last Updated**: 2026-04-20 (steering branch via `Coordinator.in_exchange`)
+**Last Updated**: 2026-04-20 (steering branch gated on `self._delivery_lock.locked()`)
 **First Used**: DLT-112 (REPL), DLT-111 (Telegram)
 
 ## Problem
@@ -27,7 +27,7 @@ Include the coordinator's teardown inside the critical section by keeping `_proc
 
 ### When NOT to Use
 
-- If you want a second entry point to *steer* the current exchange (push a mid-stream message into the still-active SDK session), do not put that path under the same lock — use the coordinator's `enqueue()` alone (the `_forwarder` will move it onto the live `_sdk_inbox`). The lock serializes distinct *exchanges*, not items within one. Gate this with `coordinator.in_exchange` so the entry point only takes the steering branch when an SDK client is actually connected; otherwise fall back to the lock-based new-exchange path.
+- If you want a second entry point to *steer* the current exchange (push a mid-stream message into the still-active SDK session), do not put that path under the same lock — use the coordinator's `enqueue()` alone (the `_forwarder` will move it onto the live `_sdk_inbox`). The lock serializes distinct *exchanges*, not items within one. Gate this with `self._delivery_lock.locked()` so the entry point takes the steering branch whenever any phase of the in-flight exchange is running (boundary detection, pre-processing, SDK streaming, or teardown — not just the SDK streaming window); otherwise fall back to the lock-based new-exchange path.
 - Channels with a single entry point don't need this pattern.
 
 ## Example
@@ -73,10 +73,12 @@ class TelegramChannel:
     async def _handle_message(self, message: Message) -> None:
         text = message.text.strip()
 
-        # Mid-response: enqueue-only so the coordinator's forwarder steers
-        # the live SDK exchange. Skipping the lock is required — taking it
-        # would queue the message as a new turn after the response ends.
-        if self._coordinator.in_exchange:
+        # Mid-exchange (any phase: boundary, pre-processing, SDK streaming,
+        # teardown): enqueue-only so the message lands in _message_buffer and
+        # the coordinator's forwarder routes it onto the live sdk_inbox as a
+        # steering message. Taking the lock would block until the in-flight
+        # exchange ends, turning this into a new turn instead.
+        if self._delivery_lock.locked():
             self._coordinator.enqueue(text)
             return
 
@@ -86,7 +88,7 @@ class TelegramChannel:
 
     async def _handle_media(self, message: Message) -> None:
         # ...download and build description first (outside the lock)...
-        if self._coordinator.in_exchange:
+        if self._delivery_lock.locked():
             self._coordinator.enqueue(description)
             return
 
@@ -119,10 +121,11 @@ class TelegramChannel:
 - Keep the `_process_through_coordinator()` call inside the critical section so teardown is serialized with the next acquisition.
 - Do long-running work that is not delivery-related (e.g. downloading a media file) *outside* the lock.
 - Spawn a detached task for bus-dispatched handlers (`_handle_buffered_delivery`) so the EventBus is freed immediately. Store task references in a `set[asyncio.Task]` with `add_done_callback(discard)` cleanup.
+- Drain the coordinator's pending messages before releasing the lock. Wrap `coordinator.send_message()` in `while coordinator.has_pending_messages:` inside `_process_through_coordinator()`. This pairs with the steering branch: a message enqueued in the post-`send_message`-return tail (after the per-turn `sdk_inbox` and forwarder are gone but before the lock is released) would otherwise sit in `_message_buffer` with no consumer until the next unrelated entry point happens to call `send_message()`. The drain loop processes it as a follow-up exchange in the same call.
 
 **Don't**
 - Don't clear a boolean flag around the delivery call — transitions and teardown are not atomic, leaving a race window.
-- Don't try to push mid-stream steering messages under this lock — they should go through the coordinator's queue without blocking on the lock. Use `coordinator.in_exchange` as the gate so user-input handlers steer mid-response and only acquire the lock when starting a fresh exchange.
+- Don't try to push mid-stream steering messages under this lock — they should go through the coordinator's queue without blocking on the lock. Use `self._delivery_lock.locked()` as the gate so user-input handlers steer whenever any phase of the in-flight exchange is running and only acquire the lock when starting a fresh exchange.
 - Don't hold the lock while awaiting user-visible I/O that can block indefinitely (e.g. external network calls unrelated to the exchange).
 
 ## Consequences
