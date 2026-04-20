@@ -2,6 +2,14 @@
 
 <!-- version list -->
 
+## v1.37.1 (2026-04-20)
+
+### Bug Fixes
+
+- **db**: Use constant default for SQLite column migration
+  ([`b9aac53`](https://github.com/asermax/tachikoma/commit/b9aac53d88358cf1663670a6a24385dcab0e9781))
+
+
 ## v1.37.0 (2026-04-20)
 
 ### Bug Fixes
