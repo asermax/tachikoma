@@ -640,6 +640,7 @@ class TestSmartPull:
                 new_callable=AsyncMock,
                 side_effect=[
                     (0, "abc123"),  # rev-parse HEAD
+                    (0, "master"),  # symbolic-ref --short HEAD (branch resolution)
                     (0, "file1.txt\nfile2.txt"),  # diff --name-only
                 ],
             ),
@@ -672,6 +673,7 @@ class TestSmartPull:
                 new_callable=AsyncMock,
                 side_effect=[
                     (0, "abc123"),  # rev-parse HEAD
+                    (0, "master"),  # symbolic-ref --short HEAD (branch resolution)
                     (0, ".tachikoma/db-dump/sessions.ndjson"),  # diff --name-only
                 ],
             ),
@@ -709,6 +711,7 @@ class TestSmartPull:
                 new_callable=AsyncMock,
                 side_effect=[
                     (0, "abc123"),  # rev-parse HEAD
+                    (0, "master"),  # symbolic-ref --short HEAD (branch resolution)
                     (0, ""),  # diff --name-only (empty)
                 ],
             ),
@@ -816,6 +819,7 @@ class TestSmartPull:
                 new_callable=AsyncMock,
                 side_effect=[
                     (0, "abc123"),
+                    (0, "master"),  # symbolic-ref --short HEAD (branch resolution)
                     (0, ""),
                 ],
             ),

@@ -185,6 +185,28 @@ async def _abort_stale_rebase(cwd: Path) -> bool:
 # --- Core Sync Functions ---
 
 
+async def _resolve_branch(cwd: Path, branch: str) -> str:
+    """Resolve "HEAD" to the actual local branch name.
+
+    Required because remotes don't always have a `refs/remotes/<remote>/HEAD`
+    symbolic ref — repos created via `git init` (rather than cloned) never get
+    one — so passing "HEAD" through to `<remote>/HEAD` produces a "fatal:
+    invalid upstream" error during rebase and silently false-positives
+    `merge-base --is-ancestor` checks (rc != 0 → treated as "not ancestor"
+    → DIVERGED). Resolving to the real branch name avoids both.
+    """
+    if branch != "HEAD":
+        return branch
+
+    rc, output = await run_git_capture("symbolic-ref", "--short", "HEAD", cwd=cwd)
+    if rc == 0 and output:
+        return output
+
+    # Detached HEAD or other failure — let callers fall through with "HEAD";
+    # the eventual git error will surface in logs.
+    return branch
+
+
 async def detect_divergence(
     cwd: Path,
     remote: str = "origin",
@@ -399,6 +421,10 @@ async def smart_push(
         # Always fetch first (R8)
         await run_git("fetch", remote, cwd=cwd)
 
+        # Resolve "HEAD" to the actual branch name so divergence checks and
+        # the rebase ref don't depend on origin/HEAD existing
+        branch = await _resolve_branch(cwd, branch)
+
         divergence = await detect_divergence(cwd, remote, branch)
 
         if divergence in (DIVERGENCE_STATUS["UP_TO_DATE"], DIVERGENCE_STATUS["BEHIND"]):
@@ -517,6 +543,10 @@ async def smart_pull(
 
         # Always fetch first (R8)
         await run_git("fetch", remote, cwd=cwd)
+
+        # Resolve "HEAD" to the actual branch name so divergence checks and
+        # the rebase ref don't depend on origin/HEAD existing
+        branch = await _resolve_branch(cwd, branch)
 
         divergence = await detect_divergence(cwd, remote, branch)
 
