@@ -2,6 +2,25 @@
 
 <!-- version list -->
 
+## v1.38.2 (2026-04-20)
+
+### Bug Fixes
+
+- **git**: Resolve HEAD to actual branch for sync ref
+  ([`a18c486`](https://github.com/asermax/tachikoma/commit/a18c4863482e9a37b44bccec7e3bca3145c107fa))
+
+- **telegram**: Broaden steering gate to delivery_lock.locked()
+  ([`9509ad0`](https://github.com/asermax/tachikoma/commit/9509ad04ace175d5444b1ac9b40607b465a2e4f7))
+
+- **telegram**: Drain pending messages before releasing delivery lock
+  ([`113724f`](https://github.com/asermax/tachikoma/commit/113724f8dbd6aec335874e58e7b748592b98e49a))
+
+### Documentation
+
+- **channels**: Reconcile lock-window steering coverage
+  ([`1fa115a`](https://github.com/asermax/tachikoma/commit/1fa115a8978c9bc4694bbe3a5cb858e503ab8684))
+
+
 ## v1.38.1 (2026-04-20)
 
 ### Bug Fixes
