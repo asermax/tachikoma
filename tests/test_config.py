@@ -62,11 +62,11 @@ class TestSettingsModel:
         """AC (AC1): agent.disallowed_tools defaults to user defaults + system tools."""
         settings = Settings()
 
-        expected = [
-            "AskUserQuestion", "Skill", "CronCreate", "CronDelete", "CronList",
-            "RemoteTrigger", "ScheduleWakeup", "PushNotification",
-        ]
-        assert settings.agent.disallowed_tools == expected
+        result = settings.agent.disallowed_tools
+        # User default comes first, then system tools in frozenset iteration order
+        assert result[0] == "AskUserQuestion"
+        assert set(result[1:]) == SYSTEM_DISALLOWED_TOOLS
+        assert len(result) == 1 + len(SYSTEM_DISALLOWED_TOOLS)
 
     def test_default_session_resume_window(self) -> None:
         """AC (DLT-028): agent.session_resume_window defaults to 86400 (1 day)."""
@@ -210,19 +210,16 @@ class TestSystemDisallowedTools:
             {"agent": {"disallowed_tools": ["AskUserQuestion", "WebSearch"]}}
         )
 
-        assert settings.agent.disallowed_tools == [
-            "AskUserQuestion", "WebSearch", "Skill", "CronCreate", "CronDelete",
-            "CronList", "RemoteTrigger", "ScheduleWakeup", "PushNotification",
-        ]
+        result = settings.agent.disallowed_tools
+        assert result[:2] == ["AskUserQuestion", "WebSearch"]
+        assert set(result[2:]) == SYSTEM_DISALLOWED_TOOLS
 
     def test_system_tools_present_with_empty_list(self) -> None:
         """AC (R2): System tools present even when user sets empty list."""
         settings = Settings.model_validate({"agent": {"disallowed_tools": []}})
 
-        assert settings.agent.disallowed_tools == [
-            "Skill", "CronCreate", "CronDelete", "CronList",
-            "RemoteTrigger", "ScheduleWakeup", "PushNotification",
-        ]
+        result = settings.agent.disallowed_tools
+        assert set(result) == SYSTEM_DISALLOWED_TOOLS
 
     def test_system_tools_no_duplicate_when_user_includes(self) -> None:
         """AC (R2): No duplicate when user already includes a system tool."""
@@ -230,10 +227,9 @@ class TestSystemDisallowedTools:
             {"agent": {"disallowed_tools": ["AskUserQuestion", "Skill"]}}
         )
 
-        assert settings.agent.disallowed_tools == [
-            "AskUserQuestion", "Skill", "CronCreate", "CronDelete", "CronList",
-            "RemoteTrigger", "ScheduleWakeup", "PushNotification",
-        ]
+        result = settings.agent.disallowed_tools
+        assert result[:2] == ["AskUserQuestion", "Skill"]
+        assert set(result[2:]) == (SYSTEM_DISALLOWED_TOOLS - {"Skill"})
 
     def test_system_tools_user_order_preserved(self) -> None:
         """AC (R3): User entry order preserved, system tools appended."""
@@ -241,10 +237,9 @@ class TestSystemDisallowedTools:
             {"agent": {"disallowed_tools": ["WebSearch", "AskUserQuestion"]}}
         )
 
-        assert settings.agent.disallowed_tools == [
-            "WebSearch", "AskUserQuestion", "Skill", "CronCreate", "CronDelete",
-            "CronList", "RemoteTrigger", "ScheduleWakeup", "PushNotification",
-        ]
+        result = settings.agent.disallowed_tools
+        assert result[:2] == ["WebSearch", "AskUserQuestion"]
+        assert set(result[2:]) == SYSTEM_DISALLOWED_TOOLS
 
     def test_constant_contains_skill(self) -> None:
         """SYSTEM_DISALLOWED_TOOLS contains 'Skill'."""
@@ -254,7 +249,7 @@ class TestSystemDisallowedTools:
         """AC (R1): SYSTEM_DISALLOWED_TOOLS contains all audited tools."""
         expected = {"Skill", "CronCreate", "CronDelete", "CronList",
                     "RemoteTrigger", "ScheduleWakeup", "PushNotification"}
-        assert SYSTEM_DISALLOWED_TOOLS == expected
+        assert expected == SYSTEM_DISALLOWED_TOOLS
 
 
 class TestDefaultConfigGeneration:
@@ -308,10 +303,9 @@ class TestDefaultConfigGeneration:
 
         settings = load_settings(config_file)
 
-        assert settings.agent.disallowed_tools == [
-            "AskUserQuestion", "Skill", "CronCreate", "CronDelete", "CronList",
-            "RemoteTrigger", "ScheduleWakeup", "PushNotification",
-        ]
+        result = settings.agent.disallowed_tools
+        assert result[0] == "AskUserQuestion"
+        assert set(result[1:]) == SYSTEM_DISALLOWED_TOOLS
 
     def test_generated_file_contains_session_resume_window(self, tmp_path: Path) -> None:
         """AC (DLT-028): Generated file contains session_resume_window with int format."""
