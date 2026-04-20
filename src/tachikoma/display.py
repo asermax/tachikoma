@@ -114,8 +114,8 @@ def summarize_tool_activity(
     tools ran. Tools of the same type are aggregated (>2 uses count, ≤2 list
     individually). Multiple tool types are joined with commas and "and".
 
-    Activities are processed newest-first so the most recent tool usage
-    appears first in the output.
+    Activities are processed in chronological order (oldest first) so
+    the summary reads naturally top-to-bottom.
 
     Args:
         activities: List of ToolActivity events from a tool→text segment.
@@ -130,10 +130,8 @@ def summarize_tool_activity(
 
     effective_summary = summary_map if summary_map is not None else TOOL_SUMMARY
 
-    # Process newest-first so recent tool usage appears first in output
-    activities = list(reversed(activities))
-
-    # Group activities by tool_name, preserving first-seen order (now newest-first)
+    # Process chronologically (oldest first)
+    # Group activities by tool_name, preserving first-seen order
     groups: dict[str, list[ToolActivity]] = {}
     for activity in activities:
         tool_name = activity.tool_name
@@ -162,9 +160,10 @@ def summarize_tool_activity(
                     phrases.append(f"used {format_tool_name(tool_name)}")
 
     # Cap at 5 phrases + truncation sentinel.
+    # Keep the newest phrases (end of list), drop the oldest.
     # Sentinel is bare "more"; the Oxford-comma join below supplies the ", and".
     if len(phrases) > 5:
-        phrases = phrases[:5]
+        phrases = phrases[-5:]
         phrases.append("more")
 
     # Join phrases: 1 item → as-is; 2 items → "A and B"; 3+ → "A, B, and C"
