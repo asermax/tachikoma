@@ -112,13 +112,6 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 **Complexity**: Easy
 **Description**: Build an eval suite for the skills context provider using the evaluation framework (DLT-015). Tests whether the right skills are being detected and injected for given input messages. Test cases should cover: detecting relevant skills when they exist, not injecting irrelevant skills that waste context, handling messages where no skills apply, prioritizing when multiple skills match, and correctly loading skill content into agent context. Measures precision (no irrelevant skills injected) and recall (applicable skills not missed) of the skill detection process.
 
-### DLT-031: Granular processing status messages
-**Status**: ✗ Defined
-**Depends on**: None
-**Priority**: 1 (Critical)
-**Complexity**: Medium
-**Description**: Replace the single hardcoded "Thinking..." status message with granular, component-driven status updates during pre-processing and post-processing. Each pipeline component (context providers, post-processors, boundary detection) reports what it is currently doing via a status callback, and the coordinator forwards these as Status events to the active channel. This gives users real-time visibility into what the assistant is doing behind the scenes (e.g., "Searching memories...", "Detecting topic shift...", "Extracting memories...") instead of a generic indicator.
-
 ### DLT-033: Validate skill detection quality during authoring
 **Status**: ✗ Defined
 **Depends on**: DLT-015, DLT-054
