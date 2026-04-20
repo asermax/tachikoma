@@ -19,7 +19,7 @@ from claude_agent_sdk import McpSdkServerConfig, create_sdk_mcp_server, tool
 from loguru import logger
 from pydantic import BaseModel, ValidationError
 
-from tachikoma.skills.registry import SkillRegistry
+from tachikoma.skills.registry import SkillRegistry, render_skill_block
 from tachikoma.workflows.definition import StepDefinition
 from tachikoma.workflows.errors import WorkflowRepositoryError
 from tachikoma.workflows.model import (
@@ -180,9 +180,7 @@ def _render_required_skills(step_info: dict, registry: SkillRegistry) -> str:
             if skill.name in seen:
                 continue
             seen.add(skill.name)
-            ordered_blocks.append(
-                f'<skill name="{skill.name}" directory="{skill.path}">\n{skill.body}\n</skill>'
-            )
+            ordered_blocks.append(render_skill_block(skill))
 
     if not ordered_blocks:
         return ""

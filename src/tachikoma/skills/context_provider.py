@@ -21,7 +21,7 @@ from tachikoma.sessions.model import SessionContextEntry
 if TYPE_CHECKING:
     from claude_agent_sdk.types import AgentDefinition
 
-from tachikoma.skills.registry import Skill, SkillRegistry
+from tachikoma.skills.registry import Skill, SkillRegistry, render_skill_block
 
 _log = logger.bind(component="skills_context")
 
@@ -225,14 +225,10 @@ class SkillsContextProvider(MessageContextProvider):
         results: list[ContextResult] = []
 
         for skill in ordered_skills:
-            skill_block = (
-                f'<skill name="{skill.name}" directory="{skill.path}">\n{skill.body}\n</skill>'
-            )
-
             results.append(
                 ContextResult(
                     tag=SKILLS_OWNER,
-                    content=skill_block,
+                    content=render_skill_block(skill),
                     metadata={SKILL_NAME_META_KEY: skill.name},
                 )
             )

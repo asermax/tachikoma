@@ -49,6 +49,11 @@ class Skill:
     depends_on: tuple[str, ...] = ()
 
 
+def render_skill_block(skill: Skill) -> str:
+    """Format a skill as an XML block for prompt injection."""
+    return f'<skill name="{skill.name}" directory="{skill.path}">\n{skill.body}\n</skill>'
+
+
 class SkillRegistry:
     """Discovers and loads skills and their agents at startup.
 
