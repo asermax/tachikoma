@@ -2,6 +2,25 @@
 
 <!-- version list -->
 
+## v1.41.0 (2026-04-21)
+
+### Bug Fixes
+
+- **config**: Use valid IANA timezone in test
+  ([`53f699c`](https://github.com/asermax/tachikoma/commit/53f699c4051c60db0426eaf8cf6388e20ea223f5))
+
+### Documentation
+
+- **deltas**: Add DLT-167 Fail-fast memory search for low-context messages
+  ([`3847dbe`](https://github.com/asermax/tachikoma/commit/3847dbe29278c72f64087ed2bcee4a02f1617675))
+
+- **deltas**: Add DLT-167, DLT-168 Telegram message listing and reactions
+  ([`4738581`](https://github.com/asermax/tachikoma/commit/47385815c7d8efeba05c997a4c357d71a12e8dc3))
+
+- **deltas**: Update DLT-167 to DLT-169 and update dependencies
+  ([`1de6cc7`](https://github.com/asermax/tachikoma/commit/1de6cc751974ecde5fe3c5f567eee37baab01c24))
+
+
 ## v1.40.0 (2026-04-21)
 
 ### Features
