@@ -659,7 +659,7 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 **Description**: Add a toggle-pin MCP tool that lets the agent pin or unpin messages in the active Telegram chat, surfacing important responses so they stay accessible at the top of the conversation. Works in private chats without admin rights; groups require `can_pin_messages` and channels require `can_edit_messages`.
 
 ### DLT-163: Block message enqueue during exchange teardown
-**Status**: ⧗ Spec
+**Status**: ⧗ Design
 **Depends on**: None
 **Priority**: 1 (Critical)
 **Complexity**: Medium
