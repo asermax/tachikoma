@@ -2,6 +2,59 @@
 
 <!-- version list -->
 
+## v1.42.0 (2026-04-21)
+
+### Chores
+
+- **docs**: Remove DLT-162 delta workflow artifacts
+  ([`19e40ef`](https://github.com/asermax/tachikoma/commit/19e40ef4daef3a0b1c43c5cf91f672ac536dd484))
+
+### Documentation
+
+- **deltas**: Remove DLT-162 entry after reconciliation
+  ([`67b91e4`](https://github.com/asermax/tachikoma/commit/67b91e4fabac575289b1449680f265b872474c37))
+
+- **deltas**: Update DLT-162 status to Design
+  ([`b498567`](https://github.com/asermax/tachikoma/commit/b4985671931ef175ada73a695c640d23e1e10985))
+
+- **deltas**: Update DLT-162 status to Implementation
+  ([`ef9ef5f`](https://github.com/asermax/tachikoma/commit/ef9ef5f01a1bd5bd61ae303ec19dcfce5022722e))
+
+- **deltas**: Update DLT-162 status to Plan
+  ([`f927f3b`](https://github.com/asermax/tachikoma/commit/f927f3b3b2fda9fb3b4b360eb2508d008f7b1de7))
+
+- **deltas**: Update DLT-162 status to Spec
+  ([`8f5957d`](https://github.com/asermax/tachikoma/commit/8f5957df4a156ccd91288d2aa6130ba81955735d))
+
+- **designs**: Add DLT-162 Telegram message pinning design draft
+  ([`1493e5b`](https://github.com/asermax/tachikoma/commit/1493e5b3329d034cdcc405f676b94259d6c60c10))
+
+- **designs**: Complete DLT-162 Telegram message pinning design
+  ([`e9af7fa`](https://github.com/asermax/tachikoma/commit/e9af7fab90f3000f1602248351f4b3662f04681c))
+
+- **designs**: Finalize DLT-162 Telegram message pinning design
+  ([`104ec7c`](https://github.com/asermax/tachikoma/commit/104ec7ceeffa65fdb5ca55a2775ad74346d99abb))
+
+- **plans**: Add DLT-162 implementation plan
+  ([`3925951`](https://github.com/asermax/tachikoma/commit/39259518e21ae9783c481e16c7bea4f209ab77b6))
+
+- **specs**: Add DLT-162 Telegram message pinning spec
+  ([`5e3b5fb`](https://github.com/asermax/tachikoma/commit/5e3b5fb2117dd169780699a2387b2aad283bb2b3))
+
+- **telegram**: Reconcile message pinning into feature docs
+  ([`eb4caf4`](https://github.com/asermax/tachikoma/commit/eb4caf4fda463b30b287e32a065239ee223ab9ad))
+
+### Features
+
+- **telegram**: Add message pinning MCP tools
+  ([`7f7cc9b`](https://github.com/asermax/tachikoma/commit/7f7cc9bf1fb543504567142fc82c97a5ad74cbce))
+
+### Testing
+
+- **telegram**: Add pinning tests
+  ([`dea644e`](https://github.com/asermax/tachikoma/commit/dea644e627e09ffd7e51cdd414bfa333aa44bb74))
+
+
 ## v1.41.0 (2026-04-21)
 
 ### Bug Fixes
