@@ -44,6 +44,7 @@ from tachikoma.media import (
     generate_media_filename,
     resolve_media,
 )
+from tachikoma.telegram.pinning import create_pinning_server
 from tachikoma.telegram.tools import create_send_file_server
 
 if TYPE_CHECKING:
@@ -160,6 +161,10 @@ class ResponseRenderer:
     def has_sent_content(self) -> bool:
         """Whether any message has been sent in the current response."""
         return self._current_message_id is not None
+
+    def get_last_message_id(self) -> int | None:
+        """Return the Telegram message ID of the last sent response, or None."""
+        return self._current_message_id
 
     async def handle_status(self, message: str) -> None:
         """Handle a Status event by sending a transient status message.
@@ -574,7 +579,16 @@ class TelegramChannel(Channel):
             self._workspace_path,
             self._settings.send_file.extra_roots,
         )
-        return {"send-file": server}
+        def get_msg_id() -> int | None:
+            if self._active_renderer is not None:
+                return self._active_renderer.get_last_message_id()
+            return None
+        pinning_server = create_pinning_server(
+            self._bot,
+            self._settings.authorized_chat_id,
+            get_msg_id,
+        )
+        return {"send-file": server, "telegram-pinning": pinning_server}
 
     def get_skill_sources(self) -> list[Path]:
         return [Path(__file__).parent / "skill"]

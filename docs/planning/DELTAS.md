@@ -651,12 +651,6 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 **Complexity**: Medium
 **Description**: Complex workflows tend to contain sub-sequences that are genuinely reusable across multiple parent workflows — for example a "process inbox note" sequence that both the weekly review and the daily review want to run. Currently there is no way to share them without duplicating steps in each parent. Add a composition mechanism where a step can declare an inline reference to another workflow; when the engine reaches such a step it pauses the parent workflow, runs the referenced workflow to completion (honouring the full step-level semantics — mandatory-step enforcement, conditional skipping, and loop iteration — just as it would when run standalone), then resumes the parent at the next step. Scope covers: the frontmatter field that names the target workflow, nested workflow-state persistence so the engine can track both layers during execution, scratchpad isolation vs sharing rules between parent and child (decided during speccing), cycle detection so a workflow cannot recursively include itself, and the tool-layer UX so the agent can see which workflow it is currently executing. Out of scope: parameter passing between parent and child workflows (can be revisited once the basic composition works).
 
-### DLT-162: Telegram message pinning
-**Status**: ✗ Defined
-**Depends on**: None
-**Priority**: 4 (Low)
-**Complexity**: Easy
-**Description**: Add a toggle-pin MCP tool that lets the agent pin or unpin messages in the active Telegram chat, surfacing important responses so they stay accessible at the top of the conversation. Works in private chats without admin rights; groups require `can_pin_messages` and channels require `can_edit_messages`.
 
 ### DLT-164: Document `depends_on` field in skill authoring guide
 **Status**: ✗ Defined
