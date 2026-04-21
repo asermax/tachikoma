@@ -693,3 +693,17 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 **Complexity**: Medium
 **Description**: When running long-lived detached processes, users need early warning if a process becomes stuck (e.g., retry loops, repeated errors, or hung-state indicators) rather than discovering failure hours later. This delta adds a sentinel mechanism that watches process log files for configurable text patterns and dispatches a notification when a match is detected. Users define patterns per process or as global defaults via the MCP tools interface. When a pattern fires, a notification is dispatched through the process monitoring system so the agent can investigate. The sentinel includes rate limiting to prevent notification floods from rapidly-repeating matches. This complements process exit detection by catching processes that are alive but not making progress.
 
+### DLT-167: List recent Telegram messages
+**Status**: ✗ Defined
+**Depends on**: None
+**Priority**: 3 (Medium)
+**Complexity**: Easy
+**Description**: Add a list_recent_messages MCP tool that returns recent messages from the active Telegram chat, providing the agent with message IDs needed for reactions, pinning, and other message-specific operations. The tool retrieves messages from an in-memory buffer (Telegram bots cannot directly access chat history) that stores recent incoming messages during normal operation. Each entry includes message ID, timestamp, and text content. Buffer size is configurable with a sensible default.
+
+### DLT-168: Telegram message reactions
+**Status**: ✗ Defined
+**Depends on**: DLT-167
+**Priority**: 3 (Medium)
+**Complexity**: Easy
+**Description**: Add a react_to_message MCP tool that lets the agent apply emoji reactions to user messages via the Telegram setMessageReaction API. This enables lightweight acknowledgment (thumbs up, checkmark, etc.) without sending a full text response. The tool accepts a message ID and an emoji, applies the reaction through the aiogram Bot client, and follows the existing MCP tool pattern (factory with closure-captured bot/chat_id, extracted handler, Pydantic args). Works in private chats without special permissions; groups require the bot to be an admin with appropriate rights. The agent discovers target message IDs using the recent message listing tool.
+
