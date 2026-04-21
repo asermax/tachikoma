@@ -1080,27 +1080,20 @@ class TestProcessThroughCoordinatorNotify:
 
 
 class TestProcessThroughCoordinatorDrain:
-    """Tests for the drain loop in _process_through_coordinator."""
+    """Tests for _process_through_coordinator after drain loop removal (DLT-163).
 
-    async def test_drain_loop_picks_up_stranded_message(self) -> None:
-        """Messages enqueued during the lock window post-send_message are drained.
+    The coordinator's re-queue loop handles leftover messages internally,
+    so the channel just calls send_message() once.
+    """
 
-        When a user message lands in _message_buffer after the SDK exchange has
-        torn down but before _delivery_lock is released, the drain loop must
-        run another send_message() in the same call so the message is never
-        stranded.
-        """
+    async def test_calls_send_message_exactly_once(self) -> None:
+        """_process_through_coordinator calls send_message() once, not in a loop."""
         bot = MagicMock()
         bot.send_message = AsyncMock(return_value=MockMessage(message_id=1))
         bot.edit_message_text = AsyncMock()
 
         coordinator = MagicMock()
-        # has_pending_messages is True initially (the call's initial message)
-        # and after the first exchange (the stranded message), then False.
-        pending_states = iter([True, True, False])
-        type(coordinator).has_pending_messages = property(
-            lambda _self: next(pending_states),
-        )
+        coordinator.has_pending_messages = True
 
         send_call_count = 0
 
@@ -1122,25 +1115,24 @@ class TestProcessThroughCoordinatorDrain:
 
         await channel._process_through_coordinator()
 
-        # Drain loop ran send_message twice: initial message + stranded.
-        assert send_call_count == 2
+        # Single call to send_message — no drain loop
+        assert send_call_count == 1
 
-    async def test_drain_loop_exits_when_buffer_empty(self) -> None:
-        """The drain loop does not call send_message when the buffer is empty."""
+    async def test_renders_continuous_stream_without_drain_loop(self) -> None:
+        """Events from multiple exchanges in one generator are processed as a stream."""
         bot = MagicMock()
         bot.send_message = AsyncMock(return_value=MockMessage(message_id=1))
+        bot.edit_message_text = AsyncMock()
 
         coordinator = MagicMock()
-        coordinator.has_pending_messages = False
+        coordinator.has_pending_messages = True
 
-        send_called = False
-
-        async def _fake_send_message():
-            nonlocal send_called
-            send_called = True
+        async def _multi_exchange_send_message():
+            # Simulates coordinator re-queue: two Result events in one generator
             yield Result(session_id="sdk-1", total_cost_usd=0.0)
+            yield Result(session_id="sdk-2", total_cost_usd=0.0)
 
-        coordinator.send_message = _fake_send_message
+        coordinator.send_message = _multi_exchange_send_message
 
         settings = MagicMock()
         settings.authorized_chat_id = 123
@@ -1151,9 +1143,8 @@ class TestProcessThroughCoordinatorDrain:
             channel._TelegramChannel__coordinator = coordinator
         channel._bot = bot
 
+        # Should complete without error — no drain loop needed
         await channel._process_through_coordinator()
-
-        assert send_called is False
 
 
 class TestCodeWrap:
