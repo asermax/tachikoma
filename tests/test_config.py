@@ -875,9 +875,9 @@ class TestTaskSettings:
 
     def test_timezone_explicit_valid_preserved(self) -> None:
         """AC (R5): Explicit valid timezone is preserved."""
-        settings = TaskSettings(timezone="US/Eastern")
+        settings = TaskSettings(timezone="America/New_York")
 
-        assert settings.timezone == "US/Eastern"
+        assert settings.timezone == "America/New_York"
 
     def test_timezone_invalid_raises_validation_error(self) -> None:
         """AC (R5): Invalid timezone raises ValidationError."""
