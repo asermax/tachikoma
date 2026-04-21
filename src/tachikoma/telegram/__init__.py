@@ -847,9 +847,7 @@ class TelegramChannel(Channel):
 
         try:
             async with ChatActionSender(bot=self._bot, chat_id=chat_id, action="typing"):
-                # The coordinator's re-queue loop handles leftover messages
-                # internally — we consume the continuous stream until the
-                # generator returns.
+                # Coordinator's re-queue loop handles leftover messages internally
                 async for event in self._coordinator.send_message():
                     if isinstance(event, Status):
                         await self._active_renderer.handle_status(event.message)
