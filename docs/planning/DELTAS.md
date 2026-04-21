@@ -679,3 +679,10 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 **Complexity**: Easy
 **Description**: When a detached process is stopped explicitly via the `stop_process` tool (SIGTERM), the process exit listener still emits a notification to the user (e.g., "exited with code unknown") seconds later. Notifications should only fire for processes that exit on their own — not for processes the agent intentionally stopped. Record the stop reason when `stop_process` is invoked and check it from the exit listener before dispatching a notification so agent-initiated stops remain silent while unexpected exits continue to notify the user.
 
+### DLT-166: Detect stuck processes via output patterns
+**Status**: ✗ Defined
+**Depends on**: None
+**Priority**: 3 (Medium)
+**Complexity**: Medium
+**Description**: When running long-lived detached processes, users need early warning if a process becomes stuck (e.g., retry loops, repeated errors, or hung-state indicators) rather than discovering failure hours later. This delta adds a sentinel mechanism that watches process log files for configurable text patterns and dispatches a notification when a match is detected. Users define patterns per process or as global defaults via the MCP tools interface. When a pattern fires, a notification is dispatched through the process monitoring system so the agent can investigate. The sentinel includes rate limiting to prevent notification floods from rapidly-repeating matches. This complements process exit detection by catching processes that are alive but not making progress.
+
