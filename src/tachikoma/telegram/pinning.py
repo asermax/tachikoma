@@ -19,7 +19,7 @@ class UnpinMessageArgs(BaseModel):
 
 
 async def handle_pin_message(
-    getter: Callable[[], int | None],
+    message_id: int | None,
     bot: Bot,
     chat_id: int,
 ) -> dict:
@@ -29,8 +29,6 @@ async def handle_pin_message(
     push notification so the user sees the pinned message promptly.
     Returns an error if no message is available or pinning fails.
     """
-    message_id = getter()
-
     if message_id is None:
         return {
             "is_error": True,
@@ -106,11 +104,10 @@ def create_pinning_server(
         {},
     )
     async def pin_message(args: dict) -> dict:
-        result = await handle_pin_message(get_last_message_id, bot, chat_id)
-        if not result.get("is_error"):
-            msg_id = get_last_message_id()
-            if msg_id is not None:
-                pinned_ids.add(msg_id)
+        msg_id = get_last_message_id()
+        result = await handle_pin_message(msg_id, bot, chat_id)
+        if not result.get("is_error") and msg_id is not None:
+            pinned_ids.add(msg_id)
         return result
 
     @tool(

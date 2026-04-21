@@ -22,22 +22,16 @@ class TestHandlePinMessage:
         bot = MagicMock()
         bot.pin_chat_message = AsyncMock()
 
-        def getter() -> int | None:
-            return 123
-
-        result = await handle_pin_message(getter, bot, 456)
+        result = await handle_pin_message(123, bot, 456)
 
         bot.pin_chat_message.assert_called_once_with(456, 123, disable_notification=False)
         assert result == {"content": [{"type": "text", "text": "Message pinned (ID: 123)"}]}
 
     async def test_returns_error_when_no_message_available(self) -> None:
-        """Getter returning None produces an error response."""
+        """None message_id produces an error response."""
         bot = MagicMock()
 
-        def getter() -> int | None:
-            return None
-
-        result = await handle_pin_message(getter, bot, 456)
+        result = await handle_pin_message(None, bot, 456)
 
         bot.pin_chat_message.assert_not_called()
         assert result["is_error"] is True
@@ -52,10 +46,7 @@ class TestHandlePinMessage:
             ),
         )
 
-        def getter() -> int | None:
-            return 123
-
-        result = await handle_pin_message(getter, bot, 456)
+        result = await handle_pin_message(123, bot, 456)
 
         assert result["is_error"] is True
         assert "Failed to pin message" in result["content"][0]["text"]
@@ -65,10 +56,7 @@ class TestHandlePinMessage:
         bot = MagicMock()
         bot.pin_chat_message = AsyncMock()
 
-        def getter() -> int | None:
-            return 123
-
-        await handle_pin_message(getter, bot, 456)
+        await handle_pin_message(123, bot, 456)
 
         call_kwargs = bot.pin_chat_message.call_args
         assert call_kwargs.kwargs.get("disable_notification") is False
@@ -78,10 +66,7 @@ class TestHandlePinMessage:
         bot = MagicMock()
         bot.pin_chat_message = AsyncMock(return_value=True)
 
-        def getter() -> int | None:
-            return 123
-
-        result = await handle_pin_message(getter, bot, 456)
+        result = await handle_pin_message(123, bot, 456)
 
         assert "is_error" not in result
         assert "Message pinned (ID: 123)" in result["content"][0]["text"]
