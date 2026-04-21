@@ -2,6 +2,33 @@
 
 <!-- version list -->
 
+## v1.40.0 (2026-04-21)
+
+### Features
+
+- **issue-71**: Wip add
+  ([`b26afef`](https://github.com/asermax/tachikoma/commit/b26afefbb9cfad26c5d5d582c1d6cfe885dc53ce))
+
+
+## v1.39.0 (2026-04-21)
+
+### Documentation
+
+- Add DLT-162 Telegram message pinning delta
+  ([`bf94516`](https://github.com/asermax/tachikoma/commit/bf94516263e21e43d919aa2fc083ab8a44dae00c))
+
+- **deltas**: Add DLT-163, DLT-164, DLT-165
+  ([`dc1e21c`](https://github.com/asermax/tachikoma/commit/dc1e21cc2ccef0ed15b9694f5bf2e7fbf23cb60f))
+
+- **deltas**: Add DLT-166 Detect stuck processes via output patterns
+  ([`7e8f762`](https://github.com/asermax/tachikoma/commit/7e8f762fce3a17f8b41cd97e570b0f7faafd33b5))
+
+### Features
+
+- **issue-67**: Wip add
+  ([`bba8733`](https://github.com/asermax/tachikoma/commit/bba873373cad5af70969bc348c4b02474e73b062))
+
+
 ## v1.38.2 (2026-04-20)
 
 ### Bug Fixes

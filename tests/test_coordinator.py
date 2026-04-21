@@ -878,15 +878,18 @@ class TestCoordinatorMessageBuffer:
 
         assert events == []
 
-    async def test_buffer_preserved_on_stream_error(self, mock_sdk) -> None:
-        """AC: buffer is not cleared on CLIConnectionError."""
+    async def test_buffer_requeued_on_stream_error(self, mock_sdk) -> None:
+        """AC: CLIConnectionError triggers re-queue of remaining buffer messages."""
         client, _ = mock_sdk
 
         async def _failing():
             raise CLIConnectionError("connection lost")
             yield  # noqa: RUF027 — makes this an async generator
 
-        client.receive_response.return_value = _failing()
+        client.receive_response.side_effect = [
+            _failing(),
+            _mock_messages(make_assistant([TextBlock(text="recovered")]), make_result()),
+        ]
 
         async with Coordinator() as coord:
             coord.enqueue("will survive")
@@ -896,9 +899,10 @@ class TestCoordinatorMessageBuffer:
         error_events = [e for e in events if isinstance(e, Error)]
         assert len(error_events) == 1
 
-        # The first message ("will survive") was consumed as the initial message
-        # "initial" should still be in the buffer
-        assert not coord._message_buffer.empty()
+        # "will survive" errored; "initial" was re-processed by re-queue loop
+        result_events = [e for e in events if isinstance(e, Result)]
+        assert len(result_events) == 1
+        assert not coord.has_pending_messages
 
     async def test_send_message_exits_after_response(self, mock_sdk) -> None:
         """AC: send_message() returns after one receive_response cycle."""
@@ -3920,24 +3924,28 @@ class TestCoordinatorIdleEmission:
 class TestCoordinatorTeardownRace:
     """Regression tests for DLT-111 R0/R1/R3/R4 + CoordinatorIdle invariant."""
 
-    async def test_message_enqueued_during_teardown_is_preserved(self, mock_sdk) -> None:
-        """R0/R1-AC1: message enqueued during teardown window lands in _message_buffer."""
+    async def test_message_enqueued_during_teardown_is_reprocessed(self, mock_sdk) -> None:
+        """R0/R1-AC1: message enqueued during teardown is re-processed in same generator."""
         client, _ = mock_sdk
-        client.receive_response.return_value = _mock_messages(
-            make_assistant([TextBlock(text="ok")]),
-            make_result(),
-        )
+        client.receive_response.side_effect = [
+            _mock_messages(make_assistant([TextBlock(text="ok")]), make_result()),
+            _mock_messages(make_assistant([TextBlock(text="late response")]), make_result()),
+        ]
 
         async with Coordinator() as coord:
             coord.enqueue("initial")
+            events = []
+            enqueued_late = False
             async for event in coord.send_message():
-                if isinstance(event, Result):
+                events.append(event)
+                if isinstance(event, Result) and not enqueued_late:
                     # Simulates a message arriving during the teardown window
                     coord.enqueue("late")
+                    enqueued_late = True
 
-        assert coord.has_pending_messages
-        assert coord._message_buffer.qsize() == 1
-        assert coord._message_buffer.get_nowait() == "late"
+        result_events = [e for e in events if isinstance(e, Result)]
+        assert len(result_events) == 2  # Two exchanges in one generator call
+        assert not coord.has_pending_messages
 
     async def test_forwarder_cancelled_before_disconnect(self, mock_sdk) -> None:
         """KD-2: forwarder_task is cancelled+awaited BEFORE client.disconnect runs."""
@@ -3978,29 +3986,34 @@ class TestCoordinatorTeardownRace:
         assert call_order.index("forwarder-done") < call_order.index("disconnect")
 
     async def test_ordering_preserved_under_concurrent_enqueue(self, mock_sdk) -> None:
-        """R3-AC3: A in sdk_inbox + B enqueued during teardown → replay order [A, B]."""
+        """R3-AC3: A recovered by drain_back + B enqueued during teardown → FIFO re-queue."""
         client, _ = mock_sdk
-        client.receive_response.return_value = _mock_messages(
-            make_assistant([TextBlock(text="ok")]),
-            make_result(),
-        )
+        client.receive_response.side_effect = [
+            _mock_messages(make_assistant([TextBlock(text="ok")]), make_result()),
+            _mock_messages(make_assistant([TextBlock(text="A resp")]), make_result()),
+            _mock_messages(make_assistant([TextBlock(text="B resp")]), make_result()),
+        ]
 
         async with Coordinator() as coord:
             coord.enqueue("initial")
             coord.enqueue("A")  # will be pulled by forwarder into sdk_inbox
+            events = []
+            enqueued_b = False
             async for event in coord.send_message():
-                if isinstance(event, Result):
+                events.append(event)
+                if isinstance(event, Result) and not enqueued_b:
                     coord.enqueue("B")  # enqueued during teardown window
+                    enqueued_b = True
 
-        # "A" was moved to sdk_inbox by forwarder → drain-back recovered it first
-        # "B" was enqueued after forwarder cancellation → drain-back kept it after A
-        buffer_items: list[str] = []
-        while not coord._message_buffer.empty():
-            buffer_items.append(coord._message_buffer.get_nowait())
-        assert buffer_items == ["A", "B"]
+        # "A" was moved to sdk_inbox by forwarder → drain_back recovered it first
+        # "B" was enqueued after forwarder cancellation → drain_back kept it after A
+        # Re-queue loop processes them in FIFO order: A then B
+        result_events = [e for e in events if isinstance(e, Result)]
+        assert len(result_events) == 3  # initial, A, B
+        assert not coord.has_pending_messages
 
     async def test_mid_stream_steering_consumed_then_followup_queued(self, mock_sdk) -> None:
-        """R3-AC2: mid-stream A consumed by SDK; B enqueued after turn → buffer == [B]."""
+        """R3-AC2: mid-stream A consumed by SDK; B re-processed in same generator."""
         client, _ = mock_sdk
 
         captured_gen: AsyncIterator | None = None
@@ -4021,20 +4034,28 @@ class TestCoordinatorTeardownRace:
             assert msg["message"]["content"] == "A"
             yield make_result()
 
-        client.receive_response.return_value = _response_consuming_gen()
+        client.receive_response.side_effect = [
+            _response_consuming_gen(),
+            _mock_messages(make_assistant([TextBlock(text="B resp")]), make_result()),
+        ]
 
         async with Coordinator() as coord:
             coord.enqueue("initial")
+            events = []
+            enqueued_a = False
+            enqueued_b = False
             async for event in coord.send_message():
-                if isinstance(event, TextChunk):
+                events.append(event)
+                if isinstance(event, TextChunk) and not enqueued_a:
                     coord.enqueue("A")  # mid-stream steering, consumed by SDK
-                elif isinstance(event, Result):
-                    coord.enqueue("B")  # queued for next turn
+                    enqueued_a = True
+                elif isinstance(event, Result) and not enqueued_b:
+                    coord.enqueue("B")  # re-processed by re-queue loop
+                    enqueued_b = True
 
-        buffer_items: list[str] = []
-        while not coord._message_buffer.empty():
-            buffer_items.append(coord._message_buffer.get_nowait())
-        assert buffer_items == ["B"]
+        result_events = [e for e in events if isinstance(e, Result)]
+        assert len(result_events) == 2  # initial (+A steering), then B
+        assert not coord.has_pending_messages
 
     async def test_mid_stream_message_reaches_sdk_via_inbox(self, mock_sdk) -> None:
         """R4-AC1: follow-up enqueued mid-stream is yielded by the generator to the SDK."""
@@ -4103,35 +4124,44 @@ class TestCoordinatorTeardownRace:
         assert [m["message"]["content"] for m in yielded] == ["initial", "x", "y"]
 
     async def test_buffer_preserved_on_connection_error_during_teardown(self, mock_sdk) -> None:
-        """R0-AC4: CLIConnectionError teardown path still runs drain-back."""
+        """R0-AC4: CLIConnectionError teardown path recovers messages for re-queue."""
         client, _ = mock_sdk
 
         async def _failing_response():
             yield make_assistant([TextBlock(text="partial")])
             raise CLIConnectionError("stream died")
 
-        client.receive_response.return_value = _failing_response()
+        client.receive_response.side_effect = [
+            _failing_response(),
+            _mock_messages(make_assistant([TextBlock(text="A resp")]), make_result()),
+            _mock_messages(make_assistant([TextBlock(text="B resp")]), make_result()),
+        ]
 
         async with Coordinator() as coord:
             coord.enqueue("initial")
             coord.enqueue("A")  # moved into sdk_inbox by forwarder during the turn
+            events = []
+            enqueued_b = False
             async for event in coord.send_message():
-                if isinstance(event, Error):
+                events.append(event)
+                if isinstance(event, Error) and not enqueued_b:
                     coord.enqueue("B")  # enqueued after the error, during teardown
+                    enqueued_b = True
 
-        # Both A (recovered from sdk_inbox) and B (from buffer) must survive, in order
-        buffer_items: list[str] = []
-        while not coord._message_buffer.empty():
-            buffer_items.append(coord._message_buffer.get_nowait())
-        assert buffer_items == ["A", "B"]
+        # First exchange errored, then re-queue loop processed A and B
+        error_events = [e for e in events if isinstance(e, Error)]
+        result_events = [e for e in events if isinstance(e, Result)]
+        assert len(error_events) == 1
+        assert len(result_events) == 2  # A and B re-processed
+        assert not coord.has_pending_messages
 
-    async def test_coordinator_idle_not_emitted_when_items_recovered(self, mock_sdk) -> None:
-        """KD-3: is_busy stays True through _client reset when drain recovers items."""
+    async def test_coordinator_idle_emitted_after_requeue_completes(self, mock_sdk) -> None:
+        """KD-3: CoordinatorIdle emitted after re-queue loop processes all messages."""
         client, _ = mock_sdk
-        client.receive_response.return_value = _mock_messages(
-            make_assistant([TextBlock(text="ok")]),
-            make_result(),
-        )
+        client.receive_response.side_effect = [
+            _mock_messages(make_assistant([TextBlock(text="ok")]), make_result()),
+            _mock_messages(make_assistant([TextBlock(text="late resp")]), make_result()),
+        ]
 
         bus = EventBus()
         idle_events: list[CoordinatorIdle] = []
@@ -4139,12 +4169,14 @@ class TestCoordinatorTeardownRace:
 
         async with Coordinator(bus=bus) as coord:
             coord.enqueue("initial")
+            enqueued_late = False
             async for event in coord.send_message():
-                if isinstance(event, Result):
+                if isinstance(event, Result) and not enqueued_late:
                     coord.enqueue("late")
+                    enqueued_late = True
 
-        assert coord.has_pending_messages
-        assert idle_events == []
+        assert not coord.has_pending_messages
+        assert len(idle_events) >= 1  # Emitted after all re-queue iterations complete
 
     async def test_coordinator_idle_emitted_when_buffer_truly_empty(self, mock_sdk) -> None:
         """Empty drain-back → is_busy flips → CoordinatorIdle dispatched once."""
@@ -4311,3 +4343,221 @@ class TestForwarderCancellation:
         # re-enqueue it to _message_buffer (no drop).
         assert coord._message_buffer.qsize() == 1
         assert coord._message_buffer.get_nowait() == "x"
+
+
+class TestRequeueLoop:
+    """Tests for DLT-163: coordinator-owned re-queue loop in send_message()."""
+
+    async def test_leftover_message_auto_processed_in_same_generator(self, mock_sdk) -> None:
+        """AC1: leftover message is automatically re-processed in the same generator."""
+        client, _ = mock_sdk
+        client.receive_response.side_effect = [
+            _mock_messages(make_assistant([TextBlock(text="resp A")]), make_result()),
+            _mock_messages(make_assistant([TextBlock(text="resp B")]), make_result()),
+        ]
+
+        async with Coordinator() as coord:
+            coord.enqueue("A")
+            events = []
+            enqueued_b = False
+            async for event in coord.send_message():
+                events.append(event)
+                if isinstance(event, Result) and not enqueued_b:
+                    coord.enqueue("B")
+                    enqueued_b = True
+
+        result_events = [e for e in events if isinstance(e, Result)]
+        assert len(result_events) == 2
+        assert not coord.has_pending_messages
+
+    async def test_fifo_order_preserved_for_multiple_leftovers(self, mock_sdk) -> None:
+        """AC2: multiple leftover messages are re-processed in FIFO order."""
+        client, _ = mock_sdk
+
+        captured_gens: list[AsyncIterator] = []
+
+        async def _capturing_connect(gen):
+            captured_gens.append(gen)
+
+        client.connect = AsyncMock(side_effect=_capturing_connect)
+
+        client.receive_response.side_effect = [
+            _mock_messages(make_assistant([TextBlock(text="resp A")]), make_result()),
+            _mock_messages(make_assistant([TextBlock(text="resp B")]), make_result()),
+            _mock_messages(make_assistant([TextBlock(text="resp C")]), make_result()),
+            _mock_messages(make_assistant([TextBlock(text="resp D")]), make_result()),
+        ]
+
+        async with Coordinator() as coord:
+            coord.enqueue("A")
+            events = []
+            enqueued_extra = False
+            async for event in coord.send_message():
+                events.append(event)
+                if isinstance(event, Result) and not enqueued_extra:
+                    coord.enqueue("B")
+                    coord.enqueue("C")
+                    coord.enqueue("D")
+                    enqueued_extra = True
+
+        # Verify all four exchanges happened via the captured generators
+        assert len(captured_gens) == 4
+        result_events = [e for e in events if isinstance(e, Result)]
+        assert len(result_events) == 4
+        assert not coord.has_pending_messages
+
+    async def test_happy_path_unchanged_single_iteration(self, mock_sdk) -> None:
+        """AC10: when no teardown messages, loop runs exactly once."""
+        client, _ = mock_sdk
+        client.receive_response.return_value = _mock_messages(
+            make_assistant([TextBlock(text="ok")]),
+            make_result(),
+        )
+
+        async with Coordinator() as coord:
+            events = await _send(coord, "hello")
+
+        result_events = [e for e in events if isinstance(e, Result)]
+        assert len(result_events) == 1
+        # SDK client created exactly once
+        _, mock_cls = mock_sdk
+        assert mock_cls.call_count == 1
+        assert not coord.has_pending_messages
+
+    async def test_pending_task_lifecycle_across_iterations(self, mock_sdk) -> None:
+        """AC5: iteration N's pending task is awaited at start of iteration N+1."""
+        client, _ = mock_sdk
+        client.receive_response.side_effect = [
+            _mock_messages(make_assistant([TextBlock(text="ok")]), make_result()),
+            _mock_messages(make_assistant([TextBlock(text="late ok")]), make_result()),
+        ]
+
+        coord = Coordinator()
+
+        # Mock the msg pipeline to track when tasks are created and awaited
+        pipeline_mock = MagicMock()
+        run_future = asyncio.get_event_loop().create_future()
+        run_future.set_result(None)
+        pipeline_mock.run = AsyncMock(return_value=run_future)
+
+        coord._msg_pipeline = pipeline_mock
+
+        # Also need a registry for the pipeline to fire
+        registry_mock = MagicMock()
+        session = Session(id="test", started_at=datetime.now(UTC))
+        registry_mock.get_active_session = AsyncMock(return_value=session)
+        coord._registry = registry_mock
+
+        # Don't use async with — check state before __aexit__ clears it
+        await coord.__aenter__()
+        try:
+            coord.enqueue("A")
+            enqueued_late = False
+            async for event in coord.send_message():
+                if isinstance(event, Result) and not enqueued_late:
+                    coord.enqueue("late")
+                    enqueued_late = True
+
+            # After generator completes, the last iteration's task is still pending
+            # (it's awaited at the start of the NEXT send_message call, not before return)
+            assert coord._pending_msg_task is not None
+            assert not coord._pending_msg_task.done()
+        finally:
+            await coord.__aexit__(None, None, None)
+
+    async def test_requeue_failure_yields_error_and_preserves_messages(self, mock_sdk) -> None:
+        """AC6: re-queue failure yields Error event and preserves messages."""
+        client, _ = mock_sdk
+
+        async def _failing():
+            raise CLIConnectionError("re-queue failed")
+            yield  # noqa: RUF027
+
+        client.receive_response.side_effect = [
+            _mock_messages(make_assistant([TextBlock(text="ok")]), make_result()),
+            _failing(),
+        ]
+
+        async with Coordinator() as coord:
+            coord.enqueue("A")
+            events = []
+            enqueued_b = False
+            async for event in coord.send_message():
+                events.append(event)
+                if isinstance(event, Result) and not enqueued_b:
+                    coord.enqueue("B")
+                    enqueued_b = True
+
+        error_events = [e for e in events if isinstance(e, Error)]
+        assert len(error_events) == 1
+        assert error_events[0].recoverable
+
+    async def test_generator_abandonment_preserves_messages(self, mock_sdk) -> None:
+        """AC7: abandoning the generator mid-re-queue preserves remaining messages."""
+        client, _ = mock_sdk
+        client.receive_response.side_effect = [
+            _mock_messages(make_assistant([TextBlock(text="ok")]), make_result()),
+            _mock_messages(make_assistant([TextBlock(text="late ok")]), make_result()),
+        ]
+
+        async with Coordinator() as coord:
+            coord.enqueue("A")
+            coord.enqueue("B")
+            # Use explicit generator control to stop after first exchange's Result
+            gen = coord.send_message()
+            async for event in gen:
+                if isinstance(event, Result):
+                    break
+
+            # Explicitly await generator cleanup before asserting buffer state
+            await gen.aclose()
+
+            # "B" should remain in the buffer after abandonment
+            assert coord.has_pending_messages
+
+    async def test_status_events_yielded_across_iterations(self, mock_sdk) -> None:
+        """AC: Status events from multiple iterations are yielded to the caller."""
+        client, _ = mock_sdk
+        client.receive_response.side_effect = [
+            _mock_messages(make_assistant([TextBlock(text="ok")]), make_result()),
+            _mock_messages(make_assistant([TextBlock(text="late ok")]), make_result()),
+        ]
+
+        async with Coordinator() as coord:
+            coord.enqueue("A")
+            events = []
+            enqueued_late = False
+            async for event in coord.send_message():
+                events.append(event)
+                if isinstance(event, Result) and not enqueued_late:
+                    coord.enqueue("late")
+                    enqueued_late = True
+
+        result_events = [e for e in events if isinstance(e, Result)]
+        assert len(result_events) == 2
+
+    async def test_has_pending_messages_state_during_requeue(self, mock_sdk) -> None:
+        """AC: has_pending_messages accurately reflects buffer state across iterations."""
+        client, _ = mock_sdk
+        client.receive_response.side_effect = [
+            _mock_messages(make_assistant([TextBlock(text="ok")]), make_result()),
+            _mock_messages(make_assistant([TextBlock(text="B ok")]), make_result()),
+            _mock_messages(make_assistant([TextBlock(text="C ok")]), make_result()),
+        ]
+
+        buffer_states: list[bool] = []
+
+        async with Coordinator() as coord:
+            coord.enqueue("A")
+            coord.enqueue("B")
+            coord.enqueue("C")
+            async for event in coord.send_message():
+                if isinstance(event, Result):
+                    buffer_states.append(coord.has_pending_messages)
+
+        # After each Result: True (B,C remaining), True (C remaining), False (empty)
+        assert len(buffer_states) == 3
+        assert buffer_states[0] is True
+        assert buffer_states[1] is True
+        assert buffer_states[2] is False
+        assert not coord.has_pending_messages

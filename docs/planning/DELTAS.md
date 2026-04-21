@@ -651,12 +651,6 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 **Complexity**: Medium
 **Description**: Complex workflows tend to contain sub-sequences that are genuinely reusable across multiple parent workflows — for example a "process inbox note" sequence that both the weekly review and the daily review want to run. Currently there is no way to share them without duplicating steps in each parent. Add a composition mechanism where a step can declare an inline reference to another workflow; when the engine reaches such a step it pauses the parent workflow, runs the referenced workflow to completion (honouring the full step-level semantics — mandatory-step enforcement, conditional skipping, and loop iteration — just as it would when run standalone), then resumes the parent at the next step. Scope covers: the frontmatter field that names the target workflow, nested workflow-state persistence so the engine can track both layers during execution, scratchpad isolation vs sharing rules between parent and child (decided during speccing), cycle detection so a workflow cannot recursively include itself, and the tool-layer UX so the agent can see which workflow it is currently executing. Out of scope: parameter passing between parent and child workflows (can be revisited once the basic composition works).
 
-### DLT-163: Block message enqueue during exchange teardown
-**Status**: ✗ Defined
-**Depends on**: None
-**Priority**: 1 (Critical)
-**Complexity**: Medium
-**Description**: When a message exchange is completing, messages arriving in the gap between final response delivery and teardown can still be accepted by the message queue, landing in a session that has already finished processing. This is a distinct manifestation from the previously fixed finalization race: the message makes it into the queue but the session is no longer active to consume it. Either fix the drain loop so it blocks new enqueues during teardown, or add a guard at the enqueue layer that inspects exchange state before accepting messages. The fix should ensure no user message is accepted by a session that cannot process it.
 
 ### DLT-164: Document `depends_on` field in skill authoring guide
 **Status**: ✗ Defined
@@ -671,4 +665,32 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 **Priority**: 1 (Critical)
 **Complexity**: Easy
 **Description**: When a detached process is stopped explicitly via the `stop_process` tool (SIGTERM), the process exit listener still emits a notification to the user (e.g., "exited with code unknown") seconds later. Notifications should only fire for processes that exit on their own — not for processes the agent intentionally stopped. Record the stop reason when `stop_process` is invoked and check it from the exit listener before dispatching a notification so agent-initiated stops remain silent while unexpected exits continue to notify the user.
+
+### DLT-167: Fail-fast memory search for low-context messages
+**Status**: ✗ Defined
+**Depends on**: None
+**Priority**: 1 (Critical)
+**Complexity**: Easy
+**Description**: The memory context provider's search prompt currently triggers a full Glob → Grep → Read search cycle on every incoming message, regardless of whether the message would benefit from memory context. Simple greetings, acknowledgments, quick follow-ups within an active topic, and other low-context messages incur the same search latency as substantive new-topic queries. Add classification guidance to the memory search prompt so the search agent can short-circuit or minimize effort for messages that clearly don't need memory retrieval — returning the no-search sentinel immediately for greetings and acknowledgments, limiting search depth for continuation messages within an active session, and only performing full searches when the message introduces a new topic or references past context. The guidance is prompt-only: no code changes to the provider or pipeline, just refined instructions that teach the search agent when to skip, when to search shallowly, and when to search thoroughly. Goal is reduced preprocessing latency on messages that don't benefit from memory context, without losing relevant context for messages that do.
+
+### DLT-166: Detect stuck processes via output patterns
+**Status**: ✗ Defined
+**Depends on**: None
+**Priority**: 3 (Medium)
+**Complexity**: Medium
+**Description**: When running long-lived detached processes, users need early warning if a process becomes stuck (e.g., retry loops, repeated errors, or hung-state indicators) rather than discovering failure hours later. This delta adds a sentinel mechanism that watches process log files for configurable text patterns and dispatches a notification when a match is detected. Users define patterns per process or as global defaults via the MCP tools interface. When a pattern fires, a notification is dispatched through the process monitoring system so the agent can investigate. The sentinel includes rate limiting to prevent notification floods from rapidly-repeating matches. This complements process exit detection by catching processes that are alive but not making progress.
+
+### DLT-169: List recent Telegram messages
+**Status**: ✗ Defined
+**Depends on**: None
+**Priority**: 3 (Medium)
+**Complexity**: Easy
+**Description**: Add a list_recent_messages MCP tool that returns recent messages from the active Telegram chat, providing the agent with message IDs needed for reactions, pinning, and other message-specific operations. The tool retrieves messages from an in-memory buffer (Telegram bots cannot directly access chat history) that stores recent incoming messages during normal operation. Each entry includes message ID, timestamp, and text content. Buffer size is configurable with a sensible default.
+
+### DLT-168: Telegram message reactions
+**Status**: ✗ Defined
+**Depends on**: DLT-169
+**Priority**: 3 (Medium)
+**Complexity**: Easy
+**Description**: Add a react_to_message MCP tool that lets the agent apply emoji reactions to user messages via the Telegram setMessageReaction API. This enables lightweight acknowledgment (thumbs up, checkmark, etc.) without sending a full text response. The tool accepts a message ID and an emoji, applies the reaction through the aiogram Bot client, and follows the existing MCP tool pattern (factory with closure-captured bot/chat_id, extracted handler, Pydantic args). Works in private chats without special permissions; groups require the bot to be an admin with appropriate rights. The agent discovers target message IDs using the recent message listing tool.
 
