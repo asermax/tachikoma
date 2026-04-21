@@ -12,6 +12,7 @@ A Telegram bot that receives text messages and media messages from a single auth
 - As a user, I want to see what tools the agent is using while it works so that I understand what is happening during pauses
 - As a user, I want messages I send during an active response to be processed so that I can provide follow-up input without waiting
 - As a user, I want to send images, voice messages, and other media through Telegram so that the agent can see and work with my non-text content
+- As a user, I want the agent to pin important messages in our Telegram chat so that key responses (summaries, decisions, reference material) stay accessible at the top of the conversation without me having to manually pin them
 
 ## Requirements
 
@@ -31,6 +32,7 @@ A Telegram bot that receives text messages and media messages from a single auth
 | R11 | Error display: surface coordinator errors (recoverable and non-recoverable) as messages in the Telegram chat |
 | R12 | Event bus integration: subscribe to `BufferedDelivery` events and route prompts through the coordinator as new message turns; flush pending buffer items on graceful shutdown (see [delivery/priority-buffer](../delivery/priority-buffer.md)) |
 | R13 | File delivery via `send_file` tool: the agent can send a file to the user's Telegram chat. Accepted `file_path` forms are workspace-relative, absolute paths inside the workspace, absolute paths under the system temporary directory, and absolute paths under operator-configured extra roots. Paths outside all allowed roots are rejected with an error that names the allowed roots. Only existing regular files can be sent. |
+| R14 | Message pinning: the agent can pin and unpin messages in the active Telegram chat. Pins are silent (no notification). Both operations are idempotent. Permission failures and API errors return clear error responses to the agent |
 
 ## Behaviors
 
@@ -197,6 +199,20 @@ The agent delivers a file to the user via the `send_file` tool. The tool validat
 - Given a symlink that crosses an allowed-root boundary, when the tool resolves it, then the resolved target governs the membership check (symlinks inside pointing outside are rejected; symlinks outside pointing inside are accepted)
 - Given the operator declares extra roots under `[telegram.send_file] extra_roots`, when the config is loaded, then `~` is expanded and each entry must be absolute; entries need not exist at load time
 
+### Message Pinning (R14)
+
+The agent can pin and unpin messages in the active Telegram chat via two MCP tools. `pin_message` pins the last response message silently (no Telegram notification) and returns its Telegram message ID. `unpin_message` accepts a message ID and unpins that specific message. Both tools are idempotent.
+
+**Acceptance Criteria**:
+- Given the agent has sent a response in the Telegram chat, when `pin_message` is called, then the last response message is pinned silently and the tool returns `{"content": [{"type": "text", "text": "Message pinned (ID: 123)"}]}`
+- Given the agent has sent a response that was split into multiple messages, when `pin_message` is called, then the final message in the split sequence is pinned and its message ID is returned
+- Given `pin_message` is called with no active response (no tracked message ID, e.g. from a background task with no active renderer), when the tool executes, then it returns `{"is_error": true, "content": [{"type": "text", "text": "No message available to pin"}]}`
+- Given a message is already pinned, when `pin_message` is called on it again, then the operation succeeds without error (idempotent)
+- Given a pinned message with a known message ID, when `unpin_message` is called with that ID, then the message is unpinned and the tool returns `{"content": [{"type": "text", "text": "Message unpinned (ID: 123)"}]}`
+- Given a message ID that is not currently pinned, when `unpin_message` is called, then the operation succeeds without error (idempotent)
+- Given the bot lacks pin permissions in a group/channel, when `pin_message` or `unpin_message` is called, then the tool returns `{"is_error": true, "content": [{"type": "text", "text": "Failed to pin/unpin message: <API error details>"}]}`
+- Given the Telegram channel is active, when the channel's `get_mcp_servers()` is called, then a "telegram-pinning" server is included with both tools
+
 ## User Flow
 
 ### Breadboard: Telegram Message Flow
@@ -275,6 +291,23 @@ The agent delivers a file to the user via the `send_file` tool. The tool validat
   - (skip if disabled,
     no message sent,
     or copy fails)
+      |
+      v
+  Pin Message
+  -----------
+  - agent calls pin_message
+  - pins last response
+    silently
+  - returns message ID
+        |
+  +-----+-----+
+  |           |
+  v           v
+  Success     Error
+  -------     -----
+  - pinned    - no active message
+  - return ID - permission denied
+              - API failure
 ```
 
 ### Flow Description
@@ -287,9 +320,9 @@ The agent delivers a file to the user via the `send_file` tool. The tool validat
 
 **Steering path (mid-exchange)**: If the user sends another message (text or media) while an exchange is in flight — at any phase: boundary detection, pre-processing, SDK streaming, or teardown — the channel checks `self._delivery_lock.locked()`. Because the lock is held by the in-flight exchange, it calls `coordinator.enqueue()` directly — bypassing the lock — and returns. The message lands in `_message_buffer`; once the coordinator's forwarder is alive (created right after pre-processing completes), it moves the message onto the per-turn `sdk_inbox` and the message source yields it to the SDK as a steering message that influences the in-flight response. If the message arrives after the SDK exchange has already torn down but before the lock is released, the drain loop in `_process_through_coordinator` runs another `send_message()` in the same call so the message is processed as a follow-up exchange rather than left stranded in the buffer. (Buffered-delivery events from the priority buffer always start new exchanges via the lock and are never delivered as steering messages.)
 
-**Decision points**: Authorization check (authorized → process, unauthorized → drop). Message type check (text → process text, supported media → download/describe/process, unsupported → drop). Empty check (empty text → drop). File size check (within 20 MB → download, too large → error message). Download result (success → describe and enqueue, failure → error message). Message length check (under limit → continue editing, approaching limit → split at paragraph boundary). Error type (recoverable → show error, continue; non-recoverable → show error, log). Push notification check (enabled and message was sent → copy+delete, disabled or no message → no-op, copy fails → preserve original).
+**Decision points**: Authorization check (authorized → process, unauthorized → drop). Message type check (text → process text, supported media → download/describe/process, unsupported → drop). Empty check (empty text → drop). File size check (within 20 MB → download, too large → error message). Download result (success → describe and enqueue, failure → error message). Message length check (under limit → continue editing, approaching limit → split at paragraph boundary). Error type (recoverable → show error, continue; non-recoverable → show error, log). Push notification check (enabled and message was sent → copy+delete, disabled or no message → no-op, copy fails → preserve original). Pin decision (agent calls pin_message after response → pinned message stays at top of chat).
 
-**Exit points**: Response complete (Result event received), recoverable error (error shown, conversation continues), non-recoverable error (error shown, failure logged), media file too large (error message sent, conversation continues), media download failed (error message sent, conversation continues), unauthorized (silently dropped), unsupported message type or empty text (silently dropped).
+**Exit points**: Response complete (Result event received), recoverable error (error shown, conversation continues), non-recoverable error (error shown, failure logged), media file too large (error message sent, conversation continues), media download failed (error message sent, conversation continues), unauthorized (silently dropped), unsupported message type or empty text (silently dropped), pin success (message pinned, ID returned), pin error (no message, permission denied, or API failure).
 
 ## Requires
 

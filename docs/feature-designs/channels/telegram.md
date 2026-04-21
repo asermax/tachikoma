@@ -58,6 +58,10 @@ The Telegram channel follows the same pattern as the REPL: a `TelegramChannel` c
 │  │              │  │  │ (progressive edits, tool lines, │ │   │
 │  │              │  │  │  message splitting, formatting) │ │   │
 │  │              │  │  └─────────────────────────────────┘ │   │
+│  │              │  │  ┌─────────────────────────────────┐ │   │
+│  │              │  │  │ pinning.py                      │ │   │
+│  │              │  │  │ MCP tools: pin/unpin messages   │ │   │
+│  │              │  │  └─────────────────────────────────┘ │   │
 │  └──────┬──────┘  └──────────────┬────────────────────────┘   │
 │         │                        │                             │
 │         ▼                        ▼                             │
@@ -90,6 +94,7 @@ The key components:
 | `src/tachikoma/coordinator.py` | Existing + `enqueue()` method, `_message_buffer` queue, `has_pending_messages` property, and `_message_source()` async generator passed to `client.connect()` | Message buffer replaces steer/pending-steers pattern |
 | `src/tachikoma/config.py` | `TelegramSettings` model added to `Settings` | Extends existing config; optional section (`None` when not configured) |
 | `src/tachikoma/display.py` | `TOOL_DISPLAY` map for live tool status formatting (present-progressive, Bash prefers description over command); `TOOL_SUMMARY` map and `summarize_tool_activity()` for post-hoc tool activity summaries (present-progressive matching active style, chronological ordering so the summary reads naturally top-to-bottom; when the display limit is exceeded, oldest entries are dropped preserving the most recent context); `summarize_tool_activity()` accepts optional `summary_map` parameter for channel-specific formatters; `format_tool_name()` for formatting MCP tool names into human-readable labels in fallback paths | Shared base formatters used directly by REPL; Telegram uses channel-specific formatter maps via `summary_map` parameter |
+| `src/tachikoma/telegram/pinning.py` | Pin/unpin MCP tool handlers + factory. Follows DES-006: `handle_pin_message()` and `handle_unpin_message()` extracted handlers, `UnpinMessageArgs` Pydantic model, `create_pinning_server()` factory. | Separate module from tools.py (unrelated concerns); getter captured as `Callable[[], int \| None]` to decouple from ResponseRenderer |
 
 ### Event Rendering
 
@@ -194,6 +199,7 @@ sequenceDiagram
 - `telegram_hook` ↔ Bootstrap: follows DES-003 pattern (defined in telegram module, registered in __main__.py, self-skips when channel != "telegram")
 - `media_hook` ↔ Bootstrap: follows DES-003 pattern (defined in media module, registered in __main__.py)
 - Channel ↔ Event bus: subscribes to `BufferedDelivery` (unified buffered-item delivery) via `bus.on()` in `run()` (see ADR-009 and [delivery/priority-buffer](../delivery/priority-buffer.md))
+- Channel ↔ pinning.py: `create_pinning_server()` factory called in `get_mcp_servers()` — captures `Bot`, chat ID, and a locally-defined `get_msg_id()` function that safely resolves `_active_renderer.get_last_message_id()` (returns `None` when no renderer is active)
 
 ## Modeling
 
@@ -235,7 +241,8 @@ ResponseRenderer
 ├── _tool_activities: list[ToolActivity]  (collected activities for summary; cleared at each tool-to-text transition and on finalize)
 ├── _last_edit_time: float                (monotonic timestamp of last edit)
 ├── _split_message_ids: list[int]         (tracked message IDs from split; reused on re-split, excess deleted)
-└── _message_count: int                   (tracks messages sent in current response)
+├── _message_count: int                   (tracks messages sent in current response)
+└── + get_last_message_id() -> int | None (returns _current_message_id; None if no message sent or after reset)
 ```
 
 The renderer exposes a `reset()` method that clears all state for a new response. The channel calls `reset()` after each `Result` event, so buffered messages start with a fresh renderer.
@@ -450,7 +457,7 @@ The `Result` event serves as a turn boundary signal. The channel finalizes the c
 
 ### Channel protocol for capability declaration
 
-**Choice**: `TelegramChannel` implements the `Channel` protocol (`@runtime_checkable Protocol` with explicit subclassing for defaults). Overrides `get_mcp_servers()` to provide the `send_file` tool server and `get_skill_sources()` to provide the skill directory. Receives coordinator in `run()`, not at construction.
+**Choice**: `TelegramChannel` implements the `Channel` protocol (`@runtime_checkable Protocol` with explicit subclassing for defaults). Overrides `get_mcp_servers()` to provide the `send_file` and `telegram-pinning` tool servers and `get_skill_sources()` to provide the skill directory. Receives coordinator in `run()`, not at construction.
 **Why**: Channels are the natural owner of channel-specific capabilities. The protocol makes this explicit and extensible — any future channel can provide tools and skills through the same interface. Creating the channel before the coordinator enables capability extraction during startup without circular dependencies.
 **Alternatives Considered**: Ad-hoc factory functions per channel, separate ChannelCapabilities object, ABC
 
@@ -633,6 +640,36 @@ The `Result` event serves as a turn boundary signal. The channel finalizes the c
 **When**: The agent processes messages
 **Then**: The REPL's `get_mcp_servers()` returns `{}` and `get_skill_sources()` returns `[]`. The `send_file` tool is not registered and the skill is not available.
 
+### Scenario: Pin after response
+
+**Given**: The agent has completed a response, `ResponseRenderer._current_message_id` holds the final message ID
+**When**: The agent calls `pin_message`
+**Then**: The message is pinned silently (no notification via `disable_notification=True`) and the tool returns the message ID
+
+### Scenario: Pin after split response
+
+**Given**: The agent's response was split into multiple messages, `_current_message_id` points to the last chunk
+**When**: The agent calls `pin_message`
+**Then**: The final message in the split sequence is pinned, which is the correct behavior since `_send_chunks()` updates `_current_message_id` to the last chunk's ID
+
+### Scenario: Pin with no active response
+
+**Given**: No active renderer exists (between responses or from a background task)
+**When**: The agent calls `pin_message`
+**Then**: Returns `{"is_error": true, "content": [{"type": "text", "text": "No message available to pin"}]}`
+
+### Scenario: Unpin a pinned message
+
+**Given**: A message was previously pinned via `pin_message`
+**When**: The agent calls `unpin_message` with its ID
+**Then**: The message is unpinned and the tool returns success with the message ID
+
+### Scenario: Pin permission denied in group
+
+**Given**: The bot is in a group without `can_pin_messages` permission
+**When**: The agent calls `pin_message`
+**Then**: Telegram returns a `TelegramAPIError`; the tool returns the error details as `is_error: true`
+
 ## Notes
 
 - aiogram 3.x docs: https://docs.aiogram.dev/en/dev/
@@ -653,3 +690,6 @@ The `Result` event serves as a turn boundary signal. The channel finalizes the c
 - `media.py` provides the media descriptor table, download, description building, file naming, and bootstrap hook. The descriptor table is an ordered sequence — resolution iterates in order and returns the first match. Ordering matters because aiogram populates multiple fields for some message types (e.g., animation sets both `message.animation` and `message.document`). More specific types appear before generic ones: animation → sticker → video_note → photo → voice → video → audio → document.
 - `media_hook` follows DES-003 (subsystem bootstrap hooks): defined in the media module, registered in __main__.py. Creates `/tmp/tachikoma-media` on startup and deletes files older than 30 days.
 - The `_handle_media` handler uses the same `enqueue()` + `_process_through_coordinator()` pattern as `_handle_message`, ensuring consistent buffering behavior for both text and media messages.
+- The `pinning.py` module follows DES-006 (SDK MCP tool server factory) — same structure as `tools.py` for `send_file`, but as a separate module since pinning and file delivery are unrelated concerns
+- The factory captures a `Callable[[], int | None]` getter rather than the renderer instance, keeping `pinning.py` free of any import or knowledge of the `ResponseRenderer` class. The getter is a locally-defined function in `get_mcp_servers()` that safely handles the case where `_active_renderer` is `None`
+- Tool descriptions in the `@tool()` decorators serve as the agent's primary documentation — no separate system prompt instructions needed, following the same approach as `send_file`
