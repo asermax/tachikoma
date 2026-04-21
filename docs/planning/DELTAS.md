@@ -679,6 +679,13 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 **Complexity**: Easy
 **Description**: When a detached process is stopped explicitly via the `stop_process` tool (SIGTERM), the process exit listener still emits a notification to the user (e.g., "exited with code unknown") seconds later. Notifications should only fire for processes that exit on their own — not for processes the agent intentionally stopped. Record the stop reason when `stop_process` is invoked and check it from the exit listener before dispatching a notification so agent-initiated stops remain silent while unexpected exits continue to notify the user.
 
+### DLT-167: Fail-fast memory search for low-context messages
+**Status**: ✗ Defined
+**Depends on**: None
+**Priority**: 1 (Critical)
+**Complexity**: Easy
+**Description**: The memory context provider's search prompt currently triggers a full Glob → Grep → Read search cycle on every incoming message, regardless of whether the message would benefit from memory context. Simple greetings, acknowledgments, quick follow-ups within an active topic, and other low-context messages incur the same search latency as substantive new-topic queries. Add classification guidance to the memory search prompt so the search agent can short-circuit or minimize effort for messages that clearly don't need memory retrieval — returning the no-search sentinel immediately for greetings and acknowledgments, limiting search depth for continuation messages within an active session, and only performing full searches when the message introduces a new topic or references past context. The guidance is prompt-only: no code changes to the provider or pipeline, just refined instructions that teach the search agent when to skip, when to search shallowly, and when to search thoroughly. Goal is reduced preprocessing latency on messages that don't benefit from memory context, without losing relevant context for messages that do.
+
 ### DLT-166: Detect stuck processes via output patterns
 **Status**: ✗ Defined
 **Depends on**: None
