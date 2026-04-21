@@ -658,13 +658,6 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 **Complexity**: Easy
 **Description**: Add a toggle-pin MCP tool that lets the agent pin or unpin messages in the active Telegram chat, surfacing important responses so they stay accessible at the top of the conversation. Works in private chats without admin rights; groups require `can_pin_messages` and channels require `can_edit_messages`.
 
-### DLT-163: Block message enqueue during exchange teardown
-**Status**: ✓ Implementation
-**Depends on**: None
-**Priority**: 1 (Critical)
-**Complexity**: Medium
-**Description**: When a message exchange is completing, messages arriving in the gap between final response delivery and teardown can still be accepted by the message queue, landing in a session that has already finished processing. This is a distinct manifestation from the previously fixed finalization race: the message makes it into the queue but the session is no longer active to consume it. Either fix the drain loop so it blocks new enqueues during teardown, or add a guard at the enqueue layer that inspects exchange state before accepting messages. The fix should ensure no user message is accepted by a session that cannot process it.
-
 ### DLT-164: Document `depends_on` field in skill authoring guide
 **Status**: ✗ Defined
 **Depends on**: None

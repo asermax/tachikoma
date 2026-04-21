@@ -59,7 +59,7 @@ Three-layer architecture with clear boundaries:
 └─────────────────────────────────────────────────────┘
 ```
 
-The **Coordinator** is the programmatic entry point. Channels call `enqueue(text)` to buffer messages and `send_message()` to process them, consuming the resulting `AsyncIterator[AgentEvent]`. The coordinator uses an unbounded `asyncio.Queue` as a message buffer. `send_message()` takes no parameters — it reads from the buffer via `_message_source()`, a long-lived async generator that yields the enriched initial message then drains subsequent buffered messages. This generator is passed to `client.connect()` which runs it as a concurrent SDK-managed task. The coordinator creates a fresh `ClaudeSDKClient` per message exchange, using `resume=sdk_session_id` for conversation continuity. It transforms SDK messages into domain events via the message adapter. Channels check `has_pending_messages` to determine if additional buffered messages need processing.
+The **Coordinator** is the programmatic entry point. Channels call `enqueue(text)` to buffer messages and `send_message()` to process them, consuming the resulting `AsyncIterator[AgentEvent]`. The coordinator uses an unbounded `asyncio.Queue` as a message buffer. `send_message()` takes no parameters — it reads from the buffer via `_message_source()`, a long-lived async generator that yields the enriched initial message then drains subsequent buffered messages. This generator is passed to `client.connect()` which runs it as a concurrent SDK-managed task. The coordinator creates a fresh `ClaudeSDKClient` per message exchange, using `resume=sdk_session_id` for conversation continuity. After one exchange completes and `_drain_back()` recovers leftover messages, `send_message()` checks `_message_buffer` and starts a new exchange if non-empty, yielding all events as one continuous stream. Each iteration creates fresh per-exchange state (status_queue, on_status, session/boundary variables, response accumulation, SDK client, and per-message post-processing task). The previous iteration's pending task is awaited at the start of the next iteration. It transforms SDK messages into domain events via the message adapter.
 
 The **Message Adapter** is a pure transformation layer — it maps SDK `Message` objects into `AgentEvent` domain types, decoupling channels from SDK internals.
 
@@ -237,12 +237,14 @@ Coordinator
 ├── has_pending_messages → bool (property)
 │   └── checks if _message_buffer has pending items
 ├── send_message() → AsyncIterator[AgentEvent]
-│   └── creates fresh ClaudeSDKClient, reads from buffer via _message_source()
+│   └── guard clause returns if buffer empty; otherwise enters re-queue loop:
+│       each iteration creates fresh ClaudeSDKClient, runs full pipeline,
+│       awaits previous iteration's pending post-processing task, breaks when buffer empty
 └── _message_source(initial, buffer) → AsyncGenerator[str]
     └── long-lived async generator: yields enriched initial message, then reads from buffer; passed to client.connect() as a concurrent SDK-managed task
 ```
 
-The `enqueue()` method allows channels to buffer user messages at any time (sync, zero preconditions). The `_message_source()` async generator yields the enriched initial message first, then continuously reads from the `_message_buffer` queue, feeding messages to the SDK via `client.connect()`. Channels call `enqueue(text)` then trigger `_process_through_coordinator()` if the coordinator is idle. The channel's `_process_through_coordinator()` has an outer drain loop (`while coordinator.has_pending_messages`) that processes remaining buffered messages as new full-pipeline sessions, with `on_complete` called after the buffer is empty.
+The `enqueue()` method allows channels to buffer user messages at any time (sync, zero preconditions). The `_message_source()` async generator yields the enriched initial message first, then continuously reads from the `_message_buffer` queue, feeding messages to the SDK via `client.connect()`. Channels call `enqueue(text)` then trigger `send_message()` if the coordinator is idle. The `send_message()` generator runs a re-queue loop: after one exchange completes and `_drain_back()` recovers leftover messages, it checks `_message_buffer` and starts a new exchange if non-empty. The previous iteration's `_pending_msg_task` is awaited at the start of each iteration; the final iteration's task is not awaited before the generator returns (runs as background task, awaited on next `send_message()` call or coordinator shutdown). Channels see one continuous `AsyncIterator[AgentEvent]` stream spanning all re-queue iterations.
 
 ## Data Flow
 
@@ -305,21 +307,21 @@ The `enqueue()` method allows channels to buffer user messages at any time (sync
 
 ```
 1. Channel calls coordinator.enqueue("msg_A") → message placed in _message_buffer
-2. Channel calls _process_through_coordinator() (if idle)
-3. _process_through_coordinator() calls coordinator.send_message()
-4. send_message() creates ClaudeSDKClient, builds _message_source(initial, buffer) async generator
+2. Channel calls send_message() (if idle)
+3. send_message() guard clause: buffer non-empty → enter re-queue loop
+4. Dequeue msg_A, run full pipeline (boundary detection, pre-processing, SDK client creation)
 5. _message_source yields enriched initial message to client.connect() (SDK-managed concurrent task)
 6. Events for msg_A stream back, channel renders them
 7. Meanwhile, user sends "msg_B" → channel calls coordinator.enqueue("msg_B")
 8. _message_source reads "msg_B" from buffer, yields it to the SDK
 9. Events for msg_B stream back through the same send_message() iteration
-10. msg_B completes → Result, send_message() returns
-11. Channel's _process_through_coordinator() checks coordinator.has_pending_messages
-12. If more messages buffered → loops back to step 3 (new full-pipeline session)
-13. If buffer empty → calls on_complete, exits
+10. msg_B completes → Result event, exchange teardown (forwarder cancelled, client disconnected, _drain_back())
+11. Per-message post-processing launched as background task (_pending_msg_task)
+12. Re-queue loop check: _message_buffer empty? → break → generator returns
+13. If more messages arrived during teardown → loop back to step 4 (await previous _pending_msg_task, dequeue next, new exchange in same session via resume)
 ```
 
-The `Result` event serves as a turn boundary. Channels can detect it to reset their rendering state between buffered messages. The outer drain loop in `_process_through_coordinator()` ensures all buffered messages are processed, with each loop iteration running a full pipeline session. `on_complete` is called only after the buffer is fully drained.
+The `Result` event serves as a turn boundary. Channels can detect it to reset their rendering state between buffered messages. The re-queue loop inside `send_message()` ensures all buffered messages are processed within the same generator call, with each iteration running a full pipeline exchange. The generator returns only when the buffer is empty after teardown.
 
 ### Startup flow
 

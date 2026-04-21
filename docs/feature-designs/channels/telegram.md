@@ -147,7 +147,7 @@ sequenceDiagram
     TG->>Channel: aiogram dispatches handler
     Channel->>Coord: enqueue(text)
     Note over Coord: Message buffered in _message_buffer queue
-    Note over Coord,SDK: _message_source() generator feeds buffered<br/>messages to client.connect() within the same session,<br/>or channel drains remaining as new sessions
+    Note over Coord,SDK: _message_source() generator feeds buffered<br/>messages to client.connect() within the same session,<br/>or coordinator re-queue loop processes remaining as follow-up exchanges
 ```
 
 #### Media message flow
@@ -186,7 +186,7 @@ sequenceDiagram
 ```
 
 **Integration Points:**
-- Channel ↔ Coordinator: `send_message()` (async iterator), `enqueue()` (sync buffer write), `has_pending_messages` (drain check)
+- Channel ↔ Coordinator: `send_message()` (async iterator yielding continuous stream from all re-queue iterations), `enqueue()` (sync buffer write)
 - Channel ↔ aiogram: `Router` handler receives `Message`, `Bot` sends/edits messages
 - Channel ↔ `media.py`: function calls — `resolve_media()` for descriptor lookup, `download_media()` for file download, `build_description()` for text composition, `generate_media_filename()` for unique file naming
 - Renderer ↔ telegramify-markdown: converts accumulated markdown to `(text, entities)` tuples on each edit cycle
@@ -247,7 +247,7 @@ Coordinator (existing)
 ├── _client: ClaudeSDKClient
 ├── _message_buffer: asyncio.Queue[str]   (unbounded FIFO queue)
 ├── has_pending_messages: bool             (property: True when buffer is non-empty)
-├── send_message() → AsyncIterator        (reads from buffer; no text parameter)
+├── send_message() → AsyncIterator        (re-queue loop: processes buffer until empty; no text parameter)
 ├── enqueue(text) → None                  (sync, zero preconditions, puts message in buffer)
 └── _message_source(initial, buffer)      (long-lived async generator passed to client.connect())
 ```
@@ -317,22 +317,22 @@ Splitting operates on the post-conversion text+entities via `telegramify_markdow
 
 ```
 1. Channel calls coordinator.enqueue("A"), then triggers processing if idle
-2. send_message() reads from _message_buffer, passes initial message + buffer to _message_source()
-3. _message_source(initial, buffer) is a long-lived async generator passed to client.connect()
-4. Generator yields "A" first, then awaits further messages from the buffer
+2. Channel calls send_message() — single async for iteration
+3. send_message() enters re-queue loop: dequeue A, run full pipeline, create SDK client
+4. _message_source yields "A" first, then awaits further messages from the buffer
 5. Events for A stream back, channel renders them
 6. User sends msg B while A is streaming
 7. aiogram dispatches new handler → channel calls coordinator.enqueue("B")
 8. _message_source() generator picks up B from the buffer and yields it to the SDK session
 9. Events for B stream back through the same session
    Channel renders them as a new response message (renderer was reset)
-10. Session completes when no more buffered messages remain
-11. Channel has an outer drain loop: if has_pending_messages is True after session ends,
-    remaining buffered messages are processed as new full-pipeline sessions
-12. on_complete callback is called after the buffer is empty
+10. Exchange completes → forwarder cancelled, client disconnected, _drain_back() recovers leftovers
+11. Re-queue loop check: _message_buffer non-empty? → dequeue next, start new exchange in same session
+12. Buffer empty → generator returns
+13. on_complete callback is called after send_message() returns
 ```
 
-The `Result` event serves as a turn boundary signal. The channel finalizes the current response and resets the renderer, so each buffered message gets its own Telegram response message(s).
+The `Result` event serves as a turn boundary signal. The channel finalizes the current response and resets the renderer, so each buffered message gets its own Telegram response message(s). The coordinator's re-queue loop handles leftover messages internally — the channel sees one continuous event stream from `send_message()`.
 
 ### Startup flow (with bootstrap integration)
 
@@ -406,7 +406,7 @@ The `Result` event serves as a turn boundary signal. The channel finalizes the c
 
 ### Message buffer via Coordinator.enqueue()
 
-**Choice**: Replace `steer()` + `_pending_steers` with an `asyncio.Queue`-based message buffer. `enqueue(text)` is sync and zero-precondition. `_message_source(initial, buffer)` is a long-lived async generator passed to `client.connect()` (SDK-managed concurrent task). The channel calls `enqueue()`, then triggers processing if idle. An outer drain loop processes remaining buffered messages as new full-pipeline sessions.
+**Choice**: Replace `steer()` + `_pending_steers` with an `asyncio.Queue`-based message buffer. `enqueue(text)` is sync and zero-precondition. `_message_source(initial, buffer)` is a long-lived async generator passed to `client.connect()` (SDK-managed concurrent task). The channel calls `enqueue()`, then triggers processing if idle. A re-queue loop inside `send_message()` processes remaining buffered messages as follow-up exchanges within the same generator call.
 **Why**: The queue-based approach decouples message arrival from processing, eliminates the counter-based coordination, and integrates cleanly with the SDK's `client.connect()` message source contract. `send_message()` no longer takes a text parameter — it reads from the buffer.
 **Sources**: Claude Agent SDK Python source, asyncio.Queue documentation
 
@@ -490,7 +490,7 @@ The `Result` event serves as a turn boundary signal. The channel finalizes the c
 
 **Given**: An exchange for message A is in flight (any phase: boundary detection, pre-processing, SDK streaming, or teardown — not just streaming)
 **When**: The user sends message B
-**Then**: `_handle_message` checks `self._delivery_lock.locked()`. Because the lock is held by A's `_process_through_coordinator()` call, it calls `coordinator.enqueue("B")` directly (bypassing the lock) and returns. The message lands in `_message_buffer`. As soon as the coordinator's forwarder is alive (after pre-processing completes), it moves B onto the per-turn `sdk_inbox` and the message source yields it to the SDK as a steering message — B influences A's in-flight response rather than being held back as a separate turn. If B arrives after `coordinator.send_message()` has already returned (forwarder gone, `sdk_inbox` torn down) but before the lock is released, the drain loop in `_process_through_coordinator` picks B up and runs it as a follow-up exchange in the same call, so B is never stranded in the buffer.
+**Then**: `_handle_message` checks `self._delivery_lock.locked()`. Because the lock is held by A's `_process_through_coordinator()` call, it calls `coordinator.enqueue("B")` directly (bypassing the lock) and returns. The message lands in `_message_buffer`. As soon as the coordinator's forwarder is alive (after pre-processing completes), it moves B onto the per-turn `sdk_inbox` and the message source yields it to the SDK as a steering message — B influences A's in-flight response rather than being held back as a separate turn. If B arrives after the SDK exchange has torn down (forwarder gone, `sdk_inbox` torn down) but before the lock is released, the coordinator's re-queue loop in `send_message()` picks B up and processes it as a follow-up exchange within the same generator call, yielding its events as a continuation of the same stream. B is never stranded in the buffer.
 
 ### Scenario: Message splitting at paragraph boundary
 
