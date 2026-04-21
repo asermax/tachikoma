@@ -847,25 +847,22 @@ class TelegramChannel(Channel):
 
         try:
             async with ChatActionSender(bot=self._bot, chat_id=chat_id, action="typing"):
-                # Drain loop: handles the initial buffered message plus any
-                # messages enqueued during the lock window that landed too late
-                # for the in-flight forwarder to pick up (e.g. between send_message
-                # returning and the lock being released). Each iteration is a
-                # fresh exchange.
-                while self._coordinator.has_pending_messages:
-                    async for event in self._coordinator.send_message():
-                        if isinstance(event, Status):
-                            await self._active_renderer.handle_status(event.message)
-                        elif isinstance(event, TextChunk):
-                            await self._active_renderer.handle_text(event.text)
-                        elif isinstance(event, ToolActivity):
-                            await self._active_renderer.handle_tool(event)
-                        elif isinstance(event, Error):
-                            await self._active_renderer.handle_error(event)
-                        elif isinstance(event, Result):
-                            await self._active_renderer.finalize()
-                            await self._active_renderer.notify()
-                            self._active_renderer.reset()
+                # The coordinator's re-queue loop handles leftover messages
+                # internally — we consume the continuous stream until the
+                # generator returns.
+                async for event in self._coordinator.send_message():
+                    if isinstance(event, Status):
+                        await self._active_renderer.handle_status(event.message)
+                    elif isinstance(event, TextChunk):
+                        await self._active_renderer.handle_text(event.text)
+                    elif isinstance(event, ToolActivity):
+                        await self._active_renderer.handle_tool(event)
+                    elif isinstance(event, Error):
+                        await self._active_renderer.handle_error(event)
+                    elif isinstance(event, Result):
+                        await self._active_renderer.finalize()
+                        await self._active_renderer.notify()
+                        self._active_renderer.reset()
 
             if on_complete is not None:
                 await on_complete()

@@ -410,329 +410,346 @@ class Coordinator:
         if self._message_buffer.empty():
             return
 
-        text = self._message_buffer.get_nowait()
-        _log.debug("Message received: length={n}", n=len(text))
+        while True:  # Re-queue loop: processes leftover messages after exchange teardown
+            text = self._message_buffer.get_nowait()
+            _log.debug("Message received: length={n}", n=len(text))
 
-        # Track last message time for idle gating
-        self._last_message_time = datetime.now(UTC)
+            # Track last message time for idle gating
+            self._last_message_time = datetime.now(UTC)
 
-        # Shared status plumbing: pipeline components push granular status
-        # messages onto the queue; _drain_status_while_running yields them as
-        # Status AgentEvents concurrently with the background work.
-        status_queue: asyncio.Queue[str] = asyncio.Queue()
+            # Per-iteration status plumbing: pipeline components push granular
+            # status messages onto the queue; _drain_status_while_running yields
+            # them as Status AgentEvents concurrently with the background work.
+            status_queue: asyncio.Queue[str] = asyncio.Queue()
 
-        async def on_status(msg: str) -> None:
-            await status_queue.put(msg)
+            async def on_status(msg: str) -> None:
+                await status_queue.put(msg)
 
-        # Await any pending per-message post-processing task before proceeding
-        if self._pending_msg_task is not None:
-            try:
-                await self._pending_msg_task
-            except Exception as exc:
-                _log.exception(
-                    "Pending per-message task failed, proceeding anyway: err={err}",
-                    err=str(exc),
-                )
-            finally:
-                self._pending_msg_task = None
-
-        # Create a session if this is the first message in a new conversation
-        active = None
-        is_new_session = False
-        cold_start_resumed = False
-
-        if self._registry is not None:
-            try:
-                active = await self._registry.get_active_session()
-
-                if active is None:
-                    cold_start_task = asyncio.create_task(
-                        self._attempt_cold_start_resume(text, on_status=on_status)
-                    )
-                    async for event in _drain_status_while_running(cold_start_task, status_queue):
-                        yield event
-                    active = cold_start_task.result()
-                    cold_start_resumed = active is not None
-
-                if active is None:
-                    active = await self._registry.create_session()
-                    is_new_session = True
-
-            except Exception as exc:
-                # Session tracking failures are logged but never crash the conversation
-                _log.exception("Failed to create session: err={err}", err=str(exc))
-
-        # Boundary detection: check if the message continues the current topic
-        will_detect_boundary = (
-            active is not None
-            and active.summary is not None
-            and self._cwd is not None
-            and not cold_start_resumed
-        )
-        if will_detect_boundary:
-            assert active is not None and active.summary is not None
-            assert self._registry is not None
-
-            try:
-                candidates = await self._query_resume_candidates()
-
-                boundary_task: asyncio.Task[BoundaryResult] = asyncio.create_task(
-                    detect_boundary(
-                        text,
-                        active,
-                        self._agent_defaults,
-                        candidates=candidates,
-                        on_status=on_status,
-                    )
-                )
-                async for event in _drain_status_while_running(boundary_task, status_queue):
-                    yield event
-                result: BoundaryResult = boundary_task.result()
-                if result.resume_session_id is not None:
-                    # resume_id is authoritative — always transition to resume
-                    _log.info(
-                        "Session match detected, resuming session (resume_id={resume_id})",
-                        resume_id=result.resume_session_id,
-                    )
-                    resumed = await self._handle_transition(
-                        active, resume_session_id=result.resume_session_id
-                    )
-                    active = await self._registry.get_active_session()
-                    is_new_session = not resumed
-                elif not result.continues:
-                    _log.info("Topic shift detected, transitioning session")
-                    resumed = await self._handle_transition(
-                        active, resume_session_id=result.resume_session_id
-                    )
-                    # Re-fetch active session after transition
-                    active = await self._registry.get_active_session()
-                    is_new_session = not resumed
-            except Exception as exc:
-                # Boundary detection failures default to continuation (fail-open)
-                _log.exception(
-                    "Boundary detection failed, proceeding as continuation: err={err}",
-                    err=str(exc),
-                )
-
-        # Save foundational context for new sessions (initial or post-transition)
-        if (
-            is_new_session
-            and self._foundational_context is not None
-            and self._registry is not None
-            and active is not None
-        ):
-            entries: list[tuple[str, str, dict | None]] = [
-                (owner, content, None) for owner, content in self._foundational_context
-            ]
-            await self._registry.save_context_entries(active.id, entries)
-
-        # Run session-gated pre-processing pipeline on first message of new session
-        if is_new_session and self._pre_pipeline is not None:
-            try:
-                pre_task = asyncio.create_task(self._pre_pipeline.run(text, on_status=on_status))
-                async for event in _drain_status_while_running(pre_task, status_queue):
-                    yield event
-                results = pre_task.result()
-                if results:
-                    # Merge mcp_servers from all results (session-scoped, not persisted)
-                    merged: dict[str, McpServerConfig] = {}
-                    for r in results:
-                        if r.mcp_servers:
-                            merged.update(r.mcp_servers)
-                    self._mcp_servers = merged
-
-                    # Save provider entries to DB for system prompt assembly
-                    if self._registry is not None and active is not None:
-                        entries_to_save = [
-                            (r.tag, r.content, r.metadata) for r in results if r.content
-                        ]
-                        if entries_to_save:
-                            await self._registry.save_context_entries(active.id, entries_to_save)
-
-            except Exception as exc:
-                _log.exception("Pre-processing failed: err={err}", err=str(exc))
-
-        # Determine whether to resume the existing SDK session
-        resume_id = self._sdk_session_id if not is_new_session else None
-
-        entries: list[SessionContextEntry] = []
-        if self._registry is not None and active is not None:
-            try:
-                entries = await self._registry.load_context_entries(active.id)
-            except Exception as exc:
-                _log.exception(
-                    "Context load failed, using preamble only: session_id={id} err={err}",
-                    id=active.id,
-                    err=str(exc),
-                )
-
-        if self._msg_pre_pipeline is not None and active is not None:
-            try:
-                msg_pre_task = asyncio.create_task(
-                    self._msg_pre_pipeline.run(
-                        text,
-                        existing_entries=entries,
-                        sdk_session_id=self._sdk_session_id,
-                        on_status=on_status,
-                        session_summary=active.summary,
-                        session_last_exchange=active.last_exchange,
-                    )
-                )
-                async for event in _drain_status_while_running(msg_pre_task, status_queue):
-                    yield event
-                pp_results = msg_pre_task.result()
-                if pp_results and self._registry is not None:
-                    pp_tuples = [(r.tag, r.content, r.metadata) for r in pp_results if r.content]
-
-                    if pp_tuples:
-                        try:
-                            saved = await self._registry.save_context_entries(
-                                active.id,
-                                pp_tuples,
-                            )
-                            entries.extend(saved)
-                        except Exception as exc:
-                            _log.exception(
-                                "Failed to save per-message entries: err={err}",
-                                err=str(exc),
-                            )
-
-            except Exception as exc:
-                _log.exception(
-                    "Per-message pre-processing failed: err={err}",
-                    err=str(exc),
-                )
-
-        agents: dict[str, AgentDefinition] | None = None
-        if self._skill_registry is not None:
-            derived = derive_agents_from_entries(entries, self._skill_registry)
-            agents = derived if derived else None
-
-        system_prompt_append = build_system_prompt(entries, timezone=self._timezone)
-
-        # Build options and create a fresh client for this exchange
-        stderr_acc = StderrAccumulator()
-        options = self._build_options(
-            resume=resume_id,
-            system_prompt_append=system_prompt_append,
-            agents=agents,
-        )
-        options.stderr = stderr_acc
-        response_chunks: list[str] = []
-        final_text_group: list[str] = []
-        had_tool_activity = False
-
-        sdk_inbox: asyncio.Queue[str] = asyncio.Queue()
-        message_source = _message_source(text, sdk_inbox)
-        transport = FilePromptTransport(prompt=message_source, options=options)
-        client = ClaudeSDKClient(options, transport=transport)
-
-        forwarder_task: asyncio.Task[None] = asyncio.create_task(
-            self._forwarder(sdk_inbox),
-        )
-
-        try:
-            await client.connect(message_source)
-            self._client = client
-
-            async for sdk_message in client.receive_response():
-                for event in adapt(sdk_message):
-                    yield event
-
-                    if isinstance(event, TextChunk):
-                        response_chunks.append(event.text)
-                        final_text_group.append(event.text)
-
-                    if isinstance(event, ToolActivity):
-                        had_tool_activity = True
-                        final_text_group = []
-
-                    if isinstance(event, Error) and is_encoding_error(event.message):
-                        await self._handle_encoding_error(active)
-
-                    if (
-                        isinstance(event, Result)
-                        and self._registry is not None
-                        and active is not None
-                        and event.session_id
-                    ):
-                        self._sdk_session_id = event.session_id
-                        try:
-                            transcript_path = _derive_transcript_path(event.session_id, self._cwd)
-                            await self._registry.update_metadata(
-                                session_id=active.id,
-                                sdk_session_id=event.session_id,
-                                transcript_path=transcript_path,
-                            )
-                        except Exception as exc:
-                            _log.exception(
-                                "Failed to update session metadata: err={err}",
-                                err=str(exc),
-                            )
-
-        except (CLIConnectionError, ProcessError) as exc:
-            stderr = stderr_acc.get()
-            if stderr is not None:
-                _log.error(
-                    "Stream error (recoverable): err={err}, stderr={stderr}",
-                    err=str(exc),
-                    stderr=stderr,
-                )
-            else:
-                _log.error("Stream error (recoverable): err={err}", err=str(exc))
-            if is_encoding_error(str(exc)):
-                await self._handle_encoding_error(active)
-            yield Error(message=sanitize_text(str(exc)), recoverable=True)
-
-        finally:
-            # Cancel the forwarder before disconnecting so _message_buffer has
-            # no consumer during SDK teardown.
-            forwarder_task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
+            # Await the previous iteration's per-message post-processing task.
+            # On the first iteration _pending_msg_task is None (no-op).
+            if self._pending_msg_task is not None:
                 try:
-                    await forwarder_task
-                except Exception:
-                    _log.exception("Forwarder failed")
-
-            await client.disconnect()
-
-            # Drain-back and _client reset form a single synchronous block so
-            # has_pending_messages is accurate at the exact moment _client flips.
-            self._drain_back(sdk_inbox)
-            self._client = None
-
-        # Trigger per-message post-processing after response completes
-        if self._msg_pipeline is not None and active is not None and self._registry is not None:
-            # Re-fetch session to get latest metadata (may have been updated)
-            current_session = await self._registry.get_active_session()
-            if current_session is not None:
-                response_text = "".join(response_chunks)
-
-                # Compute filtered final text: only the text after the last tool call.
-                # When no tools were used, final_text is None (no filtering needed).
-                # When tools were used but no text follows the last one, the join
-                # produces an empty string which becomes None via `or None`.
-                final_text = (
-                    "".join(final_text_group).strip() or None if had_tool_activity else None
-                )
-
-                self._pending_msg_task = asyncio.create_task(
-                    self._msg_pipeline.run(
-                        current_session,
-                        text,
-                        response_text,
-                        final_text=final_text,
+                    await self._pending_msg_task
+                except Exception as exc:
+                    _log.exception(
+                        "Pending per-message task failed, proceeding anyway: err={err}",
+                        err=str(exc),
                     )
-                )
-                self._pending_msg_task.add_done_callback(
-                    lambda _t: self._maybe_emit_idle(),
-                )
+                finally:
+                    self._pending_msg_task = None
 
-        # Update last message time after response completes
-        self._last_message_time = datetime.now(UTC)
-        self._maybe_emit_idle()
+            # Create a session if this is the first message in a new conversation
+            active = None
+            is_new_session = False
+            cold_start_resumed = False
 
-        _log.debug("Response complete")
+            if self._registry is not None:
+                try:
+                    active = await self._registry.get_active_session()
+
+                    if active is None:
+                        cold_start_task = asyncio.create_task(
+                            self._attempt_cold_start_resume(text, on_status=on_status)
+                        )
+                        async for event in _drain_status_while_running(
+                            cold_start_task, status_queue
+                        ):
+                            yield event
+                        active = cold_start_task.result()
+                        cold_start_resumed = active is not None
+
+                    if active is None:
+                        active = await self._registry.create_session()
+                        is_new_session = True
+
+                except Exception as exc:
+                    # Session tracking failures are logged but never crash the conversation
+                    _log.exception("Failed to create session: err={err}", err=str(exc))
+
+            # Boundary detection: check if the message continues the current topic
+            will_detect_boundary = (
+                active is not None
+                and active.summary is not None
+                and self._cwd is not None
+                and not cold_start_resumed
+            )
+            if will_detect_boundary:
+                assert active is not None and active.summary is not None
+                assert self._registry is not None
+
+                try:
+                    candidates = await self._query_resume_candidates()
+
+                    boundary_task: asyncio.Task[BoundaryResult] = asyncio.create_task(
+                        detect_boundary(
+                            text,
+                            active,
+                            self._agent_defaults,
+                            candidates=candidates,
+                            on_status=on_status,
+                        )
+                    )
+                    async for event in _drain_status_while_running(boundary_task, status_queue):
+                        yield event
+                    result: BoundaryResult = boundary_task.result()
+                    if result.resume_session_id is not None:
+                        # resume_id is authoritative — always transition to resume
+                        _log.info(
+                            "Session match detected, resuming session (resume_id={resume_id})",
+                            resume_id=result.resume_session_id,
+                        )
+                        resumed = await self._handle_transition(
+                            active, resume_session_id=result.resume_session_id
+                        )
+                        active = await self._registry.get_active_session()
+                        is_new_session = not resumed
+                    elif not result.continues:
+                        _log.info("Topic shift detected, transitioning session")
+                        resumed = await self._handle_transition(
+                            active, resume_session_id=result.resume_session_id
+                        )
+                        # Re-fetch active session after transition
+                        active = await self._registry.get_active_session()
+                        is_new_session = not resumed
+                except Exception as exc:
+                    # Boundary detection failures default to continuation (fail-open)
+                    _log.exception(
+                        "Boundary detection failed, proceeding as continuation: err={err}",
+                        err=str(exc),
+                    )
+
+            # Save foundational context for new sessions (initial or post-transition)
+            if (
+                is_new_session
+                and self._foundational_context is not None
+                and self._registry is not None
+                and active is not None
+            ):
+                entries: list[tuple[str, str, dict | None]] = [
+                    (owner, content, None) for owner, content in self._foundational_context
+                ]
+                await self._registry.save_context_entries(active.id, entries)
+
+            # Run session-gated pre-processing pipeline on first message of new session
+            if is_new_session and self._pre_pipeline is not None:
+                try:
+                    pre_task = asyncio.create_task(
+                        self._pre_pipeline.run(text, on_status=on_status)
+                    )
+                    async for event in _drain_status_while_running(pre_task, status_queue):
+                        yield event
+                    results = pre_task.result()
+                    if results:
+                        # Merge mcp_servers from all results (session-scoped, not persisted)
+                        merged: dict[str, McpServerConfig] = {}
+                        for r in results:
+                            if r.mcp_servers:
+                                merged.update(r.mcp_servers)
+                        self._mcp_servers = merged
+
+                        # Save provider entries to DB for system prompt assembly
+                        if self._registry is not None and active is not None:
+                            entries_to_save = [
+                                (r.tag, r.content, r.metadata) for r in results if r.content
+                            ]
+                            if entries_to_save:
+                                await self._registry.save_context_entries(
+                                    active.id, entries_to_save
+                                )
+
+                except Exception as exc:
+                    _log.exception("Pre-processing failed: err={err}", err=str(exc))
+
+            # Determine whether to resume the existing SDK session
+            resume_id = self._sdk_session_id if not is_new_session else None
+
+            entries: list[SessionContextEntry] = []
+            if self._registry is not None and active is not None:
+                try:
+                    entries = await self._registry.load_context_entries(active.id)
+                except Exception as exc:
+                    _log.exception(
+                        "Context load failed, using preamble only: session_id={id} err={err}",
+                        id=active.id,
+                        err=str(exc),
+                    )
+
+            if self._msg_pre_pipeline is not None and active is not None:
+                try:
+                    msg_pre_task = asyncio.create_task(
+                        self._msg_pre_pipeline.run(
+                            text,
+                            existing_entries=entries,
+                            sdk_session_id=self._sdk_session_id,
+                            on_status=on_status,
+                            session_summary=active.summary,
+                            session_last_exchange=active.last_exchange,
+                        )
+                    )
+                    async for event in _drain_status_while_running(msg_pre_task, status_queue):
+                        yield event
+                    pp_results = msg_pre_task.result()
+                    if pp_results and self._registry is not None:
+                        pp_tuples = [
+                            (r.tag, r.content, r.metadata)
+                            for r in pp_results
+                            if r.content
+                        ]
+
+                        if pp_tuples:
+                            try:
+                                saved = await self._registry.save_context_entries(
+                                    active.id,
+                                    pp_tuples,
+                                )
+                                entries.extend(saved)
+                            except Exception as exc:
+                                _log.exception(
+                                    "Failed to save per-message entries: err={err}",
+                                    err=str(exc),
+                                )
+
+                except Exception as exc:
+                    _log.exception(
+                        "Per-message pre-processing failed: err={err}",
+                        err=str(exc),
+                    )
+
+            agents: dict[str, AgentDefinition] | None = None
+            if self._skill_registry is not None:
+                derived = derive_agents_from_entries(entries, self._skill_registry)
+                agents = derived if derived else None
+
+            system_prompt_append = build_system_prompt(entries, timezone=self._timezone)
+
+            # Build options and create a fresh client for this exchange
+            stderr_acc = StderrAccumulator()
+            options = self._build_options(
+                resume=resume_id,
+                system_prompt_append=system_prompt_append,
+                agents=agents,
+            )
+            options.stderr = stderr_acc
+            response_chunks: list[str] = []
+            final_text_group: list[str] = []
+            had_tool_activity = False
+
+            sdk_inbox: asyncio.Queue[str] = asyncio.Queue()
+            message_source = _message_source(text, sdk_inbox)
+            transport = FilePromptTransport(prompt=message_source, options=options)
+            client = ClaudeSDKClient(options, transport=transport)
+
+            forwarder_task: asyncio.Task[None] = asyncio.create_task(
+                self._forwarder(sdk_inbox),
+            )
+
+            try:
+                await client.connect(message_source)
+                self._client = client
+
+                async for sdk_message in client.receive_response():
+                    for event in adapt(sdk_message):
+                        yield event
+
+                        if isinstance(event, TextChunk):
+                            response_chunks.append(event.text)
+                            final_text_group.append(event.text)
+
+                        if isinstance(event, ToolActivity):
+                            had_tool_activity = True
+                            final_text_group = []
+
+                        if isinstance(event, Error) and is_encoding_error(event.message):
+                            await self._handle_encoding_error(active)
+
+                        if (
+                            isinstance(event, Result)
+                            and self._registry is not None
+                            and active is not None
+                            and event.session_id
+                        ):
+                            self._sdk_session_id = event.session_id
+                            try:
+                                transcript_path = _derive_transcript_path(
+                                    event.session_id, self._cwd
+                                )
+                                await self._registry.update_metadata(
+                                    session_id=active.id,
+                                    sdk_session_id=event.session_id,
+                                    transcript_path=transcript_path,
+                                )
+                            except Exception as exc:
+                                _log.exception(
+                                    "Failed to update session metadata: err={err}",
+                                    err=str(exc),
+                                )
+
+            except (CLIConnectionError, ProcessError) as exc:
+                stderr = stderr_acc.get()
+                if stderr is not None:
+                    _log.error(
+                        "Stream error (recoverable): err={err}, stderr={stderr}",
+                        err=str(exc),
+                        stderr=stderr,
+                    )
+                else:
+                    _log.error("Stream error (recoverable): err={err}", err=str(exc))
+                if is_encoding_error(str(exc)):
+                    await self._handle_encoding_error(active)
+                yield Error(message=sanitize_text(str(exc)), recoverable=True)
+
+            finally:
+                # Cancel the forwarder before disconnecting so _message_buffer has
+                # no consumer during SDK teardown.
+                forwarder_task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    try:
+                        await forwarder_task
+                    except Exception:
+                        _log.exception("Forwarder failed")
+
+                await client.disconnect()
+
+                # Drain-back and _client reset form a single synchronous block so
+                # has_pending_messages is accurate at the exact moment _client flips.
+                self._drain_back(sdk_inbox)
+                self._client = None
+
+            # Trigger per-message post-processing after response completes
+            if self._msg_pipeline is not None and active is not None and self._registry is not None:
+                # Re-fetch session to get latest metadata (may have been updated)
+                current_session = await self._registry.get_active_session()
+                if current_session is not None:
+                    response_text = "".join(response_chunks)
+
+                    # Compute filtered final text: only the text after the last tool call.
+                    # When no tools were used, final_text is None (no filtering needed).
+                    # When tools were used but no text follows the last one, the join
+                    # produces an empty string which becomes None via `or None`.
+                    final_text = (
+                        "".join(final_text_group).strip() or None if had_tool_activity else None
+                    )
+
+                    self._pending_msg_task = asyncio.create_task(
+                        self._msg_pipeline.run(
+                            current_session,
+                            text,
+                            response_text,
+                            final_text=final_text,
+                        )
+                    )
+                    self._pending_msg_task.add_done_callback(
+                        lambda _t: self._maybe_emit_idle(),
+                    )
+
+            # Update last message time after response completes
+            self._last_message_time = datetime.now(UTC)
+            self._maybe_emit_idle()
+
+            _log.debug("Response complete")
+
+            if self._message_buffer.empty():
+                break
 
     async def _handle_encoding_error(self, session: Session | None) -> None:
         """Clear contaminated SDK session reference and mark session as errored.
