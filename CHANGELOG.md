@@ -2,6 +2,14 @@
 
 <!-- version list -->
 
+## v1.40.0 (2026-04-21)
+
+### Features
+
+- **issue-71**: Wip add
+  ([`b26afef`](https://github.com/asermax/tachikoma/commit/b26afefbb9cfad26c5d5d582c1d6cfe885dc53ce))
+
+
 ## v1.39.0 (2026-04-21)
 
 ### Documentation
