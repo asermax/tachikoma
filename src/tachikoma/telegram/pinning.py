@@ -25,7 +25,8 @@ async def handle_pin_message(
 ) -> dict:
     """Handle a pin_message tool call.
 
-    Pins the last response message silently and returns its ID.
+    Pins the last response message and returns its ID. The pin triggers a
+    push notification so the user sees the pinned message promptly.
     Returns an error if no message is available or pinning fails.
     """
     message_id = getter()
@@ -37,7 +38,7 @@ async def handle_pin_message(
         }
 
     try:
-        await bot.pin_chat_message(chat_id, message_id, disable_notification=True)
+        await bot.pin_chat_message(chat_id, message_id, disable_notification=False)
     except TelegramAPIError as e:
         return {
             "is_error": True,
@@ -75,7 +76,7 @@ def create_pinning_server(
     bot: Bot,
     chat_id: int,
     get_last_message_id: Callable[[], int | None],
-) -> McpSdkServerConfig:
+) -> tuple[McpSdkServerConfig, Callable[[int], bool]]:
     """Create MCP tool server for pin_message and unpin_message tools.
 
     Args:
@@ -84,8 +85,10 @@ def create_pinning_server(
         get_last_message_id: Callable returning the current renderer's last message ID.
 
     Returns:
-        McpSdkServerConfig for registration with the coordinator.
+        Tuple of (McpSdkServerConfig, is_pinned checker). The checker returns
+        True for message IDs that are currently tracked as pinned.
     """
+    pinned_ids: set[int] = set()
 
     @tool(
         "pin_message",
@@ -93,7 +96,8 @@ def create_pinning_server(
         "\n"
         "Parameters: none\n"
         "\n"
-        "Pins the most recent response message silently (no notification). "
+        "Pins the most recent response message. The pin triggers a push "
+        "notification so the user sees the pinned message promptly. "
         "Returns the pinned message's Telegram ID on success. "
         "Returns an error if no response has been sent yet or if pinning fails "
         "(e.g., insufficient permissions in groups/channels).\n"
@@ -102,7 +106,12 @@ def create_pinning_server(
         {},
     )
     async def pin_message(args: dict) -> dict:
-        return await handle_pin_message(get_last_message_id, bot, chat_id)
+        result = await handle_pin_message(get_last_message_id, bot, chat_id)
+        if not result.get("is_error"):
+            msg_id = get_last_message_id()
+            if msg_id is not None:
+                pinned_ids.add(msg_id)
+        return result
 
     @tool(
         "unpin_message",
@@ -119,9 +128,17 @@ def create_pinning_server(
     )
     async def unpin_message(args: dict) -> dict:
         parsed = UnpinMessageArgs.model_validate(args)
-        return await handle_unpin_message(parsed.message_id, bot, chat_id)
+        result = await handle_unpin_message(parsed.message_id, bot, chat_id)
+        if not result.get("is_error"):
+            pinned_ids.discard(parsed.message_id)
+        return result
 
-    return create_sdk_mcp_server(
+    def is_pinned(message_id: int) -> bool:
+        return message_id in pinned_ids
+
+    server = create_sdk_mcp_server(
         name="telegram-pinning",
         tools=[pin_message, unpin_message],
     )
+
+    return server, is_pinned

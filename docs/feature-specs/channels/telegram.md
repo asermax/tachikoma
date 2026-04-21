@@ -12,7 +12,7 @@ A Telegram bot that receives text messages and media messages from a single auth
 - As a user, I want to see what tools the agent is using while it works so that I understand what is happening during pauses
 - As a user, I want messages I send during an active response to be processed so that I can provide follow-up input without waiting
 - As a user, I want to send images, voice messages, and other media through Telegram so that the agent can see and work with my non-text content
-- As a user, I want the agent to pin important messages in our Telegram chat so that key responses (summaries, decisions, reference material) stay accessible at the top of the conversation without me having to manually pin them
+- As a user, I want the agent to pin important messages in our Telegram chat so that key responses (summaries, decisions, reference material) stay accessible at the top of the conversation without me having to manually pin them, and I still receive a notification for the pinned message
 
 ## Requirements
 
@@ -32,7 +32,7 @@ A Telegram bot that receives text messages and media messages from a single auth
 | R11 | Error display: surface coordinator errors (recoverable and non-recoverable) as messages in the Telegram chat |
 | R12 | Event bus integration: subscribe to `BufferedDelivery` events and route prompts through the coordinator as new message turns; flush pending buffer items on graceful shutdown (see [delivery/priority-buffer](../delivery/priority-buffer.md)) |
 | R13 | File delivery via `send_file` tool: the agent can send a file to the user's Telegram chat. Accepted `file_path` forms are workspace-relative, absolute paths inside the workspace, absolute paths under the system temporary directory, and absolute paths under operator-configured extra roots. Paths outside all allowed roots are rejected with an error that names the allowed roots. Only existing regular files can be sent. |
-| R14 | Message pinning: the agent can pin and unpin messages in the active Telegram chat. Pins are silent (no notification). Both operations are idempotent. Permission failures and API errors return clear error responses to the agent |
+| R14 | Message pinning: the agent can pin and unpin messages in the active Telegram chat. Pins trigger a push notification so the user sees the pinned message promptly. Both operations are idempotent. Permission failures and API errors return clear error responses to the agent |
 
 ## Behaviors
 
@@ -99,6 +99,7 @@ The bot progressively edits a single Telegram message as text chunks arrive, thr
 - Given an unexpected exception occurs before any text was streamed, then the exception error triggers a normal push notification
 - Given a Result event arrives with no preceding text, tools, or errors (empty response), then no copy+delete is performed
 - Given push notifications are disabled in config, when a response completes, then no copy+delete is performed and messages use default notification behavior
+- Given a message was pinned via `pin_message` during the current response, when `notify()` runs, then neither copy nor delete is performed — the message is left untouched and the pin is preserved (the pin action itself delivered the push notification)
 
 ### Tool Activity Display (R4)
 
@@ -201,10 +202,10 @@ The agent delivers a file to the user via the `send_file` tool. The tool validat
 
 ### Message Pinning (R14)
 
-The agent can pin and unpin messages in the active Telegram chat via two MCP tools. `pin_message` pins the last response message silently (no Telegram notification) and returns its Telegram message ID. `unpin_message` accepts a message ID and unpins that specific message. Both tools are idempotent.
+The agent can pin and unpin messages in the active Telegram chat via two MCP tools. `pin_message` pins the last response message (triggering a push notification) and returns its Telegram message ID. `unpin_message` accepts a message ID and unpins that specific message. Both tools are idempotent. When a message is pinned, the push notification copy+delete is skipped — the pin action itself delivers the notification, and the pinned message is left untouched.
 
 **Acceptance Criteria**:
-- Given the agent has sent a response in the Telegram chat, when `pin_message` is called, then the last response message is pinned silently and the tool returns `{"content": [{"type": "text", "text": "Message pinned (ID: 123)"}]}`
+- Given the agent has sent a response in the Telegram chat, when `pin_message` is called, then the last response message is pinned (triggering a push notification via `disable_notification=False`) and the tool returns `{"content": [{"type": "text", "text": "Message pinned (ID: 123)"}]}`
 - Given the agent has sent a response that was split into multiple messages, when `pin_message` is called, then the final message in the split sequence is pinned and its message ID is returned
 - Given `pin_message` is called with no active response (no tracked message ID, e.g. from a background task with no active renderer), when the tool executes, then it returns `{"is_error": true, "content": [{"type": "text", "text": "No message available to pin"}]}`
 - Given a message is already pinned, when `pin_message` is called on it again, then the operation succeeds without error (idempotent)
@@ -290,14 +291,16 @@ The agent can pin and unpin messages in the active Telegram chat via two MCP too
   - delete original
   - (skip if disabled,
     no message sent,
-    or copy fails)
+    copy fails, OR
+    message is pinned)
       |
       v
   Pin Message
   -----------
   - agent calls pin_message
   - pins last response
-    silently
+    (triggers push
+     notification)
   - returns message ID
         |
   +-----+-----+
@@ -314,13 +317,13 @@ The agent can pin and unpin messages in the active Telegram chat via two MCP too
 
 **Entry point**: User sends a message (text or media) to the Telegram bot from any Telegram client.
 
-**Happy path (text)**: The bot receives the message, confirms the sender is authorized, checks it's a non-empty text message, sends a typing indicator, and forwards the text to the coordinator. As the agent processes and responds, the bot progressively edits a single message showing the accumulating text (throttled for rate limits). Tool activity appears as an italicized inline status line within the same message — appended below any text already streamed, separated by a blank line. Each new tool replaces the previous tool line. When text resumes, the tool line is replaced with an italicized dynamic summary (e.g., "*🔧 Reading 3 files and searching for \`config\`*") with blank lines before and after, and new text continues below it. If the response exceeds the message size limit, it splits at the last paragraph boundary and continues in a new message. The final response is delivered as one or more formatted messages. All messages during streaming are sent silently (no push notifications). After the response is finalized, the last message is replaced with a fresh copy to trigger a push notification. The copied message appears after any steering messages the user sent during processing, preserving correct chronological order. Push notifications are enabled by default (`push_notifications = true`).
+**Happy path (text)**: The bot receives the message, confirms the sender is authorized, checks it's a non-empty text message, sends a typing indicator, and forwards the text to the coordinator. As the agent processes and responds, the bot progressively edits a single message showing the accumulating text (throttled for rate limits). Tool activity appears as an italicized inline status line within the same message — appended below any text already streamed, separated by a blank line. Each new tool replaces the previous tool line. When text resumes, the tool line is replaced with an italicized dynamic summary (e.g., "*🔧 Reading 3 files and searching for \`config\`*") with blank lines before and after, and new text continues below it. If the response exceeds the message size limit, it splits at the last paragraph boundary and continues in a new message. The final response is delivered as one or more formatted messages. All messages during streaming are sent silently (no push notifications). After the response is finalized, the last message is replaced with a fresh copy to trigger a push notification. If the agent pinned a message during the response, the copy+delete is skipped — the pin action itself already delivered the push notification, and the pinned message is left untouched. The copied message appears after any steering messages the user sent during processing, preserving correct chronological order. Push notifications are enabled by default (`push_notifications = true`).
 
 **Happy path (media)**: The bot receives a supported media message (photo, voice, audio, document, sticker, video, video note, or animation), confirms the sender is authorized, checks the file size is within the 20 MB Telegram bot download limit, downloads the file to the dedicated temp folder with a unique name and appropriate extension, constructs a natural-language text description with relevant metadata and the saved file path (plus caption if present), and enqueues it to the coordinator. From there, processing follows the same path as text messages — the agent receives the description and can use its tools to interact with the file. Multiple media messages arriving during an active response are buffered and processed in order, the same as text messages.
 
 **Steering path (mid-exchange)**: If the user sends another message (text or media) while an exchange is in flight — at any phase: boundary detection, pre-processing, SDK streaming, or teardown — the channel checks `self._delivery_lock.locked()`. Because the lock is held by the in-flight exchange, it calls `coordinator.enqueue()` directly — bypassing the lock — and returns. The message lands in `_message_buffer`; once the coordinator's forwarder is alive (created right after pre-processing completes), it moves the message onto the per-turn `sdk_inbox` and the message source yields it to the SDK as a steering message that influences the in-flight response. If the message arrives after the SDK exchange has already torn down but before the lock is released, the coordinator's internal re-queue loop automatically processes it as a follow-up exchange within the same `send_message()` generator call, yielding its events as a continuation of the same stream. The channel sees one continuous event stream and renders all responses in order. (Buffered-delivery events from the priority buffer always start new exchanges via the lock and are never delivered as steering messages.)
 
-**Decision points**: Authorization check (authorized → process, unauthorized → drop). Message type check (text → process text, supported media → download/describe/process, unsupported → drop). Empty check (empty text → drop). File size check (within 20 MB → download, too large → error message). Download result (success → describe and enqueue, failure → error message). Message length check (under limit → continue editing, approaching limit → split at paragraph boundary). Error type (recoverable → show error, continue; non-recoverable → show error, log). Push notification check (enabled and message was sent → copy+delete, disabled or no message → no-op, copy fails → preserve original). Pin decision (agent calls pin_message after response → pinned message stays at top of chat).
+**Decision points**: Authorization check (authorized → process, unauthorized → drop). Message type check (text → process text, supported media → download/describe/process, unsupported → drop). Empty check (empty text → drop). File size check (within 20 MB → download, too large → error message). Download result (success → describe and enqueue, failure → error message). Message length check (under limit → continue editing, approaching limit → split at paragraph boundary). Error type (recoverable → show error, continue; non-recoverable → show error, log). Push notification check (enabled and message was sent → copy+delete unless pinned, disabled or no message → no-op, copy fails → preserve original, pinned → skip copy+delete entirely, pin action delivered the notification). Pin decision (agent calls pin_message after response → pinned with push notification, message stays at top of chat).
 
 **Exit points**: Response complete (Result event received), recoverable error (error shown, conversation continues), non-recoverable error (error shown, failure logged), media file too large (error message sent, conversation continues), media download failed (error message sent, conversation continues), unauthorized (silently dropped), unsupported message type or empty text (silently dropped), pin success (message pinned, ID returned), pin error (no message, permission denied, or API failure).
 

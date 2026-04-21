@@ -27,7 +27,7 @@ class TestHandlePinMessage:
 
         result = await handle_pin_message(getter, bot, 456)
 
-        bot.pin_chat_message.assert_called_once_with(456, 123, disable_notification=True)
+        bot.pin_chat_message.assert_called_once_with(456, 123, disable_notification=False)
         assert result == {"content": [{"type": "text", "text": "Message pinned (ID: 123)"}]}
 
     async def test_returns_error_when_no_message_available(self) -> None:
@@ -60,8 +60,8 @@ class TestHandlePinMessage:
         assert result["is_error"] is True
         assert "Failed to pin message" in result["content"][0]["text"]
 
-    async def test_passes_disable_notification_true(self) -> None:
-        """Pin call passes disable_notification=True for silent pin."""
+    async def test_passes_disable_notification_false(self) -> None:
+        """Pin call passes disable_notification=False so the pin triggers push notification."""
         bot = MagicMock()
         bot.pin_chat_message = AsyncMock()
 
@@ -71,7 +71,7 @@ class TestHandlePinMessage:
         await handle_pin_message(getter, bot, 456)
 
         call_kwargs = bot.pin_chat_message.call_args
-        assert call_kwargs.kwargs.get("disable_notification") is True
+        assert call_kwargs.kwargs.get("disable_notification") is False
 
     async def test_pin_already_pinned_succeeds(self) -> None:
         """Re-pinning an already-pinned message succeeds (idempotent)."""
@@ -128,14 +128,16 @@ class TestHandleUnpinMessage:
 class TestCreatePinningServer:
     """Tests for the pinning tool server factory."""
 
-    def test_factory_returns_server_config(self) -> None:
-        """Factory returns a config with expected name and type."""
+    def test_factory_returns_server_and_checker(self) -> None:
+        """Factory returns a tuple of (server config, is_pinned checker)."""
         bot = MagicMock()
 
         def getter() -> int | None:
             return 123
 
-        server = create_pinning_server(bot, 456, getter)
+        server, is_pinned = create_pinning_server(bot, 456, getter)
 
         assert server["name"] == "telegram-pinning"
         assert server["type"] == "sdk"
+        assert is_pinned(123) is False
+        assert is_pinned(42) is False

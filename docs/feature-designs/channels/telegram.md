@@ -94,7 +94,7 @@ The key components:
 | `src/tachikoma/coordinator.py` | Existing + `enqueue()` method, `_message_buffer` queue, `has_pending_messages` property, and `_message_source()` async generator passed to `client.connect()` | Message buffer replaces steer/pending-steers pattern |
 | `src/tachikoma/config.py` | `TelegramSettings` model added to `Settings` | Extends existing config; optional section (`None` when not configured) |
 | `src/tachikoma/display.py` | `TOOL_DISPLAY` map for live tool status formatting (present-progressive, Bash prefers description over command); `TOOL_SUMMARY` map and `summarize_tool_activity()` for post-hoc tool activity summaries (present-progressive matching active style, chronological ordering so the summary reads naturally top-to-bottom; when the display limit is exceeded, oldest entries are dropped preserving the most recent context); `summarize_tool_activity()` accepts optional `summary_map` parameter for channel-specific formatters; `format_tool_name()` for formatting MCP tool names into human-readable labels in fallback paths | Shared base formatters used directly by REPL; Telegram uses channel-specific formatter maps via `summary_map` parameter |
-| `src/tachikoma/telegram/pinning.py` | Pin/unpin MCP tool handlers + factory. Follows DES-006: `handle_pin_message()` and `handle_unpin_message()` extracted handlers, `UnpinMessageArgs` Pydantic model, `create_pinning_server()` factory. | Separate module from tools.py (unrelated concerns); getter captured as `Callable[[], int \| None]` to decouple from ResponseRenderer |
+| `src/tachikoma/telegram/pinning.py` | Pin/unpin MCP tool handlers + factory. Follows DES-006: `handle_pin_message()` and `handle_unpin_message()` extracted handlers, `UnpinMessageArgs` Pydantic model, `create_pinning_server()` factory. Pins use `disable_notification=False` so the pin action delivers the push notification. Factory returns `(McpSdkServerConfig, is_pinned_checker)` — the checker tests message IDs against a closure-captured `pinned_ids` set, enabling `notify()` to skip copy+delete for pinned messages. | Separate module from tools.py (unrelated concerns); getter captured as `Callable[[], int \| None]` to decouple from ResponseRenderer |
 
 ### Event Rendering
 
@@ -199,7 +199,7 @@ sequenceDiagram
 - `telegram_hook` ↔ Bootstrap: follows DES-003 pattern (defined in telegram module, registered in __main__.py, self-skips when channel != "telegram")
 - `media_hook` ↔ Bootstrap: follows DES-003 pattern (defined in media module, registered in __main__.py)
 - Channel ↔ Event bus: subscribes to `BufferedDelivery` (unified buffered-item delivery) via `bus.on()` in `run()` (see ADR-009 and [delivery/priority-buffer](../delivery/priority-buffer.md))
-- Channel ↔ pinning.py: `create_pinning_server()` factory called in `get_mcp_servers()` — captures `Bot`, chat ID, and a locally-defined `get_msg_id()` function that safely resolves `_active_renderer.get_last_message_id()` (returns `None` when no renderer is active)
+- Channel ↔ pinning.py: `create_pinning_server()` factory called in `get_mcp_servers()` — captures `Bot`, chat ID, and a locally-defined `get_msg_id()` function that safely resolves `_active_renderer.get_last_message_id()` (returns `None` when no renderer is active). Returns a tuple of `(McpSdkServerConfig, is_pinned_checker)` where the checker tests message IDs against a closure-captured `pinned_ids` set. The channel stores the checker and passes it to each new `ResponseRenderer` so `notify()` can skip copy+delete for pinned messages.
 
 ## Modeling
 
@@ -242,6 +242,7 @@ ResponseRenderer
 ├── _last_edit_time: float                (monotonic timestamp of last edit)
 ├── _split_message_ids: list[int]         (tracked message IDs from split; reused on re-split, excess deleted)
 ├── _message_count: int                   (tracks messages sent in current response)
+├── _is_pinned: Callable[[int], bool] | None  (checker from pinning module; None when not wired)
 └── + get_last_message_id() -> int | None (returns _current_message_id; None if no message sent or after reset)
 ```
 
@@ -553,6 +554,12 @@ The `Result` event serves as a turn boundary signal. The channel finalizes the c
 **When**: The Result event arrives
 **Then**: `finalize()` sends the final edit, `notify()` copies the message via `copy_message` (triggering push notification) and deletes the original via `delete_message` with up to 3 retries (0.5s fixed backoff). All messages during streaming were sent silently. If copy fails, the original is preserved (no push, logged at warning). If delete fails after all retries, duplicate is accepted gracefully (logged at warning).
 
+### Scenario: Push notification skipped for pinned message
+
+**Given**: Push notifications enabled, the agent pinned a message via `pin_message` during the response
+**When**: The Result event arrives
+**Then**: `notify()` checks `is_pinned(_current_message_id)` and returns immediately — no copy, no delete. The pin action itself already delivered the push notification via `disable_notification=False`. The pinned message is left untouched.
+
 ### Scenario: Push notification for split response
 
 **Given**: Push notifications enabled, response splits across multiple messages
@@ -644,7 +651,7 @@ The `Result` event serves as a turn boundary signal. The channel finalizes the c
 
 **Given**: The agent has completed a response, `ResponseRenderer._current_message_id` holds the final message ID
 **When**: The agent calls `pin_message`
-**Then**: The message is pinned silently (no notification via `disable_notification=True`) and the tool returns the message ID
+**Then**: The message is pinned with notification (`disable_notification=False`) so the user receives a push notification, and the tool returns the message ID. The pinned message ID is tracked in the closure-captured `pinned_ids` set so `notify()` can skip copy+delete.
 
 ### Scenario: Pin after split response
 
@@ -690,6 +697,6 @@ The `Result` event serves as a turn boundary signal. The channel finalizes the c
 - `media.py` provides the media descriptor table, download, description building, file naming, and bootstrap hook. The descriptor table is an ordered sequence — resolution iterates in order and returns the first match. Ordering matters because aiogram populates multiple fields for some message types (e.g., animation sets both `message.animation` and `message.document`). More specific types appear before generic ones: animation → sticker → video_note → photo → voice → video → audio → document.
 - `media_hook` follows DES-003 (subsystem bootstrap hooks): defined in the media module, registered in __main__.py. Creates `/tmp/tachikoma-media` on startup and deletes files older than 30 days.
 - The `_handle_media` handler uses the same `enqueue()` + `_process_through_coordinator()` pattern as `_handle_message`, ensuring consistent buffering behavior for both text and media messages.
-- The `pinning.py` module follows DES-006 (SDK MCP tool server factory) — same structure as `tools.py` for `send_file`, but as a separate module since pinning and file delivery are unrelated concerns
+- The `pinning.py` module follows DES-006 (SDK MCP tool server factory) — same structure as `tools.py` for `send_file`, but as a separate module since pinning and file delivery are unrelated concerns. The factory returns a tuple `(McpSdkServerConfig, is_pinned_checker)` — the checker is a closure-captured function that tests message IDs against an internal `pinned_ids` set. The channel stores the checker and passes it to each `ResponseRenderer` via the `is_pinned` keyword argument. The renderer uses this in `notify()` to skip the copy+delete pattern for pinned messages, since the pin action itself delivers the push notification via `disable_notification=False`.
 - The factory captures a `Callable[[], int | None]` getter rather than the renderer instance, keeping `pinning.py` free of any import or knowledge of the `ResponseRenderer` class. The getter is a locally-defined function in `get_mcp_servers()` that safely handles the case where `_active_renderer` is `None`
 - Tool descriptions in the `@tool()` decorators serve as the agent's primary documentation — no separate system prompt instructions needed, following the same approach as `send_file`

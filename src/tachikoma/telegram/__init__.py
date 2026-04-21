@@ -132,10 +132,18 @@ class ResponseRenderer:
     an inline status line within the message.
     """
 
-    def __init__(self, bot: Bot, chat_id: int, push_notifications: bool = False) -> None:
+    def __init__(
+        self,
+        bot: Bot,
+        chat_id: int,
+        push_notifications: bool = False,
+        *,
+        is_pinned: Callable[[int], bool] | None = None,
+    ) -> None:
         self._bot = bot
         self._chat_id = chat_id
         self._push_notifications = push_notifications
+        self._is_pinned = is_pinned
         self._current_message_id: int | None = None
         self._buffer: str = ""
         self._tool_line: str | None = None
@@ -278,6 +286,15 @@ class ResponseRenderer:
         Safe ordering: copy first, skip delete on failure.
         """
         if not self._push_notifications or self._current_message_id is None:
+            return
+
+        # Pinned messages are left untouched — the pin action itself
+        # delivered the push notification via disable_notification=False.
+        if self._is_pinned is not None and self._is_pinned(self._current_message_id):
+            _log.debug(
+                "Skipping push notification copy+delete for pinned message: id={id}",
+                id=self._current_message_id,
+            )
             return
 
         # Try copy_message — on failure, preserve original
@@ -539,6 +556,7 @@ class TelegramChannel(Channel):
         self._delivery_tasks: set[asyncio.Task] = set()
         self._bus = bus
         self._buffer: Buffer | None = buffer
+        self._is_pinned: Callable[[int], bool] | None = None
 
         # Set up router with authorization filter
         self._router.message.filter(F.chat.id == settings.authorized_chat_id)
@@ -583,11 +601,12 @@ class TelegramChannel(Channel):
             if self._active_renderer is not None:
                 return self._active_renderer.get_last_message_id()
             return None
-        pinning_server = create_pinning_server(
+        pinning_server, is_pinned = create_pinning_server(
             self._bot,
             self._settings.authorized_chat_id,
             get_msg_id,
         )
+        self._is_pinned = is_pinned
         return {"send-file": server, "telegram-pinning": pinning_server}
 
     def get_skill_sources(self) -> list[Path]:
@@ -856,7 +875,8 @@ class TelegramChannel(Channel):
         """
         chat_id = self._settings.authorized_chat_id
         self._active_renderer = ResponseRenderer(
-            self._bot, chat_id, push_notifications=self._settings.push_notifications
+            self._bot, chat_id, push_notifications=self._settings.push_notifications,
+            is_pinned=self._is_pinned,
         )
 
         try:

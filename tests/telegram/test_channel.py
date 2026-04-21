@@ -796,6 +796,55 @@ class TestResponseRendererNotify:
         # Delete is retried 3 times
         assert bot.delete_message.call_count == 3
 
+    async def test_notify_skips_copy_delete_for_pinned_message(self) -> None:
+        """notify() skips entire copy+delete when message is pinned."""
+        bot = MagicMock()
+        bot.copy_message = AsyncMock()
+        bot.delete_message = AsyncMock()
+
+        pinned_ids = {42}
+        renderer = ResponseRenderer(
+            bot, chat_id=123, push_notifications=True,
+            is_pinned=lambda mid: mid in pinned_ids,
+        )
+        renderer._current_message_id = 42
+
+        await renderer.notify()
+
+        bot.copy_message.assert_not_called()
+        bot.delete_message.assert_not_called()
+
+    async def test_notify_copy_deletes_after_unpin(self) -> None:
+        """notify() performs full copy+delete when message was unpinned."""
+        bot = MagicMock()
+        bot.copy_message = AsyncMock()
+        bot.delete_message = AsyncMock()
+
+        pinned_ids: set[int] = set()
+        renderer = ResponseRenderer(
+            bot, chat_id=123, push_notifications=True,
+            is_pinned=lambda mid: mid in pinned_ids,
+        )
+        renderer._current_message_id = 42
+
+        await renderer.notify()
+
+        bot.copy_message.assert_called_once()
+        bot.delete_message.assert_called_once()
+
+    async def test_notify_no_checker_same_as_unpinned(self) -> None:
+        """notify() with no is_pinned checker performs full copy+delete."""
+        bot = MagicMock()
+        bot.copy_message = AsyncMock()
+        bot.delete_message = AsyncMock()
+        renderer = ResponseRenderer(bot, chat_id=123, push_notifications=True)
+        renderer._current_message_id = 42
+
+        await renderer.notify()
+
+        bot.copy_message.assert_called_once()
+        bot.delete_message.assert_called_once()
+
 
 class TestTelegramChannelStdinShutdown:
     """Tests for 'q' keypress graceful shutdown in TelegramChannel.run()."""
