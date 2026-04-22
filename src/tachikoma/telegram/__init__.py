@@ -561,10 +561,6 @@ class TelegramChannel(Channel):
         self._is_pinned: Callable[[int], bool] | None = None
         self._shutdown_message_id: int | None = None
 
-    @property
-    def restart_requested(self) -> bool:
-        return self._restart_requested
-
         # Set up router with authorization filter
         self._router.message.filter(F.chat.id == settings.authorized_chat_id)
 
@@ -588,6 +584,10 @@ class TelegramChannel(Channel):
 
         # Register shutdown hook
         self._dispatcher.shutdown.register(self._on_shutdown)
+
+    @property
+    def restart_requested(self) -> bool:
+        return self._restart_requested
 
     @property
     def _coordinator(self) -> Coordinator:

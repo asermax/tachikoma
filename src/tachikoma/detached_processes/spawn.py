@@ -82,7 +82,11 @@ async def spawn_process(
     pid = proc.pid
     try:
         process_create_time = psutil.Process(pid).create_time()
-    except (psutil.NoSuchProcess, psutil.AccessDenied) as exc:
+    except psutil.NoSuchProcess:
+        # Fast-finishing processes may exit before we can read create_time.
+        # No PID-reuse risk since the process is already dead.
+        process_create_time = 0.0
+    except psutil.AccessDenied as exc:
         _log.exception("Failed to capture create_time for pid={pid}, killing child", pid=pid)
         with contextlib.suppress(ProcessLookupError, PermissionError, OSError):
             os.killpg(os.getpgid(pid), signal.SIGKILL)
