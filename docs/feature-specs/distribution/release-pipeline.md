@@ -100,3 +100,7 @@ Dependencies:
 Assumes existing:
 - pyproject.toml with uv_build build system and [project.scripts] entry point (core-architecture R1)
 - Conventional commit discipline from contributors
+
+## Related Capabilities
+
+- [Update Checker](update-checker.md): Periodically checks PyPI (the output of this pipeline) for newer versions and notifies the user
