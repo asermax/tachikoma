@@ -134,7 +134,7 @@ The bot handles polling disconnects and transient network errors gracefully.
 
 ### Graceful Shutdown (R7)
 
-The bot exits cleanly on signals or `q` keypress, delivering any partial response before stopping. The `q` shortcut is available when running in a TTY; non-TTY environments (e.g., systemd) use signals only.
+The bot exits cleanly on signals or `q` keypress, delivering any partial response before stopping. The `q` shortcut is available when running in a TTY; non-TTY environments (e.g., systemd) use signals only. When post-processing is needed during shutdown, a dedicated Telegram message shows progress.
 
 **Acceptance Criteria**:
 - Given SIGTERM or SIGINT is received, when the bot is idle, then it stops polling and exits cleanly
@@ -142,6 +142,12 @@ The bot exits cleanly on signals or `q` keypress, delivering any partial respons
 - Given the bot is running in a TTY, when the user presses `q`, then it initiates the same shutdown sequence as SIGINT (stops polling, delivers any in-flight partial response, and exits cleanly)
 - Given the bot is running without a TTY, when started, then no stdin reader is registered and shutdown is signal-only
 - Given the bot is running in a TTY, when shutdown completes by any means, then terminal settings are restored to their original state
+- Given the Telegram channel is active and the post-processing pipeline needs to run, when shutdown begins, then a new message appears with italic "_Shutting down..._"
+- Given post-processing is running during shutdown, when each processor starts, then the shutdown message is edited to show the processor's status text (e.g., "_Saving episodic memory..._", "_Extracting facts..._", "_Updating preferences..._", "_Refreshing core context..._", "_Committing changes..._")
+- Given all post-processing completes during shutdown, when the pipeline finishes, then the shutdown message is edited to show italic "_Shutdown complete_"
+- Given the post-processing pipeline does not need to run (session already processed by idle post-processing), when shutdown begins, then no shutdown message is sent
+- Given a Telegram API error occurs while sending or editing the shutdown message, when the error happens, then it is logged and post-processing continues normally
+- Given the REPL channel is active, when shutdown begins with post-processing needed, then no shutdown message appears (existing shutdown behavior is unchanged)
 
 ### Telegram Configuration (R8)
 
