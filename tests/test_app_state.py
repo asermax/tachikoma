@@ -53,9 +53,7 @@ class TestAppStateRepository:
         await repo.set("test.key", "value")
 
         async with aiosqlite.connect(tmp_path / "tachikoma.db") as conn:
-            cursor = await conn.execute(
-                "SELECT updated_at FROM app_state WHERE key = 'test.key'"
-            )
+            cursor = await conn.execute("SELECT updated_at FROM app_state WHERE key = 'test.key'")
             row = await cursor.fetchone()
 
         assert row is not None

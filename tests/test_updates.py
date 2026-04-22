@@ -1,16 +1,14 @@
 """Tests for the update checker subsystem."""
 
-import asyncio
 import json
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
-
-import pytest
+from urllib.error import URLError
 
 from tachikoma.app_state import AppStateRepository
 from tachikoma.bootstrap import BootstrapContext
 from tachikoma.config import SettingsManager
-from tachikoma.database import Database
+from tachikoma.database import Database, database_hook
 from tachikoma.updates.checker import (
     DEDUP_KEY,
     UpdateCheckResult,
@@ -19,8 +17,7 @@ from tachikoma.updates.checker import (
     update_checker_tick,
 )
 from tachikoma.updates.hooks import updates_hook
-from tachikoma.updates.tools import create_update_tools_server, handle_check_updates
-
+from tachikoma.updates.tools import handle_check_updates
 
 # ---------------------------------------------------------------------------
 # fetch_latest_version
@@ -35,14 +32,15 @@ class TestFetchLatestVersion:
         mock_resp.__enter__ = MagicMock(return_value=mock_resp)
         mock_resp.__exit__ = MagicMock(return_value=False)
 
-        with patch("tachikoma.updates.checker.urllib.request.urlopen", return_value=mock_resp):
+        with patch(
+            "tachikoma.updates.checker.urllib.request.urlopen",
+            return_value=mock_resp,
+        ):
             result = fetch_latest_version()
 
         assert result == "1.43.0"
 
     def test_network_error_returns_none(self) -> None:
-        from urllib.error import URLError
-
         with patch(
             "tachikoma.updates.checker.urllib.request.urlopen",
             side_effect=URLError("connection refused"),
@@ -57,7 +55,10 @@ class TestFetchLatestVersion:
         mock_resp.__enter__ = MagicMock(return_value=mock_resp)
         mock_resp.__exit__ = MagicMock(return_value=False)
 
-        with patch("tachikoma.updates.checker.urllib.request.urlopen", return_value=mock_resp):
+        with patch(
+            "tachikoma.updates.checker.urllib.request.urlopen",
+            return_value=mock_resp,
+        ):
             result = fetch_latest_version()
 
         assert result is None
@@ -69,7 +70,10 @@ class TestFetchLatestVersion:
         mock_resp.__enter__ = MagicMock(return_value=mock_resp)
         mock_resp.__exit__ = MagicMock(return_value=False)
 
-        with patch("tachikoma.updates.checker.urllib.request.urlopen", return_value=mock_resp):
+        with patch(
+            "tachikoma.updates.checker.urllib.request.urlopen",
+            return_value=mock_resp,
+        ):
             result = fetch_latest_version()
 
         assert result is None
@@ -96,7 +100,10 @@ class TestCheckForUpdate:
         result = check_for_update()
         assert result.update_available is False
 
-    @patch("tachikoma.updates.checker.importlib.metadata.version", return_value="1.44.0.dev1")
+    @patch(
+        "tachikoma.updates.checker.importlib.metadata.version",
+        return_value="1.44.0.dev1",
+    )
     @patch("tachikoma.updates.checker.fetch_latest_version", return_value="1.43.0")
     def test_dev_build_ahead(self, mock_fetch, mock_version) -> None:
         result = check_for_update()
@@ -137,8 +144,14 @@ class TestUpdateCheckerTick:
         )
 
         with (
-            patch("tachikoma.updates.checker.check_for_update", return_value=result),
-            patch("tachikoma.updates.checker.dispatch_notification", new_callable=AsyncMock),
+            patch(
+                "tachikoma.updates.checker.check_for_update",
+                return_value=result,
+            ),
+            patch(
+                "tachikoma.updates.checker.dispatch_notification",
+                new_callable=AsyncMock,
+            ),
         ):
             await update_checker_tick(repo, bus)
 
@@ -163,8 +176,14 @@ class TestUpdateCheckerTick:
         )
 
         with (
-            patch("tachikoma.updates.checker.check_for_update", return_value=result),
-            patch("tachikoma.updates.checker.dispatch_notification", new_callable=AsyncMock) as mock_dispatch,
+            patch(
+                "tachikoma.updates.checker.check_for_update",
+                return_value=result,
+            ),
+            patch(
+                "tachikoma.updates.checker.dispatch_notification",
+                new_callable=AsyncMock,
+            ) as mock_dispatch,
         ):
             await update_checker_tick(repo, bus)
 
@@ -186,8 +205,14 @@ class TestUpdateCheckerTick:
         )
 
         with (
-            patch("tachikoma.updates.checker.check_for_update", return_value=result),
-            patch("tachikoma.updates.checker.dispatch_notification", new_callable=AsyncMock) as mock_dispatch,
+            patch(
+                "tachikoma.updates.checker.check_for_update",
+                return_value=result,
+            ),
+            patch(
+                "tachikoma.updates.checker.dispatch_notification",
+                new_callable=AsyncMock,
+            ) as mock_dispatch,
         ):
             await update_checker_tick(repo, bus)
 
@@ -209,9 +234,15 @@ class TestUpdateCheckerTick:
         )
 
         with (
-            patch("tachikoma.updates.checker.check_for_update", return_value=result),
+            patch(
+                "tachikoma.updates.checker.check_for_update",
+                return_value=result,
+            ),
             patch.object(repo, "get", side_effect=Exception("db locked")),
-            patch("tachikoma.updates.checker.dispatch_notification", new_callable=AsyncMock) as mock_dispatch,
+            patch(
+                "tachikoma.updates.checker.dispatch_notification",
+                new_callable=AsyncMock,
+            ) as mock_dispatch,
         ):
             await update_checker_tick(repo, bus)
 
@@ -226,13 +257,15 @@ class TestUpdateCheckerTick:
 
 
 class TestUpdatesHook:
-    async def test_stores_app_state_repository(self, settings_manager: SettingsManager) -> None:
+    async def test_stores_app_state_repository(
+        self,
+        settings_manager: SettingsManager,
+    ) -> None:
         ws = settings_manager.settings.workspace
         ws.path.mkdir(parents=True, exist_ok=True)
         ws.data_path.mkdir(exist_ok=True)
 
         ctx = BootstrapContext(settings_manager=settings_manager, prompt=input)
-        from tachikoma.database import database_hook
 
         await database_hook(ctx)
         await updates_hook(ctx)
@@ -261,7 +294,10 @@ class TestCheckUpdatesTool:
             latest_is_prerelease=False,
         )
 
-        with patch("tachikoma.updates.checker.check_for_update", return_value=result):
+        with patch(
+            "tachikoma.updates.checker.check_for_update",
+            return_value=result,
+        ):
             response = await handle_check_updates(repo)
 
         assert response["content"][0]["type"] == "text"
@@ -285,8 +321,14 @@ class TestCheckUpdatesTool:
         )
 
         with (
-            patch("tachikoma.updates.checker.check_for_update", return_value=result),
-            patch("tachikoma.updates.checker.dispatch_notification", new_callable=AsyncMock) as mock_dispatch,
+            patch(
+                "tachikoma.updates.checker.check_for_update",
+                return_value=result,
+            ),
+            patch(
+                "tachikoma.updates.checker.dispatch_notification",
+                new_callable=AsyncMock,
+            ) as mock_dispatch,
         ):
             await handle_check_updates(repo)
 
@@ -298,7 +340,7 @@ class TestCheckUpdatesTool:
         await db.close()
 
     async def test_imports_work(self) -> None:
-        from tachikoma.updates import (
+        from tachikoma.updates import (  # noqa: PLC0415
             create_update_tools_server,
             update_checker_tick,
             updates_hook,
