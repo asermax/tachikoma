@@ -389,8 +389,6 @@ class TestPostProcessingPipeline:
 
         assert status_calls == ["Doing work..."]
         assert process_calls == ["process"]
-        assert status_calls[0]  # status called
-        assert process_calls[0]  # process called
 
     async def test_on_status_default_when_not_set(self) -> None:
         """AC: Processors without _status_message get default 'Processing...'."""
