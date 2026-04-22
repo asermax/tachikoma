@@ -14,3 +14,4 @@
 | [ADR-010](ADR-010-semantic-versioning.md) | Semantic Versioning via python-semantic-release | Accepted | 2026-03-29 |
 | [ADR-011](ADR-011-structured-metadata-on-context-entries.md) | Structured Metadata on Context Entries | Accepted | 2026-04-07 |
 | [ADR-012](ADR-012-diffable-db-tracking.md) | Diffable DB Tracking via text dumps | Accepted | 2026-04-18 |
+| [ADR-013](ADR-013-key-value-app-state.md) | Key-Value Application State Table | Accepted | 2026-04-22 |
