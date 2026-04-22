@@ -5,7 +5,6 @@ import asyncio
 from claude_agent_sdk import McpSdkServerConfig, create_sdk_mcp_server, tool
 from pydantic import BaseModel
 
-from tachikoma.app_state import AppStateRepository
 from tachikoma.updates.checker import check_for_update
 
 
@@ -13,9 +12,7 @@ class CheckUpdatesArgs(BaseModel):
     pass
 
 
-async def handle_check_updates(
-    app_state_repo: AppStateRepository,
-) -> dict:
+async def handle_check_updates() -> dict:
     """Run an update check and return structured results. No side effects."""
     result = await asyncio.to_thread(check_for_update)
     return {
@@ -33,9 +30,7 @@ async def handle_check_updates(
     }
 
 
-def create_update_tools_server(
-    app_state_repo: AppStateRepository,
-) -> McpSdkServerConfig:
+def create_update_tools_server() -> McpSdkServerConfig:
     """Create MCP server exposing the check_updates tool (DES-006)."""
 
     @tool(
@@ -46,7 +41,7 @@ def create_update_tools_server(
         CheckUpdatesArgs.model_json_schema(),
     )
     async def check_updates(args: dict) -> dict:
-        return await handle_check_updates(app_state_repo)
+        return await handle_check_updates()
 
     return create_sdk_mcp_server(
         name="update-checker",

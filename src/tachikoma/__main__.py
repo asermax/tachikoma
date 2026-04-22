@@ -220,7 +220,7 @@ async def run(
         ZoneInfo(settings.tasks.timezone),
     )
     git_tools = create_git_tools_server(settings.workspace.path, agent_defaults)
-    update_tools = create_update_tools_server(app_state_repo)
+    update_tools = create_update_tools_server()
 
     # Shared deny hook: blocks destructive bash git commands on every
     # non-git-processor agent surface (main coordinator and task executor).
