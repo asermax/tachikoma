@@ -2,6 +2,14 @@
 
 <!-- version list -->
 
+## v1.44.0 (2026-04-22)
+
+### Bug Fixes
+
+- **tests**: Correct mock patch path for check_for_update
+  ([`f35bf47`](https://github.com/asermax/tachikoma/commit/f35bf47f2cdda49d381c3f13d75684d4fb306268))
+
+
 ## v1.43.0 (2026-04-21)
 
 ### Features
