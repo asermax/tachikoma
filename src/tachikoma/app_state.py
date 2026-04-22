@@ -7,7 +7,7 @@ dot-separated prefixes (e.g., updates.last_notified_version).
 
 from datetime import datetime
 
-from sqlalchemy import Text, func, select
+from sqlalchemy import DateTime, Text, func, select
 from sqlalchemy.ext.asyncio import async_sessionmaker
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -19,7 +19,9 @@ class AppStateModel(Base):
 
     key: Mapped[str] = mapped_column(primary_key=True)
     value: Mapped[str] = mapped_column(Text, nullable=False)
-    updated_at: Mapped[datetime] = mapped_column(default=func.now(), onupdate=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=func.now(), onupdate=func.now()
+    )
 
 
 class AppStateRepository:
