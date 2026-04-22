@@ -8,6 +8,7 @@ dot-separated prefixes (e.g., updates.last_notified_version).
 from datetime import datetime
 
 from sqlalchemy import DateTime, Text, func, select
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.ext.asyncio import async_sessionmaker
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -39,12 +40,7 @@ class AppStateRepository:
 
     async def set(self, key: str, value: str) -> None:
         async with self._session_factory() as db:
-            result = await db.execute(select(AppStateModel).where(AppStateModel.key == key))
-            record = result.scalar_one_or_none()
-
-            if record is not None:
-                record.value = value
-            else:
-                db.add(AppStateModel(key=key, value=value))
-
+            stmt = sqlite_insert(AppStateModel).values(key=key, value=value)
+            stmt = stmt.on_conflict_do_update(index_elements=["key"], set_={"value": value})
+            await db.execute(stmt)
             await db.commit()
