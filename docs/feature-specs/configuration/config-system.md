@@ -27,12 +27,13 @@ The `ANTHROPIC_API_KEY` is not managed by this system — the Claude SDK reads i
 | R8 | CLI override capability: runtime-only overrides via CLI flags without file persistence |
 | R9 | Task scheduler configuration: `[tasks]` section for idle window, check interval, max iterations, max concurrent background, and timezone |
 | R10 | Skill and script configuration: per-skill config directories under `.tachikoma/config/<skill-name>/` |
+| R11 | Update checking configuration: `[updates]` section for enabled flag and check interval |
 
 ## Behaviors
 
 ### Configuration Loading (R1, R2)
 
-The system loads parameters from the TOML config file at startup, applying defaults for any unspecified values. Supported sections include `[workspace]`, `[agent]`, `[logging]`, and `[telegram]`.
+The system loads parameters from the TOML config file at startup, applying defaults for any unspecified values. Supported sections include `[workspace]`, `[agent]`, `[logging]`, `[telegram]`, `[tasks]`, and `[updates]`.
 
 **Acceptance Criteria**:
 - Given a valid TOML config file, when the application starts, then all parameters are loaded and available to components
@@ -104,7 +105,15 @@ The `[tasks]` section configures task scheduler parameters. Unlike `[telegram]`,
 - Given a config file with `tasks.timezone` set to an invalid value (e.g. `"Fake/Timezone"`), when the application starts, then it exits with a clear validation error
 - Given the configured timezone value, when the agent environment is constructed, then `TZ` is set to that value in the subprocess environment (auto-injected as overridable default; see core-architecture R8)
 
-### CLI Override (R8)
+### Update Checking Configuration (R11)
+
+The `[updates]` section configures automatic update checking. Like `[tasks]`, `settings.updates` always has a default value — update checking operates with sensible defaults when no `[updates]` section is present.
+
+**Acceptance Criteria**:
+- Given a config file with no `[updates]` section, when loaded, then `settings.updates` is populated with default values: `enabled=true`, `check_interval=86400` (once per day)
+- Given a config file with a `[updates]` section specifying custom values, when loaded, then those values override the defaults
+- Given a config file with `updates.check_interval` set to a negative value, when the application starts, then it exits with a clear validation error
+- Given the auto-generated default config, when created, then the `[updates]` section is included (commented out) with annotations
 
 CLI flags can override configuration values at runtime without modifying the config file. Overrides apply via `SettingsManager.update_root()` followed by `reload()`.
 
