@@ -77,6 +77,8 @@ class PreferencesProcessor(PromptDrivenProcessor):
     Creates or updates topic-named files in $WORKSPACE/memories/preferences/.
     """
 
+    _status_message = "Updating preferences..."
+
     def __init__(self, agent_defaults: AgentDefaults) -> None:
         """Initialize the processor.
 

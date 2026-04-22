@@ -156,6 +156,8 @@ class GitProcessor(PostProcessor):
     Runs in the finalize phase after all other processors complete.
     """
 
+    _status_message = "Committing changes..."
+
     def __init__(self, agent_defaults: AgentDefaults) -> None:
         """Initialize the processor.
 

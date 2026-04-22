@@ -81,6 +81,8 @@ class FactsProcessor(PromptDrivenProcessor):
     Creates or updates topic-named files in $WORKSPACE/memories/facts/.
     """
 
+    _status_message = "Extracting facts..."
+
     def __init__(self, agent_defaults: AgentDefaults) -> None:
         """Initialize the processor.
 

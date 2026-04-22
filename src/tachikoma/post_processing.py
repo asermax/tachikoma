@@ -28,6 +28,7 @@ from loguru import logger
 
 from tachikoma.adapter import sanitize_text
 from tachikoma.agent_defaults import AgentDefaults
+from tachikoma.events import StatusCallback
 from tachikoma.sdk_query import stderr_aware_query
 from tachikoma.sessions.model import Session, SessionContextEntry
 from tachikoma.sessions.registry import SessionRegistry
@@ -48,6 +49,12 @@ class PostProcessor(ABC):
     or update logic. The ABC defines only the interface contract — no
     SDK coupling is inherited.
     """
+
+    _status_message: str = "Processing..."
+
+    def status_message(self) -> str:
+        """Short message describing what this processor does."""
+        return self._status_message
 
     @abstractmethod
     async def process(self, session: Session, *, extra: dict | None = None) -> None:
@@ -340,7 +347,12 @@ class PostProcessingPipeline:
             raise ValueError(f"Invalid phase '{phase}'. Valid phases: {valid_list}")
         self._phases[phase].append(processor)
 
-    async def run(self, session: Session) -> None:
+    async def run(
+        self,
+        session: Session,
+        *,
+        on_status: StatusCallback | None = None,
+    ) -> None:
         """Run all registered processors in sequential phases.
 
         Sets ``is_processing`` before acquiring the lock (for immediate
@@ -350,6 +362,9 @@ class PostProcessingPipeline:
 
         Individual processor failures are logged per DES-002 but don't
         propagate or prevent subsequent phases from running.
+
+        If *on_status* is provided, it is called with each processor's
+        status message before the processor runs.
         """
         self._is_processing = True
 
@@ -384,8 +399,19 @@ class PostProcessingPipeline:
                         names=names,
                     )
 
+                    async def _run_one(p: PostProcessor) -> None:
+                        if on_status is not None:
+                            try:
+                                await on_status(p.status_message())
+                            except Exception:
+                                _log.exception(
+                                    "Status callback failed: processor={name}",
+                                    name=p.__class__.__name__,
+                                )
+                        await p.process(session, extra=extra)
+
                     results = await asyncio.gather(
-                        *[p.process(session, extra=extra) for p in processors],
+                        *[_run_one(p) for p in processors],
                         return_exceptions=True,
                     )
 

@@ -60,6 +60,8 @@ class EpisodicProcessor(PromptDrivenProcessor):
     Creates or updates date-stamped summary files in $WORKSPACE/memories/episodic/.
     """
 
+    _status_message = "Saving episodic memory..."
+
     def __init__(self, agent_defaults: AgentDefaults) -> None:
         """Initialize the processor.
 

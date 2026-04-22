@@ -73,6 +73,8 @@ class ProjectsProcessor(PostProcessor):
     each submodule's remote. Runs in the pre_finalize phase before GitProcessor.
     """
 
+    _status_message = "Updating projects..."
+
     def __init__(self, agent_defaults: AgentDefaults) -> None:
         """Initialize the processor.
 

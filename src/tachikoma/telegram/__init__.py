@@ -557,6 +557,7 @@ class TelegramChannel(Channel):
         self._bus = bus
         self._buffer: Buffer | None = buffer
         self._is_pinned: Callable[[int], bool] | None = None
+        self._shutdown_message_id: int | None = None
 
         # Set up router with authorization filter
         self._router.message.filter(F.chat.id == settings.authorized_chat_id)
@@ -597,10 +598,12 @@ class TelegramChannel(Channel):
             self._workspace_path,
             self._settings.send_file.extra_roots,
         )
+
         def get_msg_id() -> int | None:
             if self._active_renderer is not None:
                 return self._active_renderer.get_last_message_id()
             return None
+
         pinning_server, is_pinned = create_pinning_server(
             self._bot,
             self._settings.authorized_chat_id,
@@ -621,6 +624,7 @@ class TelegramChannel(Channel):
         Coordinator's post-processing pipeline to run on shutdown.
         """
         self.__coordinator = coordinator
+        coordinator.shutdown_status_callback = self._send_shutdown_status
 
         # Subscribe to buffered delivery events — deferred to run() so coordinator is set
         if self._bus is not None:
@@ -808,6 +812,28 @@ class TelegramChannel(Channel):
             self._coordinator.enqueue(description)
             await self._process_through_coordinator()
 
+    async def _send_shutdown_status(self, message: str) -> None:
+        """Send or update a dedicated shutdown progress message."""
+        chat_id = self._settings.authorized_chat_id
+        try:
+            if self._shutdown_message_id is None:
+                msg = await self._bot.send_message(chat_id, f"_{message}_", parse_mode="Markdown")
+                self._shutdown_message_id = msg.message_id
+            else:
+                await self._bot.edit_message_text(
+                    f"_{message}_",
+                    chat_id=chat_id,
+                    message_id=self._shutdown_message_id,
+                    parse_mode="Markdown",
+                )
+        except TelegramBadRequest as e:
+            if "message is not modified" in str(e):
+                _log.debug("Shutdown status edit skipped: message content unchanged")
+            else:
+                _log.exception("Failed to update shutdown status message")
+        except TelegramAPIError:
+            _log.exception("Failed to update shutdown status message")
+
     async def _on_shutdown(self) -> None:
         """Send partial response on shutdown if one is active."""
         if self._active_renderer is not None and self._active_renderer._buffer:
@@ -875,7 +901,9 @@ class TelegramChannel(Channel):
         """
         chat_id = self._settings.authorized_chat_id
         self._active_renderer = ResponseRenderer(
-            self._bot, chat_id, push_notifications=self._settings.push_notifications,
+            self._bot,
+            chat_id,
+            push_notifications=self._settings.push_notifications,
             is_pinned=self._is_pinned,
         )
 
