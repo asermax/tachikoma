@@ -2,6 +2,14 @@
 
 <!-- version list -->
 
+## v1.46.0 (2026-04-22)
+
+### Bug Fixes
+
+- Resolve lint errors and pre-existing spawn race condition
+  ([`92af171`](https://github.com/asermax/tachikoma/commit/92af171400557ed3fc8f9ab5b34e44081fa2ce0b))
+
+
 ## v1.45.0 (2026-04-22)
 
 ### Code Style
