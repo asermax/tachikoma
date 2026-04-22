@@ -54,6 +54,11 @@ class Channel(Protocol):
         """
         return None
 
+    @property
+    def restart_requested(self) -> bool:
+        """Whether the channel has requested an in-place process restart."""
+        return False
+
     async def run(self, coordinator: Coordinator) -> None:
         """Start the channel's main loop.
 

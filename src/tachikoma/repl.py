@@ -88,6 +88,10 @@ class Repl(Channel):
         self._bus = bus
         self._buffer: Buffer | None = buffer
         self._restart_requested: bool = False
+
+    @property
+    def restart_requested(self) -> bool:
+        return self._restart_requested
         # Serialize delivery vs. prompt-driven coordinator usage
         self._delivery_lock = asyncio.Lock()
         self._delivery_tasks: set[asyncio.Task] = set()

@@ -560,6 +560,10 @@ class TelegramChannel(Channel):
         self._restart_requested: bool = False
         self._is_pinned: Callable[[int], bool] | None = None
 
+    @property
+    def restart_requested(self) -> bool:
+        return self._restart_requested
+
         # Set up router with authorization filter
         self._router.message.filter(F.chat.id == settings.authorized_chat_id)
 

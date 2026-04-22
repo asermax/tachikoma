@@ -384,7 +384,7 @@ async def run(
             await active_channel.run(coordinator)
 
             # Capture restart flag before Coordinator.__aexit__ runs cleanup
-            restart_needed = getattr(active_channel, "_restart_requested", False)
+            restart_needed = active_channel.restart_requested
 
     except (CLINotFoundError, CLIConnectionError, ProcessError) as e:
         _log.error("Connection failed: err={err}", err=str(e))
