@@ -5,7 +5,7 @@ import json
 import subprocess
 from unittest.mock import MagicMock, patch
 
-from tachikoma.updates.apply import _is_editable_install, run_upgrade
+from tachikoma.updates.apply import EDITABLE_ERROR, _is_editable_install, run_upgrade
 
 # ---------------------------------------------------------------------------
 # _is_editable_install
@@ -64,7 +64,7 @@ class TestRunUpgrade:
             patch("tachikoma.updates.apply.importlib.metadata.distribution", return_value=dist),
         ):
             result = run_upgrade()
-        assert result.error == "editable install"
+        assert result.error == EDITABLE_ERROR
         assert not result.changed
 
     @patch("tachikoma.updates.apply.importlib.metadata.version")

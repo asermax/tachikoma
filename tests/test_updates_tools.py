@@ -2,7 +2,7 @@
 
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from tachikoma.updates.apply import UpgradeResult
+from tachikoma.updates.apply import EDITABLE_ERROR, UpgradeResult
 from tachikoma.updates.events import RestartRequested
 from tachikoma.updates.tools import create_update_tools_server, handle_apply_update
 
@@ -49,7 +49,7 @@ class TestHandleApplyUpdate:
 
     async def test_editable_install_no_event(self) -> None:
         bus = AsyncMock()
-        result = _make_result(error="editable install")
+        result = _make_result(error=EDITABLE_ERROR)
 
         with patch("tachikoma.updates.tools.run_upgrade", return_value=result):
             response = await handle_apply_update(bus)

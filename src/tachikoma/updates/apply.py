@@ -13,7 +13,7 @@ _log = logger.bind(component="updates")
 
 PACKAGE_NAME = "tachikoma-agent"
 UPGRADE_TIMEOUT = 120
-_EDITABLE_ERROR = "editable install"
+EDITABLE_ERROR = "editable install"
 
 
 @dataclass(frozen=True)
@@ -57,7 +57,7 @@ def run_upgrade() -> UpgradeResult:
             old_version="",
             new_version=None,
             already_up_to_date=False,
-            error=_EDITABLE_ERROR,
+            error=EDITABLE_ERROR,
             changed=False,
         )
 

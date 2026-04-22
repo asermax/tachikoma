@@ -6,7 +6,7 @@ from bubus import EventBus
 from claude_agent_sdk import McpSdkServerConfig, create_sdk_mcp_server, tool
 from pydantic import BaseModel
 
-from tachikoma.updates.apply import UpgradeResult, run_upgrade
+from tachikoma.updates.apply import EDITABLE_ERROR, UpgradeResult, run_upgrade
 from tachikoma.updates.checker import check_for_update
 from tachikoma.updates.events import RestartRequested
 
@@ -44,7 +44,7 @@ async def handle_apply_update(bus: EventBus) -> dict:
     """
     result: UpgradeResult = await asyncio.to_thread(run_upgrade)
 
-    if result.error == "editable install":
+    if result.error == EDITABLE_ERROR:
         return {
             "content": [
                 {
