@@ -288,6 +288,7 @@ class UpdatesSettings(BaseModel):
     )
     check_interval: int = Field(
         default=86400,
+        ge=0,
         description="How often to check for updates in seconds (default: 86400 = once per day)",
     )
 
