@@ -5,6 +5,7 @@ installed via ``uv tool install``. Bare invocation defaults to ``tachikoma run``
 """
 
 import asyncio
+import os
 import sys
 from pathlib import Path
 from typing import Literal
@@ -220,7 +221,7 @@ async def run(
         ZoneInfo(settings.tasks.timezone),
     )
     git_tools = create_git_tools_server(settings.workspace.path, agent_defaults)
-    update_tools = create_update_tools_server()
+    update_tools = create_update_tools_server(bus)
 
     # Shared deny hook: blocks destructive bash git commands on every
     # non-git-processor agent surface (main coordinator and task executor).
@@ -264,6 +265,7 @@ async def run(
     scheduler_tasks: list[asyncio.Task[None]] = []
     buffer: Buffer | None = None
     background_runner: BackgroundTaskRunner | None = None
+    restart_needed: bool = False
 
     try:
         async with Coordinator(
@@ -381,6 +383,9 @@ async def run(
             # Start channel with coordinator
             await active_channel.run(coordinator)
 
+            # Capture restart flag before Coordinator.__aexit__ runs cleanup
+            restart_needed = getattr(active_channel, "_restart_requested", False)
+
     except (CLINotFoundError, CLIConnectionError, ProcessError) as e:
         _log.error("Connection failed: err={err}", err=str(e))
         print(str(e), file=sys.stderr)
@@ -423,6 +428,11 @@ async def run(
         # Dispose the shared database engine to prevent dangling connections
         if database is not None:
             await database.close()
+
+    # In-place restart after successful upgrade — all async resources are released
+    if restart_needed:
+        _log.info("Restarting after update...")
+        os.execv(sys.argv[0], sys.argv)
 
 
 @app.default

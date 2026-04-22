@@ -46,6 +46,7 @@ from tachikoma.media import (
 )
 from tachikoma.telegram.pinning import create_pinning_server
 from tachikoma.telegram.tools import create_send_file_server
+from tachikoma.updates.events import RestartRequested
 
 if TYPE_CHECKING:
     from tachikoma.buffer.buffer import Buffer
@@ -556,6 +557,7 @@ class TelegramChannel(Channel):
         self._delivery_tasks: set[asyncio.Task] = set()
         self._bus = bus
         self._buffer: Buffer | None = buffer
+        self._restart_requested: bool = False
         self._is_pinned: Callable[[int], bool] | None = None
 
         # Set up router with authorization filter
@@ -597,10 +599,12 @@ class TelegramChannel(Channel):
             self._workspace_path,
             self._settings.send_file.extra_roots,
         )
+
         def get_msg_id() -> int | None:
             if self._active_renderer is not None:
                 return self._active_renderer.get_last_message_id()
             return None
+
         pinning_server, is_pinned = create_pinning_server(
             self._bot,
             self._settings.authorized_chat_id,
@@ -625,6 +629,12 @@ class TelegramChannel(Channel):
         # Subscribe to buffered delivery events — deferred to run() so coordinator is set
         if self._bus is not None:
             self._bus.on(BufferedDelivery, self._handle_buffered_delivery)
+
+            async def _on_restart_requested(event: RestartRequested) -> None:
+                self._restart_requested = True
+                await self._dispatcher.stop_polling()
+
+            self._bus.on(RestartRequested, _on_restart_requested)
         _log.info(
             "Starting Telegram bot for chat {chat_id}",
             chat_id=self._settings.authorized_chat_id,
@@ -875,7 +885,9 @@ class TelegramChannel(Channel):
         """
         chat_id = self._settings.authorized_chat_id
         self._active_renderer = ResponseRenderer(
-            self._bot, chat_id, push_notifications=self._settings.push_notifications,
+            self._bot,
+            chat_id,
+            push_notifications=self._settings.push_notifications,
             is_pinned=self._is_pinned,
         )
 

@@ -21,6 +21,7 @@ from tachikoma.buffer.events import BufferedDelivery
 from tachikoma.channel import Channel
 from tachikoma.display import TOOL_DISPLAY, format_tool_name
 from tachikoma.events import AgentEvent, Error, Result, Status, TextChunk, ToolActivity
+from tachikoma.updates.events import RestartRequested
 
 if TYPE_CHECKING:
     from tachikoma.buffer.buffer import Buffer
@@ -86,6 +87,7 @@ class Repl(Channel):
         self._renderer = Renderer()
         self._bus = bus
         self._buffer: Buffer | None = buffer
+        self._restart_requested: bool = False
         # Serialize delivery vs. prompt-driven coordinator usage
         self._delivery_lock = asyncio.Lock()
         self._delivery_tasks: set[asyncio.Task] = set()
@@ -132,10 +134,15 @@ class Repl(Channel):
         # Subscribe to buffered delivery events — deferred to run() so coordinator is set
         if self._bus is not None:
             self._bus.on(BufferedDelivery, self._handle_buffered_delivery)
+            self._bus.on(RestartRequested, self._handle_restart_requested)
         _log.debug("REPL started")
 
         try:
             while True:
+                if self._restart_requested:
+                    _log.debug("REPL exiting for restart")
+                    break
+
                 try:
                     text = await self._session.prompt_async("> ")
                 except (KeyboardInterrupt, EOFError):
@@ -162,6 +169,10 @@ class Repl(Channel):
             if force_exit:
                 # KD-6/S15: abort shutdown immediately; skip post-processing
                 raise KeyboardInterrupt
+
+    async def _handle_restart_requested(self, event: RestartRequested) -> None:
+        """Handle restart request from the update subsystem."""
+        self._restart_requested = True
 
     async def _flush_buffer_on_shutdown(self) -> bool:
         """Drain remaining buffered items as a shutdown digest.

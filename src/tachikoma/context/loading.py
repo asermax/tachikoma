@@ -347,6 +347,15 @@ use `offset` and `count` for paging.
 after a timeout. Pass `signal` (e.g., "SIGINT") or `timeout=0` for fire-and-forget.
 - **rename_process** — Change the display name of a process record.
 
+# Updates
+
+You have update management tools:
+- **check_updates** — Check whether a newer version of tachikoma-agent is available on PyPI \
+(read-only)
+- **apply_update** — Upgrade to the latest version and restart the process. Only works for \
+tool installs (not editable/development installs). The restart is automatic — warn the user \
+before applying.
+
 # Context Documents
 
 The following sections contain your current foundational context, wrapped in XML tags."""
