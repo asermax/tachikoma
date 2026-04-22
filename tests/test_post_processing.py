@@ -366,8 +366,103 @@ class TestPostProcessingPipeline:
         # Should not raise
         await pipeline.run(session)
 
+    async def test_on_status_called_before_each_processor(self) -> None:
+        """AC: on_status is called with each processor's status message before process()."""
+        status_calls: list[str] = []
+        process_calls: list[str] = []
 
-class TestPhasedPipelineExecution:
+        async def on_status(msg: str) -> None:
+            status_calls.append(msg)
+
+        class _TrackedProcessor(PostProcessor):
+            _status_message = "Doing work..."
+
+            async def process(self, session: Session, *, extra: dict | None = None) -> None:
+                process_calls.append("process")
+
+        processor = _TrackedProcessor()
+        session = _make_session()
+        pipeline = PostProcessingPipeline(_make_mock_registry())
+        pipeline.register(processor)
+
+        await pipeline.run(session, on_status=on_status)
+
+        assert status_calls == ["Doing work..."]
+        assert process_calls == ["process"]
+        assert status_calls[0]  # status called
+        assert process_calls[0]  # process called
+
+    async def test_on_status_default_when_not_set(self) -> None:
+        """AC: Processors without _status_message get default 'Processing...'."""
+
+        class _NoMessageProcessor(PostProcessor):
+            async def process(self, session: Session, *, extra: dict | None = None) -> None:
+                pass
+
+        status_calls: list[str] = []
+
+        async def on_status(msg: str) -> None:
+            status_calls.append(msg)
+
+        processor = _NoMessageProcessor()
+        session = _make_session()
+        pipeline = PostProcessingPipeline(_make_mock_registry())
+        pipeline.register(processor)
+
+        await pipeline.run(session, on_status=on_status)
+
+        assert status_calls == ["Processing..."]
+
+    async def test_on_status_failure_does_not_block_processor(self) -> None:
+        """AC: Callback failure is logged but processor still runs."""
+
+        async def on_status(msg: str) -> None:
+            raise RuntimeError("callback broke")
+
+        processor = _make_mock_processor()
+        session = _make_session()
+        pipeline = PostProcessingPipeline(_make_mock_registry())
+        pipeline.register(processor)
+
+        await pipeline.run(session, on_status=on_status)
+
+        processor.process.assert_awaited_once()
+
+    async def test_on_status_none_skips_callback(self) -> None:
+        """AC: When on_status is None, no callback is invoked."""
+        processor = _make_mock_processor()
+        session = _make_session()
+        pipeline = PostProcessingPipeline(_make_mock_registry())
+        pipeline.register(processor)
+
+        await pipeline.run(session)
+
+        processor.process.assert_awaited_once()
+
+
+class TestProcessorStatusMessage:
+    """Tests for PostProcessor.status_message()."""
+
+    def test_default_status_message(self) -> None:
+        """AC: Default status_message returns 'Processing...'."""
+
+        class _DefaultProcessor(PostProcessor):
+            async def process(self, session: Session, *, extra: dict | None = None) -> None:
+                pass
+
+        assert _DefaultProcessor().status_message() == "Processing..."
+
+    def test_custom_status_message(self) -> None:
+        """AC: Processor with _status_message returns its custom message."""
+
+        class _CustomProcessor(PostProcessor):
+            _status_message = "Custom step..."
+
+            async def process(self, session: Session, *, extra: dict | None = None) -> None:
+                pass
+
+        assert _CustomProcessor().status_message() == "Custom step..."
+
     """Tests for phased pipeline execution (DLT-020)."""
 
     def test_unknown_phase_raises_value_error(self) -> None:
