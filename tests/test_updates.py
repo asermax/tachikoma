@@ -283,7 +283,7 @@ class TestCheckUpdatesTool:
         )
 
         with patch(
-            "tachikoma.updates.checker.check_for_update",
+            "tachikoma.updates.tools.check_for_update",
             return_value=result,
         ):
             response = await handle_check_updates()
