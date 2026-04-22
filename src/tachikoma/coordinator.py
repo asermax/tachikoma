@@ -62,6 +62,14 @@ from tachikoma.skills.registry import SkillRegistry
 
 _log = logger.bind(component="coordinator")
 
+
+async def _emit_status(cb: StatusCallback, message: str) -> None:
+    try:
+        await cb(message)
+    except Exception:
+        _log.exception("Shutdown status callback failed")
+
+
 _COLD_START_SUMMARY = "No active conversation."
 
 
@@ -336,16 +344,10 @@ class Coordinator:
             cb = self.shutdown_status_callback
             try:
                 if cb is not None:
-                    try:
-                        await cb("Shutting down...")
-                    except Exception:
-                        _log.exception("Shutdown status callback failed")
+                    await _emit_status(cb, "Shutting down...")
                 await self._pipeline.run(active, on_status=cb)
                 if cb is not None:
-                    try:
-                        await cb("Shutdown complete")
-                    except Exception:
-                        _log.exception("Shutdown status callback failed")
+                    await _emit_status(cb, "Shutdown complete")
             except Exception as exc:
                 _log.exception(
                     "Post-processing pipeline failed: err={err}",
