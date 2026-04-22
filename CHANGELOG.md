@@ -2,6 +2,19 @@
 
 <!-- version list -->
 
+## v1.43.0 (2026-04-21)
+
+### Features
+
+- **telegram**: Make pin actions trigger push notifications
+  ([`10b6aae`](https://github.com/asermax/tachikoma/commit/10b6aae8e89778319f171102f3cef7e9edc5eab8))
+
+### Refactoring
+
+- **telegram**: Simplify pin handler to accept message_id directly
+  ([`d38d19c`](https://github.com/asermax/tachikoma/commit/d38d19ca071bba90bbf69eee0107420233d1a70f))
+
+
 ## v1.42.0 (2026-04-21)
 
 ### Chores
