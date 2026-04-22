@@ -99,6 +99,9 @@ Settings (root, frozen)
 │   ├── max_concurrent_background: int = 3     (max parallel background tasks)
 │   ├── wait_timeout: int = 7200               (seconds a background task may pause awaiting user input before being failed with a timeout)
 │   └── timezone: str = ""                     (validate_default=True; validators resolve "" → system IANA key, then validate via ZoneInfo; invalid = startup error; also auto-injected as `TZ` in agent subprocess environments via `merge_env()` in `__main__.py`, overridable via `[agent.env]` without collision error)
+├── updates: UpdatesSettings                     (always has default value, never None)
+│   ├── enabled: bool = True                     (whether automatic update checking is active)
+│   └── check_interval: int = 86400              (seconds between PyPI version checks; ge=0)
 └── telegram: TelegramSettings | None = None
     ├── bot_token: str
     ├── authorized_chat_id: int
