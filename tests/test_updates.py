@@ -5,6 +5,8 @@ from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 from urllib.error import URLError
 
+import pytest
+
 from tachikoma.app_state import AppStateRepository
 from tachikoma.bootstrap import BootstrapContext
 from tachikoma.config import SettingsManager
@@ -18,6 +20,16 @@ from tachikoma.updates.checker import (
 )
 from tachikoma.updates.hooks import updates_hook
 from tachikoma.updates.tools import handle_check_updates
+
+
+@pytest.fixture
+async def app_state_repo(tmp_path: Path) -> AppStateRepository:
+    """Initialized AppStateRepository backed by a temp SQLite file."""
+    database = Database(tmp_path / "tachikoma.db")
+    await database.initialize()
+    yield AppStateRepository(database.session_factory)
+    await database.close()
+
 
 # ---------------------------------------------------------------------------
 # fetch_latest_version
@@ -130,10 +142,7 @@ class TestCheckForUpdate:
 
 
 class TestUpdateCheckerTick:
-    async def test_notify_on_new_version(self, tmp_path: Path) -> None:
-        db = Database(tmp_path / "tachikoma.db")
-        await db.initialize()
-        repo = AppStateRepository(db.session_factory)
+    async def test_notify_on_new_version(self, app_state_repo: AppStateRepository) -> None:
         bus = AsyncMock()
 
         result = UpdateCheckResult(
@@ -153,20 +162,15 @@ class TestUpdateCheckerTick:
                 new_callable=AsyncMock,
             ),
         ):
-            await update_checker_tick(repo, bus)
+            await update_checker_tick(app_state_repo, bus)
 
-        notified_version = await repo.get(DEDUP_KEY)
+        notified_version = await app_state_repo.get(DEDUP_KEY)
         assert notified_version == "1.43.0"
 
-        await db.close()
-
-    async def test_skip_on_already_notified(self, tmp_path: Path) -> None:
-        db = Database(tmp_path / "tachikoma.db")
-        await db.initialize()
-        repo = AppStateRepository(db.session_factory)
+    async def test_skip_on_already_notified(self, app_state_repo: AppStateRepository) -> None:
         bus = AsyncMock()
 
-        await repo.set(DEDUP_KEY, "1.43.0")
+        await app_state_repo.set(DEDUP_KEY, "1.43.0")
 
         result = UpdateCheckResult(
             current_version="1.42.0",
@@ -185,16 +189,11 @@ class TestUpdateCheckerTick:
                 new_callable=AsyncMock,
             ) as mock_dispatch,
         ):
-            await update_checker_tick(repo, bus)
+            await update_checker_tick(app_state_repo, bus)
 
         mock_dispatch.assert_not_called()
 
-        await db.close()
-
-    async def test_skip_on_no_update(self, tmp_path: Path) -> None:
-        db = Database(tmp_path / "tachikoma.db")
-        await db.initialize()
-        repo = AppStateRepository(db.session_factory)
+    async def test_skip_on_no_update(self, app_state_repo: AppStateRepository) -> None:
         bus = AsyncMock()
 
         result = UpdateCheckResult(
@@ -214,16 +213,11 @@ class TestUpdateCheckerTick:
                 new_callable=AsyncMock,
             ) as mock_dispatch,
         ):
-            await update_checker_tick(repo, bus)
+            await update_checker_tick(app_state_repo, bus)
 
         mock_dispatch.assert_not_called()
 
-        await db.close()
-
-    async def test_handle_db_error_gracefully(self, tmp_path: Path) -> None:
-        db = Database(tmp_path / "tachikoma.db")
-        await db.initialize()
-        repo = AppStateRepository(db.session_factory)
+    async def test_handle_db_error_gracefully(self, app_state_repo: AppStateRepository) -> None:
         bus = AsyncMock()
 
         result = UpdateCheckResult(
@@ -238,17 +232,15 @@ class TestUpdateCheckerTick:
                 "tachikoma.updates.checker.check_for_update",
                 return_value=result,
             ),
-            patch.object(repo, "get", side_effect=Exception("db locked")),
+            patch.object(app_state_repo, "get", side_effect=Exception("db locked")),
             patch(
                 "tachikoma.updates.checker.dispatch_notification",
                 new_callable=AsyncMock,
             ) as mock_dispatch,
         ):
-            await update_checker_tick(repo, bus)
+            await update_checker_tick(app_state_repo, bus)
 
         mock_dispatch.assert_not_called()
-
-        await db.close()
 
 
 # ---------------------------------------------------------------------------
@@ -282,11 +274,7 @@ class TestUpdatesHook:
 
 
 class TestCheckUpdatesTool:
-    async def test_returns_structured_result(self, tmp_path: Path) -> None:
-        db = Database(tmp_path / "tachikoma.db")
-        await db.initialize()
-        repo = AppStateRepository(db.session_factory)
-
+    async def test_returns_structured_result(self) -> None:
         result = UpdateCheckResult(
             current_version="1.42.0",
             latest_version="1.43.0",
@@ -298,7 +286,7 @@ class TestCheckUpdatesTool:
             "tachikoma.updates.checker.check_for_update",
             return_value=result,
         ):
-            response = await handle_check_updates(repo)
+            response = await handle_check_updates()
 
         assert response["content"][0]["type"] == "text"
         text = response["content"][0]["text"]
@@ -306,13 +294,7 @@ class TestCheckUpdatesTool:
         assert "1.43.0" in text
         assert "True" in text
 
-        await db.close()
-
-    async def test_no_side_effects(self, tmp_path: Path) -> None:
-        db = Database(tmp_path / "tachikoma.db")
-        await db.initialize()
-        repo = AppStateRepository(db.session_factory)
-
+    async def test_no_side_effects(self, app_state_repo: AppStateRepository) -> None:
         result = UpdateCheckResult(
             current_version="1.42.0",
             latest_version="1.43.0",
@@ -330,14 +312,12 @@ class TestCheckUpdatesTool:
                 new_callable=AsyncMock,
             ) as mock_dispatch,
         ):
-            await handle_check_updates(repo)
+            await handle_check_updates()
 
         mock_dispatch.assert_not_called()
 
-        dedup = await repo.get(DEDUP_KEY)
+        dedup = await app_state_repo.get(DEDUP_KEY)
         assert dedup is None
-
-        await db.close()
 
     async def test_imports_work(self) -> None:
         from tachikoma.updates import (  # noqa: PLC0415
