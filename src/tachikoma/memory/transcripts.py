@@ -26,6 +26,8 @@ class TranscriptArchiveProcessor(PostProcessor):
     and the git commit remain unaffected.
     """
 
+    _status_message = "Archiving transcript..."
+
     def __init__(self, agent_defaults: AgentDefaults) -> None:
         self._cwd = agent_defaults.cwd
 

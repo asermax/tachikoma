@@ -817,7 +817,7 @@ class TestCoordinatorPostProcessing:
             call_order.append("close")
             return True
 
-        async def track_run(session: Session) -> None:
+        async def track_run(session: Session, **_kwargs: object) -> None:
             call_order.append("pipeline")
 
         registry.close_session.side_effect = track_close
@@ -837,6 +837,105 @@ class TestCoordinatorPostProcessing:
             pass
 
         pipeline.run.assert_not_awaited()
+
+    async def test_shutdown_callback_emits_bookend_messages(self, mock_sdk) -> None:
+        """AC: Callback receives 'Shutting down...' before and 'Shutdown complete' after."""
+        active = Session(
+            id="s1",
+            started_at=datetime.now(UTC),
+            sdk_session_id="sdk-xyz",
+        )
+        registry = _make_mock_registry(active_session=active)
+        pipeline = _make_mock_pipeline()
+
+        status_calls: list[str] = []
+
+        async def on_status(msg: str) -> None:
+            status_calls.append(msg)
+
+        async with Coordinator(registry=registry, pipeline=pipeline) as coord:
+            coord.shutdown_status_callback = on_status
+
+        assert status_calls[0] == "Shutting down..."
+        assert status_calls[-1] == "Shutdown complete"
+
+    async def test_shutdown_callback_passed_to_pipeline(self, mock_sdk) -> None:
+        """AC: Pipeline.run() is called with on_status set to the callback."""
+        active = Session(
+            id="s1",
+            started_at=datetime.now(UTC),
+            sdk_session_id="sdk-xyz",
+        )
+        registry = _make_mock_registry(active_session=active)
+        pipeline = _make_mock_pipeline()
+
+        async def on_status(msg: str) -> None:
+            pass
+
+        async with Coordinator(registry=registry, pipeline=pipeline) as coord:
+            coord.shutdown_status_callback = on_status
+
+        pipeline.run.assert_awaited_once()
+        call_kwargs = pipeline.run.call_args
+        assert call_kwargs.kwargs.get("on_status") is on_status
+
+    async def test_shutdown_callback_not_called_when_no_processing_needed(self, mock_sdk) -> None:
+        """AC: No callback when pipeline.needs_processing returns False."""
+        active = Session(
+            id="s1",
+            started_at=datetime.now(UTC),
+            sdk_session_id="sdk-xyz",
+        )
+        registry = _make_mock_registry(active_session=active)
+        pipeline = _make_mock_pipeline()
+        pipeline.needs_processing = MagicMock(return_value=False)
+
+        status_calls: list[str] = []
+
+        async def on_status(msg: str) -> None:
+            status_calls.append(msg)
+
+        async with Coordinator(registry=registry, pipeline=pipeline) as coord:
+            coord.shutdown_status_callback = on_status
+
+        assert status_calls == []
+        pipeline.run.assert_not_awaited()
+
+    async def test_shutdown_callback_none_means_no_messages(self, mock_sdk) -> None:
+        """AC: When callback is None (REPL), no bookend messages are sent."""
+        active = Session(
+            id="s1",
+            started_at=datetime.now(UTC),
+            sdk_session_id="sdk-xyz",
+        )
+        registry = _make_mock_registry(active_session=active)
+        pipeline = _make_mock_pipeline()
+
+        async with Coordinator(registry=registry, pipeline=pipeline):
+            pass  # No callback set
+
+        pipeline.run.assert_awaited_once()
+        call_kwargs = pipeline.run.call_args
+        assert call_kwargs.kwargs.get("on_status") is None
+
+    async def test_shutdown_callback_failure_does_not_block_pipeline(self, mock_sdk) -> None:
+        """AC: Callback failure doesn't prevent pipeline from running."""
+        active = Session(
+            id="s1",
+            started_at=datetime.now(UTC),
+            sdk_session_id="sdk-xyz",
+        )
+        registry = _make_mock_registry(active_session=active)
+        pipeline = _make_mock_pipeline()
+
+        async def on_status(msg: str) -> None:
+            raise RuntimeError("callback broke")
+
+        async with Coordinator(registry=registry, pipeline=pipeline) as coord:
+            coord.shutdown_status_callback = on_status
+
+        # Pipeline should still have been awaited despite callback failure
+        pipeline.run.assert_awaited_once()
 
 
 class TestCoordinatorMessageBuffer:

@@ -804,7 +804,9 @@ class TestResponseRendererNotify:
 
         pinned_ids = {42}
         renderer = ResponseRenderer(
-            bot, chat_id=123, push_notifications=True,
+            bot,
+            chat_id=123,
+            push_notifications=True,
             is_pinned=lambda mid: mid in pinned_ids,
         )
         renderer._current_message_id = 42
@@ -822,7 +824,9 @@ class TestResponseRendererNotify:
 
         pinned_ids: set[int] = set()
         renderer = ResponseRenderer(
-            bot, chat_id=123, push_notifications=True,
+            bot,
+            chat_id=123,
+            push_notifications=True,
             is_pinned=lambda mid: mid in pinned_ids,
         )
         renderer._current_message_id = 42

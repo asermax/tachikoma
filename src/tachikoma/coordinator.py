@@ -62,6 +62,14 @@ from tachikoma.skills.registry import SkillRegistry
 
 _log = logger.bind(component="coordinator")
 
+
+async def _emit_status(cb: StatusCallback, message: str) -> None:
+    try:
+        await cb(message)
+    except Exception:
+        _log.exception("Shutdown status callback failed")
+
+
 _COLD_START_SUMMARY = "No active conversation."
 
 
@@ -257,6 +265,9 @@ class Coordinator:
         self._bus: EventBus | None = bus
         self._was_busy: bool = False
 
+        # Shutdown progress callback — set by channels before polling starts
+        self.shutdown_status_callback: StatusCallback | None = None
+
     async def __aenter__(self) -> "Coordinator":
         self._was_busy = False
         _log.info("Coordinator initialized")
@@ -330,8 +341,13 @@ class Coordinator:
             and active.sdk_session_id is not None
             and self._pipeline.needs_processing(active, self._last_message_time)
         ):
+            cb = self.shutdown_status_callback
             try:
-                await self._pipeline.run(active)
+                if cb is not None:
+                    await _emit_status(cb, "Shutting down...")
+                await self._pipeline.run(active, on_status=cb)
+                if cb is not None:
+                    await _emit_status(cb, "Shutdown complete")
             except Exception as exc:
                 _log.exception(
                     "Post-processing pipeline failed: err={err}",
@@ -591,9 +607,7 @@ class Coordinator:
                     pp_results = msg_pre_task.result()
                     if pp_results and self._registry is not None:
                         pp_tuples = [
-                            (r.tag, r.content, r.metadata)
-                            for r in pp_results
-                            if r.content
+                            (r.tag, r.content, r.metadata) for r in pp_results if r.content
                         ]
 
                         if pp_tuples:

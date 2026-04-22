@@ -2,6 +2,45 @@
 
 <!-- version list -->
 
+## v1.45.0 (2026-04-22)
+
+### Code Style
+
+- **tests**: Fix argument alignment and spacing in channel and sync tests
+  ([`30c24b7`](https://github.com/asermax/tachikoma/commit/30c24b7747a28f9714dc775a41ff74f04dae4655))
+
+- **tests**: Remove redundant assertions in pipeline status test
+  ([`7a29246`](https://github.com/asermax/tachikoma/commit/7a29246f594cce35dc0886e8fc1363c5b2558842))
+
+### Documentation
+
+- **telegram**: Update spec and design with shutdown progress feature
+  ([`7ebf841`](https://github.com/asermax/tachikoma/commit/7ebf841bbcbfb1eeb576fd2de6bb67a3d99dc2af))
+
+### Features
+
+- **post-processing**: Add status messages and shutdown progress callback
+  ([`a0f0f94`](https://github.com/asermax/tachikoma/commit/a0f0f944984f944477eb2462367b9cc71d943205))
+
+### Refactoring
+
+- **coordinator**: Extract _emit_status helper for shutdown callbacks
+  ([`cf8c371`](https://github.com/asermax/tachikoma/commit/cf8c3719fa88418496516284e09f154fe8d8ab45))
+
+### Testing
+
+- **post-processing**: Add tests for shutdown status callback and processor messages
+  ([`9013b87`](https://github.com/asermax/tachikoma/commit/9013b873e564d7bb2a7d6d32e8d4ae0d779f590d))
+
+
+## v1.44.0 (2026-04-22)
+
+### Bug Fixes
+
+- **tests**: Correct mock patch path for check_for_update
+  ([`f35bf47`](https://github.com/asermax/tachikoma/commit/f35bf47f2cdda49d381c3f13d75684d4fb306268))
+
+
 ## v1.43.0 (2026-04-21)
 
 ### Features

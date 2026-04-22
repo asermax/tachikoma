@@ -222,6 +222,8 @@ class CoreContextProcessor(PromptDrivenProcessor):
     - Post-step: mtime comparison for observability logging
     """
 
+    _status_message = "Refreshing core context..."
+
     def __init__(self, agent_defaults: AgentDefaults) -> None:
         """Initialize the processor.
 

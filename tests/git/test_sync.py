@@ -575,6 +575,7 @@ class TestSmartPush:
             result = await smart_push(repo_path, agent_defaults=agent_defaults)
         assert result == PUSH_RESULT["REBASE_FAILED"]
 
+
 # --- Smart Pull Tests ---
 
 

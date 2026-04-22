@@ -28,6 +28,8 @@ class StaleWorkflowCleanupProcessor(PostProcessor):
     the configured threshold, and removes their scratchpad files.
     """
 
+    _status_message = "Cleaning up workflows..."
+
     def __init__(
         self,
         repository: WorkflowStateRepository,
