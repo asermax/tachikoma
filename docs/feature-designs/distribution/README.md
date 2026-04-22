@@ -9,7 +9,7 @@ Design documents for package building, versioning, and publishing infrastructure
 | Capability | Description | Status |
 |------------|-------------|--------|
 | [release-pipeline](release-pipeline.md) | CD pipeline: quality gates, semantic versioning, PyPI publishing | Current |
-| [update-checker](update-checker.md) | Periodic PyPI version checking and user notification | Current |
+| [update-checker](update-checker.md) | Periodic PyPI version checking, user notification, and in-place upgrade | Current |
 
 ## Related Decisions
 

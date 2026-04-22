@@ -9,7 +9,7 @@ Package building, versioning, and publishing infrastructure. Covers how Tachikom
 | Capability | Description | Status |
 |------------|-------------|--------|
 | [release-pipeline](release-pipeline.md) | CD pipeline: quality gates, semantic versioning, PyPI publishing | ✓ |
-| [update-checker](update-checker.md) | Periodic PyPI version checking and user notification | ✓ |
+| [update-checker](update-checker.md) | Periodic PyPI version checking, user notification, and in-place upgrade | ✓ |
 
 ## Related Decisions
 
