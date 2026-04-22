@@ -279,6 +279,19 @@ class BufferSettings(BaseModel):
     )
 
 
+class UpdatesSettings(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="ignore")
+
+    enabled: bool = Field(
+        default=True,
+        description="Whether automatic update checking is enabled",
+    )
+    check_interval: int = Field(
+        default=86400,
+        description="How often to check for updates in seconds (default: 86400 = once per day)",
+    )
+
+
 class Settings(BaseModel):
     model_config = ConfigDict(frozen=True, extra="ignore")
 
@@ -294,6 +307,7 @@ class Settings(BaseModel):
         description="Telegram bot configuration (required when channel is telegram)",
     )
     tasks: TaskSettings = Field(default_factory=TaskSettings)
+    updates: UpdatesSettings = Field(default_factory=UpdatesSettings)
     buffer: BufferSettings = Field(default_factory=BufferSettings)
 
 
@@ -489,6 +503,22 @@ def _generate_default_config(config_path: Path = CONFIG_PATH) -> None:
             doc.add(tomlkit.comment(f"{name} = {default}"))
         elif isinstance(default, str):
             doc.add(tomlkit.comment(f'{name} = "{default}"'))
+
+    doc.add(tomlkit.nl())
+
+    # [updates] section
+    doc.add(tomlkit.comment("[updates]"))
+
+    for name, field_info in UpdatesSettings.model_fields.items():
+        desc = field_info.description or ""
+        default = field_info.default
+
+        doc.add(tomlkit.comment(f"{desc}"))
+
+        if isinstance(default, bool):
+            doc.add(tomlkit.comment(f"{name} = {str(default).lower()}"))
+        elif isinstance(default, int):
+            doc.add(tomlkit.comment(f"{name} = {default}"))
 
     doc.add(tomlkit.nl())
 

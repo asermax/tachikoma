@@ -79,6 +79,7 @@ from tachikoma.tasks.scheduler import (
     session_task_scheduler_tick,
 )
 from tachikoma.telegram import TelegramChannel, telegram_hook
+from tachikoma.updates import create_update_tools_server, update_checker_tick, updates_hook
 from tachikoma.workflows.cleanup import StaleWorkflowCleanupProcessor
 from tachikoma.workflows.hooks import workflows_hook
 from tachikoma.workflows.repository import WorkflowStateRepository
@@ -121,6 +122,7 @@ async def run(
     bootstrap.register("logging", logging_hook)
     bootstrap.register("git", git_hook)
     bootstrap.register("database", database_hook)
+    bootstrap.register("updates", updates_hook)
     bootstrap.register("projects", projects_hook)
     bootstrap.register("skills", skills_hook)
     bootstrap.register("context", context_hook)
@@ -149,6 +151,7 @@ async def run(
     workflow_repository: WorkflowStateRepository = bootstrap.extras["workflow_repository"]
     process_repository: ProcessRepository = bootstrap.extras["process_repository"]
     detached_log_dir: Path = bootstrap.extras["detached_process_log_dir"]
+    app_state_repo = bootstrap.extras["app_state_repository"]
     bus = EventBus()
 
     _log.info(
@@ -217,6 +220,7 @@ async def run(
         ZoneInfo(settings.tasks.timezone),
     )
     git_tools = create_git_tools_server(settings.workspace.path, agent_defaults)
+    update_tools = create_update_tools_server(app_state_repo)
 
     # Shared deny hook: blocks destructive bash git commands on every
     # non-git-processor agent surface (main coordinator and task executor).
@@ -253,6 +257,7 @@ async def run(
         "workflow-tools": workflow_tools,
         "detached-process-tools": detached_process_tools,
         "git-tools": git_tools,
+        "update-tools": update_tools,
         **channel_mcp,
     }
 
@@ -331,6 +336,15 @@ async def run(
                     run=lambda: one_shot_cleanup_tick(task_repository, settings.tasks),
                 ),
             ]
+
+            if settings.updates.enabled:
+                jobs.append(
+                    Job(
+                        name="update_checker",
+                        trigger=IntervalTrigger(settings.updates.check_interval),
+                        run=lambda: update_checker_tick(app_state_repo, bus),
+                    )
+                )
 
             scheduler_tasks.append(asyncio.create_task(scheduler(jobs), name="scheduler"))
 
