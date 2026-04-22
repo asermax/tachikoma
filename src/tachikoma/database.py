@@ -86,6 +86,7 @@ class Database:
         if self._engine is None:
             return
 
+        import tachikoma.app_state  # noqa: F401, PLC0415
         import tachikoma.detached_processes.model  # noqa: F401, PLC0415
         import tachikoma.sessions.model  # noqa: F401, PLC0415
         import tachikoma.tasks.model  # noqa: F401, PLC0415
