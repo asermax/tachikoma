@@ -2,6 +2,24 @@
 
 <!-- version list -->
 
+## v1.50.1 (2026-04-25)
+
+### Bug Fixes
+
+- **processes**: Add migration for stop_reason column
+  ([`2f2b9af`](https://github.com/asermax/tachikoma/commit/2f2b9af941583480e57dbd50afa5abb6de653939))
+
+### Documentation
+
+- Fill changelog entries for v1.48.0, v1.49.0, and v1.50.0
+  ([`81250ab`](https://github.com/asermax/tachikoma/commit/81250ab2f825df551715848fdf3f26261991f6b3))
+
+### Refactoring
+
+- **bootstrap**: Include cause chain in BootstrapError messages
+  ([`bc0e82d`](https://github.com/asermax/tachikoma/commit/bc0e82d5f6b85c157dae04373309eeba49a1eea6))
+
+
 ## v1.50.0 (2026-04-25)
 
 ### Documentation
