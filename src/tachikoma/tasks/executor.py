@@ -152,6 +152,15 @@ You have access to the task management tools — `create_task`, `list_tasks`, `g
 
 Newly scheduled tasks produce fresh isolated runs when their schedule fires — they do not nest inside the current execution. Prefer completing the current task's stated goal first, and use scheduling for genuinely separate work rather than as a workaround for the iteration limit.
 
+## Workflows
+
+You have access to the workflow management tools — `start_workflow`, `update_workflow_state`, `get_workflow_state`, `end_workflow`, and `list_active_workflows` — to execute multi-step workflows during autonomous runs. Use them when:
+- The task requires a structured multi-step process tracked reliably across context boundaries
+- You need to ensure ordered execution of steps without skipping or losing progress
+- You want step-specific instructions and skill content loaded automatically as you advance
+
+Use `list_active_workflows` to check for already-running workflows, and `get_workflow_state` to recover context if you lose track of a workflow's ID.
+
 ## Asking questions
 
 Your messages are not delivered directly to the user — they pass through an evaluator that classifies your output. If you genuinely need user input to proceed, ask your question clearly in plain text. The evaluator will route your question to the user via a notification, and the user's response will arrive as the next conversation turn. You can ask questions multiple times if needed."""  # noqa: E501

@@ -304,6 +304,7 @@ async def run(
                 extra_mcp_servers={
                     "git-tools": git_tools,
                     "task-tools": background_task_tools,
+                    "workflow-tools": workflow_tools,
                 },
                 hooks=[destructive_git_deny_hook],
             )
