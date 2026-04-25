@@ -329,13 +329,6 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 **Complexity**: Medium
 **Description**: Claude Code uses "skills" internally for its plugin-provided slash-command capabilities, and Tachikoma also uses "skills" for its own sub-agent packages. When both systems share the same term, the agent conflates them — attempting to invoke a Tachikoma skill via the Claude Code Skill tool, or ignoring a Claude Code skill because it assumes it belongs to Tachikoma's registry. This leads to incorrect tool routing and missed capabilities. Rename Tachikoma's skill subsystem to a distinct term (e.g., "modules", "packages", or "capabilities") across the codebase, configuration, and internal references, and add internal disambiguation logic so the agent reliably distinguishes between the two systems without relying on external guidance files.
 
-### DLT-077: Route settings requests to correct config system
-**Status**: ✗ Defined
-**Depends on**: None
-**Priority**: 2 (High)
-**Complexity**: Easy
-**Description**: Claude Code has its own configuration system (global, project, and local settings files) that is separate from Tachikoma's TOML-based config. The agent sometimes confuses the two when asked to "update settings," modifying Claude Code settings when the user meant Tachikoma settings or vice versa. Add internal disambiguation logic — through system prompt injection, configuration metadata, or routing rules in the coordinator — that routes settings requests to the correct config system based on what is being configured (e.g., task scheduling routes to Tachikoma MCP tools, permissions and hooks route to Claude Code settings).
-
 ### DLT-078: Session routing rollback on context mismatch
 **Status**: ✗ Defined
 **Depends on**: None
