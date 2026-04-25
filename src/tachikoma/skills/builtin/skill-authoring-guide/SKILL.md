@@ -46,6 +46,7 @@ when it use it, and how to use it.
 |-------|----------|-------------|
 | `description` | Yes | Human-readable description. Used for skill detection. |
 | `version` | No | Optional version string for tracking |
+| `depends_on` | No | List of skill names to load as dependencies when this skill activates. |
 
 ### Body Content
 
@@ -116,6 +117,61 @@ At a glance (for the default Python + uv stack):
 - Run with `uv run --project skills/<skill-name>/<skill_name>_cli pytest`
 
 See `references/testing.md` for the full pytest wiring, file conventions, coverage guidance, and notes on non-Python stacks.
+
+## Skill Dependencies
+
+Skills can declare dependencies on other skills via the `depends_on` frontmatter field. When a skill is detected and loaded, all its dependencies are loaded too — transitively and automatically.
+
+### When to Use
+
+Use `depends_on` when your skill assumes another skill is already present in context. Common cases:
+- Your skill builds on a **shared utility skill** that provides reusable instructions
+- Your skill's agents reference concepts defined in a **foundation skill**
+- Multiple skills share a common **base configuration or convention**
+
+Don't use it for skills that are merely related — only declare dependencies on skills whose content must be present for your skill to work correctly.
+
+### Format
+
+A list of skill folder names:
+
+```yaml
+---
+description: "My skill description"
+depends_on:
+  - workflow-authoring-guide
+  - shared-conventions
+---
+```
+
+Names are case-sensitive and must match the skill's folder name exactly.
+
+### How It Works
+
+1. When your skill is detected (via classification), the registry resolves its full dependency chain transitively
+2. Dependencies are loaded **before** your skill, in depth-first order (deepest deps first)
+3. Cycles and self-references are handled gracefully — each skill loads exactly once
+4. Already-loaded skills are not re-loaded (deduped against the current session)
+5. Unknown dependency names log a warning at startup but don't prevent your skill from loading
+
+### Example
+
+```yaml
+---
+description: |
+  Activates when the user wants to deploy a project to production.
+  Triggers on deploy, release, ship to prod.
+depends_on:
+  - git-workflow
+  - deployment-conventions
+---
+
+# Production Deployment
+
+Guides the user through deploying to production, following
+the git workflow and deployment conventions defined in
+dependency skills.
+```
 
 ## Detection Tuning
 
@@ -202,11 +258,14 @@ Here's a complete example skill:
 description: |
   Activates when the user wants to create, update, or manage git commits.
   Triggers on requests to commit changes, create a commit, make a commit.
+depends_on:
+  - git-workflow
 ---
 
 # Git Commit Workflow
 
-Guides the user through creating well-structured git commits.
+Guides the user through creating well-structured git commits,
+building on the conventions defined in git-workflow.
 
 ## When to Use
 
