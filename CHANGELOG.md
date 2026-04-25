@@ -2,6 +2,29 @@
 
 <!-- version list -->
 
+## v1.51.0 (2026-04-25)
+
+### Bug Fixes
+
+- **updates**: Add type narrowing assertion for new_version before rollback marker
+  ([`5fc287c`](https://github.com/asermax/tachikoma/commit/5fc287c80fb841ffeca5d0d88e32f385e1cd82d9))
+
+### Documentation
+
+- **updates**: Add rollback on failed startup to spec and design
+  ([`08f63fc`](https://github.com/asermax/tachikoma/commit/08f63fc82245a066852aa42d57943a5009b84e2c))
+
+### Features
+
+- **updates**: Add automatic rollback on failed post-update bootstrap
+  ([`cb7393f`](https://github.com/asermax/tachikoma/commit/cb7393f7a78aed08504c4fcd5eee060545b129a3))
+
+### Refactoring
+
+- **updates**: Use EAFP for rollback marker reads and simplify version fallback
+  ([`26fdf25`](https://github.com/asermax/tachikoma/commit/26fdf25f039c542fe407041d20a1582a8a459f94))
+
+
 ## v1.50.2 (2026-04-25)
 
 ### Bug Fixes
