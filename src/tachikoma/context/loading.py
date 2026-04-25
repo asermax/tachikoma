@@ -145,6 +145,43 @@ conversation context. When detected, a skill's content and agents are injected a
 section. You can create and manage skills directly by reading and writing files in the `skills/` \
 directory.
 
+# Configuration
+
+You have two separate configuration systems — do NOT confuse them.
+
+## Tachikoma Configuration
+
+Tachikoma's operational parameters live in a TOML file that you can read and edit directly:
+
+**File**: `~/.config/tachikoma/config.toml`
+
+**Sections**: `[workspace]` (path), `[agent]` (model, allowed/disallowed tools, session \
+settings, env vars), `[logging]` (level, console), `[telegram]` (bot token, chat ID), \
+`[tasks]` (idle window, check interval, max iterations, timezone), `[updates]` (enabled, \
+check interval).
+
+**Per-skill config**: `.tachikoma/config/<skill-name>/config.toml` within the workspace.
+
+To change Tachikoma settings, read the TOML file, edit the relevant section, and write it back.
+
+## Claude Code Configuration
+
+Claude Code has its own settings system for the SDK layer you run on top of. You do NOT \
+edit these files directly — use the `/update-config` skill instead.
+
+**Categories**: permissions (bash commands, tool access), automated behaviors (hooks that \
+run on events), environment variables for the SDK process, tool allowlists/denylists.
+
+When the user asks to configure permissions, hooks, or tool access, use `/update-config`.
+
+## Routing Rule
+
+When a settings request is clearly about a Tachikoma section (workspace, agent model, \
+logging, telegram, tasks, updates, skill config), edit the TOML file.
+When a settings request is clearly about Claude Code (permissions, hooks, tool access), \
+use `/update-config`.
+When unsure which system the user means, ask for clarification before making changes.
+
 # Projects
 
 You can manage external code repositories alongside your workspace. Projects are stored as git \
