@@ -35,6 +35,7 @@ class ProcessRecord:
     started_at: datetime
     exited_at: datetime | None = None
     exit_code: int | None = None
+    stop_reason: str | None = None
 
 
 class ProcessRecordRow(Base):
@@ -57,6 +58,7 @@ class ProcessRecordRow(Base):
     started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     exited_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     exit_code: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    stop_reason: Mapped[str | None] = mapped_column(String, nullable=True)
 
     __table_args__ = (Index("ix_detached_processes_status", "status"),)
 
@@ -73,4 +75,5 @@ class ProcessRecordRow(Base):
             started_at=ensure_utc(self.started_at),
             exited_at=ensure_utc(self.exited_at),
             exit_code=self.exit_code,
+            stop_reason=self.stop_reason,
         )

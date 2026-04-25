@@ -54,6 +54,14 @@ async def reconcile_exit(
         if not won or not dispatch_notification or bus is None:
             return
 
+        # Suppress notification for agent-initiated stops.
+        if record.stop_reason == "agent_stopped":
+            _log.debug(
+                "Suppressing exit notification for agent-stopped process {id}",
+                id=record_id,
+            )
+            return
+
         if exit_code == 0:
             severity = "info"
             priority = Priority.NORMAL

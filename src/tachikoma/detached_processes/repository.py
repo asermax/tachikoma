@@ -45,6 +45,7 @@ class ProcessRepository:
                 started_at=record.started_at,
                 exited_at=record.exited_at,
                 exit_code=record.exit_code,
+                stop_reason=record.stop_reason,
             )
 
             async with self._session_factory() as db:
@@ -105,6 +106,42 @@ class ProcessRepository:
 
         except Exception as exc:
             raise ProcessRepositoryError(f"Failed to rename process record {record_id}") from exc
+
+    async def mark_stop_initiated(self, record_id: str) -> None:
+        """Mark a process record as being stopped by the agent.
+
+        Sets stop_reason='agent_stopped' so the reconciler suppresses
+        the exit notification.
+        """
+        try:
+            async with self._session_factory() as db:
+                await db.execute(
+                    update(ProcessRecordRow)
+                    .where(ProcessRecordRow.id == record_id)
+                    .values(stop_reason="agent_stopped")
+                )
+                await db.commit()
+
+        except Exception as exc:
+            raise ProcessRepositoryError(
+                f"Failed to mark stop initiated for process record {record_id}"
+            ) from exc
+
+    async def clear_stop_reason(self, record_id: str) -> None:
+        """Clear the stop_reason field on a process record."""
+        try:
+            async with self._session_factory() as db:
+                await db.execute(
+                    update(ProcessRecordRow)
+                    .where(ProcessRecordRow.id == record_id)
+                    .values(stop_reason=None)
+                )
+                await db.commit()
+
+        except Exception as exc:
+            raise ProcessRepositoryError(
+                f"Failed to clear stop reason for process record {record_id}"
+            ) from exc
 
     async def delete(self, record_id: str) -> bool:
         """Delete a process record by ID. Returns True if deleted."""

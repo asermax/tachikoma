@@ -7,6 +7,7 @@ Follows DES-006 factory pattern with Pydantic arg models and
 extracted handler functions.
 """
 
+import contextlib
 import signal
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -376,8 +377,15 @@ def create_detached_process_tools_server(
                     return _error(f"Unknown signal: {parsed.signal}")
 
             try:
+                await repository.mark_stop_initiated(record.id)
+            except ProcessRepositoryError:
+                _log.exception("Failed to mark stop initiated, proceeding with signal")
+
+            try:
                 await terminate(record, sig=sig, timeout=parsed.timeout)
             except PermissionError:
+                with contextlib.suppress(Exception):
+                    await repository.clear_stop_reason(record.id)
                 return _error(f"Permission denied: cannot signal process {record.pid}.")
 
             # timeout=0 is fire-and-forget — the watcher will observe the exit.
