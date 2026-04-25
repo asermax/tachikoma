@@ -2,6 +2,43 @@
 
 <!-- version list -->
 
+## v1.47.0 (2026-04-25)
+
+### Bug Fixes
+
+- **docs**: Remove duplicate edge-case tradeoff note in process supervision design
+  ([`c640bbc`](https://github.com/asermax/tachikoma/commit/c640bbc49831bc72a40a5f4963639683e09ecf33))
+
+### Documentation
+
+- **planning**: Remove completed DLT-164 delta
+  ([`62f8a1a`](https://github.com/asermax/tachikoma/commit/62f8a1a52a0a0838365161ee0481cfc9161156ba))
+
+- **processes**: Update supervision spec and design with stop_reason
+  ([`f2b280b`](https://github.com/asermax/tachikoma/commit/f2b280b2c15b217a2c5cbc5399f44d8965ebf267))
+
+- **skills**: Document depends_on field in skill authoring guide
+  ([`93405de`](https://github.com/asermax/tachikoma/commit/93405de097129d46e75ded2802795f92ad1090ef))
+
+### Features
+
+- **processes**: Suppress exit notifications for agent-stopped processes
+  ([`b6d864b`](https://github.com/asermax/tachikoma/commit/b6d864b00c8bdca38610899789cbfe63366f40b3))
+
+### Refactoring
+
+- **processes**: Extract stop_reason constant and deduplicate update logic
+  ([`a7a0d53`](https://github.com/asermax/tachikoma/commit/a7a0d5330c317af368c302b661ef1faf5c0da06f))
+
+### Testing
+
+- **processes**: Add stop_reason notification suppression tests
+  ([`a085cbf`](https://github.com/asermax/tachikoma/commit/a085cbfbe4cc564fe2210ca8f1f37f8295f3e66e))
+
+- **processes**: Use stop_reason constant in tests
+  ([`d548e6a`](https://github.com/asermax/tachikoma/commit/d548e6a6b14dd968213cbf7387b5cb6825e684be))
+
+
 ## v1.46.0 (2026-04-22)
 
 ### Bug Fixes
