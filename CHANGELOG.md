@@ -4,11 +4,46 @@
 
 ## v1.50.0 (2026-04-25)
 
+### Documentation
+
+- **tasks**: Update spec, design, and planning for workflow tools access
+  ([`19b8b4c`](https://github.com/asermax/tachikoma/commit/19b8b4c4a10a247198d1e1397fef936180bee633))
+
+### Features
+
+- **tasks**: Wire workflow-tools MCP server into background task execution
+  ([`c46697f`](https://github.com/asermax/tachikoma/commit/c46697fe74eade6784421c0d19e44173ea450cdf))
+
 
 ## v1.49.0 (2026-04-25)
 
+### Documentation
+
+- **configuration**: Add config disambiguation requirement and design
+  ([`f6763a7`](https://github.com/asermax/tachikoma/commit/f6763a7ac4ebd33ee0416261a22c03beac41b756))
+
+### Features
+
+- **configuration**: Add system prompt config disambiguation
+  ([`8073994`](https://github.com/asermax/tachikoma/commit/80739944571a6e8a5c7a0f3b0a99b0a0bbac6e5))
+
+### Refactoring
+
+- **context**: Consolidate config routing guidance into section header
+  ([`4ccfc58`](https://github.com/asermax/tachikoma/commit/4ccfc586a17ca6e0f7a55f7048e1a6c2ab39e5af))
+
 
 ## v1.48.0 (2026-04-25)
+
+### Documentation
+
+- **memory**: Add fail-fast classification to context retrieval spec and design
+  ([`d3a2350`](https://github.com/asermax/tachikoma/commit/d3a2350cc8e56dc49f6e9d44f6b1dc18b4e870d4))
+
+### Features
+
+- **memory**: Add fail-fast classification tiers to memory search prompt
+  ([`57da122`](https://github.com/asermax/tachikoma/commit/57da1229b0c7ef4b4e6f7e6c8c1e8a7f48c4e69a))
 
 
 ## v1.47.0 (2026-04-25)
