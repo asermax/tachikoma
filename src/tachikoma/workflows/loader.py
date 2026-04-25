@@ -172,16 +172,40 @@ def _load_step(
         )
         return None
 
-    skippable = post.metadata.get("skippable", False)
+    required = post.metadata.get("required", True)
 
-    if not isinstance(skippable, bool):
+    if not isinstance(required, bool):
         _log.warning(
-            "Step has invalid skippable type: skill={skill}, workflow={workflow}, step={step}",
+            "Step has invalid required type: skill={skill}, workflow={workflow}, step={step}",
             skill=skill_name,
             workflow=workflow_name,
             step=step_dir.name,
         )
         return None
+
+    has_explicit_required = "required" in post.metadata
+
+    # skippable is a deprecated alias for required=false
+    if "skippable" in post.metadata:
+        skippable = post.metadata["skippable"]
+        if has_explicit_required:
+            _log.warning(
+                "Step uses both 'required' and deprecated 'skippable'; "
+                "'required' takes precedence: skill={skill}, workflow={workflow}, step={step}",
+                skill=skill_name,
+                workflow=workflow_name,
+                step=step_dir.name,
+            )
+        else:
+            if isinstance(skippable, bool) and skippable:
+                required = False
+            _log.warning(
+                "Step uses deprecated 'skippable' field; use 'required: false' instead: "
+                "skill={skill}, workflow={workflow}, step={step}",
+                skill=skill_name,
+                workflow=workflow_name,
+                step=step_dir.name,
+            )
 
     raw_required_skills = post.metadata.get("required_skills")
 
@@ -202,7 +226,9 @@ def _load_step(
         required_skills = ()
 
     properties = {
-        k: v for k, v in post.metadata.items() if k not in ("title", "skippable", "required_skills")
+        k: v
+        for k, v in post.metadata.items()
+        if k not in ("title", "required", "skippable", "required_skills")
     }
 
     references_path = step_dir / "references"
@@ -219,7 +245,7 @@ def _load_step(
         instructions_path=instructions_path,
         references_path=references_path,
         scripts_path=scripts_path,
-        skippable=skippable,
+        required=required,
         required_skills=required_skills,
         properties=properties,
     )

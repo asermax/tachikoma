@@ -52,7 +52,7 @@ def repository(session_factory):
     return WorkflowStateRepository(session_factory)
 
 
-def _make_step(step_id: str, title: str, skippable: bool = False) -> StepDefinition:
+def _make_step(step_id: str, title: str, required: bool = True) -> StepDefinition:
     """Create a test StepDefinition."""
     return StepDefinition(
         id=step_id,
@@ -60,7 +60,7 @@ def _make_step(step_id: str, title: str, skippable: bool = False) -> StepDefinit
         instructions_path=Path(f"/fake/skill/workflows/test/{step_id}/instructions.md"),
         references_path=None,
         scripts_path=None,
-        skippable=skippable,
+        required=required,
     )
 
 
@@ -96,14 +96,14 @@ def _make_state(
     """Create a test WorkflowState."""
     if definition_snapshot is None:
         definition_snapshot = [
-            {"id": "01-plan", "title": "Plan", "skippable": False, "path": "/fake/01-plan"},
+            {"id": "01-plan", "title": "Plan", "required": True, "path": "/fake/01-plan"},
             {
                 "id": "02-execute",
                 "title": "Execute",
-                "skippable": False,
+                "required": True,
                 "path": "/fake/02-execute",
             },
-            {"id": "03-review", "title": "Review", "skippable": True, "path": "/fake/03-review"},
+            {"id": "03-review", "title": "Review", "required": False, "path": "/fake/03-review"},
         ]
 
     if step_states is None:
@@ -212,9 +212,9 @@ class TestPydanticModels:
 
 class TestTransitionValidation:
     SNAPSHOT = [
-        {"id": "01-plan", "title": "Plan", "skippable": False, "path": "/fake/01-plan"},
-        {"id": "02-execute", "title": "Execute", "skippable": False, "path": "/fake/02-execute"},
-        {"id": "03-review", "title": "Review", "skippable": True, "path": "/fake/03-review"},
+        {"id": "01-plan", "title": "Plan", "required": True, "path": "/fake/01-plan"},
+        {"id": "02-execute", "title": "Execute", "required": True, "path": "/fake/02-execute"},
+        {"id": "03-review", "title": "Review", "required": False, "path": "/fake/03-review"},
     ]
 
     def test_start_pending_step_valid(self):
@@ -237,15 +237,15 @@ class TestTransitionValidation:
         assert error is not None
         assert "Must start" in error
 
-    def test_skip_skippable_pending_step_valid(self):
+    def test_skip_non_required_pending_step_valid(self):
         states = {"01-plan": "pending", "02-execute": "pending", "03-review": "pending"}
         assert validate_transition(states, "03-review", "skip", self.SNAPSHOT) is None
 
-    def test_skip_non_skippable_step_invalid(self):
+    def test_skip_required_step_invalid(self):
         states = {"01-plan": "pending", "02-execute": "pending", "03-review": "pending"}
         error = validate_transition(states, "01-plan", "skip", self.SNAPSHOT)
         assert error is not None
-        assert "not skippable" in error
+        assert "required and cannot be skipped" in error
 
     def test_skip_started_step_invalid(self):
         states = {"01-plan": "pending", "02-execute": "pending", "03-review": "started"}
@@ -281,12 +281,12 @@ class TestTransitionValidation:
 
 class TestHelpers:
     def test_step_to_snapshot(self):
-        step = _make_step("01-plan", "Plan", skippable=True)
+        step = _make_step("01-plan", "Plan", required=False)
         snapshot = _step_to_snapshot(step)
 
         assert snapshot["id"] == "01-plan"
         assert snapshot["title"] == "Plan"
-        assert snapshot["skippable"] is True
+        assert snapshot["required"] is False
         assert snapshot["path"] == str(step.instructions_path.parent)
         assert snapshot["required_skills"] == []
 
@@ -541,17 +541,17 @@ class TestUpdateWorkflowState:
                 "03-review": "pending",
             },
             definition_snapshot=[
-                {"id": "01-plan", "title": "Plan", "skippable": False, "path": "/fake/01-plan"},
+                {"id": "01-plan", "title": "Plan", "required": True, "path": "/fake/01-plan"},
                 {
                     "id": "02-execute",
                     "title": "Execute",
-                    "skippable": False,
+                    "required": True,
                     "path": "/fake/02-execute",
                 },
                 {
                     "id": "03-review",
                     "title": "Review",
-                    "skippable": True,
+                    "required": False,
                     "path": "/fake/03-review",
                 },
             ],
@@ -578,7 +578,7 @@ class TestUpdateWorkflowState:
         assert updated.current_step == "02-execute"
 
     @pytest.mark.asyncio
-    async def test_skip_skippable_step(self, repository, tmp_path, mock_registry):
+    async def test_skip_non_required_step(self, repository, tmp_path, mock_registry):
         state = _make_state(
             step_states={
                 "01-plan": "completed",
@@ -586,17 +586,17 @@ class TestUpdateWorkflowState:
                 "03-review": "pending",
             },
             definition_snapshot=[
-                {"id": "01-plan", "title": "Plan", "skippable": False, "path": "/fake/01-plan"},
+                {"id": "01-plan", "title": "Plan", "required": True, "path": "/fake/01-plan"},
                 {
                     "id": "02-execute",
                     "title": "Execute",
-                    "skippable": True,
+                    "required": False,
                     "path": "/fake/02-execute",
                 },
                 {
                     "id": "03-review",
                     "title": "Review",
-                    "skippable": False,
+                    "required": True,
                     "path": "/fake/03-review",
                 },
             ],
@@ -621,7 +621,7 @@ class TestUpdateWorkflowState:
         assert updated.current_step == "03-review"
 
     @pytest.mark.asyncio
-    async def test_skip_non_skippable_rejected(self, repository, tmp_path, mock_registry):
+    async def test_skip_required_step_rejected(self, repository, tmp_path, mock_registry):
         state = _make_state(
             step_states={
                 "01-plan": "pending",
@@ -640,7 +640,7 @@ class TestUpdateWorkflowState:
         )
 
         assert result.get("is_error") is True
-        assert "not skippable" in result["content"][0]["text"]
+        assert "required and cannot be skipped" in result["content"][0]["text"]
 
     @pytest.mark.asyncio
     async def test_complete_pending_rejected(self, repository, tmp_path, mock_registry):
@@ -717,11 +717,11 @@ class TestUpdateWorkflowState:
         state = _make_state(
             step_states={"01-plan": "completed", "02-execute": "started"},
             definition_snapshot=[
-                {"id": "01-plan", "title": "Plan", "skippable": False, "path": "/fake/01-plan"},
+                {"id": "01-plan", "title": "Plan", "required": True, "path": "/fake/01-plan"},
                 {
                     "id": "02-execute",
                     "title": "Execute",
-                    "skippable": False,
+                    "required": True,
                     "path": "/fake/02-execute",
                 },
             ],
@@ -797,14 +797,14 @@ class TestUpdateWorkflowState:
             {
                 "id": "01-plan",
                 "title": "Plan",
-                "skippable": False,
+                "required": True,
                 "path": "/fake/01-plan",
                 "required_skills": ["skill-a"],
             },
             {
                 "id": "02-execute",
                 "title": "Execute",
-                "skippable": False,
+                "required": True,
                 "path": "/fake/02-execute",
                 "required_skills": [],
             },
@@ -835,14 +835,14 @@ class TestUpdateWorkflowState:
             {
                 "id": "01-plan",
                 "title": "Plan",
-                "skippable": False,
+                "required": True,
                 "path": "/fake/01-plan",
                 "required_skills": [],
             },
             {
                 "id": "02-execute",
                 "title": "Execute",
-                "skippable": False,
+                "required": True,
                 "path": "/fake/02-execute",
                 "required_skills": ["skill-b"],
             },
@@ -871,14 +871,14 @@ class TestUpdateWorkflowState:
             {
                 "id": "01-plan",
                 "title": "Plan",
-                "skippable": True,
+                "required": False,
                 "path": "/fake/01-plan",
                 "required_skills": [],
             },
             {
                 "id": "02-execute",
                 "title": "Execute",
-                "skippable": False,
+                "required": True,
                 "path": "/fake/02-execute",
                 "required_skills": ["skill-c"],
             },
@@ -909,7 +909,7 @@ class TestUpdateWorkflowState:
             {
                 "id": "01-plan",
                 "title": "Plan",
-                "skippable": False,
+                "required": True,
                 "path": "/fake/01-plan",
                 "required_skills": [],
             }
@@ -1057,3 +1057,80 @@ class TestListActiveWorkflows:
 
         result = await handle_list_active_workflows(repository)
         assert "No active workflows" in result["content"][0]["text"]
+
+
+# ---------------------------------------------------------------------------
+# Old snapshot compat (skippable → required migration)
+# ---------------------------------------------------------------------------
+
+
+class TestOldSnapshotCompat:
+    def test_old_snapshot_skippable_true_allows_skip(self):
+        """Old snapshot with skippable=true (no required key) should allow skip."""
+        old_snapshot = [
+            {"id": "01-plan", "title": "Plan", "skippable": False, "path": "/fake/01-plan"},
+            {"id": "02-execute", "title": "Execute", "skippable": True, "path": "/fake/02-execute"},
+        ]
+        states = {"01-plan": "completed", "02-execute": "pending"}
+
+        # skippable=True → required=False, skip allowed
+        assert validate_transition(states, "02-execute", "skip", old_snapshot) is None
+
+    def test_old_snapshot_skippable_false_rejects_skip(self):
+        """Old snapshot with skippable=false (no required key) should reject skip."""
+        old_snapshot = [
+            {"id": "01-plan", "title": "Plan", "skippable": False, "path": "/fake/01-plan"},
+        ]
+        states = {"01-plan": "pending"}
+
+        error = validate_transition(states, "01-plan", "skip", old_snapshot)
+        assert error is not None
+        assert "required and cannot be skipped" in error
+
+    def test_new_snapshot_required_key_takes_precedence(self):
+        """New snapshot with required key should ignore any residual skippable."""
+        snapshot = [
+            {
+                "id": "01-plan",
+                "title": "Plan",
+                "required": True,
+                "skippable": True,
+                "path": "/fake/01-plan",
+            },
+        ]
+        states = {"01-plan": "pending"}
+
+        error = validate_transition(states, "01-plan", "skip", snapshot)
+        assert error is not None
+        assert "required and cannot be skipped" in error
+
+
+class TestStartWorkflowMarker:
+    @pytest.mark.asyncio
+    async def test_start_workflow_shows_marker_for_non_required(
+        self, repository, mock_registry, tmp_path
+    ):
+        """Steps with required=False show (skippable) marker."""
+        steps = [
+            _make_step("01-plan", "Plan", required=True),
+            _make_step("02-execute", "Execute", required=False),
+            _make_step("03-review", "Review", required=True),
+        ]
+        workflow = _make_workflow(steps=steps)
+        mock_registry.get_workflow.return_value = workflow
+        mock_registry.workflows = {("test-skill", "test-workflow"): workflow}
+
+        result = await handle_start_workflow(
+            "test-skill",
+            "test-workflow",
+            mock_registry,
+            repository,
+            tmp_path,
+        )
+
+        text = result["content"][0]["text"]
+        # Step with required=False should show marker
+        assert "02-execute" in text
+        assert "(skippable)" in text
+        # Count markers — only one step has required=False
+        assert text.count("(skippable)") == 1

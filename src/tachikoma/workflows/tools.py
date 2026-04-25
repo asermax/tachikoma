@@ -100,7 +100,7 @@ def _step_to_snapshot(step: StepDefinition) -> dict:
     return {
         "id": step.id,
         "title": step.title,
-        "skippable": step.skippable,
+        "required": step.required,
         "path": str(step.instructions_path.parent),
         "required_skills": list(step.required_skills),
     }
@@ -233,8 +233,11 @@ def validate_transition(
             )
 
     elif action == "skip":
-        if not step_def.get("skippable", False):
-            return f"Step '{step_id}' is not skippable. Only skippable steps can be skipped."
+        is_required = step_def.get("required", True)
+        if "required" not in step_def and "skippable" in step_def:
+            is_required = not step_def["skippable"]
+        if is_required:
+            return f"Step '{step_id}' is required and cannot be skipped."
         if current_state != STEP_PENDING:
             return f"Step '{step_id}' is {current_state}. Can only skip a pending step."
 
@@ -333,7 +336,7 @@ async def handle_start_workflow(
 
     step_lines = []
     for i, step in enumerate(workflow_def.steps, 1):
-        skip_marker = " (skippable)" if step.skippable else ""
+        skip_marker = " (skippable)" if not step.required else ""
         step_lines.append(f"{i}. **{step.title}** (`{step.id}`){skip_marker}")
 
     steps_text = "\n".join(step_lines)

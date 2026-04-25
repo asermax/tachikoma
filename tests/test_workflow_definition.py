@@ -31,8 +31,8 @@ class TestStepDefinition:
         assert step.references_path is None
         assert step.scripts_path is None
 
-    def test_default_skippable_is_false(self) -> None:
-        """StepDefinition defaults skippable to False."""
+    def test_default_required_is_true(self) -> None:
+        """StepDefinition defaults required to True."""
         step = StepDefinition(
             id="01-step",
             title="Step",
@@ -41,20 +41,20 @@ class TestStepDefinition:
             scripts_path=None,
         )
 
-        assert step.skippable is False
+        assert step.required is True
 
-    def test_skippable_can_be_set_true(self) -> None:
-        """StepDefinition accepts skippable=True."""
+    def test_required_can_be_set_false(self) -> None:
+        """StepDefinition accepts required=False."""
         step = StepDefinition(
             id="01-step",
             title="Step",
             instructions_path=Path("/instructions.md"),
             references_path=None,
             scripts_path=None,
-            skippable=True,
+            required=False,
         )
 
-        assert step.skippable is True
+        assert step.required is False
 
     def test_default_properties_is_empty_dict(self) -> None:
         """StepDefinition defaults properties to empty dict."""
@@ -290,8 +290,47 @@ Instructions here."""
         step = result["test-workflow"].steps[0]
         assert step.title == "My Custom Title"
 
-    def test_parses_frontmatter_skippable(self, tmp_path: Path) -> None:
-        """Parses skippable from instructions.md frontmatter."""
+    def test_parses_frontmatter_required(self, tmp_path: Path) -> None:
+        """Parses required from instructions.md frontmatter."""
+        skill_dir = tmp_path / "test-skill"
+        workflow_dir = skill_dir / "workflows" / "test-workflow"
+        step_dir = workflow_dir / "01-step"
+        step_dir.mkdir(parents=True)
+
+        (step_dir / "instructions.md").write_text(
+            """---
+title: Step
+required: false
+---
+Instructions."""
+        )
+
+        result = load_workflows(skill_dir, "test-skill")
+
+        step = result["test-workflow"].steps[0]
+        assert step.required is False
+
+    def test_default_required_when_not_in_frontmatter(self, tmp_path: Path) -> None:
+        """Defaults required to True when not in frontmatter."""
+        skill_dir = tmp_path / "test-skill"
+        workflow_dir = skill_dir / "workflows" / "test-workflow"
+        step_dir = workflow_dir / "01-step"
+        step_dir.mkdir(parents=True)
+
+        (step_dir / "instructions.md").write_text(
+            """---
+title: Step
+---
+Instructions."""
+        )
+
+        result = load_workflows(skill_dir, "test-skill")
+
+        step = result["test-workflow"].steps[0]
+        assert step.required is True
+
+    def test_skippable_true_alias_sets_required_false(self, tmp_path: Path) -> None:
+        """skippable: true in frontmatter is treated as required=false."""
         skill_dir = tmp_path / "test-skill"
         workflow_dir = skill_dir / "workflows" / "test-workflow"
         step_dir = workflow_dir / "01-step"
@@ -308,10 +347,10 @@ Instructions."""
         result = load_workflows(skill_dir, "test-skill")
 
         step = result["test-workflow"].steps[0]
-        assert step.skippable is True
+        assert step.required is False
 
-    def test_default_skippable_when_not_in_frontmatter(self, tmp_path: Path) -> None:
-        """Defaults skippable to False when not in frontmatter."""
+    def test_skippable_false_with_no_required_keeps_default(self, tmp_path: Path) -> None:
+        """skippable: false with no required field keeps required=True default."""
         skill_dir = tmp_path / "test-skill"
         workflow_dir = skill_dir / "workflows" / "test-workflow"
         step_dir = workflow_dir / "01-step"
@@ -320,6 +359,7 @@ Instructions."""
         (step_dir / "instructions.md").write_text(
             """---
 title: Step
+skippable: false
 ---
 Instructions."""
         )
@@ -327,7 +367,52 @@ Instructions."""
         result = load_workflows(skill_dir, "test-skill")
 
         step = result["test-workflow"].steps[0]
-        assert step.skippable is False
+        assert step.required is True
+
+    def test_required_takes_precedence_over_skippable(self, tmp_path: Path) -> None:
+        """When both required and skippable are present, required wins."""
+        skill_dir = tmp_path / "test-skill"
+        workflow_dir = skill_dir / "workflows" / "test-workflow"
+        step_dir = workflow_dir / "01-step"
+        step_dir.mkdir(parents=True)
+
+        (step_dir / "instructions.md").write_text(
+            """---
+title: Step
+required: true
+skippable: true
+---
+Instructions."""
+        )
+
+        result = load_workflows(skill_dir, "test-skill")
+
+        step = result["test-workflow"].steps[0]
+        assert step.required is True
+
+    def test_required_and_skippable_excluded_from_properties(self, tmp_path: Path) -> None:
+        """Neither required nor skippable appear in properties dict."""
+        skill_dir = tmp_path / "test-skill"
+        workflow_dir = skill_dir / "workflows" / "test-workflow"
+        step_dir = workflow_dir / "01-step"
+        step_dir.mkdir(parents=True)
+
+        (step_dir / "instructions.md").write_text(
+            """---
+title: Step
+required: false
+skippable: true
+custom_field: keep-me
+---
+Instructions."""
+        )
+
+        result = load_workflows(skill_dir, "test-skill")
+
+        step = result["test-workflow"].steps[0]
+        assert "required" not in step.properties
+        assert "skippable" not in step.properties
+        assert step.properties == {"custom_field": "keep-me"}
 
     def test_parses_required_skills(self, tmp_path: Path) -> None:
         """Parses required_skills from frontmatter into a tuple of strings."""
@@ -503,8 +588,8 @@ Instructions."""  # title should be string, not int
         # Note: Loguru writes to stderr (not stdlib logging), so caplog cannot capture
         # the warning message. The warning is visible in pytest's captured stderr output.
 
-    def test_invalid_frontmatter_skippable_skips_step(self, tmp_path: Path) -> None:
-        """Step with invalid skippable type is skipped with warning."""
+    def test_invalid_frontmatter_required_skips_step(self, tmp_path: Path) -> None:
+        """Step with invalid required type is skipped with warning."""
         skill_dir = tmp_path / "test-skill"
         workflow_dir = skill_dir / "workflows" / "test-workflow"
         step_dir = workflow_dir / "01-step"
@@ -513,7 +598,7 @@ Instructions."""  # title should be string, not int
         (step_dir / "instructions.md").write_text(
             """---
 title: Step
-skippable: "not-a-bool"
+required: "not-a-bool"
 ---
 Instructions."""
         )

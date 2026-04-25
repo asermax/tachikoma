@@ -23,7 +23,8 @@ class StepDefinition:
         instructions_path: Path to the instructions.md file.
         references_path: Path to references/ directory if exists, None otherwise.
         scripts_path: Path to scripts/ directory if exists, None otherwise.
-        skippable: Whether this step can be skipped (default False).
+        required: Whether this step must execute (default True).
+            When False, the step can be skipped.
         required_skills: Declared skills that must be loaded when this step is activated.
             The workflow engine resolves the transitive dependency chain via the
             skill registry and injects the resolved skills into the step's tool
@@ -36,7 +37,7 @@ class StepDefinition:
     instructions_path: Path
     references_path: Path | None
     scripts_path: Path | None
-    skippable: bool = False
+    required: bool = True
     required_skills: tuple[str, ...] = ()
     properties: dict[str, object] = field(default_factory=dict)
 
