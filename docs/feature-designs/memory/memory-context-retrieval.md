@@ -31,6 +31,8 @@ Conversations are enriched when the agent knows about past interactions, user fa
 
 A `MemoryContextProvider` implements the `MessageContextProvider` ABC and uses a `query()` call with an Opus agent to search stored memories. The provider receives the session's summary and last exchange from the pipeline for conversation context, rendered via the shared `render_conversation_context()` helper. On the first message (no summary yet), it operates without conversation context. The provider runs as a standalone DES-007 agent with file search tools.
 
+The search prompt includes a classification section (following DES-007) that instructs the agent to classify messages into three tiers before searching: Skip (greetings/acknowledgments → return sentinel immediately), Shallow (continuation messages → facts/preferences only), and Full (new topics/past references → all directories). When classification is ambiguous, the agent defaults to Full search.
+
 The agent returns relevant memory file paths in XML `<memory>` elements. For facts/preferences, it returns self-closing tags and the provider reads the full file. For episodic files (which can be very large), the agent extracts the relevant snippet inline and the provider uses it directly with a `[Source: path]` reference. The provider filters out paths already present in `existing_entries` (via `memory_path` metadata), and returns one `ContextResult` per new memory.
 
 ```
@@ -58,7 +60,7 @@ The agent returns relevant memory file paths in XML `<memory>` elements. For fac
 
 | Layer/Component | Responsibility | Key Decisions |
 |-----------------|----------------|---------------|
-| `src/tachikoma/memory/context_provider.py` | `MemoryContextProvider(MessageContextProvider)` — receives conversation context (session summary + last exchange) from the pipeline, runs as a standalone DES-007 agent with file search tools, parses XML `<memory>` elements from agent response, handles snippets (episodic) vs full-file reads (facts/preferences), creates per-file `ContextResult` entries with metadata. `ParsedMemoryEntry` dataclass and `parse_memory_entries()` function for XML parsing. Constants: `MEMORIES_OWNER`, `MEMORY_PATH_META_KEY`, `_NO_RELEVANT_MEMORIES`. Helper: `extract_memory_paths()`. `MEMORY_SEARCH_PROMPT` constant co-located with provider — uses `$WORKSPACE` placeholders for directory paths, replaced with absolute workspace path at call time. | Agent returns XML elements with optional snippet content; self-closing = full file load, open/close = snippet extraction; uses `memory_path` metadata key per ADR-011; single adaptive prompt with `{conversation_context_section}` placeholder rendered via shared `render_conversation_context()` helper; `$WORKSPACE` replacement applied before `str.format()` |
+| `src/tachikoma/memory/context_provider.py` | `MemoryContextProvider(MessageContextProvider)` — receives conversation context (session summary + last exchange) from the pipeline, runs as a standalone DES-007 agent with file search tools, parses XML `<memory>` elements from agent response, handles snippets (episodic) vs full-file reads (facts/preferences), creates per-file `ContextResult` entries with metadata. `ParsedMemoryEntry` dataclass and `parse_memory_entries()` function for XML parsing. Constants: `MEMORIES_OWNER`, `MEMORY_PATH_META_KEY`, `_NO_RELEVANT_MEMORIES`. Helper: `extract_memory_paths()`. `MEMORY_SEARCH_PROMPT` constant co-located with provider — includes a `## Classification` section (following DES-007) with Skip/Shallow/Full tiers for fail-fast message classification, uses `$WORKSPACE` placeholders for directory paths, replaced with absolute workspace path at call time. | Agent returns XML elements with optional snippet content; self-closing = full file load, open/close = snippet extraction; uses `memory_path` metadata key per ADR-011; single adaptive prompt with `{conversation_context_section}` placeholder rendered via shared `render_conversation_context()` helper; classification section with fail-open default (ambiguous → Full); `$WORKSPACE` replacement applied before `str.format()` |
 
 ### Cross-Layer Contracts
 
@@ -146,6 +148,17 @@ extract_memory_paths(entries: list[SessionContextEntry]) → set[str]
 
 ## Key Decisions
 
+### Fail-fast classification in search prompt
+
+**Choice**: The search prompt includes a "Classification" section that instructs the agent to classify messages into three tiers (Skip, Shallow, Full) before searching. Skip returns the sentinel immediately for greetings/acknowledgments. Shallow limits search to facts/preferences for continuation messages. Full searches all directories for new topics and past-context references. Classification is placed after conversation context but before Search Strategy. Fail-open default: ambiguous classifications escalate to Full search.
+**Why**: Every message triggers a full Glob → Grep → Read search cycle regardless of whether the message benefits from memory context. Simple greetings and acknowledgments incur the same latency as substantive queries. Classification lets the agent short-circuit for low-context messages and limit search scope for continuations, reducing preprocessing latency without losing relevant context.
+
+**Consequences**:
+- Pro: Reduced latency on greetings, acknowledgments, and short follow-ups
+- Pro: Fail-open default prevents missing relevant context
+- Pro: Follows DES-007 classification pattern (early decision point before expensive work)
+- Con: Classification quality depends on agent judgment (mitigated by fail-open default)
+
 ### Explicit conversation context via shared helper
 
 **Choice**: The provider receives the session's summary and last exchange from the pipeline (threaded through from the coordinator) and renders them into the search prompt using the shared `render_conversation_context()` helper (defined in `per_message_pre_processing.py`). This is the same explicit context pattern used by the skills provider and boundary detector.
@@ -214,19 +227,31 @@ extract_memory_paths(entries: list[SessionContextEntry]) → set[str]
 
 **Given**: A new session with no summary yet
 **When**: The memory provider runs on the first message
-**Then**: Provider calls `query()` as a standalone agent. No conversation context section in the prompt. Agent searches memories based on the message alone. Provider reads relevant files, creates per-file entries.
+**Then**: Provider calls `query()` as a standalone agent. No conversation context section in the prompt. Agent classifies the message and searches memories based on the message alone. Provider reads relevant files, creates per-file entries.
 
-### Scenario: Follow-up message introduces new topic
+### Scenario: Greeting or acknowledgment (Skip tier)
+
+**Given**: A message that is purely social/transactional ("hi", "ok", "thanks")
+**When**: The memory provider runs
+**Then**: Agent classifies the message as Skip tier. Returns `NO_RELEVANT_MEMORIES` immediately without searching any files. Provider returns None.
+
+### Scenario: Continuation message within active topic (Shallow tier)
+
+**Given**: A session with conversation context, the message extends the current discussion
+**When**: A follow-up message continues the same topic (e.g., "what about that?")
+**Then**: Agent classifies as Shallow tier. Greps only facts/preferences for terms from the message, skips episodic search. Returns results or sentinel as appropriate.
+
+### Scenario: Follow-up message introduces new topic (Full tier)
 
 **Given**: A session with a summary and last exchange, memory entries already loaded for the initial topic
 **When**: A subsequent message introduces a new topic
-**Then**: Provider includes conversation context in the prompt. Agent sees the summary, searches memories, returns relevant file paths. Provider filters out already-loaded paths, reads new files, returns new entries.
+**Then**: Agent classifies as Full tier. Provider includes conversation context in the prompt. Agent searches all memory directories, returns relevant file paths. Provider filters out already-loaded paths, reads new files, returns new entries.
 
 ### Scenario: Follow-up message continues same topic
 
 **Given**: A session with conversation context, relevant memories already loaded
 **When**: A follow-up message continues the same topic
-**Then**: Provider includes conversation context in the prompt. Agent sees the summary, determines no new memories needed, returns `NO_RELEVANT_MEMORIES`. Provider returns None.
+**Then**: Agent classifies as Shallow or determines no new memories needed. Returns `NO_RELEVANT_MEMORIES`. Provider returns None.
 
 ### Scenario: Memory already loaded (deduplication)
 

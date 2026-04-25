@@ -23,18 +23,29 @@ A per-message context provider that searches stored memories for information rel
 | R5 | Receive the session's summary and last exchange as conversation context for informed relevance decisions |
 | R6 | Check existing context entries' metadata to skip memories already present — never remove, only append |
 | R7 | Validate agent-returned file paths to ensure they are within the memories/ directory |
+| R8 | Classify messages before searching: skip greetings/acknowledgments, shallow-search continuation messages (facts/preferences only), full-search new topics and past-context references |
 
 ## Behaviors
 
-### Memory Search (R0, R1)
+### Memory Search (R0, R1, R8)
 
 The provider searches stored memories by exploring the memory directories using file search tools, finding content relevant to the user's message. Runs on every message via the per-message pipeline.
+
+**Classification** (R8): Before searching, the search agent classifies the message into three tiers:
+- **Skip**: Purely social/transactional messages (greetings, acknowledgments, yes/no) — return `NO_RELEVANT_MEMORIES` immediately without searching
+- **Shallow**: Continuation messages within an active topic (when conversation context is present) — search only facts/preferences, skip episodic
+- **Full**: New topics, past-context references, messages with questions or requests — full search across all directories
+
+When classification is ambiguous, the agent defaults to Full search (fail-open).
 
 **Acceptance Criteria**:
 - Given a user message related to previously stored memories, when the memory provider runs, then it searches memory directories for relevant files
 - Given the memory provider runs, when it searches, then it explores `memories/episodic/`, `memories/facts/`, and `memories/preferences/` directories
 - Given the memory provider runs on every message, when a follow-up message introduces a new topic, then it searches for memories relevant to the new topic
 - Given the memory provider runs on every message, when a follow-up message continues the same topic, then the agent can decide no new memories are needed
+- Given a greeting or acknowledgment message ("hi", "ok", "thanks"), when the memory provider runs, then the search agent returns `NO_RELEVANT_MEMORIES` immediately
+- Given a continuation message within an active topic, when the memory provider runs, then the search agent limits its search to facts/preferences (skipping episodic)
+- Given a message containing both a greeting and a question ("hi, remind me about my meeting"), when the memory provider runs, then the search agent performs a full search
 
 ### Per-File Context Entries (R2)
 
