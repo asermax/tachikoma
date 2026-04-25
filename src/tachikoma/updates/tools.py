@@ -80,7 +80,7 @@ async def handle_apply_update(bus: EventBus) -> dict:
             ],
         }
 
-    write_rollback_marker(result.old_version, result.new_version or "unknown")
+    write_rollback_marker(result.old_version, result.new_version)
     await bus.dispatch(RestartRequested())
     return {
         "content": [

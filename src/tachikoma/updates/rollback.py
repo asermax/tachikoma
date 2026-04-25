@@ -57,17 +57,21 @@ def write_rollback_marker(previous_version: str, target_version: str) -> None:
 
 def read_rollback_marker() -> RollbackMarker | None:
     """Read the rollback marker. Returns None if absent or malformed."""
-    if not MARKER_PATH.exists():
+    try:
+        data = json.loads(MARKER_PATH.read_text())
+    except FileNotFoundError:
+        return None
+    except (json.JSONDecodeError, TypeError) as exc:
+        _log.warning("Malformed rollback marker, ignoring: {err}", err=exc)
         return None
 
     try:
-        data = json.loads(MARKER_PATH.read_text())
         return RollbackMarker(
             previous_version=data["previous_version"],
             target_version=data["target_version"],
             timestamp=data["timestamp"],
         )
-    except (json.JSONDecodeError, KeyError, TypeError) as exc:
+    except KeyError as exc:
         _log.warning("Malformed rollback marker, ignoring: {err}", err=exc)
         return None
 
@@ -92,17 +96,21 @@ def write_rollback_notification(
 
 def read_rollback_notification() -> RollbackNotification | None:
     """Read the rollback notification marker. Returns None if absent or malformed."""
-    if not NOTIFICATION_PATH.exists():
+    try:
+        data = json.loads(NOTIFICATION_PATH.read_text())
+    except FileNotFoundError:
+        return None
+    except (json.JSONDecodeError, TypeError) as exc:
+        _log.warning("Malformed rollback notification, ignoring: {err}", err=exc)
         return None
 
     try:
-        data = json.loads(NOTIFICATION_PATH.read_text())
         return RollbackNotification(
             previous_version=data["previous_version"],
             failed_version=data["failed_version"],
             error=data["error"],
         )
-    except (json.JSONDecodeError, KeyError, TypeError) as exc:
+    except KeyError as exc:
         _log.warning("Malformed rollback notification, ignoring: {err}", err=exc)
         return None
 
