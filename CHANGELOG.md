@@ -2,6 +2,19 @@
 
 <!-- version list -->
 
+## v1.50.2 (2026-04-25)
+
+### Bug Fixes
+
+- **shutdown**: Close channel resources during shutdown
+  ([`e3092ed`](https://github.com/asermax/tachikoma/commit/e3092ed7a4433648f65f9ecd3c5b7b66862850b5))
+
+### Code Style
+
+- **shutdown**: Tighten channel-close comment
+  ([`e58b2a7`](https://github.com/asermax/tachikoma/commit/e58b2a7d63ece7181a7bb03d6399bf33a68aa531))
+
+
 ## v1.50.1 (2026-04-25)
 
 ### Bug Fixes
