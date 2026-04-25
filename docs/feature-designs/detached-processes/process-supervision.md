@@ -55,11 +55,11 @@ All MCP tool paths that touch a record (`list_processes`, `get_process`, `read_p
 |-----------------|----------------|---------------|
 | `src/tachikoma/detached_processes/__init__.py` | Public API re-exports | Clean package boundary |
 | `src/tachikoma/detached_processes/model.py` | `ProcessRecord` frozen dataclass; `ProcessRecordRow` ORM model; `ProcessStatus` constant map | Domain types frozen; ORM internal; `process_create_time` (OS anchor) deliberately named differently from `started_at` (wall-clock persistence timestamp) |
-| `src/tachikoma/detached_processes/repository.py` | `ProcessRepository` — async CRUD over `ProcessRecordRow`: `create`, `get`, `list_running`, `list_exited`, `update`, `delete`, `reconcile_to_exited` (conditional UPDATE) | Shared `async_sessionmaker` from `Database`; wraps exceptions in `ProcessRepositoryError`; `reconcile_to_exited` returns a boolean so racing reconcilers can detect their loss |
+| `src/tachikoma/detached_processes/repository.py` | `ProcessRepository` — async CRUD over `ProcessRecordRow`: `create`, `get`, `list_running`, `list_exited`, `update`, `delete`, `reconcile_to_exited` (conditional UPDATE), `mark_stop_initiated`, `clear_stop_reason` | Shared `async_sessionmaker` from `Database`; wraps exceptions in `ProcessRepositoryError`; `reconcile_to_exited` returns a boolean so racing reconcilers can detect their loss; `mark_stop_initiated`/`clear_stop_reason` manage the `stop_reason` field for agent-initiated stop tracking |
 | `src/tachikoma/detached_processes/errors.py` | `ProcessRepositoryError` | Mirrors `TaskRepositoryError` shape |
 | `src/tachikoma/detached_processes/spawn.py` | `spawn_process(...)` (wrapper build, subprocess, identity capture, persistence, DB-failure cleanup); `terminate(...)` (process-group signalling with escalation); `is_alive(record)` | Uses `psutil` for identity + liveness; `os.killpg` + `os.getpgid` for group signalling; kept outside the repository so tests can stub spawn behavior |
 | `src/tachikoma/detached_processes/log_io.py` | `read_tail(path, n)` / `read_window(path, offset, count)` for serving logs | Reverse-seek chunked reader for tail (no full-file load); sequential line scan for paged reads |
-| `src/tachikoma/detached_processes/reconcile.py` | `reconcile_exit(record, *, repository, bus, log_dir, dispatch_notification=True)` — shared reconciler | Conditional UPDATE for race resolution; `status=="running"` guard for idempotency; single 100ms retry on missing sidecar; `bus: EventBus \| None` with precondition that `bus is not None or not dispatch_notification` so the bootstrap path can pass `None` |
+| `src/tachikoma/detached_processes/reconcile.py` | `reconcile_exit(record, *, repository, bus, log_dir, dispatch_notification=True)` — shared reconciler | Conditional UPDATE for race resolution; `status=="running"` guard for idempotency; single 100ms retry on missing sidecar; suppresses notification when `stop_reason=="agent_stopped"` (agent-initiated stop); `bus: EventBus \| None` with precondition that `bus is not None or not dispatch_notification` so the bootstrap path can pass `None` |
 | `src/tachikoma/detached_processes/watcher.py` | `event_driven_watcher(repository, bus, log_dir)` over `watchfiles.awatch`; `polling_watcher(repository, bus, log_dir, interval)` every `DETACHED_PROCESS_POLL_INTERVAL=5s` | Plain async functions started as `asyncio.Task`s in `scheduler_tasks`; mirror existing scheduler-task shape; per-record error isolation |
 | `src/tachikoma/detached_processes/tools.py` | `create_detached_process_tools_server(repository, bus, log_dir, timezone)` factory — six `@tool`-decorated closures over extracted handlers | Pydantic arg model per tool; factory closures capture dependencies; every handler operating on a record runs `is_alive` + `reconcile_exit` before its main action (lazy reconciliation) |
 | `src/tachikoma/detached_processes/hooks.py` | `detached_processes_hook(ctx)` — DES-003 bootstrap hook | Creates log dir; instantiates repo from `ctx.extras["database"]`; runs crash recovery via `list_running()` + `reconcile_exit(..., bus=None, dispatch_notification=False)` for dead records; stores repo and log_dir in `ctx.extras` |
@@ -144,7 +144,8 @@ ProcessRecord (frozen dataclass)
 ├── status: str                     ("running" or "exited")
 ├── started_at: datetime            (wall-clock UTC, set at spawn)
 ├── exited_at: datetime | None      (UTC; set on reconciliation)
-└── exit_code: int | None           (None when wrapper died before sidecar)
+├── exit_code: int | None           (None when wrapper died before sidecar)
+└── stop_reason: str | None         ("agent_stopped" when stop_process initiated; None for natural exits)
 ```
 
 ### Entity
@@ -163,6 +164,7 @@ erDiagram
         datetime started_at
         datetime exited_at
         int exit_code
+        string stop_reason
     }
 ```
 
@@ -252,15 +254,16 @@ Notifications are suppressed during startup — a user rebooting Tachikoma shoul
 1. Agent calls stop_process({id, signal?, timeout?})
 2. Handler gets record; if not found → clear error
 3. Lazy is_alive check; if already dead → reconcile_exit(record, dispatch_notification=False); return "already stopped"
-4. os.killpg(os.getpgid(record.pid), signal_or_SIGTERM)
-   - PermissionError → clear error without mutating record
-5. If timeout == 0: return "signal sent"
-6. Poll is_alive with small sleeps until alive==False or timeout exceeded
-7. If still alive: os.killpg(..., SIGKILL); poll briefly to confirm
-8. reconcile_exit(record, dispatch_notification=False)
+4. repository.mark_stop_initiated(record.id) → sets stop_reason="agent_stopped"
+5. os.killpg(os.getpgid(record.pid), signal_or_SIGTERM)
+   - PermissionError → repository.clear_stop_reason(record.id); clear error without mutating status
+6. If timeout == 0: return "signal sent"
+7. Poll is_alive with small sleeps until alive==False or timeout exceeded
+8. If still alive: os.killpg(..., SIGKILL); poll briefly to confirm
+9. reconcile_exit(record, dispatch_notification=False)
 ```
 
-Note: if a watcher fires first for the same exit, the conditional UPDATE hands the write to whichever arrives first — if the watcher wins, a notification does fire (correctly reporting the actual exit); if `stop_process` wins, no notification is produced.
+The `stop_reason` flag is set before the signal (step 4) so that any watcher reconciliation that fires after the process dies sees the flag and suppresses the notification. This eliminates the previously-accepted edge case where the watcher racing ahead of `stop_process` would produce a spurious notification. The flag is cleared on PermissionError (step 5) so that a future natural exit is not incorrectly suppressed.
 
 ## Key Decisions
 
@@ -404,5 +407,6 @@ Note: if a watcher fires first for the same exit, the conditional UPDATE hands t
 - One new runtime dependency: `psutil>=6.0`. `watchfiles` is already present
 - Both watcher tasks match the existing scheduler-task shape so the `__main__.py` startup/shutdown logic remains uniform (shutdown cancellation is inherited)
 - `reconcile_exit`'s `dispatch_notification=False` path is used by the bootstrap crash-recovery hook and by `stop_process`. All other call sites default to dispatching
-- Accepted edge-case tradeoff: if the watcher fires first for a `stop_process`-initiated exit, a notification *does* go out (from the watcher — the canonical R15 producer). A fully race-free "no notification ever for stop-initiated exits" would require a `stopping` intermediate state and is out of scope
+- Agent-initiated stop tracking: `stop_process` sets `stop_reason="agent_stopped"` on the record before signalling; the reconciler suppresses notifications for records with this flag. The flag is cleared on PermissionError to avoid suppressing future natural exits. This replaces the previously-accepted edge case where watcher-initiated notifications for `stop_process` exits were tolerated
+- Accepted edge-case tradeoff: the reconciler does a single 100ms retry when the sidecar is absent at read time (covers kernel-buffer lag). Persistent absence maps to `exit_code=None` → Urgent, the correct signal
 - Accepted edge-case tradeoff: the reconciler does a single 100ms retry when the sidecar is absent at read time (covers kernel-buffer lag). Persistent absence maps to `exit_code=None` → Urgent, the correct signal

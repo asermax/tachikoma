@@ -31,8 +31,9 @@ MCP tools let the agent spawn, inspect, read logs from, and terminate detached s
 | R12 | PID-reuse protection: alongside the PID, record the process's start time (from the OS) and treat the stored process as "exited" if the current process at that PID has a different start time |
 | R13 | Capture the exit code of a terminated process when it can be determined without blocking Tachikoma |
 | R14 | Base system prompt preamble mentions the detached-process tools so the agent is aware of the capability regardless of whether any processes are currently running |
-| R15 | Proactive exit detection — a subsystem-owned watcher observes `running` records in the background and, when a process exits, updates the record (status, `exited_at`, exit code when known) and dispatches a `Notification` event on the shared event bus so the priority buffer delivers it through the active channel at a natural idle window; the watcher assigns Urgent priority on abnormal exit (non-zero or unknown exit code) and Normal priority on clean exit (exit code 0). The watcher is the sole producer of exit notifications for this subsystem — `stop_process` does not dispatch a notification of its own |
+| R15 | Proactive exit detection — a subsystem-owned watcher observes `running` records in the background and, when a process exits, updates the record (status, `exited_at`, exit code when known) and dispatches a `Notification` event on the shared event bus so the priority buffer delivers it through the active channel at a natural idle window; the watcher assigns Urgent priority on abnormal exit (non-zero or unknown exit code) and Normal priority on clean exit (exit code 0); exit notifications are suppressed for agent-initiated stops (per R17). The watcher is the sole producer of exit notifications for this subsystem — `stop_process` does not dispatch a notification of its own |
 | R16 | Process names are non-unique display labels (no collision handling on `start_process` or `rename_process`) |
+| R17 | Agent-initiated stop tracking — a nullable `stop_reason` field on process records marks whether a stop was agent-initiated; when `stop_process` is invoked, `stop_reason` is set to `"agent_stopped"` before the signal is sent so that exit notifications are suppressed for intentionally stopped processes; the field is cleared if signal delivery fails with a permission error; this ensures only unexpected exits produce user-facing notifications |
 
 ## Behaviors
 
@@ -81,20 +82,22 @@ Log reads tail by default and page by explicit offset. Large log files must not 
 - Given a process has exited, then `read_process_output` still returns the log contents unchanged (log is retained on disk)
 - Given a log file is arbitrarily large (many gigabytes), then tail-by-default reads remain fast — the implementation must not load the entire file into memory to serve a tail read
 
-### Termination (R0, R6, R13)
+### Termination (R0, R6, R13, R17)
 
-Termination signals the whole process group (not just the wrapper shell) and escalates to SIGKILL after a timeout. Termination never emits a user-facing notification — the watcher is the sole producer (R15).
+Termination signals the whole process group (not just the wrapper shell) and escalates to SIGKILL after a timeout. Termination never emits a user-facing notification — the watcher is the sole producer (R15). The `stop_reason` field is set before signalling so that the watcher suppresses the exit notification (R17).
 
 **Acceptance Criteria**:
 - Given the agent calls `stop_process` on a running record with no arguments, then SIGTERM is sent to the process group and the tool waits up to the default timeout (10 seconds) before escalating to SIGKILL if the process is still alive
 - Given the agent calls `stop_process` with an explicit `signal` (e.g. `SIGINT`, `SIGHUP`, `SIGKILL`), then that signal is sent instead of SIGTERM
-- Given the agent calls `stop_process` with `timeout=0`, then the signal is sent and the tool returns immediately without polling for exit or escalating
+- Given the agent calls `stop_process` with `timeout=0`, then the signal is sent and the tool returns immediately without polling for exit or escalating; the persisted `stop_reason` flag ensures the watcher later suppresses the exit notification
 - Given SIGTERM is sent but the process is still alive after the timeout, then SIGKILL is sent and the tool waits briefly to confirm exit
 - Given `stop_process` is called on a record whose process has already exited (detected via liveness check before signalling), then the record is reconciled and the tool returns a clear "already stopped" message
 - Given `stop_process` is called with an unknown record ID, then a clear "not found" error is returned
 - Given `stop_process` successfully terminates the process, then the record's status, `exited_at`, and exit code (when determinable) are updated
 - Given the OS rejects the signal with a permission error, then the tool returns a clear error describing the condition without altering the record's status
 - Given `stop_process` reconciles a record from `running` to `exited`, then no `Notification` event is dispatched by `stop_process` — user-facing notification of exit is the watcher's sole responsibility (R15)
+- Given `stop_process` successfully sends a signal to the process, then the record's `stop_reason` is set to `"agent_stopped"` before the signal is delivered
+- Given `stop_process` fails to deliver the signal due to a permission error, then the `stop_reason` field is cleared (set to None) so that a future natural exit is not incorrectly suppressed
 
 ### Proactive Exit Detection and Notification (R15)
 
@@ -112,6 +115,8 @@ A subsystem-owned watcher detects exits in the background and dispatches a `Noti
 - Given the watcher's liveness check, record update, or notification dispatch raises an error for a particular record, then the error is logged and the watcher continues processing other records and subsequent cycles without terminating
 - Given the watcher's cadence, then it is short enough that the worst-case gap between an abnormal exit and the dispatched notification remains small relative to the Urgent idle-window (30s)
 - Given Tachikoma is shutting down, then the watcher stops cleanly along with the other scheduler tasks
+- Given the watcher transitions a record with `stop_reason='agent_stopped'` from `running` to `exited`, then no `Notification` event is dispatched — exit notifications are suppressed for agent-initiated stops (R17)
+- Given the watcher transitions a record with no `stop_reason` (or `stop_reason` is None) from `running` to `exited`, then a `Notification` event is dispatched as normal — only agent-initiated stops are suppressed
 
 ### Renaming (R0, R7)
 
