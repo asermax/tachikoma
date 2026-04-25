@@ -426,6 +426,13 @@ async def run(
         # Stop the event bus
         await bus.stop()
 
+        # Close channel resources (e.g. Telegram bot session) after coordinator
+        # cleanup so shutdown status messages can still be sent.
+        try:
+            await active_channel.close()
+        except Exception:
+            _log.exception("Channel close failed during shutdown")
+
         # Dispose the shared database engine to prevent dangling connections
         if database is not None:
             await database.close()

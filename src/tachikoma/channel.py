@@ -67,3 +67,13 @@ class Channel(Protocol):
                          Set at run() time, not construction time.
         """
         ...
+
+    async def close(self) -> None:
+        """Release channel-specific resources after coordinator cleanup.
+
+        Called from the main entry point's finally block, after the
+        coordinator's ``__aexit__`` has finished (including post-processing).
+        Channels that hold long-lived resources (HTTP sessions, connections)
+        override this to close them.
+        """
+        return None

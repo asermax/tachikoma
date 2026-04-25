@@ -690,6 +690,7 @@ class TelegramChannel(Channel):
             await self._dispatcher.start_polling(
                 self._bot,
                 handle_signals=False,
+                close_bot_session=False,
                 backoff_config=BackoffConfig(
                     min_delay=1,
                     max_delay=60,
@@ -845,6 +846,19 @@ class TelegramChannel(Channel):
                 _log.exception("Failed to update shutdown status message")
         except TelegramAPIError:
             _log.exception("Failed to update shutdown status message")
+
+    async def close(self) -> None:
+        """Close the bot's HTTP session.
+
+        Called from the main entry point after coordinator cleanup (including
+        post-processing) has finished. The bot session is intentionally kept
+        open past polling teardown so that shutdown status messages can still
+        be sent during the coordinator's ``__aexit__``.
+        """
+        try:
+            await self._bot.session.close()
+        except Exception:
+            _log.exception("Failed to close bot session")
 
     async def _on_shutdown(self) -> None:
         """Send partial response on shutdown if one is active."""
