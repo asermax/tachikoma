@@ -226,17 +226,19 @@ title: "Gather Requirements"
 
 ### Optional Fields
 
-**skippable** (boolean, optional, default: false)
-- If `true`, the step may be skipped when not applicable
-- The agent should check conditions before executing
-- Use for conditional steps (e.g., database setup when database exists)
+**required** (boolean, optional, default: true)
+- If `false`, the step may be skipped when not applicable
+- Steps are mandatory by default; only mark `required: false` for conditional steps
+- Use for optional steps (e.g., database setup when database already exists)
 
 ```yaml
 ---
 title: "Configure Database"
-skippable: true
+required: false
 ---
 ```
+
+> **Note**: The deprecated `skippable: true` field is treated as an alias for `required: false`. Prefer `required: false` in new workflows.
 
 **required_skills** (list of strings, optional, default: empty)
 - Names of skills the agent needs to execute this step

@@ -110,7 +110,6 @@ Each step must have an `instructions.md` file with YAML frontmatter:
 ```yaml
 ---
 title: "Analyze Requirements"
-skippable: false
 custom_field: "optional metadata"
 ---
 
@@ -125,7 +124,7 @@ what to produce, and how to validate completion.
 | Field | Required | Description |
 |-------|----------|-------------|
 | `title` | Yes | Human-readable step title |
-| `skippable` | No | If `true`, step may be skipped when not applicable (default: `false`) |
+| `required` | No | If `false`, step may be skipped when not applicable (default: `true`) |
 | `*` | No | Custom fields for workflow-specific metadata |
 
 ### Body Content
@@ -233,7 +232,6 @@ workflows/
 ```yaml
 ---
 title: "Gather Requirements"
-skippable: false
 ---
 
 # Requirements Gathering
@@ -256,7 +254,6 @@ Create a requirements document at `docs/requirements/{feature-name}.md`
 ```yaml
 ---
 title: "Design Solution"
-skippable: false
 ---
 
 # Solution Design
@@ -281,7 +278,6 @@ For detailed design patterns, see `references/design-patterns.md`.
 ```yaml
 ---
 title: "Create Implementation Plan"
-skippable: false
 ---
 
 # Implementation Planning
@@ -327,14 +323,14 @@ Each step should define what "done" looks like:
 - [ ] Type checking succeeds (`just typecheck`)
 ```
 
-### Use Skippable Steps Appropriately
+### Mark Steps as Optional When Needed
 
-Mark steps as `skippable: true` when they're conditionally needed:
+Mark steps as `required: false` when they're conditionally needed:
 
 ```yaml
 ---
 title: "Configure Database"
-skippable: true
+required: false
 ---
 
 # Database Configuration
