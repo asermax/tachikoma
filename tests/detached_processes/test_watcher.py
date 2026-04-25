@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 import watchfiles
 
+from tachikoma.detached_processes.model import STOP_REASON_AGENT_STOPPED
 from tachikoma.detached_processes.watcher import (
     event_driven_watcher,
     polling_watcher,
@@ -186,7 +187,11 @@ async def test_event_driven_suppresses_agent_stopped_notification(tmp_path, repo
     log_dir.mkdir()
 
     await repo.create(
-        _make_record(record_id="ev-stopped", status="running", stop_reason="agent_stopped")
+        _make_record(
+            record_id="ev-stopped",
+            status="running",
+            stop_reason=STOP_REASON_AGENT_STOPPED,
+        )
     )
     mock_bus = AsyncMock()
 

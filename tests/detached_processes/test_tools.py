@@ -9,6 +9,7 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
+from tachikoma.detached_processes.model import STOP_REASON_AGENT_STOPPED
 from tachikoma.detached_processes.tools import create_detached_process_tools_server
 
 from .conftest import _make_record
@@ -355,7 +356,7 @@ async def test_stop_marks_agent_stopped_before_signalling(repo, tmp_path):
 
     updated = await repo.get("sp-flag")
     assert updated is not None
-    assert updated.stop_reason == "agent_stopped"
+    assert updated.stop_reason == STOP_REASON_AGENT_STOPPED
 
 
 @pytest.mark.asyncio

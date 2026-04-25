@@ -4,6 +4,8 @@ from datetime import UTC, datetime
 
 import pytest
 
+from tachikoma.detached_processes.model import STOP_REASON_AGENT_STOPPED
+
 from .conftest import _make_record
 
 
@@ -130,12 +132,12 @@ async def test_mark_stop_initiated_sets_flag(repo):
     await repo.mark_stop_initiated("stop-test")
     record = await repo.get("stop-test")
     assert record is not None
-    assert record.stop_reason == "agent_stopped"
+    assert record.stop_reason == STOP_REASON_AGENT_STOPPED
 
 
 @pytest.mark.asyncio
 async def test_clear_stop_reason(repo):
-    await repo.create(_make_record(record_id="clear-test", stop_reason="agent_stopped"))
+    await repo.create(_make_record(record_id="clear-test", stop_reason=STOP_REASON_AGENT_STOPPED))
     await repo.clear_stop_reason("clear-test")
     record = await repo.get("clear-test")
     assert record is not None

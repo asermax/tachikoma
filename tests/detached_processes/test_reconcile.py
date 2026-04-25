@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from tachikoma.buffer.priority import Priority
+from tachikoma.detached_processes.model import STOP_REASON_AGENT_STOPPED
 from tachikoma.detached_processes.reconcile import reconcile_exit
 
 from .conftest import _make_record
@@ -189,7 +190,11 @@ async def test_agent_stopped_suppresses_watcher_notification(repo, tmp_path, moc
     log_dir.mkdir()
 
     await repo.create(
-        _make_record(record_id="rec-stopped", status="running", stop_reason="agent_stopped")
+        _make_record(
+            record_id="rec-stopped",
+            status="running",
+            stop_reason=STOP_REASON_AGENT_STOPPED,
+        )
     )
     (log_dir / "rec-stopped.exit").write_text("143\n")
 
@@ -244,7 +249,7 @@ async def test_agent_stopped_already_exited_is_noop(repo, tmp_path, mock_bus):
             record_id="rec-exited-stopped",
             status="exited",
             exit_code=0,
-            stop_reason="agent_stopped",
+            stop_reason=STOP_REASON_AGENT_STOPPED,
         )
     )
 
