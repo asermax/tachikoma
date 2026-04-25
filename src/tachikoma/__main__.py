@@ -426,8 +426,7 @@ async def run(
         # Stop the event bus
         await bus.stop()
 
-        # Close channel resources (e.g. Telegram bot session) after coordinator
-        # cleanup so shutdown status messages can still be sent.
+        # Close channel resources after coordinator cleanup (allows shutdown status messages).
         try:
             await active_channel.close()
         except Exception:
