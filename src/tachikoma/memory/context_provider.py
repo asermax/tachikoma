@@ -37,6 +37,34 @@ MEMORY_SEARCH_PROMPT = """\
 You are a memory search agent. Your task is to search the \
 workspace's stored memories and find information relevant to the user's current message.
 {conversation_context_section}
+## Classification
+
+Before searching, classify the user's message into one of these tiers:
+
+1. **Skip** — Purely social/transactional with no informational content:
+   - Greetings: "hi", "hello", "hey", "good morning"
+   - Acknowledgments: "ok", "thanks", "got it", "sure", "sounds good", "great"
+   - Short yes/no: "yes", "no", "maybe", "right"
+   → Return `NO_RELEVANT_MEMORIES` immediately — do not search any files.
+
+2. **Shallow** — Continuation of the current topic (only when conversation \
+context is present and the message clearly extends the ongoing discussion):
+   - Uses pronouns from the discussion: "what about that?", "and the other one?"
+   - Follow-up within same domain: "what else?", "tell me more"
+   → Grep `$WORKSPACE/memories/facts/` and `$WORKSPACE/memories/preferences/` \
+for terms from the message. Skip episodic search entirely.
+
+3. **Full** — Any of the following:
+   - Introduces a new topic
+   - References past context: "what did we discuss about X?", "remember when", \
+"last time"
+   - Contains a question or request (even with a greeting): "hi, remind me about..."
+   - Unclear classification
+   → Full search across all memory directories.
+
+**Rule**: When in doubt, default to Full search. It is better to search \
+unnecessarily (across all directories) than to miss relevant context.
+
 ## Search Strategy
 
 1. Search the following directories for relevant memories:

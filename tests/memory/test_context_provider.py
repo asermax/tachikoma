@@ -395,6 +395,52 @@ class TestMemorySearchPrompt:
         assert "snippet" in MEMORY_SEARCH_PROMPT.lower()
 
 
+class TestMemorySearchPromptClassification:
+    """Tests for fail-fast classification guidance in MEMORY_SEARCH_PROMPT."""
+
+    def test_prompt_contains_classification_section(self) -> None:
+        """AC: Prompt includes ## Classification section header."""
+        assert "## Classification" in MEMORY_SEARCH_PROMPT
+
+    def test_prompt_contains_skip_tier(self) -> None:
+        """AC: Skip tier mentions greetings and acknowledgments."""
+        assert "Skip" in MEMORY_SEARCH_PROMPT
+        assert "greetings" in MEMORY_SEARCH_PROMPT.lower()
+        assert "acknowledgments" in MEMORY_SEARCH_PROMPT.lower()
+
+    def test_prompt_contains_skip_tier_examples(self) -> None:
+        """AC: Skip tier includes concrete greeting/acknowledgment examples."""
+        assert '"hi"' in MEMORY_SEARCH_PROMPT
+        assert '"thanks"' in MEMORY_SEARCH_PROMPT
+        assert '"ok"' in MEMORY_SEARCH_PROMPT
+
+    def test_prompt_contains_shallow_tier(self) -> None:
+        """AC: Shallow tier mentions continuation and limits scope to facts/preferences."""
+        assert "Shallow" in MEMORY_SEARCH_PROMPT
+        assert "continuation" in MEMORY_SEARCH_PROMPT.lower()
+        assert "facts" in MEMORY_SEARCH_PROMPT.lower()
+
+    def test_prompt_shallow_tier_skips_episodic(self) -> None:
+        """AC: Shallow tier explicitly instructs skipping episodic search."""
+        assert "skip episodic" in MEMORY_SEARCH_PROMPT.lower()
+
+    def test_prompt_contains_full_tier(self) -> None:
+        """AC: Full tier mentions new topic and past context references."""
+        assert "Full" in MEMORY_SEARCH_PROMPT
+        assert "new topic" in MEMORY_SEARCH_PROMPT.lower()
+        assert "past context" in MEMORY_SEARCH_PROMPT.lower()
+
+    def test_prompt_contains_fail_open_rule(self) -> None:
+        """AC: Prompt includes fail-open default (Full search when uncertain)."""
+        assert "When in doubt" in MEMORY_SEARCH_PROMPT
+        assert "default to Full search" in MEMORY_SEARCH_PROMPT
+
+    def test_prompt_substantive_content_overrides_greeting(self) -> None:
+        """AC: Prompt instructs that questions/requests override greeting classification."""
+        assert "question or request" in MEMORY_SEARCH_PROMPT.lower()
+        assert "even with a greeting" in MEMORY_SEARCH_PROMPT.lower()
+
+
 class TestParseMemoryEntries:
     """Tests for parse_memory_entries parser."""
 
