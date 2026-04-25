@@ -28,6 +28,7 @@ The `ANTHROPIC_API_KEY` is not managed by this system — the Claude SDK reads i
 | R9 | Task scheduler configuration: `[tasks]` section for idle window, check interval, max iterations, max concurrent background, and timezone |
 | R10 | Skill and script configuration: per-skill config directories under `.tachikoma/config/<skill-name>/` |
 | R11 | Update checking configuration: `[updates]` section for enabled flag and check interval |
+| R12 | Configuration disambiguation: system prompt must distinguish between Tachikoma config (TOML file) and Claude Code config (settings.json) so the agent routes settings requests to the correct system |
 
 ## Behaviors
 
@@ -148,3 +149,13 @@ Skills and scripts that need configuration store it in per-skill subdirectories 
 - Given a skill's config directory doesn't exist, when the skill runs for the first time, then it creates the directory and any default config file
 - Given the main application config at `~/.config/tachikoma/config.toml`, when a skill reads config, then it does not read from or write to the main config file
 - Given a skill that needs persistent state, when the skill writes state, then it writes to `.tachikoma/state/<skill-name>/` not `.tachikoma/config/<skill-name>/`
+
+### Configuration Disambiguation (R12)
+
+The agent distinguishes between Tachikoma's TOML config and Claude Code's settings system, routing settings requests to the correct mechanism based on which category is being configured. Tachikoma categories (workspace, agent, logging, telegram, tasks, updates, skill config) are edited in the TOML file. Claude Code categories (permissions, hooks, tool access) are managed through the `/update-config` skill. When a request is ambiguous, the agent asks the user for clarification.
+
+**Acceptance Criteria**:
+- Given the system preamble is rendered, when it includes the Configuration section, then it contains subsections for each config system (Tachikoma and Claude Code) with their respective settings categories listed
+- Given a user asks to change a setting that maps to a known Tachikoma category, when the agent processes the request, then it reads and edits `~/.config/tachikoma/config.toml` using Read/Write tools
+- Given a user asks to change a setting that maps to a known Claude Code category, when the agent processes the request, then it uses the `/update-config` skill
+- Given a user makes a genuinely ambiguous settings request, when the agent processes the request, then it asks the user which config system they mean before making changes

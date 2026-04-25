@@ -330,6 +330,20 @@ flowchart TD
 - Pro: Logs and display show the real IANA timezone name
 - Con: Falls back to UTC if `/etc/localtime` is a copy (not a symlink) — acceptable for single-user self-hosted deployment
 
+### System prompt-based config disambiguation
+
+**Choice**: Add a Configuration section to the system preamble that distinguishes between Tachikoma's TOML config and Claude Code's settings system, rather than implementing routing logic in the coordinator or adding MCP tools
+**Why**: The agent sometimes confuses the two config systems when asked to "update settings." System prompt injection follows the established pattern used for Memory and Skills disambiguation (same file, same preamble). No coordinator or routing code changes needed. The section lists which categories belong to each system and provides routing rules for ambiguous requests.
+**Alternatives Considered**:
+- Coordinator-level routing logic: Over-engineering for an LLM guidance problem; would require parsing user intent programmatically
+- MCP tool for Tachikoma config: The agent already has Read/Write tools; adding another layer is unnecessary
+
+**Consequences**:
+- Pro: Minimal code change (system prompt text only)
+- Pro: Consistent with existing disambiguation pattern (Memory, Skills)
+- Pro: No new abstractions or code paths to maintain
+- Con: LLM-dependent — relies on the agent following the routing rules (acceptable: same approach used for Memory and Skills disambiguation, which works reliably)
+
 ## System Behavior
 
 ### Scenario: First run — no config file
