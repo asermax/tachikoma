@@ -256,6 +256,21 @@ class Database:
                 )
                 _log.info("Schema migration: added 'since' column to task_definitions table")
 
+            # Check if stop_reason column exists on detached_processes table
+            result = await conn.execute(
+                text(
+                    "SELECT * FROM pragma_table_info('detached_processes')"
+                    " WHERE name='stop_reason'"
+                )
+            )
+            if result.fetchone() is None:
+                await conn.execute(
+                    text("ALTER TABLE detached_processes ADD COLUMN stop_reason TEXT")
+                )
+                _log.info(
+                    "Schema migration: added 'stop_reason' column to detached_processes table"
+                )
+
         _log.debug("Schema migrations completed: db_path={path}", path=self._db_path)
 
     async def close(self) -> None:
