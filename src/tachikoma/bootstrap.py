@@ -60,6 +60,19 @@ class Bootstrap:
             try:
                 await hook(self._context)
             except Exception as exc:
-                raise BootstrapError(f"Hook '{name}' failed: {exc}") from exc
+                # Walk the cause chain so the originating error (e.g. a SQL
+                # OperationalError wrapped in a domain exception) is visible
+                # in the message, not just the outermost layer.
+                causes = []
+                cause: BaseException | None = exc.__cause__
+                while cause is not None:
+                    causes.append(f"{type(cause).__name__}: {cause}")
+                    cause = cause.__cause__
+
+                detail = f"{exc}"
+                if causes:
+                    detail += " (caused by " + " <- ".join(causes) + ")"
+
+                raise BootstrapError(f"Hook '{name}' failed: {detail}") from exc
 
             _log.debug("Hook completed: name={name}", name=name)
