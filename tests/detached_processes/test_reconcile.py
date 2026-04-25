@@ -175,3 +175,84 @@ async def test_exception_is_logged_not_raised(repo, tmp_path, mock_bus):
             bus=mock_bus,
             log_dir=log_dir,
         )
+
+
+# ---------------------------------------------------------------------------
+# Agent-stopped suppression tests
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_agent_stopped_suppresses_watcher_notification(repo, tmp_path, mock_bus):
+    """AC1: Watcher notification suppressed when stop_reason='agent_stopped'."""
+    log_dir = tmp_path / "logs"
+    log_dir.mkdir()
+
+    await repo.create(
+        _make_record(record_id="rec-stopped", status="running", stop_reason="agent_stopped")
+    )
+    (log_dir / "rec-stopped.exit").write_text("143\n")
+
+    await reconcile_exit(
+        "rec-stopped",
+        repository=repo,
+        bus=mock_bus,
+        log_dir=log_dir,
+        dispatch_notification=True,
+    )
+
+    updated = await repo.get("rec-stopped")
+    assert updated is not None
+    assert updated.status == "exited"
+    assert updated.exit_code == 143
+
+    mock_bus.dispatch.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_natural_exit_still_notifies(repo, tmp_path, mock_bus):
+    """AC2: Natural exit (no stop_reason) dispatches notification."""
+    log_dir = tmp_path / "logs"
+    log_dir.mkdir()
+
+    await repo.create(_make_record(record_id="rec-natural", status="running"))
+    (log_dir / "rec-natural.exit").write_text("0\n")
+
+    await reconcile_exit(
+        "rec-natural",
+        repository=repo,
+        bus=mock_bus,
+        log_dir=log_dir,
+        dispatch_notification=True,
+    )
+
+    updated = await repo.get("rec-natural")
+    assert updated is not None
+    assert updated.status == "exited"
+
+    mock_bus.dispatch.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_agent_stopped_already_exited_is_noop(repo, tmp_path, mock_bus):
+    """Idempotency: already-exited record with stop_reason is a no-op."""
+    log_dir = tmp_path / "logs"
+    log_dir.mkdir()
+
+    await repo.create(
+        _make_record(
+            record_id="rec-exited-stopped",
+            status="exited",
+            exit_code=0,
+            stop_reason="agent_stopped",
+        )
+    )
+
+    await reconcile_exit(
+        "rec-exited-stopped",
+        repository=repo,
+        bus=mock_bus,
+        log_dir=log_dir,
+    )
+
+    mock_bus.dispatch.assert_not_called()

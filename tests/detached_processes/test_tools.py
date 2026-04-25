@@ -328,3 +328,76 @@ async def test_rename_not_found(repo):
 
     assert result["is_error"] is True
     assert "not found" in result["content"][0]["text"]
+
+
+# ---------------------------------------------------------------------------
+# stop_process + stop_reason tests
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_stop_marks_agent_stopped_before_signalling(repo, tmp_path):
+    """stop_process sets stop_reason='agent_stopped' before signalling."""
+    mock_bus = AsyncMock()
+    log_dir = tmp_path / "logs"
+    log_dir.mkdir()
+    tools = _build_tools_map(repo, mock_bus, log_dir)
+
+    await repo.create(_make_record(record_id="sp-flag", status="running"))
+
+    with (
+        patch("tachikoma.detached_processes.tools.is_alive", return_value=True),
+        patch("tachikoma.detached_processes.tools.terminate"),
+    ):
+        result = await tools["stop_process"]({"process_id": "sp-flag"})
+
+    assert result.get("is_error") is not True
+
+    updated = await repo.get("sp-flag")
+    assert updated is not None
+    assert updated.stop_reason == "agent_stopped"
+
+
+@pytest.mark.asyncio
+async def test_stop_permission_error_clears_flag(repo, tmp_path):
+    """AC4: PermissionError during terminate clears stop_reason."""
+    mock_bus = AsyncMock()
+    log_dir = tmp_path / "logs"
+    log_dir.mkdir()
+    tools = _build_tools_map(repo, mock_bus, log_dir)
+
+    await repo.create(_make_record(record_id="sp-perm", status="running"))
+
+    with (
+        patch("tachikoma.detached_processes.tools.is_alive", return_value=True),
+        patch("tachikoma.detached_processes.tools.terminate", side_effect=PermissionError),
+    ):
+        result = await tools["stop_process"]({"process_id": "sp-perm"})
+
+    assert result["is_error"] is True
+    assert "Permission denied" in result["content"][0]["text"]
+
+    updated = await repo.get("sp-perm")
+    assert updated is not None
+    assert updated.stop_reason is None
+
+
+@pytest.mark.asyncio
+async def test_stop_already_dead_does_not_set_stop_reason(repo, tmp_path):
+    """AC5: Already-dead process does NOT get stop_reason set."""
+    mock_bus = AsyncMock()
+    log_dir = tmp_path / "logs"
+    log_dir.mkdir()
+    tools = _build_tools_map(repo, mock_bus, log_dir)
+
+    await repo.create(_make_record(record_id="sp-dead", status="running"))
+
+    with patch("tachikoma.detached_processes.tools.is_alive", return_value=False):
+        result = await tools["stop_process"]({"process_id": "sp-dead"})
+
+    text = result["content"][0]["text"]
+    assert "already stopped" in text.lower()
+
+    updated = await repo.get("sp-dead")
+    assert updated is not None
+    assert updated.stop_reason is None

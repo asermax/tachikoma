@@ -122,3 +122,21 @@ async def test_error_wrapping_surfaces_cause(repo, monkeypatch):
 
     with pytest.raises(RuntimeError, match="disk full"):
         await repo.create(_make_record())
+
+
+@pytest.mark.asyncio
+async def test_mark_stop_initiated_sets_flag(repo):
+    await repo.create(_make_record(record_id="stop-test"))
+    await repo.mark_stop_initiated("stop-test")
+    record = await repo.get("stop-test")
+    assert record is not None
+    assert record.stop_reason == "agent_stopped"
+
+
+@pytest.mark.asyncio
+async def test_clear_stop_reason(repo):
+    await repo.create(_make_record(record_id="clear-test", stop_reason="agent_stopped"))
+    await repo.clear_stop_reason("clear-test")
+    record = await repo.get("clear-test")
+    assert record is not None
+    assert record.stop_reason is None

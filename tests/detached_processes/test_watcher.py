@@ -177,3 +177,30 @@ async def test_polling_handles_empty_running_list(tmp_path, repo):
         pytest.raises(asyncio.CancelledError),
     ):
         await polling_watcher(repo, mock_bus, log_dir, interval=0.01)
+
+
+@pytest.mark.asyncio
+async def test_event_driven_suppresses_agent_stopped_notification(tmp_path, repo):
+    """AC1: Event-driven watcher reconciles but does not notify for agent-stopped process."""
+    log_dir = tmp_path / "logs"
+    log_dir.mkdir()
+
+    await repo.create(
+        _make_record(record_id="ev-stopped", status="running", stop_reason="agent_stopped")
+    )
+    mock_bus = AsyncMock()
+
+    async def mock_awatch(path, **_kwargs):
+        exit_file = log_dir / "ev-stopped.exit"
+        exit_file.write_text("143\n")
+        yield [(watchfiles.Change.added, str(exit_file))]
+
+    with patch("tachikoma.detached_processes.watcher.watchfiles.awatch", side_effect=mock_awatch):
+        await event_driven_watcher(repo, mock_bus, log_dir)
+
+    updated = await repo.get("ev-stopped")
+    assert updated is not None
+    assert updated.status == "exited"
+    assert updated.exit_code == 143
+
+    mock_bus.dispatch.assert_not_called()

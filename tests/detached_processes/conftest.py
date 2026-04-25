@@ -27,6 +27,7 @@ def _make_record(
     started_at: datetime | None = None,
     exited_at: datetime | None = None,
     exit_code: int | None = None,
+    stop_reason: str | None = None,
 ) -> ProcessRecord:
     """Create a ProcessRecord with sensible defaults."""
     return ProcessRecord(
@@ -41,6 +42,7 @@ def _make_record(
         started_at=started_at or _utcnow(),
         exited_at=exited_at,
         exit_code=exit_code,
+        stop_reason=stop_reason,
     )
 
 

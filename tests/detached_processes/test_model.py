@@ -22,6 +22,7 @@ def _make_row(**overrides) -> ProcessRecordRow:
         "started_at": datetime.now(UTC),
         "exited_at": None,
         "exit_code": None,
+        "stop_reason": None,
     }
     defaults.update(overrides)
     return ProcessRecordRow(**defaults)
@@ -43,6 +44,7 @@ def test_to_domain_all_nullable_none():
     assert record.started_at.tzinfo == UTC
     assert record.exited_at is None
     assert record.exit_code is None
+    assert record.stop_reason is None
 
 
 def test_to_domain_all_populated():
@@ -75,6 +77,7 @@ def test_round_trip():
         started_at=now,
         exited_at=None,
         exit_code=None,
+        stop_reason=None,
     )
 
     row = ProcessRecordRow(
@@ -89,6 +92,7 @@ def test_round_trip():
         started_at=original.started_at,
         exited_at=original.exited_at,
         exit_code=original.exit_code,
+        stop_reason=original.stop_reason,
     )
 
     round_tripped = row.to_domain()
@@ -102,3 +106,4 @@ def test_round_trip():
     assert round_tripped.log_path == original.log_path
     assert round_tripped.status == original.status
     assert round_tripped.exit_code == original.exit_code
+    assert round_tripped.stop_reason == original.stop_reason
