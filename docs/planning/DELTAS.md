@@ -448,13 +448,6 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 **Complexity**: Medium
 **Description**: The baseline sensor for the proactive nudge framework, using existing episodic memory data. Polls recent episodic memories with priority weighting for conversations that have open threads, upcoming events mentioned in past chats, or topics that have been discussed multiple times. Produces scored signals (data + relevance score + optional nudge suggestion) that feed into the nudge engine via the sensor framework. This is the first concrete sensor implementation and validates the sensor abstraction. Additional sensors (routine, calendar, time-based, geo-fencing, external events) follow the same pattern and are tracked separately.
 
-### DLT-116: Provide workflow tools to background tasks
-**Status**: ✗ Defined
-**Depends on**: None
-**Priority**: 2 (High)
-**Complexity**: Easy
-**Description**: Background tasks currently receive memory, projects, skills context, and a notification tool, but have no access to workflow management tools. This means a background task cannot start, advance, or complete a workflow — limiting scheduled automation to single-prompt fire-and-forget work. Attach the workflow tools MCP server to background task executions so the agent can operate on workflows during scheduled or autonomous runs.
-
 ### DLT-117: Attach specific skills to task definitions
 **Status**: ✗ Defined
 **Depends on**: None

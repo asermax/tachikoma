@@ -24,6 +24,7 @@ Background tasks execute in isolated parallel sessions without interrupting the 
 | R6 | Stuck/looping agent detection — evaluator detects unproductive iterations and marks the task as failed |
 | R7 | Background task agents share the main agent's restricted git surface: a destructive-git deny hook blocks `git push`, `git reset`, `git checkout .`, `git restore .`, `git clean`, and mutating `git remote` subcommands; `push` and `sync` MCP tools are available for on-demand push/sync operations |
 | R8 | Background task agents have access to the task management MCP tools (`create_task`, `list_tasks`, `get_task`, `update_task`, `delete_task`) so they can schedule, inspect, update, and remove task definitions during autonomous execution |
+| R9 | Background task agents have access to the workflow management MCP tools (`start_workflow`, `update_workflow_state`, `get_workflow_state`, `end_workflow`, `list_active_workflows`) so they can start, advance, and complete multi-step workflows during autonomous execution |
 
 ## Behaviors
 
@@ -73,6 +74,15 @@ Background task agents can schedule follow-up work via the same task management 
 - Given a background task instance is being executed, then the task-tools MCP server is registered in the SDK client's MCP servers alongside the notification and git-tools servers
 - Given the background task system prompt, then it documents the task management tools (`create_task`, `list_tasks`, `get_task`, `update_task`, `delete_task`) and states that scheduled tasks run in fresh isolated sessions when their schedule fires
 - Given a background task agent calls `create_task` during execution, then the new task definition is persisted identically to definitions created from the main conversation (same validation, same instance-generation behavior)
+
+### Workflow Tools (R9)
+
+Background task agents can start, advance, and complete multi-step workflows via the same workflow management MCP tools available to the main agent. The system prompt explains when to use them — structured multi-step processes, ordered step execution, and automatic skill content loading.
+
+**Acceptance Criteria**:
+- Given a background task instance is being executed, then the workflow-tools MCP server is registered in the SDK client's MCP servers alongside the git-tools and task-tools servers
+- Given the background task system prompt, then it documents the workflow management tools (`start_workflow`, `update_workflow_state`, `get_workflow_state`, `end_workflow`, `list_active_workflows`) and when to use them
+- Given a background task agent calls `start_workflow` during execution, then the workflow state is created identically to workflows started from the main conversation (same state persistence, same step resolution)
 
 ### Concurrency (R5)
 
