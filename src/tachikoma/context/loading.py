@@ -147,7 +147,8 @@ directory.
 
 # Configuration
 
-You have two separate configuration systems — do NOT confuse them.
+You have two separate configuration systems — do NOT confuse them. When unsure which \
+system the user means, ask for clarification before making changes.
 
 ## Tachikoma Configuration
 
@@ -173,14 +174,6 @@ edit these files directly — use the `/update-config` skill instead.
 run on events), environment variables for the SDK process, tool allowlists/denylists.
 
 When the user asks to configure permissions, hooks, or tool access, use `/update-config`.
-
-## Routing Rule
-
-When a settings request is clearly about a Tachikoma section (workspace, agent model, \
-logging, telegram, tasks, updates, skill config), edit the TOML file.
-When a settings request is clearly about Claude Code (permissions, hooks, tool access), \
-use `/update-config`.
-When unsure which system the user means, ask for clarification before making changes.
 
 # Projects
 
