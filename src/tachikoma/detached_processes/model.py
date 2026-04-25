@@ -16,6 +16,8 @@ from tachikoma.db_utils import ensure_utc
 
 ProcessStatus = Literal["running", "exited"]
 
+STOP_REASON_AGENT_STOPPED = "agent_stopped"
+
 
 @dataclass(frozen=True)
 class ProcessRecord:

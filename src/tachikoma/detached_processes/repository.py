@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from tachikoma.detached_processes.errors import ProcessRepositoryError
 from tachikoma.detached_processes.model import (
+    STOP_REASON_AGENT_STOPPED,
     ProcessRecord,
     ProcessRecordRow,
     ProcessStatus,
@@ -107,41 +108,32 @@ class ProcessRepository:
         except Exception as exc:
             raise ProcessRepositoryError(f"Failed to rename process record {record_id}") from exc
 
-    async def mark_stop_initiated(self, record_id: str) -> None:
-        """Mark a process record as being stopped by the agent.
-
-        Sets stop_reason='agent_stopped' so the reconciler suppresses
-        the exit notification.
-        """
+    async def _update_stop_reason(self, record_id: str, value: str | None) -> None:
         try:
             async with self._session_factory() as db:
                 await db.execute(
                     update(ProcessRecordRow)
                     .where(ProcessRecordRow.id == record_id)
-                    .values(stop_reason="agent_stopped")
+                    .values(stop_reason=value)
                 )
                 await db.commit()
 
         except Exception as exc:
             raise ProcessRepositoryError(
-                f"Failed to mark stop initiated for process record {record_id}"
+                f"Failed to update stop reason for process record {record_id}"
             ) from exc
+
+    async def mark_stop_initiated(self, record_id: str) -> None:
+        """Set stop_reason='agent_stopped' before signalling.
+
+        Caller must clear_stop_reason if signal delivery fails, so a
+        future natural exit is not incorrectly suppressed.
+        """
+        await self._update_stop_reason(record_id, STOP_REASON_AGENT_STOPPED)
 
     async def clear_stop_reason(self, record_id: str) -> None:
-        """Clear the stop_reason field on a process record."""
-        try:
-            async with self._session_factory() as db:
-                await db.execute(
-                    update(ProcessRecordRow)
-                    .where(ProcessRecordRow.id == record_id)
-                    .values(stop_reason=None)
-                )
-                await db.commit()
-
-        except Exception as exc:
-            raise ProcessRepositoryError(
-                f"Failed to clear stop reason for process record {record_id}"
-            ) from exc
+        """Clear stop_reason after a failed signal delivery."""
+        await self._update_stop_reason(record_id, None)
 
     async def delete(self, record_id: str) -> bool:
         """Delete a process record by ID. Returns True if deleted."""

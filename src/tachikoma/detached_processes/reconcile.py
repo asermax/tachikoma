@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING
 from loguru import logger
 
 from tachikoma.buffer.priority import Priority
+from tachikoma.detached_processes.model import STOP_REASON_AGENT_STOPPED
 from tachikoma.detached_processes.repository import ProcessRepository
 from tachikoma.notifications import dispatch_notification as _dispatch_notification
 
@@ -54,8 +55,7 @@ async def reconcile_exit(
         if not won or not dispatch_notification or bus is None:
             return
 
-        # Suppress notification for agent-initiated stops.
-        if record.stop_reason == "agent_stopped":
+        if record.stop_reason == STOP_REASON_AGENT_STOPPED:
             _log.debug(
                 "Suppressing exit notification for agent-stopped process {id}",
                 id=record_id,
