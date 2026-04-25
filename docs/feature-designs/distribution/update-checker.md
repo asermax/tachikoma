@@ -7,7 +7,7 @@
 
 ## Purpose
 
-This document explains the design rationale for the update subsystem: PyPI version fetching, comparison logic, notification delivery, dedup persistence, upgrade execution, and in-place restart.
+This document explains the design rationale for the update subsystem: PyPI version fetching, comparison logic, notification delivery, dedup persistence, upgrade execution, in-place restart, and automatic rollback on failed startup.
 
 ## Problem Context
 
@@ -34,6 +34,7 @@ A lightweight subsystem composed of:
 6. **Upgrade executor** — detects editable installs, runs `uv tool upgrade`, reports structured result
 7. **Restart event** — `RestartRequested` event type on the bus, consumed by channels to exit their loops
 8. **In-place restart** — after clean shutdown, `os.execv` replaces the process preserving PID and terminal
+9. **Rollback on failed startup** — if bootstrap fails after upgrade, automatically reinstalls the previous version and restarts; notifies the user through normal channels
 
 The subsystem is minimal: one package (`src/tachikoma/updates/`) with a tick function, a PyPI fetcher, an upgrade executor, two MCP tools, and a bootstrap hook. It closes over the `AppStateRepository`, `EventBus`, and settings — no new long-lived objects beyond what the scheduler already manages.
 
@@ -48,6 +49,7 @@ The subsystem is minimal: one package (`src/tachikoma/updates/`) with a tick fun
 | `src/tachikoma/updates/tools.py` | MCP tools `check_updates` and `apply_update` | DES-006 factory pattern; accepts `EventBus` for restart signaling |
 | `src/tachikoma/updates/events.py` | `RestartRequested` event type | Follows bubus `BaseEvent[None]` pattern |
 | `src/tachikoma/updates/apply.py` | Upgrade execution: editable detection, subprocess invocation, result reporting | stdlib `subprocess.run`, `importlib.metadata` |
+| `src/tachikoma/updates/rollback.py` | Rollback marker lifecycle and version rollback execution | File-based markers in temp dir, `subprocess.run` |
 | `src/tachikoma/updates/__init__.py` | Re-exports public API | tick function, hook, tool factory, run_upgrade, RestartRequested |
 | `src/tachikoma/channel.py` | `restart_requested` protocol property on Channel | Protocol property with default `False` |
 | `src/tachikoma/app_state.py` | `app_state` table model + repository | ADR-013 |
@@ -121,6 +123,16 @@ app_state table (SQLAlchemy)
 ├─ key: str (PK)     ← "updates.last_notified_version"
 ├─ value: str        ← e.g. "1.45.0"
 └─ updated_at: datetime
+
+RollbackMarker (frozen dataclass, file-backed)
+├─ previous_version: str
+├─ target_version: str
+└─ timestamp: str          ← ISO 8601
+
+RollbackNotification (frozen dataclass, file-backed)
+├─ previous_version: str
+├─ failed_version: str
+└─ error: str
 ```
 
 ## Data Flow
@@ -168,6 +180,7 @@ Agent invokes apply_update tool
     → capture new_version via importlib.metadata
     → compare versions → return UpgradeResult
   → if result.changed:
+    → write_rollback_marker(old_version, new_version)
     → bus.dispatch(RestartRequested())
     → return success message with version transition
   → if result.already_up_to_date:
@@ -188,6 +201,31 @@ RestartRequested event fired
   → Coordinator.__aexit__: cancel idle PP, await pending tasks, close session
   → finally block: buffer stop, scheduler cancel, background runner shutdown, bus stop, DB close
   → os.execv(sys.argv[0], sys.argv) replaces the process
+```
+
+### Rollback on failed startup flow
+
+```
+New process starts after update
+  → read_rollback_marker() finds pending marker
+  → bootstrap.run() raises BootstrapError
+    → rollback path activates
+    → run_rollback(previous_version) via uv tool install tachikoma-agent==PREV_VERSION
+      → success: write_rollback_notification(), clear_rollback_marker(), os.execv
+      → failure: clear_rollback_marker(), print error to stderr, sys.exit(1)
+```
+
+### Rollback notification flow
+
+```
+Old process starts after rollback
+  → read_rollback_marker() returns None (cleared during rollback)
+  → read_rollback_notification() finds notification marker
+  → bootstrap.run() succeeds (old version works)
+  → EventBus created
+  → dispatch_notification(bus, source="Update Rollback", severity="error")
+  → clear_rollback_notification()
+  → normal startup continues
 ```
 
 ## Key Decisions
@@ -286,6 +324,34 @@ See ADR-013 for the full decision rationale.
 - Pro: Always included — no conditional loading or provider registration needed
 - Con: Preamble grows slightly (negligible — ~6 lines)
 
+### Rollback markers: file-based in temp directory (bypasses ADR-013)
+
+**Choice**: Use JSON files in the system temp directory (`$TMPDIR/tachikoma-update-pending.json` and `$TMPDIR/tachikoma-update-rollback.json`) to bridge rollback state across the `os.execv` boundary.
+
+**Why**: The rollback marker must be readable before `bootstrap.run()` executes, at which point the database is not initialized. ADR-013's `app_state` table requires `database_hook` to have completed. The pre-bootstrap timing constraint forces a filesystem approach. The temp directory is used (instead of the workspace) because it is available before settings are loaded and keeps transient process-lifecycle files out of the workspace.
+
+**Alternatives Considered**:
+- **ADR-013 app_state table**: Cannot be read before bootstrap (database not initialized)
+- **Environment variables**: Not guaranteed to survive across all `os.execv` variants; not debuggable by inspection
+- **Workspace directory**: Would require reading settings before bootstrap, adding unnecessary coupling
+
+**Consequences**:
+- Pro: Available immediately on startup, before any subsystem initialization
+- Pro: Transient by nature — cleared on system reboot (acceptable: reboot during update gap is an edge case)
+- Con: Bypasses ADR-013, but justified by the pre-bootstrap timing constraint
+- Con: Lost on system reboot (acceptable tradeoff)
+
+### Rollback scope: BootstrapError only
+
+**Choice**: Only `BootstrapError` from `bootstrap.run()` triggers automatic rollback.
+
+**Why**: The bootstrap system wraps all hook exceptions in `BootstrapError`. These failures are most likely version-specific (incompatible config, broken database migration, missing module). Runtime errors after bootstrap (SDK connection failures, coordinator errors) are not version-specific and should not trigger rollback.
+
+**Consequences**:
+- Pro: Scopes rollback to version-incompatibility issues
+- Pro: Avoids false rollbacks from transient runtime errors
+- Con: A new version that crashes during normal operation (not bootstrap) is not covered
+
 ## System Behavior
 
 ### Scenario: New version available
@@ -333,7 +399,8 @@ See ADR-013 for the full decision rationale.
 3. `uv tool upgrade tachikoma-agent` runs via `subprocess.run` (timeout: 120s)
 4. Exit code 0, version changed in metadata
 5. `bus.dispatch(RestartRequested())` fires
-6. Tool returns success message with version transition
+6. Rollback marker written to temp dir with previous and target versions
+7. Tool returns success message with version transition
 7. Agent generates response ("Restarting...")
 8. Response fully rendered to user
 9. Channel detects `restart_requested` flag and exits run loop
@@ -383,6 +450,34 @@ See ADR-013 for the full decision rationale.
 **Then**: Telegram delivers queued messages (server-side buffering). The new process processes them normally.
 
 **Rationale**: Telegram's long-polling mechanism queues messages server-side during the restart gap. No special reconnection logic needed.
+
+### Scenario: Successful upgrade with rollback protection
+
+**Given**: A newer version is applied, rollback marker written
+**When**: The new version starts and `bootstrap.run()` completes successfully
+**Then**: The pending marker is detected before bootstrap. After bootstrap succeeds, the marker is cleared and a log entry confirms the update. Normal operation continues.
+**Rationale**: The happy path should be transparent — the marker is a safety net that's cleaned up when not needed.
+
+### Scenario: Upgrade breaks bootstrap — automatic rollback
+
+**Given**: A newer version is applied, rollback marker written, new version has incompatible config
+**When**: The new version starts and `bootstrap.run()` raises `BootstrapError`
+**Then**:
+1. Rollback marker detected before bootstrap
+2. Bootstrap fails, `except BootstrapError` handler catches the error
+3. `run_rollback(previous_version)` executes `uv tool install tachikoma-agent==PREV_VERSION`
+4. On rollback success: rollback notification marker written, pending marker cleared, `os.execv` restarts with old version
+5. On next startup (old version): no pending marker, but notification marker exists
+6. Bootstrap succeeds, event bus created, notification dispatched ("Update from X to Y failed and was rolled back")
+7. Notification marker cleared, normal operation continues
+**Rationale**: The user should never need to manually downgrade. Automatic rollback handles the common failure case, and the notification explains what happened.
+
+### Scenario: Rollback itself fails
+
+**Given**: A newer version broke bootstrap, rollback marker exists
+**When**: `uv tool install tachikoma-agent==PREV_VERSION` fails (uv not found, version yanked, network error)
+**Then**: Pending marker cleared, error logged to stderr ("Rollback failed. Manual intervention required."), process exits with code 1.
+**Rationale**: A single rollback attempt prevents infinite restart loops. If rollback fails, the user needs to intervene manually.
 
 ## Notes
 

@@ -27,6 +27,7 @@ A subsystem that periodically checks PyPI for newer versions of tachikoma-agent,
 | R8 | Clean shutdown before restart (matching the graceful quit flow) |
 | R9 | Detect and reject editable/development installs with a clear error |
 | R10 | Agent awareness of update tools through the system prompt |
+| R11 | Automatic rollback to the previous version if the new version fails during startup after an upgrade |
 
 ## Behaviors
 
@@ -103,6 +104,7 @@ The agent can apply an available upgrade via the `apply_update` MCP tool.
 - Given the upgrade command fails, when the error is reported, then the running process continues normally without interruption
 - Given the package is installed as an editable/development install, when the tool checks install type, then it returns a clear error without attempting the upgrade
 - Given the process restarts after a successful upgrade, when the new process starts, then it logs its version at startup so the user can confirm the upgrade succeeded
+- Given the upgrade succeeds and triggers a restart, when the rollback marker is written before the restart event is dispatched, then the previous version is persisted for potential rollback
 
 ### In-place restart (R7, R8)
 
@@ -114,6 +116,17 @@ After a successful upgrade, the process replaces itself in-place.
 - Given the user invokes `apply_update` while the agent is processing another message, when the tool runs, then the upgrade proceeds and the restart waits for the current message exchange to finish before shutting down
 - Given background tasks are running when the restart triggers, when the shutdown sequence begins, then running background tasks are cancelled (matching existing shutdown behavior)
 - Given the restart happens during a Telegram session, when the new process starts, then it reconnects to Telegram automatically and messages sent during the restart gap are processed normally (Telegram queues them server-side)
+
+### Automatic rollback on failed startup (R11)
+
+If the new version fails during bootstrap after an upgrade, the system automatically rolls back.
+
+**Acceptance Criteria**:
+- Given the upgrade succeeded and a rollback marker exists, when the new version starts and bootstrap completes successfully, then the marker is cleared and normal operation continues
+- Given the upgrade succeeded and a rollback marker exists, when the new version starts and bootstrap fails, then the system installs the previous version via `uv tool install tachikoma-agent==PREV_VERSION` and restarts again
+- Given a rollback was performed, when the old version starts successfully, then the user receives a notification via the event bus: "Update from X to Y failed and was rolled back to X"
+- Given a rollback is attempted but `uv tool install` fails (uv not found, network error, version yanked), when the rollback fails, then the marker is cleared, the error is logged to stderr, and the process exits without restarting (no infinite loops)
+- Given a stale rollback marker exists from a previous interrupted restart, when the process starts normally and bootstrap succeeds, then the marker is cleared harmlessly
 
 ### Agent awareness (R10)
 
