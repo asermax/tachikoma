@@ -80,6 +80,7 @@ async def handle_apply_update(bus: EventBus) -> dict:
             ],
         }
 
+    assert result.new_version is not None
     write_rollback_marker(result.old_version, result.new_version)
     await bus.dispatch(RestartRequested())
     return {
