@@ -9,6 +9,7 @@ from pydantic import BaseModel
 from tachikoma.updates.apply import EDITABLE_ERROR, UpgradeResult, run_upgrade
 from tachikoma.updates.checker import check_for_update
 from tachikoma.updates.events import RestartRequested
+from tachikoma.updates.rollback import write_rollback_marker
 
 
 class CheckUpdatesArgs(BaseModel):
@@ -79,6 +80,7 @@ async def handle_apply_update(bus: EventBus) -> dict:
             ],
         }
 
+    write_rollback_marker(result.old_version, result.new_version or "unknown")
     await bus.dispatch(RestartRequested())
     return {
         "content": [

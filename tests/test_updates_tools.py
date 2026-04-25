@@ -25,7 +25,10 @@ class TestHandleApplyUpdate:
         bus = AsyncMock()
         result = _make_result(old_version="1.0.0", new_version="1.1.0", changed=True)
 
-        with patch("tachikoma.updates.tools.run_upgrade", return_value=result):
+        with (
+            patch("tachikoma.updates.tools.run_upgrade", return_value=result),
+            patch("tachikoma.updates.tools.write_rollback_marker") as mock_marker,
+        ):
             response = await handle_apply_update(bus)
 
         text = response["content"][0]["text"]
@@ -35,39 +38,52 @@ class TestHandleApplyUpdate:
         bus.dispatch.assert_awaited_once()
         dispatched_event = bus.dispatch.call_args[0][0]
         assert isinstance(dispatched_event, RestartRequested)
+        mock_marker.assert_called_once_with("1.0.0", "1.1.0")
 
     async def test_already_up_to_date_no_event(self) -> None:
         bus = AsyncMock()
         result = _make_result(already_up_to_date=True)
 
-        with patch("tachikoma.updates.tools.run_upgrade", return_value=result):
+        with (
+            patch("tachikoma.updates.tools.run_upgrade", return_value=result),
+            patch("tachikoma.updates.tools.write_rollback_marker") as mock_marker,
+        ):
             response = await handle_apply_update(bus)
 
         text = response["content"][0]["text"]
         assert "Already running the latest version" in text
         bus.dispatch.assert_not_awaited()
+        mock_marker.assert_not_called()
 
     async def test_editable_install_no_event(self) -> None:
         bus = AsyncMock()
         result = _make_result(error=EDITABLE_ERROR)
 
-        with patch("tachikoma.updates.tools.run_upgrade", return_value=result):
+        with (
+            patch("tachikoma.updates.tools.run_upgrade", return_value=result),
+            patch("tachikoma.updates.tools.write_rollback_marker") as mock_marker,
+        ):
             response = await handle_apply_update(bus)
 
         text = response["content"][0]["text"]
         assert "editable/development install" in text
         bus.dispatch.assert_not_awaited()
+        mock_marker.assert_not_called()
 
     async def test_failure_no_event(self) -> None:
         bus = AsyncMock()
         result = _make_result(error="Upgrade failed (exit code 1):\nnetwork error")
 
-        with patch("tachikoma.updates.tools.run_upgrade", return_value=result):
+        with (
+            patch("tachikoma.updates.tools.run_upgrade", return_value=result),
+            patch("tachikoma.updates.tools.write_rollback_marker") as mock_marker,
+        ):
             response = await handle_apply_update(bus)
 
         text = response["content"][0]["text"]
         assert "Upgrade failed" in text
         bus.dispatch.assert_not_awaited()
+        mock_marker.assert_not_called()
 
     async def test_no_prior_check_needed(self) -> None:
         """Verify the tool runs without requiring any prior check_updates call."""

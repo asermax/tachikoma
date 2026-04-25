@@ -49,6 +49,7 @@ from tachikoma.memory import (
     memory_hook,
 )
 from tachikoma.message_post_processing import MessagePostProcessingPipeline
+from tachikoma.notifications import dispatch_notification
 from tachikoma.per_message_pre_processing import MessagePreProcessingPipeline
 from tachikoma.post_processing import (
     FINALIZE_PHASE,
@@ -81,6 +82,14 @@ from tachikoma.tasks.scheduler import (
 )
 from tachikoma.telegram import TelegramChannel, telegram_hook
 from tachikoma.updates import create_update_tools_server, update_checker_tick, updates_hook
+from tachikoma.updates.rollback import (
+    clear_rollback_marker,
+    clear_rollback_notification,
+    read_rollback_marker,
+    read_rollback_notification,
+    run_rollback,
+    write_rollback_notification,
+)
 from tachikoma.workflows.cleanup import StaleWorkflowCleanupProcessor
 from tachikoma.workflows.hooks import workflows_hook
 from tachikoma.workflows.repository import WorkflowStateRepository
@@ -118,6 +127,10 @@ async def run(
         settings_manager.update_root("channel", channel)
         settings_manager.reload()
 
+    # Check for rollback markers from a previous post-update restart
+    rollback_marker = read_rollback_marker()
+    rollback_notification = read_rollback_notification()
+
     bootstrap = Bootstrap(settings_manager)
     bootstrap.register("workspace", workspace_hook)
     bootstrap.register("logging", logging_hook)
@@ -140,7 +153,48 @@ async def run(
     except BootstrapError as e:
         _log.error("Bootstrap failed: err={err}", err=str(e))
         print(str(e), file=sys.stderr)
+
+        if rollback_marker is not None:
+            _log.warning(
+                "Bootstrap failed after update from {prev} to {target}, rolling back",
+                prev=rollback_marker.previous_version,
+                target=rollback_marker.target_version,
+            )
+            print(
+                f"Update to {rollback_marker.target_version} failed, "
+                f"rolling back to {rollback_marker.previous_version}...",
+                file=sys.stderr,
+            )
+            if run_rollback(rollback_marker.previous_version):
+                write_rollback_notification(
+                    rollback_marker.previous_version,
+                    rollback_marker.target_version,
+                    str(e),
+                )
+                clear_rollback_marker()
+                _log.info(
+                    "Rollback succeeded, restarting with {ver}",
+                    ver=rollback_marker.previous_version,
+                )
+                os.execv(sys.argv[0], sys.argv)
+            else:
+                clear_rollback_marker()
+                print(
+                    f"Rollback to {rollback_marker.previous_version} failed. "
+                    "Manual intervention required.",
+                    file=sys.stderr,
+                )
+                _log.error("Rollback failed, exiting for manual intervention")
+
         sys.exit(1)
+
+    if rollback_marker is not None:
+        _log.info(
+            "Update confirmed: {prev} -> {target}",
+            prev=rollback_marker.previous_version,
+            target=rollback_marker.target_version,
+        )
+        clear_rollback_marker()
 
     settings = settings_manager.settings
 
@@ -154,6 +208,22 @@ async def run(
     detached_log_dir: Path = bootstrap.extras["detached_process_log_dir"]
     app_state_repo = bootstrap.extras["app_state_repository"]
     bus = EventBus()
+
+    # Dispatch rollback notification if a previous update was rolled back
+    if rollback_notification is not None:
+        await dispatch_notification(
+            bus,
+            source="Update Rollback",
+            content=(
+                f"Update from {rollback_notification.previous_version} to "
+                f"{rollback_notification.failed_version} failed and was rolled back "
+                f"to {rollback_notification.previous_version}.\n\n"
+                f"Error: {rollback_notification.error}"
+            ),
+            severity="error",
+            source_id="update_rollback",
+        )
+        clear_rollback_notification()
 
     _log.info(
         "Startup complete: workspace={ws}, log_level={level}, channel={ch}",
