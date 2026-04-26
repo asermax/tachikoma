@@ -19,6 +19,7 @@ import frontmatter
 from claude_agent_sdk.types import AgentDefinition
 from loguru import logger
 
+from tachikoma.workflows.composition import detect_cycles, validate_references
 from tachikoma.workflows.definition import WorkflowDefinition
 from tachikoma.workflows.loader import load_workflows
 
@@ -196,9 +197,29 @@ class SkillRegistry:
         self._validate_deps()
 
     def _validate_deps(self) -> None:
-        """Log one warning per dependent skill whose depends_on contains unknown names,
-        and one warning per workflow step whose required_skills contains unknown names.
+        """Validate composition graph and skill dependencies.
+
+        Runs composition validation (cycle detection + reference validation)
+        before the existing depends_on / required_skills checks.  Rejected
+        workflows are removed from ``self._workflows``.
         """
+        # Composition graph validation
+        sccs = detect_cycles(self._workflows)
+        cycles_flat: set[tuple[str, str]] = set()
+        for scc in sccs:
+            cycles_flat.update(scc)
+            _log.warning(
+                "Composition cycle detected, rejecting: cycle={members}",
+                members=scc,
+            )
+
+        bad_refs = validate_references(self._workflows, already_rejected=cycles_flat)
+        rejected = cycles_flat | bad_refs
+
+        for key in rejected:
+            self._workflows.pop(key, None)
+
+        # Existing depends_on / required_skills validation
         for name, skill in self._skills.items():
             if not skill.depends_on:
                 continue

@@ -1496,3 +1496,98 @@ class TestCacheInvalidation:
 
         # Skill loaded successfully despite missing dep
         assert "A" in registry.skills
+
+
+class TestCompositionValidation:
+    """Tests for composition graph validation in _validate_deps (DLT-161)."""
+
+    def _create_workflow(
+        self,
+        skill_dir: Path,
+        workflow_name: str,
+        steps: list[dict],
+    ) -> None:
+        """Helper to create a workflow with given steps in a skill directory.
+
+        Each step dict has: name, title, and optional composes.
+        """
+        wf_dir = skill_dir / "workflows" / workflow_name
+        wf_dir.mkdir(parents=True, exist_ok=True)
+        for step in steps:
+            step_dir = wf_dir / step["name"]
+            step_dir.mkdir(exist_ok=True)
+            fm = f'---\ntitle: "{step["title"]}"\n'
+            if "composes" in step:
+                fm += f'composes: "{step["composes"]}"\n'
+            fm += "---\nInstructions."
+            (step_dir / "instructions.md").write_text(fm)
+
+    def test_composition_cycle_rejected(self, tmp_path: Path) -> None:
+        """Workflows in a composition cycle are rejected and removed from registry."""
+        skills_dir = tmp_path / "skills"
+        skill_dir = skills_dir / "review"
+        skill_dir.mkdir(parents=True)
+        (skill_dir / "SKILL.md").write_text('---\ndescription: "Review skill"\n---\nBody')
+
+        # A composes B, B composes A
+        self._create_workflow(skill_dir, "A", [{"name": "01", "title": "Step", "composes": "B"}])
+        self._create_workflow(skill_dir, "B", [{"name": "01", "title": "Step", "composes": "A"}])
+
+        registry = SkillRegistry([skills_dir])
+        assert registry.get_workflow("review", "A") is None
+        assert registry.get_workflow("review", "B") is None
+
+    def test_missing_composes_target_rejects_parent(self, tmp_path: Path) -> None:
+        """Parent referencing nonexistent target is rejected."""
+        skills_dir = tmp_path / "skills"
+        skill_dir = skills_dir / "review"
+        skill_dir.mkdir(parents=True)
+        (skill_dir / "SKILL.md").write_text('---\ndescription: "Review skill"\n---\nBody')
+
+        self._create_workflow(
+            skill_dir, "weekly", [{"name": "01", "title": "Step", "composes": "nonexistent"}]
+        )
+
+        registry = SkillRegistry([skills_dir])
+        assert registry.get_workflow("review", "weekly") is None
+
+    def test_cascading_rejection(self, tmp_path: Path) -> None:
+        """A composes B, B composes missing target — both A and B are rejected."""
+        skills_dir = tmp_path / "skills"
+        skill_dir = skills_dir / "review"
+        skill_dir.mkdir(parents=True)
+        (skill_dir / "SKILL.md").write_text('---\ndescription: "Review skill"\n---\nBody')
+
+        self._create_workflow(
+            skill_dir, "A", [{"name": "01", "title": "Step", "composes": "B"}]
+        )
+        self._create_workflow(
+            skill_dir, "B", [{"name": "01", "title": "Step", "composes": "nonexistent"}]
+        )
+        # C is standalone — should survive
+        self._create_workflow(
+            skill_dir, "C", [{"name": "01", "title": "Step"}]
+        )
+
+        registry = SkillRegistry([skills_dir])
+        assert registry.get_workflow("review", "A") is None
+        assert registry.get_workflow("review", "B") is None
+        assert registry.get_workflow("review", "C") is not None
+
+    def test_valid_composition_registers_normally(self, tmp_path: Path) -> None:
+        """Non-cyclic, valid composition references register normally."""
+        skills_dir = tmp_path / "skills"
+        skill_dir = skills_dir / "review"
+        skill_dir.mkdir(parents=True)
+        (skill_dir / "SKILL.md").write_text('---\ndescription: "Review skill"\n---\nBody')
+
+        self._create_workflow(
+            skill_dir, "weekly", [{"name": "01", "title": "Step", "composes": "process-inbox"}]
+        )
+        self._create_workflow(
+            skill_dir, "process-inbox", [{"name": "01", "title": "Inbox Step"}]
+        )
+
+        registry = SkillRegistry([skills_dir])
+        assert registry.get_workflow("review", "weekly") is not None
+        assert registry.get_workflow("review", "process-inbox") is not None

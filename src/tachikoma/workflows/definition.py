@@ -32,6 +32,9 @@ class StepDefinition:
         condition: Natural language prompt evaluated before step start.
             If the evaluator determines the condition is not met, the step
             is auto-skipped regardless of ``required`` status.
+        composes: Raw frontmatter value referencing another workflow to compose.
+            ``<workflow>`` for same-skill or ``<skill>/<workflow>`` for cross-skill.
+            Resolved at registry validation time via composition.resolve_composes().
         properties: Extensible frontmatter fields for future customization.
     """
 
@@ -43,6 +46,7 @@ class StepDefinition:
     required: bool = True
     required_skills: tuple[str, ...] = ()
     condition: str | None = None
+    composes: str | None = None
     properties: dict[str, object] = field(default_factory=dict)
 
 

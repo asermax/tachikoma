@@ -236,10 +236,21 @@ def _load_step(
         )
         condition = None
 
+    composes = post.metadata.get("composes")
+    if composes is not None and not isinstance(composes, str):
+        _log.warning(
+            "Step has invalid composes type (expected string), treating as None: "
+            "skill={skill}, workflow={workflow}, step={step}",
+            skill=skill_name,
+            workflow=workflow_name,
+            step=step_dir.name,
+        )
+        composes = None
+
     properties = {
         k: v
         for k, v in post.metadata.items()
-        if k not in ("title", "required", "skippable", "required_skills", "condition")
+        if k not in ("title", "required", "skippable", "required_skills", "condition", "composes")
     }
 
     references_path = step_dir / "references"
@@ -259,6 +270,7 @@ def _load_step(
         required=required,
         required_skills=required_skills,
         condition=condition,
+        composes=composes,
         properties=properties,
     )
 

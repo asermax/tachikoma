@@ -629,6 +629,108 @@ Instructions."""
         step = result["test-workflow"].steps[0]
         assert step.condition is None
 
+    def test_parses_composes_same_skill(self, tmp_path: Path) -> None:
+        """Parses composes string referencing same-skill workflow."""
+        skill_dir = tmp_path / "test-skill"
+        workflow_dir = skill_dir / "workflows" / "test-workflow"
+        step_dir = workflow_dir / "01-step"
+        step_dir.mkdir(parents=True)
+
+        (step_dir / "instructions.md").write_text(
+            """---
+title: Compose Step
+composes: process-inbox
+---
+Instructions."""
+        )
+
+        result = load_workflows(skill_dir, "test-skill")
+
+        step = result["test-workflow"].steps[0]
+        assert step.composes == "process-inbox"
+
+    def test_parses_composes_cross_skill(self, tmp_path: Path) -> None:
+        """Parses composes string referencing cross-skill workflow."""
+        skill_dir = tmp_path / "test-skill"
+        workflow_dir = skill_dir / "workflows" / "test-workflow"
+        step_dir = workflow_dir / "01-step"
+        step_dir.mkdir(parents=True)
+
+        (step_dir / "instructions.md").write_text(
+            """---
+title: Compose Step
+composes: other-skill/process-inbox
+---
+Instructions."""
+        )
+
+        result = load_workflows(skill_dir, "test-skill")
+
+        step = result["test-workflow"].steps[0]
+        assert step.composes == "other-skill/process-inbox"
+
+    def test_non_string_composes_treated_as_none(self, tmp_path: Path) -> None:
+        """Non-string composes values are treated as None with a warning."""
+        skill_dir = tmp_path / "test-skill"
+        workflow_dir = skill_dir / "workflows" / "test-workflow"
+        step_dir = workflow_dir / "01-step"
+        step_dir.mkdir(parents=True)
+
+        (step_dir / "instructions.md").write_text(
+            """---
+title: Step
+composes: 123
+---
+Instructions."""
+        )
+
+        result = load_workflows(skill_dir, "test-skill")
+
+        step = result["test-workflow"].steps[0]
+        assert step.composes is None
+
+    def test_default_composes_when_missing(self, tmp_path: Path) -> None:
+        """Defaults composes to None when absent from frontmatter."""
+        skill_dir = tmp_path / "test-skill"
+        workflow_dir = skill_dir / "workflows" / "test-workflow"
+        step_dir = workflow_dir / "01-step"
+        step_dir.mkdir(parents=True)
+
+        (step_dir / "instructions.md").write_text(
+            """---
+title: Step
+---
+Instructions."""
+        )
+
+        result = load_workflows(skill_dir, "test-skill")
+
+        step = result["test-workflow"].steps[0]
+        assert step.composes is None
+
+    def test_composes_excluded_from_properties(self, tmp_path: Path) -> None:
+        """composes field is not passed through as an extensible property."""
+        skill_dir = tmp_path / "test-skill"
+        workflow_dir = skill_dir / "workflows" / "test-workflow"
+        step_dir = workflow_dir / "01-step"
+        step_dir.mkdir(parents=True)
+
+        (step_dir / "instructions.md").write_text(
+            """---
+title: Step
+composes: child-workflow
+custom_field: keep-me
+---
+Instructions."""
+        )
+
+        result = load_workflows(skill_dir, "test-skill")
+
+        step = result["test-workflow"].steps[0]
+        assert "composes" not in step.properties
+        assert step.composes == "child-workflow"
+        assert step.properties == {"custom_field": "keep-me"}
+
     def test_parses_extensible_frontmatter_fields(self, tmp_path: Path) -> None:
         """Parses extensible fields from frontmatter into properties."""
         skill_dir = tmp_path / "test-skill"
