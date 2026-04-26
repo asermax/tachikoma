@@ -687,9 +687,7 @@ class Coordinator:
                             and active is not None
                             and event.session_id
                         ):
-                            self._sdk_session_id = event.session_id
-                            if self._session_context is not None:
-                                self._session_context.set(event.session_id)
+                            self._set_sdk_session_id(event.session_id)
                             try:
                                 transcript_path = _derive_transcript_path(
                                     event.session_id, self._cwd
@@ -784,9 +782,7 @@ class Coordinator:
             "Encoding error detected, clearing SDK session: session_id={id}",
             id=self._sdk_session_id,
         )
-        self._sdk_session_id = None
-        if self._session_context is not None:
-            self._session_context.set(None)
+        self._set_sdk_session_id(None)
 
         if session is not None and self._registry is not None:
             try:
@@ -848,9 +844,7 @@ class Coordinator:
             if reopened is None:
                 return None
 
-            self._sdk_session_id = reopened.sdk_session_id
-            if self._session_context is not None:
-                self._session_context.set(reopened.sdk_session_id)
+            self._set_sdk_session_id(reopened.sdk_session_id)
 
             await self._registry.record_resumption(
                 session_id=reopened.id,
@@ -915,11 +909,15 @@ class Coordinator:
             self._background_tasks.append(task)
             self._background_tasks = [t for t in self._background_tasks if not t.done()]
 
+    def _set_sdk_session_id(self, session_id: str | None) -> None:
+        """Update the SDK session ID and sync to shared context."""
+        self._sdk_session_id = session_id
+        if self._session_context is not None:
+            self._session_context.set(session_id)
+
     def _clear_session_state(self) -> None:
         """Reset coordinator state after a session close."""
-        self._sdk_session_id = None
-        if self._session_context is not None:
-            self._session_context.set(None)
+        self._set_sdk_session_id(None)
         self._mcp_servers = {}
 
     async def _handle_transition(
@@ -945,9 +943,7 @@ class Coordinator:
             try:
                 reopened = await self._registry.reopen_session(resume_session_id)
                 if reopened is not None:
-                    self._sdk_session_id = reopened.sdk_session_id
-                    if self._session_context is not None:
-                        self._session_context.set(reopened.sdk_session_id)
+                    self._set_sdk_session_id(reopened.sdk_session_id)
 
                     await self._registry.record_resumption(
                         session_id=reopened.id,
