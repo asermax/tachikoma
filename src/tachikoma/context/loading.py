@@ -210,6 +210,7 @@ will fail at the permission layer:
 - `git checkout .` and `git restore .` (discards working-tree changes)
 - `git clean` (any form)
 - `git remote add/remove/rename/set-url/...` (any mutation of remotes)
+- `git filter-repo` (any form) — use the `push` MCP tool with `scrub_paths` instead
 
 Read-only git (`git status`, `git log`, `git diff`, `git show`, `git fetch`, `git branch`, \
 `git remote -v`, etc.) and `git clone` remain available via bash for inspecting state or \
@@ -220,9 +221,12 @@ cloning throwaway repos into `/tmp`.
 When you need to push or sync mid-session (outside the automatic session-end push), use \
 these MCP tools. Both are available at all times:
 
-- **push(type, target)** — Push the current branch of the target to its `origin` remote. \
-Handles divergence (fetch → rebase → push) with agent-driven conflict resolution on \
-diverged branches.
+- **push(type, target, scrub_paths?)** — Push the current branch of the target to its \
+`origin` remote. Handles divergence (fetch → rebase → push) with agent-driven conflict \
+resolution on diverged branches. Optionally pass `scrub_paths` (list of file paths) to \
+permanently remove those paths from the entire git history — this rewrites all history \
+and force-pushes to origin. **DESTRUCTIVE and IRREVERSIBLE.** Only works with \
+`type="project"`.
 - **sync(type, target)** — Pull (rebase on divergence) then push. Skips the push when the \
 pull is skipped (uncommitted changes) or fails.
 
@@ -231,9 +235,10 @@ Arguments:
 - `type="workspace"` — target the main workspace (`target` is ignored).
 - `type="project"`, `target=<project-name>` — target a registered project submodule under \
 `projects/<project-name>`.
+- `scrub_paths=["path/to/file"]` — (push only, project only) paths to scrub from git history.
 
-These tools cover every case where the old approach would have reached for raw `git push`. \
-Prefer them.
+These tools cover every case where the old approach would have reached for raw `git push` \
+or `git filter-repo`. Prefer them.
 
 # Tasks
 

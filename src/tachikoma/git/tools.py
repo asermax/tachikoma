@@ -11,6 +11,7 @@ handlers are extracted for testability. Also exports
 non-git-processor agent surfaces.
 """
 
+import asyncio
 import re
 from pathlib import Path
 from typing import Literal
@@ -39,6 +40,7 @@ TargetType = Literal["workspace", "project"]
 class PushArgs(BaseModel):
     type: TargetType
     target: str | None = None
+    scrub_paths: list[str] | None = None
 
 
 class SyncArgs(BaseModel):
@@ -109,6 +111,262 @@ _SYNC_FAILURES = frozenset(
 )
 
 
+# --- Scrub helper ---
+
+
+async def handle_scrub(
+    type_: TargetType,
+    target: str | None,
+    workspace_path: Path,
+    scrub_paths: list[str],
+) -> dict:
+    """Scrub specified paths from git history via ``git filter-repo``.
+
+    Runs ``git filter-repo --invert-paths --path <each> --force``,
+    re-adds the origin remote (which filter-repo removes), then
+    force-pushes to origin.
+
+    Args:
+        type_: Must be ``"project"``.
+        target: Project name.
+        workspace_path: The workspace root directory.
+        scrub_paths: Non-empty list of paths to remove from history.
+
+    Returns:
+        MCP tool response dict.
+    """
+    if type_ != "project":
+        return {
+            "content": [
+                {
+                    "type": "text",
+                    "text": "Error: scrub_paths is only supported for project targets. "
+                    "Use type='project' with target=<project-name>.",
+                }
+            ],
+            "is_error": True,
+        }
+
+    if not scrub_paths:
+        return {
+            "content": [
+                {
+                    "type": "text",
+                    "text": "Error: scrub_paths must be a non-empty list.",
+                }
+            ],
+            "is_error": True,
+        }
+
+    resolved = resolve_target(type_, target, workspace_path)
+    description = _describe_target(type_, target)
+
+    if resolved is None:
+        return {
+            "content": [
+                {
+                    "type": "text",
+                    "text": f"Error: could not resolve target ({description}). "
+                    f"For type='project', provide the project name and ensure "
+                    f"projects/<name> is a registered submodule.",
+                }
+            ],
+            "is_error": True,
+        }
+
+    try:
+        # Check working tree is clean
+        proc = await asyncio.create_subprocess_exec(
+            "git", "status", "--porcelain",
+            cwd=resolved,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        stdout, _ = await proc.communicate()
+        if stdout.strip():
+            return {
+                "content": [
+                    {
+                        "type": "text",
+                        "text": f"Error: cannot scrub {description}: working tree has "
+                        "uncommitted changes. Commit or stash them first.",
+                    }
+                ],
+                "is_error": True,
+            }
+
+        # Validate each path exists in git history
+        invalid_paths: list[str] = []
+        for path in scrub_paths:
+            rc, output = await _run_git_capture(
+                "rev-list", "--all", "--", path, cwd=resolved,
+            )
+            if not output.strip():
+                invalid_paths.append(path)
+
+        if invalid_paths:
+            return {
+                "content": [
+                    {
+                        "type": "text",
+                        "text": f"Error: paths not found in git history: "
+                        f"{', '.join(invalid_paths)}. "
+                        "Provide paths that exist in the repository's history.",
+                    }
+                ],
+                "is_error": True,
+            }
+
+        # Capture origin URL before filter-repo removes it
+        rc, origin_url = await _run_git_capture(
+            "remote", "get-url", "origin", cwd=resolved,
+        )
+        if rc != 0 or not origin_url.strip():
+            return {
+                "content": [
+                    {
+                        "type": "text",
+                        "text": f"Error: cannot scrub {description}: no origin remote "
+                        "configured. An origin remote is required to re-push after "
+                        "history rewrite.",
+                    }
+                ],
+                "is_error": True,
+            }
+        origin_url = origin_url.strip()
+
+        # Build filter-repo args: --invert-paths --path <each> --force
+        filter_args = ["--invert-paths"]
+        for path in scrub_paths:
+            filter_args.extend(["--path", path])
+        filter_args.append("--force")
+
+        _log.info(
+            "Running git filter-repo: target={desc} paths={paths}",
+            desc=description,
+            paths=scrub_paths,
+        )
+
+        # Run filter-repo with `yes` piped to stdin for already_ran prompt
+        proc = await asyncio.create_subprocess_exec(
+            "git", "filter-repo", *filter_args,
+            cwd=resolved,
+            stdin=asyncio.subprocess.PIPE,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        assert proc.stdin is not None
+        proc.stdin.writelines([b"yes\n" for _ in range(10)])
+        stdout, stderr = await proc.communicate()
+
+        if proc.returncode != 0:
+            error_msg = stderr.decode().strip() or f"exit code {proc.returncode}"
+            _log.warning(
+                "git filter-repo failed: target={desc} err={err}",
+                desc=description,
+                err=error_msg,
+            )
+            return {
+                "content": [
+                    {
+                        "type": "text",
+                        "text": f"Error: git filter-repo failed for {description}: "
+                        f"{error_msg}",
+                    }
+                ],
+                "is_error": True,
+            }
+
+        # Re-add origin remote (filter-repo removes it)
+        await _run_git("remote", "add", "origin", origin_url, cwd=resolved)
+
+        # Force push to origin
+        proc = await asyncio.create_subprocess_exec(
+            "git", "push", "--force", "origin", "HEAD",
+            cwd=resolved,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        _, stderr = await proc.communicate()
+
+        if proc.returncode != 0:
+            error_msg = stderr.decode().strip() or f"exit code {proc.returncode}"
+            _log.warning(
+                "force push failed after scrub: target={desc} err={err}",
+                desc=description,
+                err=error_msg,
+            )
+            return {
+                "content": [
+                    {
+                        "type": "text",
+                        "text": f"Scrub completed for {description}, but force push "
+                        f"failed: {error_msg}. The local repo has been rewritten. "
+                        "You can retry the push manually.",
+                    }
+                ],
+                "is_error": True,
+            }
+
+        _log.info(
+            "scrub completed: target={desc} paths={paths}",
+            desc=description,
+            paths=scrub_paths,
+        )
+
+        return {
+            "content": [
+                {
+                    "type": "text",
+                    "text": f"scrub {description}: paths {', '.join(scrub_paths)} "
+                    "removed from history and force-pushed to origin.",
+                }
+            ],
+        }
+
+    except Exception as e:
+        _log.warning(
+            "Scrub failed: target={desc} err={err}",
+            desc=description,
+            err=str(e),
+        )
+        return {
+            "content": [
+                {
+                    "type": "text",
+                    "text": f"Error: scrub failed for {description}: {e}",
+                }
+            ],
+            "is_error": True,
+        }
+
+
+async def _run_git_capture(*args: str, cwd: Path) -> tuple[int, str]:
+    """Run a git command and return exit code + stdout."""
+    proc = await asyncio.create_subprocess_exec(
+        "git", *args,
+        cwd=cwd,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    stdout, _ = await proc.communicate()
+    return proc.returncode or 0, stdout.decode().strip()
+
+
+async def _run_git(*args: str, cwd: Path) -> None:
+    """Run a git command and raise on failure."""
+    proc = await asyncio.create_subprocess_exec(
+        "git", *args,
+        cwd=cwd,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    _, stderr = await proc.communicate()
+    if proc.returncode != 0:
+        error_msg = stderr.decode().strip() or f"exit code {proc.returncode}"
+        raise RuntimeError(f"git {' '.join(args)} failed: {error_msg}")
+
+
 # --- Handlers ---
 
 
@@ -117,11 +375,13 @@ async def handle_push(
     target: str | None,
     workspace_path: Path,
     agent_defaults: AgentDefaults,
+    scrub_paths: list[str] | None = None,
 ) -> dict:
     """Push the current branch of the resolved target to its ``origin`` remote.
 
     Uses :func:`smart_push` (fetch → divergence detection → rebase → push,
-    with agent-driven conflict resolution on diverged branches).
+    with agent-driven conflict resolution on diverged branches). When
+    ``scrub_paths`` is provided, delegates to :func:`handle_scrub` instead.
 
     Args:
         type_: Target kind (``"workspace"`` or ``"project"``).
@@ -129,10 +389,13 @@ async def handle_push(
         workspace_path: The workspace root directory.
         agent_defaults: Common SDK options (used for conflict-resolution
             agent spawning inside ``smart_push``).
+        scrub_paths: Optional list of paths to scrub from history (project only).
 
     Returns:
         MCP tool response dict.
     """
+    if scrub_paths is not None:
+        return await handle_scrub(type_, target, workspace_path, scrub_paths)
     resolved = resolve_target(type_, target, workspace_path)
     description = _describe_target(type_, target)
 
@@ -274,7 +537,13 @@ def create_git_tools_server(
             "submodule to its origin remote. Handles divergence via fetch + "
             "rebase, with agent-driven conflict resolution when needed. Use "
             "type='workspace' for the main workspace, or type='project' with "
-            "target=<project-name> for a registered project."
+            "target=<project-name> for a registered project.\n\n"
+            "Optionally pass scrub_paths (list of file paths) to permanently "
+            "remove those paths from the entire git history of a project "
+            "submodule. This is DESTRUCTIVE and IRREVERSIBLE — it rewrites "
+            "all history and force-pushes to origin. Only works with "
+            "type='project'. Example: push(type='project', target='my-pages', "
+            "scrub_paths=['audio/large-file.ogg', 'data/old.json'])"
         ),
         PushArgs.model_json_schema(),
     )
@@ -285,6 +554,7 @@ def create_git_tools_server(
             parsed.target,
             workspace_path,
             agent_defaults,
+            parsed.scrub_paths,
         )
 
     @tool(
@@ -330,4 +600,5 @@ DESTRUCTIVE_GIT_DENY_PATTERNS: list[re.Pattern[str]] = [
     re.compile(r"^git\s+(checkout|restore)\s+\.(\s|$)"),
     re.compile(r"^git\s+clean\b"),
     re.compile(r"^git\s+remote\s+(add|remove|rm|rename|set-url|set-head|set-branches|prune)\b"),
+    re.compile(r"^git\s+filter-repo\b"),
 ]
