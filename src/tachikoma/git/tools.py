@@ -25,6 +25,9 @@ from tachikoma.agent_defaults import AgentDefaults
 from tachikoma.git.sync import (
     PUSH_RESULT,
     SYNC_RESULT,
+    has_uncommitted_changes,
+    run_git,
+    run_git_capture,
     smart_pull,
     smart_push,
 )
@@ -111,6 +114,10 @@ _SYNC_FAILURES = frozenset(
 )
 
 
+def _error(msg: str) -> dict:
+    return {"is_error": True, "content": [{"type": "text", "text": msg}]}
+
+
 # --- Scrub helper ---
 
 
@@ -136,106 +143,57 @@ async def handle_scrub(
         MCP tool response dict.
     """
     if type_ != "project":
-        return {
-            "content": [
-                {
-                    "type": "text",
-                    "text": "Error: scrub_paths is only supported for project targets. "
-                    "Use type='project' with target=<project-name>.",
-                }
-            ],
-            "is_error": True,
-        }
+        return _error(
+            "Error: scrub_paths is only supported for project targets. "
+            "Use type='project' with target=<project-name>."
+        )
 
     if not scrub_paths:
-        return {
-            "content": [
-                {
-                    "type": "text",
-                    "text": "Error: scrub_paths must be a non-empty list.",
-                }
-            ],
-            "is_error": True,
-        }
+        return _error("Error: scrub_paths must be a non-empty list.")
 
     resolved = resolve_target(type_, target, workspace_path)
     description = _describe_target(type_, target)
 
     if resolved is None:
-        return {
-            "content": [
-                {
-                    "type": "text",
-                    "text": f"Error: could not resolve target ({description}). "
-                    f"For type='project', provide the project name and ensure "
-                    f"projects/<name> is a registered submodule.",
-                }
-            ],
-            "is_error": True,
-        }
+        return _error(
+            f"Error: could not resolve target ({description}). "
+            f"For type='project', provide the project name and ensure "
+            f"projects/<name> is a registered submodule."
+        )
 
     try:
-        # Check working tree is clean
-        proc = await asyncio.create_subprocess_exec(
-            "git", "status", "--porcelain",
-            cwd=resolved,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-        stdout, _ = await proc.communicate()
-        if stdout.strip():
-            return {
-                "content": [
-                    {
-                        "type": "text",
-                        "text": f"Error: cannot scrub {description}: working tree has "
-                        "uncommitted changes. Commit or stash them first.",
-                    }
-                ],
-                "is_error": True,
-            }
+        if await has_uncommitted_changes(resolved):
+            return _error(
+                f"Error: cannot scrub {description}: working tree has "
+                "uncommitted changes. Commit or stash them first."
+            )
 
-        # Validate each path exists in git history
         invalid_paths: list[str] = []
         for path in scrub_paths:
-            rc, output = await _run_git_capture(
-                "rev-list", "--all", "--", path, cwd=resolved,
+            _, output = await run_git_capture(
+                "log", "-1", "--all", "--", path, cwd=resolved,
             )
             if not output.strip():
                 invalid_paths.append(path)
 
         if invalid_paths:
-            return {
-                "content": [
-                    {
-                        "type": "text",
-                        "text": f"Error: paths not found in git history: "
-                        f"{', '.join(invalid_paths)}. "
-                        "Provide paths that exist in the repository's history.",
-                    }
-                ],
-                "is_error": True,
-            }
+            return _error(
+                f"Error: paths not found in git history: "
+                f"{', '.join(invalid_paths)}. "
+                "Provide paths that exist in the repository's history."
+            )
 
-        # Capture origin URL before filter-repo removes it
-        rc, origin_url = await _run_git_capture(
+        rc, origin_url = await run_git_capture(
             "remote", "get-url", "origin", cwd=resolved,
         )
         if rc != 0 or not origin_url.strip():
-            return {
-                "content": [
-                    {
-                        "type": "text",
-                        "text": f"Error: cannot scrub {description}: no origin remote "
-                        "configured. An origin remote is required to re-push after "
-                        "history rewrite.",
-                    }
-                ],
-                "is_error": True,
-            }
+            return _error(
+                f"Error: cannot scrub {description}: no origin remote "
+                "configured. An origin remote is required to re-push after "
+                "history rewrite."
+            )
         origin_url = origin_url.strip()
 
-        # Build filter-repo args: --invert-paths --path <each> --force
         filter_args = ["--invert-paths"]
         for path in scrub_paths:
             filter_args.extend(["--path", path])
@@ -247,7 +205,7 @@ async def handle_scrub(
             paths=scrub_paths,
         )
 
-        # Run filter-repo with `yes` piped to stdin for already_ran prompt
+        # filter-repo prompts for confirmation; pipe "yes" to stdin
         proc = await asyncio.create_subprocess_exec(
             "git", "filter-repo", *filter_args,
             cwd=resolved,
@@ -255,8 +213,10 @@ async def handle_scrub(
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
-        assert proc.stdin is not None
-        proc.stdin.writelines([b"yes\n" for _ in range(10)])
+        if proc.stdin is None:
+            raise RuntimeError("stdin pipe not available for filter-repo")
+        proc.stdin.write(b"yes\n" * 10)
+        await proc.stdin.drain()
         stdout, stderr = await proc.communicate()
 
         if proc.returncode != 0:
@@ -266,47 +226,30 @@ async def handle_scrub(
                 desc=description,
                 err=error_msg,
             )
-            return {
-                "content": [
-                    {
-                        "type": "text",
-                        "text": f"Error: git filter-repo failed for {description}: "
-                        f"{error_msg}",
-                    }
-                ],
-                "is_error": True,
-            }
+            return _error(
+                f"Error: git filter-repo failed for {description}: "
+                f"{error_msg}"
+            )
 
-        # Re-add origin remote (filter-repo removes it)
-        await _run_git("remote", "add", "origin", origin_url, cwd=resolved)
+        # filter-repo removes the origin remote
+        await run_git("remote", "add", "origin", origin_url, cwd=resolved)
 
-        # Force push to origin
-        proc = await asyncio.create_subprocess_exec(
-            "git", "push", "--force", "origin", "HEAD",
-            cwd=resolved,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-        _, stderr = await proc.communicate()
-
-        if proc.returncode != 0:
-            error_msg = stderr.decode().strip() or f"exit code {proc.returncode}"
+        try:
+            await run_git("push", "--force", "origin", "HEAD", cwd=resolved)
+        except RuntimeError as exc:
+            error_msg = str(exc).removeprefix(
+                "git push --force origin HEAD failed: "
+            )
             _log.warning(
                 "force push failed after scrub: target={desc} err={err}",
                 desc=description,
                 err=error_msg,
             )
-            return {
-                "content": [
-                    {
-                        "type": "text",
-                        "text": f"Scrub completed for {description}, but force push "
-                        f"failed: {error_msg}. The local repo has been rewritten. "
-                        "You can retry the push manually.",
-                    }
-                ],
-                "is_error": True,
-            }
+            return _error(
+                f"Scrub completed for {description}, but force push "
+                f"failed: {error_msg}. The local repo has been rewritten. "
+                "You can retry the push manually."
+            )
 
         _log.info(
             "scrub completed: target={desc} paths={paths}",
@@ -330,41 +273,7 @@ async def handle_scrub(
             desc=description,
             err=str(e),
         )
-        return {
-            "content": [
-                {
-                    "type": "text",
-                    "text": f"Error: scrub failed for {description}: {e}",
-                }
-            ],
-            "is_error": True,
-        }
-
-
-async def _run_git_capture(*args: str, cwd: Path) -> tuple[int, str]:
-    """Run a git command and return exit code + stdout."""
-    proc = await asyncio.create_subprocess_exec(
-        "git", *args,
-        cwd=cwd,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-    )
-    stdout, _ = await proc.communicate()
-    return proc.returncode or 0, stdout.decode().strip()
-
-
-async def _run_git(*args: str, cwd: Path) -> None:
-    """Run a git command and raise on failure."""
-    proc = await asyncio.create_subprocess_exec(
-        "git", *args,
-        cwd=cwd,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-    )
-    _, stderr = await proc.communicate()
-    if proc.returncode != 0:
-        error_msg = stderr.decode().strip() or f"exit code {proc.returncode}"
-        raise RuntimeError(f"git {' '.join(args)} failed: {error_msg}")
+        return _error(f"Error: scrub failed for {description}: {e}")
 
 
 # --- Handlers ---
