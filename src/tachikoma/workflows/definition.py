@@ -29,6 +29,9 @@ class StepDefinition:
             The workflow engine resolves the transitive dependency chain via the
             skill registry and injects the resolved skills into the step's tool
             response, bypassing classification.
+        condition: Natural language prompt evaluated before step start.
+            If the evaluator determines the condition is not met, the step
+            is auto-skipped regardless of ``required`` status.
         properties: Extensible frontmatter fields for future customization.
     """
 
@@ -39,6 +42,7 @@ class StepDefinition:
     scripts_path: Path | None
     required: bool = True
     required_skills: tuple[str, ...] = ()
+    condition: str | None = None
     properties: dict[str, object] = field(default_factory=dict)
 
 

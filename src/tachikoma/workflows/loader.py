@@ -225,10 +225,21 @@ def _load_step(
         )
         required_skills = ()
 
+    condition = post.metadata.get("condition")
+    if condition is not None and not isinstance(condition, str):
+        _log.warning(
+            "Step has invalid condition type (expected string), treating as None: "
+            "skill={skill}, workflow={workflow}, step={step}",
+            skill=skill_name,
+            workflow=workflow_name,
+            step=step_dir.name,
+        )
+        condition = None
+
     properties = {
         k: v
         for k, v in post.metadata.items()
-        if k not in ("title", "required", "skippable", "required_skills")
+        if k not in ("title", "required", "skippable", "required_skills", "condition")
     }
 
     references_path = step_dir / "references"
@@ -247,6 +258,7 @@ def _load_step(
         scripts_path=scripts_path,
         required=required,
         required_skills=required_skills,
+        condition=condition,
         properties=properties,
     )
 

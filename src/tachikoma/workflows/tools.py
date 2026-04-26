@@ -19,7 +19,10 @@ from claude_agent_sdk import McpSdkServerConfig, create_sdk_mcp_server, tool
 from loguru import logger
 from pydantic import BaseModel, ValidationError
 
+from tachikoma.agent_defaults import AgentDefaults
+from tachikoma.session_context import SessionContext
 from tachikoma.skills.registry import SkillRegistry, render_skill_block
+from tachikoma.workflows.conditions import ConditionResult, evaluate_condition
 from tachikoma.workflows.definition import StepDefinition
 from tachikoma.workflows.errors import WorkflowRepositoryError
 from tachikoma.workflows.model import (
@@ -103,6 +106,7 @@ def _step_to_snapshot(step: StepDefinition) -> dict:
         "required": step.required,
         "path": str(step.instructions_path.parent),
         "required_skills": list(step.required_skills),
+        "condition": step.condition,
     }
 
 
@@ -117,6 +121,61 @@ def _find_next_pending_step(
             return step_id
 
     return None
+
+
+async def _evaluate_and_advance(
+    step_states: dict[str, StepState],
+    definition_snapshot: list[dict],
+    scratchpad_path: str,
+    workspace_path: Path,
+    agent_defaults: AgentDefaults,
+    session_context: SessionContext,
+) -> tuple[str | None, list[tuple[str, ConditionResult]]]:
+    """Evaluate conditions on pending steps and return the next step to start.
+
+    Loops through pending steps in definition order.  Steps without a
+    condition start immediately.  Steps with a condition are evaluated;
+    if the condition fails, the step is marked as skipped and the loop
+    continues.
+
+    Returns:
+        (next_step_id, skipped_list) where skipped_list contains
+        (step_id, ConditionResult) pairs for condition-skipped steps.
+        next_step_id is None when no passing step remains.
+    """
+    skipped: list[tuple[str, ConditionResult]] = []
+
+    while True:
+        next_step_id = _find_next_pending_step(step_states, definition_snapshot)
+
+        if next_step_id is None:
+            return None, skipped
+
+        step_info = _get_step_from_snapshot(definition_snapshot, next_step_id)
+        condition = step_info.get("condition")
+
+        if not condition:
+            return next_step_id, skipped
+
+        result = await evaluate_condition(
+            condition_prompt=condition,
+            step_states=step_states,
+            scratchpad_path=scratchpad_path,
+            workspace_path=workspace_path,
+            agent_defaults=agent_defaults,
+            sdk_session_id=session_context.get(),
+        )
+
+        if result.passes:
+            return next_step_id, skipped
+
+        step_states[next_step_id] = STEP_SKIPPED
+        skipped.append((next_step_id, result))
+        _log.info(
+            "Condition-skipped step: step={step}, reason={reason}",
+            step=next_step_id,
+            reason=result.reason,
+        )
 
 
 def _get_step_from_snapshot(
@@ -337,7 +396,8 @@ async def handle_start_workflow(
     step_lines = []
     for i, step in enumerate(workflow_def.steps, 1):
         skip_marker = " (skippable)" if not step.required else ""
-        step_lines.append(f"{i}. **{step.title}** (`{step.id}`){skip_marker}")
+        cond_marker = f" (if: {step.condition})" if step.condition else ""
+        step_lines.append(f"{i}. **{step.title}** (`{step.id}`){skip_marker}{cond_marker}")
 
     steps_text = "\n".join(step_lines)
 
@@ -371,6 +431,9 @@ async def handle_update_workflow_state(
     action: Literal["start", "complete", "skip"],
     repository: WorkflowStateRepository,
     skill_registry: SkillRegistry,
+    agent_defaults: AgentDefaults | None = None,
+    session_context: SessionContext | None = None,
+    workspace_path: Path | None = None,
 ) -> dict:
     """Handle update_workflow_state: transition a step's state."""
 
@@ -385,21 +448,69 @@ async def handle_update_workflow_state(
 
     new_step_states = dict(state.step_states)
     new_current_step: str | None = None
+    condition_skipped: list[tuple[str, ConditionResult]] = []
 
     if action == "start":
-        new_step_states[step] = STEP_STARTED
-        new_current_step = step
-    elif action == "complete":
-        new_step_states[step] = STEP_COMPLETED
-        new_current_step = _find_next_pending_step(new_step_states, state.definition_snapshot)
-    elif action == "skip":
-        new_step_states[step] = STEP_SKIPPED
-        new_current_step = _find_next_pending_step(new_step_states, state.definition_snapshot)
+        # Evaluate condition before starting (if condition support available)
+        if agent_defaults and session_context and workspace_path:
+            step_info = _get_step_from_snapshot(state.definition_snapshot, step)
+            condition = step_info.get("condition")
 
-    # Auto-start next step on complete/skip (bypasses validate_transition —
-    # _find_next_pending_step guarantees the step is pending)
-    if action in ("complete", "skip") and new_current_step is not None:
-        new_step_states[new_current_step] = STEP_STARTED
+            if condition:
+                result = await evaluate_condition(
+                    condition_prompt=condition,
+                    step_states=dict(state.step_states),
+                    scratchpad_path=state.scratchpad_path,
+                    workspace_path=workspace_path,
+                    agent_defaults=agent_defaults,
+                    sdk_session_id=session_context.get(),
+                )
+
+                if not result.passes:
+                    # Condition not met — skip and auto-advance
+                    new_step_states[step] = STEP_SKIPPED
+                    condition_skipped.append((step, result))
+
+                    new_current_step, advance_skipped = await _evaluate_and_advance(
+                        new_step_states,
+                        state.definition_snapshot,
+                        state.scratchpad_path,
+                        workspace_path,
+                        agent_defaults,
+                        session_context,
+                    )
+                    condition_skipped.extend(advance_skipped)
+
+                    if new_current_step is not None:
+                        new_step_states[new_current_step] = STEP_STARTED
+                else:
+                    new_step_states[step] = STEP_STARTED
+                    new_current_step = step
+            else:
+                new_step_states[step] = STEP_STARTED
+                new_current_step = step
+        else:
+            new_step_states[step] = STEP_STARTED
+            new_current_step = step
+
+    elif action in ("complete", "skip"):
+        new_step_states[step] = STEP_COMPLETED if action == "complete" else STEP_SKIPPED
+
+        if agent_defaults and session_context and workspace_path:
+            new_current_step, advance_skipped = await _evaluate_and_advance(
+                new_step_states,
+                state.definition_snapshot,
+                state.scratchpad_path,
+                workspace_path,
+                agent_defaults,
+                session_context,
+            )
+            condition_skipped.extend(advance_skipped)
+        else:
+            new_current_step = _find_next_pending_step(new_step_states, state.definition_snapshot)
+
+        if new_current_step is not None:
+            new_step_states[new_current_step] = STEP_STARTED
 
     try:
         updated = await repository.update(
@@ -423,19 +534,31 @@ async def handle_update_workflow_state(
         await repository.soft_delete(workflow_id)
         _delete_scratchpad(state.scratchpad_path)
 
-        return {
-            "content": [
-                {
-                    "type": "text",
-                    "text": (
-                        f"Workflow **{state.workflow_name}** complete and finalized! "
-                        f"All steps finished ({completed} completed, {skipped} skipped)."
-                    ),
-                }
-            ],
-        }
+        finalize_text = (
+            f"Workflow **{state.workflow_name}** complete and finalized! "
+            f"All steps finished ({completed} completed, {skipped} skipped)."
+        )
 
-    if action == "start":
+        if condition_skipped:
+            skip_lines = [
+                f"- `{sid}`: {cr.reason}"
+                for sid, cr in condition_skipped
+            ]
+            finalize_text += "\n\n### Condition-Skipped Steps\n" + "\n".join(skip_lines)
+
+        return {"content": [{"type": "text", "text": finalize_text}]}
+
+    # Build response text
+    response_parts: list[str] = []
+
+    if condition_skipped:
+        skip_lines = [
+            f"- `{sid}`: {cr.reason}"
+            for sid, cr in condition_skipped
+        ]
+        response_parts.append("### Condition-Skipped Steps\n" + "\n".join(skip_lines))
+
+    if action == "start" and step not in [s[0] for s in condition_skipped]:
         step_info = _get_step_from_snapshot(state.definition_snapshot, step)
         instructions = _read_step_instructions(step_info)
         step_path = step_info.get("path", "")
@@ -450,10 +573,34 @@ async def handle_update_workflow_state(
         if step_path:
             step_text += f"\n\n---\n*Step path: `{step_path}`*"
 
+        if response_parts:
+            step_text += "\n\n" + "\n\n".join(response_parts)
         return {"content": [{"type": "text", "text": step_text}]}
 
+    # Condition caused the explicitly-started step to be skipped
+    if action == "start" and condition_skipped and new_current_step:
+            next_info = _get_step_from_snapshot(state.definition_snapshot, new_current_step)
+            next_instructions = _read_step_instructions(next_info)
+            next_path = next_info.get("path", "")
+
+            next_text = (
+                f"Step `{step}` condition-skipped. "
+                f"Next step **{next_info['title']}** (`{new_current_step}`) started."
+            )
+
+            if next_instructions:
+                next_text += f"\n\n{next_instructions}"
+
+            next_text += _render_required_skills(next_info, skill_registry)
+
+            if next_path:
+                next_text += f"\n\n---\n*Step path: `{next_path}`*"
+
+            next_text += "\n\n" + "\n\n".join(response_parts)
+            return {"content": [{"type": "text", "text": next_text}]}
+
     # complete/skip with a next step — it's already auto-started
-    if new_current_step:
+    if new_current_step and action in ("complete", "skip"):
         next_info = _get_step_from_snapshot(state.definition_snapshot, new_current_step)
         next_instructions = _read_step_instructions(next_info)
         next_path = next_info.get("path", "")
@@ -471,9 +618,15 @@ async def handle_update_workflow_state(
         if next_path:
             next_text += f"\n\n---\n*Step path: `{next_path}`*"
 
+        if response_parts:
+            next_text += "\n\n" + "\n\n".join(response_parts)
         return {"content": [{"type": "text", "text": next_text}]}
 
-    return {"content": [{"type": "text", "text": f"Step `{step}` {action}d."}]}
+    base_text = f"Step `{step}` {action}d."
+    if response_parts:
+        base_text += "\n\n" + "\n\n".join(response_parts)
+
+    return {"content": [{"type": "text", "text": base_text}]}
 
 
 async def handle_get_workflow_state(
@@ -582,6 +735,8 @@ def create_workflow_tools_server(
     repository: WorkflowStateRepository,
     skill_registry: SkillRegistry,
     workspace_path: Path,
+    agent_defaults: AgentDefaults | None = None,
+    session_context: SessionContext | None = None,
 ) -> McpSdkServerConfig:
     """Create an MCP server exposing workflow management tools.
 
@@ -589,6 +744,8 @@ def create_workflow_tools_server(
         repository: The WorkflowStateRepository for state persistence.
         skill_registry: The SkillRegistry for workflow definition lookup.
         workspace_path: The workspace root path for scratchpad files.
+        agent_defaults: Shared SDK options for condition evaluation.
+        session_context: Shared session ID for condition evaluation forking.
 
     Returns:
         McpSdkServerConfig for registration with ClaudeAgentOptions.mcp_servers.
@@ -645,6 +802,9 @@ def create_workflow_tools_server(
             parsed.action,
             repository,
             skill_registry,
+            agent_defaults=agent_defaults,
+            session_context=session_context,
+            workspace_path=workspace_path,
         )
 
     @tool(

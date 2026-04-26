@@ -80,6 +80,31 @@ class TestStepDefinition:
 
         assert step.required_skills == ()
 
+    def test_default_condition_is_none(self) -> None:
+        """StepDefinition defaults condition to None."""
+        step = StepDefinition(
+            id="01-step",
+            title="Step",
+            instructions_path=Path("/instructions.md"),
+            references_path=None,
+            scripts_path=None,
+        )
+
+        assert step.condition is None
+
+    def test_condition_can_be_set(self) -> None:
+        """StepDefinition accepts a condition string."""
+        step = StepDefinition(
+            id="01-step",
+            title="Step",
+            instructions_path=Path("/instructions.md"),
+            references_path=None,
+            scripts_path=None,
+            condition="Only run if output.md exists",
+        )
+
+        assert step.condition == "Only run if output.md exists"
+
     def test_required_skills_accepts_tuple_of_strings(self) -> None:
         """StepDefinition accepts required_skills as tuple of skill names."""
         step = StepDefinition(
@@ -521,6 +546,88 @@ Instructions."""
         step = result["test-workflow"].steps[0]
         assert "required_skills" not in step.properties
         assert step.properties == {"custom_field": "keep-me"}
+
+    def test_parses_condition_from_frontmatter(self, tmp_path: Path) -> None:
+        """Parses condition string from frontmatter."""
+        skill_dir = tmp_path / "test-skill"
+        workflow_dir = skill_dir / "workflows" / "test-workflow"
+        step_dir = workflow_dir / "01-step"
+        step_dir.mkdir(parents=True)
+
+        (step_dir / "instructions.md").write_text(
+            """---
+title: Step
+condition: Only run if the file output.md exists in the workspace
+---
+Instructions."""
+        )
+
+        result = load_workflows(skill_dir, "test-skill")
+
+        step = result["test-workflow"].steps[0]
+        assert step.condition == "Only run if the file output.md exists in the workspace"
+
+    def test_default_condition_when_missing(self, tmp_path: Path) -> None:
+        """Defaults condition to None when absent from frontmatter."""
+        skill_dir = tmp_path / "test-skill"
+        workflow_dir = skill_dir / "workflows" / "test-workflow"
+        step_dir = workflow_dir / "01-step"
+        step_dir.mkdir(parents=True)
+
+        (step_dir / "instructions.md").write_text(
+            """---
+title: Step
+---
+Instructions."""
+        )
+
+        result = load_workflows(skill_dir, "test-skill")
+
+        step = result["test-workflow"].steps[0]
+        assert step.condition is None
+
+    def test_condition_excluded_from_properties(self, tmp_path: Path) -> None:
+        """condition field is not passed through as an extensible property."""
+        skill_dir = tmp_path / "test-skill"
+        workflow_dir = skill_dir / "workflows" / "test-workflow"
+        step_dir = workflow_dir / "01-step"
+        step_dir.mkdir(parents=True)
+
+        (step_dir / "instructions.md").write_text(
+            """---
+title: Step
+condition: Only run if output.md exists
+custom_field: keep-me
+---
+Instructions."""
+        )
+
+        result = load_workflows(skill_dir, "test-skill")
+
+        step = result["test-workflow"].steps[0]
+        assert "condition" not in step.properties
+        assert step.condition == "Only run if output.md exists"
+        assert step.properties == {"custom_field": "keep-me"}
+
+    def test_non_string_condition_treated_as_none(self, tmp_path: Path) -> None:
+        """Non-string condition values are treated as None with a warning."""
+        skill_dir = tmp_path / "test-skill"
+        workflow_dir = skill_dir / "workflows" / "test-workflow"
+        step_dir = workflow_dir / "01-step"
+        step_dir.mkdir(parents=True)
+
+        (step_dir / "instructions.md").write_text(
+            """---
+title: Step
+condition: 123
+---
+Instructions."""
+        )
+
+        result = load_workflows(skill_dir, "test-skill")
+
+        step = result["test-workflow"].steps[0]
+        assert step.condition is None
 
     def test_parses_extensible_frontmatter_fields(self, tmp_path: Path) -> None:
         """Parses extensible fields from frontmatter into properties."""
