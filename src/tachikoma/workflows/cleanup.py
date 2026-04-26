@@ -39,7 +39,7 @@ class StaleWorkflowCleanupProcessor(PostProcessor):
         self._threshold = threshold
 
     async def process(self, session: Session, *, extra: dict | None = None) -> None:
-        """Find and clean up stale workflow states."""
+        """Find and clean up stale workflow states (subtree-aware)."""
         try:
             stale = await self._repository.list_stale(self._threshold)
         except Exception as exc:
@@ -52,10 +52,10 @@ class StaleWorkflowCleanupProcessor(PostProcessor):
         cleaned = 0
         for state in stale:
             try:
-                deleted = await self._repository.soft_delete(state.id)
-                if deleted:
+                ids = await self._repository.abort_cascade(state.id)
+                if ids:
                     _delete_scratchpad(state.scratchpad_path)
-                    cleaned += 1
+                    cleaned += len(ids)
             except Exception as exc:
                 _log.warning(
                     "Failed to clean up stale workflow: id={id}, err={err}",
@@ -65,7 +65,7 @@ class StaleWorkflowCleanupProcessor(PostProcessor):
 
         if cleaned > 0:
             _log.info(
-                "Cleaned up {count} stale workflow(s) (threshold={threshold})",
+                "Cleaned up {count} stale workflow record(s) (threshold={threshold})",
                 count=cleaned,
                 threshold=self._threshold,
             )
