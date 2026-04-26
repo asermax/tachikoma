@@ -55,6 +55,7 @@ from tachikoma.pre_processing import (
 )
 from tachikoma.sdk_query import StderrAccumulator
 from tachikoma.sdk_transport import FilePromptTransport
+from tachikoma.session_context import SessionContext
 from tachikoma.sessions.model import Session, SessionContextEntry
 from tachikoma.sessions.registry import SessionRegistry
 from tachikoma.skills.context_provider import derive_agents_from_entries
@@ -216,6 +217,7 @@ class Coordinator:
         timezone: str = "",
         bus: EventBus | None = None,
         hooks: list[HookMatcher] | None = None,
+        session_context: SessionContext | None = None,
     ) -> None:
         # Store individual options for building ClaudeAgentOptions per message
         self._allowed_tools = allowed_tools or []
@@ -264,6 +266,9 @@ class Coordinator:
         # CoordinatorIdle emission state
         self._bus: EventBus | None = bus
         self._was_busy: bool = False
+
+        # Shared session context for MCP tools (see ADR-014)
+        self._session_context = session_context
 
         # Shutdown progress callback — set by channels before polling starts
         self.shutdown_status_callback: StatusCallback | None = None
@@ -683,6 +688,8 @@ class Coordinator:
                             and event.session_id
                         ):
                             self._sdk_session_id = event.session_id
+                            if self._session_context is not None:
+                                self._session_context.set(event.session_id)
                             try:
                                 transcript_path = _derive_transcript_path(
                                     event.session_id, self._cwd
@@ -778,6 +785,8 @@ class Coordinator:
             id=self._sdk_session_id,
         )
         self._sdk_session_id = None
+        if self._session_context is not None:
+            self._session_context.set(None)
 
         if session is not None and self._registry is not None:
             try:
@@ -840,6 +849,8 @@ class Coordinator:
                 return None
 
             self._sdk_session_id = reopened.sdk_session_id
+            if self._session_context is not None:
+                self._session_context.set(reopened.sdk_session_id)
 
             await self._registry.record_resumption(
                 session_id=reopened.id,
@@ -907,6 +918,8 @@ class Coordinator:
     def _clear_session_state(self) -> None:
         """Reset coordinator state after a session close."""
         self._sdk_session_id = None
+        if self._session_context is not None:
+            self._session_context.set(None)
         self._mcp_servers = {}
 
     async def _handle_transition(
@@ -933,6 +946,8 @@ class Coordinator:
                 reopened = await self._registry.reopen_session(resume_session_id)
                 if reopened is not None:
                     self._sdk_session_id = reopened.sdk_session_id
+                    if self._session_context is not None:
+                        self._session_context.set(reopened.sdk_session_id)
 
                     await self._registry.record_resumption(
                         session_id=reopened.id,

@@ -61,6 +61,7 @@ from tachikoma.pre_processing import PreProcessingPipeline
 from tachikoma.projects import ProjectsContextProvider, ProjectsProcessor, projects_hook
 from tachikoma.repl import Repl
 from tachikoma.scheduler import CronTrigger, IntervalTrigger, Job, scheduler
+from tachikoma.session_context import SessionContext
 from tachikoma.sessions import session_recovery_hook
 from tachikoma.skills import SkillRegistry, SkillsContextProvider, skills_hook, watch_skills
 from tachikoma.tasks import (
@@ -279,10 +280,14 @@ async def run(
         ZoneInfo(settings.tasks.timezone),
         include_respond_tool=False,
     )
+    session_context = SessionContext()
+
     workflow_tools = create_workflow_tools_server(
         workflow_repository,
         skill_registry,
         settings.workspace.path,
+        agent_defaults=agent_defaults,
+        session_context=session_context,
     )
     detached_process_tools = create_detached_process_tools_server(
         process_repository,
@@ -357,6 +362,7 @@ async def run(
             timezone=settings.tasks.timezone,
             bus=bus,
             hooks=[destructive_git_deny_hook],
+            session_context=session_context,
         ) as coordinator:
             buffer = await create_and_start_buffer(
                 bus=bus,
