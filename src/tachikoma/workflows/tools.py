@@ -96,7 +96,7 @@ def _validate_args(args: dict, model: type[BaseModel]):
         return None, _error_response(f"Invalid arguments: {exc}")
 
 
-def _delete_scratchpad(scratchpad_path: str) -> None:
+def delete_scratchpad(scratchpad_path: str) -> None:
     Path(scratchpad_path).unlink(missing_ok=True)
 
 
@@ -548,7 +548,6 @@ async def _run_cascade(
                     scratchpad_path,
                 )
 
-            # Composition step started — queue update, spawn child
             current_steps[current.id] = step
             batch.ordered.append(UpdateState(
                 layer_id=current.id,
@@ -579,9 +578,6 @@ async def _run_cascade(
             current_steps[child_id] = None
             chain_order.append(child_id)
             current = child_layer
-            # Fall through to advance loop to start child's first step
-        else:
-            pass  # Fall through to advance loop
 
     elif action == "complete":
         ss[step] = STEP_COMPLETED
@@ -589,13 +585,10 @@ async def _run_cascade(
     elif action == "skip":
         ss[step] = STEP_SKIPPED
 
-    # ── Advance loop ─────────────────────────────────────────────────────
-
     while True:
         ss = mutable_ss[current.id]
         snapshot = current.definition_snapshot
 
-        # Find next pending step (with condition evaluation if available)
         next_step: str | None = None
         if has_condition_support:
             assert agent_defaults is not None
@@ -618,9 +611,7 @@ async def _run_cascade(
             next_step = _find_next_pending_step(ss, snapshot)
 
         if next_step is None:
-            # No more steps in this layer → auto-finalize
             if current.parent_workflow_id is not None:
-                # Child layer: queue finalize + pop to parent
                 batch.ordered.append(UpdateState(
                     layer_id=current.id,
                     step_states=dict(ss),
@@ -638,7 +629,6 @@ async def _run_cascade(
                 current = parent
                 continue
             else:
-                # Top-level finalized
                 batch.ordered.append(UpdateState(
                     layer_id=current.id,
                     step_states=dict(ss),
@@ -658,12 +648,10 @@ async def _run_cascade(
                     scratchpad_path,
                 )
 
-        # Found next step — check for composition
         next_info = _get_step_from_snapshot(snapshot, next_step)
         composes = next_info.get("composes")
 
         if composes:
-            # Start the composition step + spawn child
             ss[next_step] = STEP_STARTED
             current_steps[current.id] = next_step
             batch.ordered.append(UpdateState(
@@ -697,7 +685,6 @@ async def _run_cascade(
             current = child_layer
             continue
 
-        # Regular step → start it and terminate
         ss[next_step] = STEP_STARTED
         current_steps[current.id] = next_step
         batch.ordered.append(UpdateState(
@@ -792,48 +779,24 @@ async def handle_start_workflow(
     workflow_def = registry.get_workflow(skill_name, workflow_name)
 
     if workflow_def is None:
-        return {
-            "is_error": True,
-            "content": [
-                {
-                    "type": "text",
-                    "text": (
-                        f"Workflow '{workflow_name}' not found in skill '{skill_name}'. "
-                        "Check that the skill exists and contains this workflow."
-                    ),
-                }
-            ],
-        }
+        return _error_response(
+            f"Workflow '{workflow_name}' not found in skill '{skill_name}'. "
+            "Check that the skill exists and contains this workflow."
+        )
 
     if not workflow_def.steps:
-        return {
-            "is_error": True,
-            "content": [
-                {
-                    "type": "text",
-                    "text": (
-                        f"Workflow '{workflow_name}' has no steps. "
-                        "Add step directories with instructions.md files."
-                    ),
-                }
-            ],
-        }
+        return _error_response(
+            f"Workflow '{workflow_name}' has no steps. "
+            "Add step directories with instructions.md files."
+        )
 
     existing = await repository.get_active(skill_name, workflow_name)
     if existing is not None:
-        return {
-            "is_error": True,
-            "content": [
-                {
-                    "type": "text",
-                    "text": (
-                        f"Workflow '{workflow_name}' is already active for skill "
-                        f"'{skill_name}'. Existing workflow ID: {existing.id}. "
-                        "Use end_workflow to complete or abort it before starting a new one."
-                    ),
-                }
-            ],
-        }
+        return _error_response(
+            f"Workflow '{workflow_name}' is already active for skill "
+            f"'{skill_name}'. Existing workflow ID: {existing.id}. "
+            "Use end_workflow to complete or abort it before starting a new one."
+        )
 
     workflow_id = str(uuid4())
     now = datetime.now(UTC)
@@ -930,7 +893,7 @@ async def handle_update_workflow_state(
         return _repo_error_response(exc, "Failed to update workflow state.")
 
     if outcome.finalized_top_level:
-        _delete_scratchpad(scratchpad)
+        delete_scratchpad(scratchpad)
 
         completed = 0
         skipped = len(outcome.condition_skips)
@@ -1055,7 +1018,7 @@ def _format_corruption_warning(corrupted: list[tuple[str, str, str]]) -> str:
 def _render_state_view(state: WorkflowState, *, header: str = "Workflow State") -> str:
     steps_display = [
         f"- **{sd['title']}** (`{sd['id']}`): "
-        f"{state.step_states.get(sd['id'], 'pending')}"
+        f"{state.step_states.get(sd['id'], STEP_PENDING)}"
         for sd in state.definition_snapshot
     ]
     return (
@@ -1123,7 +1086,7 @@ async def handle_get_workflow_state(
     for child in chain[1:]:
         child_steps = [
             f"  - **{sd['title']}** (`{sd['id']}`): "
-            f"{child.step_states.get(sd['id'], 'pending')}"
+            f"{child.step_states.get(sd['id'], STEP_PENDING)}"
             for sd in child.definition_snapshot
         ]
         text += (
@@ -1166,7 +1129,7 @@ async def handle_end_workflow(
     if not ids:
         return _error_response(f"Failed to end workflow '{workflow_id}'.")
 
-    _delete_scratchpad(state.scratchpad_path)
+    delete_scratchpad(state.scratchpad_path)
 
     action_label = "completed" if action == "complete" else "aborted"
     count_text = (
