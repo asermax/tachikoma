@@ -2,6 +2,38 @@
 
 <!-- version list -->
 
+## v1.53.0 (2026-04-26)
+
+### Bug Fixes
+
+- **landing**: Type narrowing, formatting, and ADR index for DLT-159
+  ([`d48ed05`](https://github.com/asermax/tachikoma/commit/d48ed0548a27ab40aad14678ddf7053e8520cb68))
+
+### Documentation
+
+- **arch**: Add ADR-014 session context sharing for MCP tool servers
+  ([`05bfc52`](https://github.com/asermax/tachikoma/commit/05bfc521e7e9a62b34263530d54c780be0ddc4f8))
+
+- **workflows**: Update DELTAS with workflow condition and composition specs
+  ([`8e9d3a2`](https://github.com/asermax/tachikoma/commit/8e9d3a228995360f7c587a471a1af96ecef3792d))
+
+### Features
+
+- **session**: Add SessionContext for sharing SDK session ID with MCP tools
+  ([`b432e6f`](https://github.com/asermax/tachikoma/commit/b432e6fdf787b3e976e3b9a644f9ac1f2909aae4))
+
+- **workflows**: Add condition-based step gating
+  ([`c88cc4b`](https://github.com/asermax/tachikoma/commit/c88cc4b5269ec98d8e6a5575628b176b04c8f7a7))
+
+### Refactoring
+
+- **coordinator**: Extract _set_sdk_session_id helper
+  ([`4f1103b`](https://github.com/asermax/tachikoma/commit/4f1103bfa0a566fa85517898e01ee05ee51267bb))
+
+- **workflows**: Simplify condition evaluation and response building
+  ([`95c3c7b`](https://github.com/asermax/tachikoma/commit/95c3c7bcc2e09a6dbeab9e2e5449797eacee5ae4))
+
+
 ## v1.52.0 (2026-04-26)
 
 ### Code Style
