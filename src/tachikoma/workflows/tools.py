@@ -12,7 +12,7 @@ Follows DES-006 (MCP tool server factory pattern).
 
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Literal
+from typing import Literal, Self
 from uuid import uuid4
 
 from claude_agent_sdk import McpSdkServerConfig, create_sdk_mcp_server, tool
@@ -22,6 +22,14 @@ from pydantic import BaseModel, ValidationError
 from tachikoma.agent_defaults import AgentDefaults
 from tachikoma.session_context import SessionContext
 from tachikoma.skills.registry import SkillRegistry, render_skill_block
+from tachikoma.workflows.composition import (
+    CascadeOutcome,
+    CreateChild,
+    MutationBatch,
+    SoftDelete,
+    UpdateState,
+    resolve_composes,
+)
 from tachikoma.workflows.conditions import ConditionResult, evaluate_condition
 from tachikoma.workflows.definition import StepDefinition
 from tachikoma.workflows.errors import WorkflowRepositoryError
@@ -105,7 +113,78 @@ def _step_to_snapshot(step: StepDefinition) -> dict:
         "path": str(step.instructions_path.parent),
         "required_skills": list(step.required_skills),
         "condition": step.condition,
+        "composes": step.composes,
     }
+
+
+def _render_breadcrumb(parts: list[tuple[str, str | None]]) -> str:
+    """Render breadcrumb showing the active path through nested layers.
+
+    Each part is (workflow_name, step_id).  Segments with a ``None`` step
+    are omitted (e.g., a layer whose step was just finalized).
+    """
+    if not parts:
+        return ""
+    segments = [
+        f"{wf}/{sid}" for wf, sid in parts if sid is not None
+    ]
+    return " > ".join(segments) if segments else ""
+
+
+class _CascadeLayerInfo:
+    """Lightweight layer info used during cascade processing."""
+
+    __slots__ = (
+        "id",
+        "workflow_name",
+        "skill_name",
+        "scratchpad_path",
+        "parent_workflow_id",
+        "parent_step_id",
+        "definition_snapshot",
+    )
+
+    def __init__(
+        self,
+        id: str,
+        workflow_name: str,
+        skill_name: str,
+        scratchpad_path: str,
+        parent_workflow_id: str | None,
+        parent_step_id: str | None,
+        definition_snapshot: list[dict],
+    ) -> None:
+        self.id = id
+        self.workflow_name = workflow_name
+        self.skill_name = skill_name
+        self.scratchpad_path = scratchpad_path
+        self.parent_workflow_id = parent_workflow_id
+        self.parent_step_id = parent_step_id
+        self.definition_snapshot = definition_snapshot
+
+    @classmethod
+    def from_state(cls, state: WorkflowState) -> Self:
+        return cls(
+            id=state.id,
+            workflow_name=state.workflow_name,
+            skill_name=state.skill_name,
+            scratchpad_path=state.scratchpad_path,
+            parent_workflow_id=state.parent_workflow_id,
+            parent_step_id=state.parent_step_id,
+            definition_snapshot=state.definition_snapshot,
+        )
+
+
+def _build_breadcrumb_parts(
+    layers: dict[str, _CascadeLayerInfo],
+    chain_order: list[str],
+    current_steps: dict[str, str | None],
+) -> list[tuple[str, str | None]]:
+    """Collect (workflow_name, current_step) per layer for breadcrumb rendering."""
+    return [
+        (layers[lid].workflow_name, current_steps.get(lid))
+        for lid in chain_order
+    ]
 
 
 def _find_next_pending_step(
@@ -252,6 +331,16 @@ def _format_condition_skips(
     return "### Condition-Skipped Steps\n" + "\n".join(skip_lines)
 
 
+def _format_cascade_skips(
+    condition_skips: list[tuple[str, str, str]],
+) -> str:
+    """Format condition-skipped steps from the cascade (workflow_name, step_id, reason)."""
+    skip_lines = [
+        f"- `{wf}/{sid}`: {reason}" for wf, sid, reason in condition_skips
+    ]
+    return "### Condition-Skipped Steps\n" + "\n".join(skip_lines)
+
+
 def _build_step_response(
     step_info: dict,
     prefix: str,
@@ -269,6 +358,365 @@ def _build_step_response(
     if extra_parts:
         text += "\n\n" + "\n\n".join(extra_parts)
     return {"content": [{"type": "text", "text": text}]}
+
+
+# ---------------------------------------------------------------------------
+# Composition spawn helper
+# ---------------------------------------------------------------------------
+
+
+def _try_spawn_child(
+    composes_str: str,
+    parent: _CascadeLayerInfo,
+    parent_step_id: str,
+    skill_registry: SkillRegistry,
+) -> dict | tuple[_CascadeLayerInfo, str, dict[str, StepState], list[dict]]:
+    """Resolve a composition target and prepare a child layer.
+
+    Returns an error dict on failure, or
+    ``(child_layer, child_id, child_step_states, child_snapshot)`` on success.
+    """
+    try:
+        target_skill, target_wf = resolve_composes(
+            composes_str, parent.skill_name
+        )
+    except ValueError:
+        return _error_response(
+            f"Composition step has invalid 'composes' value: '{composes_str}'. "
+            "Abort the workflow to clean up."
+        )
+
+    child_def = skill_registry.get_workflow(target_skill, target_wf)
+    if child_def is None:
+        return _error_response(
+            f"Composition target '{target_skill}/{target_wf}' no longer exists. "
+            "The skill may have been reloaded. Abort the workflow to clean up."
+        )
+
+    if not child_def.steps:
+        return _error_response(
+            f"Composition target '{target_skill}/{target_wf}' has no steps. "
+            "Abort the workflow to clean up."
+        )
+
+    child_id = str(uuid4())
+    child_snapshot = [_step_to_snapshot(s) for s in child_def.steps]
+    child_ss: dict[str, StepState] = {s.id: STEP_PENDING for s in child_def.steps}
+
+    child_layer = _CascadeLayerInfo(
+        id=child_id,
+        workflow_name=target_wf,
+        skill_name=target_skill,
+        scratchpad_path=parent.scratchpad_path,
+        parent_workflow_id=parent.id,
+        parent_step_id=parent_step_id,
+        definition_snapshot=child_snapshot,
+    )
+
+    return child_layer, child_id, child_ss, child_snapshot
+
+
+# ---------------------------------------------------------------------------
+# Cascade engine
+# ---------------------------------------------------------------------------
+
+
+async def _run_cascade(
+    workflow_id: str,
+    step: str,
+    action: Literal["start", "complete", "skip"],
+    repository: WorkflowStateRepository,
+    skill_registry: SkillRegistry,
+    agent_defaults: AgentDefaults | None,
+    session_context: SessionContext | None,
+    workspace_path: Path | None,
+) -> dict | tuple[
+    MutationBatch, CascadeOutcome,
+    list[tuple[str, str | None]], list[dict], str,
+]:
+    """Run the cascade-aware activation loop.
+
+    Returns an error dict on validation/routing failure, or a 5-tuple
+    ``(batch, outcome, breadcrumb_parts, deepest_snapshot, scratchpad_path)``
+    on success.
+    """
+    # ── Read chain and validate routing ──────────────────────────────────
+
+    chain = await repository.get_active_chain(workflow_id)
+    if not chain:
+        return _not_found_error(workflow_id)
+
+    # Child-ID rejection
+    if chain[0].parent_workflow_id is not None:
+        return _error_response(
+            f"Workflow '{workflow_id}' is a composed child. "
+            "Operate on its top-level workflow instead."
+        )
+
+    deepest = chain[-1]
+
+    # Deepest-active routing validation
+    step_info = _get_step_from_snapshot(deepest.definition_snapshot, step)
+    if not step_info:
+        valid_ids = [s["id"] for s in deepest.definition_snapshot]
+        return _error_response(
+            f"Invalid step '{step}'. The deepest active layer is "
+            f"'{deepest.workflow_name}'. Valid steps: {', '.join(valid_ids)}."
+        )
+
+    transition_error = validate_transition(
+        deepest.step_states, step, action, deepest.definition_snapshot,
+    )
+    if transition_error is not None:
+        return _error_response(transition_error)
+
+    # ── Initialize mutable state ─────────────────────────────────────────
+
+    batch = MutationBatch()
+    condition_skips: list[tuple[str, str, str]] = []
+
+    layers: dict[str, _CascadeLayerInfo] = {}
+    mutable_ss: dict[str, dict[str, StepState]] = {}
+    current_steps: dict[str, str | None] = {}
+    chain_order: list[str] = []
+
+    for state in chain:
+        layers[state.id] = _CascadeLayerInfo.from_state(state)
+        mutable_ss[state.id] = dict(state.step_states)
+        current_steps[state.id] = state.current_step
+        chain_order.append(state.id)
+
+    scratchpad_path = chain[0].scratchpad_path
+
+    has_condition_support = (
+        agent_defaults is not None
+        and session_context is not None
+        and workspace_path is not None
+    )
+
+    # ── Apply the requested action ───────────────────────────────────────
+
+    current = layers[deepest.id]
+    ss = mutable_ss[deepest.id]
+
+    if action == "start":
+        condition = step_info.get("condition")
+        condition_failed = False
+
+        if condition and has_condition_support:
+            assert agent_defaults is not None
+            assert session_context is not None
+            assert workspace_path is not None
+
+            cond_result = await evaluate_condition(
+                condition_prompt=condition,
+                step_states=dict(ss),
+                scratchpad_path=current.scratchpad_path,
+                workspace_path=workspace_path,
+                agent_defaults=agent_defaults,
+                sdk_session_id=session_context.get(),
+            )
+
+            if not cond_result.passes:
+                condition_failed = True
+                ss[step] = STEP_SKIPPED
+                condition_skips.append(
+                    (current.workflow_name, step, cond_result.reason)
+                )
+
+        if not condition_failed:
+            ss[step] = STEP_STARTED
+
+            if not step_info.get("composes"):
+                # Simple start on a regular step — done immediately
+                current_steps[current.id] = step
+                batch.ordered.append(UpdateState(
+                    layer_id=current.id,
+                    step_states=dict(ss),
+                    current_step=step,
+                ))
+                return (
+                    batch,
+                    CascadeOutcome(
+                        deepest_layer_id=current.id,
+                        active_step_id=step,
+                        condition_skips=condition_skips,
+                        finalized_top_level=False,
+                    ),
+                    _build_breadcrumb_parts(layers, chain_order, current_steps),
+                    current.definition_snapshot,
+                    scratchpad_path,
+                )
+
+            # Composition step started — queue update, spawn child
+            current_steps[current.id] = step
+            batch.ordered.append(UpdateState(
+                layer_id=current.id,
+                step_states=dict(ss),
+                current_step=step,
+            ))
+
+            spawn = _try_spawn_child(
+                step_info["composes"], current, step, skill_registry,
+            )
+            if isinstance(spawn, dict):
+                return spawn
+
+            child_layer, child_id, child_ss, child_snapshot = spawn
+            batch.ordered.append(CreateChild(
+                child_id=child_id,
+                parent_id=current.id,
+                parent_step_id=step,
+                skill_name=child_layer.skill_name,
+                workflow_name=child_layer.workflow_name,
+                step_states=dict(child_ss),
+                definition_snapshot=child_snapshot,
+                scratchpad_path=current.scratchpad_path,
+            ))
+
+            layers[child_id] = child_layer
+            mutable_ss[child_id] = dict(child_ss)
+            current_steps[child_id] = None
+            chain_order.append(child_id)
+            current = child_layer
+            # Fall through to advance loop to start child's first step
+        else:
+            pass  # Fall through to advance loop
+
+    elif action == "complete":
+        ss[step] = STEP_COMPLETED
+
+    elif action == "skip":
+        ss[step] = STEP_SKIPPED
+
+    # ── Advance loop ─────────────────────────────────────────────────────
+
+    while True:
+        ss = mutable_ss[current.id]
+        snapshot = current.definition_snapshot
+
+        # Find next pending step (with condition evaluation if available)
+        next_step: str | None = None
+        if has_condition_support:
+            assert agent_defaults is not None
+            assert session_context is not None
+            assert workspace_path is not None
+
+            next_step, extra_skips = await _evaluate_and_advance(
+                step_states=ss,
+                definition_snapshot=snapshot,
+                scratchpad_path=current.scratchpad_path,
+                workspace_path=workspace_path,
+                agent_defaults=agent_defaults,
+                session_context=session_context,
+            )
+            for sid, cr in extra_skips:
+                condition_skips.append(
+                    (current.workflow_name, sid, cr.reason)
+                )
+        else:
+            next_step = _find_next_pending_step(ss, snapshot)
+
+        if next_step is None:
+            # No more steps in this layer → auto-finalize
+            if current.parent_workflow_id is not None:
+                # Child layer: queue finalize + pop to parent
+                batch.ordered.append(UpdateState(
+                    layer_id=current.id,
+                    step_states=dict(ss),
+                    current_step=None,
+                ))
+                batch.ordered.append(SoftDelete(layer_id=current.id))
+
+                parent_id = current.parent_workflow_id
+                assert parent_id is not None
+                parent = layers[parent_id]
+                assert current.parent_step_id is not None
+                mutable_ss[parent_id][current.parent_step_id] = STEP_COMPLETED
+
+                chain_order.remove(current.id)
+                current = parent
+                continue
+            else:
+                # Top-level finalized
+                batch.ordered.append(UpdateState(
+                    layer_id=current.id,
+                    step_states=dict(ss),
+                    current_step=None,
+                ))
+                batch.ordered.append(SoftDelete(layer_id=current.id))
+                return (
+                    batch,
+                    CascadeOutcome(
+                        deepest_layer_id=current.id,
+                        active_step_id=None,
+                        condition_skips=condition_skips,
+                        finalized_top_level=True,
+                    ),
+                    [],
+                    current.definition_snapshot,
+                    scratchpad_path,
+                )
+
+        # Found next step — check for composition
+        next_info = _get_step_from_snapshot(snapshot, next_step)
+        composes = next_info.get("composes")
+
+        if composes:
+            # Start the composition step + spawn child
+            ss[next_step] = STEP_STARTED
+            current_steps[current.id] = next_step
+            batch.ordered.append(UpdateState(
+                layer_id=current.id,
+                step_states=dict(ss),
+                current_step=next_step,
+            ))
+
+            spawn = _try_spawn_child(
+                composes, current, next_step, skill_registry,
+            )
+            if isinstance(spawn, dict):
+                return spawn
+
+            child_layer, child_id, child_ss, child_snapshot = spawn
+            batch.ordered.append(CreateChild(
+                child_id=child_id,
+                parent_id=current.id,
+                parent_step_id=next_step,
+                skill_name=child_layer.skill_name,
+                workflow_name=child_layer.workflow_name,
+                step_states=dict(child_ss),
+                definition_snapshot=child_snapshot,
+                scratchpad_path=current.scratchpad_path,
+            ))
+
+            layers[child_id] = child_layer
+            mutable_ss[child_id] = dict(child_ss)
+            current_steps[child_id] = None
+            chain_order.append(child_id)
+            current = child_layer
+            continue
+
+        # Regular step → start it and terminate
+        ss[next_step] = STEP_STARTED
+        current_steps[current.id] = next_step
+        batch.ordered.append(UpdateState(
+            layer_id=current.id,
+            step_states=dict(ss),
+            current_step=next_step,
+        ))
+        return (
+            batch,
+            CascadeOutcome(
+                deepest_layer_id=current.id,
+                active_step_id=next_step,
+                condition_skips=condition_skips,
+                finalized_top_level=False,
+            ),
+            _build_breadcrumb_parts(layers, chain_order, current_steps),
+            current.definition_snapshot,
+            scratchpad_path,
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -421,7 +869,11 @@ async def handle_start_workflow(
     for i, step in enumerate(workflow_def.steps, 1):
         skip_marker = " (skippable)" if not step.required else ""
         cond_marker = f" (if: {step.condition})" if step.condition else ""
-        step_lines.append(f"{i}. **{step.title}** (`{step.id}`){skip_marker}{cond_marker}")
+        compose_marker = f" (composes: {step.composes})" if step.composes else ""
+        step_lines.append(
+            f"{i}. **{step.title}** (`{step.id}`)"
+            f"{skip_marker}{cond_marker}{compose_marker}"
+        )
 
     steps_text = "\n".join(step_lines)
 
@@ -459,203 +911,201 @@ async def handle_update_workflow_state(
     session_context: SessionContext | None = None,
     workspace_path: Path | None = None,
 ) -> dict:
-    """Handle update_workflow_state: transition a step's state."""
+    """Handle update_workflow_state: transition a step's state with cascade support."""
 
-    state = await repository.get(workflow_id)
-
-    if state is None:
-        return _not_found_error(workflow_id)
-
-    error = validate_transition(state.step_states, step, action, state.definition_snapshot)
-    if error is not None:
-        return _error_response(error)
-
-    new_step_states = dict(state.step_states)
-    new_current_step: str | None = None
-    condition_skipped: list[tuple[str, ConditionResult]] = []
-
-    has_condition_support = (
-        agent_defaults is not None
-        and session_context is not None
-        and workspace_path is not None
+    result = await _run_cascade(
+        workflow_id, step, action,
+        repository, skill_registry,
+        agent_defaults, session_context, workspace_path,
     )
 
-    if action == "start":
-        condition_failed = False
+    if isinstance(result, dict):
+        return result
 
-        if has_condition_support:
-            assert agent_defaults is not None
-            assert session_context is not None
-            assert workspace_path is not None
-
-            step_info = _get_step_from_snapshot(state.definition_snapshot, step)
-            condition = step_info.get("condition")
-
-            if condition:
-                result = await evaluate_condition(
-                    condition_prompt=condition,
-                    step_states=dict(state.step_states),
-                    scratchpad_path=state.scratchpad_path,
-                    workspace_path=workspace_path,
-                    agent_defaults=agent_defaults,
-                    sdk_session_id=session_context.get(),
-                )
-
-                if not result.passes:
-                    condition_failed = True
-                    new_step_states[step] = STEP_SKIPPED
-                    condition_skipped.append((step, result))
-
-                    new_current_step, advance_skipped = await _evaluate_and_advance(
-                        new_step_states,
-                        state.definition_snapshot,
-                        state.scratchpad_path,
-                        workspace_path,
-                        agent_defaults,
-                        session_context,
-                    )
-                    condition_skipped.extend(advance_skipped)
-
-                    if new_current_step is not None:
-                        new_step_states[new_current_step] = STEP_STARTED
-
-        if not condition_failed:
-            new_step_states[step] = STEP_STARTED
-            new_current_step = step
-
-    elif action in ("complete", "skip"):
-        new_step_states[step] = STEP_COMPLETED if action == "complete" else STEP_SKIPPED
-
-        if has_condition_support:
-            assert agent_defaults is not None
-            assert session_context is not None
-            assert workspace_path is not None
-
-            new_current_step, advance_skipped = await _evaluate_and_advance(
-                new_step_states,
-                state.definition_snapshot,
-                state.scratchpad_path,
-                workspace_path,
-                agent_defaults,
-                session_context,
-            )
-            condition_skipped.extend(advance_skipped)
-        else:
-            new_current_step = _find_next_pending_step(new_step_states, state.definition_snapshot)
-
-        if new_current_step is not None:
-            new_step_states[new_current_step] = STEP_STARTED
+    batch, outcome, breadcrumb_parts, deepest_snapshot, scratchpad = result
 
     try:
-        updated = await repository.update(
-            workflow_id,
-            step_states=new_step_states,
-            current_step=new_current_step,
-        )
+        await repository.apply_mutation_batch(batch)
     except WorkflowRepositoryError as exc:
         return _repo_error_response(exc, "Failed to update workflow state.")
 
-    if updated is None:
-        return _error_response(f"Workflow '{workflow_id}' not found during update.")
+    if outcome.finalized_top_level:
+        _delete_scratchpad(scratchpad)
 
-    all_done = all(s in (STEP_COMPLETED, STEP_SKIPPED) for s in new_step_states.values())
+        completed = 0
+        skipped = len(outcome.condition_skips)
+        for mutation in batch.ordered:
+            if isinstance(mutation, UpdateState):
+                completed += sum(
+                    1 for s in mutation.step_states.values() if s == STEP_COMPLETED
+                )
+                skipped += sum(
+                    1 for s in mutation.step_states.values() if s == STEP_SKIPPED
+                )
 
-    # Auto-finalize: soft-delete and clean up scratchpad on completion
-    if all_done:
-        completed = sum(1 for s in new_step_states.values() if s == STEP_COMPLETED)
-        skipped = sum(1 for s in new_step_states.values() if s == STEP_SKIPPED)
-
-        await repository.soft_delete(workflow_id)
-        _delete_scratchpad(state.scratchpad_path)
-
-        finalize_text = (
-            f"Workflow **{state.workflow_name}** complete and finalized! "
+        text = (
+            "Workflow complete and finalized! "
             f"All steps finished ({completed} completed, {skipped} skipped)."
         )
+        if outcome.condition_skips:
+            text += "\n\n" + _format_cascade_skips(outcome.condition_skips)
 
-        if condition_skipped:
-            finalize_text += "\n\n" + _format_condition_skips(condition_skipped)
+        return {"content": [{"type": "text", "text": text}]}
 
-        return {"content": [{"type": "text", "text": finalize_text}]}
+    # Build response for the activated step
+    active_step_id = outcome.active_step_id
+    assert active_step_id is not None
+    step_info = _get_step_from_snapshot(deepest_snapshot, active_step_id)
 
-    response_parts = [_format_condition_skips(condition_skipped)] if condition_skipped else []
+    original_skipped = any(
+        sid == step for _, sid, _ in outcome.condition_skips
+    )
 
-    step_was_condition_skipped = action == "start" and any(s[0] == step for s in condition_skipped)
+    if action == "start" and not original_skipped and active_step_id == step:
+        prefix = f"Step **{step_info['title']}** (`{active_step_id}`) started."
+    elif active_step_id is not None:
+        if action == "start" and original_skipped:
+            prefix = (
+                f"Step `{step}` condition-skipped. "
+                f"Next step **{step_info['title']}** (`{active_step_id}`) started."
+            )
+        elif action == "start":
+            prefix = (
+                f"Step `{step}` started. "
+                f"Next step **{step_info['title']}** (`{active_step_id}`) started."
+            )
+        else:
+            prefix = (
+                f"Step `{step}` {action}d. "
+                f"Next step **{step_info['title']}** (`{active_step_id}`) started."
+            )
+    else:
+        prefix = f"Step `{step}` {action}d."
 
-    if action == "start" and not step_was_condition_skipped:
-        step_info = _get_step_from_snapshot(state.definition_snapshot, step)
-        return _build_step_response(
-            step_info,
-            f"Step **{step_info['title']}** (`{step}`) started.",
-            skill_registry,
-            response_parts,
+    extra_parts = []
+    if outcome.condition_skips:
+        extra_parts.append(_format_cascade_skips(outcome.condition_skips))
+
+    response = _build_step_response(step_info, prefix, skill_registry, extra_parts)
+
+    breadcrumb = _render_breadcrumb(breadcrumb_parts)
+    if breadcrumb:
+        response["content"][0]["text"] = (
+            breadcrumb + "\n\n" + response["content"][0]["text"]
         )
 
-    if step_was_condition_skipped and new_current_step:
-        next_info = _get_step_from_snapshot(state.definition_snapshot, new_current_step)
-        return _build_step_response(
-            next_info,
-            f"Step `{step}` condition-skipped. "
-            f"Next step **{next_info['title']}** (`{new_current_step}`) started.",
-            skill_registry,
-            response_parts,
-        )
-
-    if new_current_step and action in ("complete", "skip"):
-        next_info = _get_step_from_snapshot(state.definition_snapshot, new_current_step)
-        return _build_step_response(
-            next_info,
-            f"Step `{step}` {action}d. "
-            f"Next step **{next_info['title']}** (`{new_current_step}`) started.",
-            skill_registry,
-            response_parts,
-        )
-
-    base_text = f"Step `{step}` {action}d."
-    if response_parts:
-        base_text += "\n\n" + "\n\n".join(response_parts)
-
-    return {"content": [{"type": "text", "text": base_text}]}
+    return response
 
 
 async def handle_get_workflow_state(
     workflow_id: str,
     repository: WorkflowStateRepository,
 ) -> dict:
-    """Handle get_workflow_state: return full workflow state."""
+    """Handle get_workflow_state: return full workflow state with nested view."""
 
-    state = await repository.get(workflow_id)
+    chain = await repository.get_active_chain(workflow_id)
 
-    if state is None:
-        return _not_found_error(workflow_id)
+    if not chain:
+        # Maybe it's a child ID — try direct get for backwards compat
+        state = await repository.get(workflow_id)
+        if state is None:
+            return _not_found_error(workflow_id)
 
-    steps_display = []
-    for step_def in state.definition_snapshot:
-        step_id = step_def["id"]
-        status = state.step_states.get(step_id, "pending")
-        steps_display.append(f"- **{step_def['title']}** (`{step_id}`): {status}")
+        steps_display = [
+            f"- **{sd['title']}** (`{sd['id']}`): "
+            f"{state.step_states.get(sd['id'], 'pending')}"
+            for sd in state.definition_snapshot
+        ]
 
-    steps_text = "\n".join(steps_display)
-    current = state.current_step or "none"
+        text = (
+            f"## Workflow State\n\n"
+            f"- **ID**: {state.id}\n"
+            f"- **Skill**: {state.skill_name}\n"
+            f"- **Workflow**: {state.workflow_name}\n"
+            f"- **Current Step**: {state.current_step or 'none'}\n"
+            f"- **Scratchpad**: `{state.scratchpad_path}`\n"
+            f"- **Created**: {state.created_at.strftime('%Y-%m-%d %H:%M UTC')}\n"
+            f"- **Updated**: {state.updated_at.strftime('%Y-%m-%d %H:%M UTC')}\n\n"
+            f"### Steps\n\n" + "\n".join(steps_display) + "\n\n"
+            "> This is a composed child. Access via the top-level workflow "
+            "for the full nested view."
+        )
+        if state.parent_workflow_id:
+            text += f"\n> Parent workflow ID: `{state.parent_workflow_id}`"
 
-    return {
-        "content": [
-            {
+        return {"content": [{"type": "text", "text": text}]}
+
+    top = chain[0]
+
+    # Single layer — standard view
+    if len(chain) == 1:
+        state = top
+        steps_display = [
+            f"- **{sd['title']}** (`{sd['id']}`): "
+            f"{state.step_states.get(sd['id'], 'pending')}"
+            for sd in state.definition_snapshot
+        ]
+
+        return {
+            "content": [{
                 "type": "text",
                 "text": (
                     f"## Workflow State\n\n"
                     f"- **ID**: {state.id}\n"
                     f"- **Skill**: {state.skill_name}\n"
                     f"- **Workflow**: {state.workflow_name}\n"
-                    f"- **Current Step**: {current}\n"
+                    f"- **Current Step**: {state.current_step or 'none'}\n"
                     f"- **Scratchpad**: `{state.scratchpad_path}`\n"
                     f"- **Created**: {state.created_at.strftime('%Y-%m-%d %H:%M UTC')}\n"
                     f"- **Updated**: {state.updated_at.strftime('%Y-%m-%d %H:%M UTC')}\n\n"
-                    f"### Steps\n\n{steps_text}"
+                    f"### Steps\n\n" + "\n".join(steps_display)
                 ),
-            }
-        ],
-    }
+            }],
+        }
+
+    # Multi-layer — nested view with breadcrumb
+    breadcrumb_parts = [
+        f"{layer.workflow_name}/{layer.current_step}"
+        for layer in chain
+        if layer.current_step
+    ]
+    breadcrumb = " > ".join(breadcrumb_parts)
+
+    top_steps = [
+        f"- **{sd['title']}** (`{sd['id']}`): "
+        f"{top.step_states.get(sd['id'], 'pending')}"
+        for sd in top.definition_snapshot
+    ]
+
+    text = (
+        f"## Workflow State\n\n"
+        f"- **ID**: {top.id}\n"
+        f"- **Skill**: {top.skill_name}\n"
+        f"- **Workflow**: {top.workflow_name}\n"
+        f"- **Current Step**: {top.current_step or 'none'}\n"
+        f"- **Scratchpad**: `{top.scratchpad_path}`\n"
+        f"- **Created**: {top.created_at.strftime('%Y-%m-%d %H:%M UTC')}\n"
+        f"- **Updated**: {top.updated_at.strftime('%Y-%m-%d %H:%M UTC')}\n\n"
+        f"### Steps\n\n" + "\n".join(top_steps)
+    )
+
+    for child in chain[1:]:
+        child_steps = [
+            f"  - **{sd['title']}** (`{sd['id']}`): "
+            f"{child.step_states.get(sd['id'], 'pending')}"
+            for sd in child.definition_snapshot
+        ]
+        text += (
+            f"\n\n### Active Child: {child.workflow_name}\n\n"
+            f"- **ID**: {child.id}\n"
+            f"- **Current Step**: {child.current_step or 'none'}\n\n"
+            f"#### Steps\n\n" + "\n".join(child_steps)
+        )
+
+    if breadcrumb:
+        text = f"> {breadcrumb}\n\n" + text
+
+    return {"content": [{"type": "text", "text": text}]}
 
 
 async def handle_end_workflow(
@@ -664,27 +1114,39 @@ async def handle_end_workflow(
     repository: WorkflowStateRepository,
     workspace_path: Path,
 ) -> dict:
-    """Handle end_workflow: soft-delete workflow and clean up scratchpad."""
+    """Handle end_workflow: abort cascade for top-level workflows."""
 
     state = await repository.get(workflow_id)
 
     if state is None:
         return _not_found_error(workflow_id)
 
-    deleted = await repository.soft_delete(workflow_id)
+    if state.parent_workflow_id is not None:
+        return _error_response(
+            f"Workflow '{workflow_id}' is a composed child. "
+            "End its top-level workflow instead."
+        )
 
-    if not deleted:
+    ids = await repository.abort_cascade(workflow_id)
+
+    if not ids:
         return _error_response(f"Failed to end workflow '{workflow_id}'.")
 
     _delete_scratchpad(state.scratchpad_path)
 
     action_label = "completed" if action == "complete" else "aborted"
+    count_text = (
+        f" ({len(ids)} records cleaned up)" if len(ids) > 1 else ""
+    )
 
     return {
         "content": [
             {
                 "type": "text",
-                "text": f"Workflow **{state.workflow_name}** {action_label}. State cleaned up.",
+                "text": (
+                    f"Workflow **{state.workflow_name}** {action_label}."
+                    f"{count_text} State cleaned up."
+                ),
             }
         ],
     }
