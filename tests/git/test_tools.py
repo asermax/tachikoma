@@ -1,7 +1,7 @@
-"""Tests for git MCP tools (push, sync) and destructive-git deny patterns."""
+"""Tests for git MCP tools (push, sync, scrub) and destructive-git deny patterns."""
 
 from pathlib import Path
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -11,6 +11,7 @@ from tachikoma.git.tools import (
     DESTRUCTIVE_GIT_DENY_PATTERNS,
     create_git_tools_server,
     handle_push,
+    handle_scrub,
     handle_sync,
     resolve_target,
 )
@@ -136,6 +137,277 @@ class TestHandlePush:
 
         assert result["is_error"] is True
         assert PUSH_RESULT["PUSH_FAILED"] in result["content"][0]["text"]
+
+    @patch("tachikoma.git.tools.smart_push", new_callable=AsyncMock)
+    async def test_push_without_scrub_paths_unchanged(
+        self,
+        mock_push: AsyncMock,
+        workspace: Path,
+        agent_defaults: AgentDefaults,
+    ) -> None:
+        mock_push.return_value = PUSH_RESULT["PUSHED"]
+        result = await handle_push("workspace", None, workspace, agent_defaults, scrub_paths=None)
+
+        assert "is_error" not in result or result["is_error"] is False
+        mock_push.assert_awaited_once()
+
+    @patch("tachikoma.git.tools.handle_scrub", new_callable=AsyncMock)
+    async def test_push_with_scrub_paths_delegates_to_handle_scrub(
+        self,
+        mock_scrub: AsyncMock,
+        workspace: Path,
+        agent_defaults: AgentDefaults,
+    ) -> None:
+        mock_scrub.return_value = {"content": [{"type": "text", "text": "ok"}]}
+        result = await handle_push(
+            "project", "my-app", workspace, agent_defaults,
+            scrub_paths=["path/to/file"],
+        )
+
+        mock_scrub.assert_awaited_once_with(
+            "project", "my-app", workspace, ["path/to/file"],
+        )
+        assert result == mock_scrub.return_value
+
+
+def _make_mock_process(
+    returncode: int = 0,
+    stdout: bytes = b"",
+    stderr: bytes = b"",
+) -> MagicMock:
+    """Create a mock subprocess that awaits communicate()."""
+    proc = MagicMock()
+    proc.returncode = returncode
+    proc.communicate = AsyncMock(return_value=(stdout, stderr))
+    proc.stdin = MagicMock()
+    proc.stdin.writelines = MagicMock()
+    return proc
+
+
+class TestHandleScrub:
+    async def test_scrub_rejected_for_workspace_type(self) -> None:
+        result = await handle_scrub("workspace", None, Path("/tmp"), ["file.txt"])
+
+        assert result["is_error"] is True
+        assert "only supported for project targets" in result["content"][0]["text"]
+
+    async def test_scrub_rejected_for_empty_list(
+        self,
+        workspace: Path,
+    ) -> None:
+        result = await handle_scrub("project", "my-app", workspace, [])
+
+        assert result["is_error"] is True
+        assert "non-empty list" in result["content"][0]["text"]
+
+    async def test_scrub_rejected_for_unresolvable_target(
+        self,
+        workspace: Path,
+    ) -> None:
+        result = await handle_scrub("project", "nonexistent", workspace, ["file.txt"])
+
+        assert result["is_error"] is True
+        assert "could not resolve" in result["content"][0]["text"]
+
+    @patch("tachikoma.git.tools.asyncio.create_subprocess_exec")
+    async def test_scrub_rejected_for_dirty_working_tree(
+        self,
+        mock_exec: AsyncMock,
+        workspace: Path,
+    ) -> None:
+        _register_project(workspace, "my-app")
+        mock_exec.return_value = _make_mock_process(stdout=b"M file.txt\n")
+
+        result = await handle_scrub("project", "my-app", workspace, ["file.txt"])
+
+        assert result["is_error"] is True
+        assert "uncommitted changes" in result["content"][0]["text"]
+
+    @patch("tachikoma.git.tools._run_git_capture", new_callable=AsyncMock)
+    @patch("tachikoma.git.tools.asyncio.create_subprocess_exec")
+    async def test_scrub_rejected_for_paths_not_in_history(
+        self,
+        mock_exec: AsyncMock,
+        mock_capture: AsyncMock,
+        workspace: Path,
+    ) -> None:
+        _register_project(workspace, "my-app")
+        # Clean working tree
+        mock_exec.return_value = _make_mock_process(stdout=b"")
+        # rev-list returns empty for nonexistent path
+        mock_capture.return_value = (0, "")
+
+        result = await handle_scrub("project", "my-app", workspace, ["nonexistent.txt"])
+
+        assert result["is_error"] is True
+        assert "not found in git history" in result["content"][0]["text"]
+        assert "nonexistent.txt" in result["content"][0]["text"]
+
+    @patch("tachikoma.git.tools._run_git_capture", new_callable=AsyncMock)
+    @patch("tachikoma.git.tools.asyncio.create_subprocess_exec")
+    async def test_scrub_rejected_for_no_origin_remote(
+        self,
+        mock_exec: AsyncMock,
+        mock_capture: AsyncMock,
+        workspace: Path,
+    ) -> None:
+        _register_project(workspace, "my-app")
+        # Clean working tree
+        mock_exec.return_value = _make_mock_process(stdout=b"")
+        # rev-list finds the path, but remote get-url fails
+        mock_capture.side_effect = [
+            (0, "abc123"),  # rev-list --all -- path (path exists)
+            (128, ""),      # remote get-url origin (no remote)
+        ]
+
+        result = await handle_scrub("project", "my-app", workspace, ["path.txt"])
+
+        assert result["is_error"] is True
+        assert "no origin remote" in result["content"][0]["text"]
+
+    @patch("tachikoma.git.tools._run_git", new_callable=AsyncMock)
+    @patch("tachikoma.git.tools._run_git_capture", new_callable=AsyncMock)
+    @patch("tachikoma.git.tools.asyncio.create_subprocess_exec")
+    async def test_scrub_runs_filter_repo_and_force_pushes(
+        self,
+        mock_exec: AsyncMock,
+        mock_capture: AsyncMock,
+        mock_git: AsyncMock,
+        workspace: Path,
+    ) -> None:
+        project = _register_project(workspace, "my-app")
+
+        # Call sequence for subprocess_exec:
+        # 1. git status --porcelain → clean
+        # 2. git filter-repo ... → success
+        # 3. git push --force → success
+        clean_proc = _make_mock_process(stdout=b"")
+        filter_proc = _make_mock_process(returncode=0, stderr=b"")
+        push_proc = _make_mock_process(returncode=0, stderr=b"")
+        mock_exec.side_effect = [clean_proc, filter_proc, push_proc]
+
+        # _run_git_capture:
+        # 1. rev-list --all -- path → path exists
+        # 2. remote get-url origin → returns URL
+        mock_capture.side_effect = [
+            (0, "abc123"),
+            (0, "git@github.com:user/my-app.git"),
+        ]
+
+        result = await handle_scrub("project", "my-app", workspace, ["old/file.ogg"])
+
+        assert "is_error" not in result or result.get("is_error") is False
+        assert "scrub" in result["content"][0]["text"]
+        assert "old/file.ogg" in result["content"][0]["text"]
+
+        # Verify filter-repo was called with correct args
+        filter_call = mock_exec.call_args_list[1]
+        assert filter_call[0][0] == "git"
+        assert filter_call[0][1] == "filter-repo"
+        assert "--invert-paths" in filter_call[0]
+        assert "--path" in filter_call[0]
+        assert "old/file.ogg" in filter_call[0]
+        assert "--force" in filter_call[0]
+        assert filter_call[1]["cwd"] == project
+
+        # Verify remote was re-added
+        mock_git.assert_awaited_once_with(
+            "remote", "add", "origin", "git@github.com:user/my-app.git",
+            cwd=project,
+        )
+
+    @patch("tachikoma.git.tools._run_git", new_callable=AsyncMock)
+    @patch("tachikoma.git.tools._run_git_capture", new_callable=AsyncMock)
+    @patch("tachikoma.git.tools.asyncio.create_subprocess_exec")
+    async def test_scrub_multiple_paths_single_invocation(
+        self,
+        mock_exec: AsyncMock,
+        mock_capture: AsyncMock,
+        mock_git: AsyncMock,
+        workspace: Path,
+    ) -> None:
+        _register_project(workspace, "my-app")
+
+        clean_proc = _make_mock_process(stdout=b"")
+        filter_proc = _make_mock_process(returncode=0, stderr=b"")
+        push_proc = _make_mock_process(returncode=0, stderr=b"")
+        mock_exec.side_effect = [clean_proc, filter_proc, push_proc]
+
+        # Both paths exist in history
+        mock_capture.side_effect = [
+            (0, "abc"),  # rev-list for first path
+            (0, "def"),  # rev-list for second path
+            (0, "git@github.com:user/repo.git"),  # remote get-url
+        ]
+
+        result = await handle_scrub(
+            "project", "my-app", workspace,
+            ["audio/one.ogg", "audio/two.ogg"],
+        )
+
+        assert "is_error" not in result or result.get("is_error") is False
+
+        # Verify single filter-repo invocation with both --path flags
+        filter_call = mock_exec.call_args_list[1]
+        filter_args = filter_call[0]
+        assert filter_args[0] == "git"
+        assert filter_args[1] == "filter-repo"
+        path_count = list(filter_args).count("--path")
+        assert path_count == 2
+
+    @patch("tachikoma.git.tools._run_git_capture", new_callable=AsyncMock)
+    @patch("tachikoma.git.tools.asyncio.create_subprocess_exec")
+    async def test_scrub_filter_repo_failure_returns_error(
+        self,
+        mock_exec: AsyncMock,
+        mock_capture: AsyncMock,
+        workspace: Path,
+    ) -> None:
+        _register_project(workspace, "my-app")
+
+        clean_proc = _make_mock_process(stdout=b"")
+        filter_proc = _make_mock_process(returncode=1, stderr=b"filter-repo error")
+        mock_exec.side_effect = [clean_proc, filter_proc]
+
+        mock_capture.side_effect = [
+            (0, "abc123"),
+            (0, "git@github.com:user/repo.git"),
+        ]
+
+        result = await handle_scrub("project", "my-app", workspace, ["file.txt"])
+
+        assert result["is_error"] is True
+        assert "filter-repo failed" in result["content"][0]["text"]
+
+    @patch("tachikoma.git.tools._run_git", new_callable=AsyncMock)
+    @patch("tachikoma.git.tools._run_git_capture", new_callable=AsyncMock)
+    @patch("tachikoma.git.tools.asyncio.create_subprocess_exec")
+    async def test_scrub_force_push_failure_returns_error(
+        self,
+        mock_exec: AsyncMock,
+        mock_capture: AsyncMock,
+        mock_git: AsyncMock,
+        workspace: Path,
+    ) -> None:
+        _register_project(workspace, "my-app")
+
+        clean_proc = _make_mock_process(stdout=b"")
+        filter_proc = _make_mock_process(returncode=0, stderr=b"")
+        push_proc = _make_mock_process(returncode=1, stderr=b"push rejected")
+        mock_exec.side_effect = [clean_proc, filter_proc, push_proc]
+
+        mock_capture.side_effect = [
+            (0, "abc123"),
+            (0, "git@github.com:user/repo.git"),
+        ]
+
+        result = await handle_scrub("project", "my-app", workspace, ["file.txt"])
+
+        assert result["is_error"] is True
+        assert "force push failed" in result["content"][0]["text"]
+        assert "local repo has been rewritten" in result["content"][0]["text"]
+        # Remote should still have been re-added
+        mock_git.assert_awaited_once()
 
 
 class TestHandleSync:
@@ -276,6 +548,7 @@ class TestDestructiveGitDenyPatterns:
             "git remote set-head origin main",
             "git remote set-branches origin main",
             "git remote prune origin",
+            "git filter-repo --invert-paths --path foo --force",
         ],
     )
     def test_destructive_commands_are_denied(self, command: str) -> None:
