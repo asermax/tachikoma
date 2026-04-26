@@ -125,6 +125,9 @@ what to produce, and how to validate completion.
 |-------|----------|-------------|
 | `title` | Yes | Human-readable step title |
 | `required` | No | If `false`, step may be skipped when not applicable (default: `true`) |
+| `condition` | No | Natural-language prompt evaluated before step start; step auto-skipped if condition fails |
+| `composes` | No | Inline another workflow as a sub-workflow; step body is ignored at runtime |
+| `required_skills` | No | Skills to auto-activate for this step |
 | `*` | No | Custom fields for workflow-specific metadata |
 
 ### Body Content
@@ -297,6 +300,84 @@ Create an implementation plan at `docs/plans/{feature-name}.md`
 ```
 
 ## Best Practices
+
+### Composition: Reusing Workflows
+
+A step can inline-reference another workflow using the `composes` frontmatter field. When the engine reaches a composition step, it spawns the referenced workflow as a sub-workflow and automatically routes all operations to the deepest active layer.
+
+**Syntax** in `instructions.md` frontmatter:
+
+```yaml
+---
+title: "Run Standard Checks"
+composes: "check-suite"
+---
+```
+
+- **Same-skill**: `composes: "workflow-name"` — references a workflow in the same skill
+- **Cross-skill**: `composes: "skill-name/workflow-name"` — references a workflow in another skill
+
+**Key rules**:
+
+1. The composition step's `instructions.md` body is **ignored at runtime** — only the frontmatter (`title`, `required`, `condition`, `composes`) is honoured
+2. When the child workflow finishes, the parent automatically resumes at the next step
+3. The agent always uses the **top-level** workflow ID — never a child ID
+4. All operations are atomic: child finalization + parent resumption happen in a single commit
+5. The scratchpad is shared: the child inherits the parent's scratchpad path
+
+**Interactions with other fields**:
+
+- `required: false` — if skipped, the child is never spawned and the parent advances
+- `condition` — evaluated before spawning; if the condition fails, the child is never spawned and the cascade advances to the next pending step
+
+**Load-time validation** (the parent workflow is rejected if):
+- The target workflow does not exist
+- A cycle would be created (A composes B, B composes A)
+- The target workflow has zero steps
+
+**Example**: A `weekly-review` workflow that reuses a `process-inbox` workflow:
+
+```
+workflows/
+├── weekly-review/
+│   ├── 01-handle-inbox/
+│   │   └── instructions.md   # composes: "process-inbox"
+│   ├── 02-summarize/
+│   │   └── instructions.md
+│   └── 03-plan-next-week/
+│       └── instructions.md
+└── process-inbox/
+    ├── 01-triage/
+    │   └── instructions.md
+    └── 02-action-items/
+        └── instructions.md
+```
+
+When the agent starts `01-handle-inbox`, the engine spawns `process-inbox` and the agent sees `process-inbox/01-triage` instructions. After completing both `process-inbox` steps, the engine auto-finalizes the child and resumes the parent at `02-summarize`.
+
+### Conditional Steps
+
+Steps can declare a `condition` — a natural-language prompt evaluated before the step starts. If the condition fails, the step is automatically skipped.
+
+```yaml
+---
+title: "Run Integration Tests"
+condition: "Does this project have integration tests? Check for test files matching *integration* or *e2e*."
+---
+```
+
+**How conditions work**:
+
+1. Before starting a step, the engine evaluates the `condition` prompt against the workflow's current state
+2. Evaluation is fail-closed: if the condition cannot be evaluated, the step is skipped with a warning
+3. A skipped condition **overrides** `required: true` — the step never starts, so `required` enforcement doesn't apply
+4. Condition-skipped steps appear in the response under `### Condition-Skipped Steps` so the agent knows what was bypassed
+
+**Best practices for condition prompts**:
+
+- Write concrete, checkable questions: *"Does a docker-compose.yml exist?"* not *"Is Docker needed?"*
+- Reference specific files or patterns to check
+- Keep prompts short and focused on one condition
 
 ### Write Atomic Steps
 

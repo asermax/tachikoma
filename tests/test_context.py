@@ -155,6 +155,16 @@ class TestRenderSystemPreamble:
         assert "stop_process" in result
         assert "rename_process" in result
 
+    def test_preamble_documents_composition_routing(self) -> None:
+        """AC (DLT-161): Preamble documents composition routing and breadcrumbs."""
+        result = render_system_preamble(timezone="UTC")
+
+        assert "top-level" in result
+        assert "deepest active layer" in result
+        assert "breadcrumb" in result.lower()
+        assert "Active Child" in result
+        assert "Condition-Skipped Steps" in result
+
 
 class TestLoadContextIntegration:
     """Integration tests for load_foundational_context + build_system_prompt together.

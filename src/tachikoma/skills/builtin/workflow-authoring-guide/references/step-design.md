@@ -278,6 +278,57 @@ complexity: "low"
 ---
 ```
 
+**condition** (string, optional)
+- Natural-language prompt evaluated before step start
+- The prompt is evaluated by a forked sub-agent with read-only access to the workflow state and filesystem
+- If the condition fails, the step is automatically skipped (`STEP_SKIPPED`) and the cascade advances to the next pending step
+- Fail-closed: if the condition cannot be evaluated (e.g., ambiguous prompt, tool failure), the step is skipped with a warning
+- Condition-skip overrides `required: true` — since the step never starts, `required` enforcement doesn't apply
+- Skipped steps are reported in the response under `### Condition-Skipped Steps`
+
+```yaml
+---
+title: "Run Integration Tests"
+condition: "Does this project have integration tests? Check for test files matching *integration* or *e2e*."
+---
+```
+
+**composes** (string, optional)
+- Inline-references another workflow as a sub-workflow
+- Two syntax forms:
+  - Same-skill: `composes: "workflow-name"` — references a workflow within the same skill
+  - Cross-skill: `composes: "skill-name/workflow-name"` — references a workflow in another skill
+- When the engine reaches a composition step, it spawns the referenced workflow and routes all operations to the deepest active layer automatically
+- The composition step's `instructions.md` body is **ignored at runtime** — only frontmatter fields (`title`, `required`, `condition`, `composes`) are honoured
+- After the child workflow finishes (all steps completed or auto-finalized), the parent resumes at its next step automatically
+- The agent always operates on the top-level workflow ID — child IDs are never used directly
+- The child inherits the parent's scratchpad path (shared scratchpad)
+
+**Load-time validation**: the parent workflow is rejected if:
+- The target workflow does not exist in the registry
+- A cycle would be created (A composes B which composes A)
+- The target workflow has zero steps
+
+**Interaction with other fields**:
+- `required: false` on the composition step: if skipped, the child is never spawned
+- `condition` on the composition step: if the condition fails, the child is never spawned and the cascade advances
+
+```yaml
+---
+title: "Run Standard Checks"
+composes: "check-suite"
+---
+```
+
+Cross-skill example:
+
+```yaml
+---
+title: "Security Audit"
+composes: "security-audit/run-scan"
+---
+```
+
 ## Naming Conventions
 
 ### Workflow Directory Names

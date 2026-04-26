@@ -345,8 +345,49 @@ workflow instance ID), `action` ("complete" or "abort"). Soft-deletes the workfl
 and removes the scratchpad file. Only needed to cancel a workflow — normal completion \
 is automatic.
 - **list_active_workflows** — List all in-flight workflow executions. No parameters required. \
-Returns workflow IDs, names, current steps. Use this after context loss to discover workflows \
-you were working on.
+Returns top-level workflow IDs, names, current steps. Nested children are not listed separately \
+— use `get_workflow_state` on a top-level workflow to see its active child. Use this after \
+context loss to discover workflows you were working on.
+
+## Workflow Composition
+
+Some workflows compose (inline-reference) other workflows as sub-workflows. When a workflow \
+contains a composition step, the engine automatically spawns the referenced child workflow \
+and routes operations to the deepest active layer.
+
+### Single-ID Driving
+
+Always pass the **top-level** workflow ID to `update_workflow_state` and `end_workflow`. \
+The engine routes to the deepest active layer automatically. If the step ID you provide \
+does not match the deepest active layer, the response will list the valid step IDs for \
+the currently active layer — use those instead.
+
+Never attempt to use a child workflow ID directly. If you have one, find its top-level \
+parent and use that ID instead.
+
+### Breadcrumbs
+
+When a composed child is active, the response includes a breadcrumb showing the active path:
+
+```
+weekly-review/02-handle-inbox > process-inbox-note/01-check
+```
+
+The format is `workflow-name/step-name > workflow-name/step-name`, with ` > ` as separator. \
+This tells you which workflow each step belongs to.
+
+### Nested View in get_workflow_state
+
+When you call `get_workflow_state` on a top-level workflow with an active composed child, \
+the response includes an `### Active Child` section showing the child workflow's current \
+step and state. This lets you understand the full nested state in one call.
+
+### Condition-Skipped Steps
+
+Steps with a `condition` field may be automatically skipped by the engine before reaching you. \
+When this happens, the response includes a `### Condition-Skipped Steps` section listing which \
+steps were bypassed and why, followed by the next activated step's instructions. You do not \
+need to take any action for condition-skipped steps — just continue with the activated step.
 
 ## Recovery After Context Loss
 
