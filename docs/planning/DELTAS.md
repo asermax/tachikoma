@@ -611,17 +611,10 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 
 ### DLT-160: Loop iteration via workflow composition
 **Status**: ✗ Defined
-**Depends on**: DLT-161
+**Depends on**: None
 **Priority**: 3 (Medium)
 **Complexity**: Medium
 **Description**: Workflows today can only express fixed-length sequences, so batch-processing steps where the item count isn't known upfront (e.g., "process all inbox notes", "handle each pending email") have to be unrolled by hand or faked with agent-level self-looping. Instead of adding a native loop mechanism to the engine, implement looping as a composition pattern: a `loop` frontmatter field on a step declares a target workflow to invoke repeatedly. Each iteration runs the referenced workflow to completion (via the composition mechanism from DLT-161), then the engine evaluates a condition expression (reusing the condition language from DLT-159) to decide whether to continue. The loop body is the full referenced workflow, not a single step — this naturally supports multi-step loops without additional engine complexity. The engine exposes an iteration counter through the scratchpad so the loop body can make progress, and guards against infinite loops with a configurable maximum iteration cap. Cycle detection from DLT-161 ensures a workflow cannot loop over itself directly.
-
-### DLT-161: Workflow composition via inline sub-workflow references
-**Status**: ✓ Implementation
-**Depends on**: DLT-158, DLT-159
-**Priority**: 3 (Medium)
-**Complexity**: Medium
-**Description**: Complex workflows tend to contain sub-sequences that are genuinely reusable across multiple parent workflows — for example a "process inbox note" sequence that both the weekly review and the daily review want to run. Currently there is no way to share them without duplicating steps in each parent. Add a composition mechanism where a step can declare an inline reference to another workflow; when the engine reaches such a step it pauses the parent workflow, runs the referenced workflow to completion (honouring the full step-level semantics — mandatory-step enforcement and conditional skipping — just as it would when run standalone), then resumes the parent at the next step. Scope covers: the frontmatter field that names the target workflow, nested workflow-state persistence so the engine can track both layers during execution, scratchpad isolation vs sharing rules between parent and child (decided during speccing), cycle detection so a workflow cannot recursively include itself, and the tool-layer UX so the agent can see which workflow it is currently executing. Out of scope: parameter passing between parent and child workflows (can be revisited once the basic composition works).
 
 ### DLT-166: Detect stuck processes via output patterns
 **Status**: ✗ Defined
