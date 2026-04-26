@@ -89,9 +89,7 @@ def _validate_args(args: dict, model: type[BaseModel]):
 
 
 def _delete_scratchpad(scratchpad_path: str) -> None:
-    path = Path(scratchpad_path)
-    if path.exists():
-        path.unlink()
+    Path(scratchpad_path).unlink(missing_ok=True)
 
 
 def _not_found_error(workflow_id: str) -> dict:
@@ -245,6 +243,32 @@ def _render_required_skills(step_info: dict, registry: SkillRegistry) -> str:
         return ""
 
     return "\n\n---\n\n## Required Skills\n\n" + "\n\n".join(ordered_blocks)
+
+
+def _format_condition_skips(
+    condition_skipped: list[tuple[str, ConditionResult]],
+) -> str:
+    skip_lines = [f"- `{sid}`: {cr.reason}" for sid, cr in condition_skipped]
+    return "### Condition-Skipped Steps\n" + "\n".join(skip_lines)
+
+
+def _build_step_response(
+    step_info: dict,
+    prefix: str,
+    skill_registry: SkillRegistry,
+    extra_parts: list[str] | None = None,
+) -> dict:
+    text = prefix
+    instructions = _read_step_instructions(step_info)
+    if instructions:
+        text += f"\n\n{instructions}"
+    text += _render_required_skills(step_info, skill_registry)
+    step_path = step_info.get("path", "")
+    if step_path:
+        text += f"\n\n---\n*Step path: `{step_path}`*"
+    if extra_parts:
+        text += "\n\n" + "\n\n".join(extra_parts)
+    return {"content": [{"type": "text", "text": text}]}
 
 
 # ---------------------------------------------------------------------------
@@ -450,9 +474,12 @@ async def handle_update_workflow_state(
     new_current_step: str | None = None
     condition_skipped: list[tuple[str, ConditionResult]] = []
 
+    has_condition_support = bool(agent_defaults and session_context and workspace_path)
+
     if action == "start":
-        # Evaluate condition before starting (if condition support available)
-        if agent_defaults and session_context and workspace_path:
+        condition_failed = False
+
+        if has_condition_support:
             step_info = _get_step_from_snapshot(state.definition_snapshot, step)
             condition = step_info.get("condition")
 
@@ -467,7 +494,7 @@ async def handle_update_workflow_state(
                 )
 
                 if not result.passes:
-                    # Condition not met — skip and auto-advance
+                    condition_failed = True
                     new_step_states[step] = STEP_SKIPPED
                     condition_skipped.append((step, result))
 
@@ -483,20 +510,15 @@ async def handle_update_workflow_state(
 
                     if new_current_step is not None:
                         new_step_states[new_current_step] = STEP_STARTED
-                else:
-                    new_step_states[step] = STEP_STARTED
-                    new_current_step = step
-            else:
-                new_step_states[step] = STEP_STARTED
-                new_current_step = step
-        else:
+
+        if not condition_failed:
             new_step_states[step] = STEP_STARTED
             new_current_step = step
 
     elif action in ("complete", "skip"):
         new_step_states[step] = STEP_COMPLETED if action == "complete" else STEP_SKIPPED
 
-        if agent_defaults and session_context and workspace_path:
+        if has_condition_support:
             new_current_step, advance_skipped = await _evaluate_and_advance(
                 new_step_states,
                 state.definition_snapshot,
@@ -540,87 +562,42 @@ async def handle_update_workflow_state(
         )
 
         if condition_skipped:
-            skip_lines = [
-                f"- `{sid}`: {cr.reason}"
-                for sid, cr in condition_skipped
-            ]
-            finalize_text += "\n\n### Condition-Skipped Steps\n" + "\n".join(skip_lines)
+            finalize_text += "\n\n" + _format_condition_skips(condition_skipped)
 
         return {"content": [{"type": "text", "text": finalize_text}]}
 
-    # Build response text
-    response_parts: list[str] = []
+    response_parts = [_format_condition_skips(condition_skipped)] if condition_skipped else []
 
-    if condition_skipped:
-        skip_lines = [
-            f"- `{sid}`: {cr.reason}"
-            for sid, cr in condition_skipped
-        ]
-        response_parts.append("### Condition-Skipped Steps\n" + "\n".join(skip_lines))
+    step_was_condition_skipped = action == "start" and any(s[0] == step for s in condition_skipped)
 
-    if action == "start" and step not in [s[0] for s in condition_skipped]:
+    if action == "start" and not step_was_condition_skipped:
         step_info = _get_step_from_snapshot(state.definition_snapshot, step)
-        instructions = _read_step_instructions(step_info)
-        step_path = step_info.get("path", "")
-
-        step_text = f"Step **{step_info['title']}** (`{step}`) started."
-
-        if instructions:
-            step_text += f"\n\n{instructions}"
-
-        step_text += _render_required_skills(step_info, skill_registry)
-
-        if step_path:
-            step_text += f"\n\n---\n*Step path: `{step_path}`*"
-
-        if response_parts:
-            step_text += "\n\n" + "\n\n".join(response_parts)
-        return {"content": [{"type": "text", "text": step_text}]}
-
-    # Condition caused the explicitly-started step to be skipped
-    if action == "start" and condition_skipped and new_current_step:
-            next_info = _get_step_from_snapshot(state.definition_snapshot, new_current_step)
-            next_instructions = _read_step_instructions(next_info)
-            next_path = next_info.get("path", "")
-
-            next_text = (
-                f"Step `{step}` condition-skipped. "
-                f"Next step **{next_info['title']}** (`{new_current_step}`) started."
-            )
-
-            if next_instructions:
-                next_text += f"\n\n{next_instructions}"
-
-            next_text += _render_required_skills(next_info, skill_registry)
-
-            if next_path:
-                next_text += f"\n\n---\n*Step path: `{next_path}`*"
-
-            next_text += "\n\n" + "\n\n".join(response_parts)
-            return {"content": [{"type": "text", "text": next_text}]}
-
-    # complete/skip with a next step — it's already auto-started
-    if new_current_step and action in ("complete", "skip"):
-        next_info = _get_step_from_snapshot(state.definition_snapshot, new_current_step)
-        next_instructions = _read_step_instructions(next_info)
-        next_path = next_info.get("path", "")
-
-        next_text = (
-            f"Step `{step}` {action}d. "
-            f"Next step **{next_info['title']}** (`{new_current_step}`) started."
+        return _build_step_response(
+            step_info,
+            f"Step **{step_info['title']}** (`{step}`) started.",
+            skill_registry,
+            response_parts,
         )
 
-        if next_instructions:
-            next_text += f"\n\n{next_instructions}"
+    if step_was_condition_skipped and new_current_step:
+        next_info = _get_step_from_snapshot(state.definition_snapshot, new_current_step)
+        return _build_step_response(
+            next_info,
+            f"Step `{step}` condition-skipped. "
+            f"Next step **{next_info['title']}** (`{new_current_step}`) started.",
+            skill_registry,
+            response_parts,
+        )
 
-        next_text += _render_required_skills(next_info, skill_registry)
-
-        if next_path:
-            next_text += f"\n\n---\n*Step path: `{next_path}`*"
-
-        if response_parts:
-            next_text += "\n\n" + "\n\n".join(response_parts)
-        return {"content": [{"type": "text", "text": next_text}]}
+    if new_current_step and action in ("complete", "skip"):
+        next_info = _get_step_from_snapshot(state.definition_snapshot, new_current_step)
+        return _build_step_response(
+            next_info,
+            f"Step `{step}` {action}d. "
+            f"Next step **{next_info['title']}** (`{new_current_step}`) started.",
+            skill_registry,
+            response_parts,
+        )
 
     base_text = f"Step `{step}` {action}d."
     if response_parts:

@@ -17,8 +17,8 @@ from loguru import logger
 
 from tachikoma.agent_defaults import AgentDefaults
 from tachikoma.post_processing import fork_and_capture
-from tachikoma.workflows.model import StepState
 from tachikoma.sessions.model import Session
+from tachikoma.workflows.model import StepState
 
 _log = logger.bind(component="workflow_conditions")
 
