@@ -883,3 +883,131 @@ async def test_list_stale_root_only_old(session_factory):
 
     stale = await repo.list_stale(threshold=timedelta(hours=24))
     assert len(stale) == 1
+
+
+# ---------------------------------------------------------------------------
+# Atomic-rollback tests (R13, R15) — induced failure mid-flight
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_apply_mutation_batch_rolls_back_on_failure(session_factory, monkeypatch):
+    """R13 atomic-rollback: if any mutation in apply_mutation_batch raises,
+    no records should be modified.
+    """
+    from sqlalchemy.ext.asyncio import AsyncSession  # noqa: PLC0415
+
+    from tachikoma.workflows.composition import (  # noqa: PLC0415
+        MutationBatch,
+        SoftDelete,
+        UpdateState,
+    )
+
+    repo = WorkflowStateRepository(session_factory)
+    parent = _make_state("root-id", step_states={"01": "pending"})
+    await repo.create(parent)
+    child = _make_state(
+        "child-id",
+        parent_workflow_id="root-id",
+        parent_step_id="02",
+        step_states={"01": "started"},
+    )
+    await repo.create(child)
+
+    parent_before = await repo.get("root-id")
+    child_before = await repo.get("child-id")
+    assert parent_before is not None and child_before is not None
+    parent_step_before = parent_before.step_states["01"]
+    child_step_before = child_before.step_states["01"]
+
+    batch = MutationBatch()
+    batch.ordered.append(
+        UpdateState(
+            layer_id="root-id",
+            step_states={"01": "completed"},
+            current_step="01",
+        )
+    )
+    batch.ordered.append(SoftDelete(layer_id="child-id"))
+    # Append a mutation that will not be reached because we patch execute.
+
+    # Patch AsyncSession.execute to raise on the SECOND call (after the first
+    # UpdateState SELECT succeeds). This simulates a transient failure midway.
+    original_execute = AsyncSession.execute
+    call_count = {"n": 0}
+
+    async def flaky_execute(self, *args, **kwargs):
+        call_count["n"] += 1
+        if call_count["n"] == 2:
+            raise RuntimeError("induced mid-batch failure")
+        return await original_execute(self, *args, **kwargs)
+
+    monkeypatch.setattr(AsyncSession, "execute", flaky_execute)
+
+    from tachikoma.workflows.errors import WorkflowRepositoryError  # noqa: PLC0415
+
+    with pytest.raises(WorkflowRepositoryError):
+        await repo.apply_mutation_batch(batch)
+
+    # Restore real execute (monkeypatch undoes automatically) — verify state
+    monkeypatch.undo()
+
+    parent_after = await repo.get("root-id")
+    child_after = await repo.get("child-id")
+    assert parent_after is not None
+    assert child_after is not None
+    assert parent_after.step_states["01"] == parent_step_before
+    assert child_after.step_states["01"] == child_step_before
+    assert child_after.deleted_at is None
+
+
+@pytest.mark.asyncio
+async def test_abort_cascade_rolls_back_on_failure(session_factory, monkeypatch):
+    """R15 third AC: if abort_cascade encounters an error mid-cascade,
+    no records should be soft-deleted.
+    """
+    from sqlalchemy.ext.asyncio import AsyncSession  # noqa: PLC0415
+
+    repo = WorkflowStateRepository(session_factory)
+    parent = _make_state("root-id")
+    await repo.create(parent)
+    child = _make_state(
+        "child-id",
+        parent_workflow_id="root-id",
+        parent_step_id="02",
+    )
+    await repo.create(child)
+    grandchild = _make_state(
+        "grandchild-id",
+        parent_workflow_id="child-id",
+        parent_step_id="01",
+    )
+    await repo.create(grandchild)
+
+    # Patch AsyncSession.execute to raise on the very last UPDATE call
+    # (the bulk soft-delete).  The descendant walk uses SELECTs; the bulk
+    # update is the final execute() inside the transaction.
+    original_execute = AsyncSession.execute
+    select_count = {"n": 0}
+
+    async def selective_execute(self, statement, *args, **kwargs):
+        # Raise on UPDATE; pass through SELECT
+        if hasattr(statement, "is_update") and statement.is_update:  # SQLAlchemy update
+            raise RuntimeError("induced abort-cascade failure")
+        select_count["n"] += 1
+        return await original_execute(self, statement, *args, **kwargs)
+
+    monkeypatch.setattr(AsyncSession, "execute", selective_execute)
+
+    from tachikoma.workflows.errors import WorkflowRepositoryError  # noqa: PLC0415
+
+    with pytest.raises(WorkflowRepositoryError):
+        await repo.abort_cascade("root-id")
+
+    monkeypatch.undo()
+
+    # All three records still active
+    for wid in ("root-id", "child-id", "grandchild-id"):
+        state = await repo.get(wid)
+        assert state is not None, f"Expected {wid} to remain active after rolled-back cascade"
+        assert state.deleted_at is None

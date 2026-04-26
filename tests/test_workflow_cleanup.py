@@ -156,3 +156,162 @@ class TestStaleWorkflowCleanup:
 
         assert await repository.get("stale-1") is None
         assert await repository.get("fresh-1") is not None
+
+
+class TestSubtreeCleanup:
+    """R16: subtree-aware staleness — fresh child keeps parent alive,
+    aborts cascade when entire subtree is stale.
+    """
+
+    def _make_child_state(
+        self,
+        workflow_id: str,
+        parent_id: str,
+        parent_step_id: str,
+        scratchpad_path: str,
+        updated_at: datetime,
+    ) -> WorkflowState:
+        return WorkflowState(
+            id=workflow_id,
+            skill_name="test-skill",
+            workflow_name=f"child-{workflow_id}",
+            current_step=None,
+            step_states={"01-only": "started"},
+            definition_snapshot=[{"id": "01-only", "title": "Only", "required": True}],
+            scratchpad_path=scratchpad_path,
+            deleted_at=None,
+            created_at=updated_at,
+            updated_at=updated_at,
+            parent_workflow_id=parent_id,
+            parent_step_id=parent_step_id,
+        )
+
+    @pytest.mark.asyncio
+    async def test_fresh_child_keeps_old_parent_alive(self, repository, tmp_path):
+        """R16 first AC: stale parent + fresh child → neither deleted."""
+        scratchpad = tmp_path / "subtree-fresh.md"
+        scratchpad.write_text("# subtree")
+
+        old = datetime.now(UTC) - timedelta(hours=30)
+        fresh = datetime.now(UTC) - timedelta(minutes=5)
+
+        parent = WorkflowState(
+            id="parent-fresh-child",
+            skill_name="test-skill",
+            workflow_name="parent-wf",
+            current_step="02-compose",
+            step_states={"02-compose": "started"},
+            definition_snapshot=[
+                {
+                    "id": "02-compose",
+                    "title": "Compose",
+                    "required": True,
+                    "composes": "child-wf",
+                }
+            ],
+            scratchpad_path=str(scratchpad),
+            deleted_at=None,
+            created_at=old,
+            updated_at=old,
+        )
+        await repository.create(parent)
+
+        child = self._make_child_state(
+            "child-fresh", parent.id, "02-compose", str(scratchpad), fresh,
+        )
+        await repository.create(child)
+
+        processor = StaleWorkflowCleanupProcessor(repository)
+        await processor.process(_make_session())
+
+        # Both still active, scratchpad still on disk
+        assert await repository.get(parent.id) is not None
+        assert await repository.get(child.id) is not None
+        assert scratchpad.exists()
+
+    @pytest.mark.asyncio
+    async def test_old_subtree_cascades(self, repository, tmp_path):
+        """R16 second AC: stale parent + stale child → both deleted, single
+        scratchpad delete.
+        """
+        scratchpad = tmp_path / "subtree-old.md"
+        scratchpad.write_text("# subtree")
+
+        old = datetime.now(UTC) - timedelta(hours=30)
+
+        parent = WorkflowState(
+            id="parent-old-child",
+            skill_name="test-skill",
+            workflow_name="parent-wf",
+            current_step="02-compose",
+            step_states={"02-compose": "started"},
+            definition_snapshot=[
+                {
+                    "id": "02-compose",
+                    "title": "Compose",
+                    "required": True,
+                    "composes": "child-wf",
+                }
+            ],
+            scratchpad_path=str(scratchpad),
+            deleted_at=None,
+            created_at=old,
+            updated_at=old,
+        )
+        await repository.create(parent)
+
+        child = self._make_child_state(
+            "child-old", parent.id, "02-compose", str(scratchpad), old,
+        )
+        await repository.create(child)
+
+        processor = StaleWorkflowCleanupProcessor(repository)
+        await processor.process(_make_session())
+
+        # Both gone, scratchpad deleted exactly once
+        assert await repository.get(parent.id) is None
+        assert await repository.get(child.id) is None
+        assert not scratchpad.exists()
+
+    @pytest.mark.asyncio
+    async def test_three_level_chain_all_old_cascade(self, repository, tmp_path):
+        """R16 + R17: a 3-level chain that is entirely stale is fully cascaded
+        in one cleanup pass.
+        """
+        scratchpad = tmp_path / "subtree-3.md"
+        scratchpad.write_text("# subtree-3")
+
+        old = datetime.now(UTC) - timedelta(hours=30)
+
+        parent = WorkflowState(
+            id="three-parent",
+            skill_name="test-skill",
+            workflow_name="three-parent-wf",
+            current_step="01",
+            step_states={"01": "started"},
+            definition_snapshot=[
+                {"id": "01", "title": "01", "required": True, "composes": "mid"}
+            ],
+            scratchpad_path=str(scratchpad),
+            deleted_at=None,
+            created_at=old,
+            updated_at=old,
+        )
+        await repository.create(parent)
+
+        mid = self._make_child_state(
+            "three-mid", parent.id, "01", str(scratchpad), old,
+        )
+        await repository.create(mid)
+
+        leaf = self._make_child_state(
+            "three-leaf", "three-mid", "01-only", str(scratchpad), old,
+        )
+        await repository.create(leaf)
+
+        processor = StaleWorkflowCleanupProcessor(repository)
+        await processor.process(_make_session())
+
+        for wid in ("three-parent", "three-mid", "three-leaf"):
+            assert await repository.get(wid) is None
+        assert not scratchpad.exists()

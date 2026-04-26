@@ -997,71 +997,118 @@ async def handle_update_workflow_state(
     return response
 
 
+def _detect_corrupted_composition_targets(
+    chain: list[WorkflowState],
+    skill_registry: SkillRegistry | None,
+) -> list[tuple[str, str, str]]:
+    """Return (workflow_name, step_id, target) tuples for active composition
+    steps whose target is no longer registered (R5 fourth AC).
+
+    A composition step is considered "corrupted" when its `composes` target
+    cannot be resolved in the current skill registry AND the step is in
+    ``STEP_STARTED`` (i.e. the parent is mid-spawn / mid-run for that step).
+    Pending or completed composition steps are not flagged here — pending
+    will surface the corruption on activation, completed has nothing to do.
+    """
+    if skill_registry is None:
+        return []
+
+    corrupted: list[tuple[str, str, str]] = []
+    for layer in chain:
+        for step_def in layer.definition_snapshot:
+            composes = step_def.get("composes")
+            if not composes:
+                continue
+            step_id = step_def["id"]
+            if layer.step_states.get(step_id) != STEP_STARTED:
+                continue
+            try:
+                target_skill, target_wf = resolve_composes(
+                    composes, layer.skill_name
+                )
+            except ValueError:
+                corrupted.append((layer.workflow_name, step_id, composes))
+                continue
+            if skill_registry.get_workflow(target_skill, target_wf) is None:
+                corrupted.append(
+                    (layer.workflow_name, step_id, f"{target_skill}/{target_wf}")
+                )
+    return corrupted
+
+
+def _format_corruption_warning(corrupted: list[tuple[str, str, str]]) -> str:
+    lines = ["> ⚠️  **Workflow definition corruption detected.**"]
+    lines.append(">")
+    for wf_name, step_id, target in corrupted:
+        lines.append(
+            f"> - Step `{wf_name}/{step_id}` references "
+            f"`{target}`, which is no longer registered."
+        )
+    lines.append(">")
+    lines.append(
+        "> The active workflow cannot proceed safely. "
+        "Abort the parent workflow with `end_workflow(action='abort')`."
+    )
+    return "\n".join(lines)
+
+
+def _render_state_view(state: WorkflowState, *, header: str = "Workflow State") -> str:
+    steps_display = [
+        f"- **{sd['title']}** (`{sd['id']}`): "
+        f"{state.step_states.get(sd['id'], 'pending')}"
+        for sd in state.definition_snapshot
+    ]
+    return (
+        f"## {header}\n\n"
+        f"- **ID**: {state.id}\n"
+        f"- **Skill**: {state.skill_name}\n"
+        f"- **Workflow**: {state.workflow_name}\n"
+        f"- **Current Step**: {state.current_step or 'none'}\n"
+        f"- **Scratchpad**: `{state.scratchpad_path}`\n"
+        f"- **Created**: {state.created_at.strftime('%Y-%m-%d %H:%M UTC')}\n"
+        f"- **Updated**: {state.updated_at.strftime('%Y-%m-%d %H:%M UTC')}\n\n"
+        f"### Steps\n\n" + "\n".join(steps_display)
+    )
+
+
 async def handle_get_workflow_state(
     workflow_id: str,
     repository: WorkflowStateRepository,
+    skill_registry: SkillRegistry | None = None,
 ) -> dict:
-    """Handle get_workflow_state: return full workflow state with nested view."""
+    """Handle get_workflow_state: return full workflow state with nested view.
+
+    When ``workflow_id`` resolves to a composed child, returns a standalone
+    view with a note pointing at the parent (R12 fifth AC).  When the
+    registry is provided and an active composition step's target is no
+    longer registered, prepends a corruption warning (R5 fourth AC).
+    """
 
     chain = await repository.get_active_chain(workflow_id)
 
     if not chain:
-        # Maybe it's a child ID — try direct get for backwards compat
-        state = await repository.get(workflow_id)
-        if state is None:
-            return _not_found_error(workflow_id)
+        return _not_found_error(workflow_id)
 
-        steps_display = [
-            f"- **{sd['title']}** (`{sd['id']}`): "
-            f"{state.step_states.get(sd['id'], 'pending')}"
-            for sd in state.definition_snapshot
-        ]
+    head = chain[0]
 
-        text = (
-            f"## Workflow State\n\n"
-            f"- **ID**: {state.id}\n"
-            f"- **Skill**: {state.skill_name}\n"
-            f"- **Workflow**: {state.workflow_name}\n"
-            f"- **Current Step**: {state.current_step or 'none'}\n"
-            f"- **Scratchpad**: `{state.scratchpad_path}`\n"
-            f"- **Created**: {state.created_at.strftime('%Y-%m-%d %H:%M UTC')}\n"
-            f"- **Updated**: {state.updated_at.strftime('%Y-%m-%d %H:%M UTC')}\n\n"
-            f"### Steps\n\n" + "\n".join(steps_display) + "\n\n"
-            "> This is a composed child. Access via the top-level workflow "
+    # Child-ID call — backwards-compat standalone view with a note
+    if head.parent_workflow_id is not None:
+        text = _render_state_view(head)
+        text += (
+            "\n\n> This is a composed child. Access via the top-level workflow "
             "for the full nested view."
         )
-        if state.parent_workflow_id:
-            text += f"\n> Parent workflow ID: `{state.parent_workflow_id}`"
-
+        text += f"\n> Parent workflow ID: `{head.parent_workflow_id}`"
         return {"content": [{"type": "text", "text": text}]}
 
-    top = chain[0]
+    corrupted = _detect_corrupted_composition_targets(chain, skill_registry)
 
     # Single layer — standard view
     if len(chain) == 1:
-        state = top
-        steps_display = [
-            f"- **{sd['title']}** (`{sd['id']}`): "
-            f"{state.step_states.get(sd['id'], 'pending')}"
-            for sd in state.definition_snapshot
-        ]
-
-        return {
-            "content": [{
-                "type": "text",
-                "text": (
-                    f"## Workflow State\n\n"
-                    f"- **ID**: {state.id}\n"
-                    f"- **Skill**: {state.skill_name}\n"
-                    f"- **Workflow**: {state.workflow_name}\n"
-                    f"- **Current Step**: {state.current_step or 'none'}\n"
-                    f"- **Scratchpad**: `{state.scratchpad_path}`\n"
-                    f"- **Created**: {state.created_at.strftime('%Y-%m-%d %H:%M UTC')}\n"
-                    f"- **Updated**: {state.updated_at.strftime('%Y-%m-%d %H:%M UTC')}\n\n"
-                    f"### Steps\n\n" + "\n".join(steps_display)
-                ),
-            }],
-        }
+        text = _render_state_view(head)
+        if corrupted:
+            text = _format_corruption_warning(corrupted) + "\n\n" + text
+        return {"content": [{"type": "text", "text": text}]}
 
     # Multi-layer — nested view with breadcrumb
     breadcrumb_parts = [
@@ -1071,23 +1118,7 @@ async def handle_get_workflow_state(
     ]
     breadcrumb = " > ".join(breadcrumb_parts)
 
-    top_steps = [
-        f"- **{sd['title']}** (`{sd['id']}`): "
-        f"{top.step_states.get(sd['id'], 'pending')}"
-        for sd in top.definition_snapshot
-    ]
-
-    text = (
-        f"## Workflow State\n\n"
-        f"- **ID**: {top.id}\n"
-        f"- **Skill**: {top.skill_name}\n"
-        f"- **Workflow**: {top.workflow_name}\n"
-        f"- **Current Step**: {top.current_step or 'none'}\n"
-        f"- **Scratchpad**: `{top.scratchpad_path}`\n"
-        f"- **Created**: {top.created_at.strftime('%Y-%m-%d %H:%M UTC')}\n"
-        f"- **Updated**: {top.updated_at.strftime('%Y-%m-%d %H:%M UTC')}\n\n"
-        f"### Steps\n\n" + "\n".join(top_steps)
-    )
+    text = _render_state_view(head)
 
     for child in chain[1:]:
         child_steps = [
@@ -1104,6 +1135,9 @@ async def handle_get_workflow_state(
 
     if breadcrumb:
         text = f"> {breadcrumb}\n\n" + text
+
+    if corrupted:
+        text = _format_corruption_warning(corrupted) + "\n\n" + text
 
     return {"content": [{"type": "text", "text": text}]}
 
@@ -1273,7 +1307,9 @@ def create_workflow_tools_server(
         if err:
             return err
 
-        return await handle_get_workflow_state(parsed.workflow_id, repository)
+        return await handle_get_workflow_state(
+            parsed.workflow_id, repository, skill_registry,
+        )
 
     @tool(
         "end_workflow",
