@@ -259,8 +259,7 @@ class Database:
             # Check if stop_reason column exists on detached_processes table
             result = await conn.execute(
                 text(
-                    "SELECT * FROM pragma_table_info('detached_processes')"
-                    " WHERE name='stop_reason'"
+                    "SELECT * FROM pragma_table_info('detached_processes') WHERE name='stop_reason'"
                 )
             )
             if result.fetchone() is None:

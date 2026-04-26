@@ -171,7 +171,12 @@ async def handle_scrub(
         invalid_paths: list[str] = []
         for path in scrub_paths:
             _, output = await run_git_capture(
-                "log", "-1", "--all", "--", path, cwd=resolved,
+                "log",
+                "-1",
+                "--all",
+                "--",
+                path,
+                cwd=resolved,
             )
             if not output.strip():
                 invalid_paths.append(path)
@@ -184,7 +189,10 @@ async def handle_scrub(
             )
 
         rc, origin_url = await run_git_capture(
-            "remote", "get-url", "origin", cwd=resolved,
+            "remote",
+            "get-url",
+            "origin",
+            cwd=resolved,
         )
         if rc != 0 or not origin_url.strip():
             return _error(
@@ -207,7 +215,9 @@ async def handle_scrub(
 
         # filter-repo prompts for confirmation; pipe "yes" to stdin
         proc = await asyncio.create_subprocess_exec(
-            "git", "filter-repo", *filter_args,
+            "git",
+            "filter-repo",
+            *filter_args,
             cwd=resolved,
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
@@ -226,10 +236,7 @@ async def handle_scrub(
                 desc=description,
                 err=error_msg,
             )
-            return _error(
-                f"Error: git filter-repo failed for {description}: "
-                f"{error_msg}"
-            )
+            return _error(f"Error: git filter-repo failed for {description}: {error_msg}")
 
         # filter-repo removes the origin remote
         await run_git("remote", "add", "origin", origin_url, cwd=resolved)
@@ -237,9 +244,7 @@ async def handle_scrub(
         try:
             await run_git("push", "--force", "origin", "HEAD", cwd=resolved)
         except RuntimeError as exc:
-            error_msg = str(exc).removeprefix(
-                "git push --force origin HEAD failed: "
-            )
+            error_msg = str(exc).removeprefix("git push --force origin HEAD failed: ")
             _log.warning(
                 "force push failed after scrub: target={desc} err={err}",
                 desc=description,

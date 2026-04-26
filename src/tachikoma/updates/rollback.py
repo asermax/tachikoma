@@ -82,9 +82,7 @@ def clear_rollback_marker() -> None:
         MARKER_PATH.unlink()
 
 
-def write_rollback_notification(
-    previous_version: str, failed_version: str, error: str
-) -> None:
+def write_rollback_notification(previous_version: str, failed_version: str, error: str) -> None:
     """Write the rollback notification marker before restarting with old version."""
     data = {
         "previous_version": previous_version,

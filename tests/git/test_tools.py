@@ -160,12 +160,18 @@ class TestHandlePush:
     ) -> None:
         mock_scrub.return_value = {"content": [{"type": "text", "text": "ok"}]}
         result = await handle_push(
-            "project", "my-app", workspace, agent_defaults,
+            "project",
+            "my-app",
+            workspace,
+            agent_defaults,
             scrub_paths=["path/to/file"],
         )
 
         mock_scrub.assert_awaited_once_with(
-            "project", "my-app", workspace, ["path/to/file"],
+            "project",
+            "my-app",
+            workspace,
+            ["path/to/file"],
         )
         assert result == mock_scrub.return_value
 
@@ -255,7 +261,7 @@ class TestHandleScrub:
         # log finds the path, but remote get-url fails
         mock_capture.side_effect = [
             (0, "abc123"),  # log -1 --all -- path (path exists)
-            (128, ""),      # remote get-url origin (no remote)
+            (128, ""),  # remote get-url origin (no remote)
         ]
 
         result = await handle_scrub("project", "my-app", workspace, ["path.txt"])
@@ -307,11 +313,18 @@ class TestHandleScrub:
 
         # Verify remote was re-added and force push was called
         mock_git.assert_any_await(
-            "remote", "add", "origin", "git@github.com:user/my-app.git",
+            "remote",
+            "add",
+            "origin",
+            "git@github.com:user/my-app.git",
             cwd=project,
         )
         mock_git.assert_any_await(
-            "push", "--force", "origin", "HEAD", cwd=project,
+            "push",
+            "--force",
+            "origin",
+            "HEAD",
+            cwd=project,
         )
 
     @patch("tachikoma.git.tools.run_git", new_callable=AsyncMock)
@@ -340,7 +353,9 @@ class TestHandleScrub:
         ]
 
         result = await handle_scrub(
-            "project", "my-app", workspace,
+            "project",
+            "my-app",
+            workspace,
             ["audio/one.ogg", "audio/two.ogg"],
         )
 
