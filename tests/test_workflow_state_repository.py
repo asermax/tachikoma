@@ -491,3 +491,395 @@ async def test_create_after_soft_delete(session_factory, sample_workflow_state):
 
     created = await repo.create(new_state)
     assert created.id == "new-state-id"
+
+
+# ---------------------------------------------------------------------------
+# Batch 2: Composition-aware repository tests (DLT-161)
+# ---------------------------------------------------------------------------
+
+
+def _make_state(
+    workflow_id: str = "test-wf-id",
+    *,
+    skill_name: str = "test-skill",
+    workflow_name: str = "test-workflow",
+    parent_workflow_id: str | None = None,
+    parent_step_id: str | None = None,
+    step_states: dict[str, str] | None = None,
+    scratchpad_path: str = "/tmp/scratch.md",
+    updated_at: datetime | None = None,
+) -> WorkflowState:
+    now = datetime.now(UTC)
+    return WorkflowState(
+        id=workflow_id,
+        skill_name=skill_name,
+        workflow_name=workflow_name,
+        current_step=None,
+        step_states=step_states or {"01": "pending"},
+        definition_snapshot=[{"id": "01", "title": "Step", "required": True}],
+        scratchpad_path=scratchpad_path,
+        deleted_at=None,
+        created_at=now,
+        updated_at=updated_at or now,
+        parent_workflow_id=parent_workflow_id,
+        parent_step_id=parent_step_id,
+    )
+
+
+@pytest.mark.asyncio
+async def test_parent_fields_round_trip(session_factory):
+    """Parent workflow fields persist and return correctly."""
+    repo = WorkflowStateRepository(session_factory)
+
+    parent = _make_state("parent-id")
+    await repo.create(parent)
+
+    child = _make_state(
+        "child-id",
+        skill_name="test-skill",
+        workflow_name="child-wf",
+        parent_workflow_id="parent-id",
+        parent_step_id="02-compose",
+    )
+    await repo.create(child)
+
+    fetched = await repo.get("child-id")
+    assert fetched is not None
+    assert fetched.parent_workflow_id == "parent-id"
+    assert fetched.parent_step_id == "02-compose"
+
+
+@pytest.mark.asyncio
+async def test_child_exemption_from_uniqueness(session_factory):
+    """R10: Composed children don't block concurrent top-level or other children."""
+    repo = WorkflowStateRepository(session_factory)
+
+    # Create a top-level workflow
+    parent = _make_state("parent-1", workflow_name="my-wf")
+    await repo.create(parent)
+
+    # Create a composed child with same (skill, workflow) — should succeed
+    child = _make_state(
+        "child-1",
+        workflow_name="my-wf",
+        parent_workflow_id="parent-1",
+        parent_step_id="02",
+    )
+    await repo.create(child)
+
+    # Another composed child should also succeed
+    _make_state(
+        "child-2",
+        workflow_name="my-wf",
+        parent_workflow_id="parent-1",
+        parent_step_id="03",
+    )
+    # This tests that children bypass the uniqueness check
+    # (The spawn logic ensures at most one active child per parent,
+    # but the repo layer doesn't enforce that)
+
+
+@pytest.mark.asyncio
+async def test_list_active_excludes_children(session_factory):
+    """R11: list_active only returns top-level workflows."""
+    repo = WorkflowStateRepository(session_factory)
+
+    parent = _make_state("parent-id", workflow_name="parent-wf")
+    await repo.create(parent)
+
+    child = _make_state(
+        "child-id",
+        workflow_name="child-wf",
+        parent_workflow_id="parent-id",
+        parent_step_id="02",
+    )
+    await repo.create(child)
+
+    active = await repo.list_active()
+    assert len(active) == 1
+    assert active[0].id == "parent-id"
+
+
+@pytest.mark.asyncio
+async def test_get_active_chain_depth_1(session_factory):
+    """get_active_chain returns root only when no children."""
+    repo = WorkflowStateRepository(session_factory)
+    parent = _make_state("root-id")
+    await repo.create(parent)
+
+    chain = await repo.get_active_chain("root-id")
+    assert len(chain) == 1
+    assert chain[0].id == "root-id"
+
+
+@pytest.mark.asyncio
+async def test_get_active_chain_depth_2(session_factory):
+    """get_active_chain walks root → child."""
+    repo = WorkflowStateRepository(session_factory)
+
+    parent = _make_state("root-id")
+    await repo.create(parent)
+
+    child = _make_state(
+        "child-id",
+        parent_workflow_id="root-id",
+        parent_step_id="02",
+    )
+    await repo.create(child)
+
+    chain = await repo.get_active_chain("root-id")
+    assert len(chain) == 2
+    assert chain[0].id == "root-id"
+    assert chain[1].id == "child-id"
+
+
+@pytest.mark.asyncio
+async def test_get_active_chain_depth_3(session_factory):
+    """get_active_chain walks root → child → grandchild."""
+    repo = WorkflowStateRepository(session_factory)
+
+    root = _make_state("root-id")
+    await repo.create(root)
+
+    child = _make_state("child-id", parent_workflow_id="root-id", parent_step_id="02")
+    await repo.create(child)
+
+    grandchild = _make_state("gc-id", parent_workflow_id="child-id", parent_step_id="01")
+    await repo.create(grandchild)
+
+    chain = await repo.get_active_chain("root-id")
+    assert len(chain) == 3
+
+
+@pytest.mark.asyncio
+async def test_get_active_chain_empty_when_not_found(session_factory):
+    """get_active_chain returns empty list for unknown ID."""
+    repo = WorkflowStateRepository(session_factory)
+    chain = await repo.get_active_chain("nonexistent")
+    assert chain == []
+
+
+@pytest.mark.asyncio
+async def test_abort_cascade_single_root(session_factory):
+    """abort_cascade soft-deletes a single root."""
+    repo = WorkflowStateRepository(session_factory)
+    parent = _make_state("root-id")
+    await repo.create(parent)
+
+    ids = await repo.abort_cascade("root-id")
+    assert ids == ["root-id"]
+    assert await repo.get("root-id") is None
+
+
+@pytest.mark.asyncio
+async def test_abort_cascade_parent_and_child(session_factory):
+    """abort_cascade soft-deletes parent + child atomically."""
+    repo = WorkflowStateRepository(session_factory)
+
+    parent = _make_state("root-id")
+    await repo.create(parent)
+    child = _make_state("child-id", parent_workflow_id="root-id", parent_step_id="02")
+    await repo.create(child)
+
+    ids = await repo.abort_cascade("root-id")
+    assert set(ids) == {"root-id", "child-id"}
+    assert await repo.get("root-id") is None
+    assert await repo.get("child-id") is None
+
+
+@pytest.mark.asyncio
+async def test_abort_cascade_three_levels(session_factory):
+    """abort_cascade tears down root → child → grandchild."""
+    repo = WorkflowStateRepository(session_factory)
+
+    root = _make_state("root-id")
+    await repo.create(root)
+    child = _make_state("child-id", parent_workflow_id="root-id", parent_step_id="02")
+    await repo.create(child)
+    gc = _make_state("gc-id", parent_workflow_id="child-id", parent_step_id="01")
+    await repo.create(gc)
+
+    ids = await repo.abort_cascade("root-id")
+    assert set(ids) == {"root-id", "child-id", "gc-id"}
+
+
+@pytest.mark.asyncio
+async def test_abort_cascade_idempotent_on_deleted(session_factory):
+    """abort_cascade returns [] when root already soft-deleted."""
+    repo = WorkflowStateRepository(session_factory)
+    parent = _make_state("root-id")
+    await repo.create(parent)
+    await repo.soft_delete("root-id")
+
+    ids = await repo.abort_cascade("root-id")
+    assert ids == []
+
+
+@pytest.mark.asyncio
+async def test_apply_mutation_batch_single_update(session_factory):
+    """apply_mutation_batch applies a single UpdateState mutation."""
+    from tachikoma.workflows.composition import MutationBatch, UpdateState  # noqa: PLC0415
+
+    repo = WorkflowStateRepository(session_factory)
+    parent = _make_state("root-id", step_states={"01": "pending"})
+    await repo.create(parent)
+
+    batch = MutationBatch()
+    batch.ordered.append(
+        UpdateState(
+            layer_id="root-id",
+            step_states={"01": "started"},
+            current_step="01",
+        )
+    )
+
+    await repo.apply_mutation_batch(batch)
+
+    state = await repo.get("root-id")
+    assert state is not None
+    assert state.step_states["01"] == "started"
+    assert state.current_step == "01"
+
+
+@pytest.mark.asyncio
+async def test_apply_mutation_batch_create_child(session_factory):
+    """apply_mutation_batch creates a child record."""
+    from tachikoma.workflows.composition import (  # noqa: PLC0415
+        CreateChild,
+        MutationBatch,
+        UpdateState,
+    )
+
+    repo = WorkflowStateRepository(session_factory)
+    parent = _make_state("root-id", scratchpad_path="/tmp/parent-scratch.md")
+    await repo.create(parent)
+
+    batch = MutationBatch()
+    batch.ordered.append(
+        UpdateState(
+            layer_id="root-id",
+            step_states={"01": "completed", "02": "started"},
+            current_step="02",
+        )
+    )
+    batch.ordered.append(
+        CreateChild(
+            child_id="child-id",
+            parent_id="root-id",
+            parent_step_id="02",
+            skill_name="test-skill",
+            workflow_name="child-wf",
+            step_states={"01": "started"},
+            definition_snapshot=[{"id": "01", "title": "Child Step", "required": True}],
+            scratchpad_path="/tmp/parent-scratch.md",
+        )
+    )
+
+    await repo.apply_mutation_batch(batch)
+
+    child = await repo.get("child-id")
+    assert child is not None
+    assert child.parent_workflow_id == "root-id"
+    assert child.parent_step_id == "02"
+    assert child.scratchpad_path == "/tmp/parent-scratch.md"
+
+
+@pytest.mark.asyncio
+async def test_apply_mutation_batch_soft_delete_child(session_factory):
+    """apply_mutation_batch soft-deletes child and updates parent atomically."""
+    from tachikoma.workflows.composition import (  # noqa: PLC0415
+        MutationBatch,
+        SoftDelete,
+        UpdateState,
+    )
+
+    repo = WorkflowStateRepository(session_factory)
+    parent = _make_state("root-id")
+    await repo.create(parent)
+    child = _make_state(
+        "child-id", parent_workflow_id="root-id", parent_step_id="02",
+    )
+    await repo.create(child)
+
+    batch = MutationBatch()
+    batch.ordered.append(
+        UpdateState(
+            layer_id="child-id",
+            step_states={"01": "completed"},
+            current_step=None,
+        )
+    )
+    batch.ordered.append(SoftDelete(layer_id="child-id"))
+    batch.ordered.append(
+        UpdateState(
+            layer_id="root-id",
+            step_states={"01": "completed", "02": "completed"},
+            current_step=None,
+        )
+    )
+
+    await repo.apply_mutation_batch(batch)
+
+    assert await repo.get("child-id") is None
+    parent_state = await repo.get("root-id")
+    assert parent_state is not None
+    assert parent_state.step_states["02"] == "completed"
+
+
+@pytest.mark.asyncio
+async def test_list_stale_subtree_fresh_child_keeps_parent_alive(session_factory):
+    """R16: Old root with fresh child is NOT stale."""
+    repo = WorkflowStateRepository(session_factory)
+    now = datetime.now(UTC)
+
+    parent = _make_state(
+        "root-id",
+        updated_at=now - timedelta(hours=30),
+    )
+    await repo.create(parent)
+
+    child = _make_state(
+        "child-id",
+        parent_workflow_id="root-id",
+        parent_step_id="02",
+        updated_at=now - timedelta(minutes=10),
+    )
+    await repo.create(child)
+
+    stale = await repo.list_stale(threshold=timedelta(hours=24))
+    assert len(stale) == 0
+
+
+@pytest.mark.asyncio
+async def test_list_stale_subtree_all_old_is_stale(session_factory):
+    """R16: Old root + old child → stale."""
+    repo = WorkflowStateRepository(session_factory)
+    now = datetime.now(UTC)
+
+    parent = _make_state("root-id", updated_at=now - timedelta(hours=30))
+    await repo.create(parent)
+
+    child = _make_state(
+        "child-id",
+        parent_workflow_id="root-id",
+        parent_step_id="02",
+        updated_at=now - timedelta(hours=28),
+    )
+    await repo.create(child)
+
+    stale = await repo.list_stale(threshold=timedelta(hours=24))
+    assert len(stale) == 1
+    assert stale[0].id == "root-id"
+
+
+@pytest.mark.asyncio
+async def test_list_stale_root_only_old(session_factory):
+    """Old root with no children is stale."""
+    repo = WorkflowStateRepository(session_factory)
+    now = datetime.now(UTC)
+
+    parent = _make_state("root-id", updated_at=now - timedelta(hours=30))
+    await repo.create(parent)
+
+    stale = await repo.list_stale(threshold=timedelta(hours=24))
+    assert len(stale) == 1

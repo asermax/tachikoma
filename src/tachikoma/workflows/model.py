@@ -44,6 +44,8 @@ class WorkflowState:
     deleted_at: datetime | None
     created_at: datetime
     updated_at: datetime
+    parent_workflow_id: str | None = None
+    parent_step_id: str | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -63,6 +65,8 @@ class WorkflowStateRecord(Base):
     id: Mapped[str] = mapped_column(String, primary_key=True)
     skill_name: Mapped[str] = mapped_column(String, nullable=False)
     workflow_name: Mapped[str] = mapped_column(String, nullable=False)
+    parent_workflow_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    parent_step_id: Mapped[str | None] = mapped_column(String, nullable=True)
     current_step: Mapped[str | None] = mapped_column(String, nullable=True)
     step_states: Mapped[str] = mapped_column(String, nullable=False)
     definition_snapshot: Mapped[str] = mapped_column(String, nullable=False)
@@ -75,6 +79,7 @@ class WorkflowStateRecord(Base):
         Index("ix_workflow_states_skill_name", "skill_name"),
         Index("ix_workflow_states_workflow_name", "workflow_name"),
         Index("ix_workflow_states_active_lookup", "skill_name", "workflow_name"),
+        Index("ix_workflow_states_parent", "parent_workflow_id", "deleted_at"),
     )
 
     def to_domain(self) -> WorkflowState:
@@ -90,4 +95,6 @@ class WorkflowStateRecord(Base):
             deleted_at=ensure_utc(self.deleted_at),
             created_at=ensure_utc(self.created_at),
             updated_at=ensure_utc(self.updated_at),
+            parent_workflow_id=self.parent_workflow_id,
+            parent_step_id=self.parent_step_id,
         )

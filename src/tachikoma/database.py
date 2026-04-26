@@ -270,6 +270,36 @@ class Database:
                     "Schema migration: added 'stop_reason' column to detached_processes table"
                 )
 
+            # Check if parent_workflow_id column exists on workflow_states table (added in DLT-161)
+            result = await conn.execute(
+                text(
+                    "SELECT * FROM pragma_table_info('workflow_states')"
+                    " WHERE name='parent_workflow_id'"
+                )
+            )
+            if result.fetchone() is None:
+                await conn.execute(
+                    text("ALTER TABLE workflow_states ADD COLUMN parent_workflow_id TEXT")
+                )
+                _log.info(
+                    "Schema migration: added 'parent_workflow_id' column to workflow_states table"
+                )
+
+            # Check if parent_step_id column exists on workflow_states table (added in DLT-161)
+            result = await conn.execute(
+                text(
+                    "SELECT * FROM pragma_table_info('workflow_states')"
+                    " WHERE name='parent_step_id'"
+                )
+            )
+            if result.fetchone() is None:
+                await conn.execute(
+                    text("ALTER TABLE workflow_states ADD COLUMN parent_step_id TEXT")
+                )
+                _log.info(
+                    "Schema migration: added 'parent_step_id' column to workflow_states table"
+                )
+
         _log.debug("Schema migrations completed: db_path={path}", path=self._db_path)
 
     async def close(self) -> None:
