@@ -617,7 +617,7 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 **Description**: Workflows today can only express fixed-length sequences, so batch-processing steps where the item count isn't known upfront (e.g., "process all inbox notes", "handle each pending email") have to be unrolled by hand or faked with agent-level self-looping. Instead of adding a native loop mechanism to the engine, implement looping as a composition pattern: a `loop` frontmatter field on a step declares a target workflow to invoke repeatedly. Each iteration runs the referenced workflow to completion (via the composition mechanism from DLT-161), then the engine evaluates a condition expression (reusing the condition language from DLT-159) to decide whether to continue. The loop body is the full referenced workflow, not a single step — this naturally supports multi-step loops without additional engine complexity. The engine exposes an iteration counter through the scratchpad so the loop body can make progress, and guards against infinite loops with a configurable maximum iteration cap. Cycle detection from DLT-161 ensures a workflow cannot loop over itself directly.
 
 ### DLT-161: Workflow composition via inline sub-workflow references
-**Status**: ✗ Defined
+**Status**: ⧗ Spec
 **Depends on**: DLT-158, DLT-159
 **Priority**: 3 (Medium)
 **Complexity**: Medium
