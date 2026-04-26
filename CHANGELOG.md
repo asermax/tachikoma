@@ -2,6 +2,72 @@
 
 <!-- version list -->
 
+## v1.54.0 (2026-04-26)
+
+### Documentation
+
+- **deltas**: Add DLT-161 design and mark spec complete
+  ([`fb8dc48`](https://github.com/asermax/tachikoma/commit/fb8dc4859c3e1471d2cb98a442cadbcfc730130c))
+
+- **deltas**: Add DLT-161 implementation plan
+  ([`b7af506`](https://github.com/asermax/tachikoma/commit/b7af506c3fa6fce7094f3de37e6cd78703dd440a))
+
+- **deltas**: Add DLT-161 spec for workflow composition
+  ([`f5c493e`](https://github.com/asermax/tachikoma/commit/f5c493efebc56f3469eaa71904adf10ff9a508f7))
+
+- **deltas**: Add R21 documentation requirement to DLT-161 spec
+  ([`6792ac1`](https://github.com/asermax/tachikoma/commit/6792ac16eb760de54810496819a0de10674601df))
+
+- **deltas**: Expand DLT-161 design with detailed rationale
+  ([`c24d885`](https://github.com/asermax/tachikoma/commit/c24d88547e5869e36f92960b831cbed991ee9b83))
+
+- **deltas**: Mark DLT-161 as in design
+  ([`af16c4a`](https://github.com/asermax/tachikoma/commit/af16c4a031f48c75380a503ac650fe2a6147eb58))
+
+- **deltas**: Mark DLT-161 as in plan
+  ([`496e586`](https://github.com/asermax/tachikoma/commit/496e58647d05ac1da11eaa587e87e121730a209a))
+
+- **deltas**: Mark DLT-161 as in spec
+  ([`5605847`](https://github.com/asermax/tachikoma/commit/560584789e481966266f222bbc6abf039035f4ab))
+
+- **deltas**: Mark DLT-161 design as complete
+  ([`e296464`](https://github.com/asermax/tachikoma/commit/e296464cf12404043ec13882559486bf4f631da8))
+
+- **deltas**: Mark DLT-161 implementation complete
+  ([`c69582c`](https://github.com/asermax/tachikoma/commit/c69582c6c26f5cb2f58529c97b03ad0fb0855e9a))
+
+- **deltas**: Refine DLT-161 spec with routing and atomicity details
+  ([`988592a`](https://github.com/asermax/tachikoma/commit/988592a3df896a2f724a132fa6b2f6753763bf13))
+
+- **workflows**: Document composition and condition fields
+  ([`20e9668`](https://github.com/asermax/tachikoma/commit/20e9668b34aa2815d34f0263738699f6bb616c82))
+
+- **workflows**: Reconcile DLT-161 into feature documentation
+  ([`5b85acf`](https://github.com/asermax/tachikoma/commit/5b85acf2ae042698c6e1d65d00a5676efad1ab87))
+
+### Features
+
+- **workflows**: Add composition-aware persistence layer
+  ([`5bb215e`](https://github.com/asermax/tachikoma/commit/5bb215e8f01e5ccc0b06f291928a32f689259a64))
+
+- **workflows**: Add load-time composition validation
+  ([`9127dfb`](https://github.com/asermax/tachikoma/commit/9127dfb6c95721f0ae1eb449235706fdc368d962))
+
+- **workflows**: Implement cascade engine and tool-handler integration
+  ([`b23bf15`](https://github.com/asermax/tachikoma/commit/b23bf15a96d53e8a27eefcb4717cd2e8823dcb4e))
+
+- **workflows**: Integrate abort_cascade into stale workflow cleanup
+  ([`74badec`](https://github.com/asermax/tachikoma/commit/74badecab329e317c5b68c168c8b90e7f7fc0326))
+
+- **workflows**: Surface composition corruption in get_workflow_state
+  ([`71feefa`](https://github.com/asermax/tachikoma/commit/71feefa52cb369719e22fef9c0277ccc5f2ae717))
+
+### Refactoring
+
+- **workflows**: Clean up tools and unexport delete_scratchpad
+  ([`42c3a32`](https://github.com/asermax/tachikoma/commit/42c3a320e7a3befd5725b2926538e774fee2c316))
+
+
 ## v1.53.0 (2026-04-26)
 
 ### Bug Fixes
