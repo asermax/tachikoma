@@ -1159,9 +1159,7 @@ class TestStartWorkflowMarker:
         assert text.count("(skippable)") == 1
 
     @pytest.mark.asyncio
-    async def test_start_workflow_shows_condition_marker(
-        self, repository, mock_registry, tmp_path
-    ):
+    async def test_start_workflow_shows_condition_marker(self, repository, mock_registry, tmp_path):
         """Steps with condition show (if: ...) marker."""
         steps = [
             _make_step("01-plan", "Plan"),
@@ -1422,9 +1420,7 @@ class TestConditionHandlerIntegration:
         assert updated.step_states["01-plan"] == "started"
 
     @pytest.mark.asyncio
-    async def test_explicit_start_with_failing_condition_skips(
-        self, repository, mock_registry
-    ):
+    async def test_explicit_start_with_failing_condition_skips(self, repository, mock_registry):
         """Explicit start with failing condition auto-skips."""
         snapshot = [
             {
@@ -1516,9 +1512,7 @@ class TestConditionHandlerIntegration:
         assert await repository.get(state.id) is None
 
     @pytest.mark.asyncio
-    async def test_complete_advances_with_condition_check(
-        self, repository, mock_registry
-    ):
+    async def test_complete_advances_with_condition_check(self, repository, mock_registry):
         """Completing a step evaluates conditions on the next step."""
         snapshot = [
             {
@@ -1681,9 +1675,7 @@ class TestConditionHandlerIntegration:
         with patch(
             "tachikoma.workflows.tools.evaluate_condition",
             new_callable=AsyncMock,
-            return_value=ConditionResult(
-                passes=False, is_error=True, reason="SDK timeout"
-            ),
+            return_value=ConditionResult(passes=False, is_error=True, reason="SDK timeout"),
         ):
             result = await handle_update_workflow_state(
                 state.id,

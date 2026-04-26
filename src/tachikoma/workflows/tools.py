@@ -474,12 +474,20 @@ async def handle_update_workflow_state(
     new_current_step: str | None = None
     condition_skipped: list[tuple[str, ConditionResult]] = []
 
-    has_condition_support = bool(agent_defaults and session_context and workspace_path)
+    has_condition_support = (
+        agent_defaults is not None
+        and session_context is not None
+        and workspace_path is not None
+    )
 
     if action == "start":
         condition_failed = False
 
         if has_condition_support:
+            assert agent_defaults is not None
+            assert session_context is not None
+            assert workspace_path is not None
+
             step_info = _get_step_from_snapshot(state.definition_snapshot, step)
             condition = step_info.get("condition")
 
@@ -519,6 +527,10 @@ async def handle_update_workflow_state(
         new_step_states[step] = STEP_COMPLETED if action == "complete" else STEP_SKIPPED
 
         if has_condition_support:
+            assert agent_defaults is not None
+            assert session_context is not None
+            assert workspace_path is not None
+
             new_current_step, advance_skipped = await _evaluate_and_advance(
                 new_step_states,
                 state.definition_snapshot,

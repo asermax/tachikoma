@@ -35,9 +35,7 @@ class TestBuildEvaluationPrompt:
 
     def test_json_in_step_states_is_valid(self):
         step_states = {"01-plan": "completed"}
-        prompt = _build_evaluation_prompt(
-            "test condition", step_states, "/tmp/scratch.md"
-        )
+        prompt = _build_evaluation_prompt("test condition", step_states, "/tmp/scratch.md")
 
         # Extract the JSON from the prompt
         for line in prompt.splitlines():
