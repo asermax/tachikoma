@@ -4,11 +4,13 @@ from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from pydantic import ValidationError
 
 from tachikoma.agent_defaults import AgentDefaults
 from tachikoma.git.sync import PUSH_RESULT, SYNC_RESULT
 from tachikoma.git.tools import (
     DESTRUCTIVE_GIT_DENY_PATTERNS,
+    PushArgs,
     create_git_tools_server,
     handle_push,
     handle_scrub,
@@ -58,6 +60,64 @@ class TestResolveTarget:
 
     def test_project_returns_none_for_unknown_name(self, workspace: Path) -> None:
         assert resolve_target("project", "nonexistent", workspace) is None
+
+
+class TestPushArgs:
+    """Validate PushArgs.scrub_paths handling, including the JSON-string fallback
+    that works around the Claude Agent SDK MCP transport stringifying arrays.
+    """
+
+    def test_scrub_paths_list_passthrough(self) -> None:
+        args = PushArgs.model_validate(
+            {"type": "project", "target": "x", "scrub_paths": ["a.ogg", "b.json"]}
+        )
+
+        assert args.scrub_paths == ["a.ogg", "b.json"]
+
+    def test_scrub_paths_json_string_decoded(self) -> None:
+        args = PushArgs.model_validate(
+            {"type": "project", "target": "x", "scrub_paths": '["a.ogg", "b.json"]'}
+        )
+
+        assert args.scrub_paths == ["a.ogg", "b.json"]
+
+    def test_scrub_paths_omitted_is_none(self) -> None:
+        assert PushArgs.model_validate({"type": "workspace"}).scrub_paths is None
+
+    def test_scrub_paths_explicit_none(self) -> None:
+        args = PushArgs.model_validate({"type": "project", "target": "x", "scrub_paths": None})
+
+        assert args.scrub_paths is None
+
+    def test_scrub_paths_invalid_json_rejected(self) -> None:
+        with pytest.raises(ValidationError, match="JSON-encoded array"):
+            PushArgs.model_validate(
+                {"type": "project", "target": "x", "scrub_paths": "not json"}
+            )
+
+    def test_scrub_paths_non_array_json_rejected(self) -> None:
+        with pytest.raises(ValidationError, match="must encode an array"):
+            PushArgs.model_validate(
+                {"type": "project", "target": "x", "scrub_paths": '{"a": 1}'}
+            )
+
+    def test_scrub_paths_non_string_items_rejected(self) -> None:
+        # Decoded list contains ints; standard list[str] validation rejects them.
+        with pytest.raises(ValidationError):
+            PushArgs.model_validate(
+                {"type": "project", "target": "x", "scrub_paths": "[1, 2]"}
+            )
+
+    def test_scrub_paths_schema_does_not_advertise_string(self) -> None:
+        """Schema stays narrow: array | null only. The JSON-string form is a
+        defensive coercion, not part of the public contract.
+        """
+        schema = PushArgs.model_json_schema()["properties"]["scrub_paths"]
+        variants = schema.get("anyOf", [])
+        types = {v.get("type") for v in variants}
+
+        assert "array" in types
+        assert "string" not in types
 
 
 class TestHandlePush:

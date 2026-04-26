@@ -12,6 +12,7 @@ non-git-processor agent surfaces.
 """
 
 import asyncio
+import json
 import re
 from pathlib import Path
 from typing import Literal
@@ -19,7 +20,7 @@ from typing import Literal
 from claude_agent_sdk import create_sdk_mcp_server, tool
 from claude_agent_sdk.types import McpSdkServerConfig
 from loguru import logger
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 
 from tachikoma.agent_defaults import AgentDefaults
 from tachikoma.git.sync import (
@@ -44,6 +45,24 @@ class PushArgs(BaseModel):
     type: TargetType
     target: str | None = None
     scrub_paths: list[str] | None = None
+
+    # Workaround: the Claude Agent SDK MCP transport occasionally serializes
+    # array tool arguments as JSON-encoded strings. Decode defensively so the
+    # tool keeps working without broadening the schema. See DES-006.
+    @field_validator("scrub_paths", mode="before")
+    @classmethod
+    def _decode_scrub_paths(cls, v: object) -> object:
+        if not isinstance(v, str):
+            return v
+        try:
+            decoded = json.loads(v)
+        except json.JSONDecodeError as exc:
+            raise ValueError(f"scrub_paths must be a JSON-encoded array: {exc}") from exc
+        if not isinstance(decoded, list):
+            raise ValueError(
+                f"scrub_paths JSON string must encode an array, got {type(decoded).__name__}"
+            )
+        return decoded
 
 
 class SyncArgs(BaseModel):
@@ -457,7 +476,10 @@ def create_git_tools_server(
             "submodule. This is DESTRUCTIVE and IRREVERSIBLE — it rewrites "
             "all history and force-pushes to origin. Only works with "
             "type='project'. Example: push(type='project', target='my-pages', "
-            "scrub_paths=['audio/large-file.ogg', 'data/old.json'])"
+            "scrub_paths=['audio/large-file.ogg', 'data/old.json']). If your "
+            "MCP transport stringifies array arguments, scrub_paths may also "
+            "be passed as a JSON-encoded string of paths; the tool decodes it "
+            "transparently."
         ),
         PushArgs.model_json_schema(),
     )
