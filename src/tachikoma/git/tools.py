@@ -476,10 +476,7 @@ def create_git_tools_server(
             "submodule. This is DESTRUCTIVE and IRREVERSIBLE — it rewrites "
             "all history and force-pushes to origin. Only works with "
             "type='project'. Example: push(type='project', target='my-pages', "
-            "scrub_paths=['audio/large-file.ogg', 'data/old.json']). If your "
-            "MCP transport stringifies array arguments, scrub_paths may also "
-            "be passed as a JSON-encoded string of paths; the tool decodes it "
-            "transparently."
+            "scrub_paths=['audio/large-file.ogg', 'data/old.json'])."
         ),
         PushArgs.model_json_schema(),
     )
