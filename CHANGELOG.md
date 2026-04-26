@@ -2,6 +2,19 @@
 
 <!-- version list -->
 
+## v1.54.1 (2026-04-26)
+
+### Bug Fixes
+
+- **git**: Decode JSON-stringified scrub_paths from SDK MCP transport
+  ([`285f2a2`](https://github.com/asermax/tachikoma/commit/285f2a268b667fca67335ca091504c395e368cc3))
+
+### Documentation
+
+- **git**: Drop scrub_paths JSON-string note from push tool description
+  ([`677a883`](https://github.com/asermax/tachikoma/commit/677a883ebdfc8280ad28d009c78eb8942c9858c2))
+
+
 ## v1.54.0 (2026-04-26)
 
 ### Documentation
