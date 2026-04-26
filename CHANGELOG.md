@@ -2,6 +2,37 @@
 
 <!-- version list -->
 
+## v1.52.0 (2026-04-26)
+
+### Code Style
+
+- Apply code formatting across multiple modules
+  ([`2698e71`](https://github.com/asermax/tachikoma/commit/2698e71f589b2dbae1099284374841a0f423e635))
+
+### Documentation
+
+- **skills**: Update workflow authoring guide to use required field
+  ([`f3e8368`](https://github.com/asermax/tachikoma/commit/f3e8368f88d9ba286492c4e917657a600a6f786a))
+
+### Features
+
+- **git**: Add scrub_paths to push MCP tool
+  ([`4df3bc9`](https://github.com/asermax/tachikoma/commit/4df3bc922b82f29288b1935a81c5f6a30bc4104d))
+
+### Refactoring
+
+- **git**: Use shared git helpers in scrub tool
+  ([`f07e757`](https://github.com/asermax/tachikoma/commit/f07e7577c63240855b1bf64785b3d3d173c1f887))
+
+- **workflows**: Rename skippable field to required with backward compat
+  ([`6ca0ffe`](https://github.com/asermax/tachikoma/commit/6ca0ffe19ace5187d0f015954a6a0292bc367f84))
+
+### Testing
+
+- **git**: Add tests for scrub paths and filter-repo deny pattern
+  ([`00d0da4`](https://github.com/asermax/tachikoma/commit/00d0da4bc1e8be3e9659516865696222219b6930))
+
+
 ## v1.51.0 (2026-04-25)
 
 ### Bug Fixes
