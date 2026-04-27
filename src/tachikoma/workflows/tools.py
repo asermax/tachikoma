@@ -60,6 +60,7 @@ class UpdateWorkflowStateArgs(BaseModel):
     workflow_id: str
     step: str
     action: Literal["start", "complete", "skip"]
+    items: list[str] | None = None
 
 
 class GetWorkflowStateArgs(BaseModel):
@@ -114,20 +115,28 @@ def _step_to_snapshot(step: StepDefinition) -> dict:
         "required_skills": list(step.required_skills),
         "condition": step.condition,
         "composes": step.composes,
+        "loop": step.loop,
     }
 
 
-def _render_breadcrumb(parts: list[tuple[str, str | None]]) -> str:
+def _render_breadcrumb(parts: list[tuple[str, str | None, str | None]]) -> str:
     """Render breadcrumb showing the active path through nested layers.
 
-    Each part is (workflow_name, step_id).  Segments with a ``None`` step
-    are omitted (e.g., a layer whose step was just finalized).
+    Each part is (workflow_name, step_id, current_item).  Segments with a
+    ``None`` step are omitted.  The deepest segment gets an ``(item: <value>)``
+    suffix when ``current_item`` is set.
     """
     if not parts:
         return ""
-    segments = [
-        f"{wf}/{sid}" for wf, sid in parts if sid is not None
-    ]
+    segments = []
+    for i, (wf, sid, item) in enumerate(parts):
+        if sid is None:
+            continue
+        seg = f"{wf}/{sid}"
+        is_deepest = i == len(parts) - 1
+        if is_deepest and item is not None:
+            seg += f" (item: {item})"
+        segments.append(seg)
     return " > ".join(segments) if segments else ""
 
 
@@ -142,6 +151,7 @@ class _CascadeLayerInfo:
         "parent_workflow_id",
         "parent_step_id",
         "definition_snapshot",
+        "current_item",
     )
 
     def __init__(
@@ -153,6 +163,7 @@ class _CascadeLayerInfo:
         parent_workflow_id: str | None,
         parent_step_id: str | None,
         definition_snapshot: list[dict],
+        current_item: str | None = None,
     ) -> None:
         self.id = id
         self.workflow_name = workflow_name
@@ -161,6 +172,7 @@ class _CascadeLayerInfo:
         self.parent_workflow_id = parent_workflow_id
         self.parent_step_id = parent_step_id
         self.definition_snapshot = definition_snapshot
+        self.current_item = current_item
 
     @classmethod
     def from_state(cls, state: WorkflowState) -> Self:
@@ -179,12 +191,28 @@ def _build_breadcrumb_parts(
     layers: dict[str, _CascadeLayerInfo],
     chain_order: list[str],
     current_steps: dict[str, str | None],
-) -> list[tuple[str, str | None]]:
-    """Collect (workflow_name, current_step) per layer for breadcrumb rendering."""
+) -> list[tuple[str, str | None, str | None]]:
+    """Collect (workflow_name, current_step, current_item) per layer for breadcrumb."""
     return [
-        (layers[lid].workflow_name, current_steps.get(lid))
+        (layers[lid].workflow_name, current_steps.get(lid), layers[lid].current_item)
         for lid in chain_order
     ]
+
+
+def _merge_loop_state(
+    current_loop_state: dict | None,
+    step_id: str,
+    items: list[str],
+    index: int,
+) -> dict:
+    """Merge a loop-state entry into the existing loop_state dict.
+
+    Preserves entries for other step IDs; overwrites/inserts the entry for
+    ``step_id``.  Returns a new dict (never mutates the input).
+    """
+    merged = dict(current_loop_state) if current_loop_state else {}
+    merged[step_id] = {"items": list(items), "index": index}
+    return merged
 
 
 def _find_next_pending_step(
@@ -370,6 +398,7 @@ def _try_spawn_child(
     parent: _CascadeLayerInfo,
     parent_step_id: str,
     skill_registry: SkillRegistry,
+    current_item: str | None = None,
 ) -> dict | tuple[_CascadeLayerInfo, str, dict[str, StepState], list[dict]]:
     """Resolve a composition target and prepare a child layer.
 
@@ -411,6 +440,7 @@ def _try_spawn_child(
         parent_workflow_id=parent.id,
         parent_step_id=parent_step_id,
         definition_snapshot=child_snapshot,
+        current_item=current_item,
     )
 
     return child_layer, child_id, child_ss, child_snapshot
@@ -430,9 +460,10 @@ async def _run_cascade(
     agent_defaults: AgentDefaults | None,
     session_context: SessionContext | None,
     workspace_path: Path | None,
+    items: list[str] | None = None,
 ) -> dict | tuple[
     MutationBatch, CascadeOutcome,
-    list[tuple[str, str | None]], list[dict], str,
+    list[tuple[str, str | None, str | None]], list[dict], str,
 ]:
     """Run the cascade-aware activation loop.
 
@@ -470,6 +501,13 @@ async def _run_cascade(
     if transition_error is not None:
         return _error_response(transition_error)
 
+    # Gate 3: structural step-kind / items consistency (before condition eval)
+    is_loop_step = bool(step_info.get("loop"))
+    if action == "start" and items is not None and not is_loop_step:
+        return _error_response(
+            "items parameter is not allowed when starting a non-loop step."
+        )
+
     # ── Initialize mutable state ─────────────────────────────────────────
 
     batch = MutationBatch()
@@ -477,12 +515,16 @@ async def _run_cascade(
 
     layers: dict[str, _CascadeLayerInfo] = {}
     mutable_ss: dict[str, dict[str, StepState]] = {}
+    mutable_loop_state: dict[str, dict | None] = {}
     current_steps: dict[str, str | None] = {}
     chain_order: list[str] = []
 
     for state in chain:
         layers[state.id] = _CascadeLayerInfo.from_state(state)
         mutable_ss[state.id] = dict(state.step_states)
+        mutable_loop_state[state.id] = (
+            dict(state.loop_state) if state.loop_state is not None else None
+        )
         current_steps[state.id] = state.current_step
         chain_order.append(state.id)
 
@@ -525,10 +567,70 @@ async def _run_cascade(
                 )
 
         if not condition_failed:
-            ss[step] = STEP_STARTED
+            # Gate 5: items required for loop steps (after condition passes)
+            if is_loop_step and items is None:
+                return _error_response(
+                    "items parameter is required when starting a loop step. "
+                    "Pass items=[...] (or items=[] to skip with zero iterations)."
+                )
 
-            if not step_info.get("composes"):
+            if is_loop_step:
+                # Loop-step start
+                if items:
+                    # Non-empty items: STARTED + spawn iteration 0
+                    ss[step] = STEP_STARTED
+                    current_steps[current.id] = step
+                    new_ls = _merge_loop_state(
+                        mutable_loop_state[current.id], step, items, index=0,
+                    )
+                    mutable_loop_state[current.id] = new_ls
+                    batch.ordered.append(UpdateState(
+                        layer_id=current.id,
+                        step_states=dict(ss),
+                        current_step=step,
+                        loop_state=new_ls,
+                    ))
+                    spawn = _try_spawn_child(
+                        step_info["loop"], current, step, skill_registry,
+                        current_item=items[0],
+                    )
+                    if isinstance(spawn, dict):
+                        return spawn
+                    child_layer, child_id, child_ss, child_snapshot = spawn
+                    batch.ordered.append(CreateChild(
+                        child_id=child_id,
+                        parent_id=current.id,
+                        parent_step_id=step,
+                        skill_name=child_layer.skill_name,
+                        workflow_name=child_layer.workflow_name,
+                        step_states=dict(child_ss),
+                        definition_snapshot=child_snapshot,
+                        scratchpad_path=current.scratchpad_path,
+                    ))
+                    layers[child_id] = child_layer
+                    mutable_ss[child_id] = dict(child_ss)
+                    mutable_loop_state[child_id] = None
+                    current_steps[child_id] = None
+                    chain_order.append(child_id)
+                    current = child_layer
+                else:
+                    # Empty items: COMPLETED directly (zero iterations)
+                    ss[step] = STEP_COMPLETED
+                    current_steps[current.id] = step
+                    new_ls = _merge_loop_state(
+                        mutable_loop_state[current.id], step, [], index=0,
+                    )
+                    mutable_loop_state[current.id] = new_ls
+                    batch.ordered.append(UpdateState(
+                        layer_id=current.id,
+                        step_states=dict(ss),
+                        current_step=step,
+                        loop_state=new_ls,
+                    ))
+                    # Fall through to auto-advance while-loop
+            elif not step_info.get("composes"):
                 # Simple start on a regular step — done immediately
+                ss[step] = STEP_STARTED
                 current_steps[current.id] = step
                 batch.ordered.append(UpdateState(
                     layer_id=current.id,
@@ -547,37 +649,39 @@ async def _run_cascade(
                     current.definition_snapshot,
                     scratchpad_path,
                 )
+            else:
+                # Composes step — existing behavior
+                ss[step] = STEP_STARTED
+                current_steps[current.id] = step
+                batch.ordered.append(UpdateState(
+                    layer_id=current.id,
+                    step_states=dict(ss),
+                    current_step=step,
+                ))
 
-            current_steps[current.id] = step
-            batch.ordered.append(UpdateState(
-                layer_id=current.id,
-                step_states=dict(ss),
-                current_step=step,
-            ))
+                spawn = _try_spawn_child(
+                    step_info["composes"], current, step, skill_registry,
+                )
+                if isinstance(spawn, dict):
+                    return spawn
 
-            spawn = _try_spawn_child(
-                step_info["composes"], current, step, skill_registry,
-            )
-            if isinstance(spawn, dict):
-                return spawn
+                child_layer, child_id, child_ss, child_snapshot = spawn
+                batch.ordered.append(CreateChild(
+                    child_id=child_id,
+                    parent_id=current.id,
+                    parent_step_id=step,
+                    skill_name=child_layer.skill_name,
+                    workflow_name=child_layer.workflow_name,
+                    step_states=dict(child_ss),
+                    definition_snapshot=child_snapshot,
+                    scratchpad_path=current.scratchpad_path,
+                ))
 
-            child_layer, child_id, child_ss, child_snapshot = spawn
-            batch.ordered.append(CreateChild(
-                child_id=child_id,
-                parent_id=current.id,
-                parent_step_id=step,
-                skill_name=child_layer.skill_name,
-                workflow_name=child_layer.workflow_name,
-                step_states=dict(child_ss),
-                definition_snapshot=child_snapshot,
-                scratchpad_path=current.scratchpad_path,
-            ))
-
-            layers[child_id] = child_layer
-            mutable_ss[child_id] = dict(child_ss)
-            current_steps[child_id] = None
-            chain_order.append(child_id)
-            current = child_layer
+                layers[child_id] = child_layer
+                mutable_ss[child_id] = dict(child_ss)
+                current_steps[child_id] = None
+                chain_order.append(child_id)
+                current = child_layer
 
     elif action == "complete":
         ss[step] = STEP_COMPLETED
@@ -623,11 +727,72 @@ async def _run_cascade(
                 assert parent_id is not None
                 parent = layers[parent_id]
                 assert current.parent_step_id is not None
-                mutable_ss[parent_id][current.parent_step_id] = STEP_COMPLETED
+                parent_step_id = current.parent_step_id
+                parent_snapshot = parent.definition_snapshot
+                parent_step_info = _get_step_from_snapshot(parent_snapshot, parent_step_id)
 
                 chain_order.remove(current.id)
-                current = parent
-                continue
+
+                if parent_step_info.get("loop"):
+                    # Loop iteration — advance or exhaust
+                    current_ls = (mutable_loop_state[parent_id] or {}).copy()
+                    entry = current_ls.get(parent_step_id, {})
+                    items_list = entry.get("items", [])
+                    next_index = entry.get("index", 0) + 1
+
+                    if next_index < len(items_list):
+                        # Spawn iteration N+1
+                        new_loop_state = _merge_loop_state(
+                            mutable_loop_state[parent_id],
+                            parent_step_id, items_list, index=next_index,
+                        )
+                        mutable_loop_state[parent_id] = new_loop_state
+                        batch.ordered.append(UpdateState(
+                            layer_id=parent_id,
+                            step_states=dict(mutable_ss[parent_id]),
+                            current_step=parent_step_id,
+                            loop_state=new_loop_state,
+                        ))
+                        spawn = _try_spawn_child(
+                            parent_step_info["loop"], parent, parent_step_id,
+                            skill_registry,
+                            current_item=items_list[next_index],
+                        )
+                        if isinstance(spawn, dict):
+                            return spawn
+                        child_layer, child_id, child_ss, child_snapshot = spawn
+                        batch.ordered.append(CreateChild(
+                            child_id=child_id,
+                            parent_id=parent_id,
+                            parent_step_id=parent_step_id,
+                            skill_name=child_layer.skill_name,
+                            workflow_name=child_layer.workflow_name,
+                            step_states=dict(child_ss),
+                            definition_snapshot=child_snapshot,
+                            scratchpad_path=parent.scratchpad_path,
+                        ))
+                        layers[child_id] = child_layer
+                        mutable_ss[child_id] = dict(child_ss)
+                        mutable_loop_state[child_id] = None
+                        current_steps[child_id] = None
+                        chain_order.append(child_id)
+                        current = child_layer
+                        continue
+                    else:
+                        # Exhausted — mark loop step COMPLETED
+                        mutable_ss[parent_id][parent_step_id] = STEP_COMPLETED
+                        new_loop_state = _merge_loop_state(
+                            mutable_loop_state[parent_id],
+                            parent_step_id, items_list, index=next_index,
+                        )
+                        mutable_loop_state[parent_id] = new_loop_state
+                        current = parent
+                        continue
+                else:
+                    # Existing composition behavior: mark parent step COMPLETED
+                    mutable_ss[parent_id][parent_step_id] = STEP_COMPLETED
+                    current = parent
+                    continue
             else:
                 batch.ordered.append(UpdateState(
                     layer_id=current.id,
@@ -649,6 +814,30 @@ async def _run_cascade(
                 )
 
         next_info = _get_step_from_snapshot(snapshot, next_step)
+        next_loop = next_info.get("loop")
+
+        if next_loop:
+            # HALT: loop step requires explicit start with items.
+            # Persist the prior cascade work but leave the loop step PENDING.
+            batch.ordered.append(UpdateState(
+                layer_id=current.id,
+                step_states=dict(ss),
+                current_step=current_steps.get(current.id),
+            ))
+            return (
+                batch,
+                CascadeOutcome(
+                    deepest_layer_id=current.id,
+                    active_step_id=next_step,
+                    condition_skips=condition_skips,
+                    finalized_top_level=False,
+                    halted_at_loop_step=next_step,
+                ),
+                _build_breadcrumb_parts(layers, chain_order, current_steps),
+                current.definition_snapshot,
+                scratchpad_path,
+            )
+
         composes = next_info.get("composes")
 
         if composes:
@@ -833,9 +1022,10 @@ async def handle_start_workflow(
         skip_marker = " (skippable)" if not step.required else ""
         cond_marker = f" (if: {step.condition})" if step.condition else ""
         compose_marker = f" (composes: {step.composes})" if step.composes else ""
+        loop_marker = f" (loop: {step.loop})" if step.loop else ""
         step_lines.append(
             f"{i}. **{step.title}** (`{step.id}`)"
-            f"{skip_marker}{cond_marker}{compose_marker}"
+            f"{skip_marker}{cond_marker}{compose_marker}{loop_marker}"
         )
 
     steps_text = "\n".join(step_lines)
@@ -873,6 +1063,7 @@ async def handle_update_workflow_state(
     agent_defaults: AgentDefaults | None = None,
     session_context: SessionContext | None = None,
     workspace_path: Path | None = None,
+    items: list[str] | None = None,
 ) -> dict:
     """Handle update_workflow_state: transition a step's state with cascade support."""
 
@@ -880,6 +1071,7 @@ async def handle_update_workflow_state(
         workflow_id, step, action,
         repository, skill_registry,
         agent_defaults, session_context, workspace_path,
+        items=items,
     )
 
     if isinstance(result, dict):
@@ -913,6 +1105,22 @@ async def handle_update_workflow_state(
         if outcome.condition_skips:
             text += "\n\n" + _format_cascade_skips(outcome.condition_skips)
 
+        return {"content": [{"type": "text", "text": text}]}
+
+    # Handle auto-start halt at loop step
+    if outcome.halted_at_loop_step is not None:
+        halted_id = outcome.halted_at_loop_step
+        halted_info = _get_step_from_snapshot(deepest_snapshot, halted_id)
+        halted_title = halted_info.get("title", halted_id)
+        text = (
+            f"Step `{step}` {action}d.\n\n"
+            f"The next step **{halted_title}** (`{halted_id}`) is a loop step. "
+            f"Call `update_workflow_state(workflow_id=\"{workflow_id}\", "
+            f"step=\"{halted_id}\", action=\"start\", items=[...])` "
+            "to begin iterating, or `items=[]` to skip with zero iterations."
+        )
+        if outcome.condition_skips:
+            text += "\n\n" + _format_cascade_skips(outcome.condition_skips)
         return {"content": [{"type": "text", "text": text}]}
 
     # Build response for the activated step
@@ -1021,6 +1229,9 @@ def _render_state_view(state: WorkflowState, *, header: str = "Workflow State") 
         f"{state.step_states.get(sd['id'], STEP_PENDING)}"
         for sd in state.definition_snapshot
     ]
+
+    loop_blocks = _render_loop_step_blocks(state)
+
     return (
         f"## {header}\n\n"
         f"- **ID**: {state.id}\n"
@@ -1031,7 +1242,44 @@ def _render_state_view(state: WorkflowState, *, header: str = "Workflow State") 
         f"- **Created**: {state.created_at.strftime('%Y-%m-%d %H:%M UTC')}\n"
         f"- **Updated**: {state.updated_at.strftime('%Y-%m-%d %H:%M UTC')}\n\n"
         f"### Steps\n\n" + "\n".join(steps_display)
+        + (f"\n\n{loop_blocks}" if loop_blocks else "")
     )
+
+
+def _render_loop_step_blocks(state: WorkflowState) -> str:
+    """Render `### Loop step` blocks for each active loop step on a layer."""
+    if not state.loop_state:
+        return ""
+
+    blocks: list[str] = []
+    for step_id, entry in state.loop_state.items():
+        items = entry.get("items", [])
+        index = entry.get("index", 0)
+        step_info = _get_step_from_snapshot(state.definition_snapshot, step_id)
+        step_title = step_info.get("title", step_id)
+        count = len(items)
+
+        if count == 0:
+            items_line = "Items (0): (none) — completed with zero iterations"
+        else:
+            items_formatted = ", ".join(f"`{i}`" for i in items)
+            items_line = f"Items ({count}): {items_formatted}"
+
+        if index >= count:
+            iteration_line = f"Current iteration: {count} / {count} (complete)"
+        else:
+            iteration_line = f"Current iteration: {index + 1} / {count}"
+            current_item = items[index] if index < count else None
+            if current_item is not None:
+                iteration_line += f"\n- Current item: `{current_item}`"
+
+        blocks.append(
+            f"### Loop step: {step_title} (`{step_id}`)\n\n"
+            f"- {items_line}\n"
+            f"- {iteration_line}"
+        )
+
+    return "\n\n".join(blocks)
 
 
 async def handle_get_workflow_state(
@@ -1074,12 +1322,25 @@ async def handle_get_workflow_state(
         return {"content": [{"type": "text", "text": text}]}
 
     # Multi-layer — nested view with breadcrumb
-    breadcrumb_parts = [
-        f"{layer.workflow_name}/{layer.current_step}"
-        for layer in chain
-        if layer.current_step
-    ]
-    breadcrumb = " > ".join(breadcrumb_parts)
+    breadcrumb_segments = []
+    for i, layer in enumerate(chain):
+        if not layer.current_step:
+            continue
+        seg = f"{layer.workflow_name}/{layer.current_step}"
+        is_deepest = i == len(chain) - 1
+        if is_deepest and i > 0:
+            # Check if the parent has an active loop providing a current item
+            parent = chain[i - 1]
+            if parent.loop_state:
+                parent_step = layer.parent_step_id
+                if parent_step and parent_step in (parent.loop_state or {}):
+                    entry = parent.loop_state[parent_step]
+                    items = entry.get("items", [])
+                    idx = entry.get("index", 0)
+                    if idx < len(items):
+                        seg += f" (item: {items[idx]})"
+        breadcrumb_segments.append(seg)
+    breadcrumb = " > ".join(breadcrumb_segments)
 
     text = _render_state_view(head)
 
@@ -1232,6 +1493,10 @@ def create_workflow_tools_server(
         "- workflow_id (str, required): The workflow instance ID\n"
         "- step (str, required): The step identifier (directory name)\n"
         "- action (str, required): 'start', 'complete', or 'skip'\n"
+        "- items (list[str], optional): Required when starting a loop step. Each\n"
+        "  item is an opaque reference (e.g., a filename) the iteration body\n"
+        "  interprets. Rejected when starting a non-loop step. Pass items=[] to\n"
+        "  skip a loop step with zero iterations.\n"
         "\n"
         "Validates the transition and returns step instructions. "
         "Completing or skipping a step auto-starts the next pending step "
@@ -1253,6 +1518,7 @@ def create_workflow_tools_server(
             agent_defaults=agent_defaults,
             session_context=session_context,
             workspace_path=workspace_path,
+            items=parsed.items,
         )
 
     @tool(
