@@ -2,6 +2,14 @@
 
 <!-- version list -->
 
+## v1.55.1 (2026-04-27)
+
+### Bug Fixes
+
+- **git**: Parse scrub_paths in push tool wrapper instead of validator
+  ([`ce9c6ec`](https://github.com/asermax/tachikoma/commit/ce9c6eccfd5f055606c67765b570ad59a5a613ce))
+
+
 ## v1.55.0 (2026-04-27)
 
 ### Documentation
