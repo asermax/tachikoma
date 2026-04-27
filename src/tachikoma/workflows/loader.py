@@ -247,10 +247,25 @@ def _load_step(
         )
         composes = None
 
+    loop = post.metadata.get("loop")
+    if loop is not None and not isinstance(loop, str):
+        _log.warning(
+            "Step has invalid loop type (expected string), treating as None: "
+            "skill={skill}, workflow={workflow}, step={step}",
+            skill=skill_name,
+            workflow=workflow_name,
+            step=step_dir.name,
+        )
+        loop = None
+
+    _excluded_keys = (
+        "title", "required", "skippable", "required_skills",
+        "condition", "composes", "loop",
+    )
     properties = {
         k: v
         for k, v in post.metadata.items()
-        if k not in ("title", "required", "skippable", "required_skills", "condition", "composes")
+        if k not in _excluded_keys
     }
 
     references_path = step_dir / "references"
@@ -271,6 +286,7 @@ def _load_step(
         required_skills=required_skills,
         condition=condition,
         composes=composes,
+        loop=loop,
         properties=properties,
     )
 

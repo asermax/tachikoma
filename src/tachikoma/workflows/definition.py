@@ -35,6 +35,10 @@ class StepDefinition:
         composes: Raw frontmatter value referencing another workflow to compose.
             ``<workflow>`` for same-skill or ``<skill>/<workflow>`` for cross-skill.
             Resolved at registry validation time via composition.resolve_composes().
+        loop: Raw frontmatter value referencing another workflow to iterate.
+            Same syntax as ``composes``; resolved at registry validation time.
+            Mutex with ``composes`` — a step declares at most one.
+            One iteration of the target runs per item supplied by the agent at start.
         properties: Extensible frontmatter fields for future customization.
     """
 
@@ -47,6 +51,7 @@ class StepDefinition:
     required_skills: tuple[str, ...] = ()
     condition: str | None = None
     composes: str | None = None
+    loop: str | None = None
     properties: dict[str, object] = field(default_factory=dict)
 
 
