@@ -1858,14 +1858,14 @@ class TestStepToSnapshotIncludesComposes:
 
 class TestRenderBreadcrumb:
     def test_single_layer(self):
-        rendered = _render_breadcrumb([("weekly-review", "01-plan")])
+        rendered = _render_breadcrumb([("weekly-review", "01-plan", None)])
         assert rendered == "weekly-review/01-plan"
 
     def test_two_layers_uses_separator(self):
         rendered = _render_breadcrumb(
             [
-                ("weekly-review", "02-handle-inbox"),
-                ("process-inbox-note", "01-check"),
+                ("weekly-review", "02-handle-inbox", None),
+                ("process-inbox-note", "01-check", None),
             ]
         )
         assert rendered == "weekly-review/02-handle-inbox > process-inbox-note/01-check"
@@ -1873,15 +1873,40 @@ class TestRenderBreadcrumb:
     def test_three_layers(self):
         rendered = _render_breadcrumb(
             [
-                ("a", "01"),
-                ("b", "02"),
-                ("c", "03"),
+                ("a", "01", None),
+                ("b", "02", None),
+                ("c", "03", None),
             ]
         )
         assert rendered == "a/01 > b/02 > c/03"
 
     def test_empty_returns_empty_string(self):
         assert _render_breadcrumb([]) == ""
+
+    def test_deepest_layer_with_item_suffix(self):
+        rendered = _render_breadcrumb(
+            [
+                ("weekly-review", "03-process", None),
+                ("process-item", "01-step", "foo.md"),
+            ]
+        )
+        assert rendered == "weekly-review/03-process > process-item/01-step (item: foo.md)"
+
+    def test_non_deepest_item_not_suffixed(self):
+        rendered = _render_breadcrumb(
+            [
+                ("weekly-review", "03-process", "outer-item"),
+                ("process-item", "01-step", "inner-item"),
+            ]
+        )
+        assert (
+            rendered
+            == "weekly-review/03-process > process-item/01-step (item: inner-item)"
+        )
+
+    def test_empty_item_renders_literal(self):
+        rendered = _render_breadcrumb([("wf", "01-step", "")])
+        assert rendered == "wf/01-step (item: )"
 
 
 class TestCascadeRouting:
