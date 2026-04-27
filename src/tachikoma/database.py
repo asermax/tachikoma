@@ -300,7 +300,6 @@ class Database:
                     "Schema migration: added 'parent_step_id' column to workflow_states table"
                 )
 
-            # Check if loop_state column exists on workflow_states table (added in DLT-160)
             result = await conn.execute(
                 text(
                     "SELECT * FROM pragma_table_info('workflow_states')"

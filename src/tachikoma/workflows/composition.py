@@ -50,10 +50,8 @@ def resolve_composes(composes_str: str, parent_skill_name: str) -> tuple[str, st
 def _composition_edge(step: StepDefinition) -> str | None:
     """Yield the composition edge value for a step (composes or loop, at most one).
 
-    Returns the raw frontmatter value when either field is set (including
-    malformed values like ``""`` so reference validation can reject the parent).
-    Mutex enforcement runs upstream in the registry pre-pass, guaranteeing at
-    most one of the two is set for any surviving step.
+    Returns the raw frontmatter value (including malformed values like ``""``
+    so reference validation can reject the parent).
     """
     if step.composes is not None:
         return step.composes
