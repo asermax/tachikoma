@@ -215,6 +215,72 @@ class TestPydanticModels:
         parsed = ListActiveWorkflowsArgs.model_validate({})
         assert parsed is not None
 
+    def test_update_args_items_optional_default_none(self):
+        """DLT-160 R2: items defaults to None when omitted."""
+        parsed = UpdateWorkflowStateArgs.model_validate(
+            {"workflow_id": "abc", "step": "01", "action": "start"}
+        )
+        assert parsed.items is None
+
+    def test_update_args_items_list_of_strings_valid(self):
+        """DLT-160 R4: list[str] is the canonical shape."""
+        parsed = UpdateWorkflowStateArgs.model_validate(
+            {
+                "workflow_id": "abc",
+                "step": "03",
+                "action": "start",
+                "items": ["foo.md", "bar.md"],
+            }
+        )
+        assert parsed.items == ["foo.md", "bar.md"]
+
+    def test_update_args_items_empty_list_valid(self):
+        """DLT-160 R6: empty list is shape-valid (semantic handling later)."""
+        parsed = UpdateWorkflowStateArgs.model_validate(
+            {"workflow_id": "abc", "step": "03", "action": "start", "items": []}
+        )
+        assert parsed.items == []
+
+    def test_update_args_items_duplicates_accepted(self):
+        """DLT-160 R4: duplicates are accepted as-is."""
+        parsed = UpdateWorkflowStateArgs.model_validate(
+            {
+                "workflow_id": "abc",
+                "step": "03",
+                "action": "start",
+                "items": ["a", "a", "b"],
+            }
+        )
+        assert parsed.items == ["a", "a", "b"]
+
+    def test_update_args_items_non_list_rejected(self):
+        """DLT-160 R4: non-list input fails Pydantic shape validation."""
+        from pydantic import ValidationError  # noqa: PLC0415
+
+        with pytest.raises(ValidationError):
+            UpdateWorkflowStateArgs.model_validate(
+                {
+                    "workflow_id": "abc",
+                    "step": "03",
+                    "action": "start",
+                    "items": "single-string",
+                }
+            )
+
+    def test_update_args_items_non_string_item_rejected(self):
+        """DLT-160 R4: non-string item fails Pydantic shape validation."""
+        from pydantic import ValidationError  # noqa: PLC0415
+
+        with pytest.raises(ValidationError):
+            UpdateWorkflowStateArgs.model_validate(
+                {
+                    "workflow_id": "abc",
+                    "step": "03",
+                    "action": "start",
+                    "items": [1, 2, 3],
+                }
+            )
+
 
 # ---------------------------------------------------------------------------
 # Transition validation
@@ -1855,6 +1921,24 @@ class TestStepToSnapshotIncludesComposes:
 
         assert snapshot["composes"] is None
 
+    def test_step_to_snapshot_includes_loop_field(self):
+        """DLT-160 R1: snapshot carries the loop value for runtime detection."""
+        step = StepDefinition(
+            id="03-process",
+            title="Process",
+            instructions_path=Path("/fake/03-process/instructions.md"),
+            references_path=None,
+            scripts_path=None,
+            loop="process-item",
+        )
+        snapshot = _step_to_snapshot(step)
+        assert snapshot["loop"] == "process-item"
+
+    def test_step_without_loop_serializes_none(self):
+        step = _make_step("01-plan", "Plan")
+        snapshot = _step_to_snapshot(step)
+        assert snapshot["loop"] is None
+
 
 class TestRenderBreadcrumb:
     def test_single_layer(self):
@@ -2966,3 +3050,763 @@ class TestAtomicAutoResume:
         assert unchanged.step_states["02-execute"] == "pending"
         assert unchanged.current_step is None or unchanged.current_step == "01-plan" or \
                unchanged.current_step != "02-execute"
+
+
+# ---------------------------------------------------------------------------
+# DLT-160 — Loop iteration tests
+# ---------------------------------------------------------------------------
+
+
+def _make_loop_step(
+    step_id: str,
+    title: str,
+    loop_target: str,
+    *,
+    required: bool = True,
+    condition: str | None = None,
+) -> StepDefinition:
+    """Create a step that declares a loop target."""
+    return StepDefinition(
+        id=step_id,
+        title=title,
+        instructions_path=Path(
+            f"/fake/skill/workflows/test/{step_id}/instructions.md"
+        ),
+        references_path=None,
+        scripts_path=None,
+        required=required,
+        condition=condition,
+        loop=loop_target,
+    )
+
+
+async def _seed_parent_with_loop_step(
+    repository: WorkflowStateRepository,
+    *,
+    parent_id: str = "parent-loop-id",
+    parent_skill: str = "parent-skill",
+    parent_workflow: str = "parent-loop-wf",
+    loop_step_id: str = "03-process",
+    loop_target: str = "child-skill/process-item",
+    pre_step_state: str = "completed",
+    scratchpad_path: str | None = None,
+) -> WorkflowState:
+    """Seed a parent workflow with a pending loop step (preceded by a completed step)."""
+    snapshot = [
+        {
+            "id": "01-prep",
+            "title": "Prep",
+            "required": True,
+            "path": "/fake/01-prep",
+            "required_skills": [],
+            "condition": None,
+            "composes": None,
+            "loop": None,
+        },
+        {
+            "id": loop_step_id,
+            "title": "Process Items",
+            "required": True,
+            "path": f"/fake/{loop_step_id}",
+            "required_skills": [],
+            "condition": None,
+            "composes": None,
+            "loop": loop_target,
+        },
+        {
+            "id": "04-finish",
+            "title": "Finish",
+            "required": True,
+            "path": "/fake/04-finish",
+            "required_skills": [],
+            "condition": None,
+            "composes": None,
+            "loop": None,
+        },
+    ]
+    state = WorkflowState(
+        id=parent_id,
+        skill_name=parent_skill,
+        workflow_name=parent_workflow,
+        current_step="01-prep",
+        step_states={
+            "01-prep": pre_step_state,  # type: ignore[dict-item]
+            loop_step_id: "pending",
+            "04-finish": "pending",
+        },
+        definition_snapshot=snapshot,
+        scratchpad_path=scratchpad_path or f"/tmp/parent-loop-{parent_id}.md",
+        deleted_at=None,
+        created_at=datetime.now(UTC),
+        updated_at=datetime.now(UTC),
+    )
+    await repository.create(state)
+    return state
+
+
+def _registry_with_loop_target(
+    *,
+    target_skill: str = "child-skill",
+    target_workflow: str = "process-item",
+    steps: list[StepDefinition] | None = None,
+) -> MagicMock:
+    """Build a mock registry exposing a loop target workflow."""
+    if steps is None:
+        steps = [
+            _make_step("01-step", "Iteration Step"),
+        ]
+    target_def = WorkflowDefinition(
+        skill_name=target_skill,
+        workflow_name=target_workflow,
+        steps=steps,
+        path=Path(f"/fake/skills/{target_skill}/workflows/{target_workflow}"),
+    )
+    return _registry_with_workflows({(target_skill, target_workflow): target_def})
+
+
+class TestLoopValidationGates:
+    """DLT-160 R2 / R8: validation gates around the items parameter."""
+
+    @pytest.mark.asyncio
+    async def test_items_on_non_loop_step_rejected(self, repository):
+        """R2: items not allowed when starting a non-loop step."""
+        state = _make_state()
+        await repository.create(state)
+        registry = _registry_with_workflows({})
+
+        result = await handle_update_workflow_state(
+            state.id, "01-plan", "start", repository, registry, items=["a"],
+        )
+
+        assert result.get("is_error") is True
+        assert "not allowed" in result["content"][0]["text"].lower()
+        # Step state unchanged
+        fresh = await repository.get(state.id)
+        assert fresh.step_states["01-plan"] == "pending"
+
+    @pytest.mark.asyncio
+    async def test_items_only_allowed_on_start_action(self, repository):
+        """DLT-160 (gate 3 hardening): items must not accompany non-start actions."""
+        state = _make_state(
+            step_states={"01-plan": "started", "02-execute": "pending", "03-review": "pending"},
+        )
+        await repository.create(state)
+        registry = _registry_with_workflows({})
+
+        result = await handle_update_workflow_state(
+            state.id, "01-plan", "complete", repository, registry, items=["a"],
+        )
+
+        assert result.get("is_error") is True
+        assert "items parameter" in result["content"][0]["text"].lower()
+
+    @pytest.mark.asyncio
+    async def test_loop_step_without_items_rejected(self, repository):
+        """R2: items required when starting a loop step."""
+        parent = await _seed_parent_with_loop_step(repository)
+        registry = _registry_with_loop_target()
+
+        result = await handle_update_workflow_state(
+            parent.id, "03-process", "start", repository, registry,
+        )
+
+        assert result.get("is_error") is True
+        assert "required" in result["content"][0]["text"].lower()
+        fresh = await repository.get(parent.id)
+        # Atomicity: nothing was written
+        assert fresh.step_states["03-process"] == "pending"
+        assert fresh.loop_state is None
+
+
+class TestLoopStartWithItems:
+    """DLT-160 R3, R7: spawning the first iteration."""
+
+    @pytest.mark.asyncio
+    async def test_start_with_items_spawns_first_iteration(self, repository):
+        parent = await _seed_parent_with_loop_step(repository)
+        registry = _registry_with_loop_target()
+
+        result = await handle_update_workflow_state(
+            parent.id, "03-process", "start", repository, registry,
+            items=["a", "b", "c"],
+        )
+
+        assert result.get("is_error") is None
+        chain = await repository.get_active_chain(parent.id)
+        assert len(chain) == 2
+        assert chain[0].step_states["03-process"] == "started"
+        assert chain[0].loop_state == {
+            "03-process": {"items": ["a", "b", "c"], "index": 0},
+        }
+        # Iteration child created with first item's snapshot
+        assert chain[1].parent_workflow_id == parent.id
+        assert chain[1].parent_step_id == "03-process"
+        assert chain[1].step_states["01-step"] == "started"
+        # Breadcrumb surfaces the current item
+        assert "(item: a)" in result["content"][0]["text"]
+
+    @pytest.mark.asyncio
+    async def test_start_with_items_inherits_scratchpad(self, repository):
+        parent = await _seed_parent_with_loop_step(repository)
+        registry = _registry_with_loop_target()
+
+        await handle_update_workflow_state(
+            parent.id, "03-process", "start", repository, registry, items=["x"],
+        )
+
+        chain = await repository.get_active_chain(parent.id)
+        assert chain[1].scratchpad_path == parent.scratchpad_path
+
+    @pytest.mark.asyncio
+    async def test_iteration_order_preserves_agent_input(self, repository):
+        """R7: iterations follow agent-supplied order, not sorted."""
+        parent = await _seed_parent_with_loop_step(repository)
+        registry = _registry_with_loop_target()
+
+        result = await handle_update_workflow_state(
+            parent.id, "03-process", "start", repository, registry,
+            items=["c", "a", "b"],
+        )
+        # First iteration is for 'c' (insertion order, not sorted)
+        assert "(item: c)" in result["content"][0]["text"]
+
+
+class TestLoopEmptyItems:
+    """DLT-160 R6: empty items auto-completes the loop step."""
+
+    @pytest.mark.asyncio
+    async def test_empty_items_completes_loop_step_immediately(self, repository):
+        parent = await _seed_parent_with_loop_step(repository)
+        registry = _registry_with_loop_target()
+
+        result = await handle_update_workflow_state(
+            parent.id, "03-process", "start", repository, registry, items=[],
+        )
+
+        assert result.get("is_error") is None
+        chain = await repository.get_active_chain(parent.id)
+        # No iteration child was spawned
+        assert len(chain) == 1
+        # Loop step transitioned PENDING -> COMPLETED (no STARTED intermediate persisted)
+        assert chain[0].step_states["03-process"] == "completed"
+        # Audit trail captured
+        assert chain[0].loop_state == {
+            "03-process": {"items": [], "index": 0},
+        }
+        # Cascade auto-advanced to the next pending step
+        assert chain[0].step_states["04-finish"] == "started"
+
+    @pytest.mark.asyncio
+    async def test_empty_items_finalizes_workflow_when_loop_is_last_step(
+        self, repository, tmp_path,
+    ):
+        # Seed a parent where the loop step is the LAST pending step
+        snapshot = [
+            {
+                "id": "01-prep",
+                "title": "Prep",
+                "required": True,
+                "path": "/fake/01-prep",
+                "required_skills": [],
+                "condition": None,
+                "composes": None,
+                "loop": None,
+            },
+            {
+                "id": "02-process",
+                "title": "Process",
+                "required": True,
+                "path": "/fake/02-process",
+                "required_skills": [],
+                "condition": None,
+                "composes": None,
+                "loop": "child-skill/process-item",
+            },
+        ]
+        scratchpad = tmp_path / "scratch.md"
+        scratchpad.write_text("seed")
+        state = WorkflowState(
+            id="last-loop",
+            skill_name="parent-skill",
+            workflow_name="parent-loop-last",
+            current_step="01-prep",
+            step_states={"01-prep": "completed", "02-process": "pending"},
+            definition_snapshot=snapshot,
+            scratchpad_path=str(scratchpad),
+            deleted_at=None,
+            created_at=datetime.now(UTC),
+            updated_at=datetime.now(UTC),
+        )
+        await repository.create(state)
+        registry = _registry_with_loop_target()
+
+        result = await handle_update_workflow_state(
+            "last-loop", "02-process", "start", repository, registry, items=[],
+        )
+
+        assert result.get("is_error") is None
+        # Top-level finalized — record soft-deleted
+        assert await repository.get("last-loop") is None
+        # Scratchpad cleaned up
+        assert not scratchpad.exists()
+
+
+class TestLoopAutoStartHalt:
+    """DLT-160 R12: auto-advance halts at pending loop steps."""
+
+    @pytest.mark.asyncio
+    async def test_complete_then_halt_at_loop_step(self, repository):
+        """Cascade halts after the prior step completes; loop step stays PENDING."""
+        # 01-prep is started; complete it -> next pending is 03-process (loop)
+        parent = await _seed_parent_with_loop_step(
+            repository, pre_step_state="started",
+        )
+        registry = _registry_with_loop_target()
+
+        result = await handle_update_workflow_state(
+            parent.id, "01-prep", "complete", repository, registry,
+        )
+
+        assert result.get("is_error") is None
+        text = result["content"][0]["text"]
+        assert "is a loop step" in text
+        assert "items=[" in text
+        # No iteration was spawned
+        chain = await repository.get_active_chain(parent.id)
+        assert len(chain) == 1
+        assert chain[0].step_states["03-process"] == "pending"
+
+    @pytest.mark.asyncio
+    async def test_halt_does_not_advance_current_step(self, repository):
+        """current_step remains the just-finalized step on halt (not the loop step)."""
+        parent = await _seed_parent_with_loop_step(
+            repository, pre_step_state="started",
+        )
+        registry = _registry_with_loop_target()
+
+        await handle_update_workflow_state(
+            parent.id, "01-prep", "complete", repository, registry,
+        )
+
+        fresh = await repository.get(parent.id)
+        assert fresh.current_step == "01-prep"
+        assert fresh.step_states["01-prep"] == "completed"
+        assert fresh.step_states["03-process"] == "pending"
+
+
+class TestLoopIterationAdvance:
+    """DLT-160 R3, R7: spawning subsequent iterations and exhausting the loop."""
+
+    @pytest.mark.asyncio
+    async def test_complete_iteration_step_spawns_next_child(self, repository):
+        """Completing the last step of iteration N spawns iteration N+1."""
+        parent = await _seed_parent_with_loop_step(repository)
+        registry = _registry_with_loop_target()
+
+        # Start iteration 0
+        await handle_update_workflow_state(
+            parent.id, "03-process", "start", repository, registry,
+            items=["a", "b", "c"],
+        )
+        chain_after_start = await repository.get_active_chain(parent.id)
+        first_iter_id = chain_after_start[1].id
+
+        # Complete iteration 0's step
+        result = await handle_update_workflow_state(
+            parent.id, "01-step", "complete", repository, registry,
+        )
+        assert result.get("is_error") is None
+        assert "(item: b)" in result["content"][0]["text"]
+
+        # Iteration 0 was soft-deleted; iteration 1 is the new active child
+        chain_after_complete = await repository.get_active_chain(parent.id)
+        assert len(chain_after_complete) == 2
+        assert chain_after_complete[1].id != first_iter_id
+        # Parent's loop_state advanced
+        assert chain_after_complete[0].loop_state == {
+            "03-process": {"items": ["a", "b", "c"], "index": 1},
+        }
+        # Loop step still STARTED (not yet exhausted)
+        assert chain_after_complete[0].step_states["03-process"] == "started"
+
+    @pytest.mark.asyncio
+    async def test_last_iteration_completes_loop_step_and_advances(self, repository):
+        """After the last iteration, loop step is COMPLETED with index=len(items)
+        and the parent's next pending step auto-starts."""
+        parent = await _seed_parent_with_loop_step(repository)
+        registry = _registry_with_loop_target()
+
+        await handle_update_workflow_state(
+            parent.id, "03-process", "start", repository, registry, items=["a"],
+        )
+
+        # Complete iteration 0's only step (last iteration)
+        result = await handle_update_workflow_state(
+            parent.id, "01-step", "complete", repository, registry,
+        )
+        assert result.get("is_error") is None
+
+        chain = await repository.get_active_chain(parent.id)
+        # No iteration child active
+        assert len(chain) == 1
+        # Loop step COMPLETED with final loop_state index=1 (audit trail)
+        assert chain[0].step_states["03-process"] == "completed"
+        assert chain[0].loop_state == {
+            "03-process": {"items": ["a"], "index": 1},
+        }
+        # Parent's next pending step auto-started
+        assert chain[0].step_states["04-finish"] == "started"
+
+    @pytest.mark.asyncio
+    async def test_iteration_advance_atomic_on_failure(self, repository, monkeypatch):
+        """R14: a mid-cascade error rolls back the in-flight MutationBatch."""
+        parent = await _seed_parent_with_loop_step(repository)
+        registry = _registry_with_loop_target()
+
+        await handle_update_workflow_state(
+            parent.id, "03-process", "start", repository, registry,
+            items=["a", "b"],
+        )
+        chain_before = await repository.get_active_chain(parent.id)
+        original_iter_id = chain_before[1].id
+
+        from tachikoma.workflows.errors import WorkflowRepositoryError  # noqa: PLC0415
+
+        async def boom(_self, _batch):
+            raise WorkflowRepositoryError("induced failure")
+
+        monkeypatch.setattr(WorkflowStateRepository, "apply_mutation_batch", boom)
+
+        result = await handle_update_workflow_state(
+            parent.id, "01-step", "complete", repository, registry,
+        )
+        assert result.get("is_error") is True
+
+        # State unchanged: loop_state still at index 0; iteration 0 child still active
+        chain = await repository.get_active_chain(parent.id)
+        assert len(chain) == 2
+        assert chain[1].id == original_iter_id
+        assert chain[0].loop_state == {
+            "03-process": {"items": ["a", "b"], "index": 0},
+        }
+
+
+class TestLoopRecovery:
+    """DLT-160 R5, R11.2, R17: recovery surfaces."""
+
+    @pytest.mark.asyncio
+    async def test_get_workflow_state_renders_loop_block(self, repository):
+        """get_workflow_state shows a `### Loop step` block on the parent's view."""
+        parent = await _seed_parent_with_loop_step(repository)
+        registry = _registry_with_loop_target()
+
+        await handle_update_workflow_state(
+            parent.id, "03-process", "start", repository, registry,
+            items=["foo.md", "bar.md"],
+        )
+
+        result = await handle_get_workflow_state(parent.id, repository)
+        text = result["content"][0]["text"]
+        assert "### Loop step" in text
+        assert "Items (2):" in text
+        # R7: insertion order is preserved on display, not sorted
+        assert text.index("`foo.md`") < text.index("`bar.md`")
+        assert "Current iteration: 1 / 2" in text  # 1-indexed display
+        assert "Current item: `foo.md`" in text
+
+    @pytest.mark.asyncio
+    async def test_get_workflow_state_breadcrumb_carries_item_after_recovery(
+        self, repository,
+    ):
+        """Recovery: breadcrumb still surfaces the item after a fresh fetch
+        (no in-memory layer state survives across calls)."""
+        parent = await _seed_parent_with_loop_step(repository)
+        registry = _registry_with_loop_target()
+
+        await handle_update_workflow_state(
+            parent.id, "03-process", "start", repository, registry,
+            items=["recovered.md"],
+        )
+
+        # Fresh get_workflow_state call simulates context-loss recovery
+        result = await handle_get_workflow_state(parent.id, repository)
+        text = result["content"][0]["text"]
+        # The multi-layer breadcrumb at the top of the response surfaces the item
+        assert "(item: recovered.md)" in text
+
+    @pytest.mark.asyncio
+    async def test_cascade_call_after_recovery_keeps_item_in_breadcrumb(
+        self, repository,
+    ):
+        """R5: a fresh cascade tool call (after the spawning call) re-derives
+        the current_item via chain-init from the parent's persisted loop_state
+        and keeps the item suffix on the breadcrumb."""
+        parent = await _seed_parent_with_loop_step(repository)
+        registry = _registry_with_loop_target(
+            steps=[
+                _make_step("01-step", "Iteration Step One"),
+                _make_step("02-step", "Iteration Step Two"),
+            ],
+        )
+
+        # Spawn iteration 0 with item "foo.md"
+        await handle_update_workflow_state(
+            parent.id, "03-process", "start", repository, registry,
+            items=["foo.md", "bar.md"],
+        )
+
+        # A SECOND cascade call against the iteration child triggers a fresh
+        # _run_cascade — chain init is what re-derives current_item.
+        result = await handle_update_workflow_state(
+            parent.id, "01-step", "complete", repository, registry,
+        )
+        assert result.get("is_error") is None
+        # Iteration 0 is still active (it has 02-step pending), still on item foo.md
+        assert "(item: foo.md)" in result["content"][0]["text"]
+
+
+class TestLoopAbort:
+    """DLT-160 R18: end_workflow with an active loop."""
+
+    @pytest.mark.asyncio
+    async def test_abort_with_active_iteration_soft_deletes_both(
+        self, repository, tmp_path,
+    ):
+        scratchpad = tmp_path / "scratch.md"
+        scratchpad.write_text("seed")
+        parent = await _seed_parent_with_loop_step(
+            repository, scratchpad_path=str(scratchpad),
+        )
+        registry = _registry_with_loop_target()
+
+        await handle_update_workflow_state(
+            parent.id, "03-process", "start", repository, registry,
+            items=["a", "b"],
+        )
+        chain_before = await repository.get_active_chain(parent.id)
+        assert len(chain_before) == 2  # parent + iteration child
+
+        result = await handle_end_workflow(
+            parent.id, "abort", repository, tmp_path,
+        )
+        assert result.get("is_error") is None
+
+        # Both records soft-deleted; scratchpad removed
+        assert await repository.get(parent.id) is None
+        assert not scratchpad.exists()
+
+    @pytest.mark.asyncio
+    async def test_end_workflow_on_iteration_child_id_rejected(
+        self, repository, tmp_path,
+    ):
+        parent = await _seed_parent_with_loop_step(repository)
+        registry = _registry_with_loop_target()
+
+        await handle_update_workflow_state(
+            parent.id, "03-process", "start", repository, registry, items=["a"],
+        )
+        chain = await repository.get_active_chain(parent.id)
+        iter_child_id = chain[1].id
+
+        result = await handle_end_workflow(
+            iter_child_id, "abort", repository, tmp_path,
+        )
+        assert result.get("is_error") is True
+        assert (
+            "composed child" in result["content"][0]["text"]
+            or "top-level" in result["content"][0]["text"]
+        )
+
+
+class TestRenderBreadcrumbInheritance:
+    """DLT-160 R3 + R17: deepest segment inherits parent's item for nested layers."""
+
+    def test_deepest_layer_with_inherited_item_via_string_value(self):
+        """When a non-loop child layer has a non-None current_item (set via inheritance
+        in `_try_spawn_child`), the breadcrumb suffix appears on the deepest segment."""
+        rendered = _render_breadcrumb(
+            [
+                ("weekly-review", "03-process", None),
+                ("process-item", "02-validate", "a"),  # iteration child
+                ("validate-item", "01-check", "a"),   # composes grandchild — inherits
+            ]
+        )
+        assert rendered.endswith("(item: a)")
+        # Non-deepest segments have no suffix even when current_item is set
+        assert "process-item/02-validate (item:" not in rendered
+
+
+class TestNestedLoops:
+    """DLT-160 R3: an iteration body containing its own loop step — nested loops.
+
+    Regression test guarding against the parameter-shadowing bug where the
+    chain-init pass in `_run_cascade` overwrote the caller's `items` parameter
+    with the outer loop's items.
+    """
+
+    @pytest.mark.asyncio
+    async def test_inner_loop_start_uses_caller_items_not_outer(self, repository):
+        """Starting an inner loop step from inside an outer iteration must use the
+        agent-supplied items, not the outer loop's items."""
+        # Outer loop target: a workflow whose 02-each step is itself a loop step
+        inner_loop_step = StepDefinition(
+            id="02-each",
+            title="Each",
+            instructions_path=Path("/fake/inner/02-each/instructions.md"),
+            references_path=None,
+            scripts_path=None,
+            loop="grandchild-skill/grandchild-wf",
+        )
+        outer_target = WorkflowDefinition(
+            skill_name="child-skill",
+            workflow_name="process-batch",
+            steps=[inner_loop_step],
+            path=Path("/fake/skills/child-skill/workflows/process-batch"),
+        )
+        grandchild_target = WorkflowDefinition(
+            skill_name="grandchild-skill",
+            workflow_name="grandchild-wf",
+            steps=[_make_step("01-step", "Inner Step")],
+            path=Path("/fake/skills/grandchild-skill/workflows/grandchild-wf"),
+        )
+        registry = _registry_with_workflows({
+            ("child-skill", "process-batch"): outer_target,
+            ("grandchild-skill", "grandchild-wf"): grandchild_target,
+        })
+
+        parent = await _seed_parent_with_loop_step(
+            repository, loop_target="child-skill/process-batch",
+        )
+
+        # Start outer loop with items ["A", "B"]
+        await handle_update_workflow_state(
+            parent.id, "03-process", "start", repository, registry,
+            items=["A", "B"],
+        )
+
+        # Cascade should halt at the inner loop step; agent then provides items
+        # for the inner loop. This is the path that previously corrupted the
+        # caller's items by shadowing in chain-init.
+        result = await handle_update_workflow_state(
+            parent.id, "02-each", "start", repository, registry,
+            items=["x", "y"],
+        )
+        assert result.get("is_error") is None
+
+        chain = await repository.get_active_chain(parent.id)
+        # Three layers: top-level, outer iteration child, inner iteration child
+        assert len(chain) == 3
+
+        # Outer parent: outer loop_state still tracks ["A", "B"], index 0
+        assert chain[0].loop_state == {
+            "03-process": {"items": ["A", "B"], "index": 0},
+        }
+        # Outer iteration child (record whose snapshot defines the inner loop)
+        # carries the inner loop_state with the AGENT-supplied ["x", "y"], NOT
+        # the outer ["A", "B"].
+        assert chain[1].loop_state == {
+            "02-each": {"items": ["x", "y"], "index": 0},
+        }
+        # Breadcrumb's deepest segment carries inner item "x"
+        assert "(item: x)" in result["content"][0]["text"]
+
+    @pytest.mark.asyncio
+    async def test_inner_loop_empty_items_auto_completes(self, repository):
+        """Inner loop with items=[] auto-completes the inner loop step (no spawn)
+        even when an outer loop is in progress."""
+        inner_loop_step = StepDefinition(
+            id="02-each",
+            title="Each",
+            instructions_path=Path("/fake/inner/02-each/instructions.md"),
+            references_path=None,
+            scripts_path=None,
+            loop="grandchild-skill/grandchild-wf",
+        )
+        outer_target = WorkflowDefinition(
+            skill_name="child-skill",
+            workflow_name="process-batch",
+            steps=[inner_loop_step],
+            path=Path("/fake/skills/child-skill/workflows/process-batch"),
+        )
+        grandchild_target = WorkflowDefinition(
+            skill_name="grandchild-skill",
+            workflow_name="grandchild-wf",
+            steps=[_make_step("01-step", "Inner Step")],
+            path=Path("/fake/skills/grandchild-skill/workflows/grandchild-wf"),
+        )
+        registry = _registry_with_workflows({
+            ("child-skill", "process-batch"): outer_target,
+            ("grandchild-skill", "grandchild-wf"): grandchild_target,
+        })
+
+        parent = await _seed_parent_with_loop_step(
+            repository, loop_target="child-skill/process-batch",
+        )
+
+        await handle_update_workflow_state(
+            parent.id, "03-process", "start", repository, registry,
+            items=["A"],
+        )
+        result = await handle_update_workflow_state(
+            parent.id, "02-each", "start", repository, registry, items=[],
+        )
+        assert result.get("is_error") is None
+
+        # Inner loop auto-completed -> outer iteration body finished -> outer
+        # loop exhausts (only one item) -> outer loop step COMPLETED -> parent's
+        # next step (04-finish) auto-starts.
+        chain = await repository.get_active_chain(parent.id)
+        assert len(chain) == 1
+        assert chain[0].step_states["03-process"] == "completed"
+        assert chain[0].step_states["04-finish"] == "started"
+
+    @pytest.mark.asyncio
+    async def test_inner_loop_without_items_rejects_atomically(self, repository):
+        """Starting an inner loop step without items returns the standard error;
+        no state is mutated."""
+        inner_loop_step = StepDefinition(
+            id="02-each",
+            title="Each",
+            instructions_path=Path("/fake/inner/02-each/instructions.md"),
+            references_path=None,
+            scripts_path=None,
+            loop="grandchild-skill/grandchild-wf",
+        )
+        outer_target = WorkflowDefinition(
+            skill_name="child-skill",
+            workflow_name="process-batch",
+            steps=[inner_loop_step],
+            path=Path("/fake/skills/child-skill/workflows/process-batch"),
+        )
+        grandchild_target = WorkflowDefinition(
+            skill_name="grandchild-skill",
+            workflow_name="grandchild-wf",
+            steps=[_make_step("01-step", "Inner Step")],
+            path=Path("/fake/skills/grandchild-skill/workflows/grandchild-wf"),
+        )
+        registry = _registry_with_workflows({
+            ("child-skill", "process-batch"): outer_target,
+            ("grandchild-skill", "grandchild-wf"): grandchild_target,
+        })
+
+        parent = await _seed_parent_with_loop_step(
+            repository, loop_target="child-skill/process-batch",
+        )
+
+        await handle_update_workflow_state(
+            parent.id, "03-process", "start", repository, registry,
+            items=["A", "B"],
+        )
+
+        # Inner loop start WITHOUT items — must reject; state must not change
+        result = await handle_update_workflow_state(
+            parent.id, "02-each", "start", repository, registry,
+        )
+        assert result.get("is_error") is True
+        assert "required" in result["content"][0]["text"].lower()
+
+        # Outer iteration child still in PENDING for 02-each, no inner loop_state
+        chain = await repository.get_active_chain(parent.id)
+        assert len(chain) == 2
+        assert chain[1].step_states["02-each"] == "pending"
+        assert chain[1].loop_state is None

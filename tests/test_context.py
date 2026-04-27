@@ -165,6 +165,20 @@ class TestRenderSystemPreamble:
         assert "Active Child" in result
         assert "Condition-Skipped Steps" in result
 
+    def test_preamble_documents_loop_iteration(self) -> None:
+        """AC (DLT-160 R15): Preamble documents the loop frontmatter, items
+        parameter, current-item exposure, auto-completion, mutex with composes,
+        and auto-start halt."""
+        result = render_system_preamble(timezone="UTC")
+
+        assert "## Loops" in result
+        assert "items=[" in result
+        assert "items=[]" in result  # zero-iteration shortcut
+        assert "loop" in result
+        assert "mutually exclusive" in result.lower() or "mutex" in result.lower()
+        assert "halt" in result.lower()
+        assert "(item:" in result  # breadcrumb format
+
 
 class TestLoadContextIntegration:
     """Integration tests for load_foundational_context + build_system_prompt together.

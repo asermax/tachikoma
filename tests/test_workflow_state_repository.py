@@ -785,6 +785,131 @@ async def test_apply_mutation_batch_create_child(session_factory):
 
 
 @pytest.mark.asyncio
+async def test_loop_state_round_trip(session_factory):
+    """DLT-160 R11.1: loop_state JSON column round-trips through the repository."""
+    repo = WorkflowStateRepository(session_factory)
+    state = _make_state("loop-id")
+    await repo.create(state)
+
+    from tachikoma.workflows.composition import MutationBatch, UpdateState  # noqa: PLC0415
+
+    batch = MutationBatch()
+    batch.ordered.append(
+        UpdateState(
+            layer_id="loop-id",
+            step_states={"01": "started"},
+            current_step="01",
+            loop_state={"03-process": {"items": ["a", "b"], "index": 1}},
+        )
+    )
+    await repo.apply_mutation_batch(batch)
+
+    fetched = await repo.get("loop-id")
+    assert fetched is not None
+    assert fetched.loop_state == {"03-process": {"items": ["a", "b"], "index": 1}}
+
+
+@pytest.mark.asyncio
+async def test_workflow_state_loop_state_default_none(session_factory):
+    """DLT-160: a state with no loop_state set surfaces as None on the domain dataclass."""
+    repo = WorkflowStateRepository(session_factory)
+    state = _make_state("no-loop")
+    await repo.create(state)
+
+    fetched = await repo.get("no-loop")
+    assert fetched is not None
+    assert fetched.loop_state is None
+
+
+@pytest.mark.asyncio
+async def test_apply_update_state_loop_state_none_does_not_clear(session_factory):
+    """DLT-160: an UpdateState with loop_state=None preserves the existing column value."""
+    repo = WorkflowStateRepository(session_factory)
+    state = _make_state("preserve-id")
+    await repo.create(state)
+
+    from tachikoma.workflows.composition import MutationBatch, UpdateState  # noqa: PLC0415
+
+    # First write loop_state
+    b1 = MutationBatch()
+    b1.ordered.append(
+        UpdateState(
+            layer_id="preserve-id",
+            step_states={"01": "started"},
+            current_step="01",
+            loop_state={"03-process": {"items": ["a"], "index": 0}},
+        )
+    )
+    await repo.apply_mutation_batch(b1)
+
+    # Then write a step-only update (loop_state defaults to None)
+    b2 = MutationBatch()
+    b2.ordered.append(
+        UpdateState(
+            layer_id="preserve-id",
+            step_states={"01": "completed"},
+            current_step=None,
+        )
+    )
+    await repo.apply_mutation_batch(b2)
+
+    fetched = await repo.get("preserve-id")
+    assert fetched is not None
+    # The loop_state column was not touched by the second update
+    assert fetched.loop_state == {"03-process": {"items": ["a"], "index": 0}}
+    assert fetched.step_states["01"] == "completed"
+
+
+@pytest.mark.asyncio
+async def test_abort_preserves_loop_state(session_factory):
+    """DLT-160 R18: loop_state remains intact on the soft-deleted parent row (audit trail)."""
+    repo = WorkflowStateRepository(session_factory)
+
+    parent = _make_state("parent-loop-id")
+    await repo.create(parent)
+    child = _make_state(
+        "iter-child-id", parent_workflow_id="parent-loop-id", parent_step_id="03",
+    )
+    await repo.create(child)
+
+    from tachikoma.workflows.composition import MutationBatch, UpdateState  # noqa: PLC0415
+
+    b = MutationBatch()
+    b.ordered.append(
+        UpdateState(
+            layer_id="parent-loop-id",
+            step_states={"01": "completed"},
+            current_step="03",
+            loop_state={"03": {"items": ["a", "b"], "index": 1}},
+        )
+    )
+    await repo.apply_mutation_batch(b)
+
+    ids = await repo.abort_cascade("parent-loop-id")
+    assert set(ids) == {"parent-loop-id", "iter-child-id"}
+
+    # The soft-deleted row preserves loop_state — query directly via SQL
+    from sqlalchemy import select  # noqa: PLC0415
+
+    from tachikoma.workflows.model import WorkflowStateRecord  # noqa: PLC0415
+
+    async with session_factory() as db:
+        result = await db.execute(
+            select(WorkflowStateRecord).where(
+                WorkflowStateRecord.id == "parent-loop-id",
+            )
+        )
+        record = result.scalar_one_or_none()
+        assert record is not None
+        assert record.deleted_at is not None
+        # loop_state column persists as JSON text
+        import json as _json  # noqa: PLC0415
+        assert _json.loads(record.loop_state) == {
+            "03": {"items": ["a", "b"], "index": 1}
+        }
+
+
+@pytest.mark.asyncio
 async def test_apply_mutation_batch_soft_delete_child(session_factory):
     """apply_mutation_batch soft-deletes child and updates parent atomically."""
     from tachikoma.workflows.composition import (  # noqa: PLC0415

@@ -25,6 +25,7 @@ def _make_step(
     title: str = "Step",
     *,
     composes: str | None = None,
+    loop: str | None = None,
 ) -> StepDefinition:
     return StepDefinition(
         id=step_id,
@@ -33,6 +34,7 @@ def _make_step(
         references_path=None,
         scripts_path=None,
         composes=composes,
+        loop=loop,
     )
 
 
@@ -249,3 +251,132 @@ class TestMutationDataclasses:
     def test_soft_delete_construction(self) -> None:
         m = SoftDelete(layer_id="id")
         assert m.layer_id == "id"
+
+    def test_update_state_loop_state_default_none(self) -> None:
+        m = UpdateState(layer_id="id", step_states={}, current_step=None)
+        assert m.loop_state is None
+
+    def test_update_state_loop_state_preserved(self) -> None:
+        ls = {"03-process": {"items": ["a", "b"], "index": 1}}
+        m = UpdateState(
+            layer_id="id", step_states={}, current_step=None, loop_state=ls,
+        )
+        assert m.loop_state == ls
+
+    def test_cascade_outcome_halted_default_none(self) -> None:
+        outcome = CascadeOutcome(
+            deepest_layer_id="id",
+            active_step_id=None,
+            condition_skips=[],
+            finalized_top_level=False,
+        )
+        assert outcome.halted_at_loop_step is None
+
+    def test_cascade_outcome_halted_preserved(self) -> None:
+        outcome = CascadeOutcome(
+            deepest_layer_id="id",
+            active_step_id="03-process",
+            condition_skips=[],
+            finalized_top_level=False,
+            halted_at_loop_step="03-process",
+        )
+        assert outcome.halted_at_loop_step == "03-process"
+
+
+# ---------------------------------------------------------------------------
+# Loop edges in the unified composition graph (DLT-160)
+# ---------------------------------------------------------------------------
+
+
+class TestDetectCyclesLoopEdges:
+    """R10: loop edges share the cycle graph with composes edges."""
+
+    def test_self_loop_via_loop_field(self) -> None:
+        a = _make_workflow("s", "A", [_make_step("01", loop="A")])
+        sccs = detect_cycles({("s", "A"): a})
+        assert len(sccs) == 1
+        assert ("s", "A") in sccs[0]
+
+    def test_mutual_cycle_loop_and_loop(self) -> None:
+        a = _make_workflow("s", "A", [_make_step("01", loop="B")])
+        b = _make_workflow("s", "B", [_make_step("01", loop="A")])
+        sccs = detect_cycles({("s", "A"): a, ("s", "B"): b})
+        assert len(sccs) == 1
+        assert set(sccs[0]) == {("s", "A"), ("s", "B")}
+
+    def test_mutual_cycle_loop_and_composes(self) -> None:
+        a = _make_workflow("s", "A", [_make_step("01", loop="B")])
+        b = _make_workflow("s", "B", [_make_step("01", composes="A")])
+        sccs = detect_cycles({("s", "A"): a, ("s", "B"): b})
+        assert len(sccs) == 1
+        assert set(sccs[0]) == {("s", "A"), ("s", "B")}
+
+    def test_cross_edge_chain_cycle_three_workflows(self) -> None:
+        a = _make_workflow("s", "A", [_make_step("01", loop="B")])
+        b = _make_workflow("s", "B", [_make_step("01", composes="C")])
+        c = _make_workflow("s", "C", [_make_step("01", loop="A")])
+        sccs = detect_cycles(
+            {("s", "A"): a, ("s", "B"): b, ("s", "C"): c}
+        )
+        assert len(sccs) == 1
+        assert set(sccs[0]) == {("s", "A"), ("s", "B"), ("s", "C")}
+
+    def test_acyclic_loop_only(self) -> None:
+        a = _make_workflow("s", "A", [_make_step("01", loop="B")])
+        b = _make_workflow("s", "B", [_make_step("01")])
+        sccs = detect_cycles({("s", "A"): a, ("s", "B"): b})
+        assert sccs == []
+
+
+class TestValidateReferencesLoopEdges:
+    """R1 + R10: loop edges go through the same reference validator."""
+
+    def test_loop_target_missing_rejects_parent(self) -> None:
+        a = _make_workflow("s", "A", [_make_step("01", loop="missing")])
+        rejected = validate_references({("s", "A"): a}, already_rejected=set())
+        assert ("s", "A") in rejected
+
+    def test_loop_target_zero_steps_rejects_parent(self) -> None:
+        a = _make_workflow("s", "A", [_make_step("01", loop="B")])
+        b = _make_workflow("s", "B", steps=[])
+        rejected = validate_references(
+            {("s", "A"): a, ("s", "B"): b}, already_rejected=set(),
+        )
+        assert ("s", "A") in rejected
+
+    def test_loop_value_empty_string_rejects_parent(self) -> None:
+        a = _make_workflow("s", "A", [_make_step("01", loop="")])
+        rejected = validate_references({("s", "A"): a}, already_rejected=set())
+        assert ("s", "A") in rejected
+
+    def test_loop_value_multi_slash_rejects_parent(self) -> None:
+        a = _make_workflow("s", "A", [_make_step("01", loop="a/b/c")])
+        rejected = validate_references({("s", "A"): a}, already_rejected=set())
+        assert ("s", "A") in rejected
+
+    def test_loop_target_was_itself_rejected(self) -> None:
+        a = _make_workflow("s", "A", [_make_step("01", loop="B")])
+        b = _make_workflow("s", "B", [_make_step("01")])
+        rejected = validate_references(
+            {("s", "A"): a, ("s", "B"): b},
+            already_rejected={("s", "B")},
+        )
+        assert ("s", "A") in rejected
+
+    def test_loop_same_skill_resolution(self) -> None:
+        a = _make_workflow("s", "A", [_make_step("01", loop="target")])
+        b = _make_workflow("s", "target", [_make_step("01")])
+        rejected = validate_references(
+            {("s", "A"): a, ("s", "target"): b}, already_rejected=set(),
+        )
+        assert rejected == set()
+
+    def test_loop_cross_skill_resolution(self) -> None:
+        a = _make_workflow(
+            "s1", "A", [_make_step("01", loop="s2/target")]
+        )
+        b = _make_workflow("s2", "target", [_make_step("01")])
+        rejected = validate_references(
+            {("s1", "A"): a, ("s2", "target"): b}, already_rejected=set(),
+        )
+        assert rejected == set()

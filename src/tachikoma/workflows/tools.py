@@ -432,6 +432,11 @@ def _try_spawn_child(
     child_snapshot = [_step_to_snapshot(s) for s in child_def.steps]
     child_ss: dict[str, StepState] = {s.id: STEP_PENDING for s in child_def.steps}
 
+    # Inherit parent's current_item when no explicit value supplied (composes
+    # spawn).  Loop spawns pass the item explicitly.  Inheriting keeps the
+    # breadcrumb suffix visible for descendants of an iteration body.
+    effective_item = current_item if current_item is not None else parent.current_item
+
     child_layer = _CascadeLayerInfo(
         id=child_id,
         workflow_name=target_wf,
@@ -440,7 +445,7 @@ def _try_spawn_child(
         parent_workflow_id=parent.id,
         parent_step_id=parent_step_id,
         definition_snapshot=child_snapshot,
-        current_item=current_item,
+        current_item=effective_item,
     )
 
     return child_layer, child_id, child_ss, child_snapshot
@@ -503,6 +508,10 @@ async def _run_cascade(
 
     # Gate 3: structural step-kind / items consistency (before condition eval)
     is_loop_step = bool(step_info.get("loop"))
+    if items is not None and action != "start":
+        return _error_response(
+            "items parameter is only allowed on the 'start' action."
+        )
     if action == "start" and items is not None and not is_loop_step:
         return _error_response(
             "items parameter is not allowed when starting a non-loop step."
@@ -527,6 +536,33 @@ async def _run_cascade(
         )
         current_steps[state.id] = state.current_step
         chain_order.append(state.id)
+
+    # Derive each iteration child's current_item from its parent's loop_state
+    # (recovery after context loss; the live value is not stored on the child
+    # record).  Non-iteration children inherit from their parent so descendants
+    # of an iteration body keep the breadcrumb item suffix.
+    # NOTE: the local name `entry_items` is intentionally distinct from the
+    # function parameter `items` — reusing `items` here would silently corrupt
+    # the caller's items list during nested-loop start.
+    for state in chain:
+        if state.parent_workflow_id is None:
+            continue
+        parent_layer = layers.get(state.parent_workflow_id)
+        if parent_layer is None:
+            continue
+        parent_ls = mutable_loop_state.get(state.parent_workflow_id) or {}
+        entry = (
+            parent_ls.get(state.parent_step_id) if state.parent_step_id else None
+        )
+        derived: str | None = None
+        if entry:
+            entry_items = entry.get("items", [])
+            idx = entry.get("index", 0)
+            if 0 <= idx < len(entry_items):
+                derived = entry_items[idx]
+        if derived is None:
+            derived = parent_layer.current_item
+        layers[state.id].current_item = derived
 
     scratchpad_path = chain[0].scratchpad_path
 
@@ -779,13 +815,21 @@ async def _run_cascade(
                         current = child_layer
                         continue
                     else:
-                        # Exhausted — mark loop step COMPLETED
+                        # Exhausted — mark loop step COMPLETED and persist the
+                        # final loop_state immediately (audit trail; subsequent
+                        # cascade-up UpdateStates do not re-thread loop_state).
                         mutable_ss[parent_id][parent_step_id] = STEP_COMPLETED
                         new_loop_state = _merge_loop_state(
                             mutable_loop_state[parent_id],
                             parent_step_id, items_list, index=next_index,
                         )
                         mutable_loop_state[parent_id] = new_loop_state
+                        batch.ordered.append(UpdateState(
+                            layer_id=parent_id,
+                            step_states=dict(mutable_ss[parent_id]),
+                            current_step=parent_step_id,
+                            loop_state=new_loop_state,
+                        ))
                         current = parent
                         continue
                 else:
@@ -1321,24 +1365,38 @@ async def handle_get_workflow_state(
             text = _format_corruption_warning(corrupted) + "\n\n" + text
         return {"content": [{"type": "text", "text": text}]}
 
-    # Multi-layer — nested view with breadcrumb
+    # Multi-layer — nested view with breadcrumb.
+    # Derive each layer's current_item by walking the chain top-down: a layer
+    # is an iteration child when its parent's loop_state holds an entry for its
+    # parent_step_id; otherwise it inherits the parent's item (so descendants
+    # of an iteration body keep the suffix on the deepest segment).
+    current_item_by_id: dict[str, str | None] = {}
+    for i, layer in enumerate(chain):
+        if i == 0:
+            current_item_by_id[layer.id] = None
+            continue
+        parent = chain[i - 1]
+        derived: str | None = None
+        if parent.loop_state and layer.parent_step_id in (parent.loop_state or {}):
+            entry = parent.loop_state[layer.parent_step_id]
+            items = entry.get("items", [])
+            idx = entry.get("index", 0)
+            if 0 <= idx < len(items):
+                derived = items[idx]
+        if derived is None:
+            derived = current_item_by_id.get(parent.id)
+        current_item_by_id[layer.id] = derived
+
     breadcrumb_segments = []
     for i, layer in enumerate(chain):
         if not layer.current_step:
             continue
         seg = f"{layer.workflow_name}/{layer.current_step}"
         is_deepest = i == len(chain) - 1
-        if is_deepest and i > 0:
-            # Check if the parent has an active loop providing a current item
-            parent = chain[i - 1]
-            if parent.loop_state:
-                parent_step = layer.parent_step_id
-                if parent_step and parent_step in (parent.loop_state or {}):
-                    entry = parent.loop_state[parent_step]
-                    items = entry.get("items", [])
-                    idx = entry.get("index", 0)
-                    if idx < len(items):
-                        seg += f" (item: {items[idx]})"
+        if is_deepest:
+            item = current_item_by_id.get(layer.id)
+            if item is not None:
+                seg += f" (item: {item})"
         breadcrumb_segments.append(seg)
     breadcrumb = " > ".join(breadcrumb_segments)
 
@@ -1356,6 +1414,9 @@ async def handle_get_workflow_state(
             f"- **Current Step**: {child.current_step or 'none'}\n\n"
             f"#### Steps\n\n" + "\n".join(child_steps)
         )
+        child_loop_blocks = _render_loop_step_blocks(child)
+        if child_loop_blocks:
+            text += f"\n\n{child_loop_blocks}"
 
     if breadcrumb:
         text = f"> {breadcrumb}\n\n" + text

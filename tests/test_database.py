@@ -139,6 +139,73 @@ class TestDatabaseInitialization:
         await database2.initialize()
         await database2.close()
 
+    async def test_workflow_states_has_loop_state_column(self, tmp_path: Path) -> None:
+        """DLT-160 R11.1: workflow_states.loop_state column is added by migrations."""
+        db_path = tmp_path / "tachikoma.db"
+
+        database = Database(db_path)
+        await database.initialize()
+        await database.close()
+
+        async with aiosqlite.connect(db_path) as db:
+            cursor = await db.execute("PRAGMA table_info('workflow_states')")
+            cols = {row[1]: row[2] for row in await cursor.fetchall()}
+
+        assert "loop_state" in cols
+
+    async def test_loop_state_migration_idempotent(self, tmp_path: Path) -> None:
+        """DLT-160: re-running migrations on a DB that already has loop_state is a no-op."""
+        db_path = tmp_path / "tachikoma.db"
+
+        database = Database(db_path)
+        await database.initialize()
+        await database.close()
+
+        # Re-initialize on the same DB; the migration must not re-add the column
+        database2 = Database(db_path)
+        await database2.initialize()
+        await database2.close()
+
+        async with aiosqlite.connect(db_path) as db:
+            cursor = await db.execute("PRAGMA table_info('workflow_states')")
+            loop_state_cols = [row for row in await cursor.fetchall() if row[1] == "loop_state"]
+
+        assert len(loop_state_cols) == 1
+
+    async def test_loop_state_migration_adds_column_on_pre_dlt_160_schema(
+        self, tmp_path: Path
+    ) -> None:
+        """DLT-160: migration adds loop_state to a pre-existing schema lacking it."""
+        db_path = tmp_path / "tachikoma.db"
+
+        # Hand-build a pre-DLT-160 workflow_states schema (no loop_state column)
+        async with aiosqlite.connect(db_path) as db:
+            await db.execute(
+                "CREATE TABLE workflow_states ("
+                "id TEXT PRIMARY KEY, "
+                "skill_name TEXT NOT NULL, "
+                "workflow_name TEXT NOT NULL, "
+                "current_step TEXT, "
+                "step_states TEXT NOT NULL, "
+                "definition_snapshot TEXT NOT NULL, "
+                "scratchpad_path TEXT NOT NULL, "
+                "deleted_at DATETIME, "
+                "created_at DATETIME NOT NULL, "
+                "updated_at DATETIME NOT NULL"
+                ")"
+            )
+            await db.commit()
+
+        database = Database(db_path)
+        await database.initialize()
+        await database.close()
+
+        async with aiosqlite.connect(db_path) as db:
+            cursor = await db.execute("PRAGMA table_info('workflow_states')")
+            cols = {row[1] for row in await cursor.fetchall()}
+
+        assert "loop_state" in cols
+
 
 class TestDatabaseClose:
     """Tests for engine disposal."""

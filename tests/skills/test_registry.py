@@ -1591,3 +1591,127 @@ class TestCompositionValidation:
         registry = SkillRegistry([skills_dir])
         assert registry.get_workflow("review", "weekly") is not None
         assert registry.get_workflow("review", "process-inbox") is not None
+
+
+class TestLoopValidation:
+    """Validation of loop edges in the unified composition graph (DLT-160)."""
+
+    def _create_workflow(
+        self,
+        skill_dir: Path,
+        workflow_name: str,
+        steps: list[dict],
+    ) -> None:
+        """Create a workflow with steps; each step dict has name, title, optional composes/loop."""
+        wf_dir = skill_dir / "workflows" / workflow_name
+        wf_dir.mkdir(parents=True, exist_ok=True)
+        for step in steps:
+            step_dir = wf_dir / step["name"]
+            step_dir.mkdir(exist_ok=True)
+            fm = f'---\ntitle: "{step["title"]}"\n'
+            if "composes" in step:
+                fm += f'composes: "{step["composes"]}"\n'
+            if "loop" in step:
+                fm += f'loop: "{step["loop"]}"\n'
+            fm += "---\nInstructions."
+            (step_dir / "instructions.md").write_text(fm)
+
+    def _make_skill(self, skills_dir: Path, name: str) -> Path:
+        skill_dir = skills_dir / name
+        skill_dir.mkdir(parents=True)
+        (skill_dir / "SKILL.md").write_text(
+            f'---\ndescription: "{name}"\n---\nBody'
+        )
+        return skill_dir
+
+    def test_mutex_rejects_workflow_with_both_composes_and_loop(
+        self, tmp_path: Path
+    ) -> None:
+        """R9: a step with both composes and loop is dropped at load time."""
+        skills_dir = tmp_path / "skills"
+        skill_dir = self._make_skill(skills_dir, "review")
+        # Step declares both composes AND loop — invalid
+        self._create_workflow(
+            skill_dir,
+            "weekly",
+            [{"name": "01", "title": "Step", "composes": "child", "loop": "other"}],
+        )
+        self._create_workflow(skill_dir, "child", [{"name": "01", "title": "Step"}])
+        self._create_workflow(skill_dir, "other", [{"name": "01", "title": "Step"}])
+
+        registry = SkillRegistry([skills_dir])
+        assert registry.get_workflow("review", "weekly") is None
+        # Other workflows survive — only the offending parent is dropped
+        assert registry.get_workflow("review", "child") is not None
+        assert registry.get_workflow("review", "other") is not None
+
+    def test_mutex_pre_pass_runs_before_cycle_detection(
+        self, tmp_path: Path
+    ) -> None:
+        """The mutex pre-pass strips invalid workflows so their would-be edges
+        don't enter the cycle graph and falsely cycle-reject neighbors."""
+        skills_dir = tmp_path / "skills"
+        skill_dir = self._make_skill(skills_dir, "review")
+        # bad has both composes and loop pointing at A and B, making a fake cycle
+        # B is a real, valid loop target. After mutex pre-pass strips bad, B
+        # should still be in the registry.
+        self._create_workflow(
+            skill_dir,
+            "bad",
+            [{"name": "01", "title": "Step", "composes": "B", "loop": "B"}],
+        )
+        self._create_workflow(skill_dir, "B", [{"name": "01", "title": "Step"}])
+
+        registry = SkillRegistry([skills_dir])
+        assert registry.get_workflow("review", "bad") is None
+        assert registry.get_workflow("review", "B") is not None
+
+    def test_loop_self_reference_rejected_at_load(self, tmp_path: Path) -> None:
+        """R10: a workflow whose step loops itself is rejected as a cycle."""
+        skills_dir = tmp_path / "skills"
+        skill_dir = self._make_skill(skills_dir, "review")
+        self._create_workflow(
+            skill_dir, "self-ref", [{"name": "01", "title": "Step", "loop": "self-ref"}]
+        )
+        registry = SkillRegistry([skills_dir])
+        assert registry.get_workflow("review", "self-ref") is None
+
+    def test_loop_cross_edge_cycle_rejected_at_load(self, tmp_path: Path) -> None:
+        """R10: cycles mixing loop and composes are detected (A loops B, B composes A)."""
+        skills_dir = tmp_path / "skills"
+        skill_dir = self._make_skill(skills_dir, "review")
+        self._create_workflow(
+            skill_dir, "A", [{"name": "01", "title": "Step", "loop": "B"}]
+        )
+        self._create_workflow(
+            skill_dir, "B", [{"name": "01", "title": "Step", "composes": "A"}]
+        )
+        registry = SkillRegistry([skills_dir])
+        assert registry.get_workflow("review", "A") is None
+        assert registry.get_workflow("review", "B") is None
+
+    def test_loop_missing_target_rejects_parent(self, tmp_path: Path) -> None:
+        """R1: a loop pointing at a missing target rejects the parent workflow."""
+        skills_dir = tmp_path / "skills"
+        skill_dir = self._make_skill(skills_dir, "review")
+        self._create_workflow(
+            skill_dir, "weekly", [{"name": "01", "title": "Step", "loop": "missing"}]
+        )
+        registry = SkillRegistry([skills_dir])
+        assert registry.get_workflow("review", "weekly") is None
+
+    def test_valid_loop_registers_normally(self, tmp_path: Path) -> None:
+        """R1: a valid loop target lets the parent register normally."""
+        skills_dir = tmp_path / "skills"
+        skill_dir = self._make_skill(skills_dir, "review")
+        self._create_workflow(
+            skill_dir,
+            "weekly",
+            [{"name": "01", "title": "Step", "loop": "process-item"}],
+        )
+        self._create_workflow(
+            skill_dir, "process-item", [{"name": "01", "title": "Inbox Step"}]
+        )
+        registry = SkillRegistry([skills_dir])
+        assert registry.get_workflow("review", "weekly") is not None
+        assert registry.get_workflow("review", "process-item") is not None

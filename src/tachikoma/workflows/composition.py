@@ -50,12 +50,14 @@ def resolve_composes(composes_str: str, parent_skill_name: str) -> tuple[str, st
 def _composition_edge(step: StepDefinition) -> str | None:
     """Yield the composition edge value for a step (composes or loop, at most one).
 
+    Returns the raw frontmatter value when either field is set (including
+    malformed values like ``""`` so reference validation can reject the parent).
     Mutex enforcement runs upstream in the registry pre-pass, guaranteeing at
     most one of the two is set for any surviving step.
     """
-    if step.composes:
+    if step.composes is not None:
         return step.composes
-    if step.loop:
+    if step.loop is not None:
         return step.loop
     return None
 
@@ -84,7 +86,7 @@ def detect_cycles(
     for (skill, wf_name), wf_def in workflows.items():
         for step in wf_def.steps:
             edge = _composition_edge(step)
-            if not edge:
+            if edge is None:
                 continue
             try:
                 target_skill, target_wf = resolve_composes(edge, skill)
@@ -143,9 +145,9 @@ def validate_references(
                 continue
             for step in wf_def.steps:
                 edge = _composition_edge(step)
-                if not edge:
+                if edge is None:
                     continue
-                edge_kind = "loop" if step.loop else "composes"
+                edge_kind = "loop" if step.loop is not None else "composes"
                 try:
                     target_skill, target_wf = resolve_composes(
                         edge, vertex[0]
