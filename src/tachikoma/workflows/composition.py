@@ -9,7 +9,7 @@ from dataclasses import dataclass, field
 
 from loguru import logger
 
-from tachikoma.workflows.definition import WorkflowDefinition
+from tachikoma.workflows.definition import StepDefinition, WorkflowDefinition
 
 _log = logger.bind(component="workflows")
 
@@ -47,6 +47,19 @@ def resolve_composes(composes_str: str, parent_skill_name: str) -> tuple[str, st
     return parent_skill_name, composes_str
 
 
+def _composition_edge(step: StepDefinition) -> str | None:
+    """Yield the composition edge value for a step (composes or loop, at most one).
+
+    Mutex enforcement runs upstream in the registry pre-pass, guaranteeing at
+    most one of the two is set for any surviving step.
+    """
+    if step.composes:
+        return step.composes
+    if step.loop:
+        return step.loop
+    return None
+
+
 # ---------------------------------------------------------------------------
 # Cycle detection (three-color DFS)
 # ---------------------------------------------------------------------------
@@ -70,10 +83,11 @@ def detect_cycles(
 
     for (skill, wf_name), wf_def in workflows.items():
         for step in wf_def.steps:
-            if not step.composes:
+            edge = _composition_edge(step)
+            if not edge:
                 continue
             try:
-                target_skill, target_wf = resolve_composes(step.composes, skill)
+                target_skill, target_wf = resolve_composes(edge, skill)
             except ValueError:
                 continue
             target = (target_skill, target_wf)
@@ -128,20 +142,23 @@ def validate_references(
             if vertex in rejected:
                 continue
             for step in wf_def.steps:
-                if not step.composes:
+                edge = _composition_edge(step)
+                if not edge:
                     continue
+                edge_kind = "loop" if step.loop else "composes"
                 try:
                     target_skill, target_wf = resolve_composes(
-                        step.composes, vertex[0]
+                        edge, vertex[0]
                     )
                 except ValueError:
                     _log.warning(
-                        "Workflow rejected: malformed composes value: "
+                        "Workflow rejected: malformed {kind} value: "
                         "skill={skill}, workflow={workflow}, step={step}, value={value}",
+                        kind=edge_kind,
                         skill=vertex[0],
                         workflow=vertex[1],
                         step=step.id,
-                        value=step.composes,
+                        value=edge,
                     )
                     rejected.add(vertex)
                     changed = True
@@ -151,9 +168,10 @@ def validate_references(
 
                 if target not in workflows:
                     _log.warning(
-                        "Workflow rejected: composes target not found: "
+                        "Workflow rejected: {kind} target not found: "
                         "skill={skill}, workflow={workflow}, step={step}, "
                         "target_skill={ts}, target_workflow={tw}",
+                        kind=edge_kind,
                         skill=vertex[0],
                         workflow=vertex[1],
                         step=step.id,
@@ -166,9 +184,10 @@ def validate_references(
 
                 if target in rejected:
                     _log.warning(
-                        "Workflow rejected: composes target was itself rejected: "
+                        "Workflow rejected: {kind} target was itself rejected: "
                         "skill={skill}, workflow={workflow}, step={step}, "
                         "target_skill={ts}, target_workflow={tw}",
+                        kind=edge_kind,
                         skill=vertex[0],
                         workflow=vertex[1],
                         step=step.id,
@@ -182,9 +201,10 @@ def validate_references(
                 target_def = workflows[target]
                 if not target_def.steps:
                     _log.warning(
-                        "Workflow rejected: composes target has zero steps: "
+                        "Workflow rejected: {kind} target has zero steps: "
                         "skill={skill}, workflow={workflow}, step={step}, "
                         "target_skill={ts}, target_workflow={tw}",
+                        kind=edge_kind,
                         skill=vertex[0],
                         workflow=vertex[1],
                         step=step.id,
@@ -210,6 +230,7 @@ class UpdateState:
     layer_id: str
     step_states: dict[str, str]
     current_step: str | None
+    loop_state: dict | None = None
 
 
 @dataclass(frozen=True)
@@ -251,3 +272,4 @@ class CascadeOutcome:
     active_step_id: str | None  # None when top-level finalized
     condition_skips: list[tuple[str, str, str]]  # (workflow_name, step_id, reason)
     finalized_top_level: bool
+    halted_at_loop_step: str | None = None  # step_id of loop step that halted auto-advance

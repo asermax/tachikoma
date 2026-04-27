@@ -204,6 +204,24 @@ class SkillRegistry:
         workflows are removed from ``self._workflows``.
         """
         # Composition graph validation
+
+        # Mutex pre-pass: a step cannot declare both `composes` and `loop`.
+        mutex_violations: list[tuple[str, str]] = []
+        for vertex, wf_def in list(self._workflows.items()):
+            for step in wf_def.steps:
+                if step.composes and step.loop:
+                    _log.warning(
+                        "Workflow rejected: step declares both `composes` and `loop`: "
+                        "skill={skill}, workflow={workflow}, step={step}",
+                        skill=vertex[0],
+                        workflow=vertex[1],
+                        step=step.id,
+                    )
+                    mutex_violations.append(vertex)
+                    break
+        for v in mutex_violations:
+            self._workflows.pop(v, None)
+
         sccs = detect_cycles(self._workflows)
         cycles_flat: set[tuple[str, str]] = set()
         for scc in sccs:
