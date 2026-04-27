@@ -127,6 +127,7 @@ what to produce, and how to validate completion.
 | `required` | No | If `false`, step may be skipped when not applicable (default: `true`) |
 | `condition` | No | Natural-language prompt evaluated before step start; step auto-skipped if condition fails |
 | `composes` | No | Inline another workflow as a sub-workflow; step body is ignored at runtime |
+| `loop` | No | Iterate a target workflow once per item in an agent-supplied list; mutually exclusive with `composes` |
 | `required_skills` | No | Skills to auto-activate for this step |
 | `*` | No | Custom fields for workflow-specific metadata |
 

@@ -329,6 +329,63 @@ composes: "security-audit/run-scan"
 ---
 ```
 
+### loop (optional, string)
+
+Declares that this step iterates a target workflow once per item in an agent-supplied list. \
+Same syntax as `composes` (`<workflow>` for same-skill, `<skill>/<workflow>` for cross-skill). \
+**Mutually exclusive with `composes`** — a step can declare at most one of the two.
+
+- The agent passes `items=["a", "b", ...]` to `update_workflow_state` when starting the step
+- Each item is an opaque string (filename, ID, label) the iteration body interprets
+- Iterations run sequentially; each iteration is a full composition child
+- Empty `items=[]` completes the loop step immediately with zero iterations
+- The engine does not auto-start loop steps — it halts and prompts the agent for items
+- The current item appears in the breadcrumb: `parent/03-process > item-wf/01-step (item: foo.md)`
+
+**Load-time validation**: the parent workflow is rejected if the target is missing, has zero \
+steps, would create a cycle, or if the step declares both `loop` and `composes`.
+
+**Worked example — producer step + loop step**:
+
+Producer step that lists items to process (writes them to the scratchpad):
+
+```yaml
+---
+title: "Collect Inbox Notes"
+---
+```
+
+```markdown
+Scan the `inbox/` directory. For each `.md` file found, record its filename in the
+scratchpad under a `## Items to Process` heading, one per line.
+
+When done, proceed to the next step — it will loop over each item.
+```
+
+Loop step that processes each item:
+
+```yaml
+---
+title: "Process Each Note"
+loop: "process-single-note"
+---
+```
+
+When the engine reaches this step, it halts and prompts the agent for items. \
+The agent reads the scratchpad, extracts the filenames, and calls:
+
+```
+update_workflow_state(
+    workflow_id="...",
+    step="02-process-each-note",
+    action="start",
+    items=["note-1.md", "note-2.md", "note-3.md"]
+)
+```
+
+The engine runs `process-single-note` once per item. Inside the iteration body, \
+the agent can read the current item from the breadcrumb suffix and process it.
+
 ## Naming Conventions
 
 ### Workflow Directory Names

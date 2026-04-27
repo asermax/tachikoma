@@ -389,6 +389,34 @@ When this happens, the response includes a `### Condition-Skipped Steps` section
 steps were bypassed and why, followed by the next activated step's instructions. You do not \
 need to take any action for condition-skipped steps — just continue with the activated step.
 
+## Loops
+
+A step can declare a `loop` field (same syntax as `composes`: `<workflow>` for same-skill, \
+`<skill>/<workflow>` for cross-skill) to run the referenced workflow once per item in an \
+agent-provided list. The `loop` and `composes` fields are mutually exclusive on a single step.
+
+**Starting a loop step**: When you start a loop step, you must pass `items=["a", "b", ...]` \
+to the `update_workflow_state` call. Each item is an opaque string (filename, ID, label) that \
+the iteration body interprets. Passing `items=[]` completes the loop step with zero iterations.
+
+**Items are required for loop steps and rejected for non-loop steps.** The engine validates \
+this before any state change.
+
+**Auto-start halt**: When the cascade auto-advance reaches a pending loop step, it does **not** \
+auto-start it (the engine cannot fabricate items). Instead, it halts and returns a prompt like: \
+"The next step is a loop step. Call `update_workflow_state(..., action='start', items=[...])` \
+to begin iterating."
+
+**Current item**: During iteration, every tool response surfaces the current item in the \
+breadcrumb suffix: `parent/03-process > process-item/01-step (item: foo.md)`.
+
+**Auto-completion**: After the last iteration completes, the loop step is automatically marked \
+completed and the parent's next step auto-starts (or the top-level auto-finalizes).
+
+**Recovery**: `get_workflow_state` shows a `### Loop step` block with the items list, current \
+iteration index, and current item. The loop step's progress is durably persisted on the parent \
+record.
+
 ## Recovery After Context Loss
 
 If you lose track of an active workflow (e.g., after a context restart), recover by:
