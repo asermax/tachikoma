@@ -2,7 +2,7 @@
 
 **Scope**: Python
 **Date**: 2026-03-21
-**Last Updated**: 2026-04-26
+**Last Updated**: 2026-04-27
 
 ## Pattern
 
@@ -93,40 +93,66 @@ MY_SERVER = create_sdk_mcp_server(name="my-server", version="1.0.0", tools=[my_t
 
 **Why**: Module-level tools are singletons — they can't capture per-invocation state like snapshots or processor-specific paths. Each processor run may need different configuration passed through the factory.
 
-### Array-Typed Args (JSON-String Fallback)
+### Array-Typed Args (JSON-String Argument)
 
-The Claude Agent SDK's MCP transport occasionally serializes `array`-typed tool arguments as JSON-encoded strings before they reach the receiving model, producing validation errors of the form `'[...]' is not valid under any of the given schemas`. For any MCP tool whose `args` model has a `list[T]` (or `list[T] | None`) field, add a `field_validator(..., mode="before")` that decodes the value when it arrives as a string, then defers to standard list validation.
+The Claude Agent SDK's MCP transport rejects array-typed tool arguments at its client-side JSON Schema validator before the value ever reaches the receiving model — both the array form and any stringified form fail with `is not valid under any of the given schemas`. For any MCP tool that conceptually accepts an array, declare the field as `str | None` (the JSON Schema becomes `string | null`, which the transport accepts) and parse the JSON string into a list inside a module-level helper called from the tool wrapper. Treat this as the default approach for array arguments — there is no reliable way to declare an `array` schema for an MCP tool.
 
 ```python
 import json
 
-from pydantic import BaseModel, field_validator
+from claude_agent_sdk import create_sdk_mcp_server, tool
+from pydantic import BaseModel
 
 
 class MyArgs(BaseModel):
-    paths: list[str] | None = None
+    # Declared as a JSON-encoded string (e.g. '["a", "b"]') because the SDK
+    # MCP transport's client-side schema validator rejects array-typed
+    # arguments. The wrapper parses it via _decode_paths.
+    paths: str | None = None
 
-    # Workaround: SDK MCP transport may stringify array arguments. Decode
-    # defensively so the tool keeps working without broadening the schema.
-    @field_validator("paths", mode="before")
-    @classmethod
-    def _decode_paths(cls, v: object) -> object:
-        if not isinstance(v, str):
-            return v
-        try:
-            decoded = json.loads(v)
-        except json.JSONDecodeError as exc:
-            raise ValueError(f"paths must be a JSON-encoded array: {exc}") from exc
-        if not isinstance(decoded, list):
-            raise ValueError(
-                f"paths JSON string must encode an array, got {type(decoded).__name__}"
-            )
-        return decoded
+
+def _decode_paths(raw: str) -> list[str]:
+    """Decode the JSON-string form of ``paths`` into a list of strings.
+
+    Raises:
+        ValueError: when ``raw`` is not valid JSON, does not encode an array,
+            or encodes an array containing non-string items.
+    """
+    try:
+        decoded = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"paths must be a JSON-encoded array of strings: {exc}") from exc
+    if not isinstance(decoded, list):
+        raise ValueError(
+            f"paths JSON string must encode an array, got {type(decoded).__name__}"
+        )
+    if not all(isinstance(item, str) for item in decoded):
+        raise ValueError("paths JSON array must contain only strings")
+    return decoded
+
+
+def create_my_server() -> "McpSdkServerConfig":
+    @tool("my_tool", "...accepts paths as a JSON-encoded string...", MyArgs.model_json_schema())
+    async def my_tool(args: dict) -> dict:
+        parsed = MyArgs.model_validate(args)
+        paths_list: list[str] | None = None
+        if parsed.paths is not None:
+            try:
+                paths_list = _decode_paths(parsed.paths)
+            except ValueError as exc:
+                return {"is_error": True, "content": [{"type": "text", "text": f"Error: {exc}"}]}
+        # ... delegate to handler with paths_list ...
+
+    return create_sdk_mcp_server(name="my-server", version="1.0.0", tools=[my_tool])
 ```
 
-**Why a `field_validator`, not a union type.** Declaring the field as `list[T] | str` would broaden the JSON Schema (`anyOf` of `array` and `string`) and advertise the JSON-string form as a first-class input. The schema should still describe what the tool conceptually accepts — an array. The validator is a defensive coercion at the transport boundary, not part of the public contract. Pydantic builds the JSON Schema from the declared type annotation; validators are invisible to schema generation, which is exactly what we want here.
+**Why parse in the wrapper, not in a Pydantic validator.** Putting the JSON parse inside a `field_validator` would either (a) require declaring the field as `list[T] | None`, which regenerates an `array | null` JSON Schema that the transport rejects, or (b) live on a `str | None` field and mutate the value to a `list[T]`, leaving the type annotation lying about the runtime contents. Wrapper-level parsing keeps the schema honest (`string | null`) and the handler signature honest (`list[T] | None`), at the cost of one extra block in the wrapper.
 
-**Item validation still applies.** After the validator decodes the string, Pydantic's standard `list[str]` validation runs against the result, so non-string elements (e.g. `'[1, 2]'`) are still rejected with a clear error.
+**Why a module-level helper.** The tool wrapper is a closure inside the factory and is awkward to test directly. A module-level `_decode_<field>` helper is directly importable, gives the parse-and-validate logic full unit-test coverage, and keeps the wrapper short.
+
+**Document the JSON-string form for the agent.** The tool description text shown to the agent must include a concrete example — the agent has no way to infer that the string should be JSON-encoded from the schema alone. State explicitly that `<field>` is a JSON-encoded string and show one full example per tool.
+
+**Tool-description placement of the example.** The tool's `@tool(..., description=...)` block is where this contract is communicated. Without an example, models will frequently send raw arrays or comma-separated strings.
 
 ## Exceptions
 
