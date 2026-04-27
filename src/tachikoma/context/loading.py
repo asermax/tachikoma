@@ -223,9 +223,9 @@ these MCP tools. Both are available at all times:
 
 - **push(type, target, scrub_paths?)** — Push the current branch of the target to its \
 `origin` remote. Handles divergence (fetch → rebase → push) with agent-driven conflict \
-resolution on diverged branches. Optionally pass `scrub_paths` (list of file paths) to \
-permanently remove those paths from the entire git history — this rewrites all history \
-and force-pushes to origin. **DESTRUCTIVE and IRREVERSIBLE.** Only works with \
+resolution on diverged branches. Optionally pass `scrub_paths` (a JSON-encoded string of \
+file paths) to permanently remove those paths from the entire git history — this rewrites \
+all history and force-pushes to origin. **DESTRUCTIVE and IRREVERSIBLE.** Only works with \
 `type="project"`.
 - **sync(type, target)** — Pull (rebase on divergence) then push. Skips the push when the \
 pull is skipped (uncommitted changes) or fails.
@@ -235,7 +235,9 @@ Arguments:
 - `type="workspace"` — target the main workspace (`target` is ignored).
 - `type="project"`, `target=<project-name>` — target a registered project submodule under \
 `projects/<project-name>`.
-- `scrub_paths=["path/to/file"]` — (push only, project only) paths to scrub from git history.
+- `scrub_paths='["path/to/file"]'` — (push only, project only) JSON-encoded array of paths \
+to scrub from git history. Pass it as a string, not a list — the SDK MCP transport cannot \
+reliably convey array arguments.
 
 These tools cover every case where the old approach would have reached for raw `git push` \
 or `git filter-repo`. Prefer them.
