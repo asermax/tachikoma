@@ -358,6 +358,8 @@ class WorkflowStateRepository:
                                 record.step_states = json.dumps(mutation.step_states)
                                 record.current_step = mutation.current_step
                                 record.updated_at = datetime.now(UTC)
+                                if mutation.loop_state is not None:
+                                    record.loop_state = json.dumps(mutation.loop_state)
 
                         elif isinstance(mutation, CreateChild):
                             child_record = WorkflowStateRecord(

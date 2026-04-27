@@ -46,6 +46,7 @@ class WorkflowState:
     updated_at: datetime
     parent_workflow_id: str | None = None
     parent_step_id: str | None = None
+    loop_state: dict | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -74,6 +75,7 @@ class WorkflowStateRecord(Base):
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    loop_state: Mapped[str | None] = mapped_column(String, nullable=True)
 
     __table_args__ = (
         Index("ix_workflow_states_skill_name", "skill_name"),
@@ -97,4 +99,5 @@ class WorkflowStateRecord(Base):
             updated_at=ensure_utc(self.updated_at),
             parent_workflow_id=self.parent_workflow_id,
             parent_step_id=self.parent_step_id,
+            loop_state=json.loads(self.loop_state) if self.loop_state is not None else None,
         )
