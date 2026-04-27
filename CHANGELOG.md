@@ -2,6 +2,77 @@
 
 <!-- version list -->
 
+## v1.55.0 (2026-04-27)
+
+### Documentation
+
+- **deltas**: Add DLT-160 design and mark spec complete
+  ([`8dd2bd6`](https://github.com/asermax/tachikoma/commit/8dd2bd64a7dd5508cda0702aec21013e52ec82f3))
+
+- **deltas**: Add DLT-160 implementation plan
+  ([`a25512a`](https://github.com/asermax/tachikoma/commit/a25512af9c6f9a712d89803d1bb0410614911d48))
+
+- **deltas**: Add DLT-160 spec for loop iteration
+  ([`138c258`](https://github.com/asermax/tachikoma/commit/138c258fcd96e063be69d1345d0b999fd0c02285))
+
+- **deltas**: Expand DLT-160 design and mark approved
+  ([`6d77042`](https://github.com/asermax/tachikoma/commit/6d7704217cf2d46cc7ead3df14fdbdbd94482f29))
+
+- **deltas**: Expand DLT-160 spec with persistence, abort, and edge-case criteria
+  ([`1be533b`](https://github.com/asermax/tachikoma/commit/1be533b7a38c674af352b502fc615268f328bead))
+
+- **deltas**: Mark DLT-160 as in-design
+  ([`612524e`](https://github.com/asermax/tachikoma/commit/612524ee9cc45cf36871b0038519e352f99576ab))
+
+- **deltas**: Mark DLT-160 as in-plan
+  ([`3af8240`](https://github.com/asermax/tachikoma/commit/3af82405183a6ca4dc310af3c9689ed2180059d9))
+
+- **deltas**: Mark DLT-160 as in-spec
+  ([`0f14a92`](https://github.com/asermax/tachikoma/commit/0f14a92dfcf4e0b477408be448547afc42dc035c))
+
+- **deltas**: Mark DLT-160 design as complete
+  ([`6157268`](https://github.com/asermax/tachikoma/commit/6157268aed4281fe778df66eef54123878688ff1))
+
+- **deltas**: Mark DLT-160 implementation complete
+  ([`0ae3633`](https://github.com/asermax/tachikoma/commit/0ae3633c3ffc260b606d550f768daaa30c62989e))
+
+- **deltas**: Mark DLT-160 plan as complete
+  ([`62dee21`](https://github.com/asermax/tachikoma/commit/62dee21729acc9b6c429da6a6d74b9a2a069276c))
+
+- **workflows**: Add loop documentation to authoring guide and context preamble
+  ([`b5ce7fc`](https://github.com/asermax/tachikoma/commit/b5ce7fcd631bbbdbe716bcc79a3523df8c1027b8))
+
+- **workflows**: Reconcile DLT-160 loop step into feature docs
+  ([`32c191d`](https://github.com/asermax/tachikoma/commit/32c191dfec641a1dbf406d432d8c05beedd718f6))
+
+### Features
+
+- **workflows**: Add loop field to step frontmatter and loader
+  ([`d3bff5c`](https://github.com/asermax/tachikoma/commit/d3bff5cc30d07462f4c56d19d1e5cbb5efdb7a72))
+
+- **workflows**: Cascade runtime for loop steps
+  ([`ec2610d`](https://github.com/asermax/tachikoma/commit/ec2610dfe636cb611d772d9c49d31a280ba6ae7f))
+
+- **workflows**: Finalize loop step composition and validation
+  ([`92549f5`](https://github.com/asermax/tachikoma/commit/92549f5e11608ff2e2f6b8defe2a695cb277d926))
+
+- **workflows**: Persist loop state in database
+  ([`e263e23`](https://github.com/asermax/tachikoma/commit/e263e2348d3fe8cb3b7f7e7db6d17e60923c9493))
+
+- **workflows**: Unify composition graph to treat loop edges like composes
+  ([`f235040`](https://github.com/asermax/tachikoma/commit/f23504033903b626cf5a14359eb9a6df776046fa))
+
+### Refactoring
+
+- **workflows**: Extract current_item derivation and breadcrumb rendering
+  ([`b5b958f`](https://github.com/asermax/tachikoma/commit/b5b958f21c274b20f6b9049999055b040505ee72))
+
+### Testing
+
+- **workflows**: Update breadcrumb tests for loop item suffix
+  ([`0cddd1d`](https://github.com/asermax/tachikoma/commit/0cddd1d0cc0170450ce7305f61d7b850b5dd60e8))
+
+
 ## v1.54.1 (2026-04-26)
 
 ### Bug Fixes
