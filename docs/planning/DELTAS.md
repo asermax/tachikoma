@@ -610,7 +610,7 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 **Description**: Workflow steps currently always execute in order, which forces authors to either write steps that no-op based on runtime state or split workflows into variants. Add a `condition` frontmatter field containing an expression the workflow engine evaluates before starting the step; if the expression resolves to false, the step is auto-skipped (independently of the `skippable` field) and the engine advances to the next step. The condition expression language should read from runtime state available to the engine — at minimum the workflow scratchpad, outputs of previous steps, and simple filesystem checks (file existence) — and should fail closed (unevaluable expressions skip the step and surface a warning rather than crashing the workflow). Example use cases from real workflows: "only run dashboard deploy if a plan was written", "only create calendar events if events exist in the scratchpad". Scope explicitly excludes cross-workflow composition (covered by DLT-161).
 
 ### DLT-160: Loop iteration via workflow composition
-**Status**: ✗ Defined
+**Status**: ⧗ Spec
 **Depends on**: None
 **Priority**: 3 (Medium)
 **Complexity**: Medium
