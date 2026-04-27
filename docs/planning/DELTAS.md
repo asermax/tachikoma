@@ -609,13 +609,6 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 **Complexity**: Medium
 **Description**: Workflow steps currently always execute in order, which forces authors to either write steps that no-op based on runtime state or split workflows into variants. Add a `condition` frontmatter field containing an expression the workflow engine evaluates before starting the step; if the expression resolves to false, the step is auto-skipped (independently of the `skippable` field) and the engine advances to the next step. The condition expression language should read from runtime state available to the engine — at minimum the workflow scratchpad, outputs of previous steps, and simple filesystem checks (file existence) — and should fail closed (unevaluable expressions skip the step and surface a warning rather than crashing the workflow). Example use cases from real workflows: "only run dashboard deploy if a plan was written", "only create calendar events if events exist in the scratchpad". Scope explicitly excludes cross-workflow composition (covered by DLT-161).
 
-### DLT-160: Loop iteration via workflow composition
-**Status**: ✓ Implementation
-**Depends on**: None
-**Priority**: 3 (Medium)
-**Complexity**: Medium
-**Description**: Workflows today can only express fixed-length sequences, so batch-processing steps where the item count isn't known upfront (e.g., "process all inbox notes", "handle each pending email") have to be unrolled by hand or faked with agent-level self-looping. Instead of adding a native loop mechanism to the engine, implement looping as a composition pattern: a `loop` frontmatter field on a step declares a target workflow to invoke repeatedly. Each iteration runs the referenced workflow to completion (via the composition mechanism from DLT-161), then the engine evaluates a condition expression (reusing the condition language from DLT-159) to decide whether to continue. The loop body is the full referenced workflow, not a single step — this naturally supports multi-step loops without additional engine complexity. The engine exposes an iteration counter through the scratchpad so the loop body can make progress, and guards against infinite loops with a configurable maximum iteration cap. Cycle detection from DLT-161 ensures a workflow cannot loop over itself directly.
-
 ### DLT-166: Detect stuck processes via output patterns
 **Status**: ✗ Defined
 **Depends on**: None

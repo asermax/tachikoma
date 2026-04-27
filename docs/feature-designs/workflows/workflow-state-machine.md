@@ -33,7 +33,7 @@ Skills that define multi-step workflows (morning routines, deployment processes,
 
 Workflows are optional subdirectories within skills (`workflows/<name>/`), each containing ordered step directories with instructions, references, and scripts. Five MCP tools (`start_workflow`, `update_workflow_state`, `get_workflow_state`, `end_workflow`, `list_active_workflows`) form the state machine boundary — the agent cannot change workflow state except through these tools, which validate all transitions. State is persisted in a database table, making it resilient to context compaction and process restarts. Stale workflow cleanup runs as a post-processor in the `pre_finalize` phase, committed alongside session changes.
 
-Steps may declare a `condition` (natural-language predicate) that gates activation; non-passing results auto-skip the step and the cascade advances to the next pending step. Steps may also declare a `composes` reference to another workflow; activating such a step pauses the parent, runs the referenced child to completion (with full step-level semantics — `condition`, `required`, `required_skills`), then auto-resumes the parent. From the agent's perspective the run is one continuous workflow: a single ID drives everything, tool responses route to the deepest active layer, and a breadcrumb (`<parent>/<step> > <child>/<step>`) identifies the current location in the stack.
+Steps may declare a `condition` (natural-language predicate) that gates activation; non-passing results auto-skip the step and the cascade advances to the next pending step. Steps may also declare a `composes` reference to another workflow; activating such a step pauses the parent, runs the referenced child to completion (with full step-level semantics — `condition`, `required`, `required_skills`), then auto-resumes the parent. A third edge type, `loop`, runs the referenced workflow once per item in an agent-supplied list — each iteration is a full composition child, and the engine reuses every existing composition primitive (cycle detection, spawn, snapshot, scratchpad inheritance, abort cascade, atomic mutations) plus a small set of loop-specific extensions (an `items` parameter on `update_workflow_state`, a `loop_state` JSON column on the parent record, an auto-start halt at pending loop steps, and an iteration-advance branch on cascade pop). `loop` and `composes` are mutually exclusive on a single step; their edges share the same cycle/reference graph. From the agent's perspective the run is one continuous workflow: a single ID drives everything, tool responses route to the deepest active layer, and a breadcrumb (`<parent>/<step> > <child>/<step>`, with `(item: <value>)` suffixed on the deepest segment when an iteration is active) identifies the current location in the stack.
 
 ```
 ┌──────────────────────────────────────────────────────────────┐
@@ -86,19 +86,19 @@ Steps may declare a `condition` (natural-language predicate) that gates activati
 
 | Layer/Component | Responsibility | Key Decisions |
 |-----------------|----------------|---------------|
-| `src/tachikoma/workflows/definition.py` | `StepDefinition` and `WorkflowDefinition` frozen dataclasses for filesystem-parsed workflow model; includes optional `condition: str \| None` (natural-language predicate evaluated at activation) and `composes: str \| None` (sub-workflow reference) | Follows skill dataclass pattern; uses directory name as step ID |
-| `src/tachikoma/workflows/loader.py` | `load_workflows()` — discovers `workflows/` subdirectories within skill dirs, reads step subdirectories sorted alphabetically, parses `instructions.md` frontmatter via python-frontmatter; parses `condition` and `composes` (warn-and-fall-back-to-`None` on type mismatch) | Uses same frontmatter library as skill loading; logs warnings for invalid steps |
-| `src/tachikoma/workflows/composition.py` | Pure helpers and in-memory dataclasses for composition: `resolve_composes`, `detect_cycles`, `validate_references`, `MutationBatch`, `UpdateState`, `CreateChild`, `SoftDelete`, `CascadeOutcome` | No SDK / DB / async dependencies — keeps composition logic testable in isolation; shared between registry validation and cascade engine |
+| `src/tachikoma/workflows/definition.py` | `StepDefinition` and `WorkflowDefinition` frozen dataclasses for filesystem-parsed workflow model; includes optional `condition: str \| None` (natural-language predicate evaluated at activation), `composes: str \| None` (sub-workflow reference), and `loop: str \| None` (target workflow run once per agent-supplied item; mutually exclusive with `composes`) | Follows skill dataclass pattern; uses directory name as step ID |
+| `src/tachikoma/workflows/loader.py` | `load_workflows()` — discovers `workflows/` subdirectories within skill dirs, reads step subdirectories sorted alphabetically, parses `instructions.md` frontmatter via python-frontmatter; parses `condition`, `composes`, and `loop` (warn-and-fall-back-to-`None` on type mismatch) | Uses same frontmatter library as skill loading; logs warnings for invalid steps |
+| `src/tachikoma/workflows/composition.py` | Pure helpers and in-memory dataclasses for composition: `resolve_composes`, `detect_cycles`, `validate_references`, `_composition_edges` (yields composes-or-loop value per step — single point that unifies the two edge types), `MutationBatch`, `UpdateState` (with optional `loop_state: dict \| None` field), `CreateChild`, `SoftDelete`, `CascadeOutcome` | No SDK / DB / async dependencies — keeps composition logic testable in isolation; shared between registry validation and cascade engine; `_composition_edges` keeps cycle detection and reference validation single-codepath across both edge types |
 | `src/tachikoma/workflows/conditions.py` | `evaluate_condition()` — forks an SDK sub-agent to evaluate a natural-language predicate against the current `step_states` and scratchpad; returns `ConditionResult(passes, reason, is_error)` | Follows DES-004 (sub-agent spawning conventions); evaluation is fail-closed — a non-passing result (genuine fail or evaluator error) causes the step to be skipped |
-| `src/tachikoma/workflows/model.py` | `StepState` type alias, `WorkflowState` frozen dataclass, `WorkflowStateRecord` ORM model on `workflow_states` table; `to_domain()` method; JSON serialization helpers; `parent_workflow_id` and `parent_step_id` columns for nested workflow linkage; composite `Index("ix_workflow_states_parent", "parent_workflow_id", "deleted_at")` | Follows ADR-007 (SQLAlchemy async + aiosqlite); JSON columns for step_states and definition_snapshot; soft delete via `deleted_at`; non-partial composite parent index serves both top-level filter and active-child lookup |
-| `src/tachikoma/workflows/repository.py` | `WorkflowStateRepository` — async CRUD: create, get (non-deleted), get_active (top-level only), update, soft_delete, list_active (top-level only), list_stale (subtree-aware), get_active_chain, get_active_child, abort_cascade, apply_mutation_batch | Application-level duplicate prevention (only enforced for top-level instances per R26); always bumps `updated_at`; cascade methods own one session each via `async with db.begin()` for atomicity (ADR-007) |
-| `src/tachikoma/workflows/tools.py` | `create_workflow_tools_server()` — MCP server factory with 5 tools; Pydantic arg models; extracted handler functions; transition validation logic; `_run_cascade` engine wrapping `_evaluate_and_advance` for per-layer step advancement; `_render_breadcrumb`, `_try_spawn_child`; deepest-active routing; child-ID rejection on `update_workflow_state` and `end_workflow`; nested view + corruption detection in `handle_get_workflow_state` | Follows DES-006 (MCP tool server factory); handlers testable without SDK; cascade stages mutations in memory and applies via single `apply_mutation_batch` for atomicity |
+| `src/tachikoma/workflows/model.py` | `StepState` type alias, `WorkflowState` frozen dataclass (with nullable `loop_state: dict \| None`), `WorkflowStateRecord` ORM model on `workflow_states` table; `to_domain()` method (decodes `loop_state` JSON when present); JSON serialization helpers; `parent_workflow_id`, `parent_step_id`, and `loop_state` columns; composite `Index("ix_workflow_states_parent", "parent_workflow_id", "deleted_at")` | Follows ADR-007 (SQLAlchemy async + aiosqlite); JSON columns for step_states, definition_snapshot, and loop_state; soft delete via `deleted_at`; non-partial composite parent index serves both top-level filter and active-child lookup |
+| `src/tachikoma/workflows/repository.py` | `WorkflowStateRepository` — async CRUD: create, get (non-deleted), get_active (top-level only), update, soft_delete, list_active (top-level only), list_stale (subtree-aware), get_active_chain, get_active_child, abort_cascade, apply_mutation_batch (writes `loop_state` to the parent record when `UpdateState.loop_state is not None`) | Application-level duplicate prevention (only enforced for top-level instances per R26); always bumps `updated_at`; cascade methods own one session each via `async with db.begin()` for atomicity (ADR-007); `loop_state` write is conditional on the field being non-None (None means "don't touch the column") |
+| `src/tachikoma/workflows/tools.py` | `create_workflow_tools_server()` — MCP server factory with 5 tools; Pydantic arg models (including optional `items: list[str] \| None` on `UpdateWorkflowStateArgs`); extracted handler functions; transition validation logic with the 5-gate items ordering (routing → transition → step-kind/items consistency → condition → items-required-for-loop); `_run_cascade` engine wrapping `_evaluate_and_advance` for per-layer step advancement, with two new branches for loop steps (auto-start halt at pending loop step; iteration advance on cascade pop reading/writing `loop_state`); `_render_breadcrumb` (suffixes `(item: <value>)` on the deepest segment when an iteration is active); `_try_spawn_child` (accepts optional `current_item` threaded onto the spawned layer); deepest-active routing; child-ID rejection on `update_workflow_state` and `end_workflow` (covers iteration children); nested view + corruption detection in `handle_get_workflow_state` (renders a `### Loop step` block on a parent's loop step showing items/index/current item; iteration child renders identically to a regular composition child — no parallel rendering path) | Follows DES-006 (MCP tool server factory); handlers testable without SDK; cascade stages mutations in memory and applies via single `apply_mutation_batch` for atomicity; loop-specific logic is localised to two cascade branches plus the breadcrumb suffix and the Loop step block — no parallel cascade engine |
 | `src/tachikoma/workflows/cleanup.py` | `StaleWorkflowCleanupProcessor(PostProcessor)` — calls `repository.abort_cascade` per stale top-level root for atomic subtree teardown, then deletes the scratchpad file once; runs in `pre_finalize` phase | Extends PostProcessor directly (not PromptDrivenProcessor — no SDK fork needed); subtree-aware staleness via repository |
 | `src/tachikoma/workflows/hooks.py` | `workflows_hook` — bootstrap hook: creates repository from shared Database, stores in extras | Follows DES-003 (subsystem-owned bootstrap hooks) |
-| `src/tachikoma/skills/registry.py` | Extended with `_workflows` dict, `get_workflow()`, `workflows` property; workflow definitions discovered during `_load_skill()`; `_validate_deps` runs composition cycle detection and reference validation before existing depends_on / required_skills checks; rejected workflows are removed from `_workflows` | Extends existing registry without creating a new one; composition validation co-located with skill dependency validation |
-| `src/tachikoma/database.py` | Pragma migration adds `parent_workflow_id` and `parent_step_id` columns to `workflow_states` (nullable, no DEFAULT); the new composite index is auto-created via `Base.metadata.create_all` | Same `pragma_table_info` + `ALTER TABLE` pattern as existing migrations |
-| `src/tachikoma/context/loading.py` | Static `# Workflows` section in `SYSTEM_PREAMBLE_TEMPLATE` documents single-ID driving, breadcrumb format, top-level filter on `list_active_workflows`, nested view in `get_workflow_state`, and condition auto-skip semantics | Follows ADR-008 (system prompt composition via append) |
-| `src/tachikoma/skills/builtin/workflow-authoring-guide/` | Built-in skill with SKILL.md and `references/step-design.md`; documents `composes` and `condition` frontmatter fields with worked examples | Follows existing built-in skill pattern |
+| `src/tachikoma/skills/registry.py` | Extended with `_workflows` dict, `get_workflow()`, `workflows` property; workflow definitions discovered during `_load_skill()`; `_validate_deps` runs (a) a `loop`/`composes` mutex pre-pass that removes any offending parent workflow before edge collection, then (b) composition cycle detection and reference validation over the unified edge set, then (c) existing depends_on / required_skills checks; rejected workflows are removed from `_workflows` | Extends existing registry without creating a new one; composition validation co-located with skill dependency validation; mutex runs before edge collection so a rejected workflow cannot contribute partial edges to the cycle graph |
+| `src/tachikoma/database.py` | Pragma migration adds `parent_workflow_id` and `parent_step_id` columns to `workflow_states` (nullable, no DEFAULT); follow-up migration adds nullable `loop_state TEXT` column for loop iteration progress; the composite index is auto-created via `Base.metadata.create_all` | Same `pragma_table_info` + `ALTER TABLE` pattern across all three migrations; nullable for backward compatibility with pre-DLT-160 records |
+| `src/tachikoma/context/loading.py` | Static `# Workflows` section in `SYSTEM_PREAMBLE_TEMPLATE` documents single-ID driving, breadcrumb format, top-level filter on `list_active_workflows`, nested view in `get_workflow_state`, condition auto-skip semantics, and a `## Loops` sub-section covering the `loop` field, `items` parameter, current-item exposure, auto-completion when items are exhausted, mutex with `composes`, items required for loop steps, and the auto-start halt | Follows ADR-008 (system prompt composition via append); the Loops sub-section slots in alongside the existing `## Workflow Composition` sub-section |
+| `src/tachikoma/skills/builtin/workflow-authoring-guide/` | Built-in skill with SKILL.md and `references/step-design.md`; documents `composes`, `condition`, and `loop` frontmatter fields with worked examples (including a paired producer + loop step example) | Follows existing built-in skill pattern |
 
 ### Cross-Layer Contracts
 
@@ -109,7 +109,12 @@ start_workflow(skill_name: str, workflow_name: str)
   → { workflow_id: str, steps: [{id, title, skippable}], scratchpad_path: str, guidance: str }
   | { error: str, existing_workflow_id: str }
 
-update_workflow_state(workflow_id: str, step: str, action: "start" | "complete" | "skip")
+update_workflow_state(
+    workflow_id: str,
+    step: str,
+    action: "start" | "complete" | "skip",
+    items: list[str] | None = None,   # required for loop-step starts; rejected for non-loop starts
+)
   → { step: str, status: str, step_path: str, instructions: str }
   | { workflow_complete: true, message: str }
   | { error: str }
@@ -127,17 +132,18 @@ list_active_workflows()
 ```
 
 **Transition validation rules** (enforced by `update_workflow_state`):
-- `start`: step must be `pending`. If the step has a `condition`, the cascade evaluates it (forks SDK sub-agent); a non-passing result (genuine fail or evaluator error) marks the step `skipped` and the cascade advances to the next pending step. Otherwise marks `started`. If the step has `composes` (and the start transition resolved to `started`), the engine spawns the referenced child workflow (allocates child_id, snapshots the *current* registered child definition, queues a `CreateChild` mutation, and descends the cascade into the child); the response describes the child's first activated step rather than the composition step's own body.
-- `complete`: step must be `started` (not `pending` — must start before completing); marks as `completed`; **auto-starts** next pending step (internal transition, bypasses validate_transition since `_find_next_pending_step` guarantees the step is pending) and returns its instructions; if no next step in the current layer, the layer auto-finalizes — for the top-level layer this means soft-delete + scratchpad cleanup; for a child layer this means soft-delete + auto-completion of the parent's composition step + auto-start of the parent's next pending step (cascade pops up).
-- `skip`: step must be `skippable` (i.e. `required: false`) in frontmatter AND `pending`; marks as `skipped`; same auto-advance / auto-finalize rules as `complete`. A `skip` action on a `required: true` composition step returns the standard "step is required" error and does not spawn a child record (no spawn side effect).
-- The composition step's `instructions.md` body is never read at runtime — only its frontmatter (title, `required`, `condition`, `required_skills`, `composes`) is honoured.
+- `start`: step must be `pending`. Items validation runs in a fixed five-gate order — routing → transition → step-kind/items consistency (structural — items provided iff step is a loop step) → condition → items-required-for-loop (semantic — only reached when the step is a loop step that survived its condition). If the step has a `condition`, the cascade evaluates it (forks SDK sub-agent); a non-passing result (genuine fail or evaluator error) marks the step `skipped` and the cascade advances to the next pending step — items (if provided) are silently discarded. Otherwise marks `started`. If the step has `composes` (and the start transition resolved to `started`), the engine spawns the referenced child workflow (allocates child_id, snapshots the *current* registered child definition, queues a `CreateChild` mutation, and descends the cascade into the child). If the step has `loop`, the engine reads `items`: with non-empty items it queues an `UpdateState` (marking the loop step `started` and writing `loop_state[<step>] = {items, index: 0}`) and spawns iteration 0 with `current_item=items[0]`; with `items=[]` it short-circuits to the exhaustion branch (no STARTED intermediate — the loop step transitions directly to `completed`). All validation gates run before any `MutationBatch` is queued; first failure short-circuits with no partial state.
+- `complete`: step must be `started` (not `pending` — must start before completing); marks as `completed`; **auto-starts** next pending step (internal transition, bypasses validate_transition since `_find_next_pending_step` guarantees the step is pending) and returns its instructions; if no next step in the current layer, the layer auto-finalizes — for the top-level layer this means soft-delete + scratchpad cleanup; for a child layer this means soft-delete + auto-completion of the parent's composition/loop step + auto-start of the parent's next pending step (cascade pops up). When the cascade pops to a parent whose just-completed child was a loop iteration, the engine advances `loop_state[<loop_step>].index`; if more items remain, iteration N+1 spawns in the same tool call; if the loop is exhausted, the loop step is marked `completed` and the cascade-up logic continues.
+- `skip`: step must be `skippable` (i.e. `required: false`) in frontmatter AND `pending`; marks as `skipped`; same auto-advance / auto-finalize rules as `complete`. A `skip` action on a `required: true` composition or loop step returns the standard "step is required" error and does not spawn a child record (no spawn side effect).
+- The composition or loop step's `instructions.md` body is never read at runtime — only its frontmatter (title, `required`, `condition`, `required_skills`, `composes`/`loop`) is honoured.
 - Any action on a completed/skipped step: error with explanation.
 - All actions update `updated_at` on the workflow state record.
 
 **Cascade routing rules** (deepest-active):
 - The agent always passes the *top-level* workflow ID. The engine reads the active chain via `get_active_chain(top_level_id)` and routes the action to the deepest active layer.
 - A step ID that does not match the deepest layer's expected step (typo, parent step while a child is active, stale reference to a soft-deleted child's step) returns: `Invalid step '{step}'. The deepest active layer is '{name}'. Valid steps: {ids}.`
-- Calls to `update_workflow_state` or `end_workflow` made with a composed child's ID return an error directing the agent to the top-level workflow. `get_workflow_state` retains backwards compatibility with child IDs and returns a standalone view with a note pointing to the parent.
+- Calls to `update_workflow_state` or `end_workflow` made with a composed child's or iteration child's ID return an error directing the agent to the top-level workflow. `get_workflow_state` retains backwards compatibility with child IDs and returns a standalone view with a note pointing to the parent.
+- When the cascade auto-advances to a pending loop step, auto-start halts: the loop step stays `pending` and the response prompts the agent to call `update_workflow_state(..., action="start", items=[...])`. The cascade caller in `_run_cascade` inspects `next_info["loop"]` after `_evaluate_and_advance` returns the next pending step; if set, it returns the halt-prompt response without queuing a STARTED transition or a spawn. The parent's `current_step` is left at the just-finalized step (deliberate deviation from normal auto-advance — the loop step is reachable via re-evaluation on the next tool call, so `current_step` does not need to point at it).
 
 **Cascade atomicity**:
 - Conditions are evaluated *outside* any database transaction (each evaluator forks an SDK sub-agent and may take seconds).
@@ -186,13 +192,17 @@ list_stale(threshold)              # subtree-aware: returns top-level
 - `end_workflow(workflow_id, action)` — top-level triggers `abort_cascade`; child ID returns an error directing to the top-level.
 - `list_active_workflows()` — only top-level workflows surface; nested children never appear.
 
+**Mutex pre-pass** (runs first in `SkillRegistry._validate_deps`):
+
+Walks every workflow and every step. If any step declares both `composes` and `loop`, the parent workflow is removed from `_workflows` up-front (logging a malformed-step warning) — *before* edge collection. This guarantees a rejected workflow's other steps cannot contribute partial edges to the cycle graph, mirroring `validate_references`'s "reject the parent on malformed `composes` value" pattern.
+
 **Cycle detection algorithm** (used by `SkillRegistry._validate_deps`):
 
-Three-color DFS over the composition graph. Vertices = `(skill_name, workflow_name)` pairs; edges from each composition step to its resolved target. A back-edge to a vertex on the current DFS stack identifies a cycle; the slice of the stack from that vertex is recorded as one detected cycle (not a full Tarjan SCC — the algorithm extracts cycles directly from the DFS stack on back-edge encounters). Self-loops are detected on the first DFS step. One warning per detected cycle; every vertex in the cycle is removed from `_workflows`.
+Three-color DFS over the unified composition graph. Vertices = `(skill_name, workflow_name)` pairs; edges = `composes` edges OR `loop` edges (a step contributes at most one — mutex enforced upstream). Both edge types resolve via the same `resolve_composes` helper and are indistinguishable for cycle purposes — a `loop: A` cycle is rejected by the same DFS that rejects a `composes: A` cycle. A back-edge to a vertex on the current DFS stack identifies a cycle; the slice of the stack from that vertex is recorded as one detected cycle (not a full Tarjan SCC — the algorithm extracts cycles directly from the DFS stack on back-edge encounters). Self-loops are detected on the first DFS step. One warning per detected cycle; every vertex in the cycle is removed from `_workflows`.
 
 **Reference validation algorithm** (after cycle detection):
 
-Fixed-point iteration over `_workflows`. For each non-rejected workflow, walk its composition steps and resolve each `composes` value via `resolve_composes(value, parent_skill)`. Reject the parent if the value is malformed (raises `ValueError`), the target is absent from `_workflows`, the target has zero steps, or the target is itself rejected. The loop repeats while any rejection was added in the previous pass; cascading rejections converge after at most `depth` passes because the graph is acyclic post-cycle-removal. Each rejection logs one warning identifying the parent and the underlying cause.
+Fixed-point iteration over `_workflows`. For each non-rejected workflow, walk its composition steps and resolve each `composes` or `loop` value (whichever is set) via `resolve_composes(value, parent_skill)`; the helper does not care which frontmatter key carried the value. Reject the parent if the value is malformed (raises `ValueError`), the target is absent from `_workflows`, the target has zero steps, or the target is itself rejected. The loop repeats while any rejection was added in the previous pass; cascading rejections converge after at most `depth` passes because the graph is acyclic post-cycle-removal. Each rejection logs one warning identifying the parent, the underlying cause, and which edge type (`composes` or `loop`) carried the rejected value.
 
 **Required-skill expansion at activation** (applied in both the explicit `start` branch and the auto-start branch after `complete`/`skip`):
 - `_render_required_skills(step_info, skill_registry)` reads `step_info["required_skills"]` from the step's snapshot entry
@@ -239,6 +249,8 @@ StepDefinition (filesystem):
   composes: str | None (raw frontmatter value: "<workflow>" same-skill or
                         "<skill>/<workflow>" cross-skill; resolved at registry
                         validation time and at spawn time)
+  loop: str | None (same syntax as composes; mutually exclusive with composes;
+                    iterates the target workflow once per agent-supplied item)
   properties: dict (extensible frontmatter fields; declared field names excluded)
 
 WorkflowState (database — table: `workflow_states`):
@@ -254,6 +266,14 @@ WorkflowState (database — table: `workflow_states`):
                              at child-spawn time)
   scratchpad_path: str (absolute path, e.g., ".tachikoma/scratchpads/workflow-abc123.md";
                         children inherit the parent's path)
+  loop_state: dict | None (nullable JSON column shaped {<step_id>: {items, index}};
+                           set on any record whose own snapshot defines a loop step
+                           that has been started; multiple keys when a record has
+                           multiple loop steps that have run. For nested loops,
+                           the inner loop's state lives on the outer iteration
+                           child's record — not on the top-level parent — because
+                           loop_state always lives on the record whose snapshot
+                           owns the loop step)
   deleted_at: datetime | None (NULL = active, set on soft delete)
   created_at: datetime
   updated_at: datetime
@@ -288,7 +308,10 @@ CascadeOutcome (in-memory, ephemeral):
 
 MutationBatch (in-memory, ephemeral):
   ordered: list[Mutation]
-  Mutation = UpdateState(layer_id, step_states, current_step)
+  Mutation = UpdateState(layer_id, step_states, current_step,
+                         loop_state: dict | None = None)
+                # loop_state: None means "do not touch the column";
+                # non-None dict is written verbatim to the row on apply.
            | CreateChild(child_id, parent_id, parent_step_id,
                          skill_name, workflow_name, step_states,
                          definition_snapshot, scratchpad_path)
@@ -300,7 +323,10 @@ The composition graph is a transient in-memory structure built only during `_val
 ```
 CompositionGraph (in-memory, transient):
   vertices: set[(skill_name, workflow_name)]
-  edges: dict[vertex, list[vertex]]   # from parent → composed targets
+  edges: dict[vertex, list[(vertex, edge_type)]]
+                # edge_type ∈ {"composes", "loop"}; cycle detection
+                # treats them uniformly. Mutex enforced before edge
+                # collection so no vertex contributes both kinds.
 ```
 
 ## Data Flow
@@ -428,6 +454,90 @@ StaleWorkflowCleanupProcessor.process:
     delete scratchpad once
 ```
 
+### Loop iteration (start with items, advance, exhaust)
+
+```
+Agent: update_workflow_state(parent_id, "03-process", "start", items=["a","b","c"])
+  -> Validation gates: routing → transition → step-kind/items consistency
+       → condition → items-required-for-loop. All pass.
+  -> Cascade loop:
+       mark "03-process" STARTED in mutable_ss[parent].
+       _try_spawn_child(loop_target, current_item="a"):
+         allocates child_id; snapshots target; child_ss = {first: PENDING, ...}.
+       queue UpdateState(parent, ..., loop_state={"03-process": {items, index: 0}}).
+       queue CreateChild(child_id_0, parent_id, "03-process", ...,
+                         scratchpad_path=parent.scratchpad_path).
+       descend into child_0; first step STARTED; cascade terminates.
+  -> apply_mutation_batch commits everything atomically.
+  -> Response breadcrumb: "<parent>/03-process > <iter-wf>/01-step (item: a)"
+       body: child_0's first step instructions.
+
+Later — iteration N's last step completes; iteration N+1 spawns same call:
+
+Agent: update_workflow_state(parent_id, "<last_iter_step>", "complete")
+  -> chain = [parent, child_N]; deepest = child_N; step matches.
+  -> Cascade loop:
+       mark child's last step COMPLETED.
+       _evaluate_and_advance on child returns None (no pending steps).
+       queue UpdateState(child_N, current_step=None) + SoftDelete(child_N); pop.
+       parent's just-completed step is "03-process" (a loop step).
+       read loop_state["03-process"].index = N; advance to N+1.
+       items[N+1] exists ("b"):
+         _try_spawn_child(loop_target, current_item="b") → child_id_N+1.
+         queue UpdateState(parent, ..., loop_state={"03-process": {items, index: N+1}}).
+         queue CreateChild(child_id_N+1, ..., scratchpad_path=parent.scratchpad_path).
+         descend into child_N+1; first step STARTED; cascade terminates.
+  -> apply_mutation_batch commits everything atomically (single SQLite tx).
+  -> Response breadcrumb suffix: "(item: b)"; body: child_N+1's first step.
+
+When the last item exhausts:
+
+Agent: update_workflow_state(parent_id, "<last_iter_step>", "complete")
+  -> Cascade pop: child_last finalizes. parent's "03-process" exhausts
+     (index advances to len(items)); queue
+       UpdateState(parent, step_states={..., "03-process": COMPLETED},
+                   loop_state={"03-process": {items, index: len(items)}}).
+     fall through to existing cascade-up logic; advance parent's next
+     pending step OR auto-finalize the top-level if "03-process" was last.
+```
+
+### Empty items list (auto-complete with zero iterations)
+
+```
+Agent: update_workflow_state(parent_id, "03-process", "start", items=[])
+  -> All five gates pass (items=[] is valid for a loop step).
+  -> Cascade loop:
+       The "spawn or exhaust" decision is centralised: index 0 vs.
+       len(items)=0 → exhausted on first check.
+       queue UpdateState(parent,
+                         step_states={..., "03-process": COMPLETED},
+                         loop_state={"03-process": {items: [], index: 0}}).
+       _evaluate_and_advance on parent: next pending step OR finalize.
+  -> MutationBatch: 1-3 mutations (no CreateChild).
+  -> Response: parent's next step OR top-level finalization.
+       Includes a one-line "Loop step <id> completed with zero iterations." note.
+```
+
+### Auto-start halt at a pending loop step
+
+```
+Agent: update_workflow_state(parent_id, "02-prepare", "complete")
+  -> Cascade marks "02-prepare" COMPLETED.
+  -> _evaluate_and_advance returns next pending step "03-process" (loop set).
+  -> Halt branch fires: do NOT mark STARTED, do NOT spawn anything.
+       queue UpdateState(parent, step_states={..., "02-prepare": COMPLETED},
+                         current_step="02-prepare").  (loop_state untouched)
+  -> apply_mutation_batch commits the partial state ("02-prepare" only).
+  -> Response (no breadcrumb suffix — no child active):
+       "Step `02-prepare` completed.
+        The next step **Process items** (`03-process`) is a loop step.
+        Call update_workflow_state(workflow_id=..., step='03-process',
+        action='start', items=[...]) to begin iterating, or items=[] to
+        skip with zero iterations."
+  -> The loop step's state stays `pending`. Re-evaluation on the agent's
+     next call reproduces the halt deterministically.
+```
+
 ### Recovery flow (context loss)
 
 ```
@@ -435,12 +545,15 @@ StaleWorkflowCleanupProcessor.process:
 2. Agent reads scratchpad file -> recovers workflow ID
    OR (scratchpad also lost):
 3. Agent calls list_active_workflows() -> recovers workflow ID
-   (only top-level workflows surface; nested children are hidden).
+   (only top-level workflows surface; nested children are hidden —
+   iteration children behave identically to composition children).
 4. Agent calls get_workflow_state(id) -> full state for resumption.
    For a parent with an active child, the response inlines the
    active child path under "### Active Child" with a breadcrumb
    header — the agent can re-orient without ever knowing the
-   child's separate ID.
+   child's separate ID. For a parent with an active loop step,
+   the response also inlines a "### Loop step" block listing
+   the items, current 1-indexed iteration, and current item.
 ```
 
 ## Key Decisions
@@ -641,6 +754,86 @@ StaleWorkflowCleanupProcessor.process:
 - Pro: Snapshot-at-spawn-time semantics preserved even for short-lived children.
 - Con: A child record briefly exists in the in-flight transaction; invisible outside the transaction boundary.
 
+### Loop iteration as a second edge type in the existing composition graph
+
+**Choice**: `loop` and `composes` are sibling frontmatter fields on the same step model; cycle detection, reference validation, spawn, snapshot-at-spawn, scratchpad inheritance, deepest-active routing, abort cascade, and atomic mutation are all reused. Iteration advancement is a new branch in the existing cascade loop, not a parallel cascade.
+**Why**: The composition machinery already encodes "spawn a child, run it, auto-resume parent". An iteration is the same mechanism applied N times with a different `current_item`. Building a parallel pipeline would duplicate cycle detection, snapshot logic, atomicity, routing, and rendering — the risk surface of one well-tested pipeline is dramatically smaller than two.
+
+**Consequences**:
+- Pro: One spawn path, one cycle detector, one cascade engine. Bug fixes on either feature benefit both.
+- Pro: Iteration children inherit composition's documented invariants (top-level filter, child-ID rejection, abort cascade) for free.
+- Pro: Cross-edge cycles (`A` loops `B`, `B` composes `A`) fall out of the unified graph naturally — no special-case algorithm.
+- Con: The cascade engine's pop branch grows a new conditional. Mitigated by keeping the loop-specific logic to ~15 lines: read `loop_state`, advance index, decide spawn vs. exhaust.
+
+### `loop_state` as a JSON column on the parent record (not a separate table)
+
+**Choice**: Items list and current iteration index live on the parent's `workflow_states` row in a new nullable `loop_state` JSON column shaped `{<step_id>: {items: list[str], index: int}}`. Iteration child records are *not* augmented — they remain identical to composition children.
+**Why**: Loop progress is intrinsic to the parent's loop step, not to the iteration child. The child is ephemeral (one per item, soft-deleted on finalize); the parent's state record is the durable home. Storing on the parent means recovery via `get_workflow_state(parent_id)` returns everything in one query — no JOIN, no N-row aggregation. Project precedent (ADR-007): `step_states` and `definition_snapshot` are already JSON columns on the same table; `loop_state` follows the same shape.
+
+**Consequences**:
+- Pro: One read returns everything needed for the parent's view; no JOIN.
+- Pro: Schema migration is a single nullable column add via the existing pattern.
+- Pro: `loop_state` survives soft-delete intact (audit trail).
+- Con: A loop step that ran with a 1000-item list embeds the list in the parent's row even after finalization. Acceptable: realistic batch sizes are dozens, not thousands; the row is soft-deleted (read-only) once the workflow ends.
+
+### Items on the existing `start` action (not a dedicated MCP tool)
+
+**Choice**: The agent passes `items: list[str]` as an additional parameter to `update_workflow_state` when starting a loop step. No new tool is added.
+**Why**: Adding a tool (e.g., `start_loop_iteration`) would force the agent to learn a parallel state-machine surface — when to call which tool, what the difference is. Reusing `start` keeps the state machine's vocabulary unified: there is exactly one way to begin a step, and the optional `items` parameter is the only difference loop steps require. Pydantic v2's default `list[str] | None` validation produces `list_type` and `string_type` ValidationError messages — every shape-error case is covered before the handler runs.
+
+**Consequences**:
+- Pro: Zero new tool surface; the agent's mental model stays "one tool drives the state machine".
+- Pro: All four shape-error modes (missing items / non-list / non-string item / items-on-non-loop) covered with one optional Pydantic field plus one handler check.
+- Pro: Atomic by construction — Pydantic rejects malformed input before the handler is called.
+- Con: The tool description grows by a few lines. Acceptable.
+
+### Auto-start halts at pending loop steps (cascade does not infer items)
+
+**Choice**: When the cascade auto-advance reaches a pending loop step, it returns the loop step as the next pending step but does *not* mark it `STARTED` and does *not* spawn any iteration. The response prompts the agent for an explicit `start` with `items`.
+**Why**: The engine cannot fabricate items. Auto-starting with an empty list would silently skip the loop step — invisible to the agent and contrary to the workflow author's intent. Auto-starting with synthesized items (e.g., from the scratchpad) would tie the engine to a specific producer pattern. The right default is to halt and require explicit input, with a self-explanatory error message that names the tool call to fix it.
+
+**`current_step` semantics on halt** (deliberate deviation): in normal auto-advance, `current_step` is set to the next step whenever a step starts. The halt branch leaves `current_step` at the just-finalized step — `current_step` semantically tracks "the step the engine most recently activated"; on halt no step is activated, so leaving it at the previous step is the correct invariant. The loop step is reachable through `_evaluate_and_advance` on the next tool call, so halt-recovery routing does not require `current_step` to point at it.
+
+**Consequences**:
+- Pro: No silent skips; the agent always sees a halt prompt naming the next tool call.
+- Pro: The loop step's state stays `PENDING` — no half-activated state.
+- Pro: Idempotent retries: if the agent's first attempt at providing items fails validation, the next attempt sees the same prompt.
+- Con: The agent must know to provide items; mitigated by the explicit prompt and the system preamble's documentation.
+
+### Five-gate validation order: routing → transition → step-kind/items consistency → condition → items-required
+
+**Choice**: Items validation is split into two distinct gates: a **structural** gate (gate 3) that runs *before* condition evaluation, and a **semantic required** gate (gate 5) that runs *after*.
+**Why**: Two pressures pull in opposite directions. (1) Condition gates the entire step — demanding items before a failing condition forces the agent to assemble a list that's about to be discarded. (2) Items on a non-loop step must reject — silently swallowing this error when the step also has a failing condition would mask an agent bug. Splitting the items check resolves the tension. The structural gate (items-vs-step-kind) is a static parameter-vs-step-kind check that requires no dynamic state and surfaces all usage errors deterministically; the semantic gate (items-required-for-loop) only runs when the step is a loop step that survived its condition.
+
+**Consequences**:
+- Pro: Items-on-non-loop-step errors surface even when the step's condition would otherwise fail.
+- Pro: Failing condition on a loop step skips items-required check; the agent doesn't need to pre-assemble items.
+- Pro: Atomic at every gate — first failure short-circuits, no `MutationBatch` is built.
+- Pro: Three layers of defence (Pydantic shape → structural step-kind → semantic required).
+- Con: Slightly more conditional logic in the handler. Acceptable — each gate is a 1–3-line check.
+
+### Current item exposed via breadcrumb suffix
+
+**Choice**: The current item is appended to the deepest segment of the breadcrumb header as `(item: <value>)`. `get_workflow_state(parent_id)` adds a `### Loop step` block on the parent's view for explicit recovery, but the breadcrumb suffix is the moment-to-moment indicator on every iteration tool response.
+**Why**: One rendering hook serves both the per-call surfacing (R5 of DLT-160) and the explicit current-item label (R17 of DLT-160). The breadcrumb is already rendered on every iteration tool response and is a natural location for context tied to the deepest active layer. A separate `Current item: ...` prefix would duplicate the signal and add a second place to keep in sync.
+
+**Consequences**:
+- Pro: One rendering hook, two requirements satisfied.
+- Pro: The agent's iteration mental model — "I'm in iteration N looking at item X" — maps directly to the breadcrumb.
+- Pro: Consistent across all tool responses inside an iteration.
+- Con: Long item values (e.g., long filenames) make the breadcrumb wider. Acceptable: items are typically short identifiers; agents truncate on display when needed.
+
+### `UpdateState` extended with optional `loop_state` (vs. a new mutation type)
+
+**Choice**: The existing `UpdateState` mutation dataclass gains an optional `loop_state: dict | None` field. `apply_mutation_batch` writes the column when set. No new mutation type is introduced.
+**Why**: `UpdateState` already targets a single workflow row; adding another field-on-that-row keeps the mutation count constant and the transaction shape unchanged. A new mutation type would force the cascade engine to queue two mutations per iteration advancement — coordination that adds nothing because they always commit together.
+
+**Consequences**:
+- Pro: Same mutation type covers both step transitions and loop-progress updates.
+- Pro: One transaction, one atomic write, one rollback boundary.
+- Pro: Existing tests for `apply_mutation_batch` need only one new branch (write `loop_state` when set).
+- Con: `UpdateState` becomes slightly less "pure" (mixes step transitions and loop progress). Acceptable: both target the same row, both must commit atomically, conceptually they are one update.
+
 ## System Behavior
 
 ### Scenario: Workflow resumption after context compaction
@@ -740,6 +933,69 @@ StaleWorkflowCleanupProcessor.process:
 **Then**: `repository.list_stale(threshold)` walks each candidate top-level root and computes the subtree max `updated_at` — for this parent, the child's value (10 minutes ago). The subtree is NOT stale. The parent is not abort-cascaded. The active child keeps the parent alive.
 **Rationale**: Staleness is a connected-component property, not a per-record property. An active child indicates work is ongoing.
 
+### Scenario: First-time start of a loop step with non-empty items
+
+**Given**: Parent is at step `02-prepare` STARTED. Step `03-process` declares `loop: process-item` and is `PENDING`.
+**When**: Agent calls `update_workflow_state(parent_id, "02-prepare", "complete")` and then `update_workflow_state(parent_id, "03-process", "start", items=["a","b","c"])`.
+**Then**: After the first call, the cascade marks `02-prepare` COMPLETED, advances, finds `03-process` is a loop step, halts auto-start, and returns a halt-prompt response naming the loop step. After the second call, all five validation gates pass; the cascade marks `03-process` STARTED, queues `UpdateState(loop_state={"03-process": {items, index: 0}})`, spawns iteration 0 with `current_item="a"`, and returns the iteration's first step's instructions with breadcrumb `<parent>/03-process > <iter-wf>/01-step (item: a)`.
+**Rationale**: Auto-start cannot fabricate items; halting is the correct default. Once items are provided, iteration 0 spawns through the same `_try_spawn_child` path used by composition.
+
+### Scenario: Iteration N+1 spawns in the same tool call as iteration N's finalize
+
+**Given**: Parent has `loop_state["03-process"] = {items: ["a","b","c"], index: 1}`; iteration child for item `b` is at its last step.
+**When**: Agent calls `update_workflow_state(parent_id, <last_iter_step>, "complete")`.
+**Then**: Cascade pop SoftDeletes child_1, advances `loop_state["03-process"].index` to 2, spawns child_2 with `current_item="c"`, and returns child_2's first step instructions with breadcrumb `<parent>/03-process > <iter-wf>/01-step (item: c)`.
+**Rationale**: Spawn-in-same-tool-call keeps the agent's progression linear — one `complete` per iteration, no manual re-`start`.
+
+### Scenario: Empty items auto-completes the loop step
+
+**Given**: Loop step `03-process` is `PENDING`. Agent calls `start` with `items=[]`.
+**When**: The handler validates and the cascade runs.
+**Then**: `03-process` transitions PENDING → COMPLETED in one atomic batch (no STARTED intermediate), `loop_state["03-process"] = {items: [], index: 0}` is persisted (audit trail), no iteration child is created, and the cascade auto-advances to the parent's next pending step (or finalizes the top-level if `03-process` was last).
+**Rationale**: Empty items is a valid expression of "no items to process" — the engine treats it as zero-iteration completion, not an error.
+
+### Scenario: Items-on-non-loop-step rejected even when condition would fail
+
+**Given**: Step `01-plan` is a regular (non-loop) step with a `condition` that would evaluate non-passing.
+**When**: Agent calls `update_workflow_state(parent_id, "01-plan", "start", items=["a"])`.
+**Then**: Validation rejects with "items not allowed for non-loop steps" before condition evaluation runs (gate 3 precedes gate 4). No state change. Step stays `PENDING`.
+**Rationale**: Splitting items validation into a structural gate (before condition) and a semantic gate (after condition) means non-loop-step + items errors surface even when the step's condition would have skipped the step anyway.
+
+### Scenario: Loop + composes mutex rejected at registry load
+
+**Given**: A workflow declares a step with both `loop: a` and `composes: b`.
+**When**: The registry validates dependencies.
+**Then**: The mutex pre-pass rejects the parent workflow with a malformed-step warning identifying `loop` and `composes` as conflicting fields. The workflow is removed from `_workflows` *before* edge collection runs, so cycle/reference DFS never sees its edges.
+**Rationale**: Mutex check runs once before edge collection, mirroring `validate_references`'s "reject the parent on malformed `composes` value" pattern. Prevents partial-edge contributions from a workflow that's about to be rejected anyway.
+
+### Scenario: Cycle introduced via cross-edge chain
+
+**Given**: Workflow `A` has `loop: B`; `B` has `composes: C`; `C` has `loop: A`.
+**When**: The registry validates dependencies.
+**Then**: `detect_cycles` finds the cycle `{A, B, C}` over the unified edge set (loop and composes treated identically). All three workflows are removed; one cycle warning is logged listing the members.
+**Rationale**: Loop edges and composes edges share the same cycle graph, so chains mixing both edge types are rejected by the same DFS.
+
+### Scenario: Recovery after context loss mid-iteration
+
+**Given**: An active loop on `03-process` with items=[a,b,c,d,e]. `loop_state["03-process"].index = 3` (the iteration for `items[3] = "d"` is active). The agent loses context.
+**When**: The agent calls `list_active_workflows` then `get_workflow_state(parent_id)`.
+**Then**: `list_active_workflows` returns only the parent (iteration child is hidden). `get_workflow_state` returns the parent's state with a `### Loop step` block showing `Items (5): a, b, c, d, e`, `Current iteration: 4 / 5` (1-indexed display of the underlying 0-indexed `index = 3`), `Current item: d`, plus the active iteration child block, plus the breadcrumb `<parent>/03-process > <iter-wf>/01-step (item: d)`. The agent has everything needed to resume.
+**Rationale**: State lives on the parent's `loop_state` column; nothing is in conversation memory.
+
+### Scenario: Nested loops — inner loop_state lives on the outer iteration child
+
+**Given**: Loop target `process-batch` has a step `02-each` declaring `loop: process-item`. Outer loop on top-level parent runs with `items=[A, B]`; the inner loop on the outer iteration child runs with its own per-iteration items.
+**When**: Outer iteration 0 (item `A`) reaches step `02-each`, agent provides `items=[x, y]`, then proceeds through inner iterations.
+**Then**: Auto-start halts at the inner loop step; the agent calls `update_workflow_state` with `items` for the inner loop. Inner iterations run as grandchildren of the top-level parent. The inner loop's `loop_state` lives on the **outer iteration child's record** (whose snapshot defines `02-each`); the top-level parent's `loop_state` only carries the outer loop's progress.
+**Rationale**: `loop_state` always lives on the record whose snapshot owns the loop step. Auto-start halt fires identically at every layer; each layer carries its own runtime state — no cross-record coordination required.
+
+### Scenario: Abort cascade with active iteration
+
+**Given**: Top-level parent is active with iteration child for item `b` mid-flight (`loop_state["03-process"].index = 1`).
+**When**: Agent calls `end_workflow(parent_id, "abort")`.
+**Then**: `abort_cascade` BFS-walks descendants via `parent_workflow_id`, soft-deletes parent + iteration child in one transaction, deletes the shared scratchpad once. The parent's `loop_state` column remains intact on the soft-deleted row (audit trail).
+**Rationale**: Iteration children are regular composition children; `abort_cascade` handles them by structure, not by special-casing.
+
 ## Notes
 
 - Workflow steps use the SDK's native TodoWrite for progress tracking, which is separate from Tachikoma's task management system
@@ -747,3 +1003,7 @@ StaleWorkflowCleanupProcessor.process:
 - `list_active_workflows` is intentionally simple (no filtering, no pagination) — it's a recovery tool, not a management tool
 - The guidance text returned by `start_workflow` is a tunable parameter — its quality directly affects the reliability of the workflow system
 - Scratchpad file location convention: `.tachikoma/scratchpads/workflow-<workflow_id>.md`
+- Loop progress is durable; iteration children are ephemeral. The parent's `loop_state` column is the recovery anchor — if every iteration child were soft-deleted (e.g., abort cascade) the items list and index would still be readable on the soft-deleted parent row for audit
+- The `loop_state` column key is the loop step's ID **on the record whose snapshot defines that step**. A record with two loop steps can carry two keys simultaneously (one active, one historical) without conflict. Nested loops live on different records — outer on top-level, inner on the outer iteration child
+- Empty-string items (`items=["", "foo"]`) are accepted — the breadcrumb suffix renders as `(item: )` for the empty entry. By design: items are opaque references and the iteration body decides what they mean. Authors who want to reject empty items can do so with a `condition` on the iteration body's first step
+- Audit-trail retention for `loop_state`: soft-deleted parent rows retain their `loop_state` payload intact. Stale-cleanup (24h threshold) eventually soft-deletes idle workflows but does not touch already-soft-deleted rows
