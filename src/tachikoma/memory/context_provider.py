@@ -18,6 +18,7 @@ from claude_agent_sdk.types import ResultMessage
 from loguru import logger
 
 from tachikoma.agent_defaults import AgentDefaults
+from tachikoma.message import IncomingMessage
 from tachikoma.per_message_pre_processing import (
     MessageContextProvider,
     render_conversation_context,
@@ -246,18 +247,17 @@ class MemoryContextProvider(MessageContextProvider):
 
     async def provide(
         self,
-        message: str,
+        message: IncomingMessage,
         *,
         existing_entries: list[SessionContextEntry] | None = None,
         sdk_session_id: str | None = None,
         session_summary: str | None = None,
         session_last_exchange: str | None = None,
-        pinned_skills: tuple[str, ...] = (),
     ) -> list[ContextResult] | None:
         """Search memories for context relevant to the message.
 
         Args:
-            message: The user's message text.
+            message: The incoming message envelope.
             existing_entries: The session's current context entries.
             sdk_session_id: The current SDK session ID (unused, kept for ABC compat).
             session_summary: The active session's rolling summary, if available.
@@ -273,7 +273,7 @@ class MemoryContextProvider(MessageContextProvider):
             session_summary, session_last_exchange
         )
         prompt = MEMORY_SEARCH_PROMPT.replace("$WORKSPACE", workspace).format(
-            message=message, conversation_context_section=conversation_context_section
+            message=message.text, conversation_context_section=conversation_context_section
         )
 
         options = ClaudeAgentOptions(

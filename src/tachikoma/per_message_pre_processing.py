@@ -14,6 +14,7 @@ from abc import ABC, abstractmethod
 from loguru import logger
 
 from tachikoma.events import StatusCallback
+from tachikoma.message import IncomingMessage
 from tachikoma.pre_processing import ContextResult
 from tachikoma.sessions.model import SessionContextEntry
 
@@ -58,23 +59,21 @@ class MessageContextProvider(ABC):
     @abstractmethod
     async def provide(
         self,
-        message: str,
+        message: IncomingMessage,
         *,
         existing_entries: list[SessionContextEntry] | None = None,
         sdk_session_id: str | None = None,
         session_summary: str | None = None,
         session_last_exchange: str | None = None,
-        pinned_skills: tuple[str, ...] = (),
     ) -> list[ContextResult] | None:
         """Provide context relevant to the user message.
 
         Args:
-            message: The user's message text.
+            message: The incoming message envelope.
             existing_entries: The session's current context entries.
             sdk_session_id: The current SDK session ID, if available.
             session_summary: The active session's rolling summary, if available.
             session_last_exchange: The active session's last assistant response, if available.
-            pinned_skills: Skill names to load unconditionally before classification.
 
         Returns:
             A list of ContextResult instances, or None if no relevant context.
@@ -119,14 +118,13 @@ class MessagePreProcessingPipeline:
 
     async def run(
         self,
-        message: str,
+        message: IncomingMessage,
         *,
         existing_entries: list[SessionContextEntry] | None = None,
         sdk_session_id: str | None = None,
         on_status: StatusCallback | None = None,
         session_summary: str | None = None,
         session_last_exchange: str | None = None,
-        pinned_skills: tuple[str, ...] = (),
     ) -> list[ContextResult]:
         """Run all registered providers in parallel.
 
@@ -135,7 +133,7 @@ class MessagePreProcessingPipeline:
         propagate or prevent other providers from completing.
 
         Args:
-            message: The user's message text.
+            message: The incoming message envelope.
             existing_entries: The session's current context entries.
             sdk_session_id: The current SDK session ID, if available.
             on_status: Optional async callback. If provided, the pipeline
@@ -143,7 +141,6 @@ class MessagePreProcessingPipeline:
                 awaiting its ``provide()`` call.
             session_summary: The active session's rolling summary, if available.
             session_last_exchange: The active session's last assistant response, if available.
-            pinned_skills: Skill names to load unconditionally before classification.
 
         Returns:
             List of successful, non-None ContextResult instances (flattened from lists).
@@ -168,7 +165,6 @@ class MessagePreProcessingPipeline:
                     sdk_session_id=sdk_session_id,
                     session_summary=session_summary,
                     session_last_exchange=session_last_exchange,
-                    pinned_skills=pinned_skills,
                 )
                 if on_status is not None:
                     await on_status(provider.status_message(result))

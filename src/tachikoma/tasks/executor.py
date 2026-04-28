@@ -30,6 +30,7 @@ from tachikoma.buffer.priority import Priority
 from tachikoma.config import TaskSettings
 from tachikoma.git.processor import GitProcessor
 from tachikoma.memory.context_provider import MemoryContextProvider
+from tachikoma.message import IncomingMessage
 from tachikoma.memory.episodic import EpisodicProcessor
 from tachikoma.notifications import (
     create_notification_server,
@@ -624,7 +625,7 @@ class BackgroundTaskExecutor:
                 )
 
             per_message_results = await msg_pipeline.run(
-                prompt, pinned_skills=pinned_skills
+                IncomingMessage(text=prompt, pinned_skills=pinned_skills)
             )
 
             all_results = (results or []) + per_message_results

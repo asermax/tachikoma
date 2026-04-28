@@ -434,9 +434,7 @@ class Coordinator:
 
         while True:  # Re-queue loop: processes leftover messages after exchange teardown
             msg = self._message_buffer.get_nowait()
-            text = msg.text
-            pinned_skills = msg.pinned_skills
-            _log.debug("Message received: length={n}", n=len(text))
+            _log.debug("Message received: length={n}", n=len(msg.text))
 
             # Track last message time for idle gating
             self._last_message_time = datetime.now(UTC)
@@ -473,7 +471,7 @@ class Coordinator:
 
                     if active is None:
                         cold_start_task = asyncio.create_task(
-                            self._attempt_cold_start_resume(text, on_status=on_status)
+                            self._attempt_cold_start_resume(msg.text, on_status=on_status)
                         )
                         async for event in _drain_status_while_running(
                             cold_start_task, status_queue
@@ -506,7 +504,7 @@ class Coordinator:
 
                     boundary_task: asyncio.Task[BoundaryResult] = asyncio.create_task(
                         detect_boundary(
-                            text,
+                            msg.text,
                             active,
                             self._agent_defaults,
                             candidates=candidates,
@@ -558,7 +556,7 @@ class Coordinator:
             if is_new_session and self._pre_pipeline is not None:
                 try:
                     pre_task = asyncio.create_task(
-                        self._pre_pipeline.run(text, on_status=on_status)
+                        self._pre_pipeline.run(msg.text, on_status=on_status)
                     )
                     async for event in _drain_status_while_running(pre_task, status_queue):
                         yield event
@@ -602,13 +600,12 @@ class Coordinator:
                 try:
                     msg_pre_task = asyncio.create_task(
                         self._msg_pre_pipeline.run(
-                            text,
+                            msg,
                             existing_entries=entries,
                             sdk_session_id=self._sdk_session_id,
                             on_status=on_status,
                             session_summary=active.summary,
                             session_last_exchange=active.last_exchange,
-                            pinned_skills=pinned_skills,
                         )
                     )
                     async for event in _drain_status_while_running(msg_pre_task, status_queue):
@@ -658,7 +655,7 @@ class Coordinator:
             had_tool_activity = False
 
             sdk_inbox: asyncio.Queue[str] = asyncio.Queue()
-            message_source = _message_source(text, sdk_inbox)
+            message_source = _message_source(msg.text, sdk_inbox)
             transport = FilePromptTransport(prompt=message_source, options=options)
             client = ClaudeSDKClient(options, transport=transport)
 
@@ -756,7 +753,7 @@ class Coordinator:
                     self._pending_msg_task = asyncio.create_task(
                         self._msg_pipeline.run(
                             current_session,
-                            text,
+                            msg.text,
                             response_text,
                             final_text=final_text,
                         )

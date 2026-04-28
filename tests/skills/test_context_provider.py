@@ -12,6 +12,7 @@ from claude_agent_sdk.types import ResultMessage
 from pytest_mock import MockerFixture
 
 from tachikoma.agent_defaults import AgentDefaults
+from tachikoma.message import IncomingMessage
 from tachikoma.per_message_pre_processing import render_conversation_context
 from tachikoma.sessions.model import SessionContextEntry
 from tachikoma.skills.context_provider import (
@@ -96,7 +97,7 @@ class TestSkillsContextProvider:
 
         provider = self._make_provider(tmp_path)
 
-        result = await provider.provide("hello")
+        result = await provider.provide(IncomingMessage(text="hello"))
 
         assert result is None
         mock_query.assert_not_called()
@@ -116,7 +117,7 @@ class TestSkillsContextProvider:
         mock_query.return_value = _make_query_result("NO_RELEVANT_SKILLS")
 
         provider = self._make_provider(tmp_path)
-        await provider.provide("hello")
+        await provider.provide(IncomingMessage(text="hello"))
 
         mock_query.assert_called_once()
         call_kwargs = mock_query.call_args
@@ -143,7 +144,7 @@ class TestSkillsContextProvider:
 
         provider = self._make_provider(tmp_path)
 
-        result = await provider.provide("hello")
+        result = await provider.provide(IncomingMessage(text="hello"))
 
         assert result is not None
         assert isinstance(result, list)
@@ -165,7 +166,7 @@ class TestSkillsContextProvider:
         mock_query.return_value = _make_query_result("my-skill")
 
         provider = self._make_provider(tmp_path)
-        result = await provider.provide("hello")
+        result = await provider.provide(IncomingMessage(text="hello"))
 
         assert result is not None
         assert len(result) == 1
@@ -195,7 +196,7 @@ class TestSkillsContextProvider:
         mock_query.return_value = _make_query_result("search")
 
         provider = self._make_provider(tmp_path)
-        result = await provider.provide("search for something")
+        result = await provider.provide(IncomingMessage(text="search for something"))
 
         assert result is not None
         assert len(result) == 1
@@ -215,7 +216,7 @@ class TestSkillsContextProvider:
         mock_query.return_value = _make_query_result("NO_RELEVANT_SKILLS")
 
         provider = self._make_provider(tmp_path)
-        result = await provider.provide("hello")
+        result = await provider.provide(IncomingMessage(text="hello"))
 
         assert result is None
 
@@ -234,7 +235,7 @@ class TestSkillsContextProvider:
         mock_query.return_value = _make_query_result("real-skill\nfake-skill\nanother-fake")
 
         provider = self._make_provider(tmp_path)
-        result = await provider.provide("hello")
+        result = await provider.provide(IncomingMessage(text="hello"))
 
         assert result is not None
         assert len(result) == 1
@@ -258,7 +259,7 @@ class TestSkillsContextProvider:
         mock_query.return_value = _make_query_result("valid-skill")
 
         provider = self._make_provider(tmp_path)
-        result = await provider.provide("hello")
+        result = await provider.provide(IncomingMessage(text="hello"))
 
         assert result is not None
         assert len(result) == 1
@@ -290,7 +291,7 @@ class TestSkillsContextProvider:
         mock_query.return_value = _make_query_result("skill-a\nskill-b")
 
         provider = self._make_provider(tmp_path)
-        result = await provider.provide("hello")
+        result = await provider.provide(IncomingMessage(text="hello"))
 
         assert result is not None
         assert len(result) == 2
@@ -331,7 +332,7 @@ class TestSkillsContextProvider:
         # Get registry agents before the call
         registry_agents_before = provider._registry.get_agents().copy()
 
-        result = await provider.provide("hello")
+        result = await provider.provide(IncomingMessage(text="hello"))
 
         # Registry agents should be unchanged
         registry_after = provider._registry.get_agents()
@@ -370,7 +371,7 @@ class TestSkillsContextProvider:
             ),
         ]
 
-        result = await provider.provide("hello", existing_entries=existing)
+        result = await provider.provide(IncomingMessage(text="hello"), existing_entries=existing)
 
         # Classifier should only see skill-b (skill-a filtered out)
         call_args = mock_query.call_args
@@ -406,7 +407,7 @@ class TestSkillsContextProvider:
             ),
         ]
 
-        result = await provider.provide("hello", existing_entries=existing)
+        result = await provider.provide(IncomingMessage(text="hello"), existing_entries=existing)
 
         assert result is None
         mock_query.assert_not_called()
@@ -424,7 +425,7 @@ class TestSkillsContextProvider:
         mock_query.return_value = _make_query_result("my-skill")
 
         provider = self._make_provider(tmp_path)
-        result = await provider.provide("hello")
+        result = await provider.provide(IncomingMessage(text="hello"))
 
         assert result is not None
         assert len(result) == 1
@@ -443,7 +444,7 @@ class TestSkillsContextProvider:
         mock_query.return_value = _make_query_result("NO_RELEVANT_SKILLS")
 
         provider = self._make_provider(tmp_path)
-        result = await provider.provide("hello", existing_entries=[])
+        result = await provider.provide(IncomingMessage(text="hello"), existing_entries=[])
 
         # Classifier should see the skill
         call_args = mock_query.call_args
@@ -486,7 +487,7 @@ class TestProviderChainExpansion:
         registry = SkillRegistry([skills_dir])
         provider = SkillsContextProvider(defaults, registry)
 
-        result = await provider.provide("hello")
+        result = await provider.provide(IncomingMessage(text="hello"))
 
         assert result is not None
         assert len(result) == 2
@@ -520,7 +521,7 @@ class TestProviderChainExpansion:
             ),
         ]
 
-        result = await provider.provide("hello", existing_entries=existing)
+        result = await provider.provide(IncomingMessage(text="hello"), existing_entries=existing)
 
         assert result is not None
         assert len(result) == 1
@@ -544,7 +545,7 @@ class TestProviderChainExpansion:
         registry = SkillRegistry([skills_dir])
         provider = SkillsContextProvider(defaults, registry)
 
-        result = await provider.provide("hello")
+        result = await provider.provide(IncomingMessage(text="hello"))
 
         assert result is not None
         names = [r.metadata["skill_name"] for r in result]
@@ -578,7 +579,7 @@ class TestProviderChainExpansion:
             ),
         ]
 
-        result = await provider.provide("hello", existing_entries=existing)
+        result = await provider.provide(IncomingMessage(text="hello"), existing_entries=existing)
 
         assert result is not None
         names = [r.metadata["skill_name"] for r in result]
@@ -601,7 +602,7 @@ class TestProviderChainExpansion:
         provider = SkillsContextProvider(defaults, registry)
         spy = mocker.spy(registry, "resolve_chain")
 
-        result = await provider.provide("hello")
+        result = await provider.provide(IncomingMessage(text="hello"))
 
         assert result is None
         spy.assert_not_called()
@@ -632,7 +633,7 @@ class TestProviderChainExpansion:
 
         mocker.patch.object(registry, "resolve_chain", side_effect=patched_resolve)
 
-        result = await provider.provide("hello")
+        result = await provider.provide(IncomingMessage(text="hello"))
 
         assert result is not None
         names = [r.metadata["skill_name"] for r in result]
@@ -655,7 +656,7 @@ class TestProviderChainExpansion:
         registry = SkillRegistry([skills_dir])
         provider = SkillsContextProvider(defaults, registry)
 
-        await provider.provide("hello")
+        await provider.provide(IncomingMessage(text="hello"))
 
         call_args = mock_query.call_args
         prompt = call_args[1]["prompt"]
@@ -679,7 +680,7 @@ class TestProviderChainExpansion:
         registry = SkillRegistry([skills_dir])
         provider = SkillsContextProvider(defaults, registry)
 
-        result = await provider.provide("hello")
+        result = await provider.provide(IncomingMessage(text="hello"))
 
         assert result is not None
         assert len(result) == 2
@@ -772,7 +773,7 @@ class TestAgentsContextInjection:
         ]
 
         provider = self._make_provider(tmp_path)
-        await provider.provide("hello", existing_entries=existing)
+        await provider.provide(IncomingMessage(text="hello"), existing_entries=existing)
 
         prompt = mock_query.call_args[1]["prompt"]
         assert "<agents>\nAlways prefer workflow W when user says Z.\n</agents>" in prompt
@@ -791,7 +792,7 @@ class TestAgentsContextInjection:
         ]
 
         provider = self._make_provider(tmp_path)
-        await provider.provide("hello", existing_entries=existing)
+        await provider.provide(IncomingMessage(text="hello"), existing_entries=existing)
 
         prompt = mock_query.call_args[1]["prompt"]
         assert "<soul>" not in prompt
@@ -809,7 +810,7 @@ class TestAgentsContextInjection:
         mock_query.return_value = _make_query_result("NO_RELEVANT_SKILLS")
 
         provider = self._make_provider(tmp_path)
-        await provider.provide("hello")
+        await provider.provide(IncomingMessage(text="hello"))
 
         prompt = mock_query.call_args[1]["prompt"]
         assert "(No agent instructions available.)" in prompt
@@ -828,7 +829,7 @@ class TestAgentsContextInjection:
         ]
 
         provider = self._make_provider(tmp_path)
-        await provider.provide("hello", existing_entries=existing)
+        await provider.provide(IncomingMessage(text="hello"), existing_entries=existing)
 
         prompt = mock_query.call_args[1]["prompt"]
         agents_idx = prompt.index("<agents>")
@@ -886,7 +887,7 @@ class TestConversationContextInjection:
 
         provider = self._make_provider(tmp_path)
         await provider.provide(
-            "hello",
+            IncomingMessage(text="hello"),
             session_summary="We discussed restaurants",
             session_last_exchange="I like Italian food",
         )
@@ -906,7 +907,7 @@ class TestConversationContextInjection:
         mock_query.return_value = _make_query_result("NO_RELEVANT_SKILLS")
 
         provider = self._make_provider(tmp_path)
-        await provider.provide("hello")
+        await provider.provide(IncomingMessage(text="hello"))
 
         prompt = mock_query.call_args[1]["prompt"]
         assert "## Conversation Context" not in prompt
@@ -935,7 +936,7 @@ class TestPinnedSkills:
         self._seed_skill(tmp_path, "research", "Research skill")
 
         provider = self._make_provider(tmp_path)
-        result = await provider.provide("hello", pinned_skills=("research",))
+        result = await provider.provide(IncomingMessage(text="hello", pinned_skills=("research",)))
 
         assert result is not None
         assert len(result) == 1
@@ -961,7 +962,8 @@ class TestPinnedSkills:
 
         provider = self._make_provider(tmp_path)
         result = await provider.provide(
-            "hello", existing_entries=existing, pinned_skills=("research",)
+            IncomingMessage(text="hello", pinned_skills=("research",)),
+            existing_entries=existing,
         )
 
         # Skill was already loaded, so nothing returned
@@ -985,7 +987,7 @@ class TestPinnedSkills:
         )
 
         provider = self._make_provider(tmp_path)
-        result = await provider.provide("hello", pinned_skills=("A",))
+        result = await provider.provide(IncomingMessage(text="hello", pinned_skills=("A",)))
 
         assert result is not None
         names = [r.metadata["skill_name"] for r in result]
@@ -1005,7 +1007,7 @@ class TestPinnedSkills:
         mock_query.return_value = _make_query_result("planning")
 
         provider = self._make_provider(tmp_path)
-        result = await provider.provide("hello", pinned_skills=("research",))
+        result = await provider.provide(IncomingMessage(text="hello", pinned_skills=("research",)))
 
         assert result is not None
         assert len(result) == 2
@@ -1027,7 +1029,7 @@ class TestPinnedSkills:
 
         provider = self._make_provider(tmp_path)
         result = await provider.provide(
-            "hello", pinned_skills=("nonexistent", "research")
+            IncomingMessage(text="hello", pinned_skills=("nonexistent", "research"))
         )
 
         assert result is not None
@@ -1057,7 +1059,7 @@ class TestPinnedSkills:
         self._seed_skill(tmp_path, "research", "Research")
 
         provider = self._make_provider(tmp_path)
-        result = await provider.provide("hello", pinned_skills=("research",))
+        result = await provider.provide(IncomingMessage(text="hello", pinned_skills=("research",)))
 
         assert result is not None
         assert len(result) == 1
@@ -1087,7 +1089,7 @@ class TestConversationContextInjectionRemaining:
 
         provider = self._make_provider(tmp_path)
         await provider.provide(
-            "hello",
+            IncomingMessage(text="hello"),
             session_summary="We discussed restaurants",
         )
 

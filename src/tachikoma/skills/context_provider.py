@@ -13,6 +13,7 @@ from claude_agent_sdk.types import ResultMessage
 from loguru import logger
 
 from tachikoma.agent_defaults import AgentDefaults
+from tachikoma.message import IncomingMessage
 from tachikoma.per_message_pre_processing import (
     MessageContextProvider,
     render_conversation_context,
@@ -126,26 +127,25 @@ class SkillsContextProvider(MessageContextProvider):
 
     async def provide(
         self,
-        message: str,
+        message: IncomingMessage,
         *,
         existing_entries: list[SessionContextEntry] | None = None,
         sdk_session_id: str | None = None,
         session_summary: str | None = None,
         session_last_exchange: str | None = None,
-        pinned_skills: tuple[str, ...] = (),
     ) -> list[ContextResult] | None:
         self._registry.refresh()
 
-        if not self._registry.skills and not pinned_skills:
+        if not self._registry.skills and not message.pinned_skills:
             return None
 
         loaded_names = extract_skill_names(existing_entries or [])
 
         # Resolve pinned skills first — they bypass classification
         pinned_results: list[ContextResult] = []
-        if pinned_skills:
+        if message.pinned_skills:
             seen: set[str] = set(loaded_names)
-            for skill_name in pinned_skills:
+            for skill_name in message.pinned_skills:
                 if skill_name in seen:
                     continue
                 try:
@@ -189,7 +189,7 @@ class SkillsContextProvider(MessageContextProvider):
             agents_context=agents_context,
             conversation_context_section=conversation_context_section,
             skills=skills_list,
-            message=message,
+            message=message.text,
         )
 
         # Tool-less agent (see DES-007 "Disabling Tools"):

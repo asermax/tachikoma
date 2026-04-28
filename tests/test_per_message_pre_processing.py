@@ -4,6 +4,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 from claude_agent_sdk.types import AgentDefinition
 
+from tachikoma.message import IncomingMessage
 from tachikoma.per_message_pre_processing import (
     MessageContextProvider,
     MessagePreProcessingPipeline,
@@ -29,6 +30,11 @@ def _make_entry(
         content=content,
         metadata=metadata,
     )
+
+
+def _msg(text: str = "hello", **kwargs) -> IncomingMessage:
+    """Create an IncomingMessage for testing."""
+    return IncomingMessage(text=text, **kwargs)
 
 
 class TestExtractSkillNames:
@@ -157,7 +163,7 @@ class TestMessagePreProcessingPipeline:
     async def test_empty_providers_returns_empty_list(self) -> None:
         """AC: No providers registered → empty result."""
         pipeline = MessagePreProcessingPipeline()
-        result = await pipeline.run("hello")
+        result = await pipeline.run(_msg())
         assert result == []
 
     async def test_single_provider_returns_results(self) -> None:
@@ -170,7 +176,7 @@ class TestMessagePreProcessingPipeline:
         pipeline = MessagePreProcessingPipeline()
         pipeline.register(provider)
 
-        result = await pipeline.run("hello", existing_entries=[])
+        result = await pipeline.run(_msg(), existing_entries=[])
 
         assert len(result) == 1
         assert result[0].tag == "skills"
@@ -185,15 +191,14 @@ class TestMessagePreProcessingPipeline:
         pipeline = MessagePreProcessingPipeline()
         pipeline.register(provider)
 
-        await pipeline.run("hello", existing_entries=entries)
+        await pipeline.run(_msg(), existing_entries=entries)
 
         provider.provide.assert_called_once_with(
-            "hello",
+            _msg(),
             existing_entries=entries,
             sdk_session_id=None,
             session_summary=None,
             session_last_exchange=None,
-            pinned_skills=(),
         )
 
     async def test_parallel_execution(self) -> None:
@@ -212,7 +217,7 @@ class TestMessagePreProcessingPipeline:
         pipeline.register(provider_a)
         pipeline.register(provider_b)
 
-        result = await pipeline.run("hello")
+        result = await pipeline.run(_msg())
 
         assert len(result) == 2
         tags = {r.metadata["skill_name"] for r in result}
@@ -232,7 +237,7 @@ class TestMessagePreProcessingPipeline:
         pipeline.register(provider_a)
         pipeline.register(provider_b)
 
-        result = await pipeline.run("hello")
+        result = await pipeline.run(_msg())
 
         # Provider B's result still comes through
         assert len(result) == 1
@@ -246,7 +251,7 @@ class TestMessagePreProcessingPipeline:
         pipeline = MessagePreProcessingPipeline()
         pipeline.register(provider)
 
-        result = await pipeline.run("hello")
+        result = await pipeline.run(_msg())
 
         assert result == []
 
@@ -258,15 +263,14 @@ class TestMessagePreProcessingPipeline:
         pipeline = MessagePreProcessingPipeline()
         pipeline.register(provider)
 
-        await pipeline.run("hello")
+        await pipeline.run(_msg())
 
         provider.provide.assert_called_once_with(
-            "hello",
+            _msg(),
             existing_entries=[],
             sdk_session_id=None,
             session_summary=None,
             session_last_exchange=None,
-            pinned_skills=(),
         )
 
     async def test_passes_sdk_session_id_to_provider(self) -> None:
@@ -277,15 +281,14 @@ class TestMessagePreProcessingPipeline:
         pipeline = MessagePreProcessingPipeline()
         pipeline.register(provider)
 
-        await pipeline.run("hello", sdk_session_id="test-session-123")
+        await pipeline.run(_msg(), sdk_session_id="test-session-123")
 
         provider.provide.assert_called_once_with(
-            "hello",
+            _msg(),
             existing_entries=[],
             sdk_session_id="test-session-123",
             session_summary=None,
             session_last_exchange=None,
-            pinned_skills=(),
         )
 
     async def test_default_sdk_session_id_is_none(self) -> None:
@@ -296,7 +299,7 @@ class TestMessagePreProcessingPipeline:
         pipeline = MessagePreProcessingPipeline()
         pipeline.register(provider)
 
-        await pipeline.run("hello")
+        await pipeline.run(_msg())
 
         _, kwargs = provider.provide.call_args
         assert kwargs["sdk_session_id"] is None
@@ -310,19 +313,17 @@ class TestMessagePreProcessingPipeline:
         pipeline.register(provider)
 
         await pipeline.run(
-            "hello",
+            _msg(),
             session_summary="We discussed restaurants",
             session_last_exchange="I like Italian food",
-            pinned_skills=(),
         )
 
         provider.provide.assert_called_once_with(
-            "hello",
+            _msg(),
             existing_entries=[],
             sdk_session_id=None,
             session_summary="We discussed restaurants",
             session_last_exchange="I like Italian food",
-            pinned_skills=(),
         )
 
     async def test_default_session_context_is_none(self) -> None:
@@ -333,7 +334,7 @@ class TestMessagePreProcessingPipeline:
         pipeline = MessagePreProcessingPipeline()
         pipeline.register(provider)
 
-        await pipeline.run("hello")
+        await pipeline.run(_msg())
 
         _, kwargs = provider.provide.call_args
         assert kwargs["session_summary"] is None
@@ -351,13 +352,12 @@ class _NamedMessageProvider(MessageContextProvider):
 
     async def provide(
         self,
-        message: str,
+        message: IncomingMessage,
         *,
         existing_entries=None,
         sdk_session_id=None,
         session_summary=None,
         session_last_exchange=None,
-        pinned_skills: tuple[str, ...] = (),
     ) -> list[ContextResult] | None:
         return []
 
@@ -390,7 +390,7 @@ class TestStatusCallback:
         async def on_status(msg: str) -> None:
             received.append(msg)
 
-        await pipeline.run("hi", on_status=on_status)
+        await pipeline.run(_msg("hi"), on_status=on_status)
 
         # Each provider emits start + completion (2 messages each).
         assert len(received) == 4
@@ -405,5 +405,5 @@ class TestStatusCallback:
         pipeline = MessagePreProcessingPipeline()
         pipeline.register(_NamedMessageProvider("Searching..."))
 
-        results = await pipeline.run("hi")
+        results = await pipeline.run(_msg("hi"))
         assert results == []
