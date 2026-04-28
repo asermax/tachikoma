@@ -25,7 +25,7 @@ def _make_result(**kwargs: object) -> UpgradeResult:
 
 
 class TestHandleApplyUpdate:
-    async def test_success_writes_marker_does_not_dispatch(self) -> None:
+    async def test_success_writes_marker_and_returns_restart_hint(self) -> None:
         result = _make_result(old_version="1.0.0", new_version="1.1.0", changed=True)
 
         with (

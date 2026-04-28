@@ -102,12 +102,7 @@ async def handle_apply_update() -> dict:
 
 
 async def handle_restart(bus: EventBus) -> dict:
-    """Dispatch a restart request on the bus.
-
-    Side effect: dispatches RestartRequested. The active channel observes the
-    event, exits its run loop, and the main entry point performs the in-place
-    ``os.execv`` after clean shutdown.
-    """
+    """Dispatch a restart request on the bus."""
     await bus.dispatch(RestartRequested())
     return {
         "content": [
