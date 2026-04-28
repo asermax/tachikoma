@@ -172,7 +172,7 @@ class TaskDefinitionRecord(Base):
             last_fired_at=ensure_utc(self.last_fired_at),
             since=ensure_utc(self.since),
             created_at=ensure_utc(self.created_at),
-            skills=tuple(json.loads(self.skills)) if self.skills else (),
+            skills=tuple(json.loads(self.skills)) if self.skills is not None else (),
         )
 
 
