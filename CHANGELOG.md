@@ -2,6 +2,104 @@
 
 <!-- version list -->
 
+## v1.56.0 (2026-04-28)
+
+### Bug Fixes
+
+- **database**: Optimize pragma query to select single column
+  ([`dcc0c28`](https://github.com/asermax/tachikoma/commit/dcc0c28aca3275e123ce25d4474c5917c6b72b32))
+
+- **tasks**: Handle empty string skills in TaskDefinitionRecord
+  ([`facdc7b`](https://github.com/asermax/tachikoma/commit/facdc7b121eaad4134e65e615cf140510a1b7ea5))
+
+### Chores
+
+- Remove DLT-117 delta working documents
+  ([`c45fa70`](https://github.com/asermax/tachikoma/commit/c45fa70992880500d519b9cdd142cfe76a3a1910))
+
+### Code Style
+
+- Fix import ordering and formatting
+  ([`be1f9a6`](https://github.com/asermax/tachikoma/commit/be1f9a6c602082ff45ed1e7ab3e66827de95c72a))
+
+- **skills**: Simplify exception handling and truthiness checks
+  ([`f10b129`](https://github.com/asermax/tachikoma/commit/f10b1296c503edd258eea880f0c039f60e664c93))
+
+### Documentation
+
+- Mark DLT-117 as reconciled
+  ([`692fc7e`](https://github.com/asermax/tachikoma/commit/692fc7ef1b2c8afb699c340ef00a57ab03311317))
+
+- Mark DLT-117 batches done, update DELTAS status, document skill pinning
+  ([`057fc77`](https://github.com/asermax/tachikoma/commit/057fc77fffdc3d10ec577e8fc91a1dd22d0bd17e))
+
+- Update specs and designs for IncomingMessage envelope and pinned skills
+  ([`7cc66dc`](https://github.com/asermax/tachikoma/commit/7cc66dc2fdd77e0933c3f6b90fe858adfef2c2dc))
+
+- **deltas**: Add implementation plan for DLT-117 skill pinning on task definitions
+  ([`b3fee78`](https://github.com/asermax/tachikoma/commit/b3fee7887fcf1f0888b9149bec9a079358eb0e5d))
+
+- **deltas**: Add spec for DLT-117 skill pinning on task definitions
+  ([`7694653`](https://github.com/asermax/tachikoma/commit/7694653ee871e5e86427c5110fa6d5876e1a2d66))
+
+- **deltas**: Complete DLT-117 design for skill pinning on task definitions
+  ([`39eb0f2`](https://github.com/asermax/tachikoma/commit/39eb0f26a6c42a853b37500c53658499daa4e537))
+
+- **deltas**: Mark DLT-117 as design in-progress
+  ([`bea9cf6`](https://github.com/asermax/tachikoma/commit/bea9cf657fa9c0838292f162d9875109a560fab9))
+
+- **deltas**: Mark DLT-117 as plan in-progress
+  ([`2781c3f`](https://github.com/asermax/tachikoma/commit/2781c3f69a18ce4ddf058d3d4f34dfb6e2ee5ace))
+
+- **deltas**: Mark DLT-117 as spec in-progress
+  ([`ec235dc`](https://github.com/asermax/tachikoma/commit/ec235dc7beddb8ec9fb54c1163253b47073bbcd0))
+
+- **deltas**: Mark DLT-117 plan as complete
+  ([`7931ce2`](https://github.com/asermax/tachikoma/commit/7931ce208a351419df3a8ce56119035eddb8c5ca))
+
+- **deltas**: Mark DLT-117 spec as complete
+  ([`575f77b`](https://github.com/asermax/tachikoma/commit/575f77bd543d68ca1973518ca627365427ef7965))
+
+- **deltas**: Refine DLT-117 spec acceptance criteria
+  ([`8ebedf1`](https://github.com/asermax/tachikoma/commit/8ebedf1d4f838721a441b82e0409fb2b5f7fc186))
+
+- **deltas**: Scaffold DLT-117 design with shape parts
+  ([`0595b3d`](https://github.com/asermax/tachikoma/commit/0595b3da1457570c50e39fba5aed92790c8c835d))
+
+- **deltas**: Unify skill resolution in SkillsContextProvider for DLT-117
+  ([`efe191c`](https://github.com/asermax/tachikoma/commit/efe191ca8293029db591e2771065f9a099fa1085))
+
+### Features
+
+- **channels**: Adapt REPL and Telegram to IncomingMessage envelope
+  ([`8331062`](https://github.com/asermax/tachikoma/commit/8331062ce3b1d029024647e20148ce474dc72d40))
+
+- **skills**: Add pinned skill resolution in SkillsContextProvider
+  ([`a2fe7f8`](https://github.com/asermax/tachikoma/commit/a2fe7f8976420fc429ced7e365514274440b1e24))
+
+- **tasks**: Add IncomingMessage envelope and skills field to task definitions
+  ([`5f75841`](https://github.com/asermax/tachikoma/commit/5f758412f2b83896f93428c5a706a2db03e4d87a))
+
+- **tasks**: Add skills parameter to MCP tools with validation
+  ([`1ea9ac7`](https://github.com/asermax/tachikoma/commit/1ea9ac7f273b85611a1b5c0818b4e578c67140b7))
+
+- **tasks**: Wire pinned skills through executor and scheduler paths
+  ([`d4e559f`](https://github.com/asermax/tachikoma/commit/d4e559f8dff0d131293f833f53d3e5ed268c4ea7))
+
+### Refactoring
+
+- **channels**: Extract pinned skills collection into BufferedDelivery
+  ([`e68d80c`](https://github.com/asermax/tachikoma/commit/e68d80cf217b5fb39a89954c2d31d291793a2940))
+
+- **pre-processing**: Pass IncomingMessage envelope through per-message pipeline
+  ([`d29d852`](https://github.com/asermax/tachikoma/commit/d29d8523202080b9ea481a76120419fa88681a4f))
+
+### Testing
+
+- Add tests for skill pinning across all layers
+  ([`6e7a860`](https://github.com/asermax/tachikoma/commit/6e7a860399e97421f7c269ab6b6ce59a2d8cd3b9))
+
+
 ## v1.55.1 (2026-04-27)
 
 ### Bug Fixes
