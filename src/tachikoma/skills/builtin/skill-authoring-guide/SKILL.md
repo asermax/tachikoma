@@ -177,6 +177,24 @@ dependency skills.
 
 Skills are detected via LLM classification using each skill's description. Writing effective descriptions is critical.
 
+### Pinning Skills to Task Definitions
+
+Skills can be pinned to scheduled task definitions so they are loaded unconditionally every time the task fires, bypassing LLM-based classification. This is useful when a task always needs a specific skill's context.
+
+Use the `skills` parameter when creating or updating a task:
+
+```
+create_task(
+  name="Research digest",
+  schedule="0 9 * * *",
+  type="background",
+  prompt="Summarize recent findings",
+  skills='["research", "planning"]'
+)
+```
+
+The `skills` parameter is a JSON-encoded array of skill folder names. Dependency resolution still applies — if a pinned skill declares `depends_on`, those dependencies are loaded too. Unknown skill names produce a warning but don't prevent task creation.
+
 ### How Detection Works
 
 1. The system assembles a list of all skills with their descriptions
