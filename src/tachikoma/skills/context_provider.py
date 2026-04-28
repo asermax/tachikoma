@@ -116,6 +116,10 @@ class SkillsContextProvider(MessageContextProvider):
         count = len(result) if result else 0
 
         if count:
+            pinned = sum(1 for r in result if r.metadata and r.metadata.get("_pinned"))
+            classified = count - pinned
+            if pinned and classified:
+                return f"Loaded {pinned} pinned + {classified} classified skills"
             return f"Loaded {count} skills"
 
         return "No relevant skills detected"
@@ -128,20 +132,51 @@ class SkillsContextProvider(MessageContextProvider):
         sdk_session_id: str | None = None,
         session_summary: str | None = None,
         session_last_exchange: str | None = None,
+        pinned_skills: tuple[str, ...] = (),
     ) -> list[ContextResult] | None:
         self._registry.refresh()
 
-        if not self._registry.skills:
+        if not self._registry.skills and not pinned_skills:
             return None
 
         loaded_names = extract_skill_names(existing_entries or [])
+
+        # Resolve pinned skills first — they bypass classification
+        pinned_results: list[ContextResult] = []
+        if pinned_skills:
+            seen: set[str] = set(loaded_names)
+            for skill_name in pinned_skills:
+                if skill_name in seen:
+                    continue
+                try:
+                    chain = self._registry.resolve_chain(skill_name)
+                except (KeyError, Exception) as exc:
+                    _log.warning(
+                        "Failed to resolve pinned skill: skill={skill}, err={err}",
+                        skill=skill_name,
+                        err=str(exc),
+                    )
+                    continue
+                for skill in chain:
+                    if skill.name in seen:
+                        continue
+                    seen.add(skill.name)
+                    pinned_results.append(
+                        ContextResult(
+                            tag=SKILLS_OWNER,
+                            content=render_skill_block(skill),
+                            metadata={SKILL_NAME_META_KEY: skill.name, "_pinned": True},
+                        )
+                    )
+            loaded_names = seen
+
         unloaded_skills = {
             name: skill for name, skill in self._registry.skills.items() if name not in loaded_names
         }
 
         # Skip classification when no unloaded skills remain
         if not unloaded_skills:
-            return None
+            return pinned_results if pinned_results else None
 
         skills_list = "\n".join(
             f"- **{name}**: {skill.description}" for name, skill in unloaded_skills.items()
@@ -214,7 +249,7 @@ class SkillsContextProvider(MessageContextProvider):
             )
 
         if not detected_names:
-            return None
+            return pinned_results if pinned_results else None
 
         ordered_skills: list[Skill] = []
         seen: set[str] = set(loaded_names)
@@ -237,12 +272,12 @@ class SkillsContextProvider(MessageContextProvider):
                 ordered_skills.append(skill)
 
         if not ordered_skills:
-            return None
+            return pinned_results if pinned_results else None
 
-        results: list[ContextResult] = []
+        classified_results: list[ContextResult] = []
 
         for skill in ordered_skills:
-            results.append(
+            classified_results.append(
                 ContextResult(
                     tag=SKILLS_OWNER,
                     content=render_skill_block(skill),
@@ -250,7 +285,7 @@ class SkillsContextProvider(MessageContextProvider):
                 )
             )
 
-        return results
+        return pinned_results + classified_results
 
 
 SKILLS_OWNER = "skills"

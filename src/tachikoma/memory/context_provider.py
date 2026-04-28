@@ -252,6 +252,7 @@ class MemoryContextProvider(MessageContextProvider):
         sdk_session_id: str | None = None,
         session_summary: str | None = None,
         session_last_exchange: str | None = None,
+        pinned_skills: tuple[str, ...] = (),
     ) -> list[ContextResult] | None:
         """Search memories for context relevant to the message.
 
