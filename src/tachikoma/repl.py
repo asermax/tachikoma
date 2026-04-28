@@ -21,6 +21,7 @@ from tachikoma.buffer.events import BufferedDelivery
 from tachikoma.channel import Channel
 from tachikoma.display import TOOL_DISPLAY, format_tool_name
 from tachikoma.events import AgentEvent, Error, Result, Status, TextChunk, ToolActivity
+from tachikoma.message import IncomingMessage
 from tachikoma.updates.events import RestartRequested
 
 if TYPE_CHECKING:
@@ -161,7 +162,7 @@ class Repl(Channel):
 
                 try:
                     async with self._delivery_lock:
-                        self._coordinator.enqueue(text)
+                        self._coordinator.enqueue(IncomingMessage(text=text))
                         async for event in self._coordinator.send_message():
                             if not self._renderer.render(event):
                                 return
@@ -230,8 +231,15 @@ class Repl(Channel):
 
         Returns False if the REPL should exit.
         """
+        return await self._execute_through_coordinator_msg(IncomingMessage(text=prompt))
+
+    async def _execute_through_coordinator_msg(self, msg: IncomingMessage) -> bool:
+        """Send an IncomingMessage through the coordinator and render the response.
+
+        Returns False if the REPL should exit.
+        """
         try:
-            self._coordinator.enqueue(prompt)
+            self._coordinator.enqueue(msg)
             async for ev in self._coordinator.send_message():
                 if not self._renderer.render(ev):
                     return False
@@ -256,7 +264,14 @@ class Repl(Channel):
             f"\n[dim italic]📋 {label}:[/dim italic]",
         )
 
-        if not await self._execute_through_coordinator(event.prompt):
+        # Collect pinned skills from session_task items
+        pinned: list[str] = []
+        for item in event.items:
+            if item.kind == "session_task":
+                pinned.extend(item.metadata.get("pinned_skills", []))
+
+        msg = IncomingMessage(text=event.prompt, pinned_skills=tuple(pinned))
+        if not await self._execute_through_coordinator_msg(msg):
             return
 
         for item in event.items:

@@ -44,6 +44,7 @@ from tachikoma.media import (
     generate_media_filename,
     resolve_media,
 )
+from tachikoma.message import IncomingMessage
 from tachikoma.telegram.pinning import create_pinning_server
 from tachikoma.telegram.tools import create_send_file_server
 from tachikoma.updates.events import RestartRequested
@@ -767,11 +768,11 @@ class TelegramChannel(Channel):
         # in-flight exchange ends, turning this into a new turn instead.
         if self._delivery_lock.locked():
             _log.debug("Mid-stream steering message")
-            self._coordinator.enqueue(text)
+            self._coordinator.enqueue(IncomingMessage(text=text))
             return
 
         async with self._delivery_lock:
-            self._coordinator.enqueue(text)
+            self._coordinator.enqueue(IncomingMessage(text=text))
             await self._process_through_coordinator()
 
     async def _handle_media(self, message: Message) -> None:
@@ -818,11 +819,11 @@ class TelegramChannel(Channel):
         # the full rationale.
         if self._delivery_lock.locked():
             _log.debug("Mid-stream steering media message")
-            self._coordinator.enqueue(description)
+            self._coordinator.enqueue(IncomingMessage(text=description))
             return
 
         async with self._delivery_lock:
-            self._coordinator.enqueue(description)
+            self._coordinator.enqueue(IncomingMessage(text=description))
             await self._process_through_coordinator()
 
     async def _send_shutdown_status(self, message: str) -> None:
@@ -893,8 +894,16 @@ class TelegramChannel(Channel):
         Runs as a detached task spawned by _handle_buffered_delivery.
         """
         try:
+            # Collect pinned skills from session_task items
+            pinned: list[str] = []
+            for item in event.items:
+                if item.kind == "session_task":
+                    pinned.extend(item.metadata.get("pinned_skills", []))
+
             async with self._delivery_lock:
-                self._coordinator.enqueue(event.prompt)
+                self._coordinator.enqueue(
+                    IncomingMessage(text=event.prompt, pinned_skills=tuple(pinned))
+                )
                 await self._process_through_coordinator(on_complete=self._build_on_complete(event))
         except Exception:
             _log.exception(
