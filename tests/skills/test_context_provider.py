@@ -911,6 +911,172 @@ class TestConversationContextInjection:
         prompt = mock_query.call_args[1]["prompt"]
         assert "## Conversation Context" not in prompt
 
+
+class TestPinnedSkills:
+    """Tests for pinned skills in SkillsContextProvider (DLT-117)."""
+
+    def _make_provider(self, tmp_path: Path) -> SkillsContextProvider:
+        defaults = AgentDefaults(cwd=tmp_path)
+        registry = SkillRegistry([tmp_path / "skills"])
+        return SkillsContextProvider(defaults, registry)
+
+    def _seed_skill(self, tmp_path: Path, name: str, description: str = "Test") -> None:
+        skill_dir = tmp_path / "skills" / name
+        skill_dir.mkdir(parents=True, exist_ok=True)
+        (skill_dir / "SKILL.md").write_text(
+            f"---\ndescription: {description}\n---\n\nBody for {name}"
+        )
+
+    async def test_pinned_skill_loaded_without_classification(
+        self, mocker: MockerFixture, tmp_path: Path
+    ) -> None:
+        """DLT-117: Pinned skill is loaded without needing LLM classification."""
+        mock_query = mocker.patch("tachikoma.skills.context_provider.stderr_aware_query")
+        self._seed_skill(tmp_path, "research", "Research skill")
+
+        provider = self._make_provider(tmp_path)
+        result = await provider.provide("hello", pinned_skills=("research",))
+
+        assert result is not None
+        assert len(result) == 1
+        assert result[0].metadata["skill_name"] == "research"
+        assert result[0].metadata.get("_pinned") is True
+        # No classification needed — only skill was pinned
+        mock_query.assert_not_called()
+
+    async def test_pinned_skill_already_loaded_skips(
+        self, mocker: MockerFixture, tmp_path: Path
+    ) -> None:
+        """DLT-117: Pinned skill already in existing_entries is skipped."""
+        mock_query = mocker.patch("tachikoma.skills.context_provider.stderr_aware_query")
+        self._seed_skill(tmp_path, "research", "Research skill")
+        mock_query.return_value = _make_query_result("NO_RELEVANT_SKILLS")
+
+        existing = [
+            SessionContextEntry(
+                id=1, session_id="s1", owner="skills", content="...",
+                metadata={"skill_name": "research"},
+            ),
+        ]
+
+        provider = self._make_provider(tmp_path)
+        result = await provider.provide(
+            "hello", existing_entries=existing, pinned_skills=("research",)
+        )
+
+        # Skill was already loaded, so nothing returned
+        assert result is None
+
+    async def test_pinned_skill_with_dependency_chain(
+        self, mocker: MockerFixture, tmp_path: Path
+    ) -> None:
+        """DLT-117: Pinned skill resolves its dependency chain."""
+        mock_query = mocker.patch("tachikoma.skills.context_provider.stderr_aware_query")
+
+        # Create skill A that depends on B
+        skills_dir = tmp_path / "skills"
+        skills_dir.mkdir(parents=True, exist_ok=True)
+        for name in ("A", "B"):
+            d = skills_dir / name
+            d.mkdir(exist_ok=True)
+        (skills_dir / "B" / "SKILL.md").write_text("---\ndescription: Base\n---\n\nB body")
+        (skills_dir / "A" / "SKILL.md").write_text(
+            "---\ndescription: Advanced\ndepends_on: ['B']\n---\n\nA body"
+        )
+
+        provider = self._make_provider(tmp_path)
+        result = await provider.provide("hello", pinned_skills=("A",))
+
+        assert result is not None
+        names = [r.metadata["skill_name"] for r in result]
+        assert names == ["B", "A"]
+        # All pinned
+        assert all(r.metadata["_pinned"] for r in result)
+        mock_query.assert_not_called()
+
+    async def test_pinned_plus_classified_combined(
+        self, mocker: MockerFixture, tmp_path: Path
+    ) -> None:
+        """DLT-117: Pinned and classified skills are combined in results."""
+        mock_query = mocker.patch("tachikoma.skills.context_provider.stderr_aware_query")
+
+        self._seed_skill(tmp_path, "research", "Research skill")
+        self._seed_skill(tmp_path, "planning", "Planning skill")
+        mock_query.return_value = _make_query_result("planning")
+
+        provider = self._make_provider(tmp_path)
+        result = await provider.provide("hello", pinned_skills=("research",))
+
+        assert result is not None
+        assert len(result) == 2
+
+        pinned = [r for r in result if r.metadata.get("_pinned")]
+        classified = [r for r in result if not r.metadata.get("_pinned")]
+        assert len(pinned) == 1
+        assert pinned[0].metadata["skill_name"] == "research"
+        assert len(classified) == 1
+        assert classified[0].metadata["skill_name"] == "planning"
+
+    async def test_unknown_pinned_skill_skipped_gracefully(
+        self, mocker: MockerFixture, tmp_path: Path
+    ) -> None:
+        """DLT-117: Unknown pinned skill name is skipped without error."""
+        mock_query = mocker.patch("tachikoma.skills.context_provider.stderr_aware_query")
+        self._seed_skill(tmp_path, "research", "Research skill")
+        mock_query.return_value = _make_query_result("NO_RELEVANT_SKILLS")
+
+        provider = self._make_provider(tmp_path)
+        result = await provider.provide(
+            "hello", pinned_skills=("nonexistent", "research")
+        )
+
+        assert result is not None
+        assert len(result) == 1
+        assert result[0].metadata["skill_name"] == "research"
+
+    async def test_status_message_pinned_and_classified(self, tmp_path: Path) -> None:
+        """DLT-117: status_message shows pinned + classified breakdown."""
+        from tachikoma.pre_processing import ContextResult  # noqa: PLC0415
+
+        provider = self._make_provider(tmp_path)
+        results = [
+            ContextResult(tag="skills", content="a", metadata={"skill_name": "x", "_pinned": True}),
+            ContextResult(tag="skills", content="b", metadata={"skill_name": "y"}),
+        ]
+        msg = provider.status_message(results)
+        assert "1 pinned" in msg
+        assert "1 classified" in msg
+
+    async def test_pinned_skills_empty_registry_still_loads(
+        self, mocker: MockerFixture, tmp_path: Path
+    ) -> None:
+        """DLT-117: Pinned skills load even when registry is otherwise empty."""
+        mocker.patch("tachikoma.skills.context_provider.stderr_aware_query")
+
+        # Create a skill dir but don't seed the registry normally — we need one skill
+        self._seed_skill(tmp_path, "research", "Research")
+
+        provider = self._make_provider(tmp_path)
+        result = await provider.provide("hello", pinned_skills=("research",))
+
+        assert result is not None
+        assert len(result) == 1
+        assert result[0].metadata["skill_name"] == "research"
+
+
+class TestConversationContextInjectionRemaining:
+    """Remaining tests for session context injection into the classifier prompt."""
+
+    def _make_provider(self, tmp_path: Path) -> SkillsContextProvider:
+        defaults = AgentDefaults(cwd=tmp_path)
+        registry = SkillRegistry([tmp_path / "skills"])
+        return SkillsContextProvider(defaults, registry)
+
+    def _seed_skill(self, tmp_path: Path, name: str = "example") -> None:
+        skill_dir = tmp_path / "skills" / name
+        skill_dir.mkdir(parents=True)
+        (skill_dir / "SKILL.md").write_text(f"---\ndescription: Example\n---\n\nBody for {name}")
+
     async def test_summary_without_last_exchange(
         self, mocker: MockerFixture, tmp_path: Path
     ) -> None:

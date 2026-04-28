@@ -27,6 +27,7 @@ def _make_definition(
     enabled: bool = True,
     last_fired_at: datetime | None = None,
     since: datetime | None = None,
+    skills: tuple[str, ...] = (),
 ) -> TaskDefinition:
     """Create a TaskDefinition with sensible defaults."""
     return TaskDefinition(
@@ -39,6 +40,7 @@ def _make_definition(
         last_fired_at=last_fired_at,
         since=since or (_utcnow() - timedelta(hours=1)),
         created_at=_utcnow(),
+        skills=skills,
     )
 
 

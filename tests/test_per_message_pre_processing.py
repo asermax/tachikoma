@@ -193,6 +193,7 @@ class TestMessagePreProcessingPipeline:
             sdk_session_id=None,
             session_summary=None,
             session_last_exchange=None,
+            pinned_skills=(),
         )
 
     async def test_parallel_execution(self) -> None:
@@ -265,6 +266,7 @@ class TestMessagePreProcessingPipeline:
             sdk_session_id=None,
             session_summary=None,
             session_last_exchange=None,
+            pinned_skills=(),
         )
 
     async def test_passes_sdk_session_id_to_provider(self) -> None:
@@ -283,6 +285,7 @@ class TestMessagePreProcessingPipeline:
             sdk_session_id="test-session-123",
             session_summary=None,
             session_last_exchange=None,
+            pinned_skills=(),
         )
 
     async def test_default_sdk_session_id_is_none(self) -> None:
@@ -310,6 +313,7 @@ class TestMessagePreProcessingPipeline:
             "hello",
             session_summary="We discussed restaurants",
             session_last_exchange="I like Italian food",
+            pinned_skills=(),
         )
 
         provider.provide.assert_called_once_with(
@@ -318,6 +322,7 @@ class TestMessagePreProcessingPipeline:
             sdk_session_id=None,
             session_summary="We discussed restaurants",
             session_last_exchange="I like Italian food",
+            pinned_skills=(),
         )
 
     async def test_default_session_context_is_none(self) -> None:
@@ -352,6 +357,7 @@ class _NamedMessageProvider(MessageContextProvider):
         sdk_session_id=None,
         session_summary=None,
         session_last_exchange=None,
+        pinned_skills: tuple[str, ...] = (),
     ) -> list[ContextResult] | None:
         return []
 

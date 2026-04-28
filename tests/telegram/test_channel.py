@@ -13,6 +13,7 @@ from aiogram.exceptions import TelegramAPIError, TelegramBadRequest, TelegramRet
 
 from tachikoma.buffer.events import BufferedDelivery
 from tachikoma.events import Error, Result, ToolActivity
+from tachikoma.message import IncomingMessage
 from tachikoma.telegram import (
     TELEGRAM_TOOL_DISPLAY,
     TELEGRAM_TOOL_SUMMARY,
@@ -1502,11 +1503,11 @@ class TestHandleMedia:
         await channel._handle_media(msg)
 
         # Should have enqueued a description
-        enqueued_text = channel._coordinator.enqueue.call_args[0][0]
-        assert "Photo" in enqueued_text
-        assert "1280 × 720" in enqueued_text
-        assert "/tmp/tachikoma-media/" in enqueued_text
-        assert 'The user said: "Check this out"' in enqueued_text
+        enqueued_msg = channel._coordinator.enqueue.call_args[0][0]
+        assert "Photo" in enqueued_msg.text
+        assert "1280 × 720" in enqueued_msg.text
+        assert "/tmp/tachikoma-media/" in enqueued_msg.text
+        assert 'The user said: "Check this out"' in enqueued_msg.text
 
         # Should have called process_through_coordinator
         channel._process_through_coordinator.assert_called_once()
@@ -1530,9 +1531,9 @@ class TestHandleMedia:
 
         await channel._handle_media(msg)
 
-        enqueued_text = channel._coordinator.enqueue.call_args[0][0]
-        assert "Voice message" in enqueued_text
-        assert "The user said" not in enqueued_text
+        enqueued_msg = channel._coordinator.enqueue.call_args[0][0]
+        assert "Voice message" in enqueued_msg.text
+        assert "The user said" not in enqueued_msg.text
 
     async def test_file_too_large(self) -> None:
         """File too large sends error message, does not enqueue."""
@@ -1640,7 +1641,7 @@ class TestDeliveryLock:
 
         # Only one exchange runs; the second call enqueued and returned.
         assert call_order == ["enter", "exit"]
-        enqueued = [args[0][0] for args in channel._coordinator.enqueue.call_args_list]
+        enqueued = [args[0][0].text for args in channel._coordinator.enqueue.call_args_list]
         assert sorted(enqueued) == ["one", "two"]
 
     async def test_handle_message_steers_when_lock_held(self) -> None:
@@ -1664,7 +1665,7 @@ class TestDeliveryLock:
         finally:
             channel._delivery_lock.release()
 
-        channel._coordinator.enqueue.assert_called_once_with("hey")
+        channel._coordinator.enqueue.assert_called_once_with(IncomingMessage(text="hey"))
         channel._process_through_coordinator.assert_not_called()
 
     async def test_handle_media_steers_when_lock_held(self) -> None:

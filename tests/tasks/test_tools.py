@@ -17,6 +17,7 @@ from tachikoma.tasks.tools import (
     ListTasksArgs,
     RunTaskNowArgs,
     UpdateTaskArgs,
+    _decode_skills,
     _format_schedule,
     _parse_schedule,
     create_task_tools_server,
@@ -331,9 +332,13 @@ class TestFutureCheckWithTzAware:
 # ---------------------------------------------------------------------------
 
 
-def _call_tool(repo: TaskRepository, tz: ZoneInfo = TZ_UTC):
+def _call_tool(
+    repo: TaskRepository,
+    tz: ZoneInfo = TZ_UTC,
+    skill_registry: object | None = None,
+):
     """Return an async callable that invokes a tool by name through the MCP server."""
-    server = create_task_tools_server(repo, tz)
+    server = create_task_tools_server(repo, tz, skill_registry=skill_registry)
     mcp_server = server["instance"]
     call_handler = mcp_server.request_handlers[types.CallToolRequest]
 
@@ -1054,3 +1059,205 @@ class TestRunTaskNow:
         tool_names = {t.name for t in result.root.tools}
         assert "run_task_now" in tool_names
         assert "respond_to_task" not in tool_names
+
+
+class TestDecodeSkills:
+    """Tests for _decode_skills helper (DLT-117)."""
+
+    def test_valid_array(self) -> None:
+        """AC: Valid JSON array of strings decoded correctly."""
+        assert _decode_skills('["research", "planning"]') == ["research", "planning"]
+
+    def test_empty_array(self) -> None:
+        """AC: Empty array returns empty list."""
+        assert _decode_skills("[]") == []
+
+    def test_single_element(self) -> None:
+        """AC: Single-element array works."""
+        assert _decode_skills('["research"]') == ["research"]
+
+    def test_invalid_json_raises_value_error(self) -> None:
+        """AC: Invalid JSON raises ValueError."""
+        with pytest.raises(ValueError, match="JSON-encoded array"):
+            _decode_skills("not-json")
+
+    def test_non_array_raises_value_error(self) -> None:
+        """AC: Non-array JSON raises ValueError."""
+        with pytest.raises(ValueError, match="must encode an array"):
+            _decode_skills('{"key": "value"}')
+
+    def test_non_string_items_raises_value_error(self) -> None:
+        """AC: Array with non-string items raises ValueError."""
+        with pytest.raises(ValueError, match="only strings"):
+            _decode_skills('["valid", 123]')
+
+
+class TestTaskSkills:
+    """Tests for skills parameter on MCP tools (DLT-117)."""
+
+    @pytest.mark.asyncio
+    async def test_create_task_with_skills(self, repo: TaskRepository) -> None:
+        """DLT-117: create_task persists skills and shows them in response."""
+        call_tool = _call_tool(repo)
+        result = await call_tool(
+            "create_task",
+            {
+                "name": "Research task",
+                "schedule": "0 9 * * *",
+                "type": "background",
+                "prompt": "Do research",
+                "skills": '["research", "planning"]',
+            },
+        )
+
+        assert result.get("is_error") is not True
+        text = result["content"][0]["text"]
+        assert "- Skills: research, planning" in text
+
+        # Verify persisted
+        defs = await repo.list_enabled_definitions()
+        assert len(defs) == 1
+        assert defs[0].skills == ("research", "planning")
+
+    @pytest.mark.asyncio
+    async def test_create_task_with_unknown_skill_warns(
+        self, repo: TaskRepository
+    ) -> None:
+        """DLT-117: create_task with unknown skill name shows warning."""
+        from tachikoma.skills.registry import SkillRegistry  # noqa: PLC0415
+
+        registry = SkillRegistry([])
+        call_tool = _call_tool(repo, skill_registry=registry)
+        result = await call_tool(
+            "create_task",
+            {
+                "name": "Task with unknown",
+                "schedule": "0 9 * * *",
+                "type": "background",
+                "prompt": "Do stuff",
+                "skills": '["nonexistent-skill"]',
+            },
+        )
+
+        assert result.get("is_error") is not True
+        text = result["content"][0]["text"]
+        assert "Warning: skill 'nonexistent-skill' not found" in text
+
+    @pytest.mark.asyncio
+    async def test_create_task_with_invalid_skills_json(self, repo: TaskRepository) -> None:
+        """DLT-117: create_task with invalid skills JSON returns error."""
+        call_tool = _call_tool(repo)
+        result = await call_tool(
+            "create_task",
+            {
+                "name": "Bad skills",
+                "schedule": "0 9 * * *",
+                "type": "background",
+                "prompt": "Do stuff",
+                "skills": "not-json",
+            },
+        )
+
+        text = result["content"][0]["text"]
+        assert "skills must be a JSON-encoded array" in text
+
+    @pytest.mark.asyncio
+    async def test_create_task_without_skills(self, repo: TaskRepository) -> None:
+        """DLT-117: create_task without skills defaults to empty tuple."""
+        call_tool = _call_tool(repo)
+        result = await call_tool(
+            "create_task",
+            {
+                "name": "No skills task",
+                "schedule": "0 9 * * *",
+                "type": "background",
+                "prompt": "Do stuff",
+            },
+        )
+
+        assert result.get("is_error") is not True
+        text = result["content"][0]["text"]
+        assert "Skills:" not in text
+
+        defs = await repo.list_enabled_definitions()
+        assert len(defs) == 1
+        assert defs[0].skills == ()
+
+    @pytest.mark.asyncio
+    async def test_update_task_sets_skills(self, repo: TaskRepository) -> None:
+        """DLT-117: update_task can set skills on existing task."""
+        defn = _make_definition(task_type="background")
+        await repo.create_definition(defn)
+
+        call_tool = _call_tool(repo)
+        result = await call_tool(
+            "update_task",
+            {"task_id": defn.id, "skills": '["research"]'},
+        )
+
+        assert result.get("is_error") is not True
+
+        updated = await repo.get_definition(defn.id)
+        assert updated is not None
+        assert updated.skills == ("research",)
+
+    @pytest.mark.asyncio
+    async def test_update_task_clears_skills(self, repo: TaskRepository) -> None:
+        """DLT-117: update_task with '[]' clears pinned skills."""
+        defn = _make_definition(task_type="background", skills=("research",))
+        await repo.create_definition(defn)
+
+        call_tool = _call_tool(repo)
+        result = await call_tool(
+            "update_task",
+            {"task_id": defn.id, "skills": "[]"},
+        )
+
+        assert result.get("is_error") is not True
+
+        updated = await repo.get_definition(defn.id)
+        assert updated is not None
+        assert updated.skills == ()
+
+    @pytest.mark.asyncio
+    async def test_get_task_shows_skills(self, repo: TaskRepository) -> None:
+        """DLT-117: get_task displays skills when present."""
+        defn = _make_definition(skills=("research", "planning"))
+        await repo.create_definition(defn)
+
+        call_tool = _call_tool(repo)
+        result = await call_tool("get_task", {"task_id": defn.id})
+
+        assert result.get("is_error") is not True
+        text = result["content"][0]["text"]
+        assert "- Skills: research, planning" in text
+
+    @pytest.mark.asyncio
+    async def test_get_task_omits_skills_when_empty(self, repo: TaskRepository) -> None:
+        """DLT-117: get_task omits Skills line when no skills pinned."""
+        defn = _make_definition()
+        await repo.create_definition(defn)
+
+        call_tool = _call_tool(repo)
+        result = await call_tool("get_task", {"task_id": defn.id})
+
+        assert result.get("is_error") is not True
+        text = result["content"][0]["text"]
+        assert "Skills:" not in text
+
+    @pytest.mark.asyncio
+    async def test_list_tasks_shows_skills(self, repo: TaskRepository) -> None:
+        """DLT-117: list_tasks shows skills line per entry when non-empty."""
+        await repo.create_definition(
+            _make_definition(definition_id="def-skills", name="With skills", skills=("research",))
+        )
+        await repo.create_definition(
+            _make_definition(definition_id="def-noskills", name="No skills")
+        )
+
+        call_tool = _call_tool(repo)
+        result = await call_tool("list_tasks", {})
+
+        assert result.get("is_error") is not True
+        text = result["content"][0]["text"]
+        assert "Skills: research" in text

@@ -20,6 +20,7 @@ from tachikoma.tasks.executor import (
     _PreprocessingResult,
     expired_waiter_sweep,
 )
+from tachikoma.tasks.model import ScheduleConfig, TaskDefinition
 from tachikoma.tasks.repository import TaskRepository
 
 from .conftest import _make_instance, _utcnow
@@ -1028,3 +1029,130 @@ class TestCrashRecoveryWaiting:
         running = await repo.get_instance("running-1")
         assert running is not None
         assert running.status == "failed"
+
+
+class TestPinnedSkillsExecution:
+    """Tests for pinned skills flow through executor (DLT-117)."""
+
+    @pytest.mark.asyncio
+    async def test_execute_passes_definition_skills_to_preprocessing(
+        self, repo: TaskRepository
+    ) -> None:
+        """DLT-117: execute() passes definition.skills as pinned_skills."""
+        definition = TaskDefinition(
+            id="def-pinned",
+            name="Pinned Task",
+            schedule=ScheduleConfig(type="cron", expression="0 9 * * *"),
+            task_type="background",
+            prompt="Test prompt",
+            skills=("research",),
+            created_at=_utcnow(),
+        )
+        await repo.create_definition(definition)
+
+        instance = _make_instance(
+            "inst-pinned",
+            definition_id="def-pinned",
+            task_type="background",
+            status="pending",
+        )
+        await repo.create_instance(instance)
+
+        settings = TaskSettings(max_concurrent_background=1)
+        bus = EventBus()
+
+        captured_skills: dict = {}
+
+        async def mock_run_preprocessing(self, prompt, *, pinned_skills=()):
+            captured_skills["skills"] = pinned_skills
+            return _mock_preproc_result()
+
+        executor = BackgroundTaskExecutor(
+            repository=repo,
+            agent_defaults=AgentDefaults(cwd=Path("/tmp")),
+            skill_registry=_mock_skill_registry(),
+            session_registry=_mock_session_registry(),
+            bus=bus,
+            settings=settings,
+        )
+
+        with patch("tachikoma.tasks.executor.ClaudeSDKClient") as mock_client_class:
+            mock_client = AsyncMock()
+            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_client.__aexit__ = AsyncMock(return_value=None)
+            mock_client_class.return_value = mock_client
+
+            mock_client.query = AsyncMock()
+            mock_client.receive_response = _make_sdk_response()
+
+            with patch("tachikoma.sdk_query.stderr_aware_query") as mock_query:
+                mock_query.return_value = _make_eval_response()
+
+                with (
+                    patch.object(
+                        BackgroundTaskExecutor,
+                        "_run_preprocessing",
+                        mock_run_preprocessing,
+                    ),
+                    patch.object(executor, "_run_postprocessing", return_value=None),
+                    patch("tachikoma.tasks.executor.create_notification_server"),
+                ):
+                    await executor.execute(instance)
+
+        assert captured_skills["skills"] == ("research",)
+
+    @pytest.mark.asyncio
+    async def test_execute_no_definition_passes_empty_skills(
+        self, repo: TaskRepository
+    ) -> None:
+        """DLT-117: execute() with transient instance passes empty pinned_skills."""
+        instance = _make_instance(
+            "inst-transient",
+            definition_id=None,
+            task_type="background",
+            status="pending",
+        )
+        await repo.create_instance(instance)
+
+        settings = TaskSettings(max_concurrent_background=1)
+        bus = EventBus()
+
+        captured_skills: dict = {}
+
+        async def mock_run_preprocessing(self, prompt, *, pinned_skills=()):
+            captured_skills["skills"] = pinned_skills
+            return _mock_preproc_result()
+
+        executor = BackgroundTaskExecutor(
+            repository=repo,
+            agent_defaults=AgentDefaults(cwd=Path("/tmp")),
+            skill_registry=_mock_skill_registry(),
+            session_registry=_mock_session_registry(),
+            bus=bus,
+            settings=settings,
+        )
+
+        with patch("tachikoma.tasks.executor.ClaudeSDKClient") as mock_client_class:
+            mock_client = AsyncMock()
+            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_client.__aexit__ = AsyncMock(return_value=None)
+            mock_client_class.return_value = mock_client
+
+            mock_client.query = AsyncMock()
+            mock_client.receive_response = _make_sdk_response()
+
+            with patch("tachikoma.sdk_query.stderr_aware_query") as mock_query:
+                mock_query.return_value = _make_eval_response()
+
+                with (
+                    patch.object(
+                        BackgroundTaskExecutor,
+                        "_run_preprocessing",
+                        mock_run_preprocessing,
+                    ),
+                    patch.object(executor, "_run_postprocessing", return_value=None),
+                    patch("tachikoma.tasks.executor.create_notification_server"),
+                ):
+                    await executor.execute(instance)
+
+        assert captured_skills["skills"] == ()

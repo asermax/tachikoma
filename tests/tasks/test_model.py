@@ -243,6 +243,45 @@ class TestORMModels:
         assert domain.schedule.type == "cron"
         assert domain.schedule.expression == "0 9 * * *"
 
+    def test_definition_with_skills(self) -> None:
+        """DLT-117: TaskDefinition with skills round-trips correctly."""
+        defn = TaskDefinition(
+            id="test-id",
+            name="Test",
+            schedule=ScheduleConfig(type="cron", expression="* * * * *"),
+            task_type="session",
+            prompt="Test",
+            skills=("research", "planning"),
+        )
+        assert defn.skills == ("research", "planning")
+
+    def test_definition_without_skills_defaults_empty(self) -> None:
+        """DLT-117: TaskDefinition without skills defaults to empty tuple."""
+        defn = TaskDefinition(
+            id="test-id",
+            name="Test",
+            schedule=ScheduleConfig(type="cron", expression="* * * * *"),
+            task_type="session",
+            prompt="Test",
+        )
+        assert defn.skills == ()
+
+    def test_definition_record_with_skills_round_trip(self) -> None:
+        """DLT-117: TaskDefinitionRecord with skills round-trips via to_domain."""
+        record = TaskDefinitionRecord(
+            id="def-1",
+            name="Test Task",
+            schedule='{"type": "cron", "expression": "0 9 * * *"}',
+            task_type="session",
+            prompt="Test prompt",
+            enabled=True,
+            since=datetime.now(UTC),
+            created_at=datetime.now(UTC),
+            skills='["research", "planning"]',
+        )
+        domain = record.to_domain()
+        assert domain.skills == ("research", "planning")
+
     def test_instance_record_to_domain(self) -> None:
         """AC: TaskInstanceRecord converts to domain correctly."""
         now = datetime.now(UTC)

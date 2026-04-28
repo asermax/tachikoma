@@ -654,3 +654,64 @@ class TestSessionTaskScheduler:
         assert inst is not None
         assert inst.status == "completed"
         assert inst.completed_at is not None
+
+
+class TestSessionTaskSchedulerPinnedSkills:
+    """Tests for pinned skills propagation in session_task_scheduler (DLT-117)."""
+
+    @pytest.mark.asyncio
+    async def test_sets_pinned_skills_metadata(
+        self, repo: TaskRepository
+    ) -> None:
+        """DLT-117: BufferedItem gets pinned_skills from definition."""
+        defn = _make_definition(
+            "def-skills",
+            task_type="session",
+            skills=("research", "planning"),
+        )
+        await repo.create_definition(defn)
+
+        # Create a pending instance linked to the definition
+        instance = _make_instance(
+            "inst-1",
+            definition_id="def-skills",
+            task_type="session",
+            status="pending",
+        )
+        await repo.create_instance(instance)
+
+        settings = TaskSettings(idle_window=0, check_interval=300)
+        enqueued_items: list[BufferedItem] = []
+        mock_buffer = AsyncMock()
+        mock_buffer.enqueue = AsyncMock(side_effect=lambda item: enqueued_items.append(item))
+
+        await session_task_scheduler_tick(repo, settings, mock_buffer)
+
+        assert len(enqueued_items) == 1
+        assert enqueued_items[0].metadata["pinned_skills"] == ["research", "planning"]
+
+    @pytest.mark.asyncio
+    async def test_no_pinned_skills_metadata_when_empty(
+        self, repo: TaskRepository
+    ) -> None:
+        """DLT-117: No pinned_skills metadata when definition has no skills."""
+        defn = _make_definition("def-noskills", task_type="session")
+        await repo.create_definition(defn)
+
+        instance = _make_instance(
+            "inst-2",
+            definition_id="def-noskills",
+            task_type="session",
+            status="pending",
+        )
+        await repo.create_instance(instance)
+
+        settings = TaskSettings(idle_window=0, check_interval=300)
+        enqueued_items: list[BufferedItem] = []
+        mock_buffer = AsyncMock()
+        mock_buffer.enqueue = AsyncMock(side_effect=lambda item: enqueued_items.append(item))
+
+        await session_task_scheduler_tick(repo, settings, mock_buffer)
+
+        assert len(enqueued_items) == 1
+        assert "pinned_skills" not in enqueued_items[0].metadata
