@@ -386,7 +386,10 @@ class BackgroundTaskExecutor:
                 else f"Background task: {instance.prompt[:100]}"
             )
 
-            preprocessing_result = await self._run_preprocessing(instance.prompt)
+            preprocessing_result = await self._run_preprocessing(
+                instance.prompt,
+                pinned_skills=definition.skills if definition else (),
+            )
 
             preprocessing_result.mcp_servers["notifications"] = create_notification_server(
                 self._bus,
@@ -591,7 +594,9 @@ class BackgroundTaskExecutor:
             priority=Priority.URGENT,
         )
 
-    async def _run_preprocessing(self, prompt: str) -> _PreprocessingResult:
+    async def _run_preprocessing(
+        self, prompt: str, *, pinned_skills: tuple[str, ...] = ()
+    ) -> _PreprocessingResult:
         """Run pre-processing pipeline for context injection.
 
         Registers context providers (memory, projects, skills) and
@@ -599,6 +604,7 @@ class BackgroundTaskExecutor:
 
         Args:
             prompt: The original task prompt
+            pinned_skills: Skill names to load unconditionally before classification.
 
         Returns:
             PreprocessingResult with enriched prompt and MCP servers.
@@ -617,7 +623,9 @@ class BackgroundTaskExecutor:
                     SkillsContextProvider(self._agent_defaults, self._skill_registry)
                 )
 
-            per_message_results = await msg_pipeline.run(prompt)
+            per_message_results = await msg_pipeline.run(
+                prompt, pinned_skills=pinned_skills
+            )
 
             all_results = (results or []) + per_message_results
 

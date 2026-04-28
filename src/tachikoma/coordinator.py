@@ -46,6 +46,7 @@ from tachikoma.events import (
     TextChunk,
     ToolActivity,
 )
+from tachikoma.message import IncomingMessage
 from tachikoma.message_post_processing import MessagePostProcessingPipeline
 from tachikoma.per_message_pre_processing import MessagePreProcessingPipeline
 from tachikoma.post_processing import PostProcessingPipeline
@@ -256,7 +257,7 @@ class Coordinator:
         self._msg_pipeline = msg_pipeline
         self._msg_pre_pipeline = msg_pre_pipeline
         self._skill_registry = skill_registry
-        self._message_buffer: asyncio.Queue[str] = asyncio.Queue()
+        self._message_buffer: asyncio.Queue[IncomingMessage] = asyncio.Queue()
 
         # Pending per-message post-processing task
         self._pending_msg_task: asyncio.Task[None] | None = None
@@ -432,7 +433,9 @@ class Coordinator:
             return
 
         while True:  # Re-queue loop: processes leftover messages after exchange teardown
-            text = self._message_buffer.get_nowait()
+            msg = self._message_buffer.get_nowait()
+            text = msg.text
+            pinned_skills = msg.pinned_skills
             _log.debug("Message received: length={n}", n=len(text))
 
             # Track last message time for idle gating
@@ -605,6 +608,7 @@ class Coordinator:
                             on_status=on_status,
                             session_summary=active.summary,
                             session_last_exchange=active.last_exchange,
+                            pinned_skills=pinned_skills,
                         )
                     )
                     async for event in _drain_status_while_running(msg_pre_task, status_queue):
@@ -1059,11 +1063,11 @@ providing context for what the user has been doing in the meantime.
         land between get() and the synchronous put_nowait(), but the
         guard keeps the invariant robust to future edits.
         """
-        pending: str | None = None
+        pending: IncomingMessage | None = None
         try:
             while True:
                 pending = await self._message_buffer.get()
-                inbox.put_nowait(pending)
+                inbox.put_nowait(pending.text)
                 pending = None
         finally:
             if pending is not None:
@@ -1076,23 +1080,23 @@ providing context for what the user has been doing in the meantime.
         and after client.disconnect() has returned — otherwise either could
         still consume from or push into the queues mid-drain.
         """
-        recovered: list[str] = []
+        recovered: list[IncomingMessage] = []
         while not inbox.empty():
-            recovered.append(inbox.get_nowait())
+            recovered.append(IncomingMessage(text=inbox.get_nowait()))
 
-        pending: list[str] = []
+        pending: list[IncomingMessage] = []
         while not self._message_buffer.empty():
             pending.append(self._message_buffer.get_nowait())
 
-        for text in recovered + pending:
-            self._message_buffer.put_nowait(text)
+        for item in recovered + pending:
+            self._message_buffer.put_nowait(item)
 
     async def interrupt(self) -> None:
         """Interrupt the current agent response."""
         if self._client is not None:
             await self._client.interrupt()
 
-    def enqueue(self, text: str) -> None:
+    def enqueue(self, msg: IncomingMessage) -> None:
         """Buffer a message for processing.
 
         Always succeeds regardless of coordinator state.  If a session is
@@ -1100,7 +1104,7 @@ providing context for what the user has been doing in the meantime.
         it to the SDK.  If idle, the channel is responsible for triggering
         ``send_message()``.
         """
-        self._message_buffer.put_nowait(text)
+        self._message_buffer.put_nowait(msg)
         _log.debug("Message buffered: queue_size={n}", n=self._message_buffer.qsize())
         self._maybe_emit_idle()  # state capture only (idle->busy, never emits)
 

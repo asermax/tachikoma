@@ -240,6 +240,18 @@ async def session_task_scheduler_tick(
                 on_delivered=on_complete,
             )
 
+            # Carry pinned skills from the task definition for coordinator injection
+            if instance.definition_id:
+                try:
+                    definition = await repository.get_definition(instance.definition_id)
+                    if definition and definition.skills:
+                        item.metadata["pinned_skills"] = list(definition.skills)
+                except Exception:
+                    _log.exception(
+                        "Failed to load definition for pinned skills: def_id={id}",
+                        id=instance.definition_id,
+                    )
+
             try:
                 await buffer.enqueue(item)
             except Exception:
