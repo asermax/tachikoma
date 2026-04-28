@@ -894,15 +894,9 @@ class TelegramChannel(Channel):
         Runs as a detached task spawned by _handle_buffered_delivery.
         """
         try:
-            # Collect pinned skills from session_task items
-            pinned: list[str] = []
-            for item in event.items:
-                if item.kind == "session_task":
-                    pinned.extend(item.metadata.get("pinned_skills", []))
-
             async with self._delivery_lock:
                 self._coordinator.enqueue(
-                    IncomingMessage(text=event.prompt, pinned_skills=tuple(pinned))
+                    IncomingMessage(text=event.prompt, pinned_skills=event.pinned_skills())
                 )
                 await self._process_through_coordinator(on_complete=self._build_on_complete(event))
         except Exception:

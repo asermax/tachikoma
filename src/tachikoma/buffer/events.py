@@ -21,3 +21,11 @@ class BufferedDelivery(BaseEvent[None]):
     prompt: str
     items: list[BufferedItem]
     is_shutdown_digest: bool = False
+
+    def pinned_skills(self) -> tuple[str, ...]:
+        """Collect pinned skill names from session_task items."""
+        pinned: list[str] = []
+        for item in self.items:
+            if item.kind == "session_task":
+                pinned.extend(item.metadata.get("pinned_skills", []))
+        return tuple(pinned)

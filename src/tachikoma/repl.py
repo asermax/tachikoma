@@ -226,14 +226,7 @@ class Repl(Channel):
 
         return force_exit_triggered
 
-    async def _execute_through_coordinator(self, prompt: str) -> bool:
-        """Send a prompt through the coordinator and render the response.
-
-        Returns False if the REPL should exit.
-        """
-        return await self._execute_through_coordinator_msg(IncomingMessage(text=prompt))
-
-    async def _execute_through_coordinator_msg(self, msg: IncomingMessage) -> bool:
+    async def _execute_through_coordinator(self, msg: IncomingMessage) -> bool:
         """Send an IncomingMessage through the coordinator and render the response.
 
         Returns False if the REPL should exit.
@@ -264,14 +257,8 @@ class Repl(Channel):
             f"\n[dim italic]📋 {label}:[/dim italic]",
         )
 
-        # Collect pinned skills from session_task items
-        pinned: list[str] = []
-        for item in event.items:
-            if item.kind == "session_task":
-                pinned.extend(item.metadata.get("pinned_skills", []))
-
-        msg = IncomingMessage(text=event.prompt, pinned_skills=tuple(pinned))
-        if not await self._execute_through_coordinator_msg(msg):
+        msg = IncomingMessage(text=event.prompt, pinned_skills=event.pinned_skills())
+        if not await self._execute_through_coordinator(msg):
             return
 
         for item in event.items:
