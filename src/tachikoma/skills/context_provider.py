@@ -150,7 +150,7 @@ class SkillsContextProvider(MessageContextProvider):
                     continue
                 try:
                     chain = self._registry.resolve_chain(skill_name)
-                except (KeyError, Exception) as exc:
+                except Exception as exc:
                     _log.warning(
                         "Failed to resolve pinned skill: skill={skill}, err={err}",
                         skill=skill_name,
@@ -176,7 +176,7 @@ class SkillsContextProvider(MessageContextProvider):
 
         # Skip classification when no unloaded skills remain
         if not unloaded_skills:
-            return pinned_results if pinned_results else None
+            return pinned_results or None
 
         skills_list = "\n".join(
             f"- **{name}**: {skill.description}" for name, skill in unloaded_skills.items()
@@ -249,7 +249,7 @@ class SkillsContextProvider(MessageContextProvider):
             )
 
         if not detected_names:
-            return pinned_results if pinned_results else None
+            return pinned_results or None
 
         ordered_skills: list[Skill] = []
         seen: set[str] = set(loaded_names)
@@ -272,7 +272,7 @@ class SkillsContextProvider(MessageContextProvider):
                 ordered_skills.append(skill)
 
         if not ordered_skills:
-            return pinned_results if pinned_results else None
+            return pinned_results or None
 
         classified_results: list[ContextResult] = []
 
