@@ -9,7 +9,6 @@ from claude_agent_sdk.types import ResultMessage
 from pytest_mock import MockerFixture
 
 from tachikoma.agent_defaults import AgentDefaults
-from tachikoma.message import IncomingMessage
 from tachikoma.memory.context_provider import (
     _NO_RELEVANT_MEMORIES,
     MEMORIES_OWNER,
@@ -20,6 +19,7 @@ from tachikoma.memory.context_provider import (
     extract_memory_paths,
     parse_memory_entries,
 )
+from tachikoma.message import IncomingMessage
 from tachikoma.sessions.model import SessionContextEntry
 
 

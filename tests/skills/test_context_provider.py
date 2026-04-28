@@ -955,7 +955,10 @@ class TestPinnedSkills:
 
         existing = [
             SessionContextEntry(
-                id=1, session_id="s1", owner="skills", content="...",
+                id=1,
+                session_id="s1",
+                owner="skills",
+                content="...",
                 metadata={"skill_name": "research"},
             ),
         ]

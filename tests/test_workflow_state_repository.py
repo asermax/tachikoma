@@ -868,7 +868,9 @@ async def test_abort_preserves_loop_state(session_factory):
     parent = _make_state("parent-loop-id")
     await repo.create(parent)
     child = _make_state(
-        "iter-child-id", parent_workflow_id="parent-loop-id", parent_step_id="03",
+        "iter-child-id",
+        parent_workflow_id="parent-loop-id",
+        parent_step_id="03",
     )
     await repo.create(child)
 
@@ -904,9 +906,8 @@ async def test_abort_preserves_loop_state(session_factory):
         assert record.deleted_at is not None
         # loop_state column persists as JSON text
         import json as _json  # noqa: PLC0415
-        assert _json.loads(record.loop_state) == {
-            "03": {"items": ["a", "b"], "index": 1}
-        }
+
+        assert _json.loads(record.loop_state) == {"03": {"items": ["a", "b"], "index": 1}}
 
 
 @pytest.mark.asyncio
@@ -922,7 +923,9 @@ async def test_apply_mutation_batch_soft_delete_child(session_factory):
     parent = _make_state("root-id")
     await repo.create(parent)
     child = _make_state(
-        "child-id", parent_workflow_id="root-id", parent_step_id="02",
+        "child-id",
+        parent_workflow_id="root-id",
+        parent_step_id="02",
     )
     await repo.create(child)
 

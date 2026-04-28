@@ -1120,9 +1120,7 @@ class TestTaskSkills:
         assert defs[0].skills == ("research", "planning")
 
     @pytest.mark.asyncio
-    async def test_create_task_with_unknown_skill_warns(
-        self, repo: TaskRepository
-    ) -> None:
+    async def test_create_task_with_unknown_skill_warns(self, repo: TaskRepository) -> None:
         """DLT-117: create_task with unknown skill name shows warning."""
         from tachikoma.skills.registry import SkillRegistry  # noqa: PLC0415
 

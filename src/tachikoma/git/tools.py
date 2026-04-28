@@ -138,9 +138,7 @@ def _decode_scrub_paths(raw: str) -> list[str]:
     try:
         decoded = json.loads(raw)
     except json.JSONDecodeError as exc:
-        raise ValueError(
-            f"scrub_paths must be a JSON-encoded array of strings: {exc}"
-        ) from exc
+        raise ValueError(f"scrub_paths must be a JSON-encoded array of strings: {exc}") from exc
     if not isinstance(decoded, list):
         raise ValueError(
             f"scrub_paths JSON string must encode an array, got {type(decoded).__name__}"
@@ -485,14 +483,14 @@ def create_git_tools_server(
             "type='workspace' for the main workspace, or type='project' with "
             "target=<project-name> for a registered project.\n\n"
             "Optionally pass scrub_paths — a JSON-encoded string of file paths "
-            "(e.g. '[\"audio/large-file.ogg\", \"data/old.json\"]') — to "
+            '(e.g. \'["audio/large-file.ogg", "data/old.json"]\') — to '
             "permanently remove those paths from the entire git history of a "
             "project submodule. This is DESTRUCTIVE and IRREVERSIBLE — it "
             "rewrites all history and force-pushes to origin. Only works with "
             "type='project'. The string is JSON because the SDK MCP transport "
             "cannot reliably pass arrays. Example: push(type='project', "
             "target='my-pages', scrub_paths='[\"audio/large-file.ogg\", "
-            "\"data/old.json\"]')."
+            '"data/old.json"]\').'
         ),
         PushArgs.model_json_schema(),
     )

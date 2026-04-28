@@ -1102,9 +1102,7 @@ class TestPinnedSkillsExecution:
         assert captured_skills["skills"] == ("research",)
 
     @pytest.mark.asyncio
-    async def test_execute_no_definition_passes_empty_skills(
-        self, repo: TaskRepository
-    ) -> None:
+    async def test_execute_no_definition_passes_empty_skills(self, repo: TaskRepository) -> None:
         """DLT-117: execute() with transient instance passes empty pinned_skills."""
         instance = _make_instance(
             "inst-transient",

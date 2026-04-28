@@ -334,9 +334,7 @@ class WorkflowStateRepository:
             return ids
 
         except Exception as exc:
-            raise WorkflowRepositoryError(
-                f"Failed to abort cascade for root={root_id}"
-            ) from exc
+            raise WorkflowRepositoryError(f"Failed to abort cascade for root={root_id}") from exc
 
     async def apply_mutation_batch(self, batch: MutationBatch) -> None:
         """Apply a ``MutationBatch`` atomically in a single transaction.
@@ -387,6 +385,4 @@ class WorkflowStateRepository:
                             )
 
         except Exception as exc:
-            raise WorkflowRepositoryError(
-                "Failed to apply mutation batch"
-            ) from exc
+            raise WorkflowRepositoryError("Failed to apply mutation batch") from exc

@@ -1807,9 +1807,7 @@ def _make_compose_step(
     return StepDefinition(
         id=step_id,
         title=title,
-        instructions_path=Path(
-            f"/fake/skill/workflows/test/{step_id}/instructions.md"
-        ),
+        instructions_path=Path(f"/fake/skill/workflows/test/{step_id}/instructions.md"),
         references_path=None,
         scripts_path=None,
         required=required,
@@ -1983,10 +1981,7 @@ class TestRenderBreadcrumb:
                 ("process-item", "01-step", "inner-item"),
             ]
         )
-        assert (
-            rendered
-            == "weekly-review/03-process > process-item/01-step (item: inner-item)"
-        )
+        assert rendered == "weekly-review/03-process > process-item/01-step (item: inner-item)"
 
     def test_empty_item_renders_literal(self):
         rendered = _render_breadcrumb([("wf", "01-step", "")])
@@ -2035,9 +2030,7 @@ class TestCascadeRouting:
         assert "top-level" in result["content"][0]["text"]
 
     @pytest.mark.asyncio
-    async def test_rejects_step_typo_with_valid_id_list(
-        self, repository, mock_registry
-    ):
+    async def test_rejects_step_typo_with_valid_id_list(self, repository, mock_registry):
         state = _make_state(
             step_states={"01-plan": "pending", "02-execute": "pending", "03-review": "pending"}
         )
@@ -2058,18 +2051,14 @@ class TestCascadeRouting:
         assert "test-workflow" in text  # deepest layer name
 
     @pytest.mark.asyncio
-    async def test_rejects_parent_step_while_child_active(
-        self, repository, tmp_path
-    ):
+    async def test_rejects_parent_step_while_child_active(self, repository, tmp_path):
         # Set up a parent at composition step + active child
         parent = await _seed_parent_at_compose_step(repository)
         # Mark composition step as STARTED
         parent_state = await repository.get(parent.id)
         new_step_states = dict(parent_state.step_states)
         new_step_states["02-compose"] = "started"
-        await repository.update(
-            parent.id, step_states=new_step_states, current_step="02-compose"
-        )
+        await repository.update(parent.id, step_states=new_step_states, current_step="02-compose")
 
         # Create child via direct repo create
         child = WorkflowState(
@@ -2221,16 +2210,12 @@ class TestCascadeSpawn:
 
 class TestCascadeAutoResume:
     @pytest.mark.asyncio
-    async def test_complete_last_child_step_resumes_parent(
-        self, repository, tmp_path
-    ):
+    async def test_complete_last_child_step_resumes_parent(self, repository, tmp_path):
         # Parent has 02-compose started; child at last step started
         parent = await _seed_parent_at_compose_step(repository)
         new_states = dict(parent.step_states)
         new_states["02-compose"] = "started"
-        await repository.update(
-            parent.id, step_states=new_states, current_step="02-compose"
-        )
+        await repository.update(parent.id, step_states=new_states, current_step="02-compose")
 
         child_id = "child-id"
         child = WorkflowState(
@@ -2293,9 +2278,7 @@ class TestCascadeAutoResume:
         assert await repository.get(child_id) is None
 
     @pytest.mark.asyncio
-    async def test_complete_last_child_step_finalizes_parent_when_last(
-        self, repository, tmp_path
-    ):
+    async def test_complete_last_child_step_finalizes_parent_when_last(self, repository, tmp_path):
         """If the parent's only remaining step is the composition step, its
         completion via child auto-resume should auto-finalize the entire stack.
         """
@@ -2609,9 +2592,7 @@ class TestCascadeAutoResume:
 
 class TestCompositionStepGating:
     @pytest.mark.asyncio
-    async def test_skip_composition_step_when_optional_does_not_spawn(
-        self, repository, tmp_path
-    ):
+    async def test_skip_composition_step_when_optional_does_not_spawn(self, repository, tmp_path):
         """R3 / R14: required:false + skip → no child created, parent advances."""
         snapshot = [
             {
@@ -2666,9 +2647,7 @@ class TestCompositionStepGating:
         assert chain[0].step_states["02-finish"] == "started"
 
     @pytest.mark.asyncio
-    async def test_skip_required_composition_step_rejected(
-        self, repository, tmp_path
-    ):
+    async def test_skip_required_composition_step_rejected(self, repository, tmp_path):
         """R3 third AC: skip on required composition step → 'is required' error."""
         parent = await _seed_parent_at_compose_step(repository)
 
@@ -2692,9 +2671,7 @@ class TestCompositionStepGating:
 
 class TestSharedScratchpad:
     @pytest.mark.asyncio
-    async def test_two_parents_keep_scratchpads_isolated(
-        self, repository, tmp_path
-    ):
+    async def test_two_parents_keep_scratchpads_isolated(self, repository, tmp_path):
         """R9: two parents each composing their own child have isolated
         scratchpads — aborting one does not touch the other.
         """
@@ -2885,9 +2862,7 @@ class TestNestedGetWorkflowState:
         registered, get_workflow_state surfaces a corruption warning.
         """
         # Parent has 02-compose started but the registry has no matching workflow
-        parent = await _seed_parent_at_compose_step(
-            repository, compose_target="missing/missing-wf"
-        )
+        parent = await _seed_parent_at_compose_step(repository, compose_target="missing/missing-wf")
         ss = dict(parent.step_states)
         ss["02-compose"] = "started"
         await repository.update(parent.id, step_states=ss, current_step="02-compose")
@@ -2908,9 +2883,7 @@ class TestEndWorkflowAbortCascade:
         scratch = tmp_path / "abort-scratch.md"
         scratch.write_text("# abort")
 
-        parent = await _seed_parent_at_compose_step(
-            repository, scratchpad_path=str(scratch)
-        )
+        parent = await _seed_parent_at_compose_step(repository, scratchpad_path=str(scratch))
         child = WorkflowState(
             id="child-abort",
             skill_name="child-skill",
@@ -2934,9 +2907,7 @@ class TestEndWorkflowAbortCascade:
         )
         await repository.create(child)
 
-        result = await handle_end_workflow(
-            parent.id, "abort", repository, tmp_path
-        )
+        result = await handle_end_workflow(parent.id, "abort", repository, tmp_path)
 
         assert result.get("is_error") is None
         # Both gone, scratchpad gone
@@ -2971,9 +2942,7 @@ class TestEndWorkflowAbortCascade:
         )
         await repository.create(child)
 
-        result = await handle_end_workflow(
-            child.id, "abort", repository, tmp_path
-        )
+        result = await handle_end_workflow(child.id, "abort", repository, tmp_path)
 
         assert result.get("is_error") is True
         assert "composed child" in result["content"][0]["text"]
@@ -3048,8 +3017,11 @@ class TestAtomicAutoResume:
         unchanged = await repository.get(state.id)
         assert unchanged.step_states["01-plan"] == "started"
         assert unchanged.step_states["02-execute"] == "pending"
-        assert unchanged.current_step is None or unchanged.current_step == "01-plan" or \
-               unchanged.current_step != "02-execute"
+        assert (
+            unchanged.current_step is None
+            or unchanged.current_step == "01-plan"
+            or unchanged.current_step != "02-execute"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -3069,9 +3041,7 @@ def _make_loop_step(
     return StepDefinition(
         id=step_id,
         title=title,
-        instructions_path=Path(
-            f"/fake/skill/workflows/test/{step_id}/instructions.md"
-        ),
+        instructions_path=Path(f"/fake/skill/workflows/test/{step_id}/instructions.md"),
         references_path=None,
         scripts_path=None,
         required=required,
@@ -3175,7 +3145,12 @@ class TestLoopValidationGates:
         registry = _registry_with_workflows({})
 
         result = await handle_update_workflow_state(
-            state.id, "01-plan", "start", repository, registry, items=["a"],
+            state.id,
+            "01-plan",
+            "start",
+            repository,
+            registry,
+            items=["a"],
         )
 
         assert result.get("is_error") is True
@@ -3194,7 +3169,12 @@ class TestLoopValidationGates:
         registry = _registry_with_workflows({})
 
         result = await handle_update_workflow_state(
-            state.id, "01-plan", "complete", repository, registry, items=["a"],
+            state.id,
+            "01-plan",
+            "complete",
+            repository,
+            registry,
+            items=["a"],
         )
 
         assert result.get("is_error") is True
@@ -3207,7 +3187,11 @@ class TestLoopValidationGates:
         registry = _registry_with_loop_target()
 
         result = await handle_update_workflow_state(
-            parent.id, "03-process", "start", repository, registry,
+            parent.id,
+            "03-process",
+            "start",
+            repository,
+            registry,
         )
 
         assert result.get("is_error") is True
@@ -3227,7 +3211,11 @@ class TestLoopStartWithItems:
         registry = _registry_with_loop_target()
 
         result = await handle_update_workflow_state(
-            parent.id, "03-process", "start", repository, registry,
+            parent.id,
+            "03-process",
+            "start",
+            repository,
+            registry,
             items=["a", "b", "c"],
         )
 
@@ -3251,7 +3239,12 @@ class TestLoopStartWithItems:
         registry = _registry_with_loop_target()
 
         await handle_update_workflow_state(
-            parent.id, "03-process", "start", repository, registry, items=["x"],
+            parent.id,
+            "03-process",
+            "start",
+            repository,
+            registry,
+            items=["x"],
         )
 
         chain = await repository.get_active_chain(parent.id)
@@ -3264,7 +3257,11 @@ class TestLoopStartWithItems:
         registry = _registry_with_loop_target()
 
         result = await handle_update_workflow_state(
-            parent.id, "03-process", "start", repository, registry,
+            parent.id,
+            "03-process",
+            "start",
+            repository,
+            registry,
             items=["c", "a", "b"],
         )
         # First iteration is for 'c' (insertion order, not sorted)
@@ -3280,7 +3277,12 @@ class TestLoopEmptyItems:
         registry = _registry_with_loop_target()
 
         result = await handle_update_workflow_state(
-            parent.id, "03-process", "start", repository, registry, items=[],
+            parent.id,
+            "03-process",
+            "start",
+            repository,
+            registry,
+            items=[],
         )
 
         assert result.get("is_error") is None
@@ -3298,7 +3300,9 @@ class TestLoopEmptyItems:
 
     @pytest.mark.asyncio
     async def test_empty_items_finalizes_workflow_when_loop_is_last_step(
-        self, repository, tmp_path,
+        self,
+        repository,
+        tmp_path,
     ):
         # Seed a parent where the loop step is the LAST pending step
         snapshot = [
@@ -3341,7 +3345,12 @@ class TestLoopEmptyItems:
         registry = _registry_with_loop_target()
 
         result = await handle_update_workflow_state(
-            "last-loop", "02-process", "start", repository, registry, items=[],
+            "last-loop",
+            "02-process",
+            "start",
+            repository,
+            registry,
+            items=[],
         )
 
         assert result.get("is_error") is None
@@ -3359,12 +3368,17 @@ class TestLoopAutoStartHalt:
         """Cascade halts after the prior step completes; loop step stays PENDING."""
         # 01-prep is started; complete it -> next pending is 03-process (loop)
         parent = await _seed_parent_with_loop_step(
-            repository, pre_step_state="started",
+            repository,
+            pre_step_state="started",
         )
         registry = _registry_with_loop_target()
 
         result = await handle_update_workflow_state(
-            parent.id, "01-prep", "complete", repository, registry,
+            parent.id,
+            "01-prep",
+            "complete",
+            repository,
+            registry,
         )
 
         assert result.get("is_error") is None
@@ -3380,12 +3394,17 @@ class TestLoopAutoStartHalt:
     async def test_halt_does_not_advance_current_step(self, repository):
         """current_step remains the just-finalized step on halt (not the loop step)."""
         parent = await _seed_parent_with_loop_step(
-            repository, pre_step_state="started",
+            repository,
+            pre_step_state="started",
         )
         registry = _registry_with_loop_target()
 
         await handle_update_workflow_state(
-            parent.id, "01-prep", "complete", repository, registry,
+            parent.id,
+            "01-prep",
+            "complete",
+            repository,
+            registry,
         )
 
         fresh = await repository.get(parent.id)
@@ -3405,7 +3424,11 @@ class TestLoopIterationAdvance:
 
         # Start iteration 0
         await handle_update_workflow_state(
-            parent.id, "03-process", "start", repository, registry,
+            parent.id,
+            "03-process",
+            "start",
+            repository,
+            registry,
             items=["a", "b", "c"],
         )
         chain_after_start = await repository.get_active_chain(parent.id)
@@ -3413,7 +3436,11 @@ class TestLoopIterationAdvance:
 
         # Complete iteration 0's step
         result = await handle_update_workflow_state(
-            parent.id, "01-step", "complete", repository, registry,
+            parent.id,
+            "01-step",
+            "complete",
+            repository,
+            registry,
         )
         assert result.get("is_error") is None
         assert "(item: b)" in result["content"][0]["text"]
@@ -3437,12 +3464,21 @@ class TestLoopIterationAdvance:
         registry = _registry_with_loop_target()
 
         await handle_update_workflow_state(
-            parent.id, "03-process", "start", repository, registry, items=["a"],
+            parent.id,
+            "03-process",
+            "start",
+            repository,
+            registry,
+            items=["a"],
         )
 
         # Complete iteration 0's only step (last iteration)
         result = await handle_update_workflow_state(
-            parent.id, "01-step", "complete", repository, registry,
+            parent.id,
+            "01-step",
+            "complete",
+            repository,
+            registry,
         )
         assert result.get("is_error") is None
 
@@ -3464,7 +3500,11 @@ class TestLoopIterationAdvance:
         registry = _registry_with_loop_target()
 
         await handle_update_workflow_state(
-            parent.id, "03-process", "start", repository, registry,
+            parent.id,
+            "03-process",
+            "start",
+            repository,
+            registry,
             items=["a", "b"],
         )
         chain_before = await repository.get_active_chain(parent.id)
@@ -3478,7 +3518,11 @@ class TestLoopIterationAdvance:
         monkeypatch.setattr(WorkflowStateRepository, "apply_mutation_batch", boom)
 
         result = await handle_update_workflow_state(
-            parent.id, "01-step", "complete", repository, registry,
+            parent.id,
+            "01-step",
+            "complete",
+            repository,
+            registry,
         )
         assert result.get("is_error") is True
 
@@ -3501,7 +3545,11 @@ class TestLoopRecovery:
         registry = _registry_with_loop_target()
 
         await handle_update_workflow_state(
-            parent.id, "03-process", "start", repository, registry,
+            parent.id,
+            "03-process",
+            "start",
+            repository,
+            registry,
             items=["foo.md", "bar.md"],
         )
 
@@ -3516,7 +3564,8 @@ class TestLoopRecovery:
 
     @pytest.mark.asyncio
     async def test_get_workflow_state_breadcrumb_carries_item_after_recovery(
-        self, repository,
+        self,
+        repository,
     ):
         """Recovery: breadcrumb still surfaces the item after a fresh fetch
         (no in-memory layer state survives across calls)."""
@@ -3524,7 +3573,11 @@ class TestLoopRecovery:
         registry = _registry_with_loop_target()
 
         await handle_update_workflow_state(
-            parent.id, "03-process", "start", repository, registry,
+            parent.id,
+            "03-process",
+            "start",
+            repository,
+            registry,
             items=["recovered.md"],
         )
 
@@ -3536,7 +3589,8 @@ class TestLoopRecovery:
 
     @pytest.mark.asyncio
     async def test_cascade_call_after_recovery_keeps_item_in_breadcrumb(
-        self, repository,
+        self,
+        repository,
     ):
         """R5: a fresh cascade tool call (after the spawning call) re-derives
         the current_item via chain-init from the parent's persisted loop_state
@@ -3551,14 +3605,22 @@ class TestLoopRecovery:
 
         # Spawn iteration 0 with item "foo.md"
         await handle_update_workflow_state(
-            parent.id, "03-process", "start", repository, registry,
+            parent.id,
+            "03-process",
+            "start",
+            repository,
+            registry,
             items=["foo.md", "bar.md"],
         )
 
         # A SECOND cascade call against the iteration child triggers a fresh
         # _run_cascade — chain init is what re-derives current_item.
         result = await handle_update_workflow_state(
-            parent.id, "01-step", "complete", repository, registry,
+            parent.id,
+            "01-step",
+            "complete",
+            repository,
+            registry,
         )
         assert result.get("is_error") is None
         # Iteration 0 is still active (it has 02-step pending), still on item foo.md
@@ -3570,24 +3632,34 @@ class TestLoopAbort:
 
     @pytest.mark.asyncio
     async def test_abort_with_active_iteration_soft_deletes_both(
-        self, repository, tmp_path,
+        self,
+        repository,
+        tmp_path,
     ):
         scratchpad = tmp_path / "scratch.md"
         scratchpad.write_text("seed")
         parent = await _seed_parent_with_loop_step(
-            repository, scratchpad_path=str(scratchpad),
+            repository,
+            scratchpad_path=str(scratchpad),
         )
         registry = _registry_with_loop_target()
 
         await handle_update_workflow_state(
-            parent.id, "03-process", "start", repository, registry,
+            parent.id,
+            "03-process",
+            "start",
+            repository,
+            registry,
             items=["a", "b"],
         )
         chain_before = await repository.get_active_chain(parent.id)
         assert len(chain_before) == 2  # parent + iteration child
 
         result = await handle_end_workflow(
-            parent.id, "abort", repository, tmp_path,
+            parent.id,
+            "abort",
+            repository,
+            tmp_path,
         )
         assert result.get("is_error") is None
 
@@ -3597,19 +3669,29 @@ class TestLoopAbort:
 
     @pytest.mark.asyncio
     async def test_end_workflow_on_iteration_child_id_rejected(
-        self, repository, tmp_path,
+        self,
+        repository,
+        tmp_path,
     ):
         parent = await _seed_parent_with_loop_step(repository)
         registry = _registry_with_loop_target()
 
         await handle_update_workflow_state(
-            parent.id, "03-process", "start", repository, registry, items=["a"],
+            parent.id,
+            "03-process",
+            "start",
+            repository,
+            registry,
+            items=["a"],
         )
         chain = await repository.get_active_chain(parent.id)
         iter_child_id = chain[1].id
 
         result = await handle_end_workflow(
-            iter_child_id, "abort", repository, tmp_path,
+            iter_child_id,
+            "abort",
+            repository,
+            tmp_path,
         )
         assert result.get("is_error") is True
         assert (
@@ -3628,7 +3710,7 @@ class TestRenderBreadcrumbInheritance:
             [
                 ("weekly-review", "03-process", None),
                 ("process-item", "02-validate", "a"),  # iteration child
-                ("validate-item", "01-check", "a"),   # composes grandchild — inherits
+                ("validate-item", "01-check", "a"),  # composes grandchild — inherits
             ]
         )
         assert rendered.endswith("(item: a)")
@@ -3669,18 +3751,25 @@ class TestNestedLoops:
             steps=[_make_step("01-step", "Inner Step")],
             path=Path("/fake/skills/grandchild-skill/workflows/grandchild-wf"),
         )
-        registry = _registry_with_workflows({
-            ("child-skill", "process-batch"): outer_target,
-            ("grandchild-skill", "grandchild-wf"): grandchild_target,
-        })
+        registry = _registry_with_workflows(
+            {
+                ("child-skill", "process-batch"): outer_target,
+                ("grandchild-skill", "grandchild-wf"): grandchild_target,
+            }
+        )
 
         parent = await _seed_parent_with_loop_step(
-            repository, loop_target="child-skill/process-batch",
+            repository,
+            loop_target="child-skill/process-batch",
         )
 
         # Start outer loop with items ["A", "B"]
         await handle_update_workflow_state(
-            parent.id, "03-process", "start", repository, registry,
+            parent.id,
+            "03-process",
+            "start",
+            repository,
+            registry,
             items=["A", "B"],
         )
 
@@ -3688,7 +3777,11 @@ class TestNestedLoops:
         # for the inner loop. This is the path that previously corrupted the
         # caller's items by shadowing in chain-init.
         result = await handle_update_workflow_state(
-            parent.id, "02-each", "start", repository, registry,
+            parent.id,
+            "02-each",
+            "start",
+            repository,
+            registry,
             items=["x", "y"],
         )
         assert result.get("is_error") is None
@@ -3734,21 +3827,33 @@ class TestNestedLoops:
             steps=[_make_step("01-step", "Inner Step")],
             path=Path("/fake/skills/grandchild-skill/workflows/grandchild-wf"),
         )
-        registry = _registry_with_workflows({
-            ("child-skill", "process-batch"): outer_target,
-            ("grandchild-skill", "grandchild-wf"): grandchild_target,
-        })
+        registry = _registry_with_workflows(
+            {
+                ("child-skill", "process-batch"): outer_target,
+                ("grandchild-skill", "grandchild-wf"): grandchild_target,
+            }
+        )
 
         parent = await _seed_parent_with_loop_step(
-            repository, loop_target="child-skill/process-batch",
+            repository,
+            loop_target="child-skill/process-batch",
         )
 
         await handle_update_workflow_state(
-            parent.id, "03-process", "start", repository, registry,
+            parent.id,
+            "03-process",
+            "start",
+            repository,
+            registry,
             items=["A"],
         )
         result = await handle_update_workflow_state(
-            parent.id, "02-each", "start", repository, registry, items=[],
+            parent.id,
+            "02-each",
+            "start",
+            repository,
+            registry,
+            items=[],
         )
         assert result.get("is_error") is None
 
@@ -3784,23 +3889,34 @@ class TestNestedLoops:
             steps=[_make_step("01-step", "Inner Step")],
             path=Path("/fake/skills/grandchild-skill/workflows/grandchild-wf"),
         )
-        registry = _registry_with_workflows({
-            ("child-skill", "process-batch"): outer_target,
-            ("grandchild-skill", "grandchild-wf"): grandchild_target,
-        })
+        registry = _registry_with_workflows(
+            {
+                ("child-skill", "process-batch"): outer_target,
+                ("grandchild-skill", "grandchild-wf"): grandchild_target,
+            }
+        )
 
         parent = await _seed_parent_with_loop_step(
-            repository, loop_target="child-skill/process-batch",
+            repository,
+            loop_target="child-skill/process-batch",
         )
 
         await handle_update_workflow_state(
-            parent.id, "03-process", "start", repository, registry,
+            parent.id,
+            "03-process",
+            "start",
+            repository,
+            registry,
             items=["A", "B"],
         )
 
         # Inner loop start WITHOUT items — must reject; state must not change
         result = await handle_update_workflow_state(
-            parent.id, "02-each", "start", repository, registry,
+            parent.id,
+            "02-each",
+            "start",
+            repository,
+            registry,
         )
         assert result.get("is_error") is True
         assert "required" in result["content"][0]["text"].lower()

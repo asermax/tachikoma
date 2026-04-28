@@ -1558,16 +1558,12 @@ class TestCompositionValidation:
         skill_dir.mkdir(parents=True)
         (skill_dir / "SKILL.md").write_text('---\ndescription: "Review skill"\n---\nBody')
 
-        self._create_workflow(
-            skill_dir, "A", [{"name": "01", "title": "Step", "composes": "B"}]
-        )
+        self._create_workflow(skill_dir, "A", [{"name": "01", "title": "Step", "composes": "B"}])
         self._create_workflow(
             skill_dir, "B", [{"name": "01", "title": "Step", "composes": "nonexistent"}]
         )
         # C is standalone — should survive
-        self._create_workflow(
-            skill_dir, "C", [{"name": "01", "title": "Step"}]
-        )
+        self._create_workflow(skill_dir, "C", [{"name": "01", "title": "Step"}])
 
         registry = SkillRegistry([skills_dir])
         assert registry.get_workflow("review", "A") is None
@@ -1584,9 +1580,7 @@ class TestCompositionValidation:
         self._create_workflow(
             skill_dir, "weekly", [{"name": "01", "title": "Step", "composes": "process-inbox"}]
         )
-        self._create_workflow(
-            skill_dir, "process-inbox", [{"name": "01", "title": "Inbox Step"}]
-        )
+        self._create_workflow(skill_dir, "process-inbox", [{"name": "01", "title": "Inbox Step"}])
 
         registry = SkillRegistry([skills_dir])
         assert registry.get_workflow("review", "weekly") is not None
@@ -1619,14 +1613,10 @@ class TestLoopValidation:
     def _make_skill(self, skills_dir: Path, name: str) -> Path:
         skill_dir = skills_dir / name
         skill_dir.mkdir(parents=True)
-        (skill_dir / "SKILL.md").write_text(
-            f'---\ndescription: "{name}"\n---\nBody'
-        )
+        (skill_dir / "SKILL.md").write_text(f'---\ndescription: "{name}"\n---\nBody')
         return skill_dir
 
-    def test_mutex_rejects_workflow_with_both_composes_and_loop(
-        self, tmp_path: Path
-    ) -> None:
+    def test_mutex_rejects_workflow_with_both_composes_and_loop(self, tmp_path: Path) -> None:
         """R9: a step with both composes and loop is dropped at load time."""
         skills_dir = tmp_path / "skills"
         skill_dir = self._make_skill(skills_dir, "review")
@@ -1645,9 +1635,7 @@ class TestLoopValidation:
         assert registry.get_workflow("review", "child") is not None
         assert registry.get_workflow("review", "other") is not None
 
-    def test_mutex_pre_pass_runs_before_cycle_detection(
-        self, tmp_path: Path
-    ) -> None:
+    def test_mutex_pre_pass_runs_before_cycle_detection(self, tmp_path: Path) -> None:
         """The mutex pre-pass strips invalid workflows so their would-be edges
         don't enter the cycle graph and falsely cycle-reject neighbors."""
         skills_dir = tmp_path / "skills"
@@ -1680,12 +1668,8 @@ class TestLoopValidation:
         """R10: cycles mixing loop and composes are detected (A loops B, B composes A)."""
         skills_dir = tmp_path / "skills"
         skill_dir = self._make_skill(skills_dir, "review")
-        self._create_workflow(
-            skill_dir, "A", [{"name": "01", "title": "Step", "loop": "B"}]
-        )
-        self._create_workflow(
-            skill_dir, "B", [{"name": "01", "title": "Step", "composes": "A"}]
-        )
+        self._create_workflow(skill_dir, "A", [{"name": "01", "title": "Step", "loop": "B"}])
+        self._create_workflow(skill_dir, "B", [{"name": "01", "title": "Step", "composes": "A"}])
         registry = SkillRegistry([skills_dir])
         assert registry.get_workflow("review", "A") is None
         assert registry.get_workflow("review", "B") is None
@@ -1709,9 +1693,7 @@ class TestLoopValidation:
             "weekly",
             [{"name": "01", "title": "Step", "loop": "process-item"}],
         )
-        self._create_workflow(
-            skill_dir, "process-item", [{"name": "01", "title": "Inbox Step"}]
-        )
+        self._create_workflow(skill_dir, "process-item", [{"name": "01", "title": "Inbox Step"}])
         registry = SkillRegistry([skills_dir])
         assert registry.get_workflow("review", "weekly") is not None
         assert registry.get_workflow("review", "process-item") is not None

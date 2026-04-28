@@ -259,7 +259,10 @@ class TestMutationDataclasses:
     def test_update_state_loop_state_preserved(self) -> None:
         ls = {"03-process": {"items": ["a", "b"], "index": 1}}
         m = UpdateState(
-            layer_id="id", step_states={}, current_step=None, loop_state=ls,
+            layer_id="id",
+            step_states={},
+            current_step=None,
+            loop_state=ls,
         )
         assert m.loop_state == ls
 
@@ -315,9 +318,7 @@ class TestDetectCyclesLoopEdges:
         a = _make_workflow("s", "A", [_make_step("01", loop="B")])
         b = _make_workflow("s", "B", [_make_step("01", composes="C")])
         c = _make_workflow("s", "C", [_make_step("01", loop="A")])
-        sccs = detect_cycles(
-            {("s", "A"): a, ("s", "B"): b, ("s", "C"): c}
-        )
+        sccs = detect_cycles({("s", "A"): a, ("s", "B"): b, ("s", "C"): c})
         assert len(sccs) == 1
         assert set(sccs[0]) == {("s", "A"), ("s", "B"), ("s", "C")}
 
@@ -340,7 +341,8 @@ class TestValidateReferencesLoopEdges:
         a = _make_workflow("s", "A", [_make_step("01", loop="B")])
         b = _make_workflow("s", "B", steps=[])
         rejected = validate_references(
-            {("s", "A"): a, ("s", "B"): b}, already_rejected=set(),
+            {("s", "A"): a, ("s", "B"): b},
+            already_rejected=set(),
         )
         assert ("s", "A") in rejected
 
@@ -367,16 +369,16 @@ class TestValidateReferencesLoopEdges:
         a = _make_workflow("s", "A", [_make_step("01", loop="target")])
         b = _make_workflow("s", "target", [_make_step("01")])
         rejected = validate_references(
-            {("s", "A"): a, ("s", "target"): b}, already_rejected=set(),
+            {("s", "A"): a, ("s", "target"): b},
+            already_rejected=set(),
         )
         assert rejected == set()
 
     def test_loop_cross_skill_resolution(self) -> None:
-        a = _make_workflow(
-            "s1", "A", [_make_step("01", loop="s2/target")]
-        )
+        a = _make_workflow("s1", "A", [_make_step("01", loop="s2/target")])
         b = _make_workflow("s2", "target", [_make_step("01")])
         rejected = validate_references(
-            {("s1", "A"): a, ("s2", "target"): b}, already_rejected=set(),
+            {("s1", "A"): a, ("s2", "target"): b},
+            already_rejected=set(),
         )
         assert rejected == set()

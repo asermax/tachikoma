@@ -42,9 +42,7 @@ def _decode_skills(raw: str) -> list[str]:
     except json.JSONDecodeError as exc:
         raise ValueError(f"skills must be a JSON-encoded array of strings: {exc}") from exc
     if not isinstance(decoded, list):
-        raise ValueError(
-            f"skills JSON string must encode an array, got {type(decoded).__name__}"
-        )
+        raise ValueError(f"skills JSON string must encode an array, got {type(decoded).__name__}")
     if not all(isinstance(item, str) for item in decoded):
         raise ValueError("skills JSON array must contain only strings")
     return decoded
@@ -354,7 +352,7 @@ def create_task_tools_server(
         "- prompt (str, required): Instruction the agent follows when the task fires\n"
         "- enabled (bool, optional, default true): Whether the task is active\n"
         "- skills (str, optional): JSON-encoded array of skill names to load"
-        " unconditionally at execution time (e.g., '[\"research\", \"planning\"]')."
+        ' unconditionally at execution time (e.g., \'["research", "planning"]\').'
         " Named skills are always injected into the task's context, bypassing"
         " LLM-based skill classification.",
         CreateTaskArgs.model_json_schema(),
@@ -447,11 +445,13 @@ def create_task_tools_server(
             created = await repository.create_definition(definition)
 
             schedule_desc = _format_schedule(created.schedule, timezone)
-            msg = f"Task '{created.name}' created successfully.\n" \
-                  f"- ID: {created.id}\n" \
-                  f"- Type: {created.task_type}\n" \
-                  f"- Schedule: {schedule_desc}\n" \
-                  f"- Enabled: {created.enabled}"
+            msg = (
+                f"Task '{created.name}' created successfully.\n"
+                f"- ID: {created.id}\n"
+                f"- Type: {created.task_type}\n"
+                f"- Schedule: {schedule_desc}\n"
+                f"- Enabled: {created.enabled}"
+            )
             if created.skills:
                 msg += f"\n- Skills: {', '.join(created.skills)}"
             if skills_warnings:

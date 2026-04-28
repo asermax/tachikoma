@@ -660,9 +660,7 @@ class TestSessionTaskSchedulerPinnedSkills:
     """Tests for pinned skills propagation in session_task_scheduler (DLT-117)."""
 
     @pytest.mark.asyncio
-    async def test_sets_pinned_skills_metadata(
-        self, repo: TaskRepository
-    ) -> None:
+    async def test_sets_pinned_skills_metadata(self, repo: TaskRepository) -> None:
         """DLT-117: BufferedItem gets pinned_skills from definition."""
         defn = _make_definition(
             "def-skills",
@@ -691,9 +689,7 @@ class TestSessionTaskSchedulerPinnedSkills:
         assert enqueued_items[0].metadata["pinned_skills"] == ["research", "planning"]
 
     @pytest.mark.asyncio
-    async def test_no_pinned_skills_metadata_when_empty(
-        self, repo: TaskRepository
-    ) -> None:
+    async def test_no_pinned_skills_metadata_when_empty(self, repo: TaskRepository) -> None:
         """DLT-117: No pinned_skills metadata when definition has no skills."""
         defn = _make_definition("def-noskills", task_type="session")
         await repo.create_definition(defn)

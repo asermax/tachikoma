@@ -30,8 +30,8 @@ from tachikoma.buffer.priority import Priority
 from tachikoma.config import TaskSettings
 from tachikoma.git.processor import GitProcessor
 from tachikoma.memory.context_provider import MemoryContextProvider
-from tachikoma.message import IncomingMessage
 from tachikoma.memory.episodic import EpisodicProcessor
+from tachikoma.message import IncomingMessage
 from tachikoma.notifications import (
     create_notification_server,
     dispatch_notification,

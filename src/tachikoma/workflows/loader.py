@@ -259,14 +259,15 @@ def _load_step(
         loop = None
 
     _excluded_keys = (
-        "title", "required", "skippable", "required_skills",
-        "condition", "composes", "loop",
+        "title",
+        "required",
+        "skippable",
+        "required_skills",
+        "condition",
+        "composes",
+        "loop",
     )
-    properties = {
-        k: v
-        for k, v in post.metadata.items()
-        if k not in _excluded_keys
-    }
+    properties = {k: v for k, v in post.metadata.items() if k not in _excluded_keys}
 
     references_path = step_dir / "references"
     if not references_path.exists() or not references_path.is_dir():

@@ -64,6 +64,7 @@ def _composition_edge(step: StepDefinition) -> str | None:
 # Cycle detection (three-color DFS)
 # ---------------------------------------------------------------------------
 
+
 def detect_cycles(
     workflows: dict[_VERTEX, WorkflowDefinition],
 ) -> list[list[_VERTEX]]:
@@ -123,6 +124,7 @@ def detect_cycles(
 # Reference validation (fixed-point iteration)
 # ---------------------------------------------------------------------------
 
+
 def validate_references(
     workflows: dict[_VERTEX, WorkflowDefinition],
     already_rejected: set[_VERTEX],
@@ -147,9 +149,7 @@ def validate_references(
                     continue
                 edge_kind = "loop" if step.loop is not None else "composes"
                 try:
-                    target_skill, target_wf = resolve_composes(
-                        edge, vertex[0]
-                    )
+                    target_skill, target_wf = resolve_composes(edge, vertex[0])
                 except ValueError:
                     _log.warning(
                         "Workflow rejected: malformed {kind} value: "
@@ -222,6 +222,7 @@ def validate_references(
 # ---------------------------------------------------------------------------
 # In-memory mutation dataclasses (used by cascade engine + repository)
 # ---------------------------------------------------------------------------
+
 
 @dataclass(frozen=True)
 class UpdateState:

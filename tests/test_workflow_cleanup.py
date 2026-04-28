@@ -217,7 +217,11 @@ class TestSubtreeCleanup:
         await repository.create(parent)
 
         child = self._make_child_state(
-            "child-fresh", parent.id, "02-compose", str(scratchpad), fresh,
+            "child-fresh",
+            parent.id,
+            "02-compose",
+            str(scratchpad),
+            fresh,
         )
         await repository.create(child)
 
@@ -261,7 +265,11 @@ class TestSubtreeCleanup:
         await repository.create(parent)
 
         child = self._make_child_state(
-            "child-old", parent.id, "02-compose", str(scratchpad), old,
+            "child-old",
+            parent.id,
+            "02-compose",
+            str(scratchpad),
+            old,
         )
         await repository.create(child)
 
@@ -289,9 +297,7 @@ class TestSubtreeCleanup:
             workflow_name="three-parent-wf",
             current_step="01",
             step_states={"01": "started"},
-            definition_snapshot=[
-                {"id": "01", "title": "01", "required": True, "composes": "mid"}
-            ],
+            definition_snapshot=[{"id": "01", "title": "01", "required": True, "composes": "mid"}],
             scratchpad_path=str(scratchpad),
             deleted_at=None,
             created_at=old,
@@ -300,12 +306,20 @@ class TestSubtreeCleanup:
         await repository.create(parent)
 
         mid = self._make_child_state(
-            "three-mid", parent.id, "01", str(scratchpad), old,
+            "three-mid",
+            parent.id,
+            "01",
+            str(scratchpad),
+            old,
         )
         await repository.create(mid)
 
         leaf = self._make_child_state(
-            "three-leaf", "three-mid", "01-only", str(scratchpad), old,
+            "three-leaf",
+            "three-mid",
+            "01-only",
+            str(scratchpad),
+            old,
         )
         await repository.create(leaf)
 
