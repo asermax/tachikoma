@@ -32,6 +32,7 @@ Note: The workflow subsystem provides a separate set of MCP tools (`start_workfl
 | R11 | On-demand background task execution via `run_task_now` MCP tool — supports both by-reference (existing definition) and ad-hoc (transient instance with no definition) modes |
 | R12 | Stale-cron prevention — a `since` timestamp auto-stamped on every create and update prevents newly-created or recently-updated task definitions from firing retroactively for cron matches before the definition was last modified |
 | R13 | Auto-cleanup of fired one-shot definitions — once the retention window has elapsed since the one-shot's last terminal instance (or since `last_fired_at` for zero-instance definitions), the definition and any associated instances are deleted. Recurring cron definitions are never cleaned up. |
+| R14 | Task definitions can declare an optional list of skill names (`pinned_skills`) that are loaded unconditionally into the execution context before LLM-based classification runs, ensuring the agent always has the domain knowledge the task requires |
 
 ## Behaviors
 
@@ -47,13 +48,15 @@ The agent manages task definitions through MCP tools exposed during conversation
 - Given the agent calls `create_task` with an ISO datetime including an explicit timezone offset or `Z` suffix, then the explicit timezone is preserved as-is
 - Given the agent calls `create_task` with an invalid cron expression, then the tool returns a clear error message
 - Given the agent calls `create_task` without a required field (name, schedule, type, or prompt), then the tool returns a clear error identifying the missing field
+- Given the agent calls `create_task` with a `pinned_skills` parameter (JSON array of skill name strings), then the definition is created with the pinned skills list persisted; empty or omitted means no pinned skills (backward compatible)
+- Given the agent calls `create_task` with a `pinned_skills` value that is not a valid JSON array of strings, then the tool returns a clear validation error
 - Given the agent calls `create_task` with a type value other than "session" or "background", then the tool returns a clear error
 - Given the agent calls `list_tasks` with no arguments, then it receives only enabled task definitions with their task ID, current status, type, schedule (one-shot times displayed in the configured timezone), and last_fired_at information (displayed in the configured timezone). Prompts are not included — use `get_task` for full details
 - Given the agent calls `list_tasks` with `archived=true`, then it receives only disabled task definitions
 - Given the agent calls `list_tasks` and no matching definitions exist (no enabled tasks by default, or no disabled tasks when archived), then a clear "no tasks found" message is returned
 - Given the agent calls `get_task` with a valid task ID, then it receives full details including the complete prompt, schedule, status, and timestamps (all displayed in the configured timezone)
 - Given the agent calls `get_task` with an unknown task ID, then a clear "not found" error is returned
-- Given the agent calls `update_task` with a modified schedule, prompt, task_type, or other updatable field, then the definition is updated and future instances use the new configuration
+- Given the agent calls `update_task` with a modified schedule, prompt, task_type, pinned_skills, or other updatable field, then the definition is updated and future instances use the new configuration
 - Given the agent calls `update_task` with a modified schedule, then `last_fired_at` is reset to null so the instance generator treats the definition as fresh — enabling re-scheduling of disabled one-shot tasks
 - Given the agent calls `update_task` with `enabled=true` but no new schedule, then `last_fired_at` is preserved — re-enabling without a new schedule does not cause a stale one-shot schedule to fire
 - Given the agent calls `update_task` with a one-shot schedule in the past, then the tool returns a clear error (consistent with `create_task`)
@@ -144,6 +147,16 @@ The agent can trigger a background task immediately via the `run_task_now` MCP t
 - Given a running or waiting instance for the same definition already exists, when the agent calls `run_task_now`, then a new pending instance is still created — the tool performs no cross-instance concurrency check; gating is left to the runner's `max_concurrent_background` semaphore.
 - Given a successful call, the tool emits an info-level log line including the instance ID, the mode (`by_ref` or `ad_hoc`), and the source identifier (definition ID + name for by-ref; `name` or prompt preview for ad-hoc).
 - Given the background task-tools server (without `respond_to_task`), when it is inspected, then `run_task_now` is present and behaves identically to the main-server copy.
+
+### Pinned Skills (R14)
+
+Task definitions can declare an optional list of skill names that are loaded unconditionally into the execution context before LLM-based classification runs. This ensures the agent always has the domain knowledge the task requires, even when the classifier might not select the right skills for a terse task prompt.
+
+**Acceptance Criteria**:
+- Given a task definition with `pinned_skills: ["research", "writing"]`, when the executor runs pre-processing, then those skills are resolved (including transitive dependencies) and injected into context before the classification step
+- Given a task definition with an empty or omitted `pinned_skills` list, when the executor runs, then behavior is identical to tasks without pinned skills (backward compatible)
+- Given a pinned skill name that does not exist in the registry, when the executor resolves it, then the unknown skill is silently skipped (consistent with the registry's unknown-dep-tolerant behavior)
+- Given the `create_task` and `update_task` MCP tools, then they accept an optional `pinned_skills` parameter (JSON array of skill name strings) for setting the pinned skills list
 
 ## Requires
 

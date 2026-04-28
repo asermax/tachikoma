@@ -16,7 +16,7 @@ Background tasks execute in isolated parallel sessions without interrupting the 
 | ID | Requirement |
 |----|-------------|
 | R0 | Execute pending background task instances in fresh isolated SDK sessions |
-| R1 | Adapted pipeline: full pre-processing (memory, projects, skills) and selective post-processing — episodic memory extraction, project submodule commit/push, and git commit (no facts, preferences, or core context extraction) |
+| R1 | Adapted pipeline: full pre-processing (memory, projects, skills) and selective post-processing — episodic memory extraction, project submodule commit/push, and git commit (no facts, preferences, or core context extraction). Pinned skills from the task definition are loaded unconditionally before LLM-based classification |
 | R2 | Evaluator loop that assesses each agent response for completion using a lightweight model |
 | R3 | Max iterations limit (configurable, default 10) — forces completion assessment and marks task as failed if not done |
 | R4 | Agent-driven success notifications via `send_notification` MCP tool during background task execution; automatic failure notifications dispatched by the executor. Notifications carry a priority field (Urgent/Normal/Low); `send_notification` accepts an optional priority (default Normal) and automatic failure notifications use Urgent. Delivery to the user is handled by the priority buffer (see [delivery/priority-buffer](../delivery/priority-buffer.md)) |
@@ -36,6 +36,7 @@ Background tasks run in fresh SDK sessions separate from the main conversation, 
 - Given a pending background task instance, when the runner picks it up, then a fresh SDK session is created (not forked from the main session) with an adapted base prompt explaining the background task context
 - Given a background task instance is being executed, then the adapted system prompt includes the current date and time in the configured timezone so the agent has temporal awareness during execution
 - Given a background task session starts, then the pre-processing pipeline runs with all context providers (memory, projects, skills) — MCP servers and agent definitions from providers are passed to the SDK client options
+- Given a background task definition declares `pinned_skills`, when the executor runs pre-processing, then the pinned skills are resolved (including transitive dependencies) and injected into context unconditionally before LLM-based classification — the per-message pipeline receives the pinned skills via the `IncomingMessage` envelope
 - Given a background task session completes, then the adapted post-processing pipeline runs with phased execution: episodic extraction (main phase), project submodule commit/push (pre_finalize phase), and git commit (finalize phase) — no facts, preferences, or core context extraction
 
 ### Evaluator Loop (R2, R3, R6)
