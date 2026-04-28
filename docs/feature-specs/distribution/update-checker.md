@@ -4,13 +4,14 @@
 
 ## Overview
 
-A subsystem that periodically checks PyPI for newer versions of tachikoma-agent, notifies the user when updates are available, and can apply updates in-place. The user sees the current and available versions and can ask the agent to apply the update directly — the process restarts itself, preserving the same terminal and tmux session. Both checking and applying are exposed as MCP tools.
+A subsystem that periodically checks PyPI for newer versions of tachikoma-agent, notifies the user when updates are available, and can apply updates in-place. Upgrade and restart are two separate steps: the agent calls `apply_update` to upgrade, then `restart` to replace the running process via `os.execv`, preserving the same terminal and tmux session. A standalone `restart` is also available for cases unrelated to upgrades — for example, loading new code after a manual `uv tool install --force` or resolving stale module/version cache issues. Checking, applying, and restarting are all exposed as MCP tools.
 
 ## User Stories
 
 - As a Tachikoma operator, I want to be notified when a newer version is available so that I can stay current with bug fixes and features without manually checking
 - As a Tachikoma operator, I want to ask the agent whether updates are available so that I can check on demand
-- As a Tachikoma operator, I want the agent to apply an available update and restart automatically so that I can stay current without manually running shell commands or losing my session
+- As a Tachikoma operator, I want the agent to apply an available update and then restart on demand so that I can stay current without manually running shell commands or losing my session
+- As a Tachikoma operator, I want to ask the agent to restart the process on its own so that I can pick up code installed manually or clear stale module/version state without losing my session
 
 ## Requirements
 
@@ -23,11 +24,12 @@ A subsystem that periodically checks PyPI for newer versions of tachikoma-agent,
 | R4 | Only notify once per new version — no repeated notifications for the same available version |
 | R5 | Manual trigger: agent can check for updates on demand via MCP tool |
 | R6 | Apply a user-confirmed agent upgrade using uv's upgrade mechanism |
-| R7 | In-place restart after successful upgrade (same terminal/tmux session via os.execv) |
+| R7 | In-place restart on demand (same terminal/tmux session via os.execv), independent of whether an upgrade just happened |
 | R8 | Clean shutdown before restart (matching the graceful quit flow) |
 | R9 | Detect and reject editable/development installs with a clear error |
 | R10 | Agent awareness of update tools through the system prompt |
 | R11 | Automatic rollback to the previous version if the new version fails during startup after an upgrade |
+| R12 | Manual restart trigger: agent can restart the process on demand via MCP tool |
 
 ## Behaviors
 
@@ -93,27 +95,37 @@ The agent can check for updates on demand via the `check_updates` MCP tool.
 
 ### Applying updates (R6, R9)
 
-The agent can apply an available upgrade via the `apply_update` MCP tool.
+The agent can apply an available upgrade via the `apply_update` MCP tool. Applying does not restart on its own — the agent calls `restart` separately to load the new code.
 
 **Acceptance Criteria**:
 - Given the user asks the agent to apply an update, when the `apply_update` tool is invoked, then it runs `uv tool upgrade tachikoma-agent` and returns the result
-- Given the upgrade command succeeds and installs a new version, when the tool completes, then it reports the old and new versions and triggers a restart
-- Given the installed version is already the latest, when the upgrade command runs, then it reports "already up to date" with the current version and does not restart
+- Given the upgrade command succeeds and installs a new version, when the tool completes, then it reports the old and new versions and instructs the agent to call `restart` to load the new code
+- Given the upgrade command succeeds, when the tool completes, then it does NOT trigger a restart on its own
+- Given the installed version is already the latest, when the upgrade command runs, then it reports "already up to date" with the current version
 - Given the user asks to update without a prior `check_updates` call, when the `apply_update` tool is invoked, then it runs the upgrade regardless (idempotent — no preconditions)
-- Given the upgrade command fails (network error, permission denied, uv not found), when the tool completes, then it reports the error and does not restart
+- Given the upgrade command fails (network error, permission denied, uv not found), when the tool completes, then it reports the error
 - Given the upgrade command fails, when the error is reported, then the running process continues normally without interruption
 - Given the package is installed as an editable/development install, when the tool checks install type, then it returns a clear error without attempting the upgrade
-- Given the process restarts after a successful upgrade, when the new process starts, then it logs its version at startup so the user can confirm the upgrade succeeded
-- Given the upgrade succeeds and triggers a restart, when the rollback marker is written before the restart event is dispatched, then the previous version is persisted for potential rollback
+- Given the upgrade succeeds, when the rollback marker is written, then the previous version is persisted so a subsequent restart can roll back if the new version fails to bootstrap
+
+### Manual restart (R7, R12)
+
+The agent can restart the process on demand via the `restart` MCP tool. Restart is decoupled from upgrade: it's also used for loading new code after a manual `uv tool install --force` or resolving stale module/version cache issues.
+
+**Acceptance Criteria**:
+- Given the agent invokes the `restart` tool (which takes no parameters), when the handler runs, then it dispatches a `RestartRequested` event on the bus and returns a confirmation message
+- Given the `restart` tool is invoked without a prior `apply_update`, when the handler runs, then no rollback marker is written and the rollback path does not activate at the next startup
+- Given the agent calls `restart` after a successful `apply_update`, when the next process starts, then the new code is in place and the rollback marker drives normal post-upgrade behavior (clear-on-success or fall-back-on-bootstrap-failure)
+- Given the new process starts after restart, when bootstrap completes, then it logs its version at startup so the user can confirm the running build
 
 ### In-place restart (R7, R8)
 
-After a successful upgrade, the process replaces itself in-place.
+When restart is triggered, the process replaces itself in-place via `os.execv`.
 
 **Acceptance Criteria**:
-- Given the upgrade succeeded, when the restart triggers, then the process replaces itself via `os.execv` preserving the same terminal and tmux session
+- Given a `RestartRequested` event is dispatched, when the restart triggers, then the process replaces itself via `os.execv` preserving the same terminal and tmux session
 - Given the restart triggers, when the shutdown sequence begins, then the application performs a full graceful shutdown — buffer flush, session close with post-processing, scheduler cancellation, and resource cleanup — matching the behavior of pressing 'q' in the REPL
-- Given the user invokes `apply_update` while the agent is processing another message, when the tool runs, then the upgrade proceeds and the restart waits for the current message exchange to finish before shutting down
+- Given the user invokes `restart` while the agent is processing another message, when the tool runs, then the restart waits for the current message exchange to finish before shutting down
 - Given background tasks are running when the restart triggers, when the shutdown sequence begins, then running background tasks are cancelled (matching existing shutdown behavior)
 - Given the restart happens during a Telegram session, when the new process starts, then it reconnects to Telegram automatically and messages sent during the restart gap are processed normally (Telegram queues them server-side)
 
@@ -133,7 +145,8 @@ If the new version fails during bootstrap after an upgrade, the system automatic
 The agent knows about update management tools.
 
 **Acceptance Criteria**:
-- Given the updates subsystem is initialized, when the agent's system prompt is assembled, then it includes a `# Updates` section describing the available update tools (`check_updates` for checking, `apply_update` for applying)
+- Given the updates subsystem is initialized, when the agent's system prompt is assembled, then it includes a `# Updates` section describing the available update tools (`check_updates` for checking, `apply_update` for applying, `restart` for restarting the process)
+- Given the system prompt describes `apply_update`, when the agent reads it, then the description states that `apply_update` does not restart on its own and that `restart` must be called separately to load the new code
 
 ## Requires
 

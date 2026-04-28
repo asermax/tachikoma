@@ -4,4 +4,4 @@ from bubus import BaseEvent
 
 
 class RestartRequested(BaseEvent[None]):
-    """Dispatched when the process should restart after a successful upgrade."""
+    """Dispatched to perform an in-place process restart."""

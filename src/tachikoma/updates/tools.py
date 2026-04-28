@@ -1,4 +1,4 @@
-"""MCP tools for update checking and applying."""
+"""MCP tools for update checking, applying, and restart."""
 
 import asyncio
 
@@ -20,6 +20,10 @@ class ApplyUpdateArgs(BaseModel):
     pass
 
 
+class RestartArgs(BaseModel):
+    pass
+
+
 async def handle_check_updates() -> dict:
     """Run an update check and return structured results. No side effects."""
     result = await asyncio.to_thread(check_for_update)
@@ -38,10 +42,12 @@ async def handle_check_updates() -> dict:
     }
 
 
-async def handle_apply_update(bus: EventBus) -> dict:
-    """Run an upgrade and optionally signal restart.
+async def handle_apply_update() -> dict:
+    """Run an upgrade and write the rollback marker on success.
 
-    Side effect: dispatches RestartRequested on success.
+    Does not restart the process — the agent must call ``restart`` separately
+    to load the new code. The rollback marker stays coupled to the upgrade so
+    a bare ``restart`` (no upgrade) does not trigger the rollback path.
     """
     result: UpgradeResult = await asyncio.to_thread(run_upgrade)
 
@@ -82,15 +88,32 @@ async def handle_apply_update(bus: EventBus) -> dict:
 
     assert result.new_version is not None
     write_rollback_marker(result.old_version, result.new_version)
-    await bus.dispatch(RestartRequested())
     return {
         "content": [
             {
                 "type": "text",
                 "text": (
                     f"Upgrade successful: {result.old_version} → {result.new_version}\n"
-                    "Restarting..."
+                    "Run `restart` to load the new version."
                 ),
+            }
+        ],
+    }
+
+
+async def handle_restart(bus: EventBus) -> dict:
+    """Dispatch a restart request on the bus.
+
+    Side effect: dispatches RestartRequested. The active channel observes the
+    event, exits its run loop, and the main entry point performs the in-place
+    ``os.execv`` after clean shutdown.
+    """
+    await bus.dispatch(RestartRequested())
+    return {
+        "content": [
+            {
+                "type": "text",
+                "text": "Restarting...",
             }
         ],
     }
@@ -111,16 +134,26 @@ def create_update_tools_server(bus: EventBus) -> McpSdkServerConfig:
 
     @tool(
         "apply_update",
-        "Upgrade tachikoma-agent to the latest version using uv and restart the process. "
+        "Upgrade tachikoma-agent to the latest version using `uv tool upgrade`. "
         "Only works for tool installs (not editable/development installs). "
-        "The restart is automatic — warn the user before applying.",
+        "Does NOT restart the process — call `restart` afterward to load the new code.",
         ApplyUpdateArgs.model_json_schema(),
     )
     async def apply_update(args: dict) -> dict:
-        return await handle_apply_update(bus)
+        return await handle_apply_update()
+
+    @tool(
+        "restart",
+        "Restart the tachikoma-agent process in place. Use after a successful "
+        "`apply_update`, or to load new code after a manual `uv tool install --force`, "
+        "or to resolve stale module/version cache issues. Warn the user before applying.",
+        RestartArgs.model_json_schema(),
+    )
+    async def restart(args: dict) -> dict:
+        return await handle_restart(bus)
 
     return create_sdk_mcp_server(
         name="update-checker",
         version="1.0.0",
-        tools=[check_updates, apply_update],
+        tools=[check_updates, apply_update, restart],
     )

@@ -11,7 +11,7 @@ This document explains the design rationale for the update subsystem: PyPI versi
 
 ## Problem Context
 
-Tachikoma runs as a long-lived process that users interact with via Telegram or REPL. When a new version is published to PyPI, users have no way to discover it without manually checking. This subsystem adds periodic background version checking, user notification, and the ability to apply updates in-place — the process replaces itself via `os.execv`, preserving the same terminal and tmux session.
+Tachikoma runs as a long-lived process that users interact with via Telegram or REPL. When a new version is published to PyPI, users have no way to discover it without manually checking. This subsystem adds periodic background version checking, user notification, the ability to apply updates, and the ability to restart the process in place — the process replaces itself via `os.execv`, preserving the same terminal and tmux session. Upgrade and restart are split into two MCP tools so the agent can also restart for reasons unrelated to upgrades (loading code installed manually via `uv tool install --force`, clearing stale `importlib.metadata` results in the running MCP server, or any general restart need).
 
 **Constraints:**
 - Must integrate with the existing central scheduler (DES-010) — not its own loop
@@ -21,6 +21,7 @@ Tachikoma runs as a long-lived process that users interact with via Telegram or 
 - The MCP tool runs inside the SDK's tool execution context, but `os.execv` must happen after full async cleanup
 - `uv tool upgrade` does not produce machine-readable output or distinct exit codes for "upgraded" vs "already up to date"
 - Editable/development installs are incompatible with `uv tool upgrade` — must be detected and reported
+- A bare restart (no upgrade) must not write a rollback marker, otherwise the rollback path could activate spuriously when the running version is unchanged
 
 ## Design Overview
 
@@ -30,13 +31,13 @@ A lightweight subsystem composed of:
 2. **Scheduled job** — runs the checker at a configurable interval via the central scheduler
 3. **Config section** — `[updates]` in TOML with `enabled` and `check_interval`
 4. **Bootstrap hook** — creates the `AppStateRepository` and registers the scheduled job when enabled
-5. **MCP tools** — `check_updates` for on-demand checks, `apply_update` for applying upgrades
+5. **MCP tools** — `check_updates` for on-demand checks, `apply_update` for applying upgrades, `restart` for triggering an in-place process restart
 6. **Upgrade executor** — detects editable installs, runs `uv tool upgrade`, reports structured result
 7. **Restart event** — `RestartRequested` event type on the bus, consumed by channels to exit their loops
 8. **In-place restart** — after clean shutdown, `os.execv` replaces the process preserving PID and terminal
 9. **Rollback on failed startup** — if bootstrap fails after upgrade, automatically reinstalls the previous version and restarts; notifies the user through normal channels
 
-The subsystem is minimal: one package (`src/tachikoma/updates/`) with a tick function, a PyPI fetcher, an upgrade executor, two MCP tools, and a bootstrap hook. It closes over the `AppStateRepository`, `EventBus`, and settings — no new long-lived objects beyond what the scheduler already manages.
+The subsystem is minimal: one package (`src/tachikoma/updates/`) with a tick function, a PyPI fetcher, an upgrade executor, three MCP tools, and a bootstrap hook. It closes over the `AppStateRepository`, `EventBus`, and settings — no new long-lived objects beyond what the scheduler already manages.
 
 ## Components
 
@@ -46,7 +47,7 @@ The subsystem is minimal: one package (`src/tachikoma/updates/`) with a tick fun
 |-----------------|----------------|---------------|
 | `src/tachikoma/updates/checker.py` | PyPI fetch, version comparison, notification logic | `urllib.request` (stdlib), `packaging.version` for PEP 440 |
 | `src/tachikoma/updates/hooks.py` | Bootstrap hook: create AppStateRepository | DES-003 pattern |
-| `src/tachikoma/updates/tools.py` | MCP tools `check_updates` and `apply_update` | DES-006 factory pattern; accepts `EventBus` for restart signaling |
+| `src/tachikoma/updates/tools.py` | MCP tools `check_updates`, `apply_update`, and `restart` | DES-006 factory pattern; accepts `EventBus`, used by `restart` to dispatch `RestartRequested` |
 | `src/tachikoma/updates/events.py` | `RestartRequested` event type | Follows bubus `BaseEvent[None]` pattern |
 | `src/tachikoma/updates/apply.py` | Upgrade execution: editable detection, subprocess invocation, result reporting | stdlib `subprocess.run`, `importlib.metadata` |
 | `src/tachikoma/updates/rollback.py` | Rollback marker lifecycle and version rollback execution | File-based markers in temp dir, `subprocess.run` |
@@ -83,15 +84,15 @@ class UpgradeResult:
 RestartRequested(BaseEvent[None])
   — No payload. Restart is unconditional once fired — the channel doesn't need
     to know why it's exiting, only whether to exit for restart vs normal shutdown.
-  — Fired by: apply_update MCP tool via bus.dispatch()
+  — Fired by: restart MCP tool via bus.dispatch()
   — Consumed by: REPL, TelegramChannel (in run())
   — Handler behavior: set self._restart_requested = True, then trigger run-loop exit
 ```
 
 **Integration Points**:
 - Tick function → `AppStateRepository` (dedup), `EventBus` (notification), settings (interval, enabled)
-- MCP tools → `check_for_update()` for read-only checks, `run_upgrade()` for applying updates
-- `apply_update` tool → `bus.dispatch(RestartRequested())` → channel event handlers
+- MCP tools → `check_for_update()` for read-only checks, `run_upgrade()` + `write_rollback_marker()` for `apply_update`, `bus.dispatch(RestartRequested())` for `restart`
+- `restart` tool → `bus.dispatch(RestartRequested())` → channel event handlers
 - Channel `restart_requested` property → main loop after `channel.run()` returns
 - Main loop → `os.execv` after full cleanup
 - Config → `UpdatesSettings` consumed by hook (to decide whether to register) and tick (for interval)
@@ -181,13 +182,22 @@ Agent invokes apply_update tool
     → compare versions → return UpgradeResult
   → if result.changed:
     → write_rollback_marker(old_version, new_version)
-    → bus.dispatch(RestartRequested())
-    → return success message with version transition
+    → return success message instructing the agent to call `restart`
   → if result.already_up_to_date:
     → return informational message
   → if result.error:
     → return error message
 ```
+
+### MCP tool: restart flow
+
+```
+Agent invokes restart tool
+  → bus.dispatch(RestartRequested())
+  → return "Restarting..." message
+```
+
+The `restart` tool is intentionally side-effect-only on the bus — it does not write a rollback marker. A bare restart on the same version must not look like a recent upgrade to the next bootstrap. Markers are written exclusively by `apply_update` on the upgrade-success path.
 
 ### Restart flow
 
@@ -311,18 +321,20 @@ See ADR-013 for the full decision rationale.
 
 ### System prompt injection in SYSTEM_PREAMBLE_TEMPLATE
 
-**Choice**: Add a `# Updates` section to the `SYSTEM_PREAMBLE_TEMPLATE` string in `context/loading.py`, placed between the existing `# Detached Processes` section and `# Context Documents`.
+**Choice**: Add a `# Updates` section to the `SYSTEM_PREAMBLE_TEMPLATE` string in `context/loading.py`, placed between the existing `# Detached Processes` section and `# Context Documents`. The section documents all three update tools (`check_updates`, `apply_update`, `restart`) and explicitly describes the upgrade → restart two-step flow so the agent does not assume `apply_update` restarts on its own.
 
-**Why**: All other tool capabilities (tasks, workflows, projects, git, detached processes) are documented in the preamble. Adding update tools there is consistent and ensures the agent always knows about them. The preamble is rendered once at startup and included in every session's system prompt.
+**Why**: All other tool capabilities (tasks, workflows, projects, git, detached processes) are documented in the preamble. Adding update tools there is consistent and ensures the agent always knows about them. The preamble is rendered once at startup and included in every session's system prompt. Documenting the two-step flow in the preamble (in addition to each tool's own description) gives the agent reinforced guidance — the per-tool descriptions tell it what each tool does, and the preamble tells it how to compose them.
 
 **Alternatives Considered**:
-- **Separate context entry via context provider**: Would require a new `ContextProvider` implementation and registration in the pre-processing pipeline. Overkill for a static two-line description.
+- **Separate context entry via context provider**: Would require a new `ContextProvider` implementation and registration in the pre-processing pipeline. Overkill for a static description.
 - **Injected by the updates hook during bootstrap**: Would couple the updates subsystem to the context assembly process. The preamble template is the canonical place for tool documentation.
+- **Rely solely on per-tool descriptions**: Would leave the upgrade → restart sequencing implicit. The preamble makes it explicit so the agent cannot mis-sequence.
 
 **Consequences**:
 - Pro: Consistent with existing pattern (tasks, git, workflows all documented in preamble)
 - Pro: Always included — no conditional loading or provider registration needed
-- Con: Preamble grows slightly (negligible — ~6 lines)
+- Pro: The two-step flow is documented in the canonical place the agent reads first
+- Con: Preamble grows slightly (negligible — ~8 lines)
 
 ### Rollback markers: file-based in temp directory (bypasses ADR-013)
 
@@ -389,33 +401,44 @@ See ADR-013 for the full decision rationale.
 **Then**: Run the same fetch + compare → return structured result → do NOT dispatch notification or update dedup state
 **Rationale**: The tool answers a question; the scheduled job drives a notification. Mixing the two would cause unexpected notifications from agent queries.
 
-### Scenario: Successful upgrade
+### Scenario: Successful upgrade followed by restart
 
 **Given**: A newer version is available on PyPI, the install is a tool install (not editable)
-**When**: The `apply_update` tool is invoked
+**When**: The agent invokes `apply_update`, then (after seeing the success message) invokes `restart`
 **Then**:
-1. Editable check passes
-2. Current version recorded from `importlib.metadata`
-3. `uv tool upgrade tachikoma-agent` runs via `subprocess.run` (timeout: 120s)
-4. Exit code 0, version changed in metadata
-5. `bus.dispatch(RestartRequested())` fires
-6. Rollback marker written to temp dir with previous and target versions
-7. Tool returns success message with version transition
-7. Agent generates response ("Restarting...")
-8. Response fully rendered to user
-9. Channel detects `restart_requested` flag and exits run loop
-10. `channel.run()` returns, main loop captures flag
-11. `Coordinator.__aexit__` runs: cancel idle PP, await pending tasks, close session
-12. Main `finally` block: buffer stop, scheduler cancel, background runner shutdown, bus stop, DB close
-13. `os.execv(sys.argv[0], sys.argv)` replaces the process
+1. `apply_update` runs:
+   - Editable check passes
+   - Current version recorded from `importlib.metadata`
+   - `uv tool upgrade tachikoma-agent` runs via `subprocess.run` (timeout: 120s)
+   - Exit code 0, version changed in metadata
+   - Rollback marker written to temp dir with previous and target versions
+   - Tool returns success message with version transition and the instruction to call `restart`
+2. Agent generates a response acknowledging the upgrade
+3. Agent invokes `restart`:
+   - `bus.dispatch(RestartRequested())` fires
+   - Tool returns "Restarting..." message
+4. Agent finishes generating its response, output is rendered to the user
+5. Channel detects `restart_requested` flag and exits run loop
+6. `channel.run()` returns, main loop captures flag
+7. `Coordinator.__aexit__` runs: cancel idle PP, await pending tasks, close session
+8. Main `finally` block: buffer stop, scheduler cancel, background runner shutdown, bus stop, DB close
+9. `os.execv(sys.argv[0], sys.argv)` replaces the process
 
-**Rationale**: The restart only triggers after the full message exchange completes. The tool fires the event and returns; the SDK finishes generating the agent's response; the channel renders every event; only then does the channel loop check the restart flag. This guarantees the user always sees the restart notification before the process exits.
+**Rationale**: Splitting upgrade and restart lets the agent decide when to actually swap the process — for example, after warning the user. The rollback marker is still written by `apply_update` (the only step that knows an upgrade just happened), so when the next bootstrap runs it can fall back to the previous version if the new one fails to start.
+
+### Scenario: Restart without upgrade
+
+**Given**: The user installed a new build manually (e.g., `uv tool install --force`) or an MCP server is serving stale `importlib.metadata` results, but no `apply_update` was run in the current process
+**When**: The agent invokes `restart`
+**Then**: `bus.dispatch(RestartRequested())` fires. Tool returns "Restarting...". The shutdown and `os.execv` flow runs identically to the post-upgrade case. **No rollback marker is written**, so the next bootstrap does not enter the rollback path even if it fails — the new code came from a manual install, not from `apply_update`.
+
+**Rationale**: Restart is a general-purpose mechanism for picking up code or clearing module/version caches. Coupling rollback markers to `apply_update` (and only `apply_update`) keeps the rollback path narrowly scoped to upgrades the system itself performed.
 
 ### Scenario: Already up to date
 
 **Given**: The installed version matches the latest on PyPI
 **When**: The `apply_update` tool is invoked
-**Then**: Tool runs `uv tool upgrade` (exit code 0). Version metadata unchanged. Tool returns informational message with current version. No restart event fired. Process continues normally.
+**Then**: Tool runs `uv tool upgrade` (exit code 0). Version metadata unchanged. Tool returns informational message with current version. No rollback marker written. Process continues normally — the agent has no reason to call `restart`.
 
 **Rationale**: Idempotent behavior — calling `apply_update` when already current is safe and informative.
 
