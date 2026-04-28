@@ -317,7 +317,7 @@ class Database:
             # Check if skills column exists on task_definitions table (added in DLT-117)
             result = await conn.execute(
                 text(
-                    "SELECT * FROM pragma_table_info('task_definitions') WHERE name='skills'"
+                    "SELECT 1 FROM pragma_table_info('task_definitions') WHERE name='skills'"
                 )
             )
             if result.fetchone() is None:
