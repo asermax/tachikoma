@@ -274,11 +274,16 @@ async def run(
     msg_pipeline.register(SummaryProcessor(registry=registry, agent_defaults=agent_defaults))
     msg_pipeline.register(LastExchangeProcessor(registry=registry))
 
-    task_tools = create_task_tools_server(task_repository, ZoneInfo(settings.tasks.timezone))
+    task_tools = create_task_tools_server(
+        task_repository,
+        ZoneInfo(settings.tasks.timezone),
+        skill_registry=skill_registry,
+    )
     background_task_tools = create_task_tools_server(
         task_repository,
         ZoneInfo(settings.tasks.timezone),
         include_respond_tool=False,
+        skill_registry=skill_registry,
     )
     session_context = SessionContext()
 

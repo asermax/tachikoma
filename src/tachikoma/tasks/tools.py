@@ -8,8 +8,9 @@ Provides MCP tools for managing task definitions:
 - delete_task: Delete a task definition
 """
 
+import json
 from datetime import UTC, datetime
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 from uuid import uuid4
 from zoneinfo import ZoneInfo
 
@@ -23,7 +24,30 @@ from tachikoma.tasks.errors import TaskRepositoryError
 from tachikoma.tasks.model import ScheduleConfig, TaskDefinition, TaskInstance
 from tachikoma.tasks.repository import TaskRepository
 
+if TYPE_CHECKING:
+    from tachikoma.skills.registry import SkillRegistry
+
 _log = logger.bind(component="task_tools")
+
+
+def _decode_skills(raw: str) -> list[str]:
+    """Decode a JSON-encoded string of skill names into a list.
+
+    Raises:
+        ValueError: when ``raw`` is not valid JSON, does not encode an array,
+            or encodes an array containing non-string items.
+    """
+    try:
+        decoded = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"skills must be a JSON-encoded array of strings: {exc}") from exc
+    if not isinstance(decoded, list):
+        raise ValueError(
+            f"skills JSON string must encode an array, got {type(decoded).__name__}"
+        )
+    if not all(isinstance(item, str) for item in decoded):
+        raise ValueError("skills JSON array must contain only strings")
+    return decoded
 
 
 # ---------------------------------------------------------------------------
@@ -41,6 +65,7 @@ class CreateTaskArgs(BaseModel):
     type: str
     prompt: str
     enabled: bool = True
+    skills: str | None = None
 
 
 class UpdateTaskArgs(BaseModel):
@@ -50,6 +75,7 @@ class UpdateTaskArgs(BaseModel):
     task_type: Literal["session", "background"] | None = None
     prompt: str | None = None
     enabled: bool | None = None
+    skills: str | None = None
 
 
 class DeleteTaskArgs(BaseModel):
@@ -144,10 +170,25 @@ async def handle_respond_to_task(
     }
 
 
+def _validate_skills(
+    skill_names: list[str],
+    registry: "SkillRegistry | None",
+) -> list[str]:
+    """Validate skill names against the registry, returning warning messages."""
+    if not skill_names or registry is None:
+        return []
+    warnings: list[str] = []
+    for name in skill_names:
+        if name not in registry.skills:
+            warnings.append(f"Warning: skill '{name}' not found in the current registry.")
+    return warnings
+
+
 def create_task_tools_server(
     repository: TaskRepository,
     timezone: ZoneInfo,
     include_respond_tool: bool = True,
+    skill_registry: "SkillRegistry | None" = None,
 ) -> McpSdkServerConfig:
     """Create an MCP server exposing task management tools.
 
@@ -158,6 +199,7 @@ def create_task_tools_server(
             conversation sessions pass True; background task sessions pass
             False so background agents cannot respond to other agents'
             waiting instances.
+        skill_registry: Optional skill registry for validating pinned skill names.
 
     Returns:
         McpSdkServerConfig for registration with ClaudeAgentOptions.mcp_servers.
@@ -208,6 +250,8 @@ def create_task_tools_server(
                 )
                 lines.append(f"- [{d.id}] **{d.name}** [{d.task_type}] {status}")
                 lines.append(f"  Schedule: {schedule_desc}{last_fired}")
+                if d.skills:
+                    lines.append(f"  Skills: {', '.join(d.skills)}")
                 lines.append("")
 
             return {
@@ -275,8 +319,10 @@ def create_task_tools_server(
                 f"- Schedule: {schedule_desc}",
                 f"- Last run: {last_fired}",
                 f"- Created: {created_str}",
-                f"\n## Prompt\n\n{d.prompt}",
             ]
+            if d.skills:
+                lines.append(f"- Skills: {', '.join(d.skills)}")
+            lines.append(f"\n## Prompt\n\n{d.prompt}")
 
             return {
                 "content": [{"type": "text", "text": "\n".join(lines)}],
@@ -306,7 +352,11 @@ def create_task_tools_server(
         "- type (str, required): 'session' (delivered during idle) or 'background'"
         " (isolated execution)\n"
         "- prompt (str, required): Instruction the agent follows when the task fires\n"
-        "- enabled (bool, optional, default true): Whether the task is active",
+        "- enabled (bool, optional, default true): Whether the task is active\n"
+        "- skills (str, optional): JSON-encoded array of skill names to load"
+        " unconditionally at execution time (e.g., '[\"research\", \"planning\"]')."
+        " Named skills are always injected into the task's context, bypassing"
+        " LLM-based skill classification.",
         CreateTaskArgs.model_json_schema(),
     )
     async def create_task(args: dict) -> dict:
@@ -367,6 +417,19 @@ def create_task_tools_server(
                 ],
             }
 
+        # Decode and validate skills
+        decoded_skills: list[str] = []
+        skills_warnings: list[str] = []
+        if parsed.skills is not None:
+            try:
+                decoded_skills = _decode_skills(parsed.skills)
+            except ValueError as exc:
+                return {
+                    "is_error": True,
+                    "content": [{"type": "text", "text": f"Error: {exc}"}],
+                }
+            skills_warnings = _validate_skills(decoded_skills, skill_registry)
+
         # Create the definition
         definition = TaskDefinition(
             id=str(uuid4()),
@@ -377,23 +440,24 @@ def create_task_tools_server(
             enabled=parsed.enabled,
             last_fired_at=None,
             created_at=datetime.now(UTC),
+            skills=tuple(decoded_skills),
         )
 
         try:
             created = await repository.create_definition(definition)
 
             schedule_desc = _format_schedule(created.schedule, timezone)
+            msg = f"Task '{created.name}' created successfully.\n" \
+                  f"- ID: {created.id}\n" \
+                  f"- Type: {created.task_type}\n" \
+                  f"- Schedule: {schedule_desc}\n" \
+                  f"- Enabled: {created.enabled}"
+            if created.skills:
+                msg += f"\n- Skills: {', '.join(created.skills)}"
+            if skills_warnings:
+                msg += "\n\n" + "\n".join(skills_warnings)
             return {
-                "content": [
-                    {
-                        "type": "text",
-                        "text": f"Task '{created.name}' created successfully.\n"
-                        f"- ID: {created.id}\n"
-                        f"- Type: {created.task_type}\n"
-                        f"- Schedule: {schedule_desc}\n"
-                        f"- Enabled: {created.enabled}",
-                    }
-                ],
+                "content": [{"type": "text", "text": msg}],
             }
 
         except TaskRepositoryError as exc:
@@ -418,6 +482,8 @@ def create_task_tools_server(
         "- task_type (str, optional): Change type — 'session' or 'background'\n"
         "- prompt (str, optional): New agent instruction\n"
         "- enabled (bool, optional): Enable or disable the task\n"
+        "- skills (str, optional): JSON-encoded array of skill names to pin"
+        " (e.g., '[\"research\", \"planning\"]'). Pass '[]' to clear pinned skills.\n"
         "\n"
         "Only provided fields are updated; omitted fields remain unchanged.",
         UpdateTaskArgs.model_json_schema(),
@@ -442,6 +508,7 @@ def create_task_tools_server(
 
         # Build updates
         updates = {}
+        skills_warnings: list[str] = []
         if parsed.name is not None:
             updates["name"] = parsed.name
         if parsed.schedule is not None:
@@ -491,6 +558,16 @@ def create_task_tools_server(
             updates["enabled"] = parsed.enabled
         if parsed.task_type is not None:
             updates["task_type"] = parsed.task_type
+        if parsed.skills is not None:
+            try:
+                decoded_skills = _decode_skills(parsed.skills)
+            except ValueError as exc:
+                return {
+                    "is_error": True,
+                    "content": [{"type": "text", "text": f"Error: {exc}"}],
+                }
+            skills_warnings = _validate_skills(decoded_skills, skill_registry)
+            updates["skills"] = tuple(decoded_skills)
 
         if not updates:
             return {
@@ -499,13 +576,11 @@ def create_task_tools_server(
 
         try:
             await repository.update_definition(parsed.task_id, **updates)
+            msg = f"Task '{parsed.task_id}' updated successfully."
+            if skills_warnings:
+                msg += "\n\n" + "\n".join(skills_warnings)
             return {
-                "content": [
-                    {
-                        "type": "text",
-                        "text": f"Task '{parsed.task_id}' updated successfully.",
-                    }
-                ],
+                "content": [{"type": "text", "text": msg}],
             }
 
         except TaskRepositoryError as exc:
