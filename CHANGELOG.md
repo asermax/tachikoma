@@ -2,6 +2,19 @@
 
 <!-- version list -->
 
+## v1.57.0 (2026-04-28)
+
+### Features
+
+- **updates**: Split restart from apply_update into separate tool
+  ([`6d4819d`](https://github.com/asermax/tachikoma/commit/6d4819d1d4035a75e5e118eb7ada39a994866cd3))
+
+### Refactoring
+
+- **updates**: Tighten restart handler docstring and test name
+  ([`a1c7282`](https://github.com/asermax/tachikoma/commit/a1c72820caa37abf50b47c3e2b648106deaf4e15))
+
+
 ## v1.56.0 (2026-04-28)
 
 ### Bug Fixes
