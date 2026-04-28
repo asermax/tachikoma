@@ -630,3 +630,10 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 **Complexity**: Easy
 **Description**: Add a react_to_message MCP tool that lets the agent apply emoji reactions to user messages via the Telegram setMessageReaction API. This enables lightweight acknowledgment (thumbs up, checkmark, etc.) without sending a full text response. The tool accepts a message ID and an emoji, applies the reaction through the aiogram Bot client, and follows the existing MCP tool pattern (factory with closure-captured bot/chat_id, extracted handler, Pydantic args). Works in private chats without special permissions; groups require the bot to be an admin with appropriate rights. The agent discovers target message IDs using the recent message listing tool.
 
+### DLT-170: CLI for reading and writing configuration values
+**Status**: ✗ Defined
+**Depends on**: None
+**Priority**: 3 (Medium)
+**Complexity**: Easy
+**Description**: The agent currently reads and writes Tachikoma's TOML configuration file directly via Read/Write tools, which is error-prone — typos in nested keys, formatting drift, and accidental edits to comments are all easy to introduce. Add a CLI surface for inspecting and modifying configuration values that uses the typed settings model and the existing comment-preserving write-back infrastructure as its source of truth. The CLI exposes operations to read a value by dot-notation key (e.g. `agent.model`), update a value at a known key, and list values optionally scoped to a section. Keys are validated against the Pydantic settings schema before reads or writes, and the underlying TOML file's comments and formatting are preserved on write. The CLI defaults to `~/.config/tachikoma/config.toml` but accepts a path override for use with non-default config locations. The exact shape (separate `tachikoma-config` binary versus a `tachikoma config` subcommand) should be evaluated during speccing, balancing entry point conventions against discoverability.
+
