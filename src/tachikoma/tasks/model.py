@@ -9,7 +9,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Literal
 
-from sqlalchemy import DateTime, ForeignKey, Index, String
+from sqlalchemy import DateTime, ForeignKey, Index, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from tachikoma.database import Base
@@ -103,6 +103,7 @@ class TaskDefinition:
     last_fired_at: datetime | None = None
     since: datetime = field(default_factory=lambda: datetime.now(UTC))
     created_at: datetime | None = None
+    skills: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -157,6 +158,7 @@ class TaskDefinitionRecord(Base):
         onupdate=lambda: datetime.now(UTC),
     )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    skills: Mapped[str] = mapped_column(Text, default="[]")
 
     def to_domain(self) -> TaskDefinition:
         """Convert ORM record to domain dataclass."""
@@ -170,6 +172,7 @@ class TaskDefinitionRecord(Base):
             last_fired_at=ensure_utc(self.last_fired_at),
             since=ensure_utc(self.since),
             created_at=ensure_utc(self.created_at),
+            skills=tuple(json.loads(self.skills)) if self.skills else (),
         )
 
 

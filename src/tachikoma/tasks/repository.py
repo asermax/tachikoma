@@ -4,6 +4,7 @@ All callers receive frozen dataclasses — SQLAlchemy types never leak out
 of this module.
 """
 
+import json
 from datetime import UTC, datetime, timedelta
 
 from loguru import logger
@@ -54,6 +55,7 @@ class TaskRepository:
                 last_fired_at=definition.last_fired_at,
                 since=definition.since,
                 created_at=definition.created_at or datetime.now(UTC),
+                skills=json.dumps(list(definition.skills)),
             )
 
             async with self._session_factory() as db:
@@ -142,6 +144,8 @@ class TaskRepository:
                 for key, value in fields.items():
                     if key == "schedule" and hasattr(value, "to_json"):
                         setattr(record, key, value.to_json())
+                    elif key == "skills":
+                        setattr(record, key, json.dumps(list(value)))
                     else:
                         setattr(record, key, value)
 

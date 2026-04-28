@@ -314,6 +314,22 @@ class Database:
                     "Schema migration: added 'loop_state' column to workflow_states table"
                 )
 
+            # Check if skills column exists on task_definitions table (added in DLT-117)
+            result = await conn.execute(
+                text(
+                    "SELECT * FROM pragma_table_info('task_definitions') WHERE name='skills'"
+                )
+            )
+            if result.fetchone() is None:
+                await conn.execute(
+                    text(
+                        "ALTER TABLE task_definitions ADD COLUMN skills TEXT NOT NULL DEFAULT '[]'"
+                    )
+                )
+                _log.info(
+                    "Schema migration: added 'skills' column to task_definitions table"
+                )
+
         _log.debug("Schema migrations completed: db_path={path}", path=self._db_path)
 
     async def close(self) -> None:
