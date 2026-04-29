@@ -31,7 +31,8 @@ Consumers (`__main__.py`, `Coordinator`, `Repl`) receive the frozen `Settings` i
 
 | Layer/Component | Responsibility | Key Decisions |
 |-----------------|----------------|---------------|
-| `src/tachikoma/config.py` | Settings model, TOML loading, default generation, SettingsManager for read-write access | Plain Pydantic + tomllib for reading, tomlkit for writing defaults and write-back |
+| `src/tachikoma/config.py` | Settings model, TOML loading, default generation, SettingsManager for read-write access | Plain Pydantic + tomllib for reading, tomlkit for writing defaults and write-back; imports `PluginSource` from `plugins/sources.py` for the top-level `plugins` field |
+| `src/tachikoma/plugins/sources.py` | Pydantic source models: `GitPluginSource`, `UrlPluginSource`, `LocalPluginSource`, `PluginSource` discriminated union | Lives alongside but separately from `config.py` to keep the config module from accumulating plugin-specific validators |
 | `.tachikoma/config/<skill-name>/` | Per-skill configuration directory | Managed by individual skills, not the core config system; TOML files loaded via stdlib `tomllib` |
 
 ### Cross-Layer Contracts
@@ -106,6 +107,8 @@ Settings (root, frozen)
     ├── bot_token: str
     ├── authorized_chat_id: int
     └── push_notifications: bool = True   (enables post-response push via copy+delete)
+└── plugins: dict[str, PluginSource] = {}  (alias → source; see plugins/sources.py)
+    └── PluginSource = GitPluginSource | UrlPluginSource | LocalPluginSource (discriminated union)
 ```
 
 A module-level `SYSTEM_DISALLOWED_TOOLS: frozenset[str]` constant defines tools that are always blocked regardless of user configuration. A `field_validator` on `AgentSettings.disallowed_tools` merges this set into the user value after type validation, deduplicating via `dict.fromkeys` to preserve insertion order (user entries first, then system entries). This merge is transparent to all downstream consumers — the field type remains `list[str]`.
@@ -124,6 +127,8 @@ SettingsManager
 ├── property settings → Settings (current frozen snapshot)
 ├── update(section, key, value) → modifies in-memory TOML doc (section-level)
 ├── update_root(key, value) → modifies in-memory TOML doc (root-level)
+├── update_plugin_entry(alias, source) → creates/replaces [plugins.<alias>] sub-table (tomlkit super-table)
+├── remove_plugin_entry(alias) → removes [plugins.<alias>] sub-table (tomlkit super-table)
 ├── reload() → reloads frozen Settings from in-memory TOML (no file I/O)
 └── save() → writes to file, reloads frozen Settings
 ```
@@ -259,6 +264,19 @@ flowchart TD
 - Pro: Modules control when file I/O happens
 - Pro: Multiple updates batched before a single write
 - Con: Callers must remember to call save()
+
+### tomlkit super-table for plugin sub-tables
+
+**Choice**: Use `tomlkit.table(is_super_table=True)` for the `[plugins]` parent table, with each `[plugins.<alias>]` as a regular `tomlkit.table()` sub-table
+**Why**: The existing `update()` method only handles single-level sections (`[section]`). Plugin config uses nested sub-tables (`[plugins.<alias>]`) that require a two-level write-back. The super-table pattern ensures tomlkit preserves comments between `[plugins.<alias>]` entries when adding or removing individual plugins. Dedicated `update_plugin_entry(alias, source)` and `remove_plugin_entry(alias)` methods encapsulate the sub-table manipulation so callers don't need to understand tomlkit's table hierarchy.
+**Alternatives Considered**:
+- Extend `update()` to support nested paths: Over-generalizes; only plugins need sub-table write-back currently
+- Raw string manipulation for plugin entries: Fragile, loses comment preservation
+
+**Consequences**:
+- Pro: Plugin install/remove can mutate config while preserving user comments
+- Pro: The pattern is isolated to plugin-specific methods — `update()` stays unchanged
+- Con: Plugin source models live in `plugins/sources.py` (imported by `config.py`), not co-located with other settings fields
 
 ### Frozen settings instance
 

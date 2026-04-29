@@ -29,12 +29,13 @@ The `ANTHROPIC_API_KEY` is not managed by this system — the Claude SDK reads i
 | R10 | Skill and script configuration: per-skill config directories under `.tachikoma/config/<skill-name>/` |
 | R11 | Update checking configuration: `[updates]` section for enabled flag and check interval |
 | R12 | Configuration disambiguation: system prompt must distinguish between Tachikoma config (TOML file) and Claude Code config (settings.json) so the agent routes settings requests to the correct system |
+| R13 | Plugin source declaration: `[plugins.<alias>]` sections in TOML config, each declaring a git/url/local source with alias validation and discriminated-union type enforcement |
 
 ## Behaviors
 
 ### Configuration Loading (R1, R2)
 
-The system loads parameters from the TOML config file at startup, applying defaults for any unspecified values. Supported sections include `[workspace]`, `[agent]`, `[logging]`, `[telegram]`, `[tasks]`, and `[updates]`.
+The system loads parameters from the TOML config file at startup, applying defaults for any unspecified values. Supported sections include `[workspace]`, `[agent]`, `[logging]`, `[telegram]`, `[tasks]`, `[updates]`, and `[plugins.<alias>]`.
 
 **Acceptance Criteria**:
 - Given a valid TOML config file, when the application starts, then all parameters are loaded and available to components
@@ -149,6 +150,27 @@ Skills and scripts that need configuration store it in per-skill subdirectories 
 - Given a skill's config directory doesn't exist, when the skill runs for the first time, then it creates the directory and any default config file
 - Given the main application config at `~/.config/tachikoma/config.toml`, when a skill reads config, then it does not read from or write to the main config file
 - Given a skill that needs persistent state, when the skill writes state, then it writes to `.tachikoma/state/<skill-name>/` not `.tachikoma/config/<skill-name>/`
+
+### Plugin Configuration (R13)
+
+Plugin sources are declared as `[plugins.<alias>]` sub-tables in the TOML config file. Each sub-table describes one plugin source — a discriminated union of git, url, or local variants. The alias must match `[a-z0-9][a-z0-9-]*`. The `SettingsManager` provides dedicated methods for adding and removing plugin entries while preserving comments in the config file.
+
+**Source variants**:
+- **Git**: `git` key (URL or `gh:owner/repo` / `github:owner/repo` shorthand), optional `subdir`, required `ref` (branch, tag, or commit — SHA-shaped refs rejected at validation)
+- **URL**: `url` key (HTTPS-only with recognized archive extension `.tar.gz`/`.tgz`/`.zip`), optional `subdir`
+- **Local**: `path` key (absolute path to local directory)
+
+**Acceptance Criteria**:
+- Given a config file with no `[plugins]` section, when loaded, then `settings.plugins` is an empty dict
+- Given a config file with `[plugins.my-plugin]` containing a valid git source, when loaded, then `settings.plugins["my-plugin"]` is a `GitPluginSource` with the parsed fields
+- Given a config file with `[plugins.my-plugin]` containing a valid url source, when loaded, then `settings.plugins["my-plugin"]` is a `UrlPluginSource`
+- Given a config file with `[plugins.my-plugin]` containing a valid local source, when loaded, then `settings.plugins["my-plugin"]` is a `LocalPluginSource`
+- Given a plugin alias that doesn't match `[a-z0-9][a-z0-9-]*`, when loaded, then validation fails with a clear error
+- Given a `[plugins.<alias>]` entry with more than one of `git`/`url`/`path`, when loaded, then validation fails with a clear error indicating mutual exclusion
+- Given a `[plugins.<alias>]` entry with none of `git`/`url`/`path`, when loaded, then validation fails with a clear error indicating at least one source is required
+- Given a git source with a SHA-shaped ref (40 hex chars), when loaded, then validation fails with a clear error (shallow clone requires a ref resolvable to a branch or tag)
+- Given `settings_manager.update_plugin_entry(alias, source)` is called, when saved, then the `[plugins.<alias>]` sub-table is created or replaced in the TOML file while preserving comments
+- Given `settings_manager.remove_plugin_entry(alias)` is called, when saved, then the `[plugins.<alias>]` sub-table is removed from the TOML file while preserving surrounding comments and other plugin entries
 
 ### Configuration Disambiguation (R12)
 

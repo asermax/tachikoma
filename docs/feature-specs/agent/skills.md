@@ -6,6 +6,8 @@
 
 The skill system provides a structured way to organize, detect, and delegate specialized sub-agents. Skills are directory-based packages containing YAML-formatted agent definitions. A skill registry discovers all skills at startup, with on-demand refresh when marked dirty by a filesystem watcher. On each message, a skills context provider classifies which skills are relevant to the user's message, considering only skills not already in context. Skills can also be pinned — loaded unconditionally from the `IncomingMessage` envelope's `pinned_skills` field before classification runs, ensuring the agent always has specific domain knowledge. Skills can declare dependencies on other skills; when a skill is selected, the registry resolves its transitive dependency chain so that required foundations are injected alongside it. Newly detected skills (and their resolved dependencies) are appended as separate context entries with metadata identifying the skill name. Agents are derived from loaded skill entries and the skill registry on each message. Skills accumulate within a session — existing skills are never removed.
 
+Skills can come from three sources: built-in (shipped with the package), workspace (user-authored in `workspace/skills/`), and plugin-installed (third-party plugins under `workspace/.tachikoma/plugins/<alias>/`). Plugin skills are registered under namespaced names of the form `<alias>:<skill-name>`, isolated from built-in, workspace, and other plugin skills.
+
 ## User Stories
 
 - As the system, I need a way to organize sub-agents into reusable skill packages so that specialized work can be delegated to focused agents
@@ -24,7 +26,7 @@ The skill system provides a structured way to organize, detect, and delegate spe
 | R4 | Relevant agents loaded per-session based on detection results and passed to SDK for delegation |
 | R5 | Agents available to the session accumulate as new skills are detected |
 | R6 | Tool scoping via agent definition metadata |
-| R7 | Bootstrap hook creates skills directory and shared registry with multiple sources, exposes via extras |
+| R7 | Bootstrap hook creates skills directory and shared registry with multiple sources (built-in, workspace, and plugin), exposes via extras; plugin skill paths are consumed from `ctx.extras["plugin_skill_paths"]` set by the plugins hook |
 | R8 | Graceful error handling for invalid skills/agents |
 | R9 | Skill detection via LLM: classify relevance using skill names, descriptions, and user message |
 | R10 | Inject matched skill content (body without frontmatter) and directory path as `<skills>` XML context block |
@@ -34,29 +36,29 @@ The skill system provides a structured way to organize, detect, and delegate spe
 | R14 | Graceful error handling for detection — failures never block the message; message proceeds with no skills/agents |
 | R15 | Base system prompt preamble includes a static Skills section so the agent has foundational awareness of the skill system independent of per-session detection |
 | R16 | Built-in skills ship with the package in src/tachikoma/skills/builtin/ |
-| R17 | Multi-source registry: built-in scanned first, workspace second; workspace skills replace built-in on name collision |
+| R17 | Multi-source registry: built-in scanned first, workspace second; workspace skills replace built-in on name collision; plugin skills registered under namespaced names (`<alias>:<skill-name>`) in a separate dimension from default-namespace last-wins |
 | R18 | Registry created by skills_hook and exposed via ctx.extras["skill_registry"] |
 | R19 | SkillsContextProvider receives registry via constructor injection (not owned internally) |
 | R20 | Missing built-in directory logs warning and continues with workspace skills only |
 | R21 | Filesystem watcher monitors the skills directory and marks the registry for refresh when changes occur |
 | R22 | Burst changes during skill authoring coalesced into a single refresh via debounce |
-| R23 | SkillsChanged event emitted via event bus when skill changes are detected |
+| R23 | SkillsChanged event emitted via event bus when skill changes are detected (dispatched both by the filesystem watcher on workspace skill edits and by the plugin event listener on plugin install/remove) |
 | R24 | Watcher lifecycle managed through bootstrap (start) and graceful shutdown |
 | R25 | Per-message skill re-evaluation — provider runs on every message, classifying skills not already in context |
-| R26 | Registry filtering — classification only considers skills not already loaded (identified via entry metadata), preventing duplicates and reducing classifier input size |
-| R27 | One context entry per detected skill, each with metadata identifying the skill name |
+| R26 | Registry filtering — classification only considers skills not already loaded (identified via entry metadata using qualified names), preventing duplicates and reducing classifier input size |
+| R27 | One context entry per detected skill, each with metadata identifying the skill name (plugin skills carry the qualified form `<alias>:<skill-name>`) |
 | R28 | Skip classification entirely when no unloaded skills remain in the registry (no LLM call, no latency) |
 | R29 | Skills can optionally contain a `workflows/` folder with multiple workflow definitions, each as a subdirectory of ordered steps |
 | R30 | Skill registry discovers workflow definitions alongside skills and exposes them for lookup |
 | R31 | Built-in `workflow-authoring-guide` skill ships with the package |
-| R32 | Skills can declare direct dependencies via a `depends_on` frontmatter list; the registry exposes a resolver that returns the transitive chain (deps-first, anchor-last, cycle-tolerant, unknown-dep-tolerant, memoized with invalidation on refresh/add_source); the context provider expands each classification-detected skill through the resolver and emits resolved deps as additional context entries, deduped against skills already loaded in the session |
-| R33 | Pinned skills — skills listed in the `IncomingMessage.pinned_skills` field are resolved (including transitive dependencies) and injected unconditionally before LLM-based classification runs, ensuring the agent always has specific domain knowledge regardless of classifier accuracy for terse prompts |
+| R32 | Skills can declare direct dependencies via a `depends_on` frontmatter list; the registry exposes a resolver that returns the transitive chain (deps-first, anchor-last, cycle-tolerant, unknown-dep-tolerant, memoized with invalidation on refresh/add_source); the context provider expands each classification-detected skill through the resolver and emits resolved deps as additional context entries, deduped against skills already loaded in the session. For plugin skills, dependency resolution uses explicit-prefix rules: bare `dep` resolves in default namespace (built-in + workspace), `:dep` (leading colon) resolves in the skill's own plugin namespace, `<other>:dep` resolves in the named plugin namespace |
+| R33 | Pinned skills — skills listed in the `IncomingMessage.pinned_skills` field are resolved (including transitive dependencies) and injected unconditionally before LLM-based classification runs, ensuring the agent always has specific domain knowledge regardless of classifier accuracy for terse prompts. Plugin skills are pinned using their qualified form (`<alias>:<skill-name>`) |
 
 ## Behaviors
 
 ### Skill Organization (R0, R29)
 
-Skills are directory-based packages in `workspace/skills/`. Each skill contains:
+Skills are directory-based packages in `workspace/skills/` (built-in and workspace) or under `<workspace>/.tachikoma/plugins/<alias>/<skills-path>/` (plugin-installed). Each skill contains:
 - `SKILL.md`: Metadata file with description and version (YAML frontmatter); the skill name is derived from the folder name
 - `agents/`: Subdirectory containing agent definition files (optional if no agents)
 
@@ -83,7 +85,7 @@ The base system prompt preamble includes a static Skills section that gives the 
 
 The skill registry discovers all skills and agents at startup from multiple sources, building an indexed dictionary. The registry is created by the skills bootstrap hook and exposed via `ctx.extras["skill_registry"]`. The SkillsContextProvider receives it via constructor injection. When marked dirty by the filesystem watcher, it re-scans all sources on the next refresh, using swap-on-success to preserve the previous state on failure.
 
-**Sources**: Built-in skills (shipped with the package in `src/tachikoma/skills/builtin/`) are scanned first, followed by workspace skills. Workspace skills completely replace built-in skills with the same name (last-wins precedence).
+**Sources**: Built-in skills (shipped with the package in `src/tachikoma/skills/builtin/`) are scanned first, followed by workspace skills. Workspace skills completely replace built-in skills with the same name (last-wins precedence). Plugin skills (from `workspace/.tachikoma/plugins/<alias>/`) are registered as namespaced sources via `add_namespaced_source(alias, path)`, keyed by qualified name (`<alias>:<skill-name>`) — they do not collide with default-namespace skills.
 
 **Acceptance Criteria**:
 - Given the registry initializes, when it scans both built-in and workspace directories, then all valid skills are discovered
@@ -119,12 +121,12 @@ Agent definitions can specify which tools the agent is allowed to use.
 
 ### Bootstrap (R7)
 
-A bootstrap hook creates the skills directory if missing and creates the shared SkillRegistry with both built-in and workspace sources, stored in extras for use by the provider and watcher.
+A bootstrap hook creates the skills directory if missing and creates the shared SkillRegistry with built-in, workspace, and plugin sources, stored in extras for use by the provider and watcher.
 
 **Acceptance Criteria**:
 - Given the bootstrap runs, when the skills hook executes, then the skills/ directory is created if it doesn't exist
 - Given the skills directory already exists, when the hook runs again, then no action is taken (idempotent)
-- Given the hook runs, when it completes, then `ctx.extras["skill_registry"]` contains a fully initialized SkillRegistry shared between provider and watcher
+- Given the hook runs, when it completes, then `ctx.extras["skill_registry"]` contains a fully initialized SkillRegistry shared between provider and watcher, including any plugin skill paths from `ctx.extras["plugin_skill_paths"]` registered as namespaced sources
 - Given the built-in directory exists, when the hook runs, then it's included in the registry's sources
 - Given the built-in directory doesn't exist, when the hook runs, then a warning is logged and the registry only contains workspace skills
 - Given the built-in directory exists, when the hook runs, then `workflow-authoring-guide` is loaded as a built-in skill (R31)
@@ -168,7 +170,12 @@ On each message, the skills context provider classifies which skills are relevan
 
 ### Dependency Resolution (R32)
 
-Skills declare direct dependencies on other skills via a `depends_on` list in SKILL.md frontmatter. The registry exposes a resolver that returns the transitive dependency chain for a named skill in deps-first order with the anchor skill last, each skill appearing exactly once. Cycles (including self-reference) are broken via a visited-set; unknown dependency names are silently skipped during resolution (they are warned about at load time — see Skill Registry). Resolved chains are memoized on the registry and invalidated on every load path (`__init__`, `refresh()`, `add_source()`). Workspace skills that replace a built-in skill use the workspace version's `depends_on` — a natural consequence of the registry's last-wins precedence (R17).
+Skills declare direct dependencies on other skills via a `depends_on` list in SKILL.md frontmatter. The registry exposes a resolver that returns the transitive dependency chain for a named skill in deps-first order with the anchor skill last, each skill appearing exactly once. Cycles (including self-reference) are broken via a visited-set; unknown dependency names are silently skipped during resolution (they are warned about at load time — see Skill Registry). Resolved chains are memoized on the registry and invalidated on every load path (`__init__`, `refresh()`, `add_source()`, `add_namespaced_source()`). Workspace skills that replace a built-in skill use the workspace version's `depends_on` — a natural consequence of the registry's last-wins precedence (R17).
+
+For plugin skills, dependency resolution uses explicit-prefix rules:
+- bare `dep` → resolved in default namespace only (built-in + workspace). Plugin skills cannot reference sibling plugin skills via bare names.
+- `:dep` (leading colon) → resolved in the skill's own plugin namespace (sibling within the same plugin)
+- `<other>:dep` → resolved in the named plugin namespace (cross-plugin dependency)
 
 **Acceptance Criteria**:
 - Given a skill declares `depends_on: [skill-a, skill-b]` in its SKILL.md, when the registry loads the skill, then its record stores both names in declared order
