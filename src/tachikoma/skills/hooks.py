@@ -2,7 +2,8 @@
 
 Creates the skills/ directory on first run (idempotent) and creates the
 SkillRegistry with both built-in and workspace skill sources, shared
-between the provider and watcher.
+between the provider and watcher. Also consumes plugin skill paths from
+the plugins hook and registers the plugin-event listener.
 """
 
 from pathlib import Path
@@ -25,6 +26,10 @@ async def skills_hook(ctx: BootstrapContext) -> None:
 
     Built-in skills are scanned first, workspace skills second — workspace
     skills completely replace built-in skills with the same name (last-wins).
+
+    Plugin skill paths from ``ctx.extras["plugin_skill_paths"]`` are added as
+    namespaced sources. The plugin-event listener is registered if the bus
+    and session registry are available.
 
     Args:
         ctx: Bootstrap context with settings manager and extras bag.
@@ -52,6 +57,26 @@ async def skills_hook(ctx: BootstrapContext) -> None:
     # Create shared registry and expose via extras
     registry = SkillRegistry(skill_sources)
     ctx.extras["skill_registry"] = registry
+
+    # Add plugin namespaced sources (from plugins_hook).
+    plugin_skill_paths: list[tuple[str, Path]] = ctx.extras.get("plugin_skill_paths", [])
+    for alias, path in plugin_skill_paths:
+        registry.add_namespaced_source(alias, path)
+
+    # Register plugin-event listener (requires bus + session_registry).
+    bus = ctx.extras.get("event_bus")
+    session_registry = ctx.extras.get("session_registry")
+    if bus is not None and session_registry is not None:
+        from tachikoma.skills.listeners import register_plugin_event_listeners  # noqa: PLC0415
+
+        register_plugin_event_listeners(bus, registry, session_registry)
+        _log.debug("Plugin event listeners registered")
+    else:
+        _log.debug(
+            "Plugin event listeners skipped: bus={bus}, session_registry={sr}",
+            bus=bus is not None,
+            sr=session_registry is not None,
+        )
 
     _log.debug(
         "Skills registry initialized: sources={count}, skills={skills}",

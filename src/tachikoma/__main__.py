@@ -53,6 +53,8 @@ from tachikoma.memory import (
 from tachikoma.message_post_processing import MessagePostProcessingPipeline
 from tachikoma.notifications import dispatch_notification
 from tachikoma.per_message_pre_processing import MessagePreProcessingPipeline
+from tachikoma.plugins.hooks import plugins_hook
+from tachikoma.plugins.tools import create_plugin_tools_server
 from tachikoma.post_processing import (
     FINALIZE_PHASE,
     PRE_FINALIZE_PHASE,
@@ -193,9 +195,12 @@ async def run(
     restart_notification = read_restart_notification()
 
     bootstrap = Bootstrap(settings_manager)
+    bus = EventBus()
+    bootstrap.extras["event_bus"] = bus
     bootstrap.register("workspace", workspace_hook)
     bootstrap.register("logging", logging_hook)
     bootstrap.register("git", git_hook)
+    bootstrap.register("plugins", plugins_hook)
     bootstrap.register("database", database_hook)
     bootstrap.register("updates", updates_hook)
     bootstrap.register("projects", projects_hook)
@@ -272,7 +277,6 @@ async def run(
     process_repository: ProcessRepository = bootstrap.extras["process_repository"]
     detached_log_dir: Path = bootstrap.extras["detached_process_log_dir"]
     app_state_repo = bootstrap.extras["app_state_repository"]
-    bus = EventBus()
 
     # Dispatch rollback notification if a previous update was rolled back
     if rollback_notification is not None:
@@ -372,6 +376,7 @@ async def run(
     )
     git_tools = create_git_tools_server(settings.workspace.path, agent_defaults)
     update_tools = create_update_tools_server(bus)
+    plugin_tools = create_plugin_tools_server(bootstrap.extras["plugin_manager"])
 
     # Shared deny hook: blocks destructive bash git commands on every
     # non-git-processor agent surface (main coordinator and task executor).
@@ -409,6 +414,7 @@ async def run(
         "detached-process-tools": detached_process_tools,
         "git-tools": git_tools,
         "update-tools": update_tools,
+        "plugin-tools": plugin_tools,
         **channel_mcp,
     }
 
