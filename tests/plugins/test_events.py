@@ -6,7 +6,6 @@ EventBus with correct payloads.
 
 from pathlib import Path
 
-import pytest
 from bubus import EventBus
 
 from tachikoma.plugins.events import PluginInstalled, PluginRemoved, PluginRemoving

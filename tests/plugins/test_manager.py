@@ -13,16 +13,17 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from bubus import EventBus
 
+from tachikoma.plugins.events import PluginRemoved, PluginRemoving
 from tachikoma.plugins.loader import LoadedPlugin
 from tachikoma.plugins.manager import (
     PluginAliasCollisionError,
     PluginInstallError,
-    PluginNotFoundError,
     PluginManager,
+    PluginNotFoundError,
 )
 from tachikoma.plugins.manifest import PluginManifest
-from tachikoma.plugins.sources import GitPluginSource, LocalPluginSource
-
+from tachikoma.plugins.materializer import MaterializeError
+from tachikoma.plugins.sources import LocalPluginSource
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -193,17 +194,14 @@ class TestInstall:
 
     async def test_install_failure_cleans_temp(self, tmp_path: Path) -> None:
         """AC-MCP-INST-6: failure → temp cleanup, config not mutated."""
-        from tachikoma.plugins.materializer import MaterializeError
-
         mgr = _make_manager(workspace=tmp_path)
 
         with patch(
             "tachikoma.plugins.manager.materialize_local",
             new_callable=AsyncMock,
             side_effect=MaterializeError("test", "/plugin", FileNotFoundError("boom")),
-        ):
-            with pytest.raises(PluginInstallError):
-                await mgr.install(LocalPluginSource(path=Path("/plugin")))
+        ), pytest.raises(PluginInstallError):
+            await mgr.install(LocalPluginSource(path=Path("/plugin")))
 
         mgr._settings_manager.update_plugin_entry.assert_not_called()
 
@@ -219,7 +217,11 @@ class TestInstall:
             call_order.append("end")
 
         with (
-            patch("tachikoma.plugins.manager.materialize_local", new_callable=AsyncMock, side_effect=slow_materialize),
+            patch(
+                "tachikoma.plugins.manager.materialize_local",
+                new_callable=AsyncMock,
+                side_effect=slow_materialize,
+            ),
             patch("tachikoma.plugins.manager.parse_manifest") as mock_parse,
             patch("tachikoma.plugins.manager._atomic_replace_dir"),
         ):
@@ -232,7 +234,7 @@ class TestInstall:
             )
 
             # Run two installs concurrently.
-            results = await asyncio.gather(
+            await asyncio.gather(
                 mgr.install(LocalPluginSource(path=Path("/a")), alias="alpha"),
                 mgr.install(LocalPluginSource(path=Path("/b")), alias="beta"),
                 return_exceptions=True,
@@ -264,8 +266,6 @@ class TestRemove:
         bus = EventBus()
         removing_events: list = []
         removed_events: list = []
-
-        from tachikoma.plugins.events import PluginRemoving, PluginRemoved
 
         async def on_removing(event: PluginRemoving) -> None:
             removing_events.append(event)

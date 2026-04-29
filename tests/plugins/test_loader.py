@@ -10,12 +10,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pytest
-
-from tachikoma.plugins.loader import LoadedPlugin, discover
-from tachikoma.plugins.manifest import PluginManifest
+from tachikoma.plugins.loader import discover
 from tachikoma.plugins.reconciler import ReconcileOutcome, ReconciliationReport
-from tachikoma.plugins.sources import GitPluginSource, LocalPluginSource
+from tachikoma.plugins.sources import LocalPluginSource
 
 
 def _write_native_manifest(
@@ -69,7 +66,11 @@ class TestDiscover:
         report = ReconciliationReport(
             outcomes=[
                 ReconcileOutcome(alias="alpha", status="loaded", diagnostic=None),
-                ReconcileOutcome(alias="beta", status="stale-fallback", diagnostic="Source unreachable"),
+                ReconcileOutcome(
+                    alias="beta",
+                    status="stale-fallback",
+                    diagnostic="Source unreachable",
+                ),
                 ReconcileOutcome(alias="gamma", status="failed", diagnostic="No source"),
             ]
         )

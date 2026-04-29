@@ -24,6 +24,7 @@ from tachikoma.config import (
     _generate_default_config,
     load_settings,
 )
+from tachikoma.plugins.sources import GitPluginSource, LocalPluginSource, UrlPluginSource
 
 
 class TestSettingsModel:
@@ -1115,7 +1116,6 @@ class TestPluginsSettings:
 
         assert "code-review" in settings.plugins
         plugin = settings.plugins["code-review"]
-        from tachikoma.plugins.sources import GitPluginSource
 
         assert isinstance(plugin, GitPluginSource)
         assert plugin.git == "https://github.com/owner/repo.git"
@@ -1133,7 +1133,6 @@ class TestPluginsSettings:
         settings = load_settings(config_path)
 
         assert "dev-plugin" in settings.plugins
-        from tachikoma.plugins.sources import LocalPluginSource
 
         assert isinstance(settings.plugins["dev-plugin"], LocalPluginSource)
         assert settings.plugins["dev-plugin"].path == Path("/home/user/dev/my-plugin")
@@ -1149,7 +1148,6 @@ class TestPluginsSettings:
         settings = load_settings(config_path)
 
         assert "foo" in settings.plugins
-        from tachikoma.plugins.sources import UrlPluginSource
 
         plugin = settings.plugins["foo"]
         assert isinstance(plugin, UrlPluginSource)
@@ -1227,7 +1225,6 @@ class TestPluginsSettings:
         settings = load_settings(config_path)
 
         plugin = settings.plugins["code-review"]
-        from tachikoma.plugins.sources import GitPluginSource
 
         assert isinstance(plugin, GitPluginSource)
         assert plugin.git == "https://github.com/owner/repo.git"

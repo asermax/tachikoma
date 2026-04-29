@@ -15,16 +15,14 @@ Covers AC-REC-1 through AC-REC-10, AC-REC-11 through REC-14 (URL flows):
 
 from __future__ import annotations
 
-import shutil
+import io
+import tarfile
 from pathlib import Path
-from unittest.mock import AsyncMock, patch
+from unittest.mock import patch
 
 import pytest
 
-from tachikoma.plugins.materializer import MaterializeError
 from tachikoma.plugins.reconciler import (
-    ReconcileOutcome,
-    ReconciliationReport,
     reconcile,
 )
 from tachikoma.plugins.sources import GitPluginSource, LocalPluginSource, UrlPluginSource
@@ -101,7 +99,7 @@ class TestReconcileBasic:
         install_dir.mkdir(parents=True)
         (install_dir / ".staging").mkdir()
 
-        report = await reconcile(workspace, {})
+        await reconcile(workspace, {})
         assert (install_dir / ".staging").exists()
 
     @pytest.mark.asyncio
@@ -193,7 +191,10 @@ class TestReconcileBasic:
         outcome = report.outcomes[0]
         assert outcome.status == "stale-fallback"
         assert outcome.diagnostic is not None
-        assert "network error" in outcome.diagnostic.lower() or "stale" in outcome.diagnostic.lower()
+        assert (
+            "network error" in outcome.diagnostic.lower()
+            or "stale" in outcome.diagnostic.lower()
+        )
 
     @pytest.mark.asyncio
     async def test_ac_rec6_failed_no_valid_copy(self, tmp_path: Path) -> None:
@@ -296,9 +297,6 @@ class TestReconcileUrlFlows:
     @pytest.mark.asyncio
     async def test_ac_rec11_url_source_loaded(self, tmp_path: Path) -> None:
         """AC-REC-11: URL source is downloaded, extracted, and installed."""
-        import io
-        import tarfile
-
         workspace = tmp_path / "workspace"
 
         # Build a small tar.gz archive.

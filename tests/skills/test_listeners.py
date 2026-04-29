@@ -9,20 +9,18 @@ from __future__ import annotations
 
 import asyncio
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
-import pytest
 from bubus import EventBus
 
 from tachikoma.plugins.events import PluginInstalled, PluginRemoved, PluginRemoving
 from tachikoma.plugins.loader import LoadedPlugin
 from tachikoma.plugins.manifest import PluginManifest
 from tachikoma.plugins.sources import LocalPluginSource
+from tachikoma.sessions.model import SessionContextEntry
 from tachikoma.skills.events import SkillsChanged
 from tachikoma.skills.listeners import register_plugin_event_listeners
 from tachikoma.skills.registry import SkillRegistry
-from tachikoma.sessions.model import Session, SessionContextEntry
-
 
 # ---------------------------------------------------------------------------
 # Helpers

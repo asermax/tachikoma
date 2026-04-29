@@ -10,12 +10,10 @@ Covers:
 from __future__ import annotations
 
 import io
-import os
-import shutil
 import tarfile
 import zipfile
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 
@@ -163,9 +161,14 @@ class TestMaterializeLocal:
         staging = tmp_path / "staging"
         source = LocalPluginSource(path=source_dir)
 
-        with patch("tachikoma.plugins.materializer.shutil.copytree", side_effect=PermissionError("denied")):
-            with pytest.raises(MaterializeError) as exc_info:
-                await materialize_local(source, staging, alias="test-plugin")
+        with (
+            patch(
+                "tachikoma.plugins.materializer.shutil.copytree",
+                side_effect=PermissionError("denied"),
+            ),
+            pytest.raises(MaterializeError) as exc_info,
+        ):
+            await materialize_local(source, staging, alias="test-plugin")
 
         assert exc_info.value.alias == "test-plugin"
 
@@ -244,11 +247,10 @@ class TestMaterializeGit:
         with patch(
             "tachikoma.plugins.materializer.run_git",
             side_effect=RuntimeError("git clone failed: not found"),
-        ):
-            with pytest.raises(MaterializeError) as exc_info:
-                await materialize_git(source, staging, alias="fail-plugin")
+        ), pytest.raises(MaterializeError) as exc_info:
+            await materialize_git(source, staging, alias="fail-plugin")
 
-        assert "fail-plugin" == exc_info.value.alias
+        assert exc_info.value.alias == "fail-plugin"
 
 
 # ===========================================================================
@@ -366,9 +368,8 @@ class TestMaterializeUrl:
         with patch(
             "tachikoma.plugins.materializer.urlopen",
             side_effect=Exception("404 Not Found"),
-        ):
-            with pytest.raises(MaterializeError) as exc_info:
-                await materialize_url(source, staging, alias="dl-fail")
+        ), pytest.raises(MaterializeError) as exc_info:
+            await materialize_url(source, staging, alias="dl-fail")
 
         assert exc_info.value.alias == "dl-fail"
 
@@ -387,6 +388,5 @@ class TestMaterializeUrl:
         with patch(
             "tachikoma.plugins.materializer.urlopen",
             side_effect=lambda url: _fake_url_open(url, archive_file),
-        ):
-            with pytest.raises(MaterializeError):
-                await materialize_url(source, staging, alias="traversal")
+        ), pytest.raises(MaterializeError):
+            await materialize_url(source, staging, alias="traversal")

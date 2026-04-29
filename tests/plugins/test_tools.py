@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from pydantic import ValidationError
@@ -16,11 +16,11 @@ from tachikoma.plugins.loader import LoadedPlugin
 from tachikoma.plugins.manager import (
     PluginAliasCollisionError,
     PluginInstallError,
-    PluginNotFoundError,
     PluginManager,
+    PluginNotFoundError,
 )
 from tachikoma.plugins.manifest import PluginManifest
-from tachikoma.plugins.sources import LocalPluginSource, GitPluginSource
+from tachikoma.plugins.sources import GitPluginSource, LocalPluginSource
 from tachikoma.plugins.tools import (
     InstallPluginArgs,
     RemovePluginArgs,
@@ -29,7 +29,6 @@ from tachikoma.plugins.tools import (
     handle_list_plugins,
     handle_remove_plugin,
 )
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -94,7 +93,12 @@ class TestInstallPluginArgs:
         assert args.path == "/some/local/dir"
 
     def test_with_optional_fields(self) -> None:
-        args = InstallPluginArgs(git="https://github.com/foo/bar", subdir="sub", ref="v1", alias="my")
+        args = InstallPluginArgs(
+            git="https://github.com/foo/bar",
+            subdir="sub",
+            ref="v1",
+            alias="my",
+        )
         assert args.subdir == "sub"
         assert args.ref == "v1"
         assert args.alias == "my"
