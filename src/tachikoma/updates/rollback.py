@@ -1,9 +1,11 @@
 """Rollback marker lifecycle and version rollback execution.
 
-Marker files in /tmp bridge state across os.execv restart boundaries.
-The pending marker is written before restart and read on next startup.
-If the new version fails during bootstrap, the rollback notification marker
-carries failure details to the recovered process.
+Marker files in /tmp bridge state across os.execv restart boundaries (DES-011).
+The pending marker is written before restart and read on next startup. If the
+new version fails during bootstrap, the rollback notification marker carries
+failure details to the recovered process. The restart notification marker
+carries reason + version context across a `restart`-triggered execv so the
+next run can announce that the agent is back online.
 """
 
 from __future__ import annotations
@@ -15,6 +17,7 @@ import tempfile
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Literal
 
 from loguru import logger
 
@@ -24,6 +27,7 @@ _log = logger.bind(component="updates")
 
 MARKER_PATH = Path(tempfile.gettempdir()) / "tachikoma-update-pending.json"
 NOTIFICATION_PATH = Path(tempfile.gettempdir()) / "tachikoma-update-rollback.json"
+RESTART_NOTIFICATION_PATH = Path(tempfile.gettempdir()) / "tachikoma-restart-notification.json"
 
 
 @dataclass(frozen=True)
@@ -117,6 +121,65 @@ def clear_rollback_notification() -> None:
     """Remove the rollback notification file. Idempotent."""
     with contextlib.suppress(FileNotFoundError):
         NOTIFICATION_PATH.unlink()
+
+
+@dataclass(frozen=True)
+class RestartNotification:
+    reason: Literal["update", "manual"]
+    rollback_marker_present: bool
+    previous_version: str | None
+    new_version: str | None
+    timestamp: str
+
+
+def write_restart_notification(
+    reason: Literal["update", "manual"],
+    rollback_marker_present: bool,
+    previous_version: str | None,
+    new_version: str | None,
+) -> None:
+    """Write the restart notification marker before os.execv restart."""
+    data = {
+        "reason": reason,
+        "rollback_marker_present": rollback_marker_present,
+        "previous_version": previous_version,
+        "new_version": new_version,
+        "timestamp": datetime.now(UTC).isoformat(),
+    }
+    RESTART_NOTIFICATION_PATH.write_text(json.dumps(data))
+
+
+def read_restart_notification() -> RestartNotification | None:
+    """Read the restart notification marker. Returns None if absent or malformed."""
+    try:
+        data = json.loads(RESTART_NOTIFICATION_PATH.read_text())
+    except FileNotFoundError:
+        return None
+    except (json.JSONDecodeError, TypeError) as exc:
+        _log.warning("Malformed restart notification, ignoring: {err}", err=exc)
+        return None
+
+    try:
+        reason = data["reason"]
+        if reason not in ("update", "manual"):
+            _log.warning("Invalid restart notification reason: {reason}", reason=reason)
+            return None
+        return RestartNotification(
+            reason=reason,
+            rollback_marker_present=data["rollback_marker_present"],
+            previous_version=data["previous_version"],
+            new_version=data["new_version"],
+            timestamp=data["timestamp"],
+        )
+    except KeyError as exc:
+        _log.warning("Malformed restart notification, ignoring: {err}", err=exc)
+        return None
+
+
+def clear_restart_notification() -> None:
+    """Remove the restart notification file. Idempotent."""
+    with contextlib.suppress(FileNotFoundError):
+        RESTART_NOTIFICATION_PATH.unlink()
 
 
 def run_rollback(version: str) -> bool:

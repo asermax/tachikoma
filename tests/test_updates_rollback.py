@@ -6,11 +6,14 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 from tachikoma.updates.rollback import (
+    clear_restart_notification,
     clear_rollback_marker,
     clear_rollback_notification,
+    read_restart_notification,
     read_rollback_marker,
     read_rollback_notification,
     run_rollback,
+    write_restart_notification,
     write_rollback_marker,
     write_rollback_notification,
 )
@@ -113,6 +116,102 @@ class TestRollbackNotification:
         monkeypatch.setattr("tachikoma.updates.rollback.NOTIFICATION_PATH", notif_file)
 
         clear_rollback_notification()  # no file — should not raise
+        assert not notif_file.exists()
+
+
+# ---------------------------------------------------------------------------
+# Restart notification: write / read / clear
+# ---------------------------------------------------------------------------
+
+
+class TestRestartNotification:
+    def test_write_and_read_roundtrip_update(self, tmp_path: Path, monkeypatch) -> None:
+        notif_file = tmp_path / "restart-notification.json"
+        monkeypatch.setattr("tachikoma.updates.rollback.RESTART_NOTIFICATION_PATH", notif_file)
+
+        write_restart_notification(
+            reason="update",
+            rollback_marker_present=True,
+            previous_version="1.55.0",
+            new_version="1.56.0",
+        )
+        result = read_restart_notification()
+
+        assert result is not None
+        assert result.reason == "update"
+        assert result.rollback_marker_present is True
+        assert result.previous_version == "1.55.0"
+        assert result.new_version == "1.56.0"
+        assert result.timestamp  # non-empty
+
+    def test_write_and_read_roundtrip_manual(self, tmp_path: Path, monkeypatch) -> None:
+        notif_file = tmp_path / "restart-notification.json"
+        monkeypatch.setattr("tachikoma.updates.rollback.RESTART_NOTIFICATION_PATH", notif_file)
+
+        write_restart_notification(
+            reason="manual",
+            rollback_marker_present=False,
+            previous_version=None,
+            new_version=None,
+        )
+        result = read_restart_notification()
+
+        assert result is not None
+        assert result.reason == "manual"
+        assert result.rollback_marker_present is False
+        assert result.previous_version is None
+        assert result.new_version is None
+
+    def test_read_returns_none_when_absent(self, tmp_path: Path, monkeypatch) -> None:
+        notif_file = tmp_path / "restart-notification.json"
+        monkeypatch.setattr("tachikoma.updates.rollback.RESTART_NOTIFICATION_PATH", notif_file)
+
+        assert read_restart_notification() is None
+
+    def test_read_returns_none_on_malformed_json(self, tmp_path: Path, monkeypatch) -> None:
+        notif_file = tmp_path / "restart-notification.json"
+        notif_file.write_text("not json")
+        monkeypatch.setattr("tachikoma.updates.rollback.RESTART_NOTIFICATION_PATH", notif_file)
+
+        assert read_restart_notification() is None
+
+    def test_read_returns_none_on_missing_fields(self, tmp_path: Path, monkeypatch) -> None:
+        notif_file = tmp_path / "restart-notification.json"
+        notif_file.write_text(json.dumps({"reason": "manual"}))
+        monkeypatch.setattr("tachikoma.updates.rollback.RESTART_NOTIFICATION_PATH", notif_file)
+
+        assert read_restart_notification() is None
+
+    def test_read_returns_none_on_invalid_reason(self, tmp_path: Path, monkeypatch) -> None:
+        notif_file = tmp_path / "restart-notification.json"
+        notif_file.write_text(
+            json.dumps(
+                {
+                    "reason": "bogus",
+                    "rollback_marker_present": False,
+                    "previous_version": None,
+                    "new_version": None,
+                    "timestamp": "2026-04-29T00:00:00+00:00",
+                }
+            )
+        )
+        monkeypatch.setattr("tachikoma.updates.rollback.RESTART_NOTIFICATION_PATH", notif_file)
+
+        assert read_restart_notification() is None
+
+    def test_clear_removes_file(self, tmp_path: Path, monkeypatch) -> None:
+        notif_file = tmp_path / "restart-notification.json"
+        notif_file.write_text("{}")
+        monkeypatch.setattr("tachikoma.updates.rollback.RESTART_NOTIFICATION_PATH", notif_file)
+
+        clear_restart_notification()
+        assert not notif_file.exists()
+
+    def test_clear_idempotent(self, tmp_path: Path, monkeypatch) -> None:
+        notif_file = tmp_path / "restart-notification.json"
+        monkeypatch.setattr("tachikoma.updates.rollback.RESTART_NOTIFICATION_PATH", notif_file)
+
+        clear_restart_notification()  # no file — should not raise
         assert not notif_file.exists()
 
 
