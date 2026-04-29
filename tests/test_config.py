@@ -1087,3 +1087,147 @@ class TestBufferSettings:
         assert "[buffer.normal]" in content
         assert "[buffer.low]" in content
         assert "idle_window_seconds" in content
+
+
+class TestPluginsSettings:
+    """Tests for Settings.plugins field (DLT-048, Batch 1).
+
+    Covers AC-PSD-1, AC-PSD-2, AC-PSD-6, AC-PSD-9, AC-PSD-14.
+    """
+
+    def test_default_plugins_is_empty_dict(self) -> None:
+        """Plugins defaults to an empty dict."""
+        settings = Settings()
+
+        assert settings.plugins == {}
+
+    def test_git_plugin_from_config(self, tmp_path: Path) -> None:
+        """AC-PSD-1: A [plugins.code-review] git source is parsed correctly."""
+        config_path = tmp_path / "config.toml"
+        config_path.write_text(
+            '[plugins.code-review]\n'
+            'git = "https://github.com/owner/repo.git"\n'
+            'subdir = "plugin"\n'
+            'ref = "v1.0.0"\n'
+        )
+
+        settings = load_settings(config_path)
+
+        assert "code-review" in settings.plugins
+        plugin = settings.plugins["code-review"]
+        from tachikoma.plugins.sources import GitPluginSource
+
+        assert isinstance(plugin, GitPluginSource)
+        assert plugin.git == "https://github.com/owner/repo.git"
+        assert plugin.subdir == "plugin"
+        assert plugin.ref == "v1.0.0"
+
+    def test_local_plugin_from_config(self, tmp_path: Path) -> None:
+        """AC-PSD-2: A [plugins.dev-plugin] local source is parsed correctly."""
+        config_path = tmp_path / "config.toml"
+        config_path.write_text(
+            '[plugins.dev-plugin]\n'
+            'path = "/home/user/dev/my-plugin"\n'
+        )
+
+        settings = load_settings(config_path)
+
+        assert "dev-plugin" in settings.plugins
+        from tachikoma.plugins.sources import LocalPluginSource
+
+        assert isinstance(settings.plugins["dev-plugin"], LocalPluginSource)
+        assert settings.plugins["dev-plugin"].path == Path("/home/user/dev/my-plugin")
+
+    def test_url_plugin_from_config_no_subdir(self, tmp_path: Path) -> None:
+        """AC-PSD-14: A URL source with no subdir parses correctly."""
+        config_path = tmp_path / "config.toml"
+        config_path.write_text(
+            '[plugins.foo]\n'
+            'url = "https://example.com/plugin.tar.gz"\n'
+        )
+
+        settings = load_settings(config_path)
+
+        assert "foo" in settings.plugins
+        from tachikoma.plugins.sources import UrlPluginSource
+
+        plugin = settings.plugins["foo"]
+        assert isinstance(plugin, UrlPluginSource)
+        assert plugin.url == "https://example.com/plugin.tar.gz"
+        assert plugin.subdir is None
+
+    def test_invalid_alias_rejected(self, tmp_path: Path) -> None:
+        """AC-PSD-6: An alias with reserved characters is rejected."""
+        config_path = tmp_path / "config.toml"
+        config_path.write_text(
+            '[plugins."code:review"]\n'
+            'path = "/home/user/plugin"\n'
+        )
+
+        with pytest.raises(SystemExit):
+            load_settings(config_path)
+
+    def test_uppercase_alias_rejected(self, tmp_path: Path) -> None:
+        """AC-PSD-6: An uppercase alias is rejected."""
+        config_path = tmp_path / "config.toml"
+        config_path.write_text(
+            '[plugins.CodeReview]\n'
+            'path = "/home/user/plugin"\n'
+        )
+
+        with pytest.raises(SystemExit):
+            load_settings(config_path)
+
+    def test_duplicate_alias_rejected_by_toml(self, tmp_path: Path) -> None:
+        """AC-PSD-9: TOML duplicate keys are rejected by stdlib parser."""
+        toml_text = (
+            '[plugins.my-plugin]\n'
+            'path = "/a"\n'
+            '[plugins.my-plugin]\n'
+            'path = "/b"\n'
+        )
+        with pytest.raises(tomllib.TOMLDecodeError):
+            tomllib.loads(toml_text)
+
+    def test_multiple_plugins_from_config(self, tmp_path: Path) -> None:
+        """Multiple plugin entries are all parsed."""
+        config_path = tmp_path / "config.toml"
+        config_path.write_text(
+            '[plugins.alpha]\n'
+            'git = "https://github.com/owner/alpha.git"\n'
+            'ref = "v1.0.0"\n\n'
+            '[plugins.beta]\n'
+            'path = "/home/user/beta"\n'
+        )
+
+        settings = load_settings(config_path)
+
+        assert len(settings.plugins) == 2
+        assert "alpha" in settings.plugins
+        assert "beta" in settings.plugins
+
+    def test_plugins_default_when_section_absent(self, tmp_path: Path) -> None:
+        """Plugins is empty dict when no [plugins] section exists."""
+        config_path = tmp_path / "config.toml"
+        config_path.write_text('[workspace]\npath = "~/tachikoma"\n')
+
+        settings = load_settings(config_path)
+
+        assert settings.plugins == {}
+
+    def test_gh_shorthand_expanded_in_config(self, tmp_path: Path) -> None:
+        """AC-PSD-10: gh: shorthand is expanded during config load."""
+        config_path = tmp_path / "config.toml"
+        config_path.write_text(
+            '[plugins.code-review]\n'
+            'git = "gh:owner/repo"\n'
+            'ref = "v1.0.0"\n'
+        )
+
+        settings = load_settings(config_path)
+
+        plugin = settings.plugins["code-review"]
+        from tachikoma.plugins.sources import GitPluginSource
+
+        assert isinstance(plugin, GitPluginSource)
+        assert plugin.git == "https://github.com/owner/repo.git"

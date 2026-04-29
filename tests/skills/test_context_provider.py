@@ -1100,3 +1100,127 @@ class TestConversationContextInjectionRemaining:
         assert "## Conversation Context" in prompt
         assert "We discussed restaurants" in prompt
         assert "Last assistant response" not in prompt
+
+
+class TestQualifiedNameMetadata:
+    """Tests for qualified-name metadata in context provider (DLT-048 Steps 4.4, 4.6)."""
+
+    def _make_provider(self, tmp_path: Path) -> SkillsContextProvider:
+        defaults = AgentDefaults(cwd=tmp_path)
+        registry = SkillRegistry([tmp_path / "skills"])
+        return SkillsContextProvider(defaults, registry)
+
+    def _seed_skill(self, tmp_path: Path, name: str, description: str = "Test") -> None:
+        skill_dir = tmp_path / "skills" / name
+        skill_dir.mkdir(parents=True, exist_ok=True)
+        (skill_dir / "SKILL.md").write_text(
+            f"---\ndescription: {description}\n---\n\nBody for {name}"
+        )
+
+    async def test_default_ns_metadata_uses_bare_name(
+        self, mocker: MockerFixture, tmp_path: Path
+    ) -> None:
+        """AC-SSR-7: Default-namespace skill metadata uses bare name."""
+        mock_query = mocker.patch("tachikoma.skills.context_provider.stderr_aware_query")
+        self._seed_skill(tmp_path, "my-skill", "My skill")
+        mock_query.return_value = _make_query_result("my-skill")
+
+        provider = self._make_provider(tmp_path)
+        result = await provider.provide(IncomingMessage(text="hello"))
+
+        assert result is not None
+        assert len(result) == 1
+        assert result[0].metadata["skill_name"] == "my-skill"
+
+    async def test_plugin_skill_metadata_uses_qualified_name(
+        self, mocker: MockerFixture, tmp_path: Path
+    ) -> None:
+        """AC-SSR-7: Plugin skill metadata uses 'alias:name' qualified name."""
+        mock_query = mocker.patch("tachikoma.skills.context_provider.stderr_aware_query")
+
+        # Create default skills dir (empty)
+        default_dir = tmp_path / "skills"
+        default_dir.mkdir(parents=True, exist_ok=True)
+
+        # Create plugin skill
+        plugin_dir = tmp_path / "plugins" / "review" / "skills"
+        plugin_dir.mkdir(parents=True)
+        skill_dir = plugin_dir / "linter"
+        skill_dir.mkdir()
+        (skill_dir / "SKILL.md").write_text(
+            "---\ndescription: Plugin linter\n---\n\nPlugin linter body"
+        )
+
+        defaults = AgentDefaults(cwd=tmp_path)
+        registry = SkillRegistry([default_dir])
+        registry.add_namespaced_source("review", plugin_dir)
+        provider = SkillsContextProvider(defaults, registry)
+
+        mock_query.return_value = _make_query_result("review:linter")
+
+        result = await provider.provide(IncomingMessage(text="hello"))
+
+        assert result is not None
+        assert len(result) == 1
+        assert result[0].metadata["skill_name"] == "review:linter"
+
+    async def test_plugin_skill_xml_block_uses_qualified_name(
+        self, mocker: MockerFixture, tmp_path: Path
+    ) -> None:
+        """AC-SSR-6: Plugin skill XML block uses qualified name attribute."""
+        mock_query = mocker.patch("tachikoma.skills.context_provider.stderr_aware_query")
+
+        default_dir = tmp_path / "skills"
+        default_dir.mkdir(parents=True, exist_ok=True)
+
+        plugin_dir = tmp_path / "plugins" / "review" / "skills"
+        plugin_dir.mkdir(parents=True)
+        skill_dir = plugin_dir / "linter"
+        skill_dir.mkdir()
+        (skill_dir / "SKILL.md").write_text(
+            "---\ndescription: Plugin linter\n---\n\nPlugin linter body"
+        )
+
+        defaults = AgentDefaults(cwd=tmp_path)
+        registry = SkillRegistry([default_dir])
+        registry.add_namespaced_source("review", plugin_dir)
+        provider = SkillsContextProvider(defaults, registry)
+
+        mock_query.return_value = _make_query_result("review:linter")
+
+        result = await provider.provide(IncomingMessage(text="hello"))
+
+        assert result is not None
+        assert 'name="review:linter"' in result[0].content
+
+    async def test_candidate_list_shows_qualified_names_for_plugin_skills(
+        self, mocker: MockerFixture, tmp_path: Path
+    ) -> None:
+        """AC-SSR-6: Classifier candidate list shows qualified names for plugin skills."""
+        mock_query = mocker.patch("tachikoma.skills.context_provider.stderr_aware_query")
+
+        default_dir = tmp_path / "skills"
+        default_dir.mkdir(parents=True, exist_ok=True)
+        # Add a default-ns skill
+        default_skill = default_dir / "builtin-skill"
+        default_skill.mkdir()
+        (default_skill / "SKILL.md").write_text("---\ndescription: Built-in skill\n---\n\nBody")
+
+        plugin_dir = tmp_path / "plugins" / "review" / "skills"
+        plugin_dir.mkdir(parents=True)
+        skill_dir = plugin_dir / "linter"
+        skill_dir.mkdir()
+        (skill_dir / "SKILL.md").write_text("---\ndescription: Plugin linter\n---\n\nBody")
+
+        defaults = AgentDefaults(cwd=tmp_path)
+        registry = SkillRegistry([default_dir])
+        registry.add_namespaced_source("review", plugin_dir)
+        provider = SkillsContextProvider(defaults, registry)
+
+        mock_query.return_value = _make_query_result("NO_RELEVANT_SKILLS")
+
+        await provider.provide(IncomingMessage(text="hello"))
+
+        prompt = mock_query.call_args[1]["prompt"]
+        assert "- **builtin-skill**" in prompt
+        assert "- **review:linter**" in prompt

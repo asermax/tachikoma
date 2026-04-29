@@ -9,7 +9,7 @@ from pathlib import Path
 import pytest
 from loguru import logger
 
-from tachikoma.skills.registry import SkillRegistry
+from tachikoma.skills.registry import Skill, SkillRegistry
 
 
 def create_skill(
@@ -1697,3 +1697,396 @@ class TestLoopValidation:
         registry = SkillRegistry([skills_dir])
         assert registry.get_workflow("review", "weekly") is not None
         assert registry.get_workflow("review", "process-item") is not None
+
+
+class TestSkillNamespace:
+    """Tests for Skill.namespace and Skill.qualified_name (DLT-048 Step 4.1)."""
+
+    def test_default_namespace_qualified_name_equals_name(self) -> None:
+        """AC: Default-namespace skill has qualified_name == name."""
+        skill = Skill(
+            name="my-skill",
+            description="A skill",
+            body="body",
+            path=Path("/tmp/skills/my-skill"),
+        )
+        assert skill.namespace is None
+        assert skill.qualified_name == "my-skill"
+
+    def test_namespaced_qualified_name_includes_alias(self) -> None:
+        """AC: Namespaced skill has qualified_name == 'alias:name'."""
+        skill = Skill(
+            name="linter",
+            description="A linter",
+            body="body",
+            path=Path("/tmp/skills/linter"),
+            namespace="code-review",
+        )
+        assert skill.namespace == "code-review"
+        assert skill.qualified_name == "code-review:linter"
+
+
+class TestNamespacedRegistration:
+    """Tests for add_namespaced_source / remove_namespaced_source (DLT-048 Steps 4.2, 4.3)."""
+
+    def test_ac_ssr1_namespaced_registration(self, tmp_path: Path) -> None:
+        """AC-SSR-1: Plugin alias 'code-review' skill 'linter' → registered
+        as 'code-review:linter'."""
+        default_dir = tmp_path / "skills"
+        default_dir.mkdir()
+        plugin_dir = tmp_path / "plugins" / "code-review" / "skills"
+        plugin_dir.mkdir(parents=True)
+        create_skill(plugin_dir, "linter", "A linter skill")
+
+        registry = SkillRegistry([default_dir])
+        registry.add_namespaced_source("code-review", plugin_dir)
+
+        assert "code-review:linter" in registry.skills
+        assert registry.skills["code-review:linter"].namespace == "code-review"
+        assert registry.skills["code-review:linter"].name == "linter"
+
+    def test_ac_ssr2_two_plugins_same_skill_name(self, tmp_path: Path) -> None:
+        """AC-SSR-2: Two plugins (alpha, beta) each contribute 'deploy' →
+        both registered, no collision."""
+        default_dir = tmp_path / "skills"
+        default_dir.mkdir()
+
+        alpha_dir = tmp_path / "plugins" / "alpha" / "skills"
+        alpha_dir.mkdir(parents=True)
+        create_skill(alpha_dir, "deploy", "Alpha deploy")
+
+        beta_dir = tmp_path / "plugins" / "beta" / "skills"
+        beta_dir.mkdir(parents=True)
+        create_skill(beta_dir, "deploy", "Beta deploy")
+
+        registry = SkillRegistry([default_dir])
+        registry.add_namespaced_source("alpha", alpha_dir)
+        registry.add_namespaced_source("beta", beta_dir)
+
+        assert "alpha:deploy" in registry.skills
+        assert "beta:deploy" in registry.skills
+        assert registry.skills["alpha:deploy"].description == "Alpha deploy"
+        assert registry.skills["beta:deploy"].description == "Beta deploy"
+
+    def test_ac_ssr3_workspace_and_plugin_coexist(self, tmp_path: Path) -> None:
+        """AC-SSR-3: Workspace skill 'linter' and plugin skill 'code-review:linter' coexist."""
+        default_dir = tmp_path / "skills"
+        default_dir.mkdir()
+        create_skill(default_dir, "linter", "Workspace linter")
+
+        plugin_dir = tmp_path / "plugins" / "code-review" / "skills"
+        plugin_dir.mkdir(parents=True)
+        create_skill(plugin_dir, "linter", "Plugin linter")
+
+        registry = SkillRegistry([default_dir])
+        registry.add_namespaced_source("code-review", plugin_dir)
+
+        assert "linter" in registry.skills
+        assert "code-review:linter" in registry.skills
+        assert registry.skills["linter"].description == "Workspace linter"
+        assert registry.skills["code-review:linter"].description == "Plugin linter"
+
+    def test_add_namespaced_source_does_not_mutate_skill_sources(self, tmp_path: Path) -> None:
+        """add_namespaced_source does NOT append to _skill_sources."""
+        default_dir = tmp_path / "skills"
+        default_dir.mkdir()
+
+        plugin_dir = tmp_path / "plugins" / "alpha" / "skills"
+        plugin_dir.mkdir(parents=True)
+        create_skill(plugin_dir, "deploy", "Alpha deploy")
+
+        registry = SkillRegistry([default_dir])
+        initial_sources = len(registry._skill_sources)
+        registry.add_namespaced_source("alpha", plugin_dir)
+
+        assert len(registry._skill_sources) == initial_sources
+        assert plugin_dir not in registry._skill_sources
+
+    def test_add_namespaced_source_with_agents(self, tmp_path: Path) -> None:
+        """Namespaced skills' agents are stored as '<alias>:<skill>/<agent>'."""
+        default_dir = tmp_path / "skills"
+        default_dir.mkdir()
+
+        plugin_dir = tmp_path / "plugins" / "review" / "skills"
+        plugin_dir.mkdir(parents=True)
+        skill_dir = create_skill(plugin_dir, "linter", "Linter skill")
+        create_agent(skill_dir, "checker", "Check agent")
+
+        registry = SkillRegistry([default_dir])
+        registry.add_namespaced_source("review", plugin_dir)
+
+        agents = registry.get_agents()
+        assert "review:linter/checker" in agents
+        assert agents["review:linter/checker"].description == "Check agent"
+
+    def test_remove_namespaced_source(self, tmp_path: Path) -> None:
+        """remove_namespaced_source drops skills, agents, and workflows for the alias."""
+        default_dir = tmp_path / "skills"
+        default_dir.mkdir()
+        create_skill(default_dir, "builtin", "Built-in skill")
+
+        plugin_dir = tmp_path / "plugins" / "alpha" / "skills"
+        plugin_dir.mkdir(parents=True)
+        skill_dir = create_skill(plugin_dir, "deploy", "Deploy")
+        create_agent(skill_dir, "agent1", "Deploy agent")
+
+        registry = SkillRegistry([default_dir])
+        registry.add_namespaced_source("alpha", plugin_dir)
+
+        assert "alpha:deploy" in registry.skills
+        assert "alpha:deploy/agent1" in registry.get_agents()
+
+        registry.remove_namespaced_source("alpha")
+
+        assert "alpha:deploy" not in registry.skills
+        assert "alpha:deploy/agent1" not in registry.get_agents()
+        assert "builtin" in registry.skills  # Default-ns unaffected
+
+    def test_remove_namespaced_source_idempotent(self, tmp_path: Path) -> None:
+        """Removing a non-existent alias is a no-op."""
+        default_dir = tmp_path / "skills"
+        default_dir.mkdir()
+
+        registry = SkillRegistry([default_dir])
+        registry.remove_namespaced_source("nonexistent")  # Should not raise
+
+    def test_add_namespaced_source_per_skill_isolation(self, tmp_path: Path) -> None:
+        """R9: A bad skill in one plugin doesn't prevent others from loading."""
+        default_dir = tmp_path / "skills"
+        default_dir.mkdir()
+
+        plugin_dir = tmp_path / "plugins" / "alpha" / "skills"
+        plugin_dir.mkdir(parents=True)
+        create_skill(plugin_dir, "good-skill", "Good")
+        # Bad skill: no SKILL.md
+        (plugin_dir / "bad-skill").mkdir()
+
+        registry = SkillRegistry([default_dir])
+        registry.add_namespaced_source("alpha", plugin_dir)
+
+        assert "alpha:good-skill" in registry.skills
+        assert "alpha:bad-skill" not in registry.skills
+
+
+class TestNamespacedDepResolution:
+    """Tests for namespaced dependency resolution (DLT-048 Step 4.5, S13)."""
+
+    def _build_skills(self, skills_dir: Path, skills: dict[str, tuple[str, list[str]]]) -> None:
+        """Create multiple skills with dependencies."""
+        for name, (desc, deps) in skills.items():
+            skill_dir = skills_dir / name
+            skill_dir.mkdir(parents=True, exist_ok=True)
+            dep_yaml = ""
+            if deps:
+                dep_yaml = f"\ndepends_on: {deps}"
+            (skill_dir / "SKILL.md").write_text(
+                f'---\ndescription: "{desc}"{dep_yaml}\n---\n\nBody for {name}'
+            )
+
+    def test_plugin_skill_bare_dep_resolves_to_default_ns(self, tmp_path: Path) -> None:
+        """S13: Plugin skill bare dep resolves to default namespace built-in skill."""
+        default_dir = tmp_path / "skills"
+        default_dir.mkdir()
+        self._build_skills(default_dir, {"workflow-guide": ("Guide", [])})
+
+        plugin_dir = tmp_path / "plugins" / "review" / "skills"
+        plugin_dir.mkdir(parents=True)
+        self._build_skills(plugin_dir, {"planner": ("Planner", ["workflow-guide"])})
+
+        registry = SkillRegistry([default_dir])
+        registry.add_namespaced_source("review", plugin_dir)
+
+        chain = registry.resolve_chain("review:planner")
+        names = [s.qualified_name for s in chain]
+        assert names == ["workflow-guide", "review:planner"]
+
+    def test_plugin_skill_leading_colon_resolves_sibling(self, tmp_path: Path) -> None:
+        """S13: Plugin skill ':dep' resolves to sibling in same plugin namespace."""
+        default_dir = tmp_path / "skills"
+        default_dir.mkdir()
+
+        plugin_dir = tmp_path / "plugins" / "review" / "skills"
+        plugin_dir.mkdir(parents=True)
+        self._build_skills(plugin_dir, {"linter": ("Linter", [])})
+        self._build_skills(plugin_dir, {"planner": ("Planner", [":linter"])})
+
+        registry = SkillRegistry([default_dir])
+        registry.add_namespaced_source("review", plugin_dir)
+
+        chain = registry.resolve_chain("review:planner")
+        names = [s.qualified_name for s in chain]
+        assert names == ["review:linter", "review:planner"]
+
+    def test_plugin_skill_qualified_dep_resolves_cross_plugin(self, tmp_path: Path) -> None:
+        """S13: Plugin skill 'other:dep' resolves to foreign plugin."""
+        default_dir = tmp_path / "skills"
+        default_dir.mkdir()
+
+        docs_dir = tmp_path / "plugins" / "docs" / "skills"
+        docs_dir.mkdir(parents=True)
+        self._build_skills(docs_dir, {"glossary": ("Glossary", [])})
+
+        review_dir = tmp_path / "plugins" / "review" / "skills"
+        review_dir.mkdir(parents=True)
+        self._build_skills(review_dir, {"planner": ("Planner", ["docs:glossary"])})
+
+        registry = SkillRegistry([default_dir])
+        registry.add_namespaced_source("docs", docs_dir)
+        registry.add_namespaced_source("review", review_dir)
+
+        chain = registry.resolve_chain("review:planner")
+        names = [s.qualified_name for s in chain]
+        assert names == ["docs:glossary", "review:planner"]
+
+    def test_plugin_skill_bare_dep_shadows_sibling_warning(self, tmp_path: Path) -> None:
+        """S13: Plugin skill bare dep that names a sibling → WARNING, resolution fails.
+
+        Bare deps resolve only in default namespace, not own-namespace.
+        """
+        default_dir = tmp_path / "skills"
+        default_dir.mkdir()
+
+        plugin_dir = tmp_path / "plugins" / "review" / "skills"
+        plugin_dir.mkdir(parents=True)
+        self._build_skills(plugin_dir, {"linter": ("Linter", [])})
+        self._build_skills(plugin_dir, {"planner": ("Planner", ["linter"])})
+
+        warnings: list[str] = []
+        sink_id = logger.add(
+            lambda m: warnings.append(str(m)),
+            filter=lambda r: r["level"].no >= 30 and "unknown dependencies" in r["message"],
+        )
+
+        try:
+            registry = SkillRegistry([default_dir])
+            registry.add_namespaced_source("review", plugin_dir)
+        finally:
+            logger.remove(sink_id)
+
+        # 'linter' bare dep doesn't resolve in default ns → warning
+        assert any("review:planner" in w and "linter" in w for w in warnings)
+
+    def test_plugin_skill_leading_colon_missing_sibling_warning(self, tmp_path: Path) -> None:
+        """S13: Plugin skill ':dep' where sibling doesn't exist → WARNING."""
+        default_dir = tmp_path / "skills"
+        default_dir.mkdir()
+
+        plugin_dir = tmp_path / "plugins" / "review" / "skills"
+        plugin_dir.mkdir(parents=True)
+        self._build_skills(plugin_dir, {"planner": ("Planner", [":nonexistent"])})
+
+        warnings: list[str] = []
+        sink_id = logger.add(
+            lambda m: warnings.append(str(m)),
+            filter=lambda r: r["level"].no >= 30 and "unknown dependencies" in r["message"],
+        )
+
+        try:
+            registry = SkillRegistry([default_dir])
+            registry.add_namespaced_source("review", plugin_dir)
+        finally:
+            logger.remove(sink_id)
+
+        assert any("review:planner" in w and ":nonexistent" in w for w in warnings)
+
+    def test_plugin_skill_cross_plugin_missing_warning(self, tmp_path: Path) -> None:
+        """S13: Plugin skill 'other:dep' where foreign plugin missing → WARNING."""
+        default_dir = tmp_path / "skills"
+        default_dir.mkdir()
+
+        plugin_dir = tmp_path / "plugins" / "review" / "skills"
+        plugin_dir.mkdir(parents=True)
+        self._build_skills(plugin_dir, {"planner": ("Planner", ["missing:glossary"])})
+
+        warnings: list[str] = []
+        sink_id = logger.add(
+            lambda m: warnings.append(str(m)),
+            filter=lambda r: r["level"].no >= 30 and "unknown dependencies" in r["message"],
+        )
+
+        try:
+            registry = SkillRegistry([default_dir])
+            registry.add_namespaced_source("review", plugin_dir)
+        finally:
+            logger.remove(sink_id)
+
+        assert any("review:planner" in w and "missing:glossary" in w for w in warnings)
+
+
+class TestRefreshPreservesNamespacedSkills:
+    """Tests for refresh() preserving namespaced skills (DLT-048 Step 4.7)."""
+
+    def test_refresh_preserves_plugin_skills(self, tmp_path: Path) -> None:
+        """After mark_dirty() + refresh(), plugin skills retain <alias>:<name> keys."""
+        default_dir = tmp_path / "skills"
+        default_dir.mkdir()
+        create_skill(default_dir, "builtin", "Built-in")
+
+        plugin_dir = tmp_path / "plugins" / "review" / "skills"
+        plugin_dir.mkdir(parents=True)
+        create_skill(plugin_dir, "linter", "Plugin linter")
+
+        registry = SkillRegistry([default_dir])
+        registry.add_namespaced_source("review", plugin_dir)
+
+        assert "review:linter" in registry.skills
+
+        registry.mark_dirty()
+        registry.refresh()
+
+        assert "review:linter" in registry.skills
+        assert "builtin" in registry.skills
+
+    def test_refresh_preserves_plugin_agents(self, tmp_path: Path) -> None:
+        """After refresh, plugin agents retain <alias>:<skill>/<agent> keys."""
+        default_dir = tmp_path / "skills"
+        default_dir.mkdir()
+
+        plugin_dir = tmp_path / "plugins" / "review" / "skills"
+        plugin_dir.mkdir(parents=True)
+        skill_dir = create_skill(plugin_dir, "linter", "Plugin linter")
+        create_agent(skill_dir, "checker", "Check agent")
+
+        registry = SkillRegistry([default_dir])
+        registry.add_namespaced_source("review", plugin_dir)
+
+        assert "review:linter/checker" in registry.get_agents()
+
+        registry.mark_dirty()
+        registry.refresh()
+
+        assert "review:linter/checker" in registry.get_agents()
+
+    def test_refresh_failure_restores_old_including_namespaced(
+        self, tmp_path: Path, mocker
+    ) -> None:
+        """On refresh failure, old dicts (including plugin skills) are restored."""
+        default_dir = tmp_path / "skills"
+        default_dir.mkdir()
+        create_skill(default_dir, "builtin", "Built-in")
+
+        plugin_dir = tmp_path / "plugins" / "review" / "skills"
+        plugin_dir.mkdir(parents=True)
+        create_skill(plugin_dir, "linter", "Plugin linter")
+
+        registry = SkillRegistry([default_dir])
+        registry.add_namespaced_source("review", plugin_dir)
+
+        old_skills = registry._skills
+        old_agents = registry._agents
+
+        # Force discover failure
+        mocker.patch.object(
+            registry,
+            "_discover",
+            side_effect=PermissionError("nope"),
+        )
+
+        registry.mark_dirty()
+        registry.refresh()
+
+        # Old references restored (including plugin skills)
+        assert registry._skills is old_skills
+        assert registry._agents is old_agents
+        assert "review:linter" in registry.skills
+        assert registry._dirty is True
