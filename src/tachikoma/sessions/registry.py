@@ -387,6 +387,63 @@ class SessionRegistry:
         """
         return await self._repository.load_context_entries(session_id)
 
+    async def update_context_entry(
+        self,
+        entry_id: int,
+        *,
+        content: str | None = None,
+        metadata: dict | None = None,
+    ) -> SessionContextEntry | None:
+        """Update a single context entry's content and/or metadata.
+
+        Best-effort: failures are logged and ``None`` is returned. A ``None``
+        return also occurs when the entry no longer exists (benign race).
+
+        Args:
+            entry_id: The autoincrement id of the context entry.
+            content: New content string (prepended notice, etc.), or ``None``
+                to leave unchanged.
+            metadata: New metadata dict (merged by caller), or ``None`` to
+                leave unchanged.
+
+        Returns:
+            The refreshed entry, or ``None`` on failure / not-found.
+        """
+        try:
+            return await self._repository.update_context_entry(
+                entry_id, content=content, metadata=metadata
+            )
+        except Exception as exc:
+            _log.warning(
+                "Failed to update context entry (best-effort): entry_id={id} err={err}",
+                id=entry_id,
+                err=str(exc),
+            )
+            return None
+
+    async def find_context_entries_by_skill_name(
+        self,
+        session_id: str,
+        skill_names: list[str],
+    ) -> list[SessionContextEntry]:
+        """Find context entries whose ``metadata.skill_name`` matches any of *skill_names*.
+
+        Delegates to repository. Returns entries ordered by id ascending.
+        Failures are logged and an empty list is returned (best-effort).
+        """
+        try:
+            return await self._repository.find_context_entries_by_skill_name(
+                session_id, skill_names
+            )
+        except Exception as exc:
+            _log.warning(
+                "Failed to find context entries by skill name (best-effort): "
+                "session_id={id} err={err}",
+                id=session_id,
+                err=str(exc),
+            )
+            return []
+
     async def recover_interrupted(self) -> None:
         """Close any sessions left open from a previous ungraceful shutdown.
 

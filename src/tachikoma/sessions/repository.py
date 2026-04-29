@@ -8,7 +8,7 @@ import json
 from datetime import datetime, timedelta
 
 from loguru import logger
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from tachikoma.sessions.errors import SessionRepositoryError
@@ -293,4 +293,103 @@ class SessionRepository:
         except Exception as exc:
             raise SessionRepositoryError(
                 f"Failed to load context entries for session {session_id}"
+            ) from exc
+
+    async def update_context_entry(
+        self,
+        entry_id: int,
+        *,
+        content: str | None = None,
+        metadata: dict | None = None,
+    ) -> SessionContextEntry | None:
+        """Update a single context entry's content and/or metadata.
+
+        Uses a single SQLAlchemy ``update()`` statement inside one session so
+        content + metadata writes are atomic. Returns the refreshed domain
+        entry, or ``None`` if no row with *entry_id* exists (benign race).
+
+        Raises:
+            SessionRepositoryError: On unexpected database errors.
+        """
+        try:
+            values: dict = {}
+            if content is not None:
+                values["content"] = content
+            if metadata is not None:
+                values["entry_metadata"] = json.dumps(metadata)
+
+            if not values:
+                # Nothing to update — just return the current row.
+                async with self._session_factory() as db:
+                    result = await db.execute(
+                        select(SessionContextEntryRecord).where(
+                            SessionContextEntryRecord.id == entry_id
+                        )
+                    )
+                    record = result.scalar_one_or_none()
+                return record.to_domain() if record else None
+
+            async with self._session_factory() as db:
+                await db.execute(
+                    update(SessionContextEntryRecord)
+                    .where(SessionContextEntryRecord.id == entry_id)
+                    .values(**values)
+                )
+                await db.commit()
+
+                result = await db.execute(
+                    select(SessionContextEntryRecord).where(
+                        SessionContextEntryRecord.id == entry_id
+                    )
+                )
+                record = result.scalar_one_or_none()
+
+            return record.to_domain() if record else None
+
+        except Exception as exc:
+            raise SessionRepositoryError(
+                f"Failed to update context entry {entry_id}"
+            ) from exc
+
+    async def find_context_entries_by_skill_name(
+        self,
+        session_id: str,
+        skill_names: list[str],
+    ) -> list[SessionContextEntry]:
+        """Find context entries whose ``metadata.skill_name`` matches any of *skill_names*.
+
+        Uses SQLite's ``json_extract`` to query the metadata JSON column.
+        Returns entries ordered by id ascending.
+
+        Raises:
+            SessionRepositoryError: On unexpected database errors.
+        """
+        if not skill_names:
+            return []
+
+        try:
+            async with self._session_factory() as db:
+                stmt = (
+                    select(SessionContextEntryRecord)
+                    .where(
+                        SessionContextEntryRecord.session_id == session_id,
+                        SessionContextEntryRecord.entry_metadata.is_not(None),
+                    )
+                    .order_by(SessionContextEntryRecord.id.asc())
+                )
+                result = await db.execute(stmt)
+                records = result.scalars().all()
+
+            # Filter in Python — json_extract across aiosqlite + SQLAlchemy
+            # has limited IN-support for JSON paths.
+            matched: list[SessionContextEntry] = []
+            for record in records:
+                meta = json.loads(record.entry_metadata) if record.entry_metadata else {}
+                if isinstance(meta, dict) and meta.get("skill_name") in skill_names:
+                    matched.append(record.to_domain())
+            return matched
+
+        except Exception as exc:
+            raise SessionRepositoryError(
+                f"Failed to find context entries by skill name for session {session_id}"
             ) from exc
