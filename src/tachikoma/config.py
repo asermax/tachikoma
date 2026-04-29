@@ -13,9 +13,17 @@ from typing import Any, Literal, Union, cast, get_args
 from zoneinfo import ZoneInfo
 
 import tomlkit
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
 from tachikoma.agent_defaults import SYSTEM_DISALLOWED_TOOLS
+from tachikoma.plugins.sources import (
+    GitPluginSource,
+    LocalPluginSource,
+    PluginSource,
+    UrlPluginSource,
+    parse_plugin_source,
+    validate_alias,
+)
 
 CONFIG_PATH = Path.home() / ".config" / "tachikoma" / "config.toml"
 
@@ -310,6 +318,40 @@ class Settings(BaseModel):
     tasks: TaskSettings = Field(default_factory=TaskSettings)
     updates: UpdatesSettings = Field(default_factory=UpdatesSettings)
     buffer: BufferSettings = Field(default_factory=BufferSettings)
+    plugins: dict[str, PluginSource] = Field(
+        default_factory=dict,
+        description="Plugin sources indexed by alias ([plugins.<alias>] sub-tables)",
+    )
+
+    @model_validator(mode="before")
+    @classmethod
+    def _validate_plugins(cls, data: object) -> object:
+        """Validate plugin aliases and parse source variants before field assignment."""
+        if not isinstance(data, dict) or "plugins" not in data:
+            return data
+
+        raw = cast(dict[str, Any], data)
+        plugins_raw = raw.get("plugins")
+        if not isinstance(plugins_raw, dict):
+            return data
+
+        validated: dict[str, PluginSource] = {}
+        for alias, value in plugins_raw.items():
+            if not isinstance(alias, str):
+                continue
+            validate_alias(alias)
+            if isinstance(value, dict):
+                validated[alias] = parse_plugin_source(value)
+            elif isinstance(value, (GitPluginSource, UrlPluginSource, LocalPluginSource)):
+                # Already parsed (e.g., nested validation pass)
+                validated[alias] = value
+            else:
+                validated[alias] = parse_plugin_source(
+                    dict(value) if isinstance(value, dict) else {}
+                )
+
+        raw["plugins"] = validated
+        return data
 
 
 class SettingsManager:
@@ -380,6 +422,71 @@ class SettingsManager:
         """Write current state to the config file and reload settings."""
         self._config_path.write_text(tomlkit.dumps(self._doc))
         self._settings = load_settings(self._config_path)
+
+    def update_plugin_entry(self, alias: str, source: PluginSource) -> None:
+        """Add or update a ``[plugins.<alias>]`` sub-table in the config file.
+
+        Validates the alias, ensures the ``[plugins]`` super-table exists,
+        builds a child table from the source model, assigns it, and saves.
+        Comments and formatting in surrounding sections are preserved.
+
+        Args:
+            alias: Plugin alias (must match ``[a-z0-9][a-z0-9-]*``).
+            source: A validated :class:`PluginSource` instance.
+
+        Raises:
+            ValueError: If the alias is invalid.
+        """
+        validate_alias(alias)
+
+        # Ensure [plugins] super-table exists
+        if "plugins" not in self._doc:
+            self._doc.add("plugins", tomlkit.table(is_super_table=True))
+
+        plugins_table = cast(dict[str, Any], self._doc["plugins"])
+
+        # Build child table from source model
+        entry = tomlkit.table()
+        dump = source.model_dump(exclude_none=True)
+
+        # Ensure 'path' is serialized as string for TOML compatibility
+        if "path" in dump and isinstance(dump["path"], Path):
+            dump["path"] = str(dump["path"])
+
+        for key, value in dump.items():
+            entry.add(key, value)
+
+        plugins_table[alias] = entry
+        self.save()
+
+    def remove_plugin_entry(self, alias: str) -> None:
+        """Remove a ``[plugins.<alias>]`` sub-table from the config file.
+
+        Deletes the sub-table; if the resulting ``[plugins]`` super-table is
+        empty, removes the parent key for cleanliness. Comments and formatting
+        in surrounding sections are preserved.
+
+        Args:
+            alias: The plugin alias to remove.
+
+        Raises:
+            KeyError: If the alias is not found in ``[plugins]``.
+        """
+        if "plugins" not in self._doc:
+            raise KeyError(alias)
+
+        plugins_table = cast(dict[str, Any], self._doc["plugins"])
+
+        if alias not in plugins_table:
+            raise KeyError(alias)
+
+        del plugins_table[alias]
+
+        # Collapse empty parent super-table
+        if len(plugins_table) == 0:
+            del self._doc["plugins"]
+
+        self.save()
 
 
 def _generate_default_config(config_path: Path = CONFIG_PATH) -> None:
