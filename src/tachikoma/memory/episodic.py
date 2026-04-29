@@ -46,12 +46,41 @@ it is perfectly acceptable to create no files
 Remember: These memories help the assistant maintain context across sessions. \
 Focus on what would be useful to remember, not a transcript of what happened.
 
+## Workspace Validation
+
+Before writing a memory that contains claims about workspace state — file paths, \
+project structure, configuration values, implementation details — validate each \
+claim against the actual workspace:
+
+1. Identify verifiable claims in the memory you're about to write:
+   - References to specific files or directories (do they exist? contain what's claimed?)
+   - Configuration values (does the config file actually say that?)
+   - Implementation details (does the code actually work that way?)
+   - Project state (is the project actually in that state?)
+
+2. For each verifiable claim, use the Agent tool to spawn a validation sub-agent:
+   - subagent_type: "Explore"
+   - model: "haiku"
+   - Give it ONE specific claim to verify and the file(s) to check
+   - The agent should read the relevant file(s) and respond with "VALID" or \
+"INVALID: reason"
+
+3. Only include VALID claims in the written memory:
+   - If a claim is INVALID, omit it
+   - If ALL claims are invalid, do not create the file
+
+Do NOT validate: subjective information, preferences, general knowledge, \
+conversation summaries, personal details — only verifiable claims about \
+workspace state.
+
 ## Permissions
 
-You can only access files within `$WORKSPACE/memories/episodic/`. Reads, edits, \
-and writes outside this directory will be denied. For Bash, read-only inspection \
-commands (`ls`, `find`, `file`, `echo`, `date`, `cat`, `head`, `tail`, `wc`, \
-`stat`) and navigation (`cd`, `pwd`) are allowed — other commands will be denied."""
+You can read files anywhere in the workspace (needed for validation). Edits \
+and writes are restricted to `$WORKSPACE/memories/episodic/`. For Bash, read-only \
+inspection commands (`ls`, `find`, `file`, `echo`, `date`, `cat`, `head`, \
+`tail`, `wc`, `stat`) and navigation (`cd`, `pwd`) are allowed — other \
+commands will be denied. You can use the Agent tool to spawn validation \
+sub-agents."""
 
 
 class EpisodicProcessor(PromptDrivenProcessor):
@@ -73,14 +102,15 @@ class EpisodicProcessor(PromptDrivenProcessor):
         super().__init__(
             EPISODIC_PROMPT,
             agent_defaults,
-            tools=["Read", "Glob", "Grep", "Bash", "Edit", "Write"],
+            tools=["Read", "Glob", "Grep", "Bash", "Edit", "Write", "Agent"],
             allow=[
-                abs_rule("Read", scope),
+                "Read",
                 "Glob",
                 "Grep",
                 "Bash",
                 abs_rule("Edit", scope),
                 abs_rule("Write", scope),
+                "Agent",
             ],
             pre_tool_use_hooks=[UTILITY_BASH_HOOK],
             model=agent_defaults.processor_model,
