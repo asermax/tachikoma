@@ -50,7 +50,8 @@ The subsystem is minimal: one package (`src/tachikoma/updates/`) with a tick fun
 | `src/tachikoma/updates/tools.py` | MCP tools `check_updates`, `apply_update`, and `restart` | DES-006 factory pattern; accepts `EventBus`, used by `restart` to dispatch `RestartRequested` |
 | `src/tachikoma/updates/events.py` | `RestartRequested` event type | Follows bubus `BaseEvent[None]` pattern |
 | `src/tachikoma/updates/apply.py` | Upgrade execution: editable detection, subprocess invocation, result reporting | stdlib `subprocess.run`, `importlib.metadata` |
-| `src/tachikoma/updates/rollback.py` | Rollback marker lifecycle and version rollback execution | File-based markers in temp dir, `subprocess.run` |
+| `src/tachikoma/updates/rollback.py` | Rollback marker, rollback notification, and restart notification lifecycle + version rollback execution | DES-011 marker pattern, `subprocess.run` |
+| `src/tachikoma/__main__.py` (`_consume_restart_notification`, `_build_back_online_prompt`) | Read restart-notification marker on startup; honor rollback-precedence and stale-marker semantics; persist a one-shot session task that fires ~30s after startup so the agent can announce "back online" | DES-011 consume-once at the call site; DES-010 session-task pipeline drives delivery |
 | `src/tachikoma/updates/__init__.py` | Re-exports public API | tick function, hook, tool factory, run_upgrade, RestartRequested |
 | `src/tachikoma/channel.py` | `restart_requested` protocol property on Channel | Protocol property with default `False` |
 | `src/tachikoma/app_state.py` | `app_state` table model + repository | ADR-013 |
@@ -134,7 +135,16 @@ RollbackNotification (frozen dataclass, file-backed)
 ├─ previous_version: str
 ├─ failed_version: str
 └─ error: str
+
+RestartNotification (frozen dataclass, file-backed)
+├─ reason: Literal["update", "manual"]
+├─ rollback_marker_present: bool
+├─ previous_version: str | None
+├─ new_version: str | None
+└─ timestamp: str          ← ISO 8601
 ```
+
+The three file-backed dataclasses (`RollbackMarker`, `RollbackNotification`, `RestartNotification`) are all instances of the **DES-011 cross-restart temp marker file** pattern: each has a write/read/clear helper triple, a `${TMPDIR}/tachikoma-*.json` path, and consume-once semantics enforced at the caller.
 
 ## Data Flow
 
@@ -210,6 +220,8 @@ RestartRequested event fired
   → main loop captures channel.restart_requested (protocol property)
   → Coordinator.__aexit__: cancel idle PP, await pending tasks, close session
   → finally block: buffer stop, scheduler cancel, background runner shutdown, bus stop, DB close
+  → restart-notification write (DES-011): fresh read_rollback_marker() classifies
+    reason="update" (with versions) vs reason="manual"; write_restart_notification()
   → os.execv(sys.argv[0], sys.argv) replaces the process
 ```
 
@@ -221,8 +233,10 @@ New process starts after update
   → bootstrap.run() raises BootstrapError
     → rollback path activates
     → run_rollback(previous_version) via uv tool install tachikoma-agent==PREV_VERSION
-      → success: write_rollback_notification(), clear_rollback_marker(), os.execv
-      → failure: clear_rollback_marker(), print error to stderr, sys.exit(1)
+      → success: write_rollback_notification(), clear_rollback_marker(),
+                 clear_restart_notification() (drop stale "back online" marker), os.execv
+      → failure: clear_rollback_marker(), clear_restart_notification(),
+                 print error to stderr, sys.exit(1)
 ```
 
 ### Rollback notification flow
@@ -235,7 +249,28 @@ Old process starts after rollback
   → EventBus created
   → dispatch_notification(bus, source="Update Rollback", severity="error")
   → clear_rollback_notification()
+  → _consume_restart_notification(rollback_was_dispatched=True): clear restart marker,
+    do NOT schedule a back-online task — rollback wins (R7/AC7)
   → normal startup continues
+```
+
+### Restart notification flow
+
+```
+New process starts after a `restart`-tool restart
+  → read_restart_notification() returns the marker (or None if the file doesn't parse)
+  → marker_existed = (notification is not None) or RESTART_NOTIFICATION_PATH.exists()
+  → bootstrap.run() succeeds
+  → if rollback_notification was dispatched (precedence) → clear restart marker, return
+  → if notification is None and marker_existed → clear stale marker, return (AC5)
+  → otherwise: clear_restart_notification() FIRST (consume-once: AC6)
+  → build prompt from {reason, previous_version, new_version}
+  → task_repository.create_definition(TaskDefinition(
+      task_type="session", schedule=once at now+30s, prompt=...))
+  → instance_generator_tick (60s) creates a pending instance
+  → session_task_scheduler_tick enqueues the BufferedItem at NORMAL priority
+  → buffer delivers when channel reattach + idle/max-hold conditions met
+  → agent renders one short "back online" message via the active channel
 ```
 
 ## Key Decisions
@@ -336,22 +371,48 @@ See ADR-013 for the full decision rationale.
 - Pro: The two-step flow is documented in the canonical place the agent reads first
 - Con: Preamble grows slightly (negligible — ~8 lines)
 
-### Rollback markers: file-based in temp directory (bypasses ADR-013)
+### Cross-restart markers: DES-011
 
-**Choice**: Use JSON files in the system temp directory (`$TMPDIR/tachikoma-update-pending.json` and `$TMPDIR/tachikoma-update-rollback.json`) to bridge rollback state across the `os.execv` boundary.
+**Choice**: All three cross-restart bridges (`tachikoma-update-pending.json`, `tachikoma-update-rollback.json`, `tachikoma-restart-notification.json`) use the **DES-011 cross-restart temp marker file pattern**: a `${TMPDIR}/tachikoma-*.json` path, frozen-dataclass payload, write/read/clear helper triple in `rollback.py`, and consume-once semantics enforced at the call site.
 
-**Why**: The rollback marker must be readable before `bootstrap.run()` executes, at which point the database is not initialized. ADR-013's `app_state` table requires `database_hook` to have completed. The pre-bootstrap timing constraint forces a filesystem approach. The temp directory is used (instead of the workspace) because it is available before settings are loaded and keeps transient process-lifecycle files out of the workspace.
+See `docs/design/DES-011-cross-restart-temp-marker-files.md` for the rationale, alternatives considered (ADR-013 `app_state`, env vars, workspace dir), and the patterns the helpers must follow.
+
+### Restart notification: session task instead of notification-bus dispatch
+
+**Choice**: When the previous run wrote a restart-notification marker, schedule a one-shot `TaskDefinition` (type=`session`, `at = now + 30s`) rather than dispatching a `Notification` event on the bus the way the rollback notification does.
+
+**Why**: The rollback notification is a fixed text message and the rollback path simply needs delivery. The restart notification needs the agent to *generate text* — a "back online" sentence that may include version context. Session tasks drive the agent through the existing prompt pipeline (channel → coordinator → SDK), which the notification system does not. Persisting a `TaskDefinition` (instead of a direct `BufferedItem.enqueue`) also gives consume-once durability across an unexpected second restart: a crash between marker-clear and task-fire still surfaces the notification on the run that finally stays up.
 
 **Alternatives Considered**:
-- **ADR-013 app_state table**: Cannot be read before bootstrap (database not initialized)
-- **Environment variables**: Not guaranteed to survive across all `os.execv` variants; not debuggable by inspection
-- **Workspace directory**: Would require reading settings before bootstrap, adding unnecessary coupling
+- **`Notification` event via `dispatch_notification`**: simpler, but produces fixed text only — cannot inject the agent's voice or have it phrase the version transition naturally
+- **Direct `buffer.enqueue(BufferedItem)`**: bypasses persistence; lost on a second restart before delivery
+- **Synchronous channel render at startup**: the channel isn't connected yet, and the user expects the agent's voice, not a system-printed line
 
 **Consequences**:
-- Pro: Available immediately on startup, before any subsystem initialization
-- Pro: Transient by nature — cleared on system reboot (acceptable: reboot during update gap is an edge case)
-- Con: Bypasses ADR-013, but justified by the pre-bootstrap timing constraint
-- Con: Lost on system reboot (acceptable tradeoff)
+- Pro: Agent renders a natural one-line message via the active channel
+- Pro: Persisted definition survives a second restart between marker-clear and task-fire
+- Pro: Reuses the existing scheduler pipeline; "no channel attached yet" is handled by the buffer
+- Con: ~30s delay before the user sees the message (acceptable for an informational signal)
+
+### Restart notification 30-second `at` offset
+
+**Choice**: The one-shot session task is scheduled for `now + 30s`, not `now`.
+
+**Why**: Lets the active channel finish reattaching (Telegram polling, REPL prompt) before delivery, while staying short enough that the user still associates the message with the restart they just witnessed. The instance generator runs every 60s, so actual user-visible delivery may be slightly later because of the buffer's normal-priority idle gating — acceptable for an informational message.
+
+**Alternatives Considered**:
+- **Fire immediately (`now`)**: risks dispatch before the buffer subscribes its handlers, or before the channel is ready to render
+- **Longer offset (e.g. 5 minutes)**: defeats the "I just restarted" framing the user expects
+
+### Restart-notification version source: fresh disk read at execv time
+
+**Choice**: Just before `os.execv`, the write path calls `read_rollback_marker()` fresh from disk to decide `reason="update"` vs `reason="manual"`.
+
+**Why**: The pending rollback marker is written by `apply_update` and cleared at line 198 of `__main__.py` after a post-update bootstrap succeeds. The two interesting cases:
+- **Case A — clean run, `apply_update` + `restart` mid-session**: line-132 `rollback_marker` was None, line-198 was a no-op, mid-session `apply_update` wrote the marker, fresh read at execv sees it → `reason="update"`.
+- **Case B — post-update boot, then later manual restart**: line-132 read the marker, line-198 cleared it, fresh read at execv returns None → `reason="manual"` (correct: the user already saw the upgrade acknowledged in Case A's run).
+
+Using the in-memory `rollback_marker` from line 132 would misclassify Case B as "update". The fresh-read invariant — "is there an `apply_update` outcome that has not yet been confirmed by a successful boot?" — is the right one.
 
 ### Rollback scope: BootstrapError only
 
@@ -499,8 +560,41 @@ See ADR-013 for the full decision rationale.
 
 **Given**: A newer version broke bootstrap, rollback marker exists
 **When**: `uv tool install tachikoma-agent==PREV_VERSION` fails (uv not found, version yanked, network error)
-**Then**: Pending marker cleared, error logged to stderr ("Rollback failed. Manual intervention required."), process exits with code 1.
+**Then**: Pending marker cleared, restart-notification marker cleared (defense-in-depth: drop any stale "back online" marker from a previous successful update), error logged to stderr ("Rollback failed. Manual intervention required."), process exits with code 1.
 **Rationale**: A single rollback attempt prevents infinite restart loops. If rollback fails, the user needs to intervene manually.
+
+### Scenario: Restart notification on second startup (manual restart)
+
+**Given**: User invokes `restart` with no `apply_update` in this session
+**When**: The channel exits, the `finally` block runs, and `os.execv` replaces the process
+**Then**:
+1. Just before `os.execv`: `read_rollback_marker()` returns None → `write_restart_notification(reason="manual", ...)` writes `${TMPDIR}/tachikoma-restart-notification.json`
+2. New process: `read_restart_notification()` returns the marker → bootstrap succeeds → `clear_restart_notification()` first → `task_repository.create_definition(TaskDefinition(task_type="session", schedule=once at now+30s, prompt=...))`
+3. Within ~90s (instance-generator + buffer normal-priority gating), the agent renders one short "back online" message via the active channel; no version info appears
+
+**Rationale**: User just witnessed the restart and expects acknowledgement. Persisting a session task lets the agent generate the message in its own voice while reusing the existing buffer/idle pipeline.
+
+### Scenario: Restart notification on second startup (update restart)
+
+**Given**: User invokes `apply_update` (writes rollback marker prev=X, target=Y), then invokes `restart`
+**When**: `os.execv` is reached, the new process boots cleanly
+**Then**:
+1. Just before `os.execv`: `read_rollback_marker()` returns the marker → `write_restart_notification(reason="update", previous_version=X, new_version=Y, ...)`
+2. New process: bootstrap consumes the rollback marker (line 198 clear), then `_consume_restart_notification` clears the restart marker first and persists a session task with a prompt containing "upgraded from X to Y"
+3. The agent renders a back-online message that mentions the version transition
+
+**Rationale**: The user just confirmed an update; the agent's first message after restart reinforces what just happened with the actual version numbers.
+
+### Scenario: Both rollback notification and restart notification present (rollback wins)
+
+**Given**: A previous run successfully applied an update + restart (writing a restart-notification marker), the new version then failed bootstrap, rollback ran successfully (writing a rollback-notification marker)
+**When**: The recovered version starts up
+**Then**:
+1. The rollback-success branch already cleared the restart-notification marker before its `os.execv` (defense-in-depth at lines 260)
+2. Even if a stale restart-notification marker had survived, `_consume_restart_notification(rollback_was_dispatched=True)` would clear it without scheduling a session task
+3. Only the rollback notification ("Update from X to Y failed and was rolled back to X") is delivered
+
+**Rationale**: One user-facing message per restart. The rollback notification carries a clearer signal ("the update failed"); a contradictory "Back online" announcement would confuse the user.
 
 ## Notes
 
@@ -510,3 +604,4 @@ See ADR-013 for the full decision rationale.
 - The `restart_requested` property is defined on the `Channel` protocol with a default of `False`, so channels that don't support restart simply inherit the default
 - Version logging at startup already exists — the new process's version is captured by `importlib.metadata` automatically, so the user can confirm the upgrade from the startup log line
 - The 120s subprocess timeout accommodates slow networks and large package downloads while preventing indefinite hangs
+- The three cross-restart marker files (`tachikoma-update-pending.json`, `tachikoma-update-rollback.json`, `tachikoma-restart-notification.json`) live in `${TMPDIR}` per DES-011; they are best-effort by design and do not survive a host reboot (acceptable: a reboot ends the cross-restart window)

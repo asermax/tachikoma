@@ -12,3 +12,4 @@
 | [DES-008](DES-008-workspace-path-placeholder.md) | Workspace Path Placeholder in Agent Prompts | Project-wide | 2026-04-12 |
 | [DES-009](DES-009-channel-delivery-serialization.md) | Channel Delivery Serialization via asyncio.Lock | Python / Channels | 2026-04-19 |
 | [DES-010](DES-010-central-scheduler.md) | Central Scheduler for Time-Based Recurring Work | Python / Architecture | 2026-04-19 |
+| [DES-011](DES-011-cross-restart-temp-marker-files.md) | Cross-Restart Temp Marker Files | Python / Architecture | 2026-04-29 |

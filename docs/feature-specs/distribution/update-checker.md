@@ -30,6 +30,11 @@ A subsystem that periodically checks PyPI for newer versions of tachikoma-agent,
 | R10 | Agent awareness of update tools through the system prompt |
 | R11 | Automatic rollback to the previous version if the new version fails during startup after an upgrade |
 | R12 | Manual restart trigger: agent can restart the process on demand via MCP tool |
+| R13 | After a `restart`-triggered restart, the user is notified on the next run that the agent is back online, with version context for update-triggered restarts |
+
+## User Stories (continued)
+
+- As a Tachikoma operator, after the agent restarts (after an update or a manual reload), I want to receive a "back online" message on the next run so that I know the agent is ready and — if the restart was triggered by an update — what version transition just happened
 
 ## Behaviors
 
@@ -140,6 +145,19 @@ If the new version fails during bootstrap after an upgrade, the system automatic
 - Given a rollback is attempted but `uv tool install` fails (uv not found, network error, version yanked), when the rollback fails, then the marker is cleared, the error is logged to stderr, and the process exits without restarting (no infinite loops)
 - Given a stale rollback marker exists from a previous interrupted restart, when the process starts normally and bootstrap succeeds, then the marker is cleared harmlessly
 
+### Restart notification on next startup (R13)
+
+After a `restart`-triggered restart completes, the user receives a "back online" message on the next run via a one-shot session task.
+
+**Acceptance Criteria**:
+- Given the agent is running with no rollback marker on disk, when the user invokes `restart`, then before `os.execv` a restart-notification marker is written that captures the trigger kind ("manual") with no version transition; on the next startup a one-shot session-task definition is created that fires ~30s in and the marker is cleared
+- Given `apply_update` has just written a rollback marker and the user invokes `restart`, when `os.execv` is reached, then the restart-notification marker is written with kind "update" and the previous → new version transition; the rollback marker's lifecycle remains owned exclusively by `apply_update` and the bootstrap rollback/clear-on-success paths
+- Given a `BootstrapError` triggers the rollback path, when `run_rollback` succeeds and the post-rollback `os.execv` completes, then on the recovered version's startup no "back online" session task is scheduled — only the existing rollback notification is delivered (the rollback path proactively clears any stale restart-notification marker)
+- Given the channel exits without a restart request (Ctrl-C / shutdown), when the `finally` block runs, then no restart-notification marker is written
+- Given a malformed restart-notification JSON file exists on startup, when startup reads it, then a warning is logged, the file is cleared, no session task is scheduled, and startup proceeds normally
+- Given both a rollback-notification marker and a restart-notification marker are present at startup, when both are processed, then the rollback notification is dispatched and the restart-notification marker is cleared without scheduling a session task — only one user-facing message per restart
+- Given a valid restart-notification marker is read on startup, when the marker has been parsed successfully, then the marker file is cleared FIRST (consume-once) and only after clearing is the session task persisted; a failure during persistence is logged and does not abort startup nor re-write the marker
+
 ### Agent awareness (R10)
 
 The agent knows about update management tools.
@@ -156,4 +174,5 @@ Dependencies:
 - DES-003: Subsystem-Owned Bootstrap Hooks (initialization)
 - DES-006: SDK MCP Tool Server Factory (MCP tools)
 - DES-010: Central Scheduler (scheduled job)
+- DES-011: Cross-Restart Temp Marker Files (rollback markers + restart notification marker)
 - Configuration system: `[updates]` section (adds R11 to config-system spec)
