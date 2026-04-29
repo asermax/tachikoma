@@ -2,6 +2,27 @@
 
 <!-- version list -->
 
+## v1.58.0 (2026-04-29)
+
+### Documentation
+
+- **deltas**: Add DLT-170 for config CLI
+  ([`e9a22b1`](https://github.com/asermax/tachikoma/commit/e9a22b11e03cb4bd326623311fcfd649a6ccd394))
+
+- **updates**: Document back-online restart notification
+  ([`eb17f99`](https://github.com/asermax/tachikoma/commit/eb17f999f8cd8c388ecc8c0f4814064918cf5b33))
+
+### Features
+
+- **updates**: Announce back online after restart
+  ([`c8667bf`](https://github.com/asermax/tachikoma/commit/c8667bfe7edd5510b9b45ce43f795b9b05a2dfb9))
+
+### Refactoring
+
+- **updates**: Simplify restart notification consumption
+  ([`bd382e0`](https://github.com/asermax/tachikoma/commit/bd382e094a01e738e788d6370eca5847adfb9088))
+
+
 ## v1.57.0 (2026-04-28)
 
 ### Features
