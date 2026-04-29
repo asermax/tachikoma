@@ -2,6 +2,88 @@
 
 <!-- version list -->
 
+## v1.59.0 (2026-04-29)
+
+### Code Style
+
+- **plugins**: Remove numbered step comments
+  ([`a70985b`](https://github.com/asermax/tachikoma/commit/a70985b6c6465b6b45531592a8a9eae00f5eb3b9))
+
+- **tests**: Clean up imports and use combined context managers
+  ([`a9d11b6`](https://github.com/asermax/tachikoma/commit/a9d11b6bbcf5e1debc318085fe1c4e073ef9dc58))
+
+### Documentation
+
+- Reconcile plugin system into existing feature documentation
+  ([`84dc541`](https://github.com/asermax/tachikoma/commit/84dc5415929503951bfddae2382c5b4de0846e4c))
+
+- Remove DLT-048 delta working documents and update planning
+  ([`7e1ad2f`](https://github.com/asermax/tachikoma/commit/7e1ad2f3f1e01f29a0fef35765eac33e8a68dff2))
+
+- Update DLT-048 batch statuses to implementation
+  ([`f68d8bd`](https://github.com/asermax/tachikoma/commit/f68d8bdcc752676ab19c9829334bb38cad14cc2a))
+
+- **deltas**: Mark DLT-048 as in design
+  ([`cf68f7e`](https://github.com/asermax/tachikoma/commit/cf68f7e5b3065647aed5d37d772628f52840c672))
+
+- **deltas**: Mark DLT-048 as in plan
+  ([`6cc1c4a`](https://github.com/asermax/tachikoma/commit/6cc1c4ad99bd243524d1bd3003ace8ed3e564a5b))
+
+- **deltas**: Mark DLT-048 as in spec
+  ([`b84a0fc`](https://github.com/asermax/tachikoma/commit/b84a0fcf232f6b7435bf3014aefc94d2a65adfbd))
+
+- **deltas**: Mark DLT-048 design as complete
+  ([`5d9bfaa`](https://github.com/asermax/tachikoma/commit/5d9bfaa65334edf629367c6b059b499a930c910b))
+
+- **deltas**: Mark DLT-048 plan as complete
+  ([`cc0e128`](https://github.com/asermax/tachikoma/commit/cc0e128af9b6dadfd2b36df703375ad0e7682404))
+
+- **plugins**: Add implementation plan for DLT-048
+  ([`833a2e7`](https://github.com/asermax/tachikoma/commit/833a2e70306e73e15d912cfad88f6865e44a4324))
+
+- **plugins**: Add plugin system feature specification and design
+  ([`fd77b88`](https://github.com/asermax/tachikoma/commit/fd77b886ef58a086b4b2893e2cf5dc81e8013498))
+
+- **plugins**: Add spec and design for plugin system
+  ([`ad16f59`](https://github.com/asermax/tachikoma/commit/ad16f59880ff8460313940519901127152f076ae))
+
+- **plugins**: Expand spec and design for DLT-048
+  ([`7a63250`](https://github.com/asermax/tachikoma/commit/7a63250631a8c35a11abc8f3256e0d4c907648a2))
+
+### Features
+
+- **plugins**: Add event system, manager, and skills listeners
+  ([`6c375f9`](https://github.com/asermax/tachikoma/commit/6c375f946b6b52d2e96c7de38e0e0e5b0f402a02))
+
+- **plugins**: Add MCP tools server for plugin management
+  ([`aa0fcf2`](https://github.com/asermax/tachikoma/commit/aa0fcf2f47804fbd2e1cd87ec3a6845417e63f12))
+
+- **plugins**: Add source materialization, reconciliation, and loader
+  ([`59e73ef`](https://github.com/asermax/tachikoma/commit/59e73efc19364f3cbb64a2017d8b33d5ca40360a))
+
+- **plugins**: Add source models, manifest parsing, and config integration
+  ([`60fb13c`](https://github.com/asermax/tachikoma/commit/60fb13c9de88e605b0f74ab0e9e86e610ee7f06c))
+
+- **plugins**: Wire bootstrap hook and integrate with main entry point
+  ([`3340f13`](https://github.com/asermax/tachikoma/commit/3340f13ebb52b559e323b4870c10fe71db97e0a5))
+
+- **sessions**: Add context entry update and skill name lookup
+  ([`680a265`](https://github.com/asermax/tachikoma/commit/680a26518e855c9d7ef9c3d8c1e2a203ca501f6c))
+
+- **skills**: Add plugin namespacing and dependency resolution
+  ([`c9099c7`](https://github.com/asermax/tachikoma/commit/c9099c79755b1ec9d457bc5010f59d31f9497944))
+
+### Refactoring
+
+- **skills**: Extract dep resolution and simplify unregister
+  ([`14a2d47`](https://github.com/asermax/tachikoma/commit/14a2d4726dcc9cd8fd9c8c08b972c150b79f95e2))
+
+### Testing
+
+- **plugins**: Add plugin system tests
+  ([`288ff7e`](https://github.com/asermax/tachikoma/commit/288ff7ea3cb74eb385a35d9298d8fd8f4506101d))
+
+
 ## v1.58.0 (2026-04-29)
 
 ### Documentation
