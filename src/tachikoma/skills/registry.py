@@ -11,6 +11,7 @@ registry re-scans all sources on the next refresh, using swap-on-success to
 preserve the previous state on failure.
 """
 
+import contextlib
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
@@ -40,6 +41,7 @@ class Skill:
         path: Path to the skill directory.
         version: Optional version string.
         depends_on: Tuple of declared direct dependency skill names.
+        namespace: Plugin alias for namespaced skills, None for default namespace.
     """
 
     name: str
@@ -48,11 +50,23 @@ class Skill:
     path: Path
     version: str | None = None
     depends_on: tuple[str, ...] = ()
+    namespace: str | None = None
+
+    @property
+    def qualified_name(self) -> str:
+        """Return the fully qualified skill name.
+
+        For default-namespace skills (namespace=None), returns the bare name.
+        For plugin skills, returns '<alias>:<name>'.
+        """
+        if self.namespace is not None:
+            return f"{self.namespace}:{self.name}"
+        return self.name
 
 
 def render_skill_block(skill: Skill) -> str:
     """Format a skill as an XML block for prompt injection."""
-    return f'<skill name="{skill.name}" directory="{skill.path}">\n{skill.body}\n</skill>'
+    return f'<skill name="{skill.qualified_name}" directory="{skill.path}">\n{skill.body}\n</skill>'
 
 
 class SkillRegistry:
@@ -85,6 +99,7 @@ class SkillRegistry:
         self._chain_cache: dict[str, list[Skill]] = {}
         self._dirty: bool = False
         self._skill_sources = skill_sources
+        self._namespaced_source_paths: dict[str, list[Path]] = {}
 
         for source in skill_sources:
             self._discover(source)
@@ -150,6 +165,11 @@ class SkillRegistry:
         names are silently skipped. Results are memoized until the next refresh() or
         add_source() call.
 
+        Dep resolution rules (per S13):
+        - bare 'dep' → resolve in default namespace (self._skills.get(dep))
+        - ':dep' (leading colon) → resolve in the current skill's own plugin namespace
+        - '<other>:dep' → resolve in the named plugin namespace
+
         Raises:
             KeyError: If skill_name is not in self._skills.
         """
@@ -162,6 +182,20 @@ class SkillRegistry:
         visited: set[str] = set()
         chain: list[Skill] = []
 
+        def _resolve_dep(dep: str, current: Skill) -> str | None:
+            """Resolve a dependency string to a qualified name, or None if unresolvable."""
+            if dep.startswith(":"):
+                # Own-plugin sibling: resolve within current skill's namespace
+                if current.namespace is None:
+                    return None  # Default-ns skill can't use :dep
+                return f"{current.namespace}:{dep[1:]}"
+            elif ":" in dep:
+                # Fully qualified cross-plugin dep
+                return dep
+            else:
+                # Bare dep: resolve in default namespace
+                return dep
+
         def dfs(name: str) -> None:
             if name in visited:
                 return
@@ -170,7 +204,9 @@ class SkillRegistry:
             visited.add(name)
             current = self._skills[name]
             for dep in current.depends_on:
-                dfs(dep)
+                resolved = _resolve_dep(dep, current)
+                if resolved is not None:
+                    dfs(resolved)
             chain.append(current)
 
         dfs(skill_name)
@@ -195,6 +231,102 @@ class SkillRegistry:
         self._skill_sources.append(path)
         self._discover(path)
         self._validate_deps()
+
+    def add_namespaced_source(self, alias: str, path: Path) -> None:
+        """Add a namespaced skill source from a plugin.
+
+        Skills discovered under this path are registered with namespace=alias,
+        keyed in _skills as '<alias>:<name>'. The path is tracked in
+        _namespaced_source_paths (NOT _skill_sources) for refresh symmetry.
+
+        Per-skill errors are isolated: a bad skill in one plugin does not
+        prevent other skills from the same plugin from loading (R9).
+
+        Args:
+            alias: Plugin alias used as the namespace prefix.
+            path: Path to the skill source directory.
+        """
+        self._namespaced_source_paths.setdefault(alias, []).append(path)
+
+        if not path.exists():
+            _log.debug(
+                "Namespaced skills directory does not exist: alias={alias}, path={path}",
+                alias=alias,
+                path=str(path),
+            )
+            self._chain_cache.clear()
+            self._validate_deps()
+            return
+
+        try:
+            items = list(path.iterdir())
+        except Exception as exc:
+            _log.warning(
+                "Failed to list namespaced skills directory: alias={alias}, path={path}, err={err}",
+                alias=alias,
+                path=str(path),
+                err=str(exc),
+            )
+            self._chain_cache.clear()
+            self._validate_deps()
+            return
+
+        for item in items:
+            if not item.is_dir():
+                continue
+            try:
+                self._load_skill(item, namespace=alias)
+            except Exception as exc:
+                _log.warning(
+                    "Failed to load namespaced skill: alias={alias}, skill={skill}, err={err}",
+                    alias=alias,
+                    skill=item.name,
+                    err=str(exc),
+                )
+
+        self._chain_cache.clear()
+        self._validate_deps()
+
+    def remove_namespaced_source(self, alias: str) -> None:
+        """Remove all skills and agents registered under a plugin namespace.
+
+        Drops every key in _skills where namespace == alias, every key in
+        _agents matching prefix '<alias>:', and every key in _workflows whose
+        first element starts with '<alias>:'. Clears the chain cache.
+
+        Args:
+            alias: Plugin alias to remove.
+        """
+        prefix = f"{alias}:"
+
+        # Drop skills with matching namespace
+        keys_to_drop = [k for k, s in self._skills.items() if s.namespace == alias]
+        for k in keys_to_drop:
+            del self._skills[k]
+
+        # Drop agents with matching prefix
+        agent_keys_to_drop = [k for k in self._agents if k.startswith(prefix)]
+        for k in agent_keys_to_drop:
+            del self._agents[k]
+
+        # Drop workflows whose first element starts with prefix
+        wf_keys_to_drop = [k for k in self._workflows if k[0].startswith(prefix)]
+        for k in wf_keys_to_drop:
+            del self._workflows[k]
+
+        self._namespaced_source_paths.pop(alias, None)
+        self._chain_cache.clear()
+
+    def _resolve_dep_for_validation(self, dep: str, skill: Skill) -> str | None:
+        """Resolve a dep string for validation purposes (returns qualified name or None)."""
+        if dep.startswith(":"):
+            if skill.namespace is None:
+                return None
+            return f"{skill.namespace}:{dep[1:]}"
+        elif ":" in dep:
+            return dep
+        else:
+            return dep
 
     def _validate_deps(self) -> None:
         """Validate composition graph and skill dependencies.
@@ -241,7 +373,11 @@ class SkillRegistry:
         for name, skill in self._skills.items():
             if not skill.depends_on:
                 continue
-            missing = [d for d in skill.depends_on if d not in self._skills]
+            missing = []
+            for dep in skill.depends_on:
+                resolved = self._resolve_dep_for_validation(dep, skill)
+                if resolved is None or resolved not in self._skills:
+                    missing.append(dep)
             if missing:
                 _log.warning(
                     "Skill declares unknown dependencies: skill={skill}, missing={missing}",
@@ -271,6 +407,9 @@ class SkillRegistry:
         If dirty, saves old dict references, builds fresh dicts via _discover(),
         and swaps them on success. On failure, restores old references and leaves
         _dirty=True so the next refresh() will retry.
+
+        Namespaced sources are re-scanned alongside default sources so that
+        plugin skills retain their <alias>:<name> keys across refresh cycles.
         """
         if not self._dirty:
             return
@@ -289,6 +428,21 @@ class SkillRegistry:
         try:
             for source in self._skill_sources:
                 self._discover(source)
+
+            # Re-scan namespaced sources to preserve plugin skills
+            for alias, paths in self._namespaced_source_paths.items():
+                for path in paths:
+                    if not path.exists():
+                        continue
+                    try:
+                        items = list(path.iterdir())
+                    except Exception:
+                        continue
+                    for item in items:
+                        if not item.is_dir():
+                            continue
+                        with contextlib.suppress(Exception):
+                            self._load_skill(item, namespace=alias)  # Per-skill isolation (R9)
 
             self._validate_deps()
 
@@ -335,11 +489,12 @@ class SkillRegistry:
                     err=str(exc),
                 )
 
-    def _load_skill(self, skill_dir: Path) -> None:
+    def _load_skill(self, skill_dir: Path, namespace: str | None = None) -> None:
         """Load a single skill and its agents.
 
         Args:
             skill_dir: Path to the skill directory.
+            namespace: Optional plugin alias for namespaced skills.
         """
         skill_file = skill_dir / "SKILL.md"
 
@@ -399,24 +554,27 @@ class SkillRegistry:
             path=skill_dir,
             version=version_str,
             depends_on=depends_on,
+            namespace=namespace,
         )
 
-        if name in self._skills:
-            prefix = f"{name}/"
+        qname = skill.qualified_name
+
+        if qname in self._skills:
+            prefix = f"{qname}/"
             for ns in [k for k in self._agents if k.startswith(prefix)]:
                 del self._agents[ns]
 
             # Clear previous workflow entries for this skill
-            for key in [k for k in self._workflows if k[0] == name]:
+            for key in [k for k in self._workflows if k[0] == qname]:
                 del self._workflows[key]
 
-            _log.debug("Replacing skill from earlier source: name={name}", name=name)
+            _log.debug("Replacing skill from earlier source: name={name}", name=qname)
 
-        self._skills[name] = skill
+        self._skills[qname] = skill
 
         _log.debug(
             "Loaded skill: name={name}, description={desc}",
-            name=name,
+            name=qname,
             desc=description[:50] + "..." if len(description) > 50 else description,
         )
 
@@ -424,19 +582,19 @@ class SkillRegistry:
         workflows = load_workflows(skill_dir, name)
 
         for workflow_name, workflow_def in workflows.items():
-            self._workflows[(name, workflow_name)] = workflow_def
+            self._workflows[(qname, workflow_name)] = workflow_def
 
         # Load agents if agents/ directory exists
         agents_dir = skill_dir / "agents"
         if agents_dir.exists() and agents_dir.is_dir():
-            self._load_agents(agents_dir, name)
+            self._load_agents(agents_dir, qname)
 
     def _load_agents(self, agents_dir: Path, skill_name: str) -> None:
         """Load all agents from a skill's agents/ directory.
 
         Args:
             agents_dir: Path to the agents/ directory.
-            skill_name: Name of the parent skill (for namespacing).
+            skill_name: Qualified name of the parent skill (for namespacing).
         """
         try:
             items = list(agents_dir.iterdir())
@@ -469,7 +627,7 @@ class SkillRegistry:
 
         Args:
             agent_path: Path to the agent markdown file.
-            skill_name: Name of the parent skill (for namespacing).
+            skill_name: Qualified name of the parent skill (for namespacing).
         """
         agent_name = agent_path.stem
         namespace = f"{skill_name}/{agent_name}"

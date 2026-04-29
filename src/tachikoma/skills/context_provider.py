@@ -158,14 +158,14 @@ class SkillsContextProvider(MessageContextProvider):
                     )
                     continue
                 for skill in chain:
-                    if skill.name in seen:
+                    if skill.qualified_name in seen:
                         continue
-                    seen.add(skill.name)
+                    seen.add(skill.qualified_name)
                     pinned_results.append(
                         ContextResult(
                             tag=SKILLS_OWNER,
                             content=render_skill_block(skill),
-                            metadata={SKILL_NAME_META_KEY: skill.name, "_pinned": True},
+                            metadata={SKILL_NAME_META_KEY: skill.qualified_name, "_pinned": True},
                         )
                     )
             loaded_names = seen
@@ -266,9 +266,9 @@ class SkillsContextProvider(MessageContextProvider):
                 continue
 
             for skill in chain:
-                if skill.name in seen:
+                if skill.qualified_name in seen:
                     continue
-                seen.add(skill.name)
+                seen.add(skill.qualified_name)
                 ordered_skills.append(skill)
 
         if not ordered_skills:
@@ -281,7 +281,7 @@ class SkillsContextProvider(MessageContextProvider):
                 ContextResult(
                     tag=SKILLS_OWNER,
                     content=render_skill_block(skill),
-                    metadata={SKILL_NAME_META_KEY: skill.name},
+                    metadata={SKILL_NAME_META_KEY: skill.qualified_name},
                 )
             )
 
