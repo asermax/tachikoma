@@ -56,15 +56,12 @@ async def plugins_hook(ctx: BootstrapContext) -> None:
     settings = ctx.settings_manager.settings
     workspace_path = settings.workspace.path
 
-    # 1. Create install and staging directories.
     install_dir = workspace_path / ".tachikoma" / "plugins"
     install_dir.mkdir(parents=True, exist_ok=True)
     (install_dir / ".staging").mkdir(parents=True, exist_ok=True)
 
-    # 2. Gitignore entry (idempotent).
     _ensure_gitignore_entry(workspace_path, _GITIGNORE_PLUGIN_ENTRY)
 
-    # 3. Reconcile.
     report = await reconcile(workspace_path, settings.plugins)
     failed = [o for o in report.outcomes if o.status == "failed"]
     if failed:
@@ -73,10 +70,9 @@ async def plugins_hook(ctx: BootstrapContext) -> None:
             failures=[f"{o.alias}: {o.diagnostic}" for o in failed],
         )
 
-    # 4. Discover loaded plugins.
     loaded_plugins = discover(install_dir, report, settings.plugins)
 
-    # 5. Construct PluginManager (requires event_bus from ctx.extras).
+
     bus: EventBus | None = ctx.extras.get("event_bus")
     if bus is None:
         msg = (
@@ -93,7 +89,6 @@ async def plugins_hook(ctx: BootstrapContext) -> None:
         loaded={p.alias: p for p in loaded_plugins},
     )
 
-    # 6. Store in extras.
     ctx.extras["plugin_manager"] = manager
     ctx.extras["plugin_skill_paths"] = [
         (p.alias, skill_dir)

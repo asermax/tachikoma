@@ -160,7 +160,6 @@ class PluginManager:
         if staging.exists():
             shutil.rmtree(staging, ignore_errors=True)
 
-        # 1. Materialize.
         try:
             if isinstance(source, GitPluginSource):
                 await materialize_git(source, staging, alias=alias or "<unknown>")
@@ -172,7 +171,6 @@ class PluginManager:
             _cleanup(staging)
             raise PluginInstallError(alias or "<unknown>", exc) from exc
 
-        # 2. Parse manifest.
         try:
             manifest = parse_manifest(staging)
         except Exception as exc:
@@ -189,7 +187,6 @@ class PluginManager:
                 ),
             )
 
-        # 3. Resolve alias.
         resolved_alias = alias or manifest.name
         try:
             validate_alias(resolved_alias)
@@ -197,7 +194,6 @@ class PluginManager:
             _cleanup(staging)
             raise PluginInstallError(resolved_alias, exc) from exc
 
-        # 4. Collision check.
         if (
             resolved_alias in self._loaded
             or resolved_alias in self._settings_manager.settings.plugins
@@ -208,7 +204,6 @@ class PluginManager:
                 suggest_retry_with_alias=(alias is None),
             )
 
-        # 5. Atomic-swap.
         target = install_dir / resolved_alias
         try:
             _atomic_replace_dir(staging, target)
@@ -216,10 +211,8 @@ class PluginManager:
             _cleanup(staging)
             raise PluginInstallError(resolved_alias, exc) from exc
 
-        # 6. Write config.
         self._settings_manager.update_plugin_entry(resolved_alias, source)
 
-        # 7. Record.
         plugin = LoadedPlugin(
             alias=resolved_alias,
             source=source,
@@ -230,7 +223,6 @@ class PluginManager:
         )
         self._loaded[resolved_alias] = plugin
 
-        # 8. Dispatch event.
         await self._bus.dispatch(
             PluginInstalled(alias=resolved_alias, plugin=plugin)
         )
@@ -259,20 +251,17 @@ class PluginManager:
             return await self._remove_locked(alias)
 
     async def _remove_locked(self, alias: str) -> str | None:
-        # 1. Existence check.
         plugin = self._loaded.get(alias)
         if plugin is None:
             raise PluginNotFoundError(alias)
 
-        # 2. Collect namespaced skill names.
         namespaced_skills = [s.qualified_name for s in plugin.contributed_skills]
 
-        # 3. Dispatch PluginRemoving (listener marks session entries).
+
         await self._bus.dispatch(
             PluginRemoving(alias=alias, namespaced_skill_names=namespaced_skills)
         )
 
-        # 4. Remove config entry.
         rmtree_diagnostic: str | None = None
         try:
             self._settings_manager.remove_plugin_entry(alias)
@@ -281,7 +270,6 @@ class PluginManager:
                 "Plugin alias not found in config during removal (may be stale-fallback)"
             )
 
-        # 5. Remove install directory (best-effort).
         try:
             target = self._workspace_path / ".tachikoma" / "plugins" / alias
             if target.exists():
@@ -293,10 +281,9 @@ class PluginManager:
                 "Failed to remove plugin directory: {}", exc
             )
 
-        # 6. Delete from loaded.
         del self._loaded[alias]
 
-        # 7. Dispatch PluginRemoved.
+
         await self._bus.dispatch(PluginRemoved(alias=alias))
 
         return rmtree_diagnostic
