@@ -26,6 +26,7 @@ The memory workspace also includes `memories/transcripts/`, a non-extractive sub
 | R6 | Bootstrap hook creates the memory directory structure on first run (idempotent) |
 | R7 | Transcript archive processor copies each session's SDK transcript into `memories/transcripts/<sdk-session-id>.jsonl` on session close; runs in the post-processing `pre_finalize` phase so archived files land before the workspace git commit |
 | R8 | Transcript archival is best-effort — failures (missing source, filesystem errors) are logged and swallowed, never crashing the conversation or blocking other post-processing |
+| R9 | Before writing memories that reference workspace state (file paths, configuration values, implementation details), forked agents validate claims against actual workspace files using internal sub-agents; invalid claims are omitted |
 
 ## Behaviors
 
@@ -92,3 +93,13 @@ On session close, the transcript archive processor copies the SDK-owned transcri
 **Acceptance Criteria**:
 - Given memory files exist, when the user navigates to `memories/`, then they can read and understand the contents in any text editor
 - Given a user manually edits a memory file, when the next extraction runs, then the agent sees and respects the edits
+
+### Workspace Claim Validation (R9)
+
+Before writing memory files that contain claims about workspace state, the forked agent validates those claims against actual files using lightweight internal sub-agents.
+
+**Acceptance Criteria**:
+- Given a memory referencing a non-existent file path, when the agent prepares to write, the claim is omitted from the memory file
+- Given a memory with accurate workspace claims, when the agent prepares to write, all claims are included
+- Given a memory with no workspace references (e.g., personal details, preferences, conversation summaries), when the agent prepares to write, no validation overhead is added
+- Given the agent identifies a verifiable claim, it spawns a read-only sub-agent to check the claim against the actual file and omits the claim if invalid

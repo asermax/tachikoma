@@ -60,7 +60,9 @@ Three **memory processors** extend `PromptDrivenProcessor` (DES-004) and plug in
                                                    context/ files
 ```
 
-Each **memory processor** is a `PromptDrivenProcessor` subclass (DES-004, scoped writer tier) that provides an extraction prompt. Prompts use `$WORKSPACE` placeholders for file paths (DES-008), which the base class replaces with the absolute workspace path at construction time — ensuring forked agents use absolute paths regardless of the CLI's session-restored working directory. The base class handles forking the SDK session via `fork_and_consume()`. Forked agents have `Read`, `Glob`, `Grep`, `Bash`, `Edit`, and `Write` tools, path-scoped to their memory subdirectory, with Bash gated to utility-only commands via `UTILITY_BASH_HOOK` (DES-004). The forked agent autonomously reads, creates, updates, or deletes memory files — the processor code performs no file I/O.
+Each **memory processor** is a `PromptDrivenProcessor` subclass (DES-004, scoped writer tier) that provides an extraction prompt. Prompts use `$WORKSPACE` placeholders for file paths (DES-008), which the base class replaces with the absolute workspace path at construction time — ensuring forked agents use absolute paths regardless of the CLI's session-restored working directory. The base class handles forking the SDK session via `fork_and_consume()`. Forked agents have `Read`, `Glob`, `Grep`, `Bash`, `Edit`, `Write`, and `Agent` tools. `Read` is unrestricted (needed for workspace claim validation); `Edit` and `Write` are path-scoped to the agent's memory subdirectory. Bash is gated to utility-only commands via `UTILITY_BASH_HOOK` (DES-004). The forked agent autonomously reads, creates, updates, or deletes memory files — the processor code performs no file I/O.
+
+Extraction prompts include a **Workspace Validation** section that instructs the agent to validate workspace-referencing claims (file paths, configuration values, implementation details) before writing. The agent uses the `Agent` tool to spawn lightweight read-only sub-agents (Explore type, haiku model) that verify claims against actual workspace files. Only validated claims are included in written memories; invalid claims are omitted.
 
 For the context update processor that also runs in the main phase, see [core-context-updates design](../agent/core-context-updates.md).
 
@@ -129,13 +131,16 @@ Each processor inherits `_prompt`, `_cwd`, and the default `process()` implement
 1. processor.process(session) is called
 2. Base class references the extraction prompt (set in constructor via DES-004 pattern)
 3. Base class calls fork_and_consume(session, self._prompt, self._cwd):
-   a. Creates ClaudeAgentOptions(cwd=self._cwd, resume=session.sdk_session_id, fork_session=True, permission_mode="bypassPermissions")
+   a. Creates ClaudeAgentOptions(cwd=self._cwd, resume=session.sdk_session_id, fork_session=True)
    b. Calls query(prompt=prompt, options=options)
    c. Async iterates over the returned generator to consume all messages
    d. The forked agent (LLM) autonomously:
       - Reads existing files in its memory subdirectory
       - Analyzes the conversation history (via the forked session)
-      - Creates, updates, or deletes memory files as needed
+      - For memories referencing workspace state, spawns read-only validation
+        sub-agents (Agent tool, Explore type, haiku) to verify claims
+      - Omits claims that fail validation
+      - Creates, updates, or deletes memory files with validated content
 4. Once the async iterator is exhausted, the forked session ends
 ```
 
@@ -280,4 +285,16 @@ Each processor inherits `_prompt`, `_cwd`, and the default `process()` implement
 
 - Forked sessions have no `max_turns` or `max_budget_usd` limits. Extraction prompts are focused, so sessions should be naturally short.
 - Memory extraction quality is an LLM behavioral concern. Prompts are the primary quality lever.
-- Forked sessions require `permission_mode="bypassPermissions"` to allow the extraction agent to read and write memory files without permission prompts.
+- Forked sessions use `dontAsk` permission mode with explicit allow rules (DES-004). Read access is unrestricted; Edit/Write are path-scoped to the memory subdirectory.
+
+### Workspace claim validation via in-agent sub-agents
+
+**Choice**: Extraction prompts include a validation section instructing the agent to verify workspace-referencing claims using the `Agent` tool before writing. The agent spawns lightweight read-only sub-agents (Explore type, haiku model) that check claims against actual files.
+**Why**: Memories can contain stale or inaccurate claims about workspace state (file paths, configuration values, implementation details) that were accurate during conversation but became invalid by extraction time. Validating before writing prevents persisting bad data. Using in-agent sub-agents avoids creating new Python modules or pipeline phases — the prompt is the implementation.
+
+**Consequences**:
+- Pro: No new pipeline phase or preprocessor — purely prompt-driven
+- Pro: Invalid claims are omitted, preventing stale memories from accumulating
+- Pro: Read-only sub-agents cannot modify workspace state
+- Con: Adds API cost (haiku sub-agents for validation) and extraction latency
+- Con: Unrestricted `Read` access expands the agent's visibility beyond its memory directory (necessary for validation; write remains scoped)
