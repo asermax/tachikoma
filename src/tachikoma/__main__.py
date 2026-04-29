@@ -87,7 +87,6 @@ from tachikoma.tasks.scheduler import (
 from tachikoma.telegram import TelegramChannel, telegram_hook
 from tachikoma.updates import create_update_tools_server, update_checker_tick, updates_hook
 from tachikoma.updates.rollback import (
-    RESTART_NOTIFICATION_PATH,
     RestartNotification,
     clear_restart_notification,
     clear_rollback_marker,
@@ -132,34 +131,17 @@ def _build_back_online_prompt(notification: RestartNotification) -> str:
 async def _consume_restart_notification(
     task_repository: TaskRepository,
     notification: RestartNotification | None,
-    marker_existed: bool,
     rollback_was_dispatched: bool,
 ) -> None:
-    """Schedule the back-online session task for a prior `restart` MCP-tool restart.
-
-    Handles AC7 (rollback wins) → AC5 (stale/malformed clear) → consume-once →
-    persist a one-shot session task. Best-effort: a persistence failure is
-    logged but never aborts startup.
-    """
-    if rollback_was_dispatched:
-        if marker_existed:
-            clear_restart_notification()
-            _log.info(
-                "Discarding restart notification — superseded by rollback notification",
-            )
-        return
-
-    if notification is None:
-        if marker_existed:
-            _log.warning("Stale or malformed restart notification — clearing")
-            clear_restart_notification()
-        return
-
-    # Consume-once: clear FIRST so a downstream failure cannot re-fire on the next run.
+    """Schedule the back-online session task; clear the marker first so a failure cannot re-fire."""
+    # Clear unconditionally and FIRST: idempotent for the no-marker case, and a
+    # downstream failure cannot leave the marker on disk to re-fire next run.
     clear_restart_notification()
 
+    if rollback_was_dispatched or notification is None:
+        return
+
     try:
-        prompt = _build_back_online_prompt(notification)
         definition = TaskDefinition(
             id=str(uuid4()),
             name="Back online",
@@ -168,7 +150,7 @@ async def _consume_restart_notification(
                 type="once",
                 at=datetime.now(UTC) + timedelta(seconds=30),
             ),
-            prompt=prompt,
+            prompt=_build_back_online_prompt(notification),
         )
         await task_repository.create_definition(definition)
         _log.info(
@@ -176,7 +158,6 @@ async def _consume_restart_notification(
             r=notification.reason,
         )
     except Exception:
-        # Best-effort: do not abort startup. Marker is already cleared, so no re-fire.
         _log.exception("Failed to schedule back-online session task")
 
 
@@ -209,9 +190,7 @@ async def run(
     # Check for rollback markers from a previous post-update restart
     rollback_marker = read_rollback_marker()
     rollback_notification = read_rollback_notification()
-    # Restart notification marker (DES-011): "Back online" announcement on the next run
     restart_notification = read_restart_notification()
-    restart_marker_existed = restart_notification is not None or RESTART_NOTIFICATION_PATH.exists()
 
     bootstrap = Bootstrap(settings_manager)
     bootstrap.register("workspace", workspace_hook)
@@ -254,9 +233,8 @@ async def run(
                     str(e),
                 )
                 clear_rollback_marker()
-                # Discard any stale restart notification from a prior successful
-                # update + restart cycle so the recovered run does not announce
-                # "back online" with outdated version info (R3 / AC3).
+                # Drop any stale "back online" marker from the prior successful
+                # update so the recovered run doesn't announce with outdated versions.
                 clear_restart_notification()
                 _log.info(
                     "Rollback succeeded, restarting with {ver}",
@@ -312,13 +290,9 @@ async def run(
         )
         clear_rollback_notification()
 
-    # Schedule the back-online session task if the previous run wrote a restart
-    # notification marker (DES-011). Honors AC7 (rollback wins) and AC5 (clear
-    # stale/malformed marker).
     await _consume_restart_notification(
         task_repository,
         restart_notification,
-        marker_existed=restart_marker_existed,
         rollback_was_dispatched=rollback_notification is not None,
     )
 
@@ -614,23 +588,20 @@ async def run(
             await database.close()
 
     # In-place restart after successful upgrade — all async resources are released.
-    # Write a restart notification marker (DES-011) so the next run can announce
-    # "back online" with the right context. Re-read the rollback marker fresh from
-    # disk: its presence here means apply_update ran in this session and has not
-    # yet been confirmed by a successful boot — i.e., this is an update restart.
+    # Re-read the rollback marker fresh: presence here means apply_update ran in
+    # this session and the boot it triggers has not yet succeeded — i.e., update
+    # restart; absence means manual restart.
     if restart_needed:
         current_rollback = read_rollback_marker()
         if current_rollback is not None:
             write_restart_notification(
                 reason="update",
-                rollback_marker_present=True,
                 previous_version=current_rollback.previous_version,
                 new_version=current_rollback.target_version,
             )
         else:
             write_restart_notification(
                 reason="manual",
-                rollback_marker_present=False,
                 previous_version=None,
                 new_version=None,
             )

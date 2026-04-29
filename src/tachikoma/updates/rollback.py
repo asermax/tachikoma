@@ -126,7 +126,6 @@ def clear_rollback_notification() -> None:
 @dataclass(frozen=True)
 class RestartNotification:
     reason: Literal["update", "manual"]
-    rollback_marker_present: bool
     previous_version: str | None
     new_version: str | None
     timestamp: str
@@ -134,14 +133,12 @@ class RestartNotification:
 
 def write_restart_notification(
     reason: Literal["update", "manual"],
-    rollback_marker_present: bool,
     previous_version: str | None,
     new_version: str | None,
 ) -> None:
     """Write the restart notification marker before os.execv restart."""
     data = {
         "reason": reason,
-        "rollback_marker_present": rollback_marker_present,
         "previous_version": previous_version,
         "new_version": new_version,
         "timestamp": datetime.now(UTC).isoformat(),
@@ -166,7 +163,6 @@ def read_restart_notification() -> RestartNotification | None:
             return None
         return RestartNotification(
             reason=reason,
-            rollback_marker_present=data["rollback_marker_present"],
             previous_version=data["previous_version"],
             new_version=data["new_version"],
             timestamp=data["timestamp"],

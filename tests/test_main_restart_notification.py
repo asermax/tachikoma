@@ -23,7 +23,6 @@ def _make_notification(
 ) -> RestartNotification:
     return RestartNotification(
         reason=reason,  # type: ignore[arg-type]
-        rollback_marker_present=reason == "update",
         previous_version=previous_version,
         new_version=new_version,
         timestamp="2026-04-29T00:00:00+00:00",
@@ -50,7 +49,6 @@ class TestBuildBackOnlinePrompt:
         assert "upgraded from 1.55.0 to 1.56.0" in prompt
 
     def test_update_prompt_without_versions_falls_back_to_no_clause(self) -> None:
-        # Defensive: shouldn't happen in practice but guards against bad markers.
         prompt = _build_back_online_prompt(
             _make_notification(reason="update", previous_version=None, new_version=None)
         )
@@ -61,7 +59,7 @@ class TestBuildBackOnlinePrompt:
 
 class TestConsumeRestartNotification:
     @pytest.mark.asyncio
-    async def test_rollback_dispatched_with_marker_clears_and_skips(self, monkeypatch) -> None:
+    async def test_rollback_dispatched_clears_and_skips(self, monkeypatch) -> None:
         clear_calls: list[None] = []
         monkeypatch.setattr(
             "tachikoma.__main__.clear_restart_notification",
@@ -72,7 +70,6 @@ class TestConsumeRestartNotification:
         await _consume_restart_notification(
             repo,
             notification=_make_notification(),
-            marker_existed=True,
             rollback_was_dispatched=True,
         )
 
@@ -80,7 +77,7 @@ class TestConsumeRestartNotification:
         repo.create_definition.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_rollback_dispatched_without_marker_skips_clear(self, monkeypatch) -> None:
+    async def test_no_notification_clears_and_skips(self, monkeypatch) -> None:
         clear_calls: list[None] = []
         monkeypatch.setattr(
             "tachikoma.__main__.clear_restart_notification",
@@ -91,49 +88,10 @@ class TestConsumeRestartNotification:
         await _consume_restart_notification(
             repo,
             notification=None,
-            marker_existed=False,
-            rollback_was_dispatched=True,
-        )
-
-        assert clear_calls == []
-        repo.create_definition.assert_not_called()
-
-    @pytest.mark.asyncio
-    async def test_stale_marker_clears_and_skips(self, monkeypatch) -> None:
-        clear_calls: list[None] = []
-        monkeypatch.setattr(
-            "tachikoma.__main__.clear_restart_notification",
-            lambda: clear_calls.append(None),
-        )
-        repo = AsyncMock()
-
-        await _consume_restart_notification(
-            repo,
-            notification=None,
-            marker_existed=True,
             rollback_was_dispatched=False,
         )
 
         assert clear_calls == [None]
-        repo.create_definition.assert_not_called()
-
-    @pytest.mark.asyncio
-    async def test_no_marker_no_action(self, monkeypatch) -> None:
-        clear_calls: list[None] = []
-        monkeypatch.setattr(
-            "tachikoma.__main__.clear_restart_notification",
-            lambda: clear_calls.append(None),
-        )
-        repo = AsyncMock()
-
-        await _consume_restart_notification(
-            repo,
-            notification=None,
-            marker_existed=False,
-            rollback_was_dispatched=False,
-        )
-
-        assert clear_calls == []
         repo.create_definition.assert_not_called()
 
     @pytest.mark.asyncio
@@ -149,7 +107,6 @@ class TestConsumeRestartNotification:
         await _consume_restart_notification(
             repo,
             notification=_make_notification(reason="manual"),
-            marker_existed=True,
             rollback_was_dispatched=False,
         )
         after = datetime.now(UTC)
@@ -161,7 +118,6 @@ class TestConsumeRestartNotification:
         assert definition.name == "Back online"
         assert definition.schedule.type == "once"
         assert definition.schedule.at is not None
-        # at should fall in roughly [now+25s, now+35s] window allowing scheduling jitter.
         assert before + timedelta(seconds=25) <= definition.schedule.at
         assert definition.schedule.at <= after + timedelta(seconds=35)
         assert "manual restart" in definition.prompt
@@ -179,7 +135,6 @@ class TestConsumeRestartNotification:
                 previous_version="1.55.0",
                 new_version="1.56.0",
             ),
-            marker_existed=True,
             rollback_was_dispatched=False,
         )
 
@@ -203,11 +158,9 @@ class TestConsumeRestartNotification:
         repo = AsyncMock()
         repo.create_definition = AsyncMock(side_effect=record_create_definition_and_fail)
 
-        # Must not raise — best-effort scheduling.
         await _consume_restart_notification(
             repo,
             notification=_make_notification(reason="manual"),
-            marker_existed=True,
             rollback_was_dispatched=False,
         )
 

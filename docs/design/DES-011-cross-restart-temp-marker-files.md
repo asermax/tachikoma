@@ -45,7 +45,6 @@ RESTART_NOTIFICATION_PATH = Path(tempfile.gettempdir()) / "tachikoma-restart-not
 @dataclass(frozen=True)
 class RestartNotification:
     reason: Literal["update", "manual"]
-    rollback_marker_present: bool
     previous_version: str | None
     new_version: str | None
     timestamp: str
@@ -77,21 +76,18 @@ Caller in `__main__.py`:
 
 ```python
 notification = read_restart_notification()
-marker_existed = notification is not None or RESTART_NOTIFICATION_PATH.exists()
+clear_restart_notification()  # idempotent: covers absent / malformed / valid
 
 if notification is None:
-    if marker_existed:
-        clear_restart_notification()  # AC5: stale/malformed → clear, no action
-    return
+    return  # malformed cases were already logged by read_restart_notification
 
-clear_restart_notification()  # consume-once: clear FIRST
 try:
     await schedule_back_online_task(notification)
 except Exception:
     _log.exception("Scheduling failed; marker already cleared, no re-fire")
 ```
 
-**Why**: Startup paths can read the marker before any subsystem is initialized. The clear-before-side-effect ordering means a downstream failure cannot leave the marker on disk to re-trigger.
+**Why**: Startup paths can read the marker before any subsystem is initialized. The unconditional clear-before-side-effect ordering means a downstream failure cannot leave the marker on disk to re-trigger, and the idempotent helper makes the no-marker case a no-op.
 
 ### Don't Do This
 
@@ -118,12 +114,13 @@ await app_state_repo.set("restart.reason", "update")
 **Why**: Cross-restart bridging is consumed once and discarded. Putting it in the database means the database has to be up before you can read it (which excludes the rollback path), and the row hangs around as garbage if the consumer forgets to delete it. Use `app_state` for **long-lived** state per ADR-013.
 
 ```python
-# Don't omit the malformed-clear at the call site
-def read_my_marker() -> Marker | None:
-    ...  # returns None on bad JSON but doesn't delete the file
+# Don't skip the unconditional clear at the call site
+notification = read_restart_notification()
+if notification is None:
+    return  # marker file may still be on disk — will trip every subsequent startup
 ```
 
-**Why**: A malformed marker that's not cleared trips every subsequent startup. The helper symmetry across markers (rollback marker, rollback notification, restart notification) is preserved by keeping `read_X` non-mutating; the **caller** is responsible for clearing a malformed marker when it observes `read_X() is None and PATH.exists()`.
+**Why**: A malformed marker that's not cleared trips every subsequent startup. The helper symmetry across markers (rollback marker, rollback notification, restart notification) is preserved by keeping `read_X` non-mutating; the **caller** clears unconditionally so absent / malformed / valid cases all converge on a clean disk before the side effect runs.
 
 ## Scope
 

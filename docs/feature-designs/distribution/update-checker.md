@@ -138,7 +138,6 @@ RollbackNotification (frozen dataclass, file-backed)
 
 RestartNotification (frozen dataclass, file-backed)
 ├─ reason: Literal["update", "manual"]
-├─ rollback_marker_present: bool
 ├─ previous_version: str | None
 ├─ new_version: str | None
 └─ timestamp: str          ← ISO 8601
@@ -258,13 +257,12 @@ Old process starts after rollback
 
 ```
 New process starts after a `restart`-tool restart
-  → read_restart_notification() returns the marker (or None if the file doesn't parse)
-  → marker_existed = (notification is not None) or RESTART_NOTIFICATION_PATH.exists()
+  → read_restart_notification() returns the marker (or None if absent / malformed)
   → bootstrap.run() succeeds
-  → if rollback_notification was dispatched (precedence) → clear restart marker, return
-  → if notification is None and marker_existed → clear stale marker, return (AC5)
-  → otherwise: clear_restart_notification() FIRST (consume-once: AC6)
-  → build prompt from {reason, previous_version, new_version}
+  → clear_restart_notification() unconditionally (consume-once; idempotent)
+  → if rollback_notification was dispatched (precedence) → return
+  → if notification is None → return
+  → otherwise: build prompt from {reason, previous_version, new_version}
   → task_repository.create_definition(TaskDefinition(
       task_type="session", schedule=once at now+30s, prompt=...))
   → instance_generator_tick (60s) creates a pending instance

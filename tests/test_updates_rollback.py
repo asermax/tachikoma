@@ -131,7 +131,6 @@ class TestRestartNotification:
 
         write_restart_notification(
             reason="update",
-            rollback_marker_present=True,
             previous_version="1.55.0",
             new_version="1.56.0",
         )
@@ -139,7 +138,6 @@ class TestRestartNotification:
 
         assert result is not None
         assert result.reason == "update"
-        assert result.rollback_marker_present is True
         assert result.previous_version == "1.55.0"
         assert result.new_version == "1.56.0"
         assert result.timestamp  # non-empty
@@ -150,7 +148,6 @@ class TestRestartNotification:
 
         write_restart_notification(
             reason="manual",
-            rollback_marker_present=False,
             previous_version=None,
             new_version=None,
         )
@@ -158,7 +155,6 @@ class TestRestartNotification:
 
         assert result is not None
         assert result.reason == "manual"
-        assert result.rollback_marker_present is False
         assert result.previous_version is None
         assert result.new_version is None
 
@@ -188,7 +184,6 @@ class TestRestartNotification:
             json.dumps(
                 {
                     "reason": "bogus",
-                    "rollback_marker_present": False,
                     "previous_version": None,
                     "new_version": None,
                     "timestamp": "2026-04-29T00:00:00+00:00",
