@@ -182,20 +182,6 @@ class SkillRegistry:
         visited: set[str] = set()
         chain: list[Skill] = []
 
-        def _resolve_dep(dep: str, current: Skill) -> str | None:
-            """Resolve a dependency string to a qualified name, or None if unresolvable."""
-            if dep.startswith(":"):
-                # Own-plugin sibling: resolve within current skill's namespace
-                if current.namespace is None:
-                    return None  # Default-ns skill can't use :dep
-                return f"{current.namespace}:{dep[1:]}"
-            elif ":" in dep:
-                # Fully qualified cross-plugin dep
-                return dep
-            else:
-                # Bare dep: resolve in default namespace
-                return dep
-
         def dfs(name: str) -> None:
             if name in visited:
                 return
@@ -204,7 +190,7 @@ class SkillRegistry:
             visited.add(name)
             current = self._skills[name]
             for dep in current.depends_on:
-                resolved = _resolve_dep(dep, current)
+                resolved = self._resolve_dep_for_validation(dep, current)
                 if resolved is not None:
                     dfs(resolved)
             chain.append(current)
@@ -299,20 +285,9 @@ class SkillRegistry:
         """
         prefix = f"{alias}:"
 
-        # Drop skills with matching namespace
-        keys_to_drop = [k for k, s in self._skills.items() if s.namespace == alias]
-        for k in keys_to_drop:
-            del self._skills[k]
-
-        # Drop agents with matching prefix
-        agent_keys_to_drop = [k for k in self._agents if k.startswith(prefix)]
-        for k in agent_keys_to_drop:
-            del self._agents[k]
-
-        # Drop workflows whose first element starts with prefix
-        wf_keys_to_drop = [k for k in self._workflows if k[0].startswith(prefix)]
-        for k in wf_keys_to_drop:
-            del self._workflows[k]
+        self._skills = {k: v for k, v in self._skills.items() if v.namespace != alias}
+        self._agents = {k: v for k, v in self._agents.items() if not k.startswith(prefix)}
+        self._workflows = {k: v for k, v in self._workflows.items() if not k[0].startswith(prefix)}
 
         self._namespaced_source_paths.pop(alias, None)
         self._chain_cache.clear()
