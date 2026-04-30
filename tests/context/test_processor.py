@@ -187,14 +187,15 @@ class TestCoreContextProcessor:
         call_kwargs = mock_fork.call_args[1]
         scope = tmp_path / "context"
 
-        assert call_kwargs["tools"] == ["Read", "Glob", "Grep", "Bash", "Edit", "Write"]
+        assert call_kwargs["tools"] == ["Read", "Glob", "Grep", "Bash", "Edit", "Write", "Agent"]
         assert call_kwargs["allow"] == [
-            abs_rule("Read", scope),
+            "Read",
             "Glob",
             "Grep",
             "Bash",
             abs_rule("Edit", scope),
             abs_rule("Write", scope),
+            "Agent",
             "mcp__pending-signals__add_pending_signal",
             "mcp__pending-signals__remove_pending_signal",
         ]
@@ -351,3 +352,10 @@ class TestContextUpdatePrompt:
         """AC: Prompt contains examples showing the expected correction format."""
         assert "Use rebase and push normally on shared" in CONTEXT_UPDATE_PROMPT
         assert "Use the patch workflow for single-file" in CONTEXT_UPDATE_PROMPT
+
+    def test_includes_workspace_validation_section(self) -> None:
+        """AC: Prompt includes workspace validation section for verifying workspace claims."""
+        assert "Workspace Validation" in CONTEXT_UPDATE_PROMPT
+        assert "Agent tool to spawn validation sub-agents" in CONTEXT_UPDATE_PROMPT
+        assert "VALID" in CONTEXT_UPDATE_PROMPT
+        assert "INVALID" in CONTEXT_UPDATE_PROMPT

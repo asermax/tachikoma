@@ -21,6 +21,7 @@ from tachikoma.context.tools import (
 )
 from tachikoma.post_processing import (
     UTILITY_BASH_HOOK,
+    WORKSPACE_VALIDATION_SECTION,
     PromptDrivenProcessor,
     abs_rule,
     augment_prompt_for_resumption,
@@ -30,7 +31,7 @@ from tachikoma.sessions.model import Session
 
 _log = logger.bind(component="core_context_processor")
 
-CONTEXT_UPDATE_PROMPT = """\
+_BASE_PROMPT = """\
 You are a context file update agent. Your task is to analyze the completed \
 conversation and update the foundational context files when appropriate.
 
@@ -202,13 +203,18 @@ Action: Call `remove_pending_signal` with indices [2] to clean up the stale sign
 These files shape the assistant's identity and behavior across all sessions. \
 Updates should be deliberate and evidence-based. When in doubt, stage the signal \
 for future recurrence detection rather than making premature changes.
+"""
 
+_PERMISSIONS_SECTION = """\
 ## Permissions
 
-You can only access files within `context/`. Reads, edits, and writes outside \
-this directory will be denied. For Bash, read-only inspection commands (`ls`, \
-`find`, `file`, `echo`, `date`, `cat`, `head`, `tail`, `wc`, `stat`) and \
-navigation (`cd`, `pwd`) are allowed — other commands will be denied."""
+You can read files anywhere in the workspace (needed for validation). Edits \
+and writes are restricted to `$WORKSPACE/context/`. For Bash, read-only \
+inspection commands (`ls`, `find`, `file`, `echo`, `date`, `cat`, `head`, \
+`tail`, `wc`, `stat`) and navigation (`cd`, `pwd`) are allowed — other \
+commands will be denied. You can use the Agent tool to spawn validation sub-agents."""
+
+CONTEXT_UPDATE_PROMPT = _BASE_PROMPT + WORKSPACE_VALIDATION_SECTION + "\n\n" + _PERMISSIONS_SECTION
 
 
 def _read_pending_signals_snapshot(data_dir: Path) -> list[tuple[str, str]]:
@@ -289,14 +295,15 @@ class CoreContextProcessor(PromptDrivenProcessor):
         super().__init__(
             CONTEXT_UPDATE_PROMPT,
             agent_defaults,
-            tools=["Read", "Glob", "Grep", "Bash", "Edit", "Write"],
+            tools=["Read", "Glob", "Grep", "Bash", "Edit", "Write", "Agent"],
             allow=[
-                abs_rule("Read", scope),
+                "Read",
                 "Glob",
                 "Grep",
                 "Bash",
                 abs_rule("Edit", scope),
                 abs_rule("Write", scope),
+                "Agent",
                 "mcp__pending-signals__add_pending_signal",
                 "mcp__pending-signals__remove_pending_signal",
             ],
