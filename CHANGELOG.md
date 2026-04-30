@@ -2,6 +2,19 @@
 
 <!-- version list -->
 
+## v1.62.0 (2026-04-30)
+
+### Documentation
+
+- **context**: Add correction detection spec and design
+  ([`6992946`](https://github.com/asermax/tachikoma/commit/6992946194eb82bf8d4f1b84f9ea86801581ee85))
+
+### Features
+
+- **context**: Add correction detection guidance to processor prompt
+  ([`8e56120`](https://github.com/asermax/tachikoma/commit/8e561203cc7a15cae04a9fffeaacdf9fc2789f6c))
+
+
 ## v1.61.0 (2026-04-30)
 
 ### Bug Fixes
