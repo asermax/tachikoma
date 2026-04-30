@@ -2,6 +2,19 @@
 
 <!-- version list -->
 
+## v1.65.0 (2026-04-30)
+
+### Documentation
+
+- **memory**: Clarify one-time event routing in facts extraction
+  ([`e32c77c`](https://github.com/asermax/tachikoma/commit/e32c77c3100a7a8af1a38becf458e52869f20761))
+
+### Features
+
+- **memory**: Route one-time events to episodic in facts prompt
+  ([`ea8137b`](https://github.com/asermax/tachikoma/commit/ea8137bdb53b2d364a8ac10ab927b7d9a9e4a5b3))
+
+
 ## v1.64.0 (2026-04-30)
 
 ### Documentation
