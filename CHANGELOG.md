@@ -2,6 +2,19 @@
 
 <!-- version list -->
 
+## v1.66.0 (2026-04-30)
+
+### Documentation
+
+- **memory**: Update extraction spec and design for preferences AGENTS.md dedup
+  ([`ab643bd`](https://github.com/asermax/tachikoma/commit/ab643bd7f09011a6125efff1ea0d06323f291ec8))
+
+### Features
+
+- **memory**: Use inline AGENTS.md dedup for preferences extraction
+  ([`3cccc6b`](https://github.com/asermax/tachikoma/commit/3cccc6b01fdad8f82c7ff4af7c67e5e245cc31ab))
+
+
 ## v1.65.0 (2026-04-30)
 
 ### Documentation
