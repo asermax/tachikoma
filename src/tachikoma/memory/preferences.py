@@ -51,14 +51,30 @@ words, REPLACE the old version — don't add a second version.
    - Each file should have ONE clear statement per preference, not multiple \
 sections restating the same thing in different words
 
-5. Each preference file should contain:
+5. **Prune stale and reversed preferences**:
+   - After reading existing files, actively look for preferences that may no \
+longer reflect the user's current stance:
+     - Reversed preferences (e.g., file says "prefers dark mode" but user now \
+says "I switched to light mode")
+     - Preferences about tools or workflows the user has explicitly moved away from
+     - Preferences that the conversation contradicts with clear, stated \
+alternatives
+   - When you find stale preferences: update the file if the user expressed a \
+new preference on the same topic, or delete the file if the preference topic \
+is no longer relevant
+   - When you find files covering overlapping preference topics: merge into \
+the most specific file and delete the redundant ones
+   - **Do NOT prune based on**: vague hints ("I might try..."), single \
+exceptions to general rules, or assumptions not backed by conversation evidence
+
+6. Each preference file should contain:
    - A clear statement of the preference
    - Brief context or an example (1-2 sentences)
    - When appropriate, how strongly the preference is held
    - Keep files under 30 lines. A preference that takes more to express \
 is probably a spec or design document, not a preference.
 
-6. **Important constraints**:
+7. **Important constraints**:
    - Only create or modify files within `$WORKSPACE/memories/preferences/`
    - Use descriptive, topic-based filenames (not dates)
    - If no preference-related information emerged from the conversation, \

@@ -56,13 +56,28 @@ covers the topic
    - When updating a file, READ it first. If a section already covers what \
 you're about to add, update that section rather than appending a duplicate
 
-5. Each fact file should contain:
+5. **Prune stale and redundant entries**:
+   - After reading existing files, actively look for entries that may be \
+outdated or no longer accurate based on the conversation:
+     - Information contradicted by new statements (e.g., file says "works at \
+Company A" but conversation reveals a move to Company B)
+     - References to completed projects, past roles, or expired commitments \
+that the conversation confirms are done
+     - Entries about tools, services, or setups the user no longer uses
+   - When you find stale entries: update them if new information replaces the \
+old, or delete the file if the entire topic is no longer relevant
+   - When you find files covering overlapping topics: merge into the most \
+comprehensive file and delete the redundant ones
+   - **Do NOT prune based on**: vague hints ("I might switch..."), old dates \
+alone (age is not staleness), or assumptions not backed by conversation evidence
+
+6. Each fact file should contain:
    - Clear, factual statements
    - Relevant context or details
    - Keep files under 40 lines. If a topic needs more detail, the detail \
 probably belongs in a project file, not in facts memory.
 
-6. **Important constraints**:
+7. **Important constraints**:
    - Only create or modify files within `$WORKSPACE/memories/facts/`
    - Use descriptive, topic-based filenames (not dates)
    - If no new factual information emerged from the conversation, \

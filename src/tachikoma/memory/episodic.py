@@ -41,7 +41,8 @@ status (which activities were done/skipped — that belongs in facts)
 5. **Cleanup duty**: If you see files that don't match the `YYYY-MM-DD.md` \
 pattern (e.g., files with `-consolidated`, `-final`, `-updated` suffixes, or \
 empty 0-byte files), merge any useful content into the correct `YYYY-MM-DD.md` \
-file and delete the variant.
+file and delete the variant. This corrects filename format violations — \
+episodic entries are never deleted based on their content.
 
 6. **Important constraints**:
    - Only create or modify files within `$WORKSPACE/memories/episodic/`

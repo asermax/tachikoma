@@ -88,7 +88,23 @@ the promoted signal via `remove_pending_signal`
 
    **No relevant information** → do nothing (this is perfectly acceptable)
 
-5. **Important constraints:**
+5. **Prune stale content** from context files:
+   - While reading context files, actively look for content that is outdated \
+or no longer accurate:
+     - USER.md: projects that were completed or abandoned (confirmed by \
+conversation), outdated employer or role info, interests the user has moved \
+away from
+     - AGENTS.md: instructions about tools or workflows no longer in use, \
+outdated conventions
+     - SOUL.md: personality adjustments that the user has contradicted or \
+reversed
+   - Remove or update stale sections to keep files current and concise. Do \
+not leave outdated info "just in case" — these files should be a current \
+snapshot, not an archive.
+   - **Do NOT prune based on**: vague hints, assumptions, or the age of \
+content alone (age is not staleness — only prune when you have clear evidence)
+
+6. **Important constraints:**
    - **Be conservative**: Only apply changes with clear conversational evidence
    - **Route correctly**: personality→SOUL, user info→USER, instructions→AGENTS
    - **Read-first**: Always read a file before modifying it
