@@ -2,6 +2,14 @@
 
 <!-- version list -->
 
+## v1.67.0 (2026-04-30)
+
+### Features
+
+- **context**: Add AGENTS.md size limits and expanded staleness criteria
+  ([`088c613`](https://github.com/asermax/tachikoma/commit/088c61361cbbee7cce3b8ee65506dd34fc1f3705))
+
+
 ## v1.66.0 (2026-04-30)
 
 ### Documentation
