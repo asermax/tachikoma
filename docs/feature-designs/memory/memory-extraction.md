@@ -137,6 +137,8 @@ Each processor inherits `_prompt`, `_cwd`, and the default `process()` implement
    d. The forked agent (LLM) autonomously:
       - Reads existing files in its memory subdirectory
       - Analyzes the conversation history (via the forked session)
+      - For preferences: reads `$WORKSPACE/context/AGENTS.md` and skips
+        creating files for preferences already captured there
       - For facts/preferences: validates workspace-referencing claims by
         spawning read-only sub-agents (Agent tool, Explore type, haiku)
         to verify claims; omits claims that fail validation
@@ -251,6 +253,18 @@ Each processor inherits `_prompt`, `_cwd`, and the default `process()` implement
 **When**: Next facts processor runs
 **Then**: Forked agent reads the user-edited file and respects changes.
 
+### Scenario: Preference already captured in AGENTS.md
+
+**Given**: A conversation where the user restates a preference already present in `context/AGENTS.md`
+**When**: The preferences processor runs
+**Then**: The forked agent reads AGENTS.md, detects the overlap, and skips creating a preference file — the information is already stored where it belongs.
+
+### Scenario: AGENTS.md missing during preferences extraction
+
+**Given**: A workspace without `context/AGENTS.md`
+**When**: The preferences processor runs
+**Then**: The forked agent proceeds normally — the dedup check is gracefully skipped and preferences are created or updated as usual.
+
 ### Scenario: Transcript archived on session close
 
 **Given**: A closing session with populated `transcript_path` and `sdk_session_id`, and the SDK transcript file exists at that path
@@ -312,14 +326,16 @@ Each processor inherits `_prompt`, `_cwd`, and the default `process()` implement
 - Pro: Conservative guardrails prevent premature deletion of valid entries
 - Con: Pruning effectiveness depends on LLM interpretation of staleness signals
 
-### Context file deduplication via prompt instruction (facts and preferences only)
+### Context file deduplication via prompt instruction (facts and preferences)
 
-**Choice**: Facts and preferences extraction prompts include a `CONTEXT_DEDUP_SECTION` instructing the agent to read the foundational context files (AGENTS.md, USER.md, SOUL.md) before creating any memory file and skip creation when the information is already covered there. The section follows the same shared-constant pattern as `WORKSPACE_VALIDATION_SECTION`. The episodic processor does not include this section — episodic memories are conversation summaries that do not duplicate context file content.
-**Why**: The prompts mentioned context files in their "DO NOT store" lists but this was passive guidance — agents never actively checked. This led to memory files that directly duplicated context file content (response gates, communication style, workflow details), creating confusion about which source was authoritative. The shared section in `prompts.py` makes the dedup instruction explicit, consistent across both processors, and easy to update.
+**Choice**: Facts extraction uses a shared `CONTEXT_DEDUP_SECTION` prompt that checks all three foundational context files (AGENTS.md, USER.md, SOUL.md) before creating memory files. Preferences extraction uses an additional inline AGENTS.md check integrated directly into its extraction steps (step 1 reads AGENTS.md alongside existing preferences; step 3 searches AGENTS.md for overlap before creating files). The episodic processor does not include dedup — episodic memories are conversation summaries that do not duplicate context file content.
+**Why**: The prompts mentioned context files in their "DO NOT store" lists but this was passive guidance — agents never actively checked. This led to memory files that directly duplicated context file content (response gates, communication style, workflow details), creating confusion about which source was authoritative. The shared section in `prompts.py` makes the dedup instruction explicit for facts. For preferences, the inline AGENTS.md check targets the most common source of duplication (operational and workflow preferences captured in AGENTS.md) with graceful fallback when the file is absent.
 
 **Consequences**:
 - Pro: No code changes beyond prompt text — consistent with DES-004 pattern
-- Pro: Shared section keeps facts and preferences prompts in sync
+- Pro: Shared section keeps facts dedup consistent and easy to update
+- Pro: Preferences inline check is more targeted and contextual (integrated into extraction steps)
 - Pro: Context files remain authoritative; memory files supplement rather than duplicate
-- Con: Agents read three additional files per extraction (small overhead; files are small)
+- Pro: Graceful fallback for preferences when AGENTS.md is absent
+- Con: Agents read additional files per extraction (small overhead; files are small)
 - Con: Dedup effectiveness depends on LLM interpretation of "already covered"

@@ -29,6 +29,7 @@ The memory workspace also includes `memories/transcripts/`, a non-extractive sub
 | R9 | Before writing facts or preferences memories that reference workspace state (file paths, configuration values, implementation details), forked agents validate claims against actual workspace files using internal sub-agents; invalid claims are omitted |
 | R10 | Facts and preferences processors proactively prune stale, outdated, or superseded entries during extraction — removing or updating entries that the conversation contradicts, and merging overlapping files into one; episodic entries are never deleted for content reasons (only malformed filenames are consolidated) |
 | R11 | Before creating facts or preferences memory files, forked agents read the foundational context files from `$WORKSPACE/context/` (AGENTS.md, USER.md, SOUL.md) and skip creation when the information is already covered there; context files are the authoritative source for their respective categories |
+| R12 | The preferences processor also checks `AGENTS.md` inline before creating new preference files — if the information is already captured there (even in different words), the processor skips creating the file; gracefully proceeds normally if `AGENTS.md` doesn't exist or is empty |
 
 ## Behaviors
 
@@ -76,6 +77,8 @@ Named files about how the user likes things — code style, communication, workf
 - Given the same preference appears in multiple files, when the preferences processor runs, then the agent consolidates into the most specific file and removes duplicates
 - Given a preferences file contains entries the user has reversed or moved away from, when the preferences processor runs, then the agent updates or removes the stale entries (R10)
 - Given ambiguous signals ("I might try..."), when the preferences processor runs, then it retains existing entries unchanged — only clear evidence triggers pruning (R10)
+- Given a preference already captured in `AGENTS.md`, when the preferences processor runs, then no preference file is created — the information is already stored where it belongs (R12)
+- Given `AGENTS.md` doesn't exist or is empty, when the preferences processor runs, then preference extraction proceeds normally without the dedup check (R12)
 
 ### Directory Structure and Bootstrap (R4, R6)
 
@@ -112,12 +115,13 @@ Before writing facts or preferences memory files that contain claims about works
 - Given a memory with no workspace references (e.g., personal details, preferences, conversation summaries), when the agent prepares to write, no validation overhead is added
 - Given the agent identifies a verifiable claim, it spawns a read-only sub-agent to check the claim against the actual file and omits the claim if invalid
 
-### Context File Deduplication (R11)
+### Context File Deduplication (R11, R12)
 
-Before creating facts or preferences memory files, the forked agent reads the foundational context files from `$WORKSPACE/context/` and skips creation when the information is already covered there.
+Before creating facts or preferences memory files, the forked agent reads the foundational context files and skips creation when the information is already covered there. Facts uses a shared `CONTEXT_DEDUP_SECTION` prompt that checks all context files (AGENTS.md, USER.md, SOUL.md). Preferences has an additional inline AGENTS.md check integrated directly into its extraction steps (read + overlap search), providing a focused dedup that specifically targets operational and workflow preferences.
 
 **Acceptance Criteria**:
 - Given a fact topic already covered in AGENTS.md, USER.md, or SOUL.md, when the facts processor runs, then the agent does not create a separate memory file
-- Given a preference topic already covered in AGENTS.md or SOUL.md, when the preferences processor runs, then the agent does not create a separate memory file
+- Given a preference topic already covered in AGENTS.md, when the preferences processor runs, then the agent does not create a separate memory file (R12)
 - Given a context file partially covers the topic but the conversation adds genuinely new details, when the agent runs, then it creates a file for the new information only
 - Given no context file covers the topic, when the agent runs, then it proceeds normally with file creation
+- Given `AGENTS.md` doesn't exist or is empty, when the preferences processor runs, then extraction proceeds normally without the inline dedup check (R12)

@@ -73,12 +73,13 @@ class TestPreferencesProcessor:
         """AC: Prompt mentions descriptive, topic-based naming."""
         assert "descriptive" in PREFERENCES_PROMPT.lower() or "topic" in PREFERENCES_PROMPT.lower()
 
-    def test_prompt_instructs_context_file_dedup(self) -> None:
-        """AC: Prompt instructs to check context files before creating memory."""
+    def test_prompt_instructs_agents_md_dedup(self) -> None:
+        """AC: Prompt instructs to check AGENTS.md before creating files."""
         assert "AGENTS.md" in PREFERENCES_PROMPT
-        assert "USER.md" in PREFERENCES_PROMPT
-        assert "SOUL.md" in PREFERENCES_PROMPT
-        assert "context" in PREFERENCES_PROMPT.lower()
+
+    def test_prompt_instructs_agents_md_graceful_fallback(self) -> None:
+        """AC: Prompt handles missing AGENTS.md gracefully."""
+        assert "proceed normally" in PREFERENCES_PROMPT.lower()
 
     async def test_propagates_fork_and_consume_error(self, mocker: MockerFixture) -> None:
         """AC: Exceptions from fork_and_consume propagate."""
