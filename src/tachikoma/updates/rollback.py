@@ -19,8 +19,11 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Literal
 
+from bubus import EventBus
 from loguru import logger
 
+from tachikoma.buffer.priority import Priority
+from tachikoma.notifications import dispatch_notification
 from tachikoma.updates.apply import PACKAGE_NAME, UPGRADE_TIMEOUT
 
 _log = logger.bind(component="updates")
@@ -176,6 +179,53 @@ def clear_restart_notification() -> None:
     """Remove the restart notification file. Idempotent."""
     with contextlib.suppress(FileNotFoundError):
         RESTART_NOTIFICATION_PATH.unlink()
+
+
+def build_back_online_content(notification: RestartNotification) -> str:
+    """Build the back-online notification message from restart marker data."""
+    if (
+        notification.reason == "update"
+        and notification.previous_version
+        and notification.new_version
+    ):
+        return (
+            f"Tachikoma is back online after an update restart "
+            f"(upgraded from {notification.previous_version} "
+            f"to {notification.new_version})."
+        )
+    return (
+        f"Tachikoma is back online after a "
+        f"{notification.reason} restart."
+    )
+
+
+async def handle_restart_notification(
+    bus: EventBus,
+    restart_notification: RestartNotification | None,
+    rollback_was_dispatched: bool,
+) -> None:
+    """Process restart notification marker after startup.
+
+    Implements DES-011 consume-once: clears the marker unconditionally
+    before dispatching any side effect.
+    """
+    if restart_notification is None:
+        return
+
+    clear_restart_notification()
+
+    if rollback_was_dispatched:
+        return
+
+    content = build_back_online_content(restart_notification)
+    await dispatch_notification(
+        bus,
+        source="Back Online",
+        content=content,
+        severity="info",
+        priority=Priority.URGENT,
+        source_id="restart_notification",
+    )
 
 
 def run_rollback(version: str) -> bool:

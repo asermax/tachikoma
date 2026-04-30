@@ -21,7 +21,6 @@ from tachikoma.bootstrap import Bootstrap, BootstrapError
 from tachikoma.boundary import LastExchangeProcessor, SummaryProcessor
 from tachikoma.buffer.buffer import Buffer
 from tachikoma.buffer.factory import create_and_start_buffer
-from tachikoma.buffer.priority import Priority
 from tachikoma.config import SettingsManager
 from tachikoma.context import CoreContextProcessor, context_hook
 from tachikoma.coordinator import Coordinator
@@ -90,6 +89,7 @@ from tachikoma.updates.rollback import (
     clear_restart_notification,
     clear_rollback_marker,
     clear_rollback_notification,
+    handle_restart_notification,
     read_restart_notification,
     read_rollback_marker,
     read_rollback_notification,
@@ -480,34 +480,7 @@ async def run(
             active_channel.attach_buffer(buffer)
 
             # Per DES-011: clear marker unconditionally before side effects.
-            if restart_notification is not None:
-                clear_restart_notification()
-                if not rollback_was_dispatched:
-                    if (
-                        restart_notification.reason == "update"
-                        and restart_notification.previous_version
-                        and restart_notification.new_version
-                    ):
-                        back_online_content = (
-                            f"Tachikoma is back online after an update restart "
-                            f"(upgraded from {restart_notification.previous_version} "
-                            f"to {restart_notification.new_version})."
-                        )
-                    else:
-                        back_online_content = (
-                            f"Tachikoma is back online after a "
-                            f"{restart_notification.reason} restart."
-                        )
-
-                    await dispatch_notification(
-                        bus,
-                        source="Back Online",
-                        content=back_online_content,
-                        severity="info",
-                        priority=Priority.URGENT,
-                        source_id="restart_notification",
-                    )
-                    _log.info("Back-online notification dispatched")
+            await handle_restart_notification(bus, restart_notification, rollback_was_dispatched)
 
             # Start channel with coordinator
             await active_channel.run(coordinator)
