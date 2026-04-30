@@ -26,7 +26,7 @@ The memory workspace also includes `memories/transcripts/`, a non-extractive sub
 | R6 | Bootstrap hook creates the memory directory structure on first run (idempotent) |
 | R7 | Transcript archive processor copies each session's SDK transcript into `memories/transcripts/<sdk-session-id>.jsonl` on session close; runs in the post-processing `pre_finalize` phase so archived files land before the workspace git commit |
 | R8 | Transcript archival is best-effort — failures (missing source, filesystem errors) are logged and swallowed, never crashing the conversation or blocking other post-processing |
-| R9 | Before writing memories that reference workspace state (file paths, configuration values, implementation details), forked agents validate claims against actual workspace files using internal sub-agents; invalid claims are omitted |
+| R9 | Before writing facts or preferences memories that reference workspace state (file paths, configuration values, implementation details), forked agents validate claims against actual workspace files using internal sub-agents; invalid claims are omitted |
 
 ## Behaviors
 
@@ -96,7 +96,7 @@ On session close, the transcript archive processor copies the SDK-owned transcri
 
 ### Workspace Claim Validation (R9)
 
-Before writing memory files that contain claims about workspace state, the forked agent validates those claims against actual files using lightweight internal sub-agents.
+Before writing facts or preferences memory files that contain claims about workspace state, the forked agent validates those claims against actual files using lightweight internal sub-agents. Episodic memories are conversation summaries and do not reference workspace state, so validation does not apply to the episodic processor.
 
 **Acceptance Criteria**:
 - Given a memory referencing a non-existent file path, when the agent prepares to write, the claim is omitted from the memory file
