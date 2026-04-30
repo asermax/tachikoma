@@ -2,6 +2,38 @@
 
 <!-- version list -->
 
+## v1.61.0 (2026-04-30)
+
+### Bug Fixes
+
+- **memory**: Remove overlap-merging from pruning instructions
+  ([`3c8cce2`](https://github.com/asermax/tachikoma/commit/3c8cce297fc75c3d991f29fd48b1fb94382f2316))
+
+### Documentation
+
+- **memory**: Add stale entry pruning requirements to extraction and context specs
+  ([`da20742`](https://github.com/asermax/tachikoma/commit/da207429a98e480f5c76e4f1b0a6aa3cbd0f767e))
+
+- **memory**: Update extraction spec and design for episodic validation scope
+  ([`9df0f94`](https://github.com/asermax/tachikoma/commit/9df0f94600320fc30e522aac859d8cc56af38d3b))
+
+### Features
+
+- **memory**: Add prompt-driven pruning of stale entries to processors
+  ([`abc0781`](https://github.com/asermax/tachikoma/commit/abc07810cbf80b183d140e1969c71a1147730e80))
+
+### Refactoring
+
+- **memory**: Skip workspace validation for episodic extraction
+  ([`8144326`](https://github.com/asermax/tachikoma/commit/814432688df48898198738235430ed02d4210dd2))
+
+- **updates**: Await restart notification directly instead of scheduling as task
+  ([`ee06196`](https://github.com/asermax/tachikoma/commit/ee06196932a605cb29084210661fb9c6387820c5))
+
+- **updates**: Dispatch restart notification via buffer instead of session task
+  ([`8d4d2b1`](https://github.com/asermax/tachikoma/commit/8d4d2b11db6239dd45826332752e210c85e2fce3))
+
+
 ## v1.60.0 (2026-04-30)
 
 ### Documentation
