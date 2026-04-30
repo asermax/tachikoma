@@ -2,6 +2,19 @@
 
 <!-- version list -->
 
+## v1.64.0 (2026-04-30)
+
+### Documentation
+
+- **memory**: Add context file dedup spec and design
+  ([`e39a4b2`](https://github.com/asermax/tachikoma/commit/e39a4b2e269b5484310ddcecba6fed3398b5e672))
+
+### Features
+
+- **memory**: Add context file dedup to extraction prompts
+  ([`8c7d880`](https://github.com/asermax/tachikoma/commit/8c7d880a80339bad81c4ec6fcc282ada3f825f86))
+
+
 ## v1.63.1 (2026-04-30)
 
 ### Bug Fixes
