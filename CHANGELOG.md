@@ -2,6 +2,24 @@
 
 <!-- version list -->
 
+## v1.60.0 (2026-04-30)
+
+### Documentation
+
+- **memory**: Update extraction spec and design for workspace validation
+  ([`9f8bbe0`](https://github.com/asermax/tachikoma/commit/9f8bbe05107c27e0741f29849f64fe3888407c7f))
+
+### Features
+
+- **memory**: Add workspace claim validation to extraction processors
+  ([`86d14c9`](https://github.com/asermax/tachikoma/commit/86d14c92536046d45b0ed7449c22a96f97636ca0))
+
+### Refactoring
+
+- **memory**: Extract shared prompt sections into prompts module
+  ([`7925893`](https://github.com/asermax/tachikoma/commit/7925893d090d4c780c56e49296246c657301876c))
+
+
 ## v1.59.0 (2026-04-29)
 
 ### Code Style
