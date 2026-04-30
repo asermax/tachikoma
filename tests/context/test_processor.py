@@ -349,5 +349,5 @@ class TestContextUpdatePrompt:
 
     def test_correction_detection_contains_examples(self) -> None:
         """AC: Prompt contains examples showing the expected correction format."""
-        assert "Don't" in CONTEXT_UPDATE_PROMPT
-        assert "instead" in CONTEXT_UPDATE_PROMPT
+        assert "Use rebase and push normally on shared" in CONTEXT_UPDATE_PROMPT
+        assert "Use the patch workflow for single-file" in CONTEXT_UPDATE_PROMPT

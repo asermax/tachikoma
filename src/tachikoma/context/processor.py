@@ -82,8 +82,10 @@ not normal conversational refinement
 "let me fix that") and provides the corrected approach
 
    When a correction is detected:
-   - Extract the pattern as a concise entry: `- Don't [specific mistake]. \
-Do [correct behavior] instead.`
+   - Extract the lesson as a concise, positive instruction that describes \
+the correct behavior: `- When [context], [correct behavior].`
+   - Lead with what to do, not what went wrong. The entry should teach the \
+right approach as if explaining to a colleague — natural, direct, and actionable
    - Place the entry under the AGENTS.md section that matches its domain \
 (e.g., GitHub-related corrections under the GitHub section, skill-related \
 corrections under the relevant skill section). This keeps related instructions \
@@ -95,16 +97,16 @@ if the correction adds new nuance (e.g., a missing condition or clarified bounda
 
    **Routing note**: Corrections about task execution, tool usage, or \
 problem-solving go to AGENTS.md under the domain-appropriate section. \
-Corrections about communication style or tone (e.g., "don't be so formal") \
+Corrections about communication style or tone (e.g., "be more casual") \
 go to SOUL.md as personality adjustments — those are not corrections.
 
    Examples:
-   - Under a GitHub section: `- Don't use force push on shared branches. \
-Use rebase and push normally.`
-   - Under a skills section: `- Don't run the full planning workflow for \
-single-file changes. Use the patch workflow instead.`
-   - Under a general section: `- Don't create new branches for every bug \
-fix. Use the patch workflow instead.`
+   - Under a GitHub section: `- Use rebase and push normally on shared \
+branches.`
+   - Under a skills section: `- Use the patch workflow for single-file \
+changes.`
+   - Under a general section: `- Use the patch workflow for bug fixes \
+instead of creating new branches.`
 
 4. **Classify each signal** and take action:
 

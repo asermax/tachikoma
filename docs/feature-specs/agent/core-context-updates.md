@@ -35,7 +35,7 @@ This is distinct from memory extraction: memory processors create individual fil
 | R10 | Log which files were updated for observability |
 | R11 | Clear boundary with memory extraction — context files are foundational identity documents while memory files are individual entries for retrieval; overlap is acceptable since they serve different purposes |
 | R12 | Proactively prune stale sections from context files — remove or update outdated content (completed projects, past roles, reversed personality adjustments, obsolete instructions) when the conversation provides clear evidence; ambiguous signals do not trigger pruning |
-| R13 | Detect corrections (explicit user corrections, implicit user corrections after agent errors, agent self-corrections) and extract concise behavioral instructions to AGENTS.md under domain-appropriate sections; check for existing semantically similar entries before adding; corrections about communication style or tone route to SOUL.md |
+| R13 | Detect corrections (explicit user corrections, implicit user corrections after agent errors, agent self-corrections) and extract concise behavioral instructions to AGENTS.md under domain-appropriate sections; entries are framed as positive instructions describing the correct behavior, not "don't/do" correction pairs; check for existing semantically similar entries before adding; corrections about communication style or tone route to SOUL.md |
 
 ## Behaviors
 
@@ -136,11 +136,11 @@ The processor actively removes outdated sections from context files when clear e
 The processor detects moments where the agent was corrected and extracts the lesson as a behavioral instruction in AGENTS.md.
 
 **Acceptance Criteria**:
-- Given a conversation where the user explicitly corrects the agent (e.g., "no, don't do that, do this instead"), when the processor runs, then a concise behavioral instruction is added to AGENTS.md under the domain-appropriate section
-- Given a conversation where the agent self-corrects (acknowledges a mistake and provides the corrected approach), when the processor runs, then the lesson is extracted as a behavioral instruction in AGENTS.md
+- Given a conversation where the user explicitly corrects the agent (e.g., "no, don't do that, do this instead"), when the processor runs, then a concise behavioral instruction is added to AGENTS.md under the domain-appropriate section, framed as a positive instruction (e.g., "Use rebase on shared branches" rather than "Don't force-push, do rebase")
+- Given a conversation where the agent self-corrects (acknowledges a mistake and provides the corrected approach), when the processor runs, then the lesson is extracted as a positive behavioral instruction in AGENTS.md
 - Given a conversation where the user implicitly corrects by restating or rephrasing after a clearly wrong agent answer, when the processor runs, then the correction pattern is captured — but only when the agent demonstrably erred, not during normal conversational refinement
 - Given AGENTS.md already contains a semantically similar entry, when the processor would add a correction, then the existing entry is kept (or refined if the correction adds new nuance)
-- Given a correction about communication style or tone (e.g., "don't be so formal"), when the processor runs, then it routes to SOUL.md as a personality adjustment rather than AGENTS.md
+- Given a correction about communication style or tone (e.g., "be more casual"), when the processor runs, then it routes to SOUL.md as a personality adjustment rather than AGENTS.md
 - Given no matching section exists in AGENTS.md for the correction's domain, when the processor adds the entry, then it creates a new section with a descriptive heading
 
 ### Edge Cases
