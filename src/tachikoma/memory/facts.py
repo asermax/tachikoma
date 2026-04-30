@@ -6,6 +6,7 @@ persist for future reference.
 
 from tachikoma.agent_defaults import AgentDefaults
 from tachikoma.memory.prompts import (
+    CONTEXT_DEDUP_SECTION,
     EXTRACTION_TOOLS,
     WORKSPACE_VALIDATION_SECTION,
     extraction_allow_rules,
@@ -36,7 +37,6 @@ stay true across conversations:
    - Daily activity logs or status updates (that's episodic memory)
    - Full design documents, specs, or game mechanics (project files)
    - Article summaries or reading notes (the reading list skill tracks those)
-   - Information already in context files (USER.md, AGENTS.md)
    - Anything longer than ~40 lines — if it needs that much space, it's \
 not a fact, it's a document
 
@@ -88,7 +88,14 @@ Focus on accurate, stable reference information — not activity logs or documen
 
 """
 
-FACTS_PROMPT = _BASE_PROMPT + WORKSPACE_VALIDATION_SECTION + "\n\n" + permissions_section("facts")
+FACTS_PROMPT = (
+    _BASE_PROMPT
+    + CONTEXT_DEDUP_SECTION
+    + "\n\n"
+    + WORKSPACE_VALIDATION_SECTION
+    + "\n\n"
+    + permissions_section("facts")
+)
 
 
 class FactsProcessor(PromptDrivenProcessor):

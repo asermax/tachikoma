@@ -8,6 +8,29 @@ from tachikoma.post_processing import WORKSPACE_VALIDATION_SECTION, abs_rule
 
 __all__ = ["WORKSPACE_VALIDATION_SECTION"]
 
+CONTEXT_DEDUP_SECTION = """\
+## Context File Deduplication
+
+Before creating any new memory file, check whether the information is already \
+covered in the foundational context files. These files are maintained as the \
+authoritative source for certain categories of information.
+
+1. Read the context files in `$WORKSPACE/context/`:
+   - `AGENTS.md` — operational guidelines and workflow preferences
+   - `USER.md` — stable identity and high-level project awareness
+   - `SOUL.md` — personality and communication style
+
+2. For each piece of information you're about to write:
+   - If the SAME information is already in one of these files, do NOT create \
+a memory file for it — the context file is the source of truth
+   - If a context file partially covers the topic but the conversation adds \
+genuinely new details not found there, you MAY create a file — but only for \
+the new information, not a restatement of what's already in the context file
+   - If no context file covers the topic, proceed normally
+
+This check prevents duplicating information across the memory system and the \
+context files, which would create confusion about which is authoritative."""
+
 
 def permissions_section(memory_type: str, *, include_agent: bool = True) -> str:
     """Build the permissions section for a memory extraction prompt."""

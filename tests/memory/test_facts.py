@@ -70,6 +70,13 @@ class TestFactsProcessor:
         """AC: Prompt mentions descriptive, topic-based naming."""
         assert "topic" in FACTS_PROMPT.lower() or "descriptive" in FACTS_PROMPT.lower()
 
+    def test_prompt_instructs_context_file_dedup(self) -> None:
+        """AC: Prompt instructs to check context files before creating memory."""
+        assert "AGENTS.md" in FACTS_PROMPT
+        assert "USER.md" in FACTS_PROMPT
+        assert "SOUL.md" in FACTS_PROMPT
+        assert "context" in FACTS_PROMPT.lower()
+
     async def test_propagates_fork_and_consume_error(self, mocker: MockerFixture) -> None:
         """AC: Exceptions from fork_and_consume propagate."""
         _mock_fork = mocker.patch(

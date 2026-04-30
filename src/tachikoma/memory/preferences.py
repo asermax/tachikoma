@@ -5,6 +5,7 @@ Extracts user preferences from conversations.
 
 from tachikoma.agent_defaults import AgentDefaults
 from tachikoma.memory.prompts import (
+    CONTEXT_DEDUP_SECTION,
     EXTRACTION_TOOLS,
     WORKSPACE_VALIDATION_SECTION,
     extraction_allow_rules,
@@ -93,7 +94,12 @@ preferences. Focus on genuine, stated choices — not facts, specs, or instructi
 """
 
 PREFERENCES_PROMPT = (
-    _BASE_PROMPT + WORKSPACE_VALIDATION_SECTION + "\n\n" + permissions_section("preferences")
+    _BASE_PROMPT
+    + CONTEXT_DEDUP_SECTION
+    + "\n\n"
+    + WORKSPACE_VALIDATION_SECTION
+    + "\n\n"
+    + permissions_section("preferences")
 )
 
 
