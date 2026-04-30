@@ -66,8 +66,6 @@ that the conversation confirms are done
      - Entries about tools, services, or setups the user no longer uses
    - When you find stale entries: update them if new information replaces the \
 old, or delete the file if the entire topic is no longer relevant
-   - When you find files covering overlapping topics: merge into the most \
-comprehensive file and delete the redundant ones
    - **Do NOT prune based on**: vague hints ("I might switch..."), old dates \
 alone (age is not staleness), or assumptions not backed by conversation evidence
 

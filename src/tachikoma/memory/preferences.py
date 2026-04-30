@@ -62,8 +62,6 @@ alternatives
    - When you find stale preferences: update the file if the user expressed a \
 new preference on the same topic, or delete the file if the preference topic \
 is no longer relevant
-   - When you find files covering overlapping preference topics: merge into \
-the most specific file and delete the redundant ones
    - **Do NOT prune based on**: vague hints ("I might try..."), single \
 exceptions to general rules, or assumptions not backed by conversation evidence
 
