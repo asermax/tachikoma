@@ -80,7 +80,7 @@ The assistant's foundational context files (SOUL.md, USER.md, AGENTS.md) shape i
 | `src/tachikoma/context/` | Package containing all context concerns: loading (startup) and updating (post-processing) | Groups loading, processor, and tools cohesively under one package |
 | `src/tachikoma/context/__init__.py` | Re-exports: `load_context`, `context_hook`, `CoreContextProcessor`, plus all constants from `loading.py` (`CONTEXT_DIR_NAME`, `CONTEXT_FILES`, `DEFAULT_*_CONTENT`, `SYSTEM_PREAMBLE`) | Clean public API; existing imports (`from tachikoma.context import context_hook`) continue to work |
 | `src/tachikoma/context/loading.py` | `load_context()`, `context_hook()`, constants (`CONTEXT_FILES`, `CONTEXT_DIR_NAME`, default content, `SYSTEM_PREAMBLE`) | All startup context behavior; unchanged from original `context.py` |
-| `src/tachikoma/context/processor.py` | `CoreContextProcessor(PromptDrivenProcessor)` + `CONTEXT_UPDATE_PROMPT` template constant + `_read_pending_signals_snapshot()` and `_format_pending_signals_section()` module-level helpers | Overrides `process()` for pre-step cleanup, snapshot reading, prompt formatting, MCP tools, and post-step observability; prompt uses `$WORKSPACE` placeholders for context file paths (DES-008) and `{pending_signals_section}` placeholder filled via `str.replace()` (DES-004) |
+| `src/tachikoma/context/processor.py` | `CoreContextProcessor(PromptDrivenProcessor)` + `CONTEXT_UPDATE_PROMPT` template constant (composed: `_BASE_PROMPT + WORKSPACE_VALIDATION_SECTION + _PERMISSIONS_SECTION`) + `_read_pending_signals_snapshot()` and `_format_pending_signals_section()` module-level helpers | Overrides `process()` for pre-step cleanup, snapshot reading, prompt formatting, MCP tools, and post-step observability; prompt includes workspace claim validation section (shared via `post_processing.py`); tools include `Agent` for spawning validation sub-agents; `Read` is unrestricted (needed for validation) while Edit/Write remain scoped to `context/`; prompt uses `$WORKSPACE` placeholders (DES-008) and `{pending_signals_section}` placeholder filled via `str.replace()` (DES-004) |
 | `src/tachikoma/context/tools.py` | `create_pending_signals_server(data_dir, snapshot)` factory (DES-006) + `add_pending_signal` and `remove_pending_signal` SDK MCP tools + `handle_add_pending_signal()` and `handle_remove_pending_signal()` extracted handlers + `clean_pending_signals()` utility + `parse_pending_signals()` public parser | Tools have closure over `data_dir` and `snapshot`; handlers extracted for testability; remove tool uses immutable snapshot for index-based file rewrite |
 
 ### Cross-Layer Contracts
@@ -121,7 +121,7 @@ sequenceDiagram
 
 **Integration Points:**
 - Processor ↔ Pipeline: registers in default `main` phase via `pipeline.register(CoreContextProcessor(cwd))`
-- Processor ↔ SDK: `fork_and_consume(session, formatted_prompt, cwd, mcp_servers={"pending-signals": server}, tools=..., allow=..., pre_tool_use_hooks=[UTILITY_BASH_HOOK], model=agent_defaults.processor_model)` — standalone `query()`, independent of `ClaudeSDKClient`; runs on the configured processor tier (default `"haiku"`, same pattern as memory processors); scoped writer tier with utility-only Bash (DES-004)
+- Processor ↔ SDK: `fork_and_consume(session, formatted_prompt, cwd, mcp_servers={"pending-signals": server}, tools=..., allow=..., pre_tool_use_hooks=[UTILITY_BASH_HOOK], model=agent_defaults.processor_model)` — standalone `query()`, independent of `ClaudeSDKClient`; runs on the configured processor tier (default `"haiku"`, same pattern as memory processors); tools include `Agent` for workspace claim validation (haiku Explore sub-agents); `Read` is unrestricted (needed for validation) while Edit/Write remain scoped to `context/`; utility-only Bash (DES-004)
 - Processor ↔ Prompt: `CONTEXT_UPDATE_PROMPT` is a template constant; `str.replace()` fills the `{pending_signals_section}` placeholder at runtime into a local `formatted_prompt` variable
 - Forked agent ↔ Context files: agent reads/writes `context/SOUL.md`, `context/USER.md`, `context/AGENTS.md` using standard Claude Code file tools and utility Bash commands
 - Forked agent ↔ Pending signals: agent sees current signals via auto-injection in prompt; uses `add_pending_signal` (staging) and `remove_pending_signal` (cleanup) MCP tools — prompt instructs against direct file access
@@ -285,6 +285,18 @@ flowchart TD
 - Pro: Zero code changes beyond the prompt — fully leverages the existing architecture
 - Pro: Correction entries are deduplicated against existing AGENTS.md content via the prompt's read-first strategy
 - Con: Detection quality depends on LLM judgment (same tradeoff as all prompt-driven processors)
+
+### Workspace claim validation via shared prompt section
+
+**Choice**: The context processor reuses the `WORKSPACE_VALIDATION_SECTION` prompt constant from `post_processing.py` (shared processor infrastructure), appending it to the prompt before the permissions section. The `Agent` tool is enabled, allowing the forked agent to spawn haiku Explore sub-agents that verify workspace-referencing claims against actual files before writing to context files. `Read` is unrestricted (needed for validation sub-agents to read anywhere in the workspace).
+**Why**: Context files (especially AGENTS.md) can contain verifiable claims about workspace state — project structure, tool configuration, implementation patterns. The same validation pattern used by memory processors (facts, preferences) applies directly. Sharing the prompt section via `post_processing.py` avoids duplication and cross-package dependencies (the context processor already imports from `post_processing`, not from `memory`).
+
+**Consequences**:
+- Pro: Consistent validation behavior across all processors that write workspace-referencing content
+- Pro: No new pipeline components — purely prompt-driven, consistent with DES-004
+- Pro: Invalid claims are omitted, preventing inaccurate information from persisting in foundational context files
+- Con: Adds API cost and extraction latency (haiku sub-agents for validation)
+- Con: Unrestricted `Read` expands the agent's visibility beyond `context/` (necessary for validation; write remains scoped)
 
 ### Observability via mtime comparison
 

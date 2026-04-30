@@ -287,9 +287,9 @@ Each processor inherits `_prompt`, `_cwd`, and the default `process()` implement
 - Memory extraction quality is an LLM behavioral concern. Prompts are the primary quality lever.
 - Forked sessions use `dontAsk` permission mode with explicit allow rules (DES-004). Read access is unrestricted; Edit/Write are path-scoped to the memory subdirectory.
 
-### Workspace claim validation via in-agent sub-agents (facts and preferences only)
+### Workspace claim validation via in-agent sub-agents (facts, preferences, and context)
 
-**Choice**: Facts and preferences extraction prompts include a validation section instructing the agent to verify workspace-referencing claims using the `Agent` tool before writing. The agent spawns lightweight read-only sub-agents (Explore type, haiku model) that check claims against actual files. The episodic processor does not include this validation — episodic memories are conversation summaries that do not reference workspace state, so validation adds overhead without accuracy benefit.
+**Choice**: Facts and preferences extraction prompts include a validation section instructing the agent to verify workspace-referencing claims using the `Agent` tool before writing. The agent spawns lightweight read-only sub-agents (Explore type, haiku model) that check claims against actual files. The episodic processor does not include this validation — episodic memories are conversation summaries that do not reference workspace state, so validation adds overhead without accuracy benefit. The validation prompt section (`WORKSPACE_VALIDATION_SECTION`) is defined in `post_processing.py` and shared with the core context update processor, which applies the same pattern to context file updates (SOUL.md, USER.md, AGENTS.md).
 **Why**: Memories can contain stale or inaccurate claims about workspace state (file paths, configuration values, implementation details) that were accurate during conversation but became invalid by extraction time. Validating before writing prevents persisting bad data. Using in-agent sub-agents avoids creating new Python modules or pipeline phases — the prompt is the implementation. Episodic memories capture high-level narrative arcs, not workspace-specific claims, so validation is unnecessary for that processor.
 
 **Consequences**:
@@ -297,6 +297,7 @@ Each processor inherits `_prompt`, `_cwd`, and the default `process()` implement
 - Pro: Invalid claims are omitted, preventing stale memories from accumulating
 - Pro: Read-only sub-agents cannot modify workspace state
 - Pro: Episodic processor avoids unnecessary validation overhead
+- Pro: Shared prompt section ensures consistent validation behavior across memory and context processors
 - Con: Adds API cost (haiku sub-agents for validation) and extraction latency for facts/preferences
 - Con: Unrestricted `Read` access expands facts/preferences agents' visibility beyond their memory directory (necessary for validation; write remains scoped)
 

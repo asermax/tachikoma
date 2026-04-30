@@ -36,6 +36,7 @@ This is distinct from memory extraction: memory processors create individual fil
 | R11 | Clear boundary with memory extraction — context files are foundational identity documents while memory files are individual entries for retrieval; overlap is acceptable since they serve different purposes |
 | R12 | Proactively prune stale sections from context files — remove or update outdated content (completed projects, past roles, reversed personality adjustments, obsolete instructions) when the conversation provides clear evidence; ambiguous signals do not trigger pruning |
 | R13 | Detect corrections (explicit user corrections, implicit user corrections after agent errors, agent self-corrections) and extract concise behavioral instructions to AGENTS.md under domain-appropriate sections; entries are framed as positive instructions describing the correct behavior, not "don't/do" correction pairs; check for existing semantically similar entries before adding; corrections about communication style or tone route to SOUL.md |
+| R14 | Before writing context file updates that reference workspace state (file paths, project structure, configuration values, implementation details), validate verifiable claims against actual workspace files using haiku Explore sub-agents; invalid claims are omitted from context file updates |
 
 ## Behaviors
 
@@ -142,6 +143,15 @@ The processor detects moments where the agent was corrected and extracts the les
 - Given AGENTS.md already contains a semantically similar entry, when the processor would add a correction, then the existing entry is kept (or refined if the correction adds new nuance)
 - Given a correction about communication style or tone (e.g., "be more casual"), when the processor runs, then it routes to SOUL.md as a personality adjustment rather than AGENTS.md
 - Given no matching section exists in AGENTS.md for the correction's domain, when the processor adds the entry, then it creates a new section with a descriptive heading
+
+### Workspace Claim Validation (R14)
+
+The processor validates verifiable workspace claims before writing them to context files.
+
+**Acceptance Criteria**:
+- Given a proposed context update containing a verifiable workspace claim (e.g., "the project uses poetry for dependency management"), when the processor runs, then it spawns a haiku Explore sub-agent to verify the claim against actual files before writing
+- Given a verifiable claim that is INVALID (e.g., claimed file doesn't exist or doesn't contain what's stated), when the processor runs, then the claim is omitted from the context file update
+- Given a proposed update containing only subjective information or user preferences, when the processor runs, then no validation sub-agents are spawned — subjective content passes through without verification
 
 ### Edge Cases
 
