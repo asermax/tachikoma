@@ -623,3 +623,31 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 **Complexity**: Easy
 **Description**: The agent currently reads and writes Tachikoma's TOML configuration file directly via Read/Write tools, which is error-prone — typos in nested keys, formatting drift, and accidental edits to comments are all easy to introduce. Add a CLI surface for inspecting and modifying configuration values that uses the typed settings model and the existing comment-preserving write-back infrastructure as its source of truth. The CLI exposes operations to read a value by dot-notation key (e.g. `agent.model`), update a value at a known key, and list values optionally scoped to a section. Keys are validated against the Pydantic settings schema before reads or writes, and the underlying TOML file's comments and formatting are preserved on write. The CLI defaults to `~/.config/tachikoma/config.toml` but accepts a path override for use with non-default config locations. The exact shape (separate `tachikoma-config` binary versus a `tachikoma config` subcommand) should be evaluated during speccing, balancing entry point conventions against discoverability.
 
+### DLT-171: Plugin hook for per-message post-processors
+**Status**: ✗ Defined
+**Depends on**: None
+**Priority**: 4 (Low)
+**Complexity**: Easy
+**Description**: Allow plugins to contribute per-message post-processors that run after each agent response. Plugin-declared processors implement the existing MessagePostProcessor interface and are registered into the per-message post-processing pipeline alongside built-in processors (summary extraction, last exchange tracking) during plugin loading. Session-level post-processors run once at session close and are suited for batch extraction; per-message processors run after every response and are suited for real-time reactions to individual exchanges — for example, per-message logging, conditional notification triggers based on response content, or live sentiment tracking that needs per-exchange granularity rather than a session-level summary.
+
+### DLT-172: Plugin configuration schema
+**Status**: ✗ Defined
+**Depends on**: None
+**Priority**: 3 (Medium)
+**Complexity**: Medium
+**Description**: Allow plugins to declare a configuration schema that users populate via Tachikoma's config.toml. The plugin manifest gains an optional `[config]` section describing typed settings with defaults and descriptions. During plugin loading, declared settings are validated against the schema and merged into the plugin's runtime context. This enables plugins to accept user-specific configuration (API keys, feature toggles, endpoint URLs) without relying on environment variables or separate config files, and gives plugin users a single configuration surface for all plugin settings alongside built-in configuration.
+
+### DLT-173: Plugin lifecycle hooks and event bus access
+**Status**: ✗ Defined
+**Depends on**: None
+**Priority**: 3 (Medium)
+**Complexity**: Medium
+**Description**: Allow plugins to declare lifecycle hooks that run at specific points in the application lifecycle and subscribe to system events. The plugin manifest gains an optional `[hooks]` section declaring hook entry points (e.g., `init = "hooks/init.py"`), and an optional `[events]` section listing event types the plugin wants to receive. Init hooks run after plugin loading completes but before the first conversation, enabling startup tasks like establishing external connections, validating prerequisites, or registering event listeners. Event subscriptions let plugins react to system events — session open/close, coordinator idle, notification dispatch, and other published events — by routing matching events to declared handler functions. Failed init hooks and event handlers are isolated per-plugin and logged without blocking other plugins or application startup, consistent with the existing fail-safe loading pattern.
+
+### DLT-174: Plugin-provided MCP tool servers
+**Status**: ✗ Defined
+**Depends on**: None
+**Priority**: 4 (Low)
+**Complexity**: Medium
+**Description**: Allow plugins to declare MCP tool servers in their manifest that become available to the main agent at all times, without going through the skill activation system. The plugin manifest gains an optional `tools` field listing tool server entry points. During plugin loading, declared tool servers are registered alongside built-in MCP tools and injected into every agent session. This provides a simpler, more direct path than bundling a skill with MCP tools (which requires skill activation to trigger tool availability), covering use cases like a weather plugin that provides a `get_weather` tool the agent should always have access to. Tool servers follow the same factory pattern used by skill-provided MCP tools for consistency.
+
