@@ -12,7 +12,7 @@ from pytest_mock import MockerFixture
 
 from tachikoma.agent_defaults import AgentDefaults
 from tachikoma.memory.episodic import EPISODIC_PROMPT, EpisodicProcessor
-from tachikoma.memory.prompts import EXTRACTION_TOOLS, extraction_allow_rules
+from tachikoma.memory.prompts import EPISODIC_TOOLS, extraction_allow_rules
 from tachikoma.post_processing import UTILITY_BASH_HOOK
 from tachikoma.sessions.model import Session
 
@@ -47,8 +47,8 @@ class TestEpisodicProcessor:
             session,
             expected_prompt,
             defaults,
-            tools=EXTRACTION_TOOLS,
-            allow=extraction_allow_rules(scope),
+            tools=EPISODIC_TOOLS,
+            allow=extraction_allow_rules(scope, include_agent=False),
             pre_tool_use_hooks=[UTILITY_BASH_HOOK],
             model="haiku",
         )

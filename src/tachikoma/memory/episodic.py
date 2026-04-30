@@ -5,8 +5,7 @@ Extracts date-stamped summaries of conversations from completed sessions.
 
 from tachikoma.agent_defaults import AgentDefaults
 from tachikoma.memory.prompts import (
-    EXTRACTION_TOOLS,
-    WORKSPACE_VALIDATION_SECTION,
+    EPISODIC_TOOLS,
     extraction_allow_rules,
     permissions_section,
 )
@@ -55,7 +54,7 @@ Focus on what would be useful to remember, not a transcript of what happened.
 """
 
 EPISODIC_PROMPT = (
-    _BASE_PROMPT + WORKSPACE_VALIDATION_SECTION + "\n\n" + permissions_section("episodic")
+    _BASE_PROMPT + "\n\n" + permissions_section("episodic", include_agent=False)
 )
 
 
@@ -78,8 +77,8 @@ class EpisodicProcessor(PromptDrivenProcessor):
         super().__init__(
             EPISODIC_PROMPT,
             agent_defaults,
-            tools=EXTRACTION_TOOLS,
-            allow=extraction_allow_rules(scope),
+            tools=EPISODIC_TOOLS,
+            allow=extraction_allow_rules(scope, include_agent=False),
             pre_tool_use_hooks=[UTILITY_BASH_HOOK],
             model=agent_defaults.processor_model,
         )
