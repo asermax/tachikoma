@@ -133,8 +133,10 @@ or no longer accurate:
      - USER.md: projects that were completed or abandoned (confirmed by \
 conversation), outdated employer or role info, interests the user has moved \
 away from
-     - AGENTS.md: instructions about tools or workflows no longer in use, \
-outdated conventions
+     - AGENTS.md: entries about resolved bugs or completed work (the fix \
+is done, the instruction is no longer needed), entries that duplicate another \
+section (keep the better version and remove the other), content that duplicates \
+skill reference files (skill files are the authoritative source), outdated conventions
      - SOUL.md: personality adjustments that the user has contradicted or \
 reversed
    - Remove or update stale sections to keep files current and concise. Do \
@@ -153,9 +155,13 @@ the provided `add_pending_signal` and `remove_pending_signal` tools — never ac
 the file directly
    - **Order matters**: Perform all removals before staging new signals to avoid \
 overwriting freshly-added entries
-   - **Watch file size**: USER.md should stay under ~120 lines. If it's growing \
-past that, you're including too much detail — summarize, remove stale sections, \
-or omit details that belong in facts/preferences memory instead.
+   - **Watch file size**: USER.md should stay under ~120 lines, AGENTS.md under \
+~400 lines. When a file exceeds its limit, prune actively:
+     - USER.md: summarize, remove stale sections, or omit details that belong in \
+facts/preferences memory
+     - AGENTS.md: remove entries about resolved bugs or completed work, consolidate \
+duplicated entries across sections, and remove content that duplicates what skill \
+reference files already cover — skill content belongs in skills, not AGENTS.md
    - **Replace, don't append**: When updating a section, rewrite it cleanly \
 rather than appending new paragraphs. Each section should read as a current \
 snapshot, not a changelog.
