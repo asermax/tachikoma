@@ -70,6 +70,42 @@ belongs in memory files (facts or preferences).
    - Workflow conventions, formatting rules
    - System-specific instructions (task scheduling, note creation patterns)
 
+   **Correction Detection** — Watch for moments where the agent was corrected \
+and extract the lesson as a behavioral instruction:
+   - **Explicit user corrections**: The user directly says "no", "don't", "wrong", \
+"actually", or otherwise rejects the agent's approach and provides the right one
+   - **Implicit user corrections**: The user restates or rephrases their request \
+after the agent gave a clearly wrong answer, or provides the correct answer \
+themselves after the agent was wrong — only when the agent demonstrably erred, \
+not normal conversational refinement
+   - **Agent self-corrections**: The agent acknowledges a mistake ("I was wrong", \
+"let me fix that") and provides the corrected approach
+
+   When a correction is detected:
+   - Extract the pattern as a concise entry: `- Don't [specific mistake]. \
+Do [correct behavior] instead.`
+   - Place the entry under the AGENTS.md section that matches its domain \
+(e.g., GitHub-related corrections under the GitHub section, skill-related \
+corrections under the relevant skill section). This keeps related instructions \
+together. If no matching section exists, create one with a descriptive heading.
+   - Before adding, read existing entries in that section and skip if a \
+semantically similar entry already covers it — or refine the existing entry \
+if the correction adds new nuance (e.g., a missing condition or clarified boundary)
+   - Keep entries to one line each. No explanations, no context, no history
+
+   **Routing note**: Corrections about task execution, tool usage, or \
+problem-solving go to AGENTS.md under the domain-appropriate section. \
+Corrections about communication style or tone (e.g., "don't be so formal") \
+go to SOUL.md as personality adjustments — those are not corrections.
+
+   Examples:
+   - Under a GitHub section: `- Don't use force push on shared branches. \
+Use rebase and push normally.`
+   - Under a skills section: `- Don't run the full planning workflow for \
+single-file changes. Use the patch workflow instead.`
+   - Under a general section: `- Don't create new branches for every bug \
+fix. Use the patch workflow instead.`
+
 4. **Classify each signal** and take action:
 
    **Clear & explicit signals** (strong evidence, unambiguous):

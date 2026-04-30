@@ -326,3 +326,28 @@ class TestContextUpdatePrompt:
         prompt = CONTEXT_UPDATE_PROMPT.lower()
         assert "preserve" in prompt or "maintain" in prompt
         assert "structure" in prompt or "format" in prompt
+
+    def test_contains_correction_detection_guidance(self) -> None:
+        """AC: Prompt contains correction detection section with all pattern types."""
+        assert "Correction Detection" in CONTEXT_UPDATE_PROMPT
+        prompt_lower = CONTEXT_UPDATE_PROMPT.lower()
+        assert "explicit user corrections" in prompt_lower
+        assert "implicit user corrections" in prompt_lower
+        assert "agent self-corrections" in prompt_lower
+
+    def test_correction_detection_instructs_domain_aligned_placement(self) -> None:
+        """AC: Prompt instructs placing corrections under domain-appropriate sections."""
+        prompt_lower = CONTEXT_UPDATE_PROMPT.lower()
+        assert "section that matches its domain" in prompt_lower
+        assert "descriptive heading" in prompt_lower
+
+    def test_correction_detection_instructs_deduplication(self) -> None:
+        """AC: Prompt instructs checking for existing entries before adding corrections."""
+        prompt_lower = CONTEXT_UPDATE_PROMPT.lower()
+        assert "semantically similar" in prompt_lower
+        assert "refine" in prompt_lower
+
+    def test_correction_detection_contains_examples(self) -> None:
+        """AC: Prompt contains examples showing the expected correction format."""
+        assert "Don't" in CONTEXT_UPDATE_PROMPT
+        assert "instead" in CONTEXT_UPDATE_PROMPT
