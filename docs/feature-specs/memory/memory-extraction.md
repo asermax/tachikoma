@@ -28,6 +28,7 @@ The memory workspace also includes `memories/transcripts/`, a non-extractive sub
 | R8 | Transcript archival is best-effort — failures (missing source, filesystem errors) are logged and swallowed, never crashing the conversation or blocking other post-processing |
 | R9 | Before writing facts or preferences memories that reference workspace state (file paths, configuration values, implementation details), forked agents validate claims against actual workspace files using internal sub-agents; invalid claims are omitted |
 | R10 | Facts and preferences processors proactively prune stale, outdated, or superseded entries during extraction — removing or updating entries that the conversation contradicts, and merging overlapping files into one; episodic entries are never deleted for content reasons (only malformed filenames are consolidated) |
+| R11 | Before creating facts or preferences memory files, forked agents read the foundational context files from `$WORKSPACE/context/` (AGENTS.md, USER.md, SOUL.md) and skip creation when the information is already covered there; context files are the authoritative source for their respective categories |
 
 ## Behaviors
 
@@ -109,3 +110,13 @@ Before writing facts or preferences memory files that contain claims about works
 - Given a memory with accurate workspace claims, when the agent prepares to write, all claims are included
 - Given a memory with no workspace references (e.g., personal details, preferences, conversation summaries), when the agent prepares to write, no validation overhead is added
 - Given the agent identifies a verifiable claim, it spawns a read-only sub-agent to check the claim against the actual file and omits the claim if invalid
+
+### Context File Deduplication (R11)
+
+Before creating facts or preferences memory files, the forked agent reads the foundational context files from `$WORKSPACE/context/` and skips creation when the information is already covered there.
+
+**Acceptance Criteria**:
+- Given a fact topic already covered in AGENTS.md, USER.md, or SOUL.md, when the facts processor runs, then the agent does not create a separate memory file
+- Given a preference topic already covered in AGENTS.md or SOUL.md, when the preferences processor runs, then the agent does not create a separate memory file
+- Given a context file partially covers the topic but the conversation adds genuinely new details, when the agent runs, then it creates a file for the new information only
+- Given no context file covers the topic, when the agent runs, then it proceeds normally with file creation

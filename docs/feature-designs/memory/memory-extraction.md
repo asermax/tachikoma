@@ -311,3 +311,15 @@ Each processor inherits `_prompt`, `_cwd`, and the default `process()` implement
 - Pro: Files stay lean and current without scheduled maintenance
 - Pro: Conservative guardrails prevent premature deletion of valid entries
 - Con: Pruning effectiveness depends on LLM interpretation of staleness signals
+
+### Context file deduplication via prompt instruction (facts and preferences only)
+
+**Choice**: Facts and preferences extraction prompts include a `CONTEXT_DEDUP_SECTION` instructing the agent to read the foundational context files (AGENTS.md, USER.md, SOUL.md) before creating any memory file and skip creation when the information is already covered there. The section follows the same shared-constant pattern as `WORKSPACE_VALIDATION_SECTION`. The episodic processor does not include this section — episodic memories are conversation summaries that do not duplicate context file content.
+**Why**: The prompts mentioned context files in their "DO NOT store" lists but this was passive guidance — agents never actively checked. This led to memory files that directly duplicated context file content (response gates, communication style, workflow details), creating confusion about which source was authoritative. The shared section in `prompts.py` makes the dedup instruction explicit, consistent across both processors, and easy to update.
+
+**Consequences**:
+- Pro: No code changes beyond prompt text — consistent with DES-004 pattern
+- Pro: Shared section keeps facts and preferences prompts in sync
+- Pro: Context files remain authoritative; memory files supplement rather than duplicate
+- Con: Agents read three additional files per extraction (small overhead; files are small)
+- Con: Dedup effectiveness depends on LLM interpretation of "already covered"
