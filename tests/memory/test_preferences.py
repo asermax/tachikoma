@@ -12,7 +12,8 @@ from pytest_mock import MockerFixture
 
 from tachikoma.agent_defaults import AgentDefaults
 from tachikoma.memory.preferences import PREFERENCES_PROMPT, PreferencesProcessor
-from tachikoma.post_processing import UTILITY_BASH_HOOK, abs_rule
+from tachikoma.memory.prompts import EXTRACTION_TOOLS, extraction_allow_rules
+from tachikoma.post_processing import UTILITY_BASH_HOOK
 from tachikoma.sessions.model import Session
 
 
@@ -46,16 +47,8 @@ class TestPreferencesProcessor:
             session,
             expected_prompt,
             defaults,
-            tools=["Read", "Glob", "Grep", "Bash", "Edit", "Write", "Agent"],
-            allow=[
-                "Read",
-                "Glob",
-                "Grep",
-                "Bash",
-                abs_rule("Edit", scope),
-                abs_rule("Write", scope),
-                "Agent",
-            ],
+            tools=EXTRACTION_TOOLS,
+            allow=extraction_allow_rules(scope),
             pre_tool_use_hooks=[UTILITY_BASH_HOOK],
             model="haiku",
         )

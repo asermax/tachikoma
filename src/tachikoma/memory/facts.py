@@ -5,9 +5,15 @@ persist for future reference.
 """
 
 from tachikoma.agent_defaults import AgentDefaults
-from tachikoma.post_processing import UTILITY_BASH_HOOK, PromptDrivenProcessor, abs_rule
+from tachikoma.memory.prompts import (
+    EXTRACTION_TOOLS,
+    WORKSPACE_VALIDATION_SECTION,
+    extraction_allow_rules,
+    permissions_section,
+)
+from tachikoma.post_processing import UTILITY_BASH_HOOK, PromptDrivenProcessor
 
-FACTS_PROMPT = """\
+_BASE_PROMPT = """\
 You are a memory extraction agent. Your task is to analyze the conversation \
 and extract or update factual information that would be useful to remember \
 for future conversations.
@@ -67,41 +73,9 @@ what was actually shared or discussed
 Remember: These memories help the assistant maintain context across sessions. \
 Focus on accurate, stable reference information — not activity logs or documents.
 
-## Workspace Validation
+"""
 
-Before writing a memory that contains claims about workspace state — file paths, \
-project structure, configuration values, implementation details — validate each \
-claim against the actual workspace:
-
-1. Identify verifiable claims in the memory you're about to write:
-   - References to specific files or directories (do they exist? contain what's claimed?)
-   - Configuration values (does the config file actually say that?)
-   - Implementation details (does the code actually work that way?)
-   - Project state (is the project actually in that state?)
-
-2. For each verifiable claim, use the Agent tool to spawn a validation sub-agent:
-   - subagent_type: "Explore"
-   - model: "haiku"
-   - Give it ONE specific claim to verify and the file(s) to check
-   - The agent should read the relevant file(s) and respond with "VALID" or \
-"INVALID: reason"
-
-3. Only include VALID claims in the written memory:
-   - If a claim is INVALID, omit it
-   - If ALL claims are invalid, do not create the file
-
-Do NOT validate: subjective information, preferences, general knowledge, \
-conversation summaries, personal details — only verifiable claims about \
-workspace state.
-
-## Permissions
-
-You can read files anywhere in the workspace (needed for validation). Edits \
-and writes are restricted to `$WORKSPACE/memories/facts/`. For Bash, read-only \
-inspection commands (`ls`, `find`, `file`, `echo`, `date`, `cat`, `head`, \
-`tail`, `wc`, `stat`) and navigation (`cd`, `pwd`) are allowed — other \
-commands will be denied. You can use the Agent tool to spawn validation \
-sub-agents."""
+FACTS_PROMPT = _BASE_PROMPT + WORKSPACE_VALIDATION_SECTION + "\n\n" + permissions_section("facts")
 
 
 class FactsProcessor(PromptDrivenProcessor):
@@ -123,16 +97,8 @@ class FactsProcessor(PromptDrivenProcessor):
         super().__init__(
             FACTS_PROMPT,
             agent_defaults,
-            tools=["Read", "Glob", "Grep", "Bash", "Edit", "Write", "Agent"],
-            allow=[
-                "Read",
-                "Glob",
-                "Grep",
-                "Bash",
-                abs_rule("Edit", scope),
-                abs_rule("Write", scope),
-                "Agent",
-            ],
+            tools=EXTRACTION_TOOLS,
+            allow=extraction_allow_rules(scope),
             pre_tool_use_hooks=[UTILITY_BASH_HOOK],
             model=agent_defaults.processor_model,
         )
