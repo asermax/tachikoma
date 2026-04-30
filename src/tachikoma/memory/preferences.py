@@ -33,6 +33,13 @@ be done:
    - A design decision or spec (game mechanics, system rules) → project files
    - A behavioral instruction for the assistant → AGENTS.md context file
    - A detailed description of a system or project → too detailed for prefs
+   - An implementation detail or system behavior (how something works \
+technically) → facts memory or project docs
+   - A bug report, resolved issue, or one-time fix → transient, not a \
+lasting preference
+   - A procedural workflow step → skill reference files
+   - Content already covered in AGENTS.md, SOUL.md, or skill reference \
+files → those files already capture it
 
 3. **Before creating a new file**, search for existing overlap:
    - Use Grep to search existing files for the key topic or keywords
