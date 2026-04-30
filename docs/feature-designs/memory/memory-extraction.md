@@ -299,3 +299,14 @@ Each processor inherits `_prompt`, `_cwd`, and the default `process()` implement
 - Pro: Episodic processor avoids unnecessary validation overhead
 - Con: Adds API cost (haiku sub-agents for validation) and extraction latency for facts/preferences
 - Con: Unrestricted `Read` access expands facts/preferences agents' visibility beyond their memory directory (necessary for validation; write remains scoped)
+
+### Prompt-driven pruning of stale entries
+
+**Choice**: Extraction prompts include a pruning section instructing the agent to proactively identify and remove stale, outdated, or superseded entries when reading existing memory files. The agent compares conversation content against existing files and removes entries that are contradicted, superseded, or no longer relevant. Episodic memory is explicitly excluded — entries are never deleted for content reasons.
+**Why**: Memory files accumulate stale content over time because processors only add or update entries. The existing prompts already grant delete permissions and mention "delete outdated files," but provide no criteria for when to prune. Adding explicit detection guidance (contradicted information, completed projects, reversed preferences) with conservative guardrails ("do NOT prune based on vague hints") makes the existing capability actionable without code changes.
+
+**Consequences**:
+- Pro: No code changes — purely prompt-driven, consistent with DES-004 pattern
+- Pro: Files stay lean and current without scheduled maintenance
+- Pro: Conservative guardrails prevent premature deletion of valid entries
+- Con: Pruning effectiveness depends on LLM interpretation of staleness signals

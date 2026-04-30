@@ -27,6 +27,7 @@ The memory workspace also includes `memories/transcripts/`, a non-extractive sub
 | R7 | Transcript archive processor copies each session's SDK transcript into `memories/transcripts/<sdk-session-id>.jsonl` on session close; runs in the post-processing `pre_finalize` phase so archived files land before the workspace git commit |
 | R8 | Transcript archival is best-effort — failures (missing source, filesystem errors) are logged and swallowed, never crashing the conversation or blocking other post-processing |
 | R9 | Before writing facts or preferences memories that reference workspace state (file paths, configuration values, implementation details), forked agents validate claims against actual workspace files using internal sub-agents; invalid claims are omitted |
+| R10 | Facts and preferences processors proactively prune stale, outdated, or superseded entries during extraction — removing or updating entries that the conversation contradicts, and merging overlapping files into one; episodic entries are never deleted for content reasons (only malformed filenames are consolidated) |
 
 ## Behaviors
 
@@ -48,6 +49,7 @@ Date-stamped summaries of conversations, consolidated over time.
 - Given a completed conversation with meaningful content, when the episodic processor runs, then the forked agent creates or updates exactly one date-stamped file (`YYYY-MM-DD.md`) in `memories/episodic/` — no variant filenames (e.g., `-consolidated`, `-final`) are permitted
 - Given multiple conversations on the same day, when the episodic processor runs, then the agent reads the existing day file and edits it to merge new content rather than creating a second file
 - Given a trivial conversation, when the episodic processor runs, then the agent may determine there's nothing meaningful to record — no file creation is forced
+- Given an episodic entry with valid content, when the episodic processor runs, it is never deleted based on content — only malformed filenames are consolidated into the canonical daily file (R10)
 
 ### Facts Memories (R3)
 
@@ -58,6 +60,8 @@ Named files about the user and other stable reference information — personal d
 - Given previously stored factual information is contradicted, when the facts processor runs, then the agent updates the existing file with corrected information
 - Given a previously stored fact becomes invalid, when the facts processor runs, then the agent may delete the obsolete file
 - Given information about a topic is spread across multiple files, when the facts processor runs, then the agent merges them into a single file and deletes the redundant ones
+- Given a facts file contains entries contradicted by the conversation, when the facts processor runs, then the agent updates or removes the stale entries (R10)
+- Given ambiguous signals ("I might switch..."), when the facts processor runs, then it retains existing entries unchanged — only clear evidence triggers pruning (R10)
 
 ### Preferences Memories (R3)
 
@@ -68,6 +72,8 @@ Named files about how the user likes things — code style, communication, workf
 - Given a user changes a previously expressed preference, when the preferences processor runs, then the agent updates or deletes the existing file
 - Given a conversation with no preference-related content, when the preferences processor runs, then no changes are made
 - Given the same preference appears in multiple files, when the preferences processor runs, then the agent consolidates into the most specific file and removes duplicates
+- Given a preferences file contains entries the user has reversed or moved away from, when the preferences processor runs, then the agent updates or removes the stale entries (R10)
+- Given ambiguous signals ("I might try..."), when the preferences processor runs, then it retains existing entries unchanged — only clear evidence triggers pruning (R10)
 
 ### Directory Structure and Bootstrap (R4, R6)
 

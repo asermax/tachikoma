@@ -34,6 +34,7 @@ This is distinct from memory extraction: memory processors create individual fil
 | R9.6 | A remove tool allows the agent to remove signals by their injected index (single or batch), with all-or-nothing semantics for batch removal |
 | R10 | Log which files were updated for observability |
 | R11 | Clear boundary with memory extraction — context files are foundational identity documents while memory files are individual entries for retrieval; overlap is acceptable since they serve different purposes |
+| R12 | Proactively prune stale sections from context files — remove or update outdated content (completed projects, past roles, reversed personality adjustments, obsolete instructions) when the conversation provides clear evidence; ambiguous signals do not trigger pruning |
 
 ## Behaviors
 
@@ -56,6 +57,16 @@ Only high-confidence changes with clear conversational evidence are applied. Amb
 - Given a context file with existing content, when the processor applies an update, then the existing structure and formatting are preserved — only the relevant section is modified
 - Given a conversation where the user mentions something that contradicts existing context file content with clear evidence (e.g., "I moved from Buenos Aires to Berlin"), when the processor runs, then the outdated information is replaced with the new information
 - Given a conversation with casual or hypothetical statements (e.g., "I might switch to Vim someday"), when the processor runs, then no context file updates are applied
+
+### Pruning Stale Content (R12)
+
+The processor actively removes outdated sections from context files when clear evidence is found.
+
+**Acceptance Criteria**:
+- Given USER.md lists a project the conversation confirms is completed or abandoned, when the processor runs, then the stale project entry is removed
+- Given AGENTS.md contains instructions about tools or workflows no longer in use (confirmed by conversation), when the processor runs, then the obsolete instructions are removed
+- Given SOUL.md has personality adjustments the user has contradicted or reversed, when the processor runs, then the reversed adjustments are updated or removed
+- Given ambiguous signals about changes (e.g., "I might stop using X"), when the processor runs, then existing content is retained unchanged — only clear evidence triggers pruning
 
 ### No-Op Behavior (R7)
 
