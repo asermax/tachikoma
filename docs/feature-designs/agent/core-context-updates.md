@@ -276,6 +276,18 @@ flowchart TD
 - Pro: No bootstrap coupling — processor is self-contained
 - Con: First `add` call creates the file (trivial)
 
+### Enhanced pruning scope via prompt expansion
+
+**Choice**: Expand the existing pruning instruction in `CONTEXT_UPDATE_PROMPT` to cover additional staleness categories (resolved bugs, completed work, time-specific events, procedural details) and add consolidation of duplicate sections, all within the existing step 5 of the prompt.
+**Why**: The original pruning instruction only covered projects, employer info, tool instructions, and reversed personality adjustments. In practice, other content types accumulate (resolved bug descriptions, past trip plans, step-by-step procedures that belong in skills). These are all instances of the same problem — stale content persisting because the prompt didn't explicitly direct the agent to clean it up. Adding categories to the existing pruning step is the lightest-weight approach: no new steps, no code changes, just expanded instructions.
+
+Consolidation is treated as a distinct concern from removal — it merges semantically equivalent sections rather than deleting content. The prompt includes a safeguard against over-merging: related-but-distinct topics must remain separate.
+
+**Consequences**:
+- Pro: Zero code changes — fully leverages the prompt-driven pattern (DES-004)
+- Pro: All new pruning categories use the same conservative evidence threshold as existing ones
+- Con: Effectiveness depends on LLM judgment (same tradeoff as all prompt-driven processors)
+
 ### Correction detection via prompt guidance
 
 **Choice**: Add correction detection instructions directly to `CONTEXT_UPDATE_PROMPT` rather than creating a new pipeline component. The prompt identifies three correction types (explicit user corrections, implicit user corrections after agent errors, agent self-corrections) and instructs the agent to write concise behavioral entries to AGENTS.md under domain-appropriate sections. Entries are framed as positive instructions describing the correct behavior (e.g., "Use rebase on shared branches"), not "don't/do" correction pairs — the entry teaches the right approach as if explaining to a colleague.
@@ -375,6 +387,36 @@ flowchart TD
 **Given**: A conversation where the user says "be more casual with me"
 **When**: The processor runs
 **Then**: The forked agent detects the correction but recognizes it as a communication style preference, routing it to SOUL.md as a personality adjustment rather than AGENTS.md.
+
+### Scenario: Time-specific entry pruned from USER.md
+
+**Given**: USER.md contains a trip entry "- Planning trip to Berlin (March 15-20)" and the conversation confirms the trip happened and is past
+**When**: The processor runs
+**Then**: The forked agent recognizes the time-specific entry as stale and removes it from USER.md.
+
+### Scenario: Resolved bug description pruned from context files
+
+**Given**: USER.md contains an entry about a bug the user was experiencing, and the conversation confirms the bug was resolved
+**When**: The processor runs
+**Then**: The forked agent removes the stale bug description from USER.md.
+
+### Scenario: Procedural details pruned from AGENTS.md
+
+**Given**: AGENTS.md contains step-by-step procedural instructions for a task that belongs in a skill reference, and the conversation confirms these are procedural rather than foundational
+**When**: The processor runs
+**Then**: The forked agent removes the procedural details, keeping only high-level operational instructions in AGENTS.md.
+
+### Scenario: Duplicate sections consolidated
+
+**Given**: AGENTS.md has both a "Code Review" section and a "PR Conventions" section covering the same review workflow rules with semantically equivalent content
+**When**: The processor runs
+**Then**: The forked agent merges the two sections into a single "Code Review" section combining the rules from both, rather than leaving redundant content.
+
+### Scenario: Related-but-distinct sections kept separate
+
+**Given**: AGENTS.md has a "Remote Work" section and a "Home Office Equipment" section that are related but cover distinct topics
+**When**: The processor runs
+**Then**: The forked agent recognizes these as related-but-distinct and does not merge them — only semantically equivalent sections are consolidated.
 
 ## Notes
 

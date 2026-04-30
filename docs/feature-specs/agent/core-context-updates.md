@@ -34,7 +34,7 @@ This is distinct from memory extraction: memory processors create individual fil
 | R9.6 | A remove tool allows the agent to remove signals by their injected index (single or batch), with all-or-nothing semantics for batch removal |
 | R10 | Log which files were updated for observability |
 | R11 | Clear boundary with memory extraction — context files are foundational identity documents while memory files are individual entries for retrieval; overlap is acceptable since they serve different purposes |
-| R12 | Proactively prune stale sections from context files — remove or update outdated content (completed projects, past roles, reversed personality adjustments, obsolete instructions) when the conversation provides clear evidence; ambiguous signals do not trigger pruning |
+| R12 | Proactively prune stale sections from context files — remove or update outdated content (completed projects, past roles, reversed personality adjustments, obsolete instructions, resolved bugs, completed work, time-specific past events, procedural details that belong in skill references) when the conversation provides clear evidence; also consolidate semantically equivalent sections within the same file; ambiguous signals do not trigger pruning |
 | R13 | Detect corrections (explicit user corrections, implicit user corrections after agent errors, agent self-corrections) and extract concise behavioral instructions to AGENTS.md under domain-appropriate sections; entries are framed as positive instructions describing the correct behavior, not "don't/do" correction pairs; check for existing semantically similar entries before adding; corrections about communication style or tone route to SOUL.md |
 | R14 | Before writing context file updates that reference workspace state (file paths, project structure, configuration values, implementation details), validate verifiable claims against actual workspace files using haiku Explore sub-agents; invalid claims are omitted from context file updates |
 
@@ -62,13 +62,17 @@ Only high-confidence changes with clear conversational evidence are applied. Amb
 
 ### Pruning Stale Content (R12)
 
-The processor actively removes outdated sections from context files when clear evidence is found.
+The processor actively removes outdated sections from context files when clear evidence is found, and consolidates semantically equivalent sections within the same file.
 
 **Acceptance Criteria**:
 - Given USER.md lists a project the conversation confirms is completed or abandoned, when the processor runs, then the stale project entry is removed
 - Given AGENTS.md contains instructions about tools or workflows no longer in use (confirmed by conversation), when the processor runs, then the obsolete instructions are removed
 - Given SOUL.md has personality adjustments the user has contradicted or reversed, when the processor runs, then the reversed adjustments are updated or removed
 - Given ambiguous signals about changes (e.g., "I might stop using X"), when the processor runs, then existing content is retained unchanged — only clear evidence triggers pruning
+- Given USER.md contains resolved bugs or completed work items confirmed by conversation, when the processor runs, then the stale entries are removed
+- Given USER.md contains time-specific information about past events or completed trips, when the processor runs, then the outdated time-specific entries are removed
+- Given AGENTS.md contains procedural step-by-step instructions that belong in skill references rather than foundational context, when the processor runs, then the procedural details are removed
+- Given a context file has two semantically equivalent sections covering the same topic, when the processor runs, then the sections are consolidated into one combining the best of both — but related-but-distinct topics (e.g., "remote work preferences" vs "home office equipment") remain separate
 
 ### No-Op Behavior (R7)
 

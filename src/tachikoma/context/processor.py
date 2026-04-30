@@ -132,13 +132,22 @@ the promoted signal via `remove_pending_signal`
 or no longer accurate:
      - USER.md: projects that were completed or abandoned (confirmed by \
 conversation), outdated employer or role info, interests the user has moved \
-away from
+away from, resolved bugs or issues the user discussed in the past, completed \
+one-time tasks or work items, past events or completed trips, one-time plans \
+that are now past
      - AGENTS.md: entries about resolved bugs or completed work (the fix \
 is done, the instruction is no longer needed), entries that duplicate another \
 section (keep the better version and remove the other), content that duplicates \
-skill reference files (skill files are the authoritative source), outdated conventions
+skill reference files (skill files are the authoritative source), procedural \
+step-by-step instructions that belong in skill references rather than \
+foundational context, outdated conventions
      - SOUL.md: personality adjustments that the user has contradicted or \
 reversed
+   - **Consolidate duplicate sections**: If two sections in the same file \
+cover the same topic with semantically equivalent content, merge them into \
+one section combining the best of both. Only consolidate when sections are \
+truly equivalent — related-but-distinct topics (e.g., "remote work \
+preferences" vs "home office equipment") must remain separate.
    - Remove or update stale sections to keep files current and concise. Do \
 not leave outdated info "just in case" — these files should be a current \
 snapshot, not an archive.
@@ -203,6 +212,16 @@ responses, then call `remove_pending_signal` with indices [1] to clean up S1.
 Pending signals: S2: "User mentioned liking dark themes" (from 3 weeks ago, \
 no recurrence in subsequent conversations)
 Action: Call `remove_pending_signal` with indices [2] to clean up the stale signal.
+
+### Stale Content → Prune
+USER.md contains: "- Planning trip to Berlin (March 15-20)"
+Conversation reveals: The trip happened and is now in the past.
+Action: Remove the trip entry — it's time-specific and no longer current.
+
+### Duplicate Sections → Consolidate
+AGENTS.md has both a "Code Review" section and a "PR Conventions" section \
+covering the same review workflow rules.
+Action: Merge into a single "Code Review" section combining the rules from both.
 
 ## Remember
 
