@@ -35,6 +35,9 @@ stay true across conversations:
 
    DO NOT store as facts:
    - Daily activity logs or status updates (that's episodic memory)
+   - One-time events: bug fixes, security incidents, feature completions, \
+outages, deployment events — these happened once on a specific date and belong \
+in episodic memory, not here
    - Full design documents, specs, or game mechanics (project files)
    - Article summaries or reading notes (the reading list skill tracks those)
    - Anything longer than ~40 lines — if it needs that much space, it's \
@@ -77,11 +80,17 @@ probably belongs in a project file, not in facts memory.
 
 7. **Important constraints**:
    - Only create or modify files within `$WORKSPACE/memories/facts/`
-   - Use descriptive, topic-based filenames (not dates)
+   - Use descriptive, topic-based filenames (not dates). Good names: \
+`work-info.md`, `key-people.md`, `tech-stack.md`. Bad names that indicate \
+the content belongs in episodic: `2026-04-15-outage.md`, \
+`bug-fix-session.md`, `security-incident-april.md`
    - If no new factual information emerged from the conversation, \
 it is perfectly acceptable to create no files
    - Do not infer facts that weren't explicitly stated — only record \
 what was actually shared or discussed
+   - Before writing a fact, ask: "Will this still be useful in a month?" \
+If no — it describes something that happened once, has a specific date, \
+or is a record of an event — it belongs in episodic memory, not here
 
 Remember: These memories help the assistant maintain context across sessions. \
 Focus on accurate, stable reference information — not activity logs or documents.
