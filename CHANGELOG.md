@@ -2,6 +2,14 @@
 
 <!-- version list -->
 
+## v1.63.1 (2026-04-30)
+
+### Bug Fixes
+
+- **memory**: Expand preferences exclusion categories
+  ([`cbfe5e1`](https://github.com/asermax/tachikoma/commit/cbfe5e1f4007693facc111b2068d8eba290dae0b))
+
+
 ## v1.63.0 (2026-04-30)
 
 ### Documentation
