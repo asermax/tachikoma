@@ -276,6 +276,16 @@ flowchart TD
 - Pro: No bootstrap coupling — processor is self-contained
 - Con: First `add` call creates the file (trivial)
 
+### Correction detection via prompt guidance
+
+**Choice**: Add correction detection instructions directly to `CONTEXT_UPDATE_PROMPT` rather than creating a new pipeline component. The prompt identifies three correction types (explicit user corrections, implicit user corrections after agent errors, agent self-corrections) and instructs the agent to write concise behavioral entries to AGENTS.md under domain-appropriate sections.
+**Why**: Correction detection is a signal classification task that fits naturally into the existing prompt-driven processor pattern (DES-004). No new infrastructure is needed — the forked agent already reads AGENTS.md and has write access. Keeping it prompt-level avoids pipeline complexity for what is essentially a new signal type alongside the existing identity/behavioral/instructional signals.
+
+**Consequences**:
+- Pro: Zero code changes beyond the prompt — fully leverages the existing architecture
+- Pro: Correction entries are deduplicated against existing AGENTS.md content via the prompt's read-first strategy
+- Con: Detection quality depends on LLM judgment (same tradeoff as all prompt-driven processors)
+
 ### Observability via mtime comparison
 
 **Choice**: Snapshot context file modification times before the fork and compare after. Changed files are logged.
@@ -335,6 +345,24 @@ flowchart TD
 **Given**: A user manually deletes `context/USER.md`
 **When**: The processor runs
 **Then**: The processor's mtime snapshot treats a missing file as `None`. The forked agent handles the missing file gracefully.
+
+### Scenario: User correction extracted as behavioral instruction
+
+**Given**: A conversation where the user says "no, don't use force push on shared branches" after the agent suggested force-pushing
+**When**: The processor runs
+**Then**: The forked agent detects the explicit correction, reads AGENTS.md, finds or creates the appropriate domain section, and adds a concise entry like `- Don't use force push on shared branches. Use rebase and push normally.` If a semantically similar entry already exists, it is skipped or refined.
+
+### Scenario: Agent self-correction captured
+
+**Given**: A conversation where the agent says "I was wrong, let me fix that" and corrects its approach
+**When**: The processor runs
+**Then**: The forked agent detects the self-correction and writes the lesson as a behavioral instruction to AGENTS.md under the relevant domain section.
+
+### Scenario: Style correction routes to SOUL.md
+
+**Given**: A conversation where the user says "don't be so formal with me"
+**When**: The processor runs
+**Then**: The forked agent detects the correction but recognizes it as a communication style preference, routing it to SOUL.md as a personality adjustment rather than AGENTS.md.
 
 ## Notes
 
