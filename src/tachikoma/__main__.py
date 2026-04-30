@@ -479,13 +479,7 @@ async def run(
             # Attach buffer so the channel can flush it during its own teardown
             active_channel.attach_buffer(buffer)
 
-            # Dispatch restart notification as URGENT after the system is ready.
-            # restart_notification was read from the marker file before the
-            # coordinator context; rollback_was_dispatched tracks whether a
-            # rollback notification was already sent. The notification enters
-            # the buffer at URGENT priority and is held until max-hold (120s)
-            # expires, by which time the channel is fully running.
-            # Per DES-011: clear the marker unconditionally before side effects.
+            # Per DES-011: clear marker unconditionally before side effects.
             if restart_notification is not None:
                 clear_restart_notification()
                 if not rollback_was_dispatched:
@@ -505,25 +499,15 @@ async def run(
                             f"{restart_notification.reason} restart."
                         )
 
-                    async def _dispatch_back_online(
-                        content: str = back_online_content,
-                    ) -> None:
-                        await dispatch_notification(
-                            bus,
-                            source="Back Online",
-                            content=content,
-                            severity="info",
-                            priority=Priority.URGENT,
-                            source_id="restart_notification",
-                        )
-                        _log.info("Back-online notification dispatched")
-
-                    scheduler_tasks.append(
-                        asyncio.create_task(
-                            _dispatch_back_online(),
-                            name="back_online_notification",
-                        ),
+                    await dispatch_notification(
+                        bus,
+                        source="Back Online",
+                        content=back_online_content,
+                        severity="info",
+                        priority=Priority.URGENT,
+                        source_id="restart_notification",
                     )
+                    _log.info("Back-online notification dispatched")
 
             # Start channel with coordinator
             await active_channel.run(coordinator)
