@@ -2,6 +2,14 @@
 
 <!-- version list -->
 
+## v1.68.0 (2026-04-30)
+
+### Features
+
+- **context**: Expand pruning scope and add section consolidation
+  ([`d41a204`](https://github.com/asermax/tachikoma/commit/d41a204a09bd31b8ef47f6084f5377fe19c91d71))
+
+
 ## v1.67.0 (2026-04-30)
 
 ### Features
