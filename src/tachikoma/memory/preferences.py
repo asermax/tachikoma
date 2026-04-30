@@ -5,7 +5,6 @@ Extracts user preferences from conversations.
 
 from tachikoma.agent_defaults import AgentDefaults
 from tachikoma.memory.prompts import (
-    CONTEXT_DEDUP_SECTION,
     EXTRACTION_TOOLS,
     WORKSPACE_VALIDATION_SECTION,
     extraction_allow_rules,
@@ -20,7 +19,10 @@ and extract or update the user's expressed preferences.
 ## Instructions
 
 1. **Read existing files** in `$WORKSPACE/memories/preferences/` to see what \
-preferences are already stored.
+preferences are already stored. Also read `$WORKSPACE/context/AGENTS.md` if it \
+exists — this file contains operational instructions and workflow preferences. \
+If it doesn't exist or is empty, proceed normally — this check is purely to \
+avoid duplication.
 
 2. Analyze the conversation for SUBJECTIVE CHOICES about how things should \
 be done:
@@ -44,6 +46,9 @@ files → those files already capture it
 
 3. **Before creating a new file**, search for existing overlap:
    - Use Grep to search existing files for the key topic or keywords
+   - Also search `$WORKSPACE/context/AGENTS.md` for the same topic. If \
+AGENTS.md already captures the preference (even in different words), skip \
+creating a new file — the information is already stored where it belongs
    - If an existing file covers the same topic, UPDATE that file instead \
 of creating a new one
    - If the same preference appears in multiple files, consolidate into \
@@ -94,12 +99,7 @@ preferences. Focus on genuine, stated choices — not facts, specs, or instructi
 """
 
 PREFERENCES_PROMPT = (
-    _BASE_PROMPT
-    + CONTEXT_DEDUP_SECTION
-    + "\n\n"
-    + WORKSPACE_VALIDATION_SECTION
-    + "\n\n"
-    + permissions_section("preferences")
+    _BASE_PROMPT + WORKSPACE_VALIDATION_SECTION + "\n\n" + permissions_section("preferences")
 )
 
 
