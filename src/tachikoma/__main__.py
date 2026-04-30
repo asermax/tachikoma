@@ -7,10 +7,8 @@ installed via ``uv tool install``. Bare invocation defaults to ``tachikoma run``
 import asyncio
 import os
 import sys
-from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Literal
-from uuid import uuid4
 from zoneinfo import ZoneInfo
 
 from bubus import EventBus
@@ -23,6 +21,7 @@ from tachikoma.bootstrap import Bootstrap, BootstrapError
 from tachikoma.boundary import LastExchangeProcessor, SummaryProcessor
 from tachikoma.buffer.buffer import Buffer
 from tachikoma.buffer.factory import create_and_start_buffer
+from tachikoma.buffer.priority import Priority
 from tachikoma.config import SettingsManager
 from tachikoma.context import CoreContextProcessor, context_hook
 from tachikoma.coordinator import Coordinator
@@ -78,7 +77,6 @@ from tachikoma.tasks.executor import (
     expired_waiter_sweep,
 )
 from tachikoma.tasks.hooks import tasks_hook
-from tachikoma.tasks.model import ScheduleConfig, TaskDefinition
 from tachikoma.tasks.scheduler import (
     GENERATION_INTERVAL_SECONDS,
     get_timezone,
@@ -89,7 +87,6 @@ from tachikoma.tasks.scheduler import (
 from tachikoma.telegram import TelegramChannel, telegram_hook
 from tachikoma.updates import create_update_tools_server, update_checker_tick, updates_hook
 from tachikoma.updates.rollback import (
-    RestartNotification,
     clear_restart_notification,
     clear_rollback_marker,
     clear_rollback_notification,
@@ -109,58 +106,6 @@ from tachikoma.workspace import workspace_hook
 _log = logger.bind(component="main")
 
 app = App()
-
-
-def _build_back_online_prompt(notification: RestartNotification) -> str:
-    """Build the back-online session-task prompt from a restart notification."""
-    if (
-        notification.reason == "update"
-        and notification.previous_version
-        and notification.new_version
-    ):
-        return (
-            f"You just came back online after an update restart (upgraded from"
-            f" {notification.previous_version} to {notification.new_version})."
-            " Briefly let the user know you are back and mention the version"
-            " transition. Keep it short and natural."
-        )
-    return (
-        f"You just came back online after a {notification.reason} restart."
-        " Briefly let the user know you are back. Keep it short and natural."
-    )
-
-
-async def _consume_restart_notification(
-    task_repository: TaskRepository,
-    notification: RestartNotification | None,
-    rollback_was_dispatched: bool,
-) -> None:
-    """Schedule the back-online session task; clear the marker first so a failure cannot re-fire."""
-    # Clear unconditionally and FIRST: idempotent for the no-marker case, and a
-    # downstream failure cannot leave the marker on disk to re-fire next run.
-    clear_restart_notification()
-
-    if rollback_was_dispatched or notification is None:
-        return
-
-    try:
-        definition = TaskDefinition(
-            id=str(uuid4()),
-            name="Back online",
-            task_type="session",
-            schedule=ScheduleConfig(
-                type="once",
-                at=datetime.now(UTC) + timedelta(seconds=30),
-            ),
-            prompt=_build_back_online_prompt(notification),
-        )
-        await task_repository.create_definition(definition)
-        _log.info(
-            "Scheduled back-online session task: reason={r}",
-            r=notification.reason,
-        )
-    except Exception:
-        _log.exception("Failed to schedule back-online session task")
 
 
 def cli():
@@ -294,11 +239,7 @@ async def run(
         )
         clear_rollback_notification()
 
-    await _consume_restart_notification(
-        task_repository,
-        restart_notification,
-        rollback_was_dispatched=rollback_notification is not None,
-    )
+    rollback_was_dispatched = rollback_notification is not None
 
     _log.info(
         "Startup complete: workspace={ws}, log_level={level}, channel={ch}",
@@ -537,6 +478,52 @@ async def run(
 
             # Attach buffer so the channel can flush it during its own teardown
             active_channel.attach_buffer(buffer)
+
+            # Dispatch restart notification as URGENT after the system is ready.
+            # restart_notification was read from the marker file before the
+            # coordinator context; rollback_was_dispatched tracks whether a
+            # rollback notification was already sent. The notification enters
+            # the buffer at URGENT priority and is held until max-hold (120s)
+            # expires, by which time the channel is fully running.
+            # Per DES-011: clear the marker unconditionally before side effects.
+            if restart_notification is not None:
+                clear_restart_notification()
+                if not rollback_was_dispatched:
+                    if (
+                        restart_notification.reason == "update"
+                        and restart_notification.previous_version
+                        and restart_notification.new_version
+                    ):
+                        back_online_content = (
+                            f"Tachikoma is back online after an update restart "
+                            f"(upgraded from {restart_notification.previous_version} "
+                            f"to {restart_notification.new_version})."
+                        )
+                    else:
+                        back_online_content = (
+                            f"Tachikoma is back online after a "
+                            f"{restart_notification.reason} restart."
+                        )
+
+                    async def _dispatch_back_online(
+                        content: str = back_online_content,
+                    ) -> None:
+                        await dispatch_notification(
+                            bus,
+                            source="Back Online",
+                            content=content,
+                            severity="info",
+                            priority=Priority.URGENT,
+                            source_id="restart_notification",
+                        )
+                        _log.info("Back-online notification dispatched")
+
+                    scheduler_tasks.append(
+                        asyncio.create_task(
+                            _dispatch_back_online(),
+                            name="back_online_notification",
+                        ),
+                    )
 
             # Start channel with coordinator
             await active_channel.run(coordinator)
