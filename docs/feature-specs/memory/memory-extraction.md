@@ -54,7 +54,7 @@ Date-stamped summaries of conversations, consolidated over time.
 
 ### Facts Memories (R3)
 
-Named files about the user and other stable reference information — personal details, key people, technical decisions, routines — updated when new information emerges.
+Named files about the user and other stable reference information — personal details, key people, technical decisions, routines — updated when new information emerges. One-time events (bug fixes, security incidents, feature completions, outages, deployments) are not facts — they belong in episodic memory.
 
 **Acceptance Criteria**:
 - Given a conversation where new factual information is revealed, when the facts processor runs, then the forked agent searches existing files for topic overlap and updates the matching file, or creates a new topic-named file in `memories/facts/` only when no existing file covers the topic
@@ -63,6 +63,7 @@ Named files about the user and other stable reference information — personal d
 - Given information about a topic is spread across multiple files, when the facts processor runs, then the agent merges them into a single file and deletes the redundant ones
 - Given a facts file contains entries contradicted by the conversation, when the facts processor runs, then the agent updates or removes the stale entries (R10)
 - Given ambiguous signals ("I might switch..."), when the facts processor runs, then it retains existing entries unchanged — only clear evidence triggers pruning (R10)
+- Given a conversation about a one-time event (bug fix, security incident, outage, deployment), when the facts processor runs, then it does not create a facts file — that content belongs in episodic memory
 
 ### Preferences Memories (R3)
 

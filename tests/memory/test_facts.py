@@ -77,6 +77,22 @@ class TestFactsProcessor:
         assert "SOUL.md" in FACTS_PROMPT
         assert "context" in FACTS_PROMPT.lower()
 
+    def test_prompt_instructs_one_time_events_are_episodic(self) -> None:
+        """AC: Prompt routes one-time events to episodic memory."""
+        prompt_lower = FACTS_PROMPT.lower()
+        assert "one-time events" in prompt_lower
+        assert "bug fixes" in prompt_lower or "security incidents" in prompt_lower
+        assert "episodic" in prompt_lower
+
+    def test_prompt_includes_filename_examples(self) -> None:
+        """AC: Prompt includes concrete good/bad filename examples."""
+        assert "work-info.md" in FACTS_PROMPT
+        assert "outage.md" in FACTS_PROMPT or "security-incident" in FACTS_PROMPT
+
+    def test_prompt_includes_durability_check(self) -> None:
+        """AC: Prompt includes the 'useful in a month' pre-write check."""
+        assert "useful in a month" in FACTS_PROMPT.lower()
+
     async def test_propagates_fork_and_consume_error(self, mocker: MockerFixture) -> None:
         """AC: Exceptions from fork_and_consume propagate."""
         _mock_fork = mocker.patch(
