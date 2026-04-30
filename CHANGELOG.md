@@ -2,6 +2,30 @@
 
 <!-- version list -->
 
+## v1.63.0 (2026-04-30)
+
+### Documentation
+
+- **context**: Add workspace claim validation spec and design
+  ([`38f3eb3`](https://github.com/asermax/tachikoma/commit/38f3eb3dc1a5f4e856a3617629ca222fd3851599))
+
+- **context**: Frame correction entries as positive instructions
+  ([`f4fc90d`](https://github.com/asermax/tachikoma/commit/f4fc90ddfe215fb830aa01e3beff427b12bb396a))
+
+- **planning**: Add plugin system delta definitions
+  ([`51ef533`](https://github.com/asermax/tachikoma/commit/51ef533c0842be143a51fbff897db114d786cf15))
+
+### Features
+
+- **context**: Add workspace claim validation to context processor
+  ([`5db920a`](https://github.com/asermax/tachikoma/commit/5db920ac439f48ace33d948f9b79cf8d4d81a119))
+
+### Refactoring
+
+- **post-processing**: Extract workspace validation prompt to shared location
+  ([`4929543`](https://github.com/asermax/tachikoma/commit/4929543d68eee979cce9f01a3cd02219bb280ea8))
+
+
 ## v1.62.0 (2026-04-30)
 
 ### Documentation
