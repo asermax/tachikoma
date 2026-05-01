@@ -204,7 +204,6 @@ An opinionated personal assistant built on Claude Agent SDK that maintains conve
 - Buffer background task notifications until idle — hold notifications for natural conversation pauses instead of injecting into active exchanges (DLT-112)
 - Fix double 'and' in truncated tool activity summary — grammar fix for truncated summaries (DLT-113)
 - Run and monitor detached shell commands — MCP tools for dispatching, monitoring, and controlling OS-level commands that outlive the session (DLT-115)
-- Git-friendly database storage — replace opaque binary SQLite diffs with diffable representations in git history (DLT-121)
 
 **Medium:**
 - Run as a persistent background service — systemd-managed process with auto-start and crash recovery (DLT-011)
@@ -346,7 +345,6 @@ Ideas for v2 and beyond (not committing to these):
 - Feature toggles for disabling optional subsystems via configuration
 - Nori agent proxy library for SDK abstraction
 - Game integration concept (interact with assistant within a game world)
-- Git-friendly database storage replacing opaque binary SQLite diffs with diffable representations
 
 ---
 

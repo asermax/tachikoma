@@ -259,7 +259,7 @@ class TestEnsureGitignoreEntries:
     def test_ensure_is_noop_when_complete(self, tmp_path: Path) -> None:
         """AC3: _ensure_gitignore_entries is no-op when all entries exist."""
         gitignore = tmp_path / ".gitignore"
-        expected = ".tachikoma/*.db\n.tachikoma/logs/tachikoma.log\n.tachikoma/db-dump/\n"
+        expected = ".tachikoma/*.db\n.tachikoma/logs/tachikoma.log\n"
         gitignore.write_text(expected)
 
         _ensure_gitignore_entries(tmp_path)
@@ -341,6 +341,6 @@ class TestWorkspaceSync:
         with patch(
             "tachikoma.git.hooks.smart_pull",
             new_callable=AsyncMock,
-            return_value=(SYNC_RESULT["SYNC_FAILED"], []),
+            return_value=SYNC_RESULT["SYNC_FAILED"],
         ):
             await git_hook(ctx)  # Should not raise

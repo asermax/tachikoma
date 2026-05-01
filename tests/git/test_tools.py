@@ -502,7 +502,7 @@ class TestHandleSync:
     @patch(
         "tachikoma.git.tools.smart_pull",
         new_callable=AsyncMock,
-        return_value=(SYNC_RESULT["UP_TO_DATE"], []),
+        return_value=SYNC_RESULT["UP_TO_DATE"],
     )
     async def test_sync_runs_pull_then_push(
         self,
@@ -527,7 +527,7 @@ class TestHandleSync:
     @patch(
         "tachikoma.git.tools.smart_pull",
         new_callable=AsyncMock,
-        return_value=(SYNC_RESULT["DIRTY_SKIPPED"], []),
+        return_value=SYNC_RESULT["DIRTY_SKIPPED"],
     )
     async def test_sync_short_circuits_on_dirty_skipped(
         self,
@@ -551,7 +551,7 @@ class TestHandleSync:
     @patch(
         "tachikoma.git.tools.smart_pull",
         new_callable=AsyncMock,
-        return_value=(SYNC_RESULT["SYNC_FAILED"], []),
+        return_value=SYNC_RESULT["SYNC_FAILED"],
     )
     async def test_sync_short_circuits_on_sync_failed(
         self,

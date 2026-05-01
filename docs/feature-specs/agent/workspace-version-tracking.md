@@ -24,7 +24,7 @@ Automatic git version tracking for all workspace file changes. Every modificatio
 | R5 | Bootstrap hook initializes workspace as a git repo on first run (idempotent) |
 | R6 | Commits use a fixed identity via repo-local git config (no global config dependency) |
 | R7 | Linear history on a single branch — no branch operations |
-| R8 | Bootstrap creates `.gitignore` with `.tachikoma/*.db`, `.tachikoma/logs/tachikoma.log`, and `.tachikoma/db-dump/` to exclude the DB binary, active log file, and stale dump directories from git tracking. Rotated log files (`.tachikoma/logs/tachikoma.<timestamp>.log`) are tracked by git. On every startup, missing gitignore entries are appended without committing (idempotent) |
+| R8 | Bootstrap creates `.gitignore` with `.tachikoma/*.db` and `.tachikoma/logs/tachikoma.log` to exclude the DB binary and active log file from git tracking. Rotated log files (`.tachikoma/logs/tachikoma.<timestamp>.log`) are tracked by git. On every startup, missing gitignore entries are appended without committing (idempotent) |
 | R9 | After committing, push committed changes to the `origin` remote with divergence detection and conflict resolution; on divergence, rebase local changes on top of remote before pushing |
 | R10 | If no `origin` remote is configured, skip pushing silently (no-op) |
 | R11 | On push failure (rebase failed, push failed after rebase), log a warning with the failure reason and continue; committed changes remain intact and will be retried on next sync |

@@ -219,7 +219,7 @@ class TestProjectsHook:
             patch(
                 "tachikoma.projects.hooks.smart_pull",
                 new_callable=AsyncMock,
-                return_value=(SYNC_RESULT["FAST_FORWARDED"], []),
+                return_value=SYNC_RESULT["FAST_FORWARDED"],
             ) as mock_smart_pull,
         ):
             await projects_hook(mock_context)
