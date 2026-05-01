@@ -2,6 +2,38 @@
 
 <!-- version list -->
 
+## v1.68.1 (2026-05-01)
+
+### Bug Fixes
+
+- **workflows**: Accept items as JSON-encoded string in update_workflow_state
+  ([`d0483cc`](https://github.com/asermax/tachikoma/commit/d0483ccb1445f2fbfa1bea75490eead18c23c91e))
+
+### Documentation
+
+- **workflows**: Update spec and design for JSON-encoded items parameter
+  ([`1fedfea`](https://github.com/asermax/tachikoma/commit/1fedfea7caf81cee4552aff5238bff67edad7786))
+
+### Refactoring
+
+- **mcp**: Extract shared JSON array decoder into mcp_utils module
+  ([`59e9e47`](https://github.com/asermax/tachikoma/commit/59e9e4776e8d6f004ff4e9f160c4075f26464d9c))
+
+- **updates**: Extract restart notification handling into rollback module
+  ([`1e9f2a4`](https://github.com/asermax/tachikoma/commit/1e9f2a43cbf698f26f11563cadf86e1b001ce2c7))
+
+### Testing
+
+- **mcp**: Update tests to use shared decode_json_string_array
+  ([`c87dd9f`](https://github.com/asermax/tachikoma/commit/c87dd9fab5694ddb623b554e77a23d085c9fd18b))
+
+- **updates**: Add tests for extracted restart notification functions
+  ([`6991319`](https://github.com/asermax/tachikoma/commit/6991319c3c4519174361c6f929062cb5d1b937a6))
+
+- **workflows**: Update tests for JSON-encoded items parameter
+  ([`c505177`](https://github.com/asermax/tachikoma/commit/c5051779ac96b8c9d21d9089d71bdc66a7852f88))
+
+
 ## v1.68.0 (2026-04-30)
 
 ### Features
