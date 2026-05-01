@@ -10,6 +10,7 @@ Provides MCP tools for managing workflow lifecycle:
 Follows DES-006 (MCP tool server factory pattern).
 """
 
+import json
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Literal, Self
@@ -60,7 +61,11 @@ class UpdateWorkflowStateArgs(BaseModel):
     workflow_id: str
     step: str
     action: Literal["start", "complete", "skip"]
-    items: list[str] | None = None
+    # Declared as a JSON-encoded string (e.g. '["a.md", "b.md"]') rather
+    # than a list. The SDK MCP transport's client-side schema validator
+    # rejects array-typed arguments, so the tool accepts a JSON string and
+    # the wrapper parses it via _decode_items. See DES-006.
+    items: str | None = None
 
 
 class GetWorkflowStateArgs(BaseModel):
@@ -95,6 +100,29 @@ def _validate_args(args: dict, model: type[BaseModel]):
         return model.model_validate(args), None
     except ValidationError as exc:
         return None, _error_response(f"Invalid arguments: {exc}")
+
+
+def _decode_items(raw: str) -> list[str]:
+    """Decode the JSON-string form of ``items`` into a list of strings.
+
+    The SDK MCP transport's client-side schema validator rejects array-typed
+    tool arguments, so the ``update_workflow_state`` tool accepts ``items`` as
+    a JSON string instead. This helper performs the parse-and-validate step.
+    See DES-006 for the pattern.
+
+    Raises:
+        ValueError: when ``raw`` is not valid JSON, does not encode an array,
+            or encodes an array containing non-string items.
+    """
+    try:
+        decoded = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"items must be a JSON-encoded array of strings: {exc}") from exc
+    if not isinstance(decoded, list):
+        raise ValueError(f"items JSON string must encode an array, got {type(decoded).__name__}")
+    if not all(isinstance(item, str) for item in decoded):
+        raise ValueError("items JSON array must contain only strings")
+    return decoded
 
 
 def delete_scratchpad(scratchpad_path: str) -> None:
@@ -1576,10 +1604,12 @@ def create_workflow_tools_server(
         "- workflow_id (str, required): The workflow instance ID\n"
         "- step (str, required): The step identifier (directory name)\n"
         "- action (str, required): 'start', 'complete', or 'skip'\n"
-        "- items (list[str], optional): Required when starting a loop step. Each\n"
-        "  item is an opaque reference (e.g., a filename) the iteration body\n"
-        "  interprets. Rejected when starting a non-loop step. Pass items=[] to\n"
-        "  skip a loop step with zero iterations.\n"
+        "- items (str, optional): Required when starting a loop step. A\n"
+        "  JSON-encoded string of opaque references (e.g.\n"
+        '  \'["file1.md", "file2.md"]\') that the iteration body interprets.\n'
+        "  Rejected when starting a non-loop step. Pass items='[]' to skip a\n"
+        "  loop step with zero iterations. The parameter is a JSON string\n"
+        "  because the SDK MCP transport cannot reliably pass arrays.\n"
         "\n"
         "Validates the transition and returns step instructions. "
         "Completing or skipping a step auto-starts the next pending step "
@@ -1592,6 +1622,13 @@ def create_workflow_tools_server(
         if err:
             return err
 
+        items_list: list[str] | None = None
+        if parsed.items is not None:
+            try:
+                items_list = _decode_items(parsed.items)
+            except ValueError as exc:
+                return _error_response(str(exc))
+
         return await handle_update_workflow_state(
             parsed.workflow_id,
             parsed.step,
@@ -1601,7 +1638,7 @@ def create_workflow_tools_server(
             agent_defaults=agent_defaults,
             session_context=session_context,
             workspace_path=workspace_path,
-            items=parsed.items,
+            items=items_list,
         )
 
     @tool(
