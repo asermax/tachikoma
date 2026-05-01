@@ -13,15 +13,21 @@ As the system grows, more modules need first-run setup (workspace creation, cont
 Each subsystem owns its bootstrap hook in its own module. The `bootstrap.py` module owns only the mechanism (`Bootstrap` class, `BootstrapContext`, `BootstrapHook` type, `BootstrapError`), not the hooks themselves. Hooks are defined where they logically belong:
 
 - **workspace subsystem** → `src/tachikoma/workspace.py` owns `workspace_hook`
-- **git subsystem** → `src/tachikoma/git/hooks.py` owns `git_hook`
 - **logging subsystem** → `src/tachikoma/logging.py` owns `logging_hook`
-- **context subsystem** → `src/tachikoma/context/loading.py` owns `context_hook`
-- **skills subsystem** → `src/tachikoma/skills/hooks.py` owns `skills_hook`
-- **memory subsystem** → `src/tachikoma/memory/hooks.py` owns `memory_hook`
+- **git subsystem** → `src/tachikoma/git/hooks.py` owns `git_hook`
+- **plugins subsystem** → `src/tachikoma/plugins/hooks.py` owns `plugins_hook`
+- **database subsystem** → `src/tachikoma/database.py` owns `database_hook`
+- **updates subsystem** → `src/tachikoma/updates/hooks.py` owns `updates_hook`
 - **projects subsystem** → `src/tachikoma/projects/hooks.py` owns `projects_hook`
+- **skills subsystem** → `src/tachikoma/skills/hooks.py` owns `skills_hook`
+- **context subsystem** → `src/tachikoma/context/loading.py` owns `context_hook`
+- **memory subsystem** → `src/tachikoma/memory/hooks.py` owns `memory_hook`
 - **sessions subsystem** → `src/tachikoma/sessions/hooks.py` owns `session_recovery_hook`
-- **telegram subsystem** → `src/tachikoma/telegram/__init__.py` owns `telegram_hook`
 - **tasks subsystem** → `src/tachikoma/tasks/hooks.py` owns `tasks_hook`
+- **detached_processes subsystem** → `src/tachikoma/detached_processes/hooks.py` owns `detached_processes_hook`
+- **media subsystem** → `src/tachikoma/media.py` owns `media_hook`
+- **workflows subsystem** → `src/tachikoma/workflows/hooks.py` owns `workflows_hook`
+- **telegram subsystem** → `src/tachikoma/telegram/__init__.py` owns `telegram_hook`
 
 The `__main__.py` entry point registers hooks in order:
 
@@ -68,27 +74,22 @@ async def context_hook(ctx: BootstrapContext) -> None:
 
 **__main__.py** (registers hooks):
 ```python
-from tachikoma.workspace import workspace_hook
-from tachikoma.git import git_hook
-from tachikoma.logging import logging_hook
-from tachikoma.projects import projects_hook
-from tachikoma.skills import skills_hook
-from tachikoma.context import context_hook
-from tachikoma.memory import memory_hook
-from tachikoma.sessions import session_recovery_hook
-from tachikoma.telegram import telegram_hook
-from tachikoma.tasks import tasks_hook
-
 bootstrap.register("workspace", workspace_hook)
 bootstrap.register("logging", logging_hook)
 bootstrap.register("git", git_hook)
+bootstrap.register("plugins", plugins_hook)
+bootstrap.register("database", database_hook)
+bootstrap.register("updates", updates_hook)
 bootstrap.register("projects", projects_hook)
 bootstrap.register("skills", skills_hook)
 bootstrap.register("context", context_hook)
 bootstrap.register("memory", memory_hook)
 bootstrap.register("sessions", session_recovery_hook)
-bootstrap.register("telegram", telegram_hook)
 bootstrap.register("tasks", tasks_hook)
+bootstrap.register("detached_processes", detached_processes_hook)
+bootstrap.register("media", media_hook)
+bootstrap.register("workflows", workflows_hook)
+bootstrap.register("telegram", telegram_hook)
 ```
 
 ## Benefits

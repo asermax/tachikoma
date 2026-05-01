@@ -55,11 +55,13 @@ User message → Channel (Telegram/REPL)
 
 ### Subsystem Pattern
 
-Each subsystem (memory, skills, projects, context, git, tasks) follows a consistent structure:
-- A **bootstrap hook** (`hooks.py`) for initialization (registered in `__main__.py`)
-- A **context provider** for pre-processing (implements `ContextProvider`)
-- A **processor** for post-processing (extends `PromptDrivenProcessor` — forks the SDK session with a prompt)
+Subsystems combine some of the following elements, depending on what they need:
+- A **bootstrap hook** for initialization (typically in `hooks.py`, registered in `__main__.py`)
+- A **context provider** for pre-processing (implements `ContextProvider`) — when the subsystem contributes per-message context
+- A **processor** for post-processing (extends `PromptDrivenProcessor` — forks the SDK session with a prompt) — when the subsystem extracts info from session transcripts
 - An `__init__.py` that re-exports the public API
+
+Not every subsystem has every element. For example, `memory/` and `projects/` have all four; `skills/` has hooks and a context provider but no processor; `git/` has hooks and a processor but no context provider; `tasks/` has hooks but uses `executor.py` (not a `PromptDrivenProcessor`); `context/` defines its hook in `loading.py` rather than `hooks.py`. Use existing subsystems as templates.
 
 ### Configuration
 
