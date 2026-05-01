@@ -1,6 +1,6 @@
 """Tests for the send_file tool server (telegram/tools.py).
 
-Tests for DLT-063: Send files and media to users.
+Send files and media to users.
 """
 
 import tempfile

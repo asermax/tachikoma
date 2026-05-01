@@ -1,6 +1,6 @@
 """Display module tests.
 
-Tests for DLT-034: Summarize agent actions instead of generic tool markers.
+Summarize agent actions instead of generic tool markers.
 """
 
 from tachikoma.display import TOOL_DISPLAY, format_tool_name, summarize_tool_activity

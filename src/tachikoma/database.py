@@ -97,7 +97,7 @@ class Database:
 
             # Check for and add missing columns on existing databases
 
-            # Check if summary column exists on sessions table (added in DLT-027)
+            # Check if summary column exists on sessions table
             result = await conn.execute(
                 text("SELECT * FROM pragma_table_info('sessions') WHERE name='summary'")
             )
@@ -105,7 +105,7 @@ class Database:
                 await conn.execute(text("ALTER TABLE sessions ADD COLUMN summary TEXT"))
                 _log.info("Schema migration: added 'summary' column to sessions table")
 
-            # Check if last_resumed_at column exists on sessions table (added in DLT-028)
+            # Check if last_resumed_at column exists on sessions table
             result = await conn.execute(
                 text("SELECT * FROM pragma_table_info('sessions') WHERE name='last_resumed_at'")
             )
@@ -121,7 +121,7 @@ class Database:
                 await conn.execute(text("ALTER TABLE sessions ADD COLUMN processed_at DATETIME"))
                 _log.info("Schema migration: added 'processed_at' column to sessions table")
 
-            # Check if session_resumptions table exists (added in DLT-028)
+            # Check if session_resumptions table exists
             result = await conn.execute(
                 text(
                     "SELECT name FROM sqlite_master"
@@ -173,7 +173,7 @@ class Database:
                 )
                 _log.info("Schema migration: created 'session_context_entries' table")
 
-            # Check if notify column exists on task_definitions table (removed in DLT-091)
+            # Check if notify column exists on task_definitions table (now removed)
             result = await conn.execute(
                 text("SELECT * FROM pragma_table_info('task_definitions') WHERE name='notify'")
             )
@@ -270,7 +270,7 @@ class Database:
                     "Schema migration: added 'stop_reason' column to detached_processes table"
                 )
 
-            # Check if parent_workflow_id column exists on workflow_states table (added in DLT-161)
+            # Check if parent_workflow_id column exists on workflow_states table
             result = await conn.execute(
                 text(
                     "SELECT * FROM pragma_table_info('workflow_states')"
@@ -285,7 +285,7 @@ class Database:
                     "Schema migration: added 'parent_workflow_id' column to workflow_states table"
                 )
 
-            # Check if parent_step_id column exists on workflow_states table (added in DLT-161)
+            # Check if parent_step_id column exists on workflow_states table
             result = await conn.execute(
                 text(
                     "SELECT * FROM pragma_table_info('workflow_states') WHERE name='parent_step_id'"
@@ -306,7 +306,7 @@ class Database:
                 await conn.execute(text("ALTER TABLE workflow_states ADD COLUMN loop_state TEXT"))
                 _log.info("Schema migration: added 'loop_state' column to workflow_states table")
 
-            # Check if skills column exists on task_definitions table (added in DLT-117)
+            # Check if skills column exists on task_definitions table
             result = await conn.execute(
                 text("SELECT 1 FROM pragma_table_info('task_definitions') WHERE name='skills'")
             )

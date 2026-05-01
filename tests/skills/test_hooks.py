@@ -1,8 +1,8 @@
 """Tests for skills bootstrap hook.
 
-Tests for DLT-003: Skill system foundation and sub-agent delegation.
-Tests for DLT-032: Multi-source registry and provider injection.
-Updated for DLT-038: Hot-reload skills at runtime (registry in extras).
+Skill system foundation and sub-agent delegation.
+Multi-source registry and provider injection.
+Hot-reload skills at runtime (registry in extras).
 """
 
 from pathlib import Path
@@ -95,7 +95,7 @@ class TestSkillsHook:
 
 
 class TestSkillsHookRegistry:
-    """Tests for skills_hook registry creation and extras exposure (DLT-032, DLT-038)."""
+    """Tests for skills_hook registry creation and extras exposure."""
 
     async def test_creates_registry_and_stores_in_extras(self, ctx: BootstrapContext) -> None:
         """AC: Hook creates registry and stores in ctx.extras["skill_registry"]."""

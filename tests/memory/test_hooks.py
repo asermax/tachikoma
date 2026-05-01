@@ -1,6 +1,6 @@
 """Tests for memory bootstrap hook.
 
-Tests for DLT-008: Extract and store memories from conversations.
+Extract and store memories from conversations.
 """
 
 from pathlib import Path

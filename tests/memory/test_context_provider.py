@@ -1,6 +1,6 @@
 """Tests for memory context provider.
 
-Tests for DLT-076: Re-evaluate memory context per message.
+Re-evaluate memory context per message.
 """
 
 from pathlib import Path

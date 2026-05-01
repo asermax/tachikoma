@@ -1,8 +1,8 @@
 """Coordinator integration tests.
 
-Tests for DLT-001: Core agent architecture.
-Tests for DLT-027: Session tracking integration.
-Tests for DLT-008: Post-processing pipeline integration.
+Core agent architecture.
+Session tracking integration.
+Post-processing pipeline integration.
 Mocks ClaudeSDKClient to test the coordinator's end-to-end behavior.
 """
 
@@ -220,7 +220,7 @@ class TestCoordinatorSendMessage:
         assert options.disallowed_tools == ["AskUserQuestion"]
 
     async def test_forwards_cwd_to_sdk_options(self, mock_sdk) -> None:
-        """AC (R8, DLT-023): Coordinator passes cwd to ClaudeAgentOptions."""
+        """AC (R8, ): Coordinator passes cwd to ClaudeAgentOptions."""
         client, mock_cls = mock_sdk
         client.receive_response.return_value = _mock_messages(
             make_assistant([TextBlock(text="hi")]),
@@ -290,7 +290,7 @@ class TestCoordinatorErrorHandling:
         assert text_events[0].text == "recovered"
 
     async def test_logs_stderr_on_process_error(self, mock_sdk, mocker) -> None:
-        """AC: DLT-098 R0 — ProcessError with stderr output logged with stderr= field."""
+        """AC: R0: ProcessError with stderr output logged with stderr= field."""
         client, _ = mock_sdk
         captured_options = []
 
@@ -327,7 +327,7 @@ class TestCoordinatorErrorHandling:
         # The stderr_aware_query unit tests already cover the logging behavior.
 
     async def test_no_stderr_in_log_when_empty(self, mock_sdk, mocker) -> None:
-        """AC: DLT-098 R0 — ProcessError with no stderr, log omits stderr kwarg."""
+        """AC: R0: ProcessError with no stderr, log omits stderr kwarg."""
         client, _ = mock_sdk
 
         async def _crashing_no_stderr():
@@ -406,7 +406,7 @@ def _make_mock_registry(active_session=None):
 
 
 class TestCoordinatorSessionTracking:
-    """Tests for DLT-027: session tracking integration in the coordinator."""
+    """session tracking integration in the coordinator."""
 
     async def test_first_message_creates_session(self, mock_sdk) -> None:
         """AC: first message with no active session triggers create_session."""
@@ -506,8 +506,6 @@ class TestCoordinatorSessionTracking:
 
 class TestTranscriptPathDerivation:
     """Tests for _derive_transcript_path helper.
-
-    See: DLT-027 design -- Known SDK coupling note.
     """
 
     def test_basic_path_derivation(self) -> None:
@@ -541,7 +539,7 @@ class TestTranscriptPathDerivation:
 
 
 class TestCoordinatorSystemPrompt:
-    """Tests for DLT-005/DLT-041: system prompt integration via foundational context."""
+    """system prompt integration via foundational context."""
 
     async def test_foundational_context_persisted_to_db(
         self,
@@ -719,7 +717,7 @@ def _make_mock_pipeline():
 
 
 class TestCoordinatorPostProcessing:
-    """Tests for DLT-008: post-processing pipeline integration."""
+    """post-processing pipeline integration."""
 
     async def test_triggers_pipeline_on_shutdown_with_valid_session(self, mock_sdk) -> None:
         """AC: Session with sdk_session_id triggers pipeline.run()."""
@@ -1042,7 +1040,7 @@ def _make_mock_skill_registry(agents: dict[str, AgentDefinition]) -> MagicMock:
 
 
 class TestCoordinatorAgents:
-    """Tests for DLT-003: sub-agent delegation derived from skill_registry + context entries."""
+    """sub-agent delegation derived from skill_registry + context entries."""
 
     async def test_derives_agents_from_entries_and_registry(self, mock_sdk) -> None:
         """AC: Agents are derived from DB entries with skill metadata + skill_registry."""
@@ -1249,7 +1247,7 @@ def _make_mock_pre_pipeline():
 
 
 class TestCoordinatorPreProcessing:
-    """Tests for DLT-006: pre-processing pipeline integration."""
+    """pre-processing pipeline integration."""
 
     async def test_runs_pre_pipeline_on_first_message_of_new_session(
         self,
@@ -1415,7 +1413,7 @@ class TestCoordinatorPreProcessing:
 
 
 class TestCoordinatorMcpServers:
-    """Tests for DLT-030: MCP servers extraction from pre-processing results."""
+    """MCP servers extraction from pre-processing results."""
 
     async def test_extracts_mcp_servers_from_pre_processing_results(self, mock_sdk, mocker) -> None:
         """AC: MCP servers from ContextResult are passed to ClaudeAgentOptions."""
@@ -1572,7 +1570,7 @@ class TestCoordinatorMcpServers:
 
 
 class TestBoundaryDetection:
-    """Tests for DLT-026: boundary detection integration in send_message()."""
+    """boundary detection integration in send_message()."""
 
     async def test_skips_detection_when_no_active_session(self, mock_sdk) -> None:
         """AC: No active session means detection is skipped."""
@@ -1773,7 +1771,7 @@ class TestBoundaryDetection:
 
 
 class TestSessionTransition:
-    """Tests for DLT-026: session transition on topic shift."""
+    """session transition on topic shift."""
 
     async def test_closes_current_session_on_topic_shift(
         self,
@@ -2386,7 +2384,7 @@ class TestBuildOptions:
 
 
 class TestPerMessagePostProcessing:
-    """Tests for DLT-026: per-message post-processing pipeline trigger."""
+    """per-message post-processing pipeline trigger."""
 
     async def test_triggers_msg_pipeline_after_result(
         self,
@@ -2641,7 +2639,7 @@ class TestPerMessagePostProcessing:
 
 
 class TestCoordinatorShutdownWithBoundaryDetection:
-    """Tests for DLT-026: shutdown with background tasks from boundary detection."""
+    """shutdown with background tasks from boundary detection."""
 
     async def test_awaits_pending_msg_task_on_shutdown(
         self,
@@ -2856,7 +2854,7 @@ class TestCoordinatorShutdownWithBoundaryDetection:
 
 
 class TestCoordinatorPipelineAgents:
-    """Tests for DLT-021: agent derivation from per-message pipeline + skill registry."""
+    """agent derivation from per-message pipeline + skill registry."""
 
     async def test_agents_derived_from_per_message_pipeline_entries(
         self,
@@ -3150,7 +3148,7 @@ class TestIdlePostProcessingConfig:
 
 
 class TestIsBusy:
-    """Tests for DLT-036: is_busy property detection."""
+    """is_busy property detection."""
 
     async def test_not_busy_when_idle(self, mock_sdk) -> None:
         """AC: All conditions false means not busy."""
@@ -3487,7 +3485,7 @@ class TestIdlePostProcessingShutdown:
 
 
 class TestPerMessagePreProcessingIntegration:
-    """Tests for DLT-075: per-message pre-processing pipeline integration."""
+    """per-message pre-processing pipeline integration."""
 
     async def test_per_message_pipeline_runs_on_every_message(
         self,
@@ -3671,7 +3669,7 @@ class TestPerMessagePreProcessingIntegration:
 
 
 class TestColdStartResume:
-    """Tests for DLT-084: resume matching conversation on return after restart."""
+    """resume matching conversation on return after restart."""
 
     async def test_resumes_matching_session(self, mock_sdk, mocker) -> None:
         """AC: Cold start with matching candidate reopens the previous session."""
@@ -3848,7 +3846,7 @@ class TestColdStartResume:
         assert text_events[0].text == "hi"
 
     async def test_forwards_boundary_status(self, mock_sdk, mocker) -> None:
-        """AC (DLT-031): Status from detect_boundary is forwarded on the stream."""
+        """AC: Status from detect_boundary is forwarded on the stream."""
         client, _ = mock_sdk
         client.receive_response.return_value = _mock_messages(
             make_assistant([TextBlock(text="hi")]),
@@ -3976,7 +3974,7 @@ class TestColdStartResume:
 
 
 class TestCoordinatorIdleEmission:
-    """Tests for CoordinatorIdle emission on busy->idle transitions (DLT-112 R13)."""
+    """Tests for CoordinatorIdle emission on busy->idle transitions (R13)."""
 
     async def test_emit_on_busy_to_idle(self) -> None:
         """AC (R13): CoordinatorIdle emitted exactly once per busy->idle transition."""
@@ -4024,7 +4022,7 @@ class TestCoordinatorIdleEmission:
 
 
 class TestCoordinatorTeardownRace:
-    """Regression tests for DLT-111 R0/R1/R3/R4 + CoordinatorIdle invariant."""
+    """Regression tests for R0/R1/R3/R4 + CoordinatorIdle invariant."""
 
     async def test_message_enqueued_during_teardown_is_reprocessed(self, mock_sdk) -> None:
         """R0/R1-AC1: message enqueued during teardown is re-processed in same generator."""
@@ -4450,7 +4448,7 @@ class TestForwarderCancellation:
 
 
 class TestRequeueLoop:
-    """Tests for DLT-163: coordinator-owned re-queue loop in send_message()."""
+    """coordinator-owned re-queue loop in send_message()."""
 
     async def test_leftover_message_auto_processed_in_same_generator(self, mock_sdk) -> None:
         """AC1: leftover message is automatically re-processed in the same generator."""

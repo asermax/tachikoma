@@ -1,4 +1,4 @@
-"""Tests for plugin lifecycle events (DLT-048 Batch 5, Step 5.1).
+"""Tests for plugin lifecycle events.
 
 Verifies that plugin events can be dispatched and received via the bubus
 EventBus with correct payloads.

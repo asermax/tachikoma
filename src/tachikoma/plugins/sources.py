@@ -3,8 +3,6 @@
 Defines three frozen Pydantic models for plugin source variants (git, URL, local),
 a discriminated-union type alias, a parsing helper enforcing exactly-one-source,
 and alias regex validation used by both config loading and install operations.
-
-Design reference: DLT-048 §S1.
 """
 
 import re

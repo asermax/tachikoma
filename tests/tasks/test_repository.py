@@ -251,9 +251,7 @@ class TestRepositoryInstanceCRUD:
 
 
 class TestGetActiveInstancePeriodAware:
-    """Tests for period-aware duplicate detection via scheduled_for param (DLT-090 S2).
-
-    See: docs/delta-specs/DLT-090.md (R2)
+    """Tests for period-aware duplicate detection via scheduled_for param (S2).
     """
 
     async def test_finds_pending_instance_matching_scheduled_for(
@@ -415,7 +413,7 @@ class TestCorruptedScheduleIsolation:
 
 
 class TestGetReadyBackgroundInstances:
-    """Tests for get_ready_background_instances (DLT-120 S6)."""
+    """Tests for get_ready_background_instances (S6)."""
 
     async def test_returns_pending_background_instances(self, repo: TaskRepository) -> None:
         """AC: Pending background instances are returned."""
@@ -483,7 +481,7 @@ class TestGetReadyBackgroundInstances:
 
 
 class TestListExpiredWaitingInstances:
-    """Tests for list_expired_waiting_instances (DLT-120 S8)."""
+    """Tests for list_expired_waiting_instances (S8)."""
 
     async def test_returns_expired_waiting_instances(self, repo: TaskRepository) -> None:
         """AC: Waiting instances older than timeout are returned."""
@@ -537,7 +535,7 @@ class TestListExpiredWaitingInstances:
 
 
 class TestGetActiveInstanceIncludesWaiting:
-    """Tests for get_active_instance_for_definition including 'waiting' (DLT-120 S9)."""
+    """Tests for get_active_instance_for_definition including 'waiting' (S9)."""
 
     async def test_waiting_instance_prevents_duplicate_backward_compat(
         self, repo: TaskRepository
@@ -603,7 +601,7 @@ class TestUpdatedAtAutoStamping:
 
 
 class TestCleanupExpiredOneShotDefinitions:
-    """Tests for cleanup_expired_one_shot_definitions (DLT-104)."""
+    """Tests for cleanup_expired_one_shot_definitions."""
 
     async def test_ac1_deletes_fired_one_shot_past_retention(self, repo: TaskRepository) -> None:
         """AC1: Fired one-shot with terminal instances past retention is deleted."""

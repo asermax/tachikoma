@@ -3,8 +3,6 @@
 Walks ``[plugins]`` config, dispatches each source to the appropriate
 materializer, performs atomic swap on success, and handles stale-fallback
 when a source is unreachable but a valid prior install exists.
-
-Design reference: DLT-048 S4.
 """
 
 from __future__ import annotations

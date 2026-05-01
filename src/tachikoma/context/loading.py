@@ -5,8 +5,6 @@ SOUL.md (personality/tone), USER.md (user knowledge), and AGENTS.md (behavioral 
 
 These files are loaded once at startup and assembled into a system prompt that layers
 on top of the SDK's default prompt.
-
-See: DLT-005 (Load foundational context for personality and user knowledge).
 """
 
 from pathlib import Path

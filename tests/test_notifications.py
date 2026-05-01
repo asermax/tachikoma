@@ -316,7 +316,7 @@ class TestCreateNotificationServer:
 
 
 class TestRespondableNotification:
-    """Tests for respondable notification behavior (DLT-120 R2, R2.1)."""
+    """Tests for respondable notification behavior (R2, R2.1)."""
 
     def test_prompt_includes_respondable_suffix_when_id_provided(self) -> None:
         """AC: Prompt contains respond_to_task instructions when response_instance_id is set."""

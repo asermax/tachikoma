@@ -279,7 +279,7 @@ git/tools.py
 ### Destructive-git deny hook for non-git-processor surfaces
 
 **Choice**: Install a `PreToolUse` deny hook (via `make_bash_deny_hook` in `post_processing.py`) on every agent surface that runs in `bypassPermissions` mode *except* the git-dedicated processors. The hook denies `git push` (any form), `git reset`, `git checkout .`, `git restore .`, `git clean`, and mutating `git remote` subcommands. Read-only git and `git clone` are unaffected. The deny patterns live alongside the MCP tools in `git/tools.py` as `DESTRUCTIVE_GIT_DENY_PATTERNS`.
-**Why**: The main coordinator and task executor agents run in `bypassPermissions` with no git guardrails — a confused agent could wipe local changes, force-push, or repoint a remote. The git processors (GitProcessor, ProjectsProcessor commit agents, rebase resolver) already use allow-list gate hooks (`GIT_BASH_HOOK`) that only permit the commands they need. The deny hook is the inverse: it blocks destructive patterns while allowing everything else. This makes DLT-154 (role-based git permissions) obsolete.
+**Why**: The main coordinator and task executor agents run in `bypassPermissions` with no git guardrails — a confused agent could wipe local changes, force-push, or repoint a remote. The git processors (GitProcessor, ProjectsProcessor commit agents, rebase resolver) already use allow-list gate hooks (`GIT_BASH_HOOK`) that only permit the commands they need. The deny hook is the inverse: it blocks destructive patterns while allowing everything else.
 
 **Consequences**:
 - Pro: Irrecoverable git operations are blocked on all non-git-processor surfaces

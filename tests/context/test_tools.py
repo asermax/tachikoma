@@ -1,6 +1,6 @@
 """Tests for pending signals tooling.
 
-Tests for DLT-018: Update core context files from conversation learnings.
+Update core context files from conversation learnings.
 """
 
 from datetime import date, datetime, timedelta

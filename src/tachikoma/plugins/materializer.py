@@ -3,8 +3,6 @@
 Three async materializers (git, URL, local) each write content into a staging
 directory, which the reconciler then swaps into the install location via
 ``_atomic_replace_dir`` (pip-style triple-step rename).
-
-Design reference: DLT-048 S3.
 """
 
 from __future__ import annotations

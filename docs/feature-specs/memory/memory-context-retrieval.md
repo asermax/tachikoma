@@ -4,7 +4,7 @@
 
 ## Overview
 
-A per-message context provider that searches stored memories for information relevant to the current user message. Runs on every message using the per-message pre-processing pipeline. Receives the session's summary and last assistant exchange for conversation context, enabling informed relevance decisions. On the first message (no summary yet), it operates without conversation context. Returns one context entry per relevant memory file with metadata identifying the file path for deduplication. DLT-009 (embedding-based semantic search) is a potential future upgrade to the retrieval mechanism.
+A per-message context provider that searches stored memories for information relevant to the current user message. Runs on every message using the per-message pre-processing pipeline. Receives the session's summary and last assistant exchange for conversation context, enabling informed relevance decisions. On the first message (no summary yet), it operates without conversation context. Returns one context entry per relevant memory file with metadata identifying the file path for deduplication. Embedding-based semantic search is a potential future upgrade to the retrieval mechanism.
 
 ## User Stories
 

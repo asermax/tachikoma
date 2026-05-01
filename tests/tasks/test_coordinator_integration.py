@@ -1,4 +1,4 @@
-"""Tests for coordinator task integration (DLT-010).
+"""Tests for coordinator task integration.
 
 Tests for the new coordinator parameters: last_message_time and mcp_servers.
 """

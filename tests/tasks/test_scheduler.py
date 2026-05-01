@@ -1,6 +1,4 @@
 """Tests for task scheduler and instance generator.
-
-See: docs/delta-specs/DLT-090.md (R0–R6 acceptance criteria)
 """
 
 from datetime import UTC, datetime, timedelta
@@ -474,7 +472,7 @@ class TestInstanceGenerator:
 
 
 class TestStaleCronPrevention:
-    """Tests for DLT-102: since-based stale cron prevention."""
+    """since-based stale cron prevention."""
 
     async def test_no_fire_when_cron_match_before_since_on_create(
         self,
@@ -657,11 +655,11 @@ class TestSessionTaskScheduler:
 
 
 class TestSessionTaskSchedulerPinnedSkills:
-    """Tests for pinned skills propagation in session_task_scheduler (DLT-117)."""
+    """Tests for pinned skills propagation in session_task_scheduler."""
 
     @pytest.mark.asyncio
     async def test_sets_pinned_skills_metadata(self, repo: TaskRepository) -> None:
-        """DLT-117: BufferedItem gets pinned_skills from definition."""
+        """BufferedItem gets pinned_skills from definition."""
         defn = _make_definition(
             "def-skills",
             task_type="session",
@@ -690,7 +688,7 @@ class TestSessionTaskSchedulerPinnedSkills:
 
     @pytest.mark.asyncio
     async def test_no_pinned_skills_metadata_when_empty(self, repo: TaskRepository) -> None:
-        """DLT-117: No pinned_skills metadata when definition has no skills."""
+        """No pinned_skills metadata when definition has no skills."""
         defn = _make_definition("def-noskills", task_type="session")
         await repo.create_definition(defn)
 

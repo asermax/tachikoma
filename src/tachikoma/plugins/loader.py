@@ -2,8 +2,6 @@
 
 Runs after reconciliation and produces a list of :class:`LoadedPlugin` records
 consumed by the bootstrap hook and the plugin manager.
-
-Design reference: DLT-048 S5.
 """
 
 from __future__ import annotations

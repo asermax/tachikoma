@@ -1,6 +1,6 @@
 """Tests for plugin manifest parsing.
 
-Covers AC-MP-1 through AC-MP-9 from the DLT-048 spec:
+Covers AC-MP-1 through AC-MP-9 from the spec:
 - AC-MP-1: Native TOML manifest round-trip
 - AC-MP-2: CC manifest fallback with skills/ directory
 - AC-MP-3: Ignored CC contributions logged and returned

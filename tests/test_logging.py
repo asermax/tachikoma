@@ -1,6 +1,6 @@
 """Tests for the logging module.
 
-Tests for DLT-013: Add structured logging for agent actions.
+Add structured logging for agent actions.
 """
 
 import logging

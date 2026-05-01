@@ -1,6 +1,6 @@
 """Tests for the media module.
 
-Tests for DLT-035: Telegram media support.
+Telegram media support.
 """
 
 import os

@@ -473,11 +473,11 @@ SkillsChanged(BaseEvent[None])
 ### Per-Message Pipeline over Direct Coordinator Call
 
 **Choice**: Create `MessagePreProcessingPipeline` mirroring the existing `MessagePostProcessingPipeline`, rather than having the coordinator call the skills provider directly.
-**Why**: The project already has a paired pipeline pattern — `MessagePostProcessingPipeline` runs per-message post-response. Creating the pre-response counterpart keeps the architecture symmetric. It also makes DLT-076 (memory re-evaluation) a simple registration away rather than requiring coordinator changes.
+**Why**: The project already has a paired pipeline pattern — `MessagePostProcessingPipeline` runs per-message post-response. Creating the pre-response counterpart keeps the architecture symmetric. It also makes future per-message providers (such as memory re-evaluation) a simple registration away rather than requiring coordinator changes.
 
 **Consequences**:
 - Pro: Architectural consistency with `MessagePostProcessingPipeline`
-- Pro: DLT-076 becomes a registration, not a coordinator change
+- Pro: Future per-message providers become registrations, not coordinator changes
 - Pro: Pipeline handles parallel execution and error isolation automatically
 - Con: New file + new ABC (minimal overhead)
 
@@ -716,5 +716,5 @@ SkillsChanged(BaseEvent[None])
 - Workflow definitions are discovered alongside skills during registry loading. The `workflows/` directory is optional — skills without workflows incur no overhead. See [workflow state machine design](../workflows/workflow-state-machine.md) for the full workflow subsystem.
 - `MessageContextProvider` is a standalone ABC (not extending `ContextProvider`) because the return types are incompatible — `ContextResult | None` vs `list[ContextResult] | None`. See Key Decisions for rationale.
 - `extract_skill_names()` and `derive_agents_from_entries()` live in `skills/context_provider.py` for cohesion with the skills module that owns the skill-related logic, rather than in the per-message pipeline module.
-- DLT-076 (memory re-evaluation) can reuse the per-message pipeline by registering a memory provider — no coordinator changes needed.
+- Future memory re-evaluation can reuse the per-message pipeline by registering a memory provider — no coordinator changes needed.
 - `SkillRegistry.resolve_chain` has a second caller: the workflow MCP tool invokes it when activating a step that declares `required_skills`, injecting the resolved chains into the tool response. `SkillRegistry._validate_deps` also walks `self._workflows` and warns about unknown step-declared skill names alongside skill-level `depends_on` warnings. See [workflow state machine design](../workflows/workflow-state-machine.md) — "Step-declared required skills injected via tool response".

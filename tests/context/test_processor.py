@@ -1,6 +1,6 @@
 """Tests for CoreContextProcessor.
 
-Tests for DLT-018: Update core context files from conversation learnings.
+Update core context files from conversation learnings.
 """
 
 import os

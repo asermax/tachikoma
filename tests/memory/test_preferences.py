@@ -1,6 +1,6 @@
 """Tests for preferences memory processor.
 
-Tests for DLT-008: Extract and store memories from conversations.
+Extract and store memories from conversations.
 """
 
 from datetime import UTC, datetime

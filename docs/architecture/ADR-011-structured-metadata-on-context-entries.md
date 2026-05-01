@@ -60,4 +60,4 @@ The coordinator passes metadata through without interpretation — it's provider
 ## Notes
 
 - Migration: `ALTER TABLE session_context_entries ADD COLUMN metadata TEXT` — nullable, no data migration needed for existing rows
-- The motivating use case was DLT-075 (per-message skill re-evaluation), but the field is designed for general-purpose use
+- The motivating use case was per-message skill re-evaluation, but the field is designed for general-purpose use

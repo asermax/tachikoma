@@ -1,9 +1,9 @@
 """Tests for skills context provider.
 
-Tests for DLT-021: Skill detection and context injection.
-Tests for DLT-032: Registry injection via constructor.
-Updated for DLT-038: Registry injected via constructor.
-Updated for DLT-075: Per-message evaluation with metadata-based filtering.
+Skill detection and context injection.
+Registry injection via constructor.
+Registry injected via constructor.
+Per-message evaluation with metadata-based filtering.
 """
 
 from pathlib import Path
@@ -66,7 +66,7 @@ class TestSkillClassificationPrompt:
         assert "no skills are relevant" in SKILL_CLASSIFICATION_PROMPT.lower()
 
     def test_prompt_has_agents_context_placeholder(self) -> None:
-        """AC (DLT-145): Prompt has {agents_context} placeholder for AGENTS.md injection."""
+        """AC: Prompt has {agents_context} placeholder for AGENTS.md injection."""
         assert "{agents_context}" in SKILL_CLASSIFICATION_PROMPT
 
     def test_prompt_has_conversation_context_placeholder(self) -> None:
@@ -455,7 +455,7 @@ class TestSkillsContextProvider:
 
 
 class TestProviderChainExpansion:
-    """Tests for chain expansion in SkillsContextProvider (DLT-118)."""
+    """Tests for chain expansion in SkillsContextProvider."""
 
     def _create_skill_with_deps(
         self, skills_dir: Path, name: str, description: str, deps: list[str] | None = None
@@ -694,7 +694,7 @@ class TestProviderChainExpansion:
 
 
 class TestRenderAgentsContext:
-    """Tests for render_agents_context helper (DLT-145)."""
+    """Tests for render_agents_context helper."""
 
     def test_empty_entries_returns_placeholder(self) -> None:
         """AC3: Empty list → neutral placeholder."""
@@ -743,7 +743,7 @@ class TestRenderAgentsContext:
 
 
 class TestAgentsContextInjection:
-    """Tests for AGENTS.md injection into the classifier prompt (DLT-145)."""
+    """Tests for AGENTS.md injection into the classifier prompt."""
 
     def _make_provider(self, tmp_path: Path) -> SkillsContextProvider:
         defaults = AgentDefaults(cwd=tmp_path)
@@ -914,7 +914,7 @@ class TestConversationContextInjection:
 
 
 class TestPinnedSkills:
-    """Tests for pinned skills in SkillsContextProvider (DLT-117)."""
+    """Tests for pinned skills in SkillsContextProvider."""
 
     def _make_provider(self, tmp_path: Path) -> SkillsContextProvider:
         defaults = AgentDefaults(cwd=tmp_path)
@@ -931,7 +931,7 @@ class TestPinnedSkills:
     async def test_pinned_skill_loaded_without_classification(
         self, mocker: MockerFixture, tmp_path: Path
     ) -> None:
-        """DLT-117: Pinned skill is loaded without needing LLM classification."""
+        """Pinned skill is loaded without needing LLM classification."""
         mock_query = mocker.patch("tachikoma.skills.context_provider.stderr_aware_query")
         self._seed_skill(tmp_path, "research", "Research skill")
 
@@ -948,7 +948,7 @@ class TestPinnedSkills:
     async def test_pinned_skill_already_loaded_skips(
         self, mocker: MockerFixture, tmp_path: Path
     ) -> None:
-        """DLT-117: Pinned skill already in existing_entries is skipped."""
+        """Pinned skill already in existing_entries is skipped."""
         mock_query = mocker.patch("tachikoma.skills.context_provider.stderr_aware_query")
         self._seed_skill(tmp_path, "research", "Research skill")
         mock_query.return_value = _make_query_result("NO_RELEVANT_SKILLS")
@@ -975,7 +975,7 @@ class TestPinnedSkills:
     async def test_pinned_skill_with_dependency_chain(
         self, mocker: MockerFixture, tmp_path: Path
     ) -> None:
-        """DLT-117: Pinned skill resolves its dependency chain."""
+        """Pinned skill resolves its dependency chain."""
         mock_query = mocker.patch("tachikoma.skills.context_provider.stderr_aware_query")
 
         # Create skill A that depends on B
@@ -1002,7 +1002,7 @@ class TestPinnedSkills:
     async def test_pinned_plus_classified_combined(
         self, mocker: MockerFixture, tmp_path: Path
     ) -> None:
-        """DLT-117: Pinned and classified skills are combined in results."""
+        """Pinned and classified skills are combined in results."""
         mock_query = mocker.patch("tachikoma.skills.context_provider.stderr_aware_query")
 
         self._seed_skill(tmp_path, "research", "Research skill")
@@ -1025,7 +1025,7 @@ class TestPinnedSkills:
     async def test_unknown_pinned_skill_skipped_gracefully(
         self, mocker: MockerFixture, tmp_path: Path
     ) -> None:
-        """DLT-117: Unknown pinned skill name is skipped without error."""
+        """Unknown pinned skill name is skipped without error."""
         mock_query = mocker.patch("tachikoma.skills.context_provider.stderr_aware_query")
         self._seed_skill(tmp_path, "research", "Research skill")
         mock_query.return_value = _make_query_result("NO_RELEVANT_SKILLS")
@@ -1040,7 +1040,7 @@ class TestPinnedSkills:
         assert result[0].metadata["skill_name"] == "research"
 
     async def test_status_message_pinned_and_classified(self, tmp_path: Path) -> None:
-        """DLT-117: status_message shows pinned + classified breakdown."""
+        """status_message shows pinned + classified breakdown."""
         from tachikoma.pre_processing import ContextResult  # noqa: PLC0415
 
         provider = self._make_provider(tmp_path)
@@ -1055,7 +1055,7 @@ class TestPinnedSkills:
     async def test_pinned_skills_empty_registry_still_loads(
         self, mocker: MockerFixture, tmp_path: Path
     ) -> None:
-        """DLT-117: Pinned skills load even when registry is otherwise empty."""
+        """Pinned skills load even when registry is otherwise empty."""
         mocker.patch("tachikoma.skills.context_provider.stderr_aware_query")
 
         # Create a skill dir but don't seed the registry normally — we need one skill
@@ -1103,7 +1103,7 @@ class TestConversationContextInjectionRemaining:
 
 
 class TestQualifiedNameMetadata:
-    """Tests for qualified-name metadata in context provider (DLT-048 Steps 4.4, 4.6)."""
+    """Tests for qualified-name metadata in context provider."""
 
     def _make_provider(self, tmp_path: Path) -> SkillsContextProvider:
         defaults = AgentDefaults(cwd=tmp_path)

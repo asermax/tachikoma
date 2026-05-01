@@ -1,6 +1,6 @@
 """Tests for pre-processing pipeline.
 
-Tests for DLT-006: Pre-process messages with memory context injection.
+Pre-process messages with memory context injection.
 """
 
 import asyncio
@@ -347,7 +347,7 @@ class LoadingProjectsProvider(ContextProvider):
 
 
 class TestStatusCallback:
-    """DLT-031: pipeline emits provider status via callback."""
+    """pipeline emits provider status via callback."""
 
     async def test_pipeline_emits_status_per_provider(self) -> None:
         ctx = ContextResult(tag="test", content="data")

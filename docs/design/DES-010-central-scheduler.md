@@ -3,7 +3,6 @@
 **Scope**: Python / Architecture
 **Status**: Established
 **Date**: 2026-04-19
-**First Used**: DLT-104
 
 ## Problem
 

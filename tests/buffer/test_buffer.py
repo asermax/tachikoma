@@ -1,6 +1,6 @@
 """Tests for the Buffer core (priority queue + event-driven loop).
 
-DLT-112: Unified priority buffer for deferred notification and session task delivery.
+Unified priority buffer for deferred notification and session task delivery.
 """
 
 import asyncio

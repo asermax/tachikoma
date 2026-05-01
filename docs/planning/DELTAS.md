@@ -434,13 +434,6 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 **Complexity**: Medium
 **Description**: The baseline sensor for the proactive nudge framework, using existing episodic memory data. Polls recent episodic memories with priority weighting for conversations that have open threads, upcoming events mentioned in past chats, or topics that have been discussed multiple times. Produces scored signals (data + relevance score + optional nudge suggestion) that feed into the nudge engine via the sensor framework. This is the first concrete sensor implementation and validates the sensor abstraction. Additional sensors (routine, calendar, time-based, geo-fencing, external events) follow the same pattern and are tracked separately.
 
-### DLT-117: Attach specific skills to task definitions
-**Status**: ✓ Reconciled
-**Depends on**: None
-**Priority**: 1 (Critical)
-**Complexity**: Medium
-**Description**: Task definitions currently rely on LLM-based skill classification at execution time to determine which skills are relevant. This is unreliable for tasks that always need specific skills — the classifier might not select the right skills for a terse task prompt. Add an optional list of skill names to the task definition model. When a task executes, the named skills are loaded unconditionally into the context before the classification step runs, ensuring the agent always has the domain knowledge the task requires. The task creation and update MCP tools expose this field so the agent can attach skills when defining tasks.
-
 ### DLT-122: Evaluate alternatives to Claude Agent SDK
 **Status**: ✗ Defined
 **Depends on**: None
@@ -566,13 +559,6 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 **Priority**: 2 (High)
 **Complexity**: Medium
 **Description**: Allow session tasks to fire immediately as steering messages into the active conversation, bypassing the idle wait. Currently, session tasks are gated by an idle check — they only fire when the user has been inactive for a configured period. This delta adds an optional immediate mode to session tasks that, when enabled, skips the idle check and injects the task's content as a steering message into the active conversation at the earliest opportunity. This enables reminder-like behavior where time-sensitive prompts reach the user without waiting for idle. The mode is configured per task definition and uses the existing steering message infrastructure.
-
-### DLT-154: Role-based git permission guardrails
-**Status**: ✓ Reconciled (subsumed by DLT-155)
-**Depends on**: None
-**Priority**: 3 (Medium)
-**Complexity**: Medium
-**Description**: Agents operating inside Tachikoma (main user-driven agent, background tasks, post-processors, sub-agents spawned by pre/post-processing) currently share a single git access surface with no role-based restrictions, so any of them can commit, push, or otherwise mutate repository state. This is risky for non-user-driven roles: a runaway background task or a misbehaving post-processor could publish unintended commits or corrupt remote history before the user sees what happened. Introduce a permission layer that scopes git access by agent role — at minimum, background tasks, post-processors, and forked sub-agents must be read-only on git (no `commit`, no `push`, no `git` subcommand that mutates the working tree or refs), while the main agent retains the full surface. The layer should live at the permission/deny-rule level so restrictions apply regardless of whether the agent reaches git through bash, an MCP tool, or the auto-commit system. The delta delivers the role classification, the deny-rule enforcement, and sensible defaults per role.
 
 ### DLT-156: Encrypted token store for repo-committed secrets
 **Status**: ✗ Defined

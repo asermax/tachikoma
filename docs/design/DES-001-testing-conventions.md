@@ -92,10 +92,7 @@ class TestCoordinatorSendMessage:
 Group related tests by feature or acceptance criteria:
 
 ```python
-"""Message adapter tests.
-
-Tests for DLT-001: Core agent architecture.
-"""
+"""Message adapter tests."""
 
 from tachikoma.adapter import adapt
 from tachikoma.events import TextChunk, ToolActivity, Error
@@ -123,7 +120,7 @@ async def test_preserves_conversation_context(
 ) -> None:
     """AC: Follow-up messages have context from prior messages.
 
-    See: docs/delta-specs/DLT-001.md (R0)
+    See: docs/feature-specs/agent/core-architecture.md
     """
 ```
 

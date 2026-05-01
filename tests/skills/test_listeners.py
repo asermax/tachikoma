@@ -1,4 +1,4 @@
-"""Tests for the plugin-event listener in the skills module (DLT-048 Batch 5, Step 5.4).
+"""Tests for the plugin-event listener in the skills module.
 
 Covers all three event handlers: PluginInstalled, PluginRemoving, PluginRemoved.
 Uses a real EventBus and real SkillRegistry where practical, mocking only the

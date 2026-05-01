@@ -1,6 +1,6 @@
 """Tests for ProjectsProcessor post-processor.
 
-Tests updated for DLT-097: smart_push replaces bare push.
+smart_push replaces bare push.
 """
 
 import asyncio

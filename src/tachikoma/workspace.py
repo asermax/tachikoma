@@ -2,8 +2,6 @@
 
 Provides the workspace_hook bootstrap function that creates the workspace
 root and .tachikoma/ data folder if missing.
-
-See: DLT-023 (Workspace bootstrap), DLT-005 (Hook extraction pattern).
 """
 
 from loguru import logger

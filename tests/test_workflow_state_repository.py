@@ -494,7 +494,7 @@ async def test_create_after_soft_delete(session_factory, sample_workflow_state):
 
 
 # ---------------------------------------------------------------------------
-# Batch 2: Composition-aware repository tests (DLT-161)
+# Batch 2: Composition-aware repository tests
 # ---------------------------------------------------------------------------
 
 
@@ -786,7 +786,7 @@ async def test_apply_mutation_batch_create_child(session_factory):
 
 @pytest.mark.asyncio
 async def test_loop_state_round_trip(session_factory):
-    """DLT-160 R11.1: loop_state JSON column round-trips through the repository."""
+    """R11.1: loop_state JSON column round-trips through the repository."""
     repo = WorkflowStateRepository(session_factory)
     state = _make_state("loop-id")
     await repo.create(state)
@@ -811,7 +811,7 @@ async def test_loop_state_round_trip(session_factory):
 
 @pytest.mark.asyncio
 async def test_workflow_state_loop_state_default_none(session_factory):
-    """DLT-160: a state with no loop_state set surfaces as None on the domain dataclass."""
+    """a state with no loop_state set surfaces as None on the domain dataclass."""
     repo = WorkflowStateRepository(session_factory)
     state = _make_state("no-loop")
     await repo.create(state)
@@ -823,7 +823,7 @@ async def test_workflow_state_loop_state_default_none(session_factory):
 
 @pytest.mark.asyncio
 async def test_apply_update_state_loop_state_none_does_not_clear(session_factory):
-    """DLT-160: an UpdateState with loop_state=None preserves the existing column value."""
+    """an UpdateState with loop_state=None preserves the existing column value."""
     repo = WorkflowStateRepository(session_factory)
     state = _make_state("preserve-id")
     await repo.create(state)
@@ -862,7 +862,7 @@ async def test_apply_update_state_loop_state_none_does_not_clear(session_factory
 
 @pytest.mark.asyncio
 async def test_abort_preserves_loop_state(session_factory):
-    """DLT-160 R18: loop_state remains intact on the soft-deleted parent row (audit trail)."""
+    """R18: loop_state remains intact on the soft-deleted parent row (audit trail)."""
     repo = WorkflowStateRepository(session_factory)
 
     parent = _make_state("parent-loop-id")

@@ -287,7 +287,7 @@ class TestMutationDataclasses:
 
 
 # ---------------------------------------------------------------------------
-# Loop edges in the unified composition graph (DLT-160)
+# Loop edges in the unified composition graph
 # ---------------------------------------------------------------------------
 
 

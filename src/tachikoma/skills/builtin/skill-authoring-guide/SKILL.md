@@ -309,7 +309,7 @@ Use this skill when:
 
 The following capabilities are planned but not yet available:
 
-- **MCP Tool Servers** (DLT-054): Skills will be able to expose MCP tools that the main agent can call directly. This enables interactive capabilities without delegation.
+- **MCP Tool Servers**: Skills will be able to expose MCP tools that the main agent can call directly. This enables interactive capabilities without delegation.
 
 ---
 

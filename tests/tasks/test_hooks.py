@@ -1,6 +1,6 @@
 """Integration tests for the task subsystem bootstrap hook.
 
-Tests for DLT-010: Queue and process background tasks during idle time.
+Queue and process background tasks during idle time.
 """
 
 from datetime import UTC, datetime

@@ -1,6 +1,6 @@
 """Unit tests for context assembly function.
 
-Tests for DLT-041: Persist session context to database.
+Persist session context to database.
 """
 
 import re
@@ -11,7 +11,7 @@ from tachikoma.sessions.model import SessionContextEntry
 
 
 class TestBuildSystemPrompt:
-    """Tests for build_system_prompt() pure function (DLT-041 S3)."""
+    """Tests for build_system_prompt() pure function (S3)."""
 
     def test_empty_entries_returns_preamble_only(self) -> None:
         """AC: empty entries list returns rendered preamble alone."""

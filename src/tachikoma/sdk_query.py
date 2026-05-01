@@ -4,8 +4,6 @@ Provides a ``StderrAccumulator`` that receives stderr lines from the SDK
 subprocess via the ``ClaudeAgentOptions.stderr`` callback, and a
 ``stderr_aware_query()`` async generator that wraps the SDK's ``query()``
 with automatic stderr accumulation and error logging.
-
-See DLT-098 design for rationale.
 """
 
 from collections.abc import AsyncIterable, AsyncIterator

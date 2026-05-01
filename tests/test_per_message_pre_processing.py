@@ -368,7 +368,7 @@ class _NamedMessageProvider(MessageContextProvider):
 
 
 class TestStatusCallback:
-    """DLT-031: per-message pipeline emits provider status via callback."""
+    """per-message pipeline emits provider status via callback."""
 
     async def test_emits_status_per_provider(self) -> None:
         pipeline = MessagePreProcessingPipeline()

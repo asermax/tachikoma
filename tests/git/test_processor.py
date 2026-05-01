@@ -1,7 +1,7 @@
 """Tests for git post-processor.
 
-Tests for DLT-020: Git module for workspace version tracking.
-Tests updated for DLT-097: smart_push replaces bare push.
+Git module for workspace version tracking.
+smart_push replaces bare push.
 """
 
 from datetime import UTC, datetime

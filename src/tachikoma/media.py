@@ -2,8 +2,6 @@
 
 Provides media descriptor table, download, description building,
 file naming, and a bootstrap hook for temp folder management.
-
-See: DLT-035 (Telegram media support).
 """
 
 import time

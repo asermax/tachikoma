@@ -1,6 +1,6 @@
 """Integration tests for the session recovery bootstrap hook.
 
-Tests for DLT-027: Track conversation sessions.
+Track conversation sessions.
 """
 
 from datetime import UTC, datetime

@@ -1,4 +1,4 @@
-"""Tests for plugin MCP tools (DLT-048 Batch 6, Steps 6.1 & 6.2).
+"""Tests for plugin MCP tools.
 
 Covers arg validation, handler logic, and factory smoke test.
 """

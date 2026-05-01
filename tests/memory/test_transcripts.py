@@ -1,6 +1,6 @@
 """Tests for TranscriptArchiveProcessor.
 
-Tests for DLT-099: Archive conversation transcripts to project workspace.
+Archive conversation transcripts to project workspace.
 """
 
 from datetime import UTC, datetime

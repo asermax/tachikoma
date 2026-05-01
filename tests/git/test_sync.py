@@ -1,6 +1,6 @@
 """Tests for git sync utilities.
 
-Tests for DLT-097: Keep local repositories in sync with remotes.
+Keep local repositories in sync with remotes.
 """
 
 from pathlib import Path

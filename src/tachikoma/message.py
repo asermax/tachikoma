@@ -12,8 +12,8 @@ class IncomingMessage:
     Session task deliveries carry skill names that were declared on the task
     definition.
 
-    This is a thin interim envelope — DLT-125 will subsume it with a richer
-    type carrying content-type and media metadata.
+    This is a thin interim envelope — a future typed message envelope will
+    subsume it with a richer type carrying content-type and media metadata.
     """
 
     text: str

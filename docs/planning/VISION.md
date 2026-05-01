@@ -186,24 +186,32 @@ An opinionated personal assistant built on Claude Agent SDK that maintains conve
 - Per-message pre-processing pipeline for context evaluation on every message (skills, memory), distinct from the session-gated pipeline (projects)
 - Per-message post-processing for rolling summary generation after each agent response
 
+**Diagnostics:**
+- SDK stderr capture on error — stderr output from the CLI subprocess is attached to error logs when SDK calls fail
+- Granular processing status messages — component-driven status updates during pre-processing and shutdown post-processing replace the generic "Thinking..." indicator
+
+**Workspace Git Sync:**
+- Fetch-rebase-push synchronization for the workspace and registered project repositories, with divergence detection and conflict recovery, replacing bare push
+
+**Transcript Archiving:**
+- Conversation transcripts copied from SDK storage to the workspace memories directory for durability and offline accessibility
+
+**Buffered Delivery:**
+- Priority buffer with idle-window and max-hold timeouts coordinates background-task notifications and session-task delivery so they wait for natural conversation pauses instead of injecting into active exchanges
+- Asyncio-lock serialization on channels prevents message loss during response finalization
+
+**Detached Process Supervision:**
+- MCP tools for dispatching, monitoring, and controlling OS-level commands that outlive the session
+- Event-driven and polling watchers track exit status and stream output for the agent
+
 ### v1 — Pending
 
-**Critical:**
-- Capture SDK stderr on error for debugging — attach stderr output from CLI subprocess to error logs when SDK calls fail (DLT-098)
-
 **High:**
-- Granular processing status messages — replace "Thinking..." with component-driven status updates during pipeline processing (DLT-031)
 - Collapse intensive work sections in Telegram — detect rapid tool-call sequences and wrap intermediate content in collapsible sections (DLT-064)
 - Recover interrupted post-processing on restart — checkpoint tracking so incomplete post-processing resumes from where it left off (DLT-066)
 - Abort tool execution on stop steering message — immediate interrupt on stop intent instead of waiting for the tool chain to complete (DLT-089)
 - Delegate work to autonomous long-running agents — persistent communicative agents that execute extended work with progress reporting and user interaction (DLT-094)
-- Keep local repositories in sync with remotes — fetch-rebase-push sequence replacing bare push, with conflict recovery (DLT-097)
-- Archive conversation transcripts to workspace — copy transcripts from SDK storage to workspace for durability and accessibility (DLT-099)
 - Agent-driven episodic memory search — MCP tools for on-demand memory search by keyword, date range, or relevance during conversations (DLT-105)
-- Prevent message loss during response finalization — guarantee every consumed message is processed even during response transitions (DLT-111)
-- Buffer background task notifications until idle — hold notifications for natural conversation pauses instead of injecting into active exchanges (DLT-112)
-- Fix double 'and' in truncated tool activity summary — grammar fix for truncated summaries (DLT-113)
-- Run and monitor detached shell commands — MCP tools for dispatching, monitoring, and controlling OS-level commands that outlive the session (DLT-115)
 
 **Medium:**
 - Run as a persistent background service — systemd-managed process with auto-start and crash recovery (DLT-011)
@@ -277,14 +285,14 @@ An opinionated personal assistant built on Claude Agent SDK that maintains conve
 13. Event-bus-driven notification system for background task results and cross-subsystem communication
 14. Cold-start session resumption preserving conversational continuity across process restarts
 15. Installable CLI tool via uv with semantic versioning and automated releases
+16. Detached process supervision with MCP tools for dispatching, monitoring, and controlling OS-level commands that outlive the session
+17. Buffered notification and session-task delivery coordinated by a priority buffer with idle-window timing
+18. SDK stderr capture, granular pipeline status updates, transcript archiving, workspace git sync (fetch-rebase-push), and message-loss prevention during response finalization
 
 ### Still Needed for v1
 
-1. Capture SDK stderr on error for operator debugging (DLT-098)
-2. Readable action summaries in Telegram responses instead of generic tool markers
-3. Granular processing status messages replacing the generic "Thinking..." indicator (DLT-031)
-4. Persistent background service with auto-start and crash recovery (DLT-011)
-5. Prevent message loss during response finalization (DLT-111)
+1. Readable action summaries in Telegram responses instead of generic tool markers
+2. Persistent background service with auto-start and crash recovery (DLT-011)
 
 ## Future Considerations
 
@@ -303,46 +311,24 @@ Ideas for v2 and beyond (not committing to these):
 - Notes provider (Obsidian vault)
 - Dynamic/user-created providers via plugin system
 
-**Plugin System:**
-- Directory-based plugins contributing context providers, post-processors, skills, channels, and tools
-- Plugin install, update, and removal lifecycle
-- Skill-provided tools via MCP servers
-
-**Context Lifecycle:**
-- Persisted context entries with invalidation and refresh when underlying data changes
-- Foundational context as a pre-processing provider with file-change invalidation
-- Proactive session handoff before context compaction to preserve critical context
-
 **Channels and Interfaces:**
-- Concurrent secondary channels alongside the primary (e.g., Telegram notifications while using REPL)
 - Web interface with chat and dashboard
 - Hardware presence (speaker with simple display)
 
-**Autonomous Agents:**
-- Delegate work to persistent, communicative long-running agents that maintain ongoing sessions
-- Agents report progress, ask clarifying questions, and collaborate with the user over time
-- User can control lifecycle (pause, resume, terminate) without blocking main conversation
-- Pause background tasks to request user input mid-execution
-
-**Transcript Archiving and Search:**
-- Archive conversation transcripts to workspace for durability independent of SDK storage
-- Search and analysis tools for past conversations (full-text search, date filtering, excerpt retrieval)
+**Transcript Search:**
+- Full-text search and analysis tools over archived transcripts (date filtering, excerpt retrieval)
 
 **Operational Tooling:**
 - CLI for querying internal state (tasks, sessions, context entries, skill status) without starting a full agent conversation
 - External command processor for remote management of server deployments without SSH
-- Run and monitor detached shell commands as a lightweight process supervisor
 - Check for agent updates and notify user with confirm/defer/skip choices
 
 **Advanced Proactivity:**
 - Event-driven triggers from external sources (new emails, calendar events)
 - Pattern detection and insight surfacing
 - Dynamic profile building
-- Sensor framework for proactive nudge signals with pluggable sensors and user-facing configuration
-- Memory sensor for detecting follow-up-worthy topics from past conversations
 
 **Other:**
-- Feature toggles for disabling optional subsystems via configuration
 - Nori agent proxy library for SDK abstraction
 - Game integration concept (interact with assistant within a game world)
 

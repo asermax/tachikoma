@@ -1,6 +1,6 @@
 """Tests for plugin config write-back via SettingsManager.
 
-Tests for DLT-048 Batch 1: TOML write-back helpers.
+Tests for Batch 1: TOML write-back helpers.
 Covers add/remove round-trips, comment preservation,
 KeyError for unknown aliases, and round-trip determinism.
 """

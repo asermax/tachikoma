@@ -1,6 +1,6 @@
 """Tests for summary processor.
 
-Tests for DLT-026: Detect conversation boundaries via topic analysis.
+Detect conversation boundaries via topic analysis.
 """
 
 from datetime import UTC, datetime

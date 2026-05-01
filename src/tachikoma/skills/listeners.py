@@ -3,9 +3,7 @@
 Subscribes to ``PluginInstalled``, ``PluginRemoving``, and ``PluginRemoved``
 and translates them into skill-registry mutations and ``SkillsChanged``
 dispatches. The plugin manager itself has no skill-registry coupling — all
-registry mutation is owned here (per Q7 decoupling decision).
-
-Design reference: DLT-048 S11.
+registry mutation is owned here.
 """
 
 from __future__ import annotations

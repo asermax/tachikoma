@@ -3,9 +3,7 @@
 Owns the ``_loaded`` dict, serializes operations with an ``asyncio.Lock``, and
 dispatches plugin lifecycle events on the bubus EventBus. Does NOT depend on
 ``SkillRegistry`` or ``session_registry`` — those are handled by the plugin-
-event listener in the skills module (per Q7 decoupling decision).
-
-Design reference: DLT-048 S8.
+event listener in the skills module.
 """
 
 from __future__ import annotations

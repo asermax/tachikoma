@@ -1,4 +1,4 @@
-"""Tests for PluginManager (DLT-048 Batch 5, Step 5.3).
+"""Tests for PluginManager.
 
 Covers install/remove/list flows, alias resolution, collision errors,
 concurrency serialization, and failure isolation.

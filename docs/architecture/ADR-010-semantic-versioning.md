@@ -5,7 +5,7 @@
 
 ## Context
 
-Tachikoma is now packaged for PyPI distribution (DLT-024). Releases need to be versioned, tagged, and published automatically. Manual version management is error-prone and creates friction for releasing frequently.
+Tachikoma is packaged for PyPI distribution. Releases need to be versioned, tagged, and published automatically. Manual version management is error-prone and creates friction for releasing frequently.
 
 The project already follows conventional commit format (`feat:`, `fix:`, `docs:`, etc.). An automated tool can analyze commit messages to determine the appropriate version bump, update the changelog, create git tags, and produce GitHub Releases — all without manual intervention.
 

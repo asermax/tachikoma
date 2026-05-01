@@ -1,6 +1,6 @@
 """Tests for the pinning tool server (telegram/pinning.py).
 
-Tests for DLT-162: Telegram message pinning.
+Telegram message pinning.
 """
 
 from unittest.mock import AsyncMock, MagicMock

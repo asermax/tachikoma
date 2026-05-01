@@ -1,6 +1,6 @@
 """REPL behavior tests.
 
-Tests for DLT-001: Core agent architecture and DLT-025: Markdown rendering.
+Core agent architecture and Markdown rendering.
 """
 
 import asyncio

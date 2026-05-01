@@ -292,7 +292,7 @@ class TaskRepository:
     async def list_expired_waiting_instances(self, timeout_seconds: int) -> list[TaskInstance]:
         """Return waiting instances whose updated_at is older than timeout_seconds.
 
-        NULL updated_at (legacy rows pre-DLT-120) are excluded.
+        NULL updated_at (legacy rows from before the column was tracked) are excluded.
         """
         try:
             threshold = datetime.now(UTC) - timedelta(seconds=timeout_seconds)

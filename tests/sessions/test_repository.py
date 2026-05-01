@@ -1,6 +1,6 @@
 """Integration tests for SessionRepository.
 
-Tests for DLT-027: Track conversation sessions.
+Track conversation sessions.
 Uses real SQLite databases in tmp_path (no mocking of the DB layer).
 """
 
@@ -242,7 +242,7 @@ class TestRepositoryGetByTimeRange:
 
 
 class TestRepositoryContextEntries:
-    """Tests for context entry persistence (DLT-041)."""
+    """Tests for context entry persistence."""
 
     async def test_save_context_entries_returns_entries_with_ids(
         self, repo: SessionRepository
@@ -365,7 +365,7 @@ User prefers:
         assert loaded[0].content == original_content
 
     async def test_metadata_round_trips_through_db(self, repo: SessionRepository) -> None:
-        """AC: metadata dict survives save → load cycle (DLT-075)."""
+        """AC: metadata dict survives save → load cycle."""
         session = _make_session("ctx-meta-1")
         await repo.create(session)
 
@@ -380,7 +380,7 @@ User prefers:
         assert loaded[0].metadata == {"skill_name": "calendar"}
 
     async def test_none_metadata_round_trips_through_db(self, repo: SessionRepository) -> None:
-        """AC: None metadata survives save → load cycle (DLT-075)."""
+        """AC: None metadata survives save → load cycle."""
         session = _make_session("ctx-meta-2")
         await repo.create(session)
 
@@ -395,7 +395,7 @@ User prefers:
         assert loaded[0].metadata is None
 
     async def test_mixed_metadata_entries(self, repo: SessionRepository) -> None:
-        """AC: Entries with and without metadata coexist correctly (DLT-075)."""
+        """AC: Entries with and without metadata coexist correctly."""
         session = _make_session("ctx-meta-3")
         await repo.create(session)
 

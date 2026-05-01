@@ -3,7 +3,6 @@
 **Scope**: Python / Channels
 **Date**: 2026-04-19
 **Last Updated**: 2026-04-20 (steering branch gated on `self._delivery_lock.locked()`)
-**First Used**: DLT-112 (REPL), DLT-111 (Telegram)
 
 ## Problem
 

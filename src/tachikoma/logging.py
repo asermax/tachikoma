@@ -2,8 +2,6 @@
 
 Configures loguru with file-based output, rotation, and optional console output.
 Installs an InterceptHandler to redirect stdlib logging through loguru.
-
-DLT-013: Add structured logging for agent actions.
 """
 
 import logging

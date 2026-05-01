@@ -1,6 +1,6 @@
 """Tests for workflow definition model and loader.
 
-Tests for DLT-081: Workflow State Machine for Skills - Batch 1.
+Workflow State Machine for Skills - Batch 1.
 """
 
 from pathlib import Path
@@ -169,7 +169,7 @@ class TestStepDefinition:
         assert step.scripts_path == Path("/scripts")
 
     def test_default_loop_is_none(self) -> None:
-        """StepDefinition defaults loop to None (DLT-160)."""
+        """StepDefinition defaults loop to None."""
         step = StepDefinition(
             id="01-step",
             title="Step",
@@ -181,7 +181,7 @@ class TestStepDefinition:
         assert step.loop is None
 
     def test_loop_can_be_set(self) -> None:
-        """StepDefinition accepts a loop string (DLT-160 R1)."""
+        """StepDefinition accepts a loop string (R1)."""
         step = StepDefinition(
             id="01-step",
             title="Step",
@@ -734,7 +734,7 @@ Instructions."""
         assert step.composes is None
 
     def test_parses_loop_same_skill(self, tmp_path: Path) -> None:
-        """Parses loop string referencing same-skill workflow (DLT-160 R1)."""
+        """Parses loop string referencing same-skill workflow (R1)."""
         skill_dir = tmp_path / "test-skill"
         workflow_dir = skill_dir / "workflows" / "test-workflow"
         step_dir = workflow_dir / "01-step"
@@ -753,7 +753,7 @@ Instructions."""
         assert step.loop == "process-item"
 
     def test_parses_loop_cross_skill(self, tmp_path: Path) -> None:
-        """Parses loop string referencing cross-skill workflow (DLT-160 R1)."""
+        """Parses loop string referencing cross-skill workflow (R1)."""
         skill_dir = tmp_path / "test-skill"
         workflow_dir = skill_dir / "workflows" / "test-workflow"
         step_dir = workflow_dir / "01-step"
@@ -772,7 +772,7 @@ Instructions."""
         assert step.loop == "other-skill/process-item"
 
     def test_non_string_loop_treated_as_none(self, tmp_path: Path) -> None:
-        """Non-string loop values fall back to None with a warning (DLT-160 R1)."""
+        """Non-string loop values fall back to None with a warning (R1)."""
         skill_dir = tmp_path / "test-skill"
         workflow_dir = skill_dir / "workflows" / "test-workflow"
         step_dir = workflow_dir / "01-step"
@@ -791,7 +791,7 @@ Instructions."""
         assert step.loop is None
 
     def test_default_loop_when_missing(self, tmp_path: Path) -> None:
-        """Defaults loop to None when absent from frontmatter (DLT-160 R1)."""
+        """Defaults loop to None when absent from frontmatter (R1)."""
         skill_dir = tmp_path / "test-skill"
         workflow_dir = skill_dir / "workflows" / "test-workflow"
         step_dir = workflow_dir / "01-step"
@@ -809,7 +809,7 @@ Instructions."""
         assert step.loop is None
 
     def test_loop_excluded_from_properties(self, tmp_path: Path) -> None:
-        """loop field is not passed through as an extensible property (DLT-160 R1)."""
+        """loop field is not passed through as an extensible property (R1)."""
         skill_dir = tmp_path / "test-skill"
         workflow_dir = skill_dir / "workflows" / "test-workflow"
         step_dir = workflow_dir / "01-step"

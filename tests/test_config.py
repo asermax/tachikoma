@@ -1,6 +1,6 @@
 """Configuration module tests.
 
-Tests for DLT-012: Configure application parameters and secrets.
+Configure application parameters and secrets.
 """
 
 import tomllib
@@ -70,13 +70,13 @@ class TestSettingsModel:
         assert len(result) == 1 + len(SYSTEM_DISALLOWED_TOOLS)
 
     def test_default_session_resume_window(self) -> None:
-        """AC (DLT-028): agent.session_resume_window defaults to 86400 (1 day)."""
+        """AC: agent.session_resume_window defaults to 86400 (1 day)."""
         settings = Settings()
 
         assert settings.agent.session_resume_window == 86400
 
     def test_custom_session_resume_window(self) -> None:
-        """AC (DLT-028): agent.session_resume_window can be customized."""
+        """AC: agent.session_resume_window can be customized."""
         settings = Settings.model_validate(
             {
                 "agent": {"session_resume_window": 3600},
@@ -86,13 +86,13 @@ class TestSettingsModel:
         assert settings.agent.session_resume_window == 3600
 
     def test_default_session_idle_timeout(self) -> None:
-        """AC (DLT-036): agent.session_idle_timeout defaults to 900 (15 min)."""
+        """AC: agent.session_idle_timeout defaults to 900 (15 min)."""
         settings = Settings()
 
         assert settings.agent.session_idle_timeout == 900
 
     def test_session_idle_timeout_zero_accepted(self) -> None:
-        """AC (DLT-036): agent.session_idle_timeout = 0 disables idle close."""
+        """AC: agent.session_idle_timeout = 0 disables idle close."""
         settings = Settings.model_validate(
             {
                 "agent": {"session_idle_timeout": 0},
@@ -102,7 +102,7 @@ class TestSettingsModel:
         assert settings.agent.session_idle_timeout == 0
 
     def test_session_idle_timeout_from_toml(self) -> None:
-        """AC (DLT-036): agent.session_idle_timeout loads from TOML."""
+        """AC: agent.session_idle_timeout loads from TOML."""
         settings = Settings.model_validate(
             {
                 "agent": {"session_idle_timeout": 600},
@@ -174,7 +174,7 @@ class TestSettingsModel:
         assert settings.agent.model == "opus"
 
     def test_data_path_returns_tachikoma_subfolder(self) -> None:
-        """AC (R1, DLT-023): data_path is .tachikoma under workspace path."""
+        """AC (R1, ): data_path is .tachikoma under workspace path."""
         ws = WorkspaceSettings(path=Path("/workspace"))
 
         assert ws.data_path == Path("/workspace/.tachikoma")
@@ -185,25 +185,25 @@ class TestSettingsModel:
             Settings.model_validate({"workspace": {"path": 123}})
 
     def test_default_logging_level_is_info(self) -> None:
-        """AC (R2, DLT-013): logging.level defaults to INFO."""
+        """AC (R2, ): logging.level defaults to INFO."""
         settings = Settings()
 
         assert settings.logging.level == "INFO"
 
     def test_default_logging_console_is_false(self) -> None:
-        """AC (R2, DLT-013): logging.console defaults to False."""
+        """AC (R2, ): logging.console defaults to False."""
         settings = Settings()
 
         assert settings.logging.console is False
 
     def test_invalid_logging_level_raises_validation_error(self) -> None:
-        """AC (R3, DLT-013): Invalid log level produces ValidationError."""
+        """AC (R3, ): Invalid log level produces ValidationError."""
         with pytest.raises(ValidationError):
             LoggingSettings(level="VERBOSE")
 
 
 class TestSystemDisallowedTools:
-    """Tests for system-level disallowed tools merge behavior (DLT-087)."""
+    """Tests for system-level disallowed tools merge behavior."""
 
     def test_system_tools_merged_with_user_config(self) -> None:
         """AC (R2): User-configured tools preserved, system tools appended."""
@@ -284,7 +284,7 @@ class TestDefaultConfigGeneration:
         assert "allowed_tools" in content
 
     def test_generated_file_contains_logging_section(self, tmp_path: Path) -> None:
-        """AC (R4, DLT-013): Generated file contains [logging] section."""
+        """AC (R4, ): Generated file contains [logging] section."""
         config_path = tmp_path / "config.toml"
         _generate_default_config(config_path)
 
@@ -316,7 +316,7 @@ class TestDefaultConfigGeneration:
         assert set(result[1:]) == SYSTEM_DISALLOWED_TOOLS
 
     def test_generated_file_contains_session_resume_window(self, tmp_path: Path) -> None:
-        """AC (DLT-028): Generated file contains session_resume_window with int format."""
+        """AC: Generated file contains session_resume_window with int format."""
         config_path = tmp_path / "config.toml"
         _generate_default_config(config_path)
 
@@ -328,7 +328,7 @@ class TestDefaultConfigGeneration:
         assert 'session_resume_window = "86400"' not in content
 
     def test_generated_file_contains_session_idle_timeout(self, tmp_path: Path) -> None:
-        """AC (DLT-036): Generated file contains session_idle_timeout with int format."""
+        """AC: Generated file contains session_idle_timeout with int format."""
         config_path = tmp_path / "config.toml"
         _generate_default_config(config_path)
 
@@ -491,7 +491,7 @@ class TestLoadSettings:
             settings.workspace = WorkspaceSettings(path=Path("/other"))
 
     def test_logging_level_from_config(self, tmp_path: Path) -> None:
-        """AC (R1, DLT-013): Logging level loaded from config."""
+        """AC (R1, ): Logging level loaded from config."""
         config_path = tmp_path / "config.toml"
         config_path.write_text('[logging]\nlevel = "DEBUG"\n')
 
@@ -500,7 +500,7 @@ class TestLoadSettings:
         assert settings.logging.level == "DEBUG"
 
     def test_invalid_logging_level_exits_with_error(self, tmp_path: Path, capsys) -> None:
-        """AC (R3, DLT-013): Invalid logging level exits with clear error."""
+        """AC (R3, ): Invalid logging level exits with clear error."""
         config_path = tmp_path / "config.toml"
         config_path.write_text('[logging]\nlevel = "VERBOSE"\n')
 
@@ -544,7 +544,7 @@ class TestLoadSettings:
 class TestSettingsManager:
     """Tests for the SettingsManager read-write config wrapper.
 
-    Tests for DLT-023: Bootstrap agent workspace on first run.
+    Bootstrap agent workspace on first run.
     """
 
     def test_settings_returns_frozen_snapshot(self, tmp_path: Path) -> None:
@@ -641,7 +641,7 @@ class TestSettingsManager:
 
 
 class TestTelegramSettings:
-    """Tests for TelegramSettings model (DLT-002)."""
+    """Tests for TelegramSettings model."""
 
     def test_telegram_settings_requires_both_fields(self) -> None:
         """AC (R8): TelegramSettings requires bot_token and authorized_chat_id."""
@@ -714,7 +714,7 @@ class TestTelegramSettings:
 
 
 class TestTelegramDefaultConfig:
-    """Tests for telegram section in default config generation (DLT-002)."""
+    """Tests for telegram section in default config generation."""
 
     def test_generated_file_contains_telegram_section(self, tmp_path: Path) -> None:
         """AC (R8): Generated file contains [telegram] section."""
@@ -738,7 +738,7 @@ class TestTelegramDefaultConfig:
 
 
 class TestSettingsManagerTelegram:
-    """Tests for SettingsManager with telegram section (DLT-002)."""
+    """Tests for SettingsManager with telegram section."""
 
     def test_update_telegram_section_with_union_type(self, tmp_path: Path) -> None:
         """AC (R8): update() handles optional section types (TelegramSettings | None)."""
@@ -803,28 +803,28 @@ class TestSettingsManagerTelegram:
 
 
 class TestTaskSettings:
-    """Tests for TaskSettings model (DLT-010)."""
+    """Tests for TaskSettings model."""
 
     def test_default_idle_window(self) -> None:
-        """AC (DLT-010): tasks.idle_window defaults to 300 seconds."""
+        """AC: tasks.idle_window defaults to 300 seconds."""
         settings = TaskSettings()
 
         assert settings.idle_window == 300
 
     def test_default_check_interval(self) -> None:
-        """AC (DLT-010): tasks.check_interval defaults to 300 seconds."""
+        """AC: tasks.check_interval defaults to 300 seconds."""
         settings = TaskSettings()
 
         assert settings.check_interval == 300
 
     def test_default_max_iterations(self) -> None:
-        """AC (DLT-010): tasks.max_iterations defaults to 10."""
+        """AC: tasks.max_iterations defaults to 10."""
         settings = TaskSettings()
 
         assert settings.max_iterations == 10
 
     def test_default_max_concurrent_background(self) -> None:
-        """AC (DLT-010): tasks.max_concurrent_background defaults to 3."""
+        """AC: tasks.max_concurrent_background defaults to 3."""
         settings = TaskSettings()
 
         assert settings.max_concurrent_background == 3
@@ -837,14 +837,14 @@ class TestTaskSettings:
         assert len(settings.timezone) > 0
 
     def test_settings_has_tasks_with_defaults(self) -> None:
-        """AC (DLT-010): Settings has tasks field with default TaskSettings."""
+        """AC: Settings has tasks field with default TaskSettings."""
         settings = Settings()
 
         assert settings.tasks.idle_window == 300
         assert settings.tasks.max_iterations == 10
 
     def test_tasks_settings_from_config(self, tmp_path: Path) -> None:
-        """AC (DLT-010): TaskSettings loaded from config."""
+        """AC: TaskSettings loaded from config."""
         config_path = tmp_path / "config.toml"
         config_path.write_text(
             '[tasks]\nidle_window = 600\nmax_iterations = 20\ntimezone = "America/New_York"\n'
@@ -857,7 +857,7 @@ class TestTaskSettings:
         assert settings.tasks.timezone == "America/New_York"
 
     def test_tasks_settings_extra_fields_ignored(self) -> None:
-        """AC (DLT-010): Unknown fields in [tasks] are ignored."""
+        """AC: Unknown fields in [tasks] are ignored."""
         settings = Settings.model_validate(
             {
                 "tasks": {"idle_window": 120, "unknown_field": "value"},
@@ -909,10 +909,10 @@ class TestTaskSettings:
 
 
 class TestTaskSettingsDefaultConfig:
-    """Tests for tasks section in default config generation (DLT-010)."""
+    """Tests for tasks section in default config generation."""
 
     def test_generated_file_contains_tasks_section(self, tmp_path: Path) -> None:
-        """AC (DLT-010): Generated file contains [tasks] section."""
+        """AC: Generated file contains [tasks] section."""
         config_path = tmp_path / "config.toml"
         _generate_default_config(config_path)
 
@@ -926,7 +926,7 @@ class TestTaskSettingsDefaultConfig:
         assert "timezone" in content
 
     def test_generated_tasks_section_uses_int_format(self, tmp_path: Path) -> None:
-        """AC (DLT-010): Tasks int fields are formatted as ints, not strings."""
+        """AC: Tasks int fields are formatted as ints, not strings."""
         config_path = tmp_path / "config.toml"
         _generate_default_config(config_path)
 
@@ -938,7 +938,7 @@ class TestTaskSettingsDefaultConfig:
 
 
 class TestSendFileSettings:
-    """Tests for SendFileSettings model (DLT-140)."""
+    """Tests for SendFileSettings model."""
 
     def test_default_extra_roots_is_empty(self) -> None:
         settings = SendFileSettings()
@@ -1038,7 +1038,7 @@ class TestSendFileSettings:
 
 
 class TestBufferSettings:
-    """Tests for BufferSettings model (DLT-112)."""
+    """Tests for BufferSettings model."""
 
     def test_default_urgent_timing(self) -> None:
         settings = BufferSettings()
@@ -1091,7 +1091,7 @@ class TestBufferSettings:
 
 
 class TestPluginsSettings:
-    """Tests for Settings.plugins field (DLT-048, Batch 1).
+    """Tests for Settings.plugins field ( , Batch 1).
 
     Covers AC-PSD-1, AC-PSD-2, AC-PSD-6, AC-PSD-9, AC-PSD-14.
     """

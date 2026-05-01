@@ -3,7 +3,6 @@
 **Scope**: Python / Architecture
 **Status**: Established
 **Date**: 2026-03-13
-**First Used**: DLT-005, DLT-023
 
 ## Problem
 
@@ -15,13 +14,13 @@ Each subsystem owns its bootstrap hook in its own module. The `bootstrap.py` mod
 
 - **workspace subsystem** → `src/tachikoma/workspace.py` owns `workspace_hook`
 - **git subsystem** → `src/tachikoma/git/hooks.py` owns `git_hook`
-- **logging subsystem** → `src/tachikoma/logging/hooks.py` owns `logging_hook`
+- **logging subsystem** → `src/tachikoma/logging.py` owns `logging_hook`
 - **context subsystem** → `src/tachikoma/context/loading.py` owns `context_hook`
 - **skills subsystem** → `src/tachikoma/skills/hooks.py` owns `skills_hook`
 - **memory subsystem** → `src/tachikoma/memory/hooks.py` owns `memory_hook`
 - **projects subsystem** → `src/tachikoma/projects/hooks.py` owns `projects_hook`
 - **sessions subsystem** → `src/tachikoma/sessions/hooks.py` owns `session_recovery_hook`
-- **telegram subsystem** → `src/tachikoma/telegram.py` owns `telegram_hook`
+- **telegram subsystem** → `src/tachikoma/telegram/__init__.py` owns `telegram_hook`
 - **tasks subsystem** → `src/tachikoma/tasks/hooks.py` owns `tasks_hook`
 
 The `__main__.py` entry point registers hooks in order:

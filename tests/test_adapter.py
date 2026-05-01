@@ -1,6 +1,6 @@
 """Message adapter tests.
 
-Tests for DLT-001: Core agent architecture.
+Core agent architecture.
 """
 
 from unittest.mock import MagicMock

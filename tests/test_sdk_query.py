@@ -1,6 +1,6 @@
 """Tests for sdk_query module.
 
-Tests for DLT-098: Capture SDK stderr on error for debugging.
+Capture SDK stderr on error for debugging.
 """
 
 from collections.abc import AsyncIterator

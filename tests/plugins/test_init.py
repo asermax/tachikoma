@@ -1,4 +1,4 @@
-"""Tests for plugins package public surface (DLT-048 Batch 7, Step 7.4).
+"""Tests for plugins package public surface.
 
 Verifies that re-exported names are importable from ``tachikoma.plugins``
 and that submodules are importable directly.

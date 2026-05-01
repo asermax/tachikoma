@@ -1,6 +1,6 @@
 """Tests for projects bootstrap hook.
 
-Tests updated for DLT-097: smart_pull replaces bare pull.
+smart_pull replaces bare pull.
 """
 
 import asyncio

@@ -1,7 +1,7 @@
 """Unit tests for Session domain model.
 
-Tests for DLT-027: Track conversation sessions.
-Tests for DLT-041: Persist session context to database.
+Track conversation sessions.
+Persist session context to database.
 """
 
 from dataclasses import FrozenInstanceError
@@ -131,7 +131,7 @@ class TestSessionSummary:
 
 
 class TestSessionContextEntry:
-    """Tests for SessionContextEntry dataclass (DLT-041)."""
+    """Tests for SessionContextEntry dataclass."""
 
     def test_is_frozen(self) -> None:
         """SessionContextEntry is a frozen dataclass — field assignment raises."""
@@ -182,7 +182,7 @@ class TestSessionContextEntry:
 
 
 class TestSessionContextEntryMetadata:
-    """Tests for metadata field on SessionContextEntry (DLT-075)."""
+    """Tests for metadata field on SessionContextEntry."""
 
     def test_metadata_defaults_to_none(self) -> None:
         """AC: metadata field defaults to None when not provided."""

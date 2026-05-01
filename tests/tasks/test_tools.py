@@ -646,7 +646,7 @@ class TestUpdateTaskScheduleReset:
 
 
 class TestHandleRespondToTask:
-    """Tests for handle_respond_to_task (DLT-120 R3)."""
+    """Tests for handle_respond_to_task (R3)."""
 
     @pytest.mark.asyncio
     async def test_success_saves_response(self, repo: TaskRepository) -> None:
@@ -1062,7 +1062,7 @@ class TestRunTaskNow:
 
 
 class TestDecodeSkills:
-    """Tests for decode_json_string_array helper used by task tools (DLT-117)."""
+    """Tests for decode_json_string_array helper used by task tools."""
 
     def test_valid_array(self) -> None:
         """AC: Valid JSON array of strings decoded correctly."""
@@ -1096,11 +1096,11 @@ class TestDecodeSkills:
 
 
 class TestTaskSkills:
-    """Tests for skills parameter on MCP tools (DLT-117)."""
+    """Tests for skills parameter on MCP tools."""
 
     @pytest.mark.asyncio
     async def test_create_task_with_skills(self, repo: TaskRepository) -> None:
-        """DLT-117: create_task persists skills and shows them in response."""
+        """create_task persists skills and shows them in response."""
         call_tool = _call_tool(repo)
         result = await call_tool(
             "create_task",
@@ -1124,7 +1124,7 @@ class TestTaskSkills:
 
     @pytest.mark.asyncio
     async def test_create_task_with_unknown_skill_warns(self, repo: TaskRepository) -> None:
-        """DLT-117: create_task with unknown skill name shows warning."""
+        """create_task with unknown skill name shows warning."""
         from tachikoma.skills.registry import SkillRegistry  # noqa: PLC0415
 
         registry = SkillRegistry([])
@@ -1146,7 +1146,7 @@ class TestTaskSkills:
 
     @pytest.mark.asyncio
     async def test_create_task_with_invalid_skills_json(self, repo: TaskRepository) -> None:
-        """DLT-117: create_task with invalid skills JSON returns error."""
+        """create_task with invalid skills JSON returns error."""
         call_tool = _call_tool(repo)
         result = await call_tool(
             "create_task",
@@ -1164,7 +1164,7 @@ class TestTaskSkills:
 
     @pytest.mark.asyncio
     async def test_create_task_without_skills(self, repo: TaskRepository) -> None:
-        """DLT-117: create_task without skills defaults to empty tuple."""
+        """create_task without skills defaults to empty tuple."""
         call_tool = _call_tool(repo)
         result = await call_tool(
             "create_task",
@@ -1186,7 +1186,7 @@ class TestTaskSkills:
 
     @pytest.mark.asyncio
     async def test_update_task_sets_skills(self, repo: TaskRepository) -> None:
-        """DLT-117: update_task can set skills on existing task."""
+        """update_task can set skills on existing task."""
         defn = _make_definition(task_type="background")
         await repo.create_definition(defn)
 
@@ -1204,7 +1204,7 @@ class TestTaskSkills:
 
     @pytest.mark.asyncio
     async def test_update_task_clears_skills(self, repo: TaskRepository) -> None:
-        """DLT-117: update_task with '[]' clears pinned skills."""
+        """update_task with '[]' clears pinned skills."""
         defn = _make_definition(task_type="background", skills=("research",))
         await repo.create_definition(defn)
 
@@ -1222,7 +1222,7 @@ class TestTaskSkills:
 
     @pytest.mark.asyncio
     async def test_get_task_shows_skills(self, repo: TaskRepository) -> None:
-        """DLT-117: get_task displays skills when present."""
+        """get_task displays skills when present."""
         defn = _make_definition(skills=("research", "planning"))
         await repo.create_definition(defn)
 
@@ -1235,7 +1235,7 @@ class TestTaskSkills:
 
     @pytest.mark.asyncio
     async def test_get_task_omits_skills_when_empty(self, repo: TaskRepository) -> None:
-        """DLT-117: get_task omits Skills line when no skills pinned."""
+        """get_task omits Skills line when no skills pinned."""
         defn = _make_definition()
         await repo.create_definition(defn)
 
@@ -1248,7 +1248,7 @@ class TestTaskSkills:
 
     @pytest.mark.asyncio
     async def test_list_tasks_shows_skills(self, repo: TaskRepository) -> None:
-        """DLT-117: list_tasks shows skills line per entry when non-empty."""
+        """list_tasks shows skills line per entry when non-empty."""
         await repo.create_definition(
             _make_definition(definition_id="def-skills", name="With skills", skills=("research",))
         )

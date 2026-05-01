@@ -1,7 +1,7 @@
 """Tests for LastExchangeProcessor.
 
-Tests for DLT-096: Include last exchange in session resumption candidates.
-Tests for DLT-142: Filter last exchange to final text response only.
+Include last exchange in session resumption candidates.
+Filter last exchange to final text response only.
 """
 
 from datetime import UTC, datetime

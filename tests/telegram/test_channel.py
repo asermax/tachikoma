@@ -1,6 +1,6 @@
 """Telegram channel tests.
 
-Tests for DLT-002: Send and receive messages via Telegram.
+Send and receive messages via Telegram.
 """
 
 import asyncio
@@ -1134,7 +1134,7 @@ class TestProcessThroughCoordinatorNotify:
 
 
 class TestProcessThroughCoordinatorDrain:
-    """Tests for _process_through_coordinator after drain loop removal (DLT-163).
+    """Tests for _process_through_coordinator after drain loop removal.
 
     The coordinator's re-queue loop handles leftover messages internally,
     so the channel just calls send_message() once.
@@ -1597,7 +1597,7 @@ class TestHandleMedia:
 
 
 class TestDeliveryLock:
-    """DLT-111 R2 / KD-5: entry points serialize via _delivery_lock."""
+    """R2 / KD-5: entry points serialize via _delivery_lock."""
 
     def _make_channel(self) -> TelegramChannel:
         coordinator = MagicMock()

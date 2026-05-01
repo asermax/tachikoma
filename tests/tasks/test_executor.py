@@ -551,7 +551,7 @@ class TestBackgroundTaskExecutor:
 
     @pytest.mark.asyncio
     async def test_needs_input_transitions_to_waiting(self, repo: TaskRepository) -> None:
-        """AC (DLT-120): Executor transitions to waiting on needs_input."""
+        """AC: Executor transitions to waiting on needs_input."""
         instance = _make_instance(
             "inst-1",
             task_type="background",
@@ -620,13 +620,13 @@ class TestBackgroundTaskExecutor:
 
 
 class TestExecutorStderrCapture:
-    """Tests for DLT-098: stderr capture in executor error handler."""
+    """stderr capture in executor error handler."""
 
     @pytest.mark.asyncio
     async def test_stderr_accumulator_installed_on_options(
         self, repo: TaskRepository, mocker
     ) -> None:
-        """AC: DLT-098 R1 — StderrAccumulator installed on SDK options."""
+        """AC: R1: StderrAccumulator installed on SDK options."""
         captured_options = []
 
         class CapturingClient:
@@ -681,7 +681,7 @@ class TestExecutorStderrCapture:
 
     @pytest.mark.asyncio
     async def test_no_stderr_in_log_when_empty_executor(self, repo: TaskRepository, mocker) -> None:
-        """AC: DLT-098 R0 — executor error with no stderr omits stderr kwarg."""
+        """AC: R0: executor error with no stderr omits stderr kwarg."""
         instance = _make_instance(
             "inst-no-stderr",
             task_type="background",
@@ -733,7 +733,7 @@ class TestExecutorStderrCapture:
 
 
 class TestBackgroundTaskSystemPrompt:
-    """Tests for system prompt documentation (DLT-112 R8)."""
+    """Tests for system prompt documentation (R8)."""
 
     def test_mentions_all_priority_levels(self) -> None:
         assert "urgent" in BACKGROUND_TASK_SYSTEM_PROMPT
@@ -742,13 +742,13 @@ class TestBackgroundTaskSystemPrompt:
         assert "priority" in BACKGROUND_TASK_SYSTEM_PROMPT
 
     def test_mentions_asking_questions_section(self) -> None:
-        """AC (DLT-120): System prompt explains evaluator-mediated communication."""
+        """AC: System prompt explains evaluator-mediated communication."""
         assert "evaluator" in BACKGROUND_TASK_SYSTEM_PROMPT.lower()
         assert "notification" in BACKGROUND_TASK_SYSTEM_PROMPT.lower()
 
 
 class TestExecutorResumePath:
-    """Tests for the resume path in executor (DLT-120)."""
+    """Tests for the resume path in executor."""
 
     @pytest.mark.asyncio
     async def test_resume_with_response_completes(self, repo: TaskRepository, tmp_path) -> None:
@@ -932,7 +932,7 @@ class TestExecutorResumePath:
 
 
 class TestRunnerTimeoutSweep:
-    """Tests for the runner timeout sweep (DLT-120 S8)."""
+    """Tests for the runner timeout sweep (S8)."""
 
     @pytest.mark.asyncio
     async def test_expired_waiting_instance_swept(self, repo: TaskRepository) -> None:
@@ -1005,7 +1005,7 @@ class TestRunnerTimeoutSweep:
 
 
 class TestCrashRecoveryWaiting:
-    """Tests for crash recovery with waiting instances (DLT-120 S9)."""
+    """Tests for crash recovery with waiting instances (S9)."""
 
     @pytest.mark.asyncio
     async def test_waiting_survives_bootstrap(self, repo: TaskRepository) -> None:
@@ -1032,13 +1032,13 @@ class TestCrashRecoveryWaiting:
 
 
 class TestPinnedSkillsExecution:
-    """Tests for pinned skills flow through executor (DLT-117)."""
+    """Tests for pinned skills flow through executor."""
 
     @pytest.mark.asyncio
     async def test_execute_passes_definition_skills_to_preprocessing(
         self, repo: TaskRepository
     ) -> None:
-        """DLT-117: execute() passes definition.skills as pinned_skills."""
+        """execute() passes definition.skills as pinned_skills."""
         definition = TaskDefinition(
             id="def-pinned",
             name="Pinned Task",
@@ -1103,7 +1103,7 @@ class TestPinnedSkillsExecution:
 
     @pytest.mark.asyncio
     async def test_execute_no_definition_passes_empty_skills(self, repo: TaskRepository) -> None:
-        """DLT-117: execute() with transient instance passes empty pinned_skills."""
+        """execute() with transient instance passes empty pinned_skills."""
         instance = _make_instance(
             "inst-transient",
             definition_id=None,

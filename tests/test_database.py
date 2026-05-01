@@ -139,7 +139,7 @@ class TestDatabaseInitialization:
         await database2.close()
 
     async def test_workflow_states_has_loop_state_column(self, tmp_path: Path) -> None:
-        """DLT-160 R11.1: workflow_states.loop_state column is added by migrations."""
+        """R11.1: workflow_states.loop_state column is added by migrations."""
         db_path = tmp_path / "tachikoma.db"
 
         database = Database(db_path)
@@ -153,7 +153,7 @@ class TestDatabaseInitialization:
         assert "loop_state" in cols
 
     async def test_loop_state_migration_idempotent(self, tmp_path: Path) -> None:
-        """DLT-160: re-running migrations on a DB that already has loop_state is a no-op."""
+        """re-running migrations on a DB that already has loop_state is a no-op."""
         db_path = tmp_path / "tachikoma.db"
 
         database = Database(db_path)
@@ -171,13 +171,13 @@ class TestDatabaseInitialization:
 
         assert len(loop_state_cols) == 1
 
-    async def test_loop_state_migration_adds_column_on_pre_dlt_160_schema(
+    async def test_loop_state_migration_adds_column_on_pre_existing_schema(
         self, tmp_path: Path
     ) -> None:
-        """DLT-160: migration adds loop_state to a pre-existing schema lacking it."""
+        """migration adds loop_state to a pre-existing schema lacking it."""
         db_path = tmp_path / "tachikoma.db"
 
-        # Hand-build a pre-DLT-160 workflow_states schema (no loop_state column)
+        # Hand-build a pre-existing workflow_states schema (no loop_state column)
         async with aiosqlite.connect(db_path) as db:
             await db.execute(
                 "CREATE TABLE workflow_states ("

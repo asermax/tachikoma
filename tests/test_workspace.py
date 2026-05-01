@@ -1,6 +1,6 @@
 """Workspace initialization hook tests.
 
-Tests for DLT-023: Bootstrap agent workspace on first run.
+Bootstrap agent workspace on first run.
 """
 
 from pathlib import Path

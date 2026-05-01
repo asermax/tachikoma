@@ -4,8 +4,6 @@ Runs after ``git_hook`` and before ``skills_hook``. Creates the plugin install
 directory, runs reconciliation (materialize declared plugins), discovers loaded
 plugins, and constructs the ``PluginManager`` — all stored in ``ctx.extras``
 for downstream hooks and ``__main__`` wiring.
-
-Design reference: DLT-048 S6, S10.
 """
 
 from __future__ import annotations

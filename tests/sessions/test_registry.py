@@ -1,6 +1,6 @@
 """Unit tests for SessionRegistry.
 
-Tests for DLT-027: Track conversation sessions.
+Track conversation sessions.
 Uses a mocked SessionRepository to test registry business logic in isolation.
 """
 
@@ -357,7 +357,7 @@ class TestSessionRegistryRecoverInterrupted:
 
 
 class TestSessionRegistryContextEntries:
-    """Tests for context entry pass-through methods (DLT-041)."""
+    """Tests for context entry pass-through methods."""
 
     async def test_save_context_entries_delegates_to_repository(
         self, registry: SessionRegistry, mock_repo
@@ -560,7 +560,7 @@ class TestMarkErrored:
 
 
 class TestCandidateFiltering:
-    """Tests for DLT-084 R8: universal candidate filtering verification.
+    """Tests for R8: universal candidate filtering verification.
 
     Verifies that get_recent_closed() properly filters out sessions that
     cannot be meaningfully resumed. These tests formalize existing behavior

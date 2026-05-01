@@ -3,8 +3,6 @@
 Follows DES-006 (SDK MCP tool server factory): handler logic extracted into
 standalone async functions for direct testability, the factory wraps them with
 ``@tool()`` decorators that close over the ``PluginManager``.
-
-Design reference: DLT-048 S9.
 """
 
 from __future__ import annotations

@@ -1,8 +1,8 @@
 """Tests for boundary detection.
 
-Tests for DLT-026: Detect conversation boundaries via topic analysis.
-Tests for DLT-028: Resume conversation on topic revisit.
-Tests for DLT-096: Include last exchange in session resumption candidates.
+Detect conversation boundaries via topic analysis.
+Resume conversation on topic revisit.
+Include last exchange in session resumption candidates.
 """
 
 from datetime import UTC, datetime
@@ -564,7 +564,7 @@ class TestDetectBoundary:
     async def test_includes_last_exchange_in_prompt_when_available(
         self, mocker: MockerFixture
     ) -> None:
-        """AC: Session last_exchange is included in prompt when non-null (DLT-096 R3)."""
+        """AC: Session last_exchange is included in prompt when non-null (R3)."""
         mock_query = mocker.patch("tachikoma.boundary.detector.stderr_aware_query")
 
         async def fake_query_gen(*args, **kwargs):
@@ -594,7 +594,7 @@ class TestDetectBoundary:
         assert "Here's the CORS fix..." in prompt
 
     async def test_omits_last_exchange_section_when_null(self, mocker: MockerFixture) -> None:
-        """AC: No last_exchange section when session.last_exchange is None (DLT-096 R2)."""
+        """AC: No last_exchange section when session.last_exchange is None (R2)."""
         mock_query = mocker.patch("tachikoma.boundary.detector.stderr_aware_query")
 
         async def fake_query_gen(*args, **kwargs):
@@ -623,7 +623,7 @@ class TestDetectBoundary:
         assert "Last assistant response" not in prompt
 
     async def test_includes_candidate_last_exchange_in_prompt(self, mocker: MockerFixture) -> None:
-        """AC: Candidate last_exchange is included when available (DLT-096 R4)."""
+        """AC: Candidate last_exchange is included when available (R4)."""
         mock_query = mocker.patch("tachikoma.boundary.detector.stderr_aware_query")
 
         async def fake_query_gen(*args, **kwargs):
@@ -670,7 +670,7 @@ class TestDetectBoundary:
 
 
 class TestOnStatusCallback:
-    """DLT-031: detect_boundary emits a Status message before the query runs."""
+    """detect_boundary emits a Status message before the query runs."""
 
     async def test_emits_single_status_before_query(self, mocker: MockerFixture) -> None:
         order: list[str] = []

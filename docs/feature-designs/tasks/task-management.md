@@ -561,7 +561,7 @@ Note: `since` is declared non-nullable (`Mapped[datetime]`) because it is introd
 **Why**: Daily cadence fits DES-010's `CronTrigger` naturally and keeps cleanup off the hot 60s instance-generator tick. Encapsulating find+delete in a single transactional repository method avoids N+1 queries and keeps the Job a one-liner. JSON substring match on `'"type": "once"'` is tightly coupled to `to_json()` serialization but acceptable given it's the only serializer and is covered by tests. The retention anchor composes `max(instance.completed_at)` with a `last_fired_at` fallback so zero-instance-but-fired definitions are also eligible — otherwise a partially corrupted state would accumulate forever.
 
 **Consequences**:
-- Pro: New cadences slot in without touching `instance_generator`; DLT-147-style system-maintenance operations (future) register as additional Jobs
+- Pro: New cadences slot in without touching `instance_generator`; future system-maintenance operations register as additional Jobs
 - Pro: Cleanup failures are isolated per DES-010 and log without affecting other jobs
 - Con: JSON substring filter will need adjustment if `ScheduleConfig.to_json()` changes serialization
 

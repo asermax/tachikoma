@@ -475,7 +475,7 @@ erDiagram
 
 **Given**: An active session with `summary` but `last_exchange = None` (first exchange, or pipeline failure)
 **When**: Boundary detection runs
-**Then**: The prompt includes only the summary — no "Last assistant response" section. This matches pre-DLT-096 behavior (graceful degradation).
+**Then**: The prompt includes only the summary — no "Last assistant response" section. This matches the prior summary-only behavior (graceful degradation).
 
 ### Scenario: Candidate sessions with mixed last_exchange availability
 

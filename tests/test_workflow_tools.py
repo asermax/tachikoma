@@ -217,7 +217,7 @@ class TestPydanticModels:
         assert parsed is not None
 
     def test_update_args_items_optional_default_none(self):
-        """DLT-160 R2: items defaults to None when omitted."""
+        """R2: items defaults to None when omitted."""
         parsed = UpdateWorkflowStateArgs.model_validate(
             {"workflow_id": "abc", "step": "01", "action": "start"}
         )
@@ -1819,7 +1819,7 @@ class TestConditionHandlerIntegration:
 
 
 # ---------------------------------------------------------------------------
-# Composition (DLT-161) — cascade engine, routing, breadcrumb, nested view
+# Composition — cascade engine, routing, breadcrumb, nested view
 # ---------------------------------------------------------------------------
 
 
@@ -1948,7 +1948,7 @@ class TestStepToSnapshotIncludesComposes:
         assert snapshot["composes"] is None
 
     def test_step_to_snapshot_includes_loop_field(self):
-        """DLT-160 R1: snapshot carries the loop value for runtime detection."""
+        """R1: snapshot carries the loop value for runtime detection."""
         step = StepDefinition(
             id="03-process",
             title="Process",
@@ -3053,7 +3053,7 @@ class TestAtomicAutoResume:
 
 
 # ---------------------------------------------------------------------------
-# DLT-160 — Loop iteration tests
+# Loop iteration tests
 # ---------------------------------------------------------------------------
 
 
@@ -3163,7 +3163,7 @@ def _registry_with_loop_target(
 
 
 class TestLoopValidationGates:
-    """DLT-160 R2 / R8: validation gates around the items parameter."""
+    """R2 / R8: validation gates around the items parameter."""
 
     @pytest.mark.asyncio
     async def test_items_on_non_loop_step_rejected(self, repository):
@@ -3189,7 +3189,7 @@ class TestLoopValidationGates:
 
     @pytest.mark.asyncio
     async def test_items_only_allowed_on_start_action(self, repository):
-        """DLT-160 (gate 3 hardening): items must not accompany non-start actions."""
+        """ (gate 3 hardening): items must not accompany non-start actions."""
         state = _make_state(
             step_states={"01-plan": "started", "02-execute": "pending", "03-review": "pending"},
         )
@@ -3231,7 +3231,7 @@ class TestLoopValidationGates:
 
 
 class TestLoopStartWithItems:
-    """DLT-160 R3, R7: spawning the first iteration."""
+    """R3, R7: spawning the first iteration."""
 
     @pytest.mark.asyncio
     async def test_start_with_items_spawns_first_iteration(self, repository):
@@ -3297,7 +3297,7 @@ class TestLoopStartWithItems:
 
 
 class TestLoopEmptyItems:
-    """DLT-160 R6: empty items auto-completes the loop step."""
+    """R6: empty items auto-completes the loop step."""
 
     @pytest.mark.asyncio
     async def test_empty_items_completes_loop_step_immediately(self, repository):
@@ -3389,7 +3389,7 @@ class TestLoopEmptyItems:
 
 
 class TestLoopAutoStartHalt:
-    """DLT-160 R12: auto-advance halts at pending loop steps."""
+    """R12: auto-advance halts at pending loop steps."""
 
     @pytest.mark.asyncio
     async def test_complete_then_halt_at_loop_step(self, repository):
@@ -3442,7 +3442,7 @@ class TestLoopAutoStartHalt:
 
 
 class TestLoopIterationAdvance:
-    """DLT-160 R3, R7: spawning subsequent iterations and exhausting the loop."""
+    """R3, R7: spawning subsequent iterations and exhausting the loop."""
 
     @pytest.mark.asyncio
     async def test_complete_iteration_step_spawns_next_child(self, repository):
@@ -3564,7 +3564,7 @@ class TestLoopIterationAdvance:
 
 
 class TestLoopRecovery:
-    """DLT-160 R5, R11.2, R17: recovery surfaces."""
+    """R5, R11.2, R17: recovery surfaces."""
 
     @pytest.mark.asyncio
     async def test_get_workflow_state_renders_loop_block(self, repository):
@@ -3656,7 +3656,7 @@ class TestLoopRecovery:
 
 
 class TestLoopAbort:
-    """DLT-160 R18: end_workflow with an active loop."""
+    """R18: end_workflow with an active loop."""
 
     @pytest.mark.asyncio
     async def test_abort_with_active_iteration_soft_deletes_both(
@@ -3729,7 +3729,7 @@ class TestLoopAbort:
 
 
 class TestRenderBreadcrumbInheritance:
-    """DLT-160 R3 + R17: deepest segment inherits parent's item for nested layers."""
+    """R3 + R17: deepest segment inherits parent's item for nested layers."""
 
     def test_deepest_layer_with_inherited_item_via_string_value(self):
         """When a non-loop child layer has a non-None current_item (set via inheritance
@@ -3747,7 +3747,7 @@ class TestRenderBreadcrumbInheritance:
 
 
 class TestNestedLoops:
-    """DLT-160 R3: an iteration body containing its own loop step — nested loops.
+    """R3: an iteration body containing its own loop step — nested loops.
 
     Regression test guarding against the parameter-shadowing bug where the
     chain-init pass in `_run_cascade` overwrote the caller's `items` parameter

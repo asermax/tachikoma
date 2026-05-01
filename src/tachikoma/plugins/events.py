@@ -7,8 +7,6 @@ Three events cover the install/remove lifecycle:
   access still-valid on-disk paths (e.g., to update active session entries).
 - ``PluginRemoved`` — dispatched after cleanup. Subscribers remove skills from
   the registry.
-
-Design reference: DLT-048 S11.
 """
 
 from __future__ import annotations

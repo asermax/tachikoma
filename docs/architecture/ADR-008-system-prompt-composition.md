@@ -37,12 +37,13 @@ Use `SystemPromptPreset(type="preset", preset="claude_code", append=context_stri
 
 ## Related Decisions
 
-- **Core-context loading**: DLT-005 defines how foundational context files are loaded and assembled
+- **Core-context loading**: foundational context file loading and assembly is documented in `feature-specs/agent/core-architecture.md`
 - **SDK library choice**: ADR-007 selected the Claude Agent SDK as the agent runtime
 
 ## See Also
 
 - `docs/feature-specs/agent/core-architecture.md` — R9: Foundational context requirement
 - `docs/feature-designs/agent/core-architecture.md` — Startup flow: system_prompt passed to Coordinator
-- `src/tachikoma/context.py` — Context loading and assembly implementation
+- `src/tachikoma/context/loading.py` — Context loading
+- `src/tachikoma/context/assembly.py` — System prompt assembly
 - `src/tachikoma/coordinator.py` — SystemPromptPreset wrapping in ClaudeAgentOptions

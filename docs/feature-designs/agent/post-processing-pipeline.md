@@ -319,7 +319,7 @@ erDiagram
 
 **Given**: A session where `load_context_entries` raises an exception
 **When**: The post-processing pipeline runs
-**Then**: The pipeline logs the exception, passes `extra=None` to all processors, and continues normally. Processors run without a summary — equivalent to the pre-DLT-146 behavior.
+**Then**: The pipeline logs the exception, passes `extra=None` to all processors, and continues normally. Processors run without a summary — equivalent to the prior behavior before context summaries were threaded through to processors.
 **Rationale**: Context summary is an optimization, not a critical path. Failures in loading entries should never prevent post-processing from running.
 
 ## Notes

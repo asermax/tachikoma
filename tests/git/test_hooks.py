@@ -1,7 +1,7 @@
 """Tests for git bootstrap hook.
 
-Tests for DLT-020: Git module for workspace version tracking.
-Tests updated for DLT-097: workspace startup sync after init.
+Git module for workspace version tracking.
+workspace startup sync after init.
 """
 
 import shutil
@@ -278,7 +278,7 @@ class TestEnsureGitignoreEntries:
 
 @pytest.mark.asyncio
 class TestWorkspaceSync:
-    """Tests for workspace startup sync (DLT-097 R1)."""
+    """Tests for workspace startup sync (R1)."""
 
     async def test_calls_sync_after_init(
         self, ctx: BootstrapContext, settings_manager: SettingsManager

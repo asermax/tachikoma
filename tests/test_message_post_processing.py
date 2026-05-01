@@ -1,6 +1,6 @@
 """Tests for per-message post-processing pipeline.
 
-Tests for DLT-026: Detect conversation boundaries via topic analysis.
+Detect conversation boundaries via topic analysis.
 """
 
 import asyncio

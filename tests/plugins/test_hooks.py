@@ -1,4 +1,4 @@
-"""Tests for the plugins bootstrap hook (DLT-048 Batch 7, Step 7.1).
+"""Tests for the plugins bootstrap hook.
 
 Covers: fresh workspace setup, plugin loading, gitignore idempotency,
 and bus pre-condition enforcement.

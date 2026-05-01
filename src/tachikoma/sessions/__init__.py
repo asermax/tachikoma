@@ -1,7 +1,4 @@
-"""Sessions package: persistent conversation session tracking.
-
-Public API for DLT-027: Track conversation sessions.
-"""
+"""Sessions package: persistent conversation session tracking."""
 
 from tachikoma.sessions.errors import SessionRepositoryError
 from tachikoma.sessions.hooks import session_recovery_hook

@@ -1,7 +1,7 @@
 """Core context module tests.
 
-Tests for DLT-005: Load foundational context for personality and user knowledge.
-Tests for DLT-041: Persist session context to database.
+Load foundational context for personality and user knowledge.
+Persist session context to database.
 """
 
 from pathlib import Path
@@ -25,7 +25,7 @@ from tachikoma.sessions.model import SessionContextEntry
 
 
 class TestLoadFoundationalContext:
-    """Tests for the load_foundational_context function (DLT-041)."""
+    """Tests for the load_foundational_context function."""
 
     def test_all_files_present_returns_tuples(self, tmp_path: Path) -> None:
         """AC: All files with content → list of (owner, content) tuples."""
@@ -137,7 +137,7 @@ class TestRenderSystemPreamble:
         assert "**Invalid/Timezone**" in result
 
     def test_preamble_includes_respond_to_task(self) -> None:
-        """AC (DLT-120): Preamble includes respond_to_task tool documentation."""
+        """AC: Preamble includes respond_to_task tool documentation."""
         result = render_system_preamble(timezone="UTC")
 
         assert "respond_to_task" in result
@@ -156,7 +156,7 @@ class TestRenderSystemPreamble:
         assert "rename_process" in result
 
     def test_preamble_documents_composition_routing(self) -> None:
-        """AC (DLT-161): Preamble documents composition routing and breadcrumbs."""
+        """AC: Preamble documents composition routing and breadcrumbs."""
         result = render_system_preamble(timezone="UTC")
 
         assert "top-level" in result
@@ -166,7 +166,7 @@ class TestRenderSystemPreamble:
         assert "Condition-Skipped Steps" in result
 
     def test_preamble_documents_loop_iteration(self) -> None:
-        """AC (DLT-160 R15): Preamble documents the loop frontmatter, items
+        """AC (R15): Preamble documents the loop frontmatter, items
         parameter, current-item exposure, auto-completion, mutex with composes,
         and auto-start halt."""
         result = render_system_preamble(timezone="UTC")

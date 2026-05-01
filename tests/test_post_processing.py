@@ -1,6 +1,6 @@
 """Tests for post-processing pipeline.
 
-Tests for DLT-008: Extract and store memories from conversations.
+Extract and store memories from conversations.
 """
 
 import asyncio
@@ -461,7 +461,7 @@ class TestProcessorStatusMessage:
 
         assert _CustomProcessor().status_message() == "Custom step..."
 
-    """Tests for phased pipeline execution (DLT-020)."""
+    """Tests for phased pipeline execution."""
 
     def test_unknown_phase_raises_value_error(self) -> None:
         """AC: Registration with unknown phase raises ValueError with clear message."""
@@ -859,7 +859,7 @@ class TestForkAndConsume:
     async def test_system_prompt_append_sets_system_prompt_preset(
         self, mocker: MockerFixture
     ) -> None:
-        """AC: system_prompt_append param sets SystemPromptPreset on options (DLT-041)."""
+        """AC: system_prompt_append param sets SystemPromptPreset on options."""
         mock_query = mocker.patch("tachikoma.post_processing.stderr_aware_query")
 
         async def fake_query(*args, **kwargs):
@@ -886,7 +886,7 @@ class TestForkAndConsume:
         assert options.system_prompt["append"] == context
 
     async def test_system_prompt_append_none_no_system_prompt(self, mocker: MockerFixture) -> None:
-        """AC: system_prompt_append=None (default) leaves system_prompt unset (DLT-041)."""
+        """AC: system_prompt_append=None (default) leaves system_prompt unset."""
         mock_query = mocker.patch("tachikoma.post_processing.stderr_aware_query")
 
         async def fake_query(*args, **kwargs):
@@ -1059,7 +1059,7 @@ class TestForkAndCapture:
     async def test_system_prompt_append_sets_system_prompt_preset(
         self, mocker: MockerFixture
     ) -> None:
-        """AC: system_prompt_append param sets SystemPromptPreset on options (DLT-041)."""
+        """AC: system_prompt_append param sets SystemPromptPreset on options."""
         mock_query = mocker.patch("tachikoma.post_processing.stderr_aware_query")
 
         async def fake_query(*args, **kwargs):
@@ -1088,7 +1088,7 @@ class TestForkAndCapture:
         assert options.system_prompt["append"] == context
 
     async def test_system_prompt_append_none_no_system_prompt(self, mocker: MockerFixture) -> None:
-        """AC: system_prompt_append=None (default) leaves system_prompt unset (DLT-041)."""
+        """AC: system_prompt_append=None (default) leaves system_prompt unset."""
         mock_query = mocker.patch("tachikoma.post_processing.stderr_aware_query")
 
         async def fake_query(*args, **kwargs):
@@ -1426,7 +1426,7 @@ class TestPromptDrivenProcessor:
 
 
 class TestMakeBashDenyHook:
-    """Tests for make_bash_deny_hook (DLT-155)."""
+    """Tests for make_bash_deny_hook."""
 
     @staticmethod
     async def _run_hook(hook_matcher, command: str) -> dict:

@@ -3,8 +3,6 @@
 Post-processor that analyzes completed conversations and updates SOUL.md,
 USER.md, and AGENTS.md based on conversation learnings. Uses the pending
 signals mechanism for ambiguous signals that need recurrence detection.
-
-See DLT-018: Update core context files from conversation learnings.
 """
 
 from pathlib import Path

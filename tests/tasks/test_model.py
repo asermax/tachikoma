@@ -244,7 +244,7 @@ class TestORMModels:
         assert domain.schedule.expression == "0 9 * * *"
 
     def test_definition_with_skills(self) -> None:
-        """DLT-117: TaskDefinition with skills round-trips correctly."""
+        """TaskDefinition with skills round-trips correctly."""
         defn = TaskDefinition(
             id="test-id",
             name="Test",
@@ -256,7 +256,7 @@ class TestORMModels:
         assert defn.skills == ("research", "planning")
 
     def test_definition_without_skills_defaults_empty(self) -> None:
-        """DLT-117: TaskDefinition without skills defaults to empty tuple."""
+        """TaskDefinition without skills defaults to empty tuple."""
         defn = TaskDefinition(
             id="test-id",
             name="Test",
@@ -267,7 +267,7 @@ class TestORMModels:
         assert defn.skills == ()
 
     def test_definition_record_with_skills_round_trip(self) -> None:
-        """DLT-117: TaskDefinitionRecord with skills round-trips via to_domain."""
+        """TaskDefinitionRecord with skills round-trips via to_domain."""
         record = TaskDefinitionRecord(
             id="def-1",
             name="Test Task",

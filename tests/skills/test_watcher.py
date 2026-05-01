@@ -1,6 +1,6 @@
 """Tests for skills filesystem watcher.
 
-Tests for DLT-038: Hot-reload skills at runtime.
+Hot-reload skills at runtime.
 """
 
 import asyncio

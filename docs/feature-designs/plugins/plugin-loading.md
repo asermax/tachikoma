@@ -389,6 +389,6 @@ __main__.py (after bootstrap)
 ## Notes
 
 - The plugin system reuses `tachikoma.git.sync.run_git()` for git materialization — no GitPython or dulwich dependency added.
-- CC plugins declaring non-skill contributions install successfully but those contributions are silently ignored (INFO log per type per plugin), enabling forward compatibility with DLT-049/050/051/053.
+- CC plugins declaring non-skill contributions install successfully but those contributions are silently ignored (INFO log per type per plugin), enabling forward compatibility with future plugin contribution hooks (custom context providers, post-processors, bundled skills, secondary channels).
 - The `_namespaced_source_paths` tracking dict on `SkillRegistry` keeps install/remove symmetric — preventing monotonic growth of source lists across many install/remove cycles.
 - Plugin-specific configuration is managed through the existing TOML config under `[plugins]`, not through per-plugin config files.

@@ -1,6 +1,6 @@
 """Tests for skills event classes.
 
-Tests for DLT-038: Hot-reload skills at runtime.
+Hot-reload skills at runtime.
 """
 
 from bubus import BaseEvent

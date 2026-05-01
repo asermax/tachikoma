@@ -1,6 +1,6 @@
 """Tests for SkillRegistry.
 
-Tests for DLT-003: Skill system foundation and sub-agent delegation.
+Skill system foundation and sub-agent delegation.
 """
 
 import shutil
@@ -618,7 +618,7 @@ class TestMultiSourceDiscovery:
 
 
 class TestRegistryRefresh:
-    """Tests for hot-reload refresh functionality (DLT-038)."""
+    """Tests for hot-reload refresh functionality."""
 
     def test_mark_dirty_sets_flag(self, tmp_path: Path) -> None:
         """AC: mark_dirty() sets _dirty to True."""
@@ -790,7 +790,7 @@ class TestRegistryRefresh:
 
 
 class TestAddSource:
-    """Tests for SkillRegistry.add_source() (DLT-063)."""
+    """Tests for SkillRegistry.add_source()."""
 
     def test_add_source_discovers_skills(self, tmp_path: Path) -> None:
         """add_source() discovers skills from the new path immediately."""
@@ -841,7 +841,7 @@ class TestAddSource:
 
 
 class TestSkillDependsOnParsing:
-    """Tests for depends_on frontmatter parsing (DLT-118)."""
+    """Tests for depends_on frontmatter parsing."""
 
     def test_parses_depends_on_list(self, tmp_path: Path) -> None:
         """AC: depends_on: [skill-a, skill-b] → tuple preserving order."""
@@ -956,7 +956,7 @@ class TestSkillDependsOnParsing:
 
 
 class TestResolveChain:
-    """Tests for SkillRegistry.resolve_chain() (DLT-118)."""
+    """Tests for SkillRegistry.resolve_chain()."""
 
     def _build_skills(self, skills_dir: Path, skills: dict[str, tuple[str, list[str]]]) -> None:
         """Create multiple skills with dependencies.
@@ -1222,7 +1222,7 @@ class TestResolveChain:
 
 
 class TestValidateDeps:
-    """Tests for SkillRegistry._validate_deps() (DLT-118)."""
+    """Tests for SkillRegistry._validate_deps()."""
 
     def test_unknown_deps_warn_once_per_skill(self, tmp_path: Path) -> None:
         """AC: Skill with unknown deps gets one warning listing all missing names."""
@@ -1330,7 +1330,7 @@ class TestValidateDeps:
 
     def test_workflow_step_unknown_required_skills_warns(self, tmp_path: Path) -> None:
         """AC: Workflow step declaring unknown required_skills gets a warning
-        listing the step and missing names (DLT-119).
+        listing the step and missing names.
         """
         skills_dir = tmp_path / "skills"
         skills_dir.mkdir(parents=True)
@@ -1398,7 +1398,7 @@ class TestValidateDeps:
 
 
 class TestCacheInvalidation:
-    """Tests for chain cache invalidation on refresh/add_source (DLT-118)."""
+    """Tests for chain cache invalidation on refresh/add_source."""
 
     def test_refresh_clears_chain_cache(self, tmp_path: Path) -> None:
         """AC: After refresh, cached chains are recomputed from fresh state."""
@@ -1499,7 +1499,7 @@ class TestCacheInvalidation:
 
 
 class TestCompositionValidation:
-    """Tests for composition graph validation in _validate_deps (DLT-161)."""
+    """Tests for composition graph validation in _validate_deps."""
 
     def _create_workflow(
         self,
@@ -1588,7 +1588,7 @@ class TestCompositionValidation:
 
 
 class TestLoopValidation:
-    """Validation of loop edges in the unified composition graph (DLT-160)."""
+    """Validation of loop edges in the unified composition graph."""
 
     def _create_workflow(
         self,
@@ -1700,7 +1700,7 @@ class TestLoopValidation:
 
 
 class TestSkillNamespace:
-    """Tests for Skill.namespace and Skill.qualified_name (DLT-048 Step 4.1)."""
+    """Tests for Skill.namespace and Skill.qualified_name."""
 
     def test_default_namespace_qualified_name_equals_name(self) -> None:
         """AC: Default-namespace skill has qualified_name == name."""
@@ -1727,7 +1727,7 @@ class TestSkillNamespace:
 
 
 class TestNamespacedRegistration:
-    """Tests for add_namespaced_source / remove_namespaced_source (DLT-048 Steps 4.2, 4.3)."""
+    """Tests for add_namespaced_source / remove_namespaced_source."""
 
     def test_ac_ssr1_namespaced_registration(self, tmp_path: Path) -> None:
         """AC-SSR-1: Plugin alias 'code-review' skill 'linter' → registered
@@ -1869,7 +1869,7 @@ class TestNamespacedRegistration:
 
 
 class TestNamespacedDepResolution:
-    """Tests for namespaced dependency resolution (DLT-048 Step 4.5, S13)."""
+    """Tests for namespaced dependency resolution ( Step 4.5, S13)."""
 
     def _build_skills(self, skills_dir: Path, skills: dict[str, tuple[str, list[str]]]) -> None:
         """Create multiple skills with dependencies."""
@@ -2014,7 +2014,7 @@ class TestNamespacedDepResolution:
 
 
 class TestRefreshPreservesNamespacedSkills:
-    """Tests for refresh() preserving namespaced skills (DLT-048 Step 4.7)."""
+    """Tests for refresh() preserving namespaced skills."""
 
     def test_refresh_preserves_plugin_skills(self, tmp_path: Path) -> None:
         """After mark_dirty() + refresh(), plugin skills retain <alias>:<name> keys."""
