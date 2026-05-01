@@ -2,7 +2,6 @@
 
 Tests for DLT-020: Git module for workspace version tracking.
 Tests updated for DLT-097: workspace startup sync after init.
-Tests updated for diffable DB dump/restore (replaces LFS).
 """
 
 import shutil
@@ -14,7 +13,7 @@ import pytest
 
 from tachikoma.bootstrap import BootstrapContext
 from tachikoma.config import SettingsManager
-from tachikoma.git.hooks import _ensure_gitignore_entries, _sync_workspace, git_hook
+from tachikoma.git.hooks import _ensure_gitignore_entries, git_hook
 from tachikoma.git.sync import SYNC_RESULT
 
 
@@ -260,11 +259,12 @@ class TestEnsureGitignoreEntries:
     def test_ensure_is_noop_when_complete(self, tmp_path: Path) -> None:
         """AC3: _ensure_gitignore_entries is no-op when all entries exist."""
         gitignore = tmp_path / ".gitignore"
-        gitignore.write_text(".tachikoma/*.db\n.tachikoma/logs/tachikoma.log\n")
+        expected = ".tachikoma/*.db\n.tachikoma/logs/tachikoma.log\n.tachikoma/db-dump/\n"
+        gitignore.write_text(expected)
 
         _ensure_gitignore_entries(tmp_path)
 
-        assert gitignore.read_text() == ".tachikoma/*.db\n.tachikoma/logs/tachikoma.log\n"
+        assert gitignore.read_text() == expected
 
     def test_ensure_creates_file_if_missing(self, tmp_path: Path) -> None:
         """AC2: _ensure_gitignore_entries creates .gitignore if it doesn't exist."""
@@ -344,65 +344,3 @@ class TestWorkspaceSync:
             return_value=(SYNC_RESULT["SYNC_FAILED"], []),
         ):
             await git_hook(ctx)  # Should not raise
-
-    async def test_restores_db_when_dump_files_changed(
-        self, ctx: BootstrapContext, settings_manager: SettingsManager
-    ) -> None:
-        """AC: DB is restored when smart_pull reports changed dump files."""
-        workspace_path = settings_manager.settings.workspace.path
-
-        with (
-            patch(
-                "tachikoma.git.hooks.run_git",
-                new_callable=AsyncMock,
-            ),
-            patch(
-                "tachikoma.git.hooks.agent_defaults_from_settings",
-            ),
-            patch(
-                "tachikoma.git.hooks.smart_pull",
-                new_callable=AsyncMock,
-                return_value=(
-                    SYNC_RESULT["FAST_FORWARDED"],
-                    [".tachikoma/db-dump/sessions.ndjson"],
-                ),
-            ),
-            patch(
-                "tachikoma.git.hooks._restore_db_if_possible",
-                new_callable=AsyncMock,
-            ) as mock_restore,
-        ):
-            await _sync_workspace(workspace_path, settings_manager.settings)
-
-        mock_restore.assert_awaited_once_with(workspace_path)
-
-    async def test_no_restore_when_no_dump_files_changed(
-        self, ctx: BootstrapContext, settings_manager: SettingsManager
-    ) -> None:
-        """AC: No DB restore when pull succeeds but no dump files changed."""
-        workspace_path = settings_manager.settings.workspace.path
-
-        with (
-            patch(
-                "tachikoma.git.hooks.run_git",
-                new_callable=AsyncMock,
-            ),
-            patch(
-                "tachikoma.git.hooks.agent_defaults_from_settings",
-            ),
-            patch(
-                "tachikoma.git.hooks.smart_pull",
-                new_callable=AsyncMock,
-                return_value=(
-                    SYNC_RESULT["FAST_FORWARDED"],
-                    ["memories/episodic/2026-04-18.md"],
-                ),
-            ),
-            patch(
-                "tachikoma.git.hooks._restore_db_if_possible",
-                new_callable=AsyncMock,
-            ) as mock_restore,
-        ):
-            await _sync_workspace(workspace_path, settings_manager.settings)
-
-        mock_restore.assert_not_awaited()
