@@ -21,6 +21,7 @@ from tachikoma.workflows.tools import (
     ListActiveWorkflowsArgs,
     StartWorkflowArgs,
     UpdateWorkflowStateArgs,
+    _decode_items,
     _evaluate_and_advance,
     _find_next_pending_step,
     _render_breadcrumb,
@@ -222,53 +223,51 @@ class TestPydanticModels:
         )
         assert parsed.items is None
 
-    def test_update_args_items_list_of_strings_valid(self):
-        """DLT-160 R4: list[str] is the canonical shape."""
+    def test_update_args_items_json_string_valid(self):
+        """items accepts a JSON-encoded string of string items."""
         parsed = UpdateWorkflowStateArgs.model_validate(
             {
                 "workflow_id": "abc",
                 "step": "03",
                 "action": "start",
-                "items": ["foo.md", "bar.md"],
+                "items": '["foo.md", "bar.md"]',
             }
         )
-        assert parsed.items == ["foo.md", "bar.md"]
+        assert parsed.items == '["foo.md", "bar.md"]'
 
-    def test_update_args_items_empty_list_valid(self):
-        """DLT-160 R6: empty list is shape-valid (semantic handling later)."""
+    def test_update_args_items_empty_array_string_valid(self):
+        """items accepts '[]' as a valid JSON string."""
         parsed = UpdateWorkflowStateArgs.model_validate(
-            {"workflow_id": "abc", "step": "03", "action": "start", "items": []}
+            {"workflow_id": "abc", "step": "03", "action": "start", "items": "[]"}
         )
-        assert parsed.items == []
+        assert parsed.items == "[]"
 
     def test_update_args_items_duplicates_accepted(self):
-        """DLT-160 R4: duplicates are accepted as-is."""
+        """items accepts a JSON string with duplicate entries."""
         parsed = UpdateWorkflowStateArgs.model_validate(
             {
                 "workflow_id": "abc",
                 "step": "03",
                 "action": "start",
-                "items": ["a", "a", "b"],
+                "items": '["a", "a", "b"]',
             }
         )
-        assert parsed.items == ["a", "a", "b"]
+        assert parsed.items == '["a", "a", "b"]'
 
-    def test_update_args_items_non_list_rejected(self):
-        """DLT-160 R4: non-list input fails Pydantic shape validation."""
-        from pydantic import ValidationError  # noqa: PLC0415
+    def test_update_args_items_plain_string_accepted_by_model(self):
+        """items is str | None, so any string passes Pydantic (decode validates later)."""
+        parsed = UpdateWorkflowStateArgs.model_validate(
+            {
+                "workflow_id": "abc",
+                "step": "03",
+                "action": "start",
+                "items": "single-string",
+            }
+        )
+        assert parsed.items == "single-string"
 
-        with pytest.raises(ValidationError):
-            UpdateWorkflowStateArgs.model_validate(
-                {
-                    "workflow_id": "abc",
-                    "step": "03",
-                    "action": "start",
-                    "items": "single-string",
-                }
-            )
-
-    def test_update_args_items_non_string_item_rejected(self):
-        """DLT-160 R4: non-string item fails Pydantic shape validation."""
+    def test_update_args_items_non_string_rejected(self):
+        """items rejects non-string types (e.g. list) at the Pydantic level."""
         from pydantic import ValidationError  # noqa: PLC0415
 
         with pytest.raises(ValidationError):
@@ -280,6 +279,35 @@ class TestPydanticModels:
                     "items": [1, 2, 3],
                 }
             )
+
+
+# ---------------------------------------------------------------------------
+# _decode_items
+# ---------------------------------------------------------------------------
+
+
+class TestDecodeItems:
+    def test_valid_json_array_of_strings(self):
+        assert _decode_items('["a.md", "b.md"]') == ["a.md", "b.md"]
+
+    def test_empty_array(self):
+        assert _decode_items("[]") == []
+
+    def test_invalid_json_raises(self):
+        with pytest.raises(ValueError, match="JSON-encoded array"):
+            _decode_items("not-json")
+
+    def test_non_array_json_raises(self):
+        with pytest.raises(ValueError, match="must encode an array"):
+            _decode_items("{}")
+
+    def test_non_string_items_raises(self):
+        with pytest.raises(ValueError, match="only strings"):
+            _decode_items("[1, 2, 3]")
+
+    def test_mixed_types_raises(self):
+        with pytest.raises(ValueError, match="only strings"):
+            _decode_items('["a", 1]')
 
 
 # ---------------------------------------------------------------------------
