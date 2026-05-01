@@ -24,7 +24,7 @@ Automatic git version tracking for all workspace file changes. Every modificatio
 | R5 | Bootstrap hook initializes workspace as a git repo on first run (idempotent) |
 | R6 | Commits use a fixed identity via repo-local git config (no global config dependency) |
 | R7 | Linear history on a single branch — no branch operations |
-| R8 | Bootstrap creates `.gitignore` with `.tachikoma/*.db` and `.tachikoma/logs/tachikoma.log` to exclude the DB binary and active log file from git tracking; the `.tachikoma/db-dump/` directory (diffable text dumps) and rotated log files (`.tachikoma/logs/tachikoma.<timestamp>.log`) are tracked by git. On every startup, missing gitignore entries are appended without committing (idempotent) |
+| R8 | Bootstrap creates `.gitignore` with `.tachikoma/*.db`, `.tachikoma/logs/tachikoma.log`, and `.tachikoma/db-dump/` to exclude the DB binary, active log file, and stale dump directories from git tracking. Rotated log files (`.tachikoma/logs/tachikoma.<timestamp>.log`) are tracked by git. On every startup, missing gitignore entries are appended without committing (idempotent) |
 | R9 | After committing, push committed changes to the `origin` remote with divergence detection and conflict resolution; on divergence, rebase local changes on top of remote before pushing |
 | R10 | If no `origin` remote is configured, skip pushing silently (no-op) |
 | R11 | On push failure (rebase failed, push failed after rebase), log a warning with the failure reason and continue; committed changes remain intact and will be retried on next sync |
@@ -34,10 +34,6 @@ Automatic git version tracking for all workspace file changes. Every modificatio
 | R15 | PreToolUse deny hook on every non-git-processor agent surface that blocks destructive bash git commands: `git push`, `git reset`, `git checkout .`, `git restore .`, `git clean`, and mutating `git remote` subcommands |
 | R16 | The deny hook splits compound commands (`&&`, `||`, `|`, `;`) and checks each sub-command independently |
 | R17 | Read-only git commands (`status`, `log`, `diff`, `show`, `fetch`, `branch`, `remote -v`) and `git clone` pass through the deny hook unimpeded |
-| R18 | The workspace SQLite DB is dumped to diffable text files (`.ndjson` + `.metadata.json` per table) via `dump_database()` before the commit agent runs, so DB changes appear as dump-file diffs in `git status`. `sqlite_sequence` is excluded. |
-| R19 | After `smart_pull` succeeds with incoming changes that include dump file modifications, the DB is rebuilt from dumps via `restore_database()` (drops the existing DB file, re-runs each `CREATE TABLE` from the dump metadata, bulk-inserts the rows); restore failure is non-fatal (log warning, `database_hook` creates fresh DB) |
-| R20 | Bootstrap hook runs before `database_hook` so DB restore completes before the database engine opens; the DB path is derived from settings, not from `ctx.extras` |
-| R21 | On startup, if the database file is missing but dump files exist (e.g., fresh clone, deleted DB), `database_hook` restores the DB from dumps before initializing the engine; restore failure is non-fatal (log warning, fresh DB created via `create_all()`) |
 
 ## Behaviors
 

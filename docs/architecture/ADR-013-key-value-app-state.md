@@ -42,7 +42,7 @@ Keys are namespaced by convention using dot-separated prefixes (e.g., `updates.l
 - Follows existing SQLAlchemy/async patterns (ADR-007) — no new dependencies or storage mechanisms
 - Simple repository interface — get/set by key is all most consumers need
 - `updated_at` provides auditability for when state last changed
-- Survives restarts and is included in the existing DB dump/restore flow (ADR-012)
+- Survives restarts — persisted in the SQLite database alongside other workspace state
 
 ### Negative
 
