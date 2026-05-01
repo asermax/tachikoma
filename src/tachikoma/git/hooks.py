@@ -1,8 +1,7 @@
 """Bootstrap hook for git repository initialization and workspace sync.
 
 Initializes the workspace as a git repo on first run (idempotent),
-then syncs with the origin remote if configured. After a successful
-sync, rebuilds the DB from diffable dump files if they changed.
+then syncs with the origin remote if configured.
 """
 
 from pathlib import Path
@@ -11,7 +10,6 @@ from loguru import logger
 
 from tachikoma.agent_defaults import agent_defaults_from_settings
 from tachikoma.bootstrap import BootstrapContext
-from tachikoma.git.db_sync import restore_database
 from tachikoma.git.sync import SYNC_RESULT, run_git, smart_pull
 
 _log = logger.bind(component="git")
@@ -24,10 +22,8 @@ _COMMITTER_EMAIL = "tachikoma@local"
 _GITIGNORE_ENTRIES = [
     ".tachikoma/*.db\n",
     ".tachikoma/logs/tachikoma.log\n",
+    ".tachikoma/db-dump/\n",
 ]
-
-# Dump directory path relative to workspace root
-_DUMP_DIR_RELATIVE = ".tachikoma/db-dump"
 
 
 async def git_hook(ctx: BootstrapContext) -> None:
@@ -111,9 +107,7 @@ def _append_missing_entries(existing: str) -> str:
 async def _sync_workspace(workspace_path: Path, settings) -> None:
     """Sync workspace with origin remote using smart_pull.
 
-    After a successful pull, checks if DB dump files changed and
-    rebuilds the DB if needed. Non-blocking — all errors are caught
-    and logged so startup continues.
+    Non-blocking — all errors are caught and logged so startup continues.
 
     Args:
         workspace_path: Path to the workspace git repository.
@@ -130,7 +124,7 @@ async def _sync_workspace(workspace_path: Path, settings) -> None:
         # Build agent defaults following the same pattern as __main__.py
         agent_defaults = agent_defaults_from_settings(settings)
 
-        result, changed_files = await smart_pull(workspace_path, "origin", "HEAD", agent_defaults)
+        result, _changed_files = await smart_pull(workspace_path, "origin", "HEAD", agent_defaults)
 
         # Log result
         if result == SYNC_RESULT["DIRTY_SKIPPED"]:
@@ -143,40 +137,8 @@ async def _sync_workspace(workspace_path: Path, settings) -> None:
             SYNC_RESULT["AGENT_RESOLVED"],
         ):
             _log.info("Workspace synced: result={result}", result=result)
-
-            # Restore DB if dump files changed
-            dump_changed = any(
-                f == _DUMP_DIR_RELATIVE or f.startswith(f"{_DUMP_DIR_RELATIVE}/")
-                for f in changed_files
-            )
-            if dump_changed:
-                await _restore_db_if_possible(workspace_path)
         elif result == SYNC_RESULT["SYNC_FAILED"]:
             _log.warning("Workspace sync failed, continuing with local state")
 
     except Exception as e:
         _log.warning("Workspace sync failed: err={err}", err=str(e))
-
-
-async def _restore_db_if_possible(workspace_path: Path) -> None:
-    """Restore DB from dump files after a successful sync.
-
-    Non-fatal — if restore fails, logs a warning and continues.
-    database_hook will create a fresh empty DB via create_all().
-
-    Args:
-        workspace_path: Path to the workspace git repository.
-    """
-    db_path = workspace_path / ".tachikoma" / "tachikoma.db"
-    dump_dir = workspace_path / _DUMP_DIR_RELATIVE
-
-    if not dump_dir.exists() or not any(dump_dir.iterdir()):
-        return
-
-    try:
-        await restore_database(db_path, dump_dir)
-    except Exception as e:
-        _log.warning(
-            "DB restore failed, database_hook will create a fresh DB: err={err}",
-            err=str(e),
-        )
