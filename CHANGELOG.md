@@ -2,6 +2,32 @@
 
 <!-- version list -->
 
+## v1.68.2 (2026-05-01)
+
+### Bug Fixes
+
+- **buffer**: Treat no-message-time as inherently idle at startup
+  ([`b15ba9e`](https://github.com/asermax/tachikoma/commit/b15ba9e80267a5eb0a7a0b08b0305daf72e4ffa7))
+
+### Documentation
+
+- Remove diffable DB tracking references
+  ([`6a10de3`](https://github.com/asermax/tachikoma/commit/6a10de3b8baeee92719ff960110eeb037da5d2e8))
+
+### Refactoring
+
+- **git**: Discard unused smart_pull return value
+  ([`9aecd92`](https://github.com/asermax/tachikoma/commit/9aecd92c8bd7e17372dba67b81605475606f3553))
+
+- **git**: Remove diffable DB dump/restore system
+  ([`39f228b`](https://github.com/asermax/tachikoma/commit/39f228b72ea96d15ed20f9e7a26fcef031fa6672))
+
+### Testing
+
+- **git**: Remove DB dump/restore tests
+  ([`d9181d7`](https://github.com/asermax/tachikoma/commit/d9181d72d934c5ad94c5c8ccdccb7b6e125c3f9b))
+
+
 ## v1.68.1 (2026-05-01)
 
 ### Bug Fixes
