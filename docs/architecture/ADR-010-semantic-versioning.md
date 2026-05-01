@@ -29,8 +29,8 @@ Configuration in `pyproject.toml`:
 - Changelog in `update` mode — prepends new entries, preserves existing content
 
 GitHub Actions integration:
-- `python-semantic-release/python-semantic-release@v10.2.0` — version/tag/release action
-- `python-semantic-release/publish-action@v10.2.0` — attaches dist artifacts to GitHub Release
+- `python-semantic-release/python-semantic-release@v10.5.3` — version/tag/release action
+- `python-semantic-release/publish-action@v10.5.3` — attaches dist artifacts to GitHub Release
 - Publishing uses OIDC trusted publisher via `pypa/gh-action-pypi-publish`, eliminating stored secrets
 
 ## Consequences
