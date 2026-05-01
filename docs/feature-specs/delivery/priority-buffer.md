@@ -75,7 +75,7 @@ The front item waits until the coordinator is not busy and the time since the la
 **Acceptance Criteria**:
 - Given the front item has an idle window of N seconds, when `coordinator` is not busy and `now - coordinator.last_message_time >= N`, then the item is delivered as a new message turn
 - Given the front item's idle window is not yet satisfied, then the item remains buffered and is re-evaluated when something actionable changes (enqueue, coordinator idle, or timer expiry)
-- Given `coordinator.last_message_time` is None (no messages exchanged yet), then the idle window is not considered satisfied — items remain buffered until the first exchange establishes a timestamp (max-hold still applies for Urgent and Normal)
+- Given `coordinator.last_message_time` is None (no messages exchanged yet), then the idle window is considered satisfied — the system is inherently idle at startup with no prior activity to wait out
 - Given the front item is delivered and `coordinator.last_message_time` updates, when the next item reaches the front, then its idle-window countdown starts fresh from that delivery timestamp
 
 ### Force-Delivery on Max-Hold (R5)

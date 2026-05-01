@@ -376,7 +376,7 @@ sequenceDiagram
 
 **Given**: Process just started; no messages exchanged; item enqueued immediately.
 **When**: Loop evaluates eligibility.
-**Then**: Idle-window check fails (`last_message_time is None`). Max-hold timer still applies for Urgent and Normal. If the user never sends a message, the coordinator never becomes busy, so max-hold expiry permits delivery. Low items with no max-hold wait forever.
+**Then**: Idle-window is satisfied (`last_message_time is None` treated as inherently idle). If the coordinator is not busy, the item is delivered immediately. If the coordinator is busy, delivery waits for the next busy→idle transition.
 
 ### Scenario: Shutdown flush with mid-response coordinator
 

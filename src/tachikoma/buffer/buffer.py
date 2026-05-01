@@ -211,7 +211,8 @@ class Buffer:
 
         last_msg = self._coordinator.last_message_time
         idle_satisfied = (
-            last_msg is not None and (now - last_msg).total_seconds() >= timing.idle_window_seconds
+            last_msg is None  # No messages yet = inherently idle
+            or (now - last_msg).total_seconds() >= timing.idle_window_seconds
         )
 
         front_time = item.total_front_time

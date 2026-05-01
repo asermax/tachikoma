@@ -279,9 +279,9 @@ class TestBufferLoopResilience:
 
 
 class TestBufferStartupNoMessageTime:
-    """R4: when last_message_time is None (startup), idle window is not satisfied."""
+    """R4: when last_message_time is None (startup), system is inherently idle."""
 
-    async def test_no_last_message_time_blocks_idle_delivery(self) -> None:
+    async def test_no_last_message_time_delivers_when_not_busy(self) -> None:
         bus = EventBus()
         # last_message_time = None — fresh process, no exchange yet
         coord = FakeCoordinator(last_message_time=None)
@@ -300,7 +300,33 @@ class TestBufferStartupNoMessageTime:
         await asyncio.sleep(0.2)
         await buf.stop()
 
+        assert len(delivered) == 1
+
+    async def test_no_last_message_time_busy_blocks_delivery(self) -> None:
+        bus = EventBus()
+        coord = FakeCoordinator(is_busy=True, last_message_time=None)
+        settings = BufferSettings(
+            normal=PriorityTiming(idle_window_seconds=0.05, max_hold_seconds=None),
+        )
+        buf = Buffer(bus=bus, coordinator=coord, settings=settings)
+
+        delivered: list[BufferedDelivery] = []
+        bus.dispatch = lambda e: delivered.append(e)  # type: ignore[assignment]
+
+        await buf.start()
+        await buf.enqueue(_make_item(Priority.NORMAL))
+
+        await asyncio.sleep(0.2)
         assert len(delivered) == 0
+
+        # Now make idle
+        coord.set_busy(False)
+        buf._wake_event.set()
+
+        await asyncio.sleep(0.2)
+        await buf.stop()
+
+        assert len(delivered) == 1
 
 
 class TestBufferPreemptionAccounting:
