@@ -12,7 +12,6 @@ non-git-processor agent surfaces.
 """
 
 import asyncio
-import json
 import re
 from pathlib import Path
 from typing import Literal
@@ -32,6 +31,7 @@ from tachikoma.git.sync import (
     smart_pull,
     smart_push,
 )
+from tachikoma.mcp_utils import decode_json_string_array
 
 _log = logger.bind(component="git.tools")
 
@@ -47,7 +47,7 @@ class PushArgs(BaseModel):
     # Declared as a JSON-encoded string (e.g. '["a.ogg", "b.json"]') rather
     # than a list. The SDK MCP transport's client-side schema validator
     # rejects array-typed arguments, so the tool accepts a JSON string and
-    # the wrapper parses it via _decode_scrub_paths. See DES-006.
+    # the wrapper parses it via decode_json_string_array. See DES-006.
     scrub_paths: str | None = None
 
 
@@ -122,30 +122,6 @@ _SYNC_FAILURES = frozenset(
 def _error(msg: str) -> dict:
     return {"is_error": True, "content": [{"type": "text", "text": msg}]}
 
-
-def _decode_scrub_paths(raw: str) -> list[str]:
-    """Decode the JSON-string form of ``scrub_paths`` into a list of strings.
-
-    The SDK MCP transport's client-side schema validator rejects array-typed
-    tool arguments, so the ``push`` tool accepts ``scrub_paths`` as a JSON
-    string instead. This helper performs the parse-and-validate step. See
-    DES-006 for the pattern.
-
-    Raises:
-        ValueError: when ``raw`` is not valid JSON, does not encode an array,
-            or encodes an array containing non-string items.
-    """
-    try:
-        decoded = json.loads(raw)
-    except json.JSONDecodeError as exc:
-        raise ValueError(f"scrub_paths must be a JSON-encoded array of strings: {exc}") from exc
-    if not isinstance(decoded, list):
-        raise ValueError(
-            f"scrub_paths JSON string must encode an array, got {type(decoded).__name__}"
-        )
-    if not all(isinstance(item, str) for item in decoded):
-        raise ValueError("scrub_paths JSON array must contain only strings")
-    return decoded
 
 
 # --- Scrub helper ---
@@ -499,7 +475,7 @@ def create_git_tools_server(
         scrub_paths_list: list[str] | None = None
         if parsed.scrub_paths is not None:
             try:
-                scrub_paths_list = _decode_scrub_paths(parsed.scrub_paths)
+                scrub_paths_list = decode_json_string_array(parsed.scrub_paths, "scrub_paths")
             except ValueError as exc:
                 return _error(f"Error: {exc}")
         return await handle_push(

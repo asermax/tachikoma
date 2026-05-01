@@ -10,7 +10,6 @@ Provides MCP tools for managing workflow lifecycle:
 Follows DES-006 (MCP tool server factory pattern).
 """
 
-import json
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Literal, Self
@@ -21,6 +20,7 @@ from loguru import logger
 from pydantic import BaseModel, ValidationError
 
 from tachikoma.agent_defaults import AgentDefaults
+from tachikoma.mcp_utils import decode_json_string_array
 from tachikoma.session_context import SessionContext
 from tachikoma.skills.registry import SkillRegistry, render_skill_block
 from tachikoma.workflows.composition import (
@@ -64,7 +64,7 @@ class UpdateWorkflowStateArgs(BaseModel):
     # Declared as a JSON-encoded string (e.g. '["a.md", "b.md"]') rather
     # than a list. The SDK MCP transport's client-side schema validator
     # rejects array-typed arguments, so the tool accepts a JSON string and
-    # the wrapper parses it via _decode_items. See DES-006.
+    # the wrapper parses it via decode_json_string_array. See DES-006.
     items: str | None = None
 
 
@@ -101,28 +101,6 @@ def _validate_args(args: dict, model: type[BaseModel]):
     except ValidationError as exc:
         return None, _error_response(f"Invalid arguments: {exc}")
 
-
-def _decode_items(raw: str) -> list[str]:
-    """Decode the JSON-string form of ``items`` into a list of strings.
-
-    The SDK MCP transport's client-side schema validator rejects array-typed
-    tool arguments, so the ``update_workflow_state`` tool accepts ``items`` as
-    a JSON string instead. This helper performs the parse-and-validate step.
-    See DES-006 for the pattern.
-
-    Raises:
-        ValueError: when ``raw`` is not valid JSON, does not encode an array,
-            or encodes an array containing non-string items.
-    """
-    try:
-        decoded = json.loads(raw)
-    except json.JSONDecodeError as exc:
-        raise ValueError(f"items must be a JSON-encoded array of strings: {exc}") from exc
-    if not isinstance(decoded, list):
-        raise ValueError(f"items JSON string must encode an array, got {type(decoded).__name__}")
-    if not all(isinstance(item, str) for item in decoded):
-        raise ValueError("items JSON array must contain only strings")
-    return decoded
 
 
 def delete_scratchpad(scratchpad_path: str) -> None:
@@ -1625,7 +1603,7 @@ def create_workflow_tools_server(
         items_list: list[str] | None = None
         if parsed.items is not None:
             try:
-                items_list = _decode_items(parsed.items)
+                items_list = decode_json_string_array(parsed.items, "items")
             except ValueError as exc:
                 return _error_response(str(exc))
 

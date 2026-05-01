@@ -8,7 +8,6 @@ Provides MCP tools for managing task definitions:
 - delete_task: Delete a task definition
 """
 
-import json
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Literal
 from uuid import uuid4
@@ -20,6 +19,7 @@ from cronsim.cronsim import CronSimError
 from loguru import logger
 from pydantic import BaseModel, ValidationError, model_validator
 
+from tachikoma.mcp_utils import decode_json_string_array
 from tachikoma.tasks.errors import TaskRepositoryError
 from tachikoma.tasks.model import ScheduleConfig, TaskDefinition, TaskInstance
 from tachikoma.tasks.repository import TaskRepository
@@ -28,24 +28,6 @@ if TYPE_CHECKING:
     from tachikoma.skills.registry import SkillRegistry
 
 _log = logger.bind(component="task_tools")
-
-
-def _decode_skills(raw: str) -> list[str]:
-    """Decode a JSON-encoded string of skill names into a list.
-
-    Raises:
-        ValueError: when ``raw`` is not valid JSON, does not encode an array,
-            or encodes an array containing non-string items.
-    """
-    try:
-        decoded = json.loads(raw)
-    except json.JSONDecodeError as exc:
-        raise ValueError(f"skills must be a JSON-encoded array of strings: {exc}") from exc
-    if not isinstance(decoded, list):
-        raise ValueError(f"skills JSON string must encode an array, got {type(decoded).__name__}")
-    if not all(isinstance(item, str) for item in decoded):
-        raise ValueError("skills JSON array must contain only strings")
-    return decoded
 
 
 # ---------------------------------------------------------------------------
@@ -420,7 +402,7 @@ def create_task_tools_server(
         skills_warnings: list[str] = []
         if parsed.skills is not None:
             try:
-                decoded_skills = _decode_skills(parsed.skills)
+                decoded_skills = decode_json_string_array(parsed.skills, "skills")
             except ValueError as exc:
                 return {
                     "is_error": True,
@@ -560,7 +542,7 @@ def create_task_tools_server(
             updates["task_type"] = parsed.task_type
         if parsed.skills is not None:
             try:
-                decoded_skills = _decode_skills(parsed.skills)
+                decoded_skills = decode_json_string_array(parsed.skills, "skills")
             except ValueError as exc:
                 return {
                     "is_error": True,
