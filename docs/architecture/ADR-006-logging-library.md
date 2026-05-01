@@ -62,6 +62,6 @@ Use **loguru** as the logging library for the project.
 
 ## Notes
 
-- Install with: `poetry add loguru`
+- Install with: `uv add loguru`
 - Documentation: https://loguru.readthedocs.io/en/stable/
 - Future consideration: Can add structlog later if we need structured JSON logs for production monitoring
