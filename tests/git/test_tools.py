@@ -10,13 +10,13 @@ from tachikoma.git.sync import PUSH_RESULT, SYNC_RESULT
 from tachikoma.git.tools import (
     DESTRUCTIVE_GIT_DENY_PATTERNS,
     PushArgs,
-    _decode_scrub_paths,
     create_git_tools_server,
     handle_push,
     handle_scrub,
     handle_sync,
     resolve_target,
 )
+from tachikoma.mcp_utils import decode_json_string_array
 
 
 @pytest.fixture
@@ -104,23 +104,23 @@ class TestDecodeScrubPaths:
     """Validate the parse-and-validate helper used by the push tool wrapper."""
 
     def test_valid_json_array_returns_list(self) -> None:
-        assert _decode_scrub_paths('["a.ogg", "b.json"]') == ["a.ogg", "b.json"]
+        assert decode_json_string_array('["a.ogg", "b.json"]', "scrub_paths") == ["a.ogg", "b.json"]
 
     def test_empty_array_returns_empty_list(self) -> None:
         # Helper accepts []; the non-empty rule lives in handle_scrub.
-        assert _decode_scrub_paths("[]") == []
+        assert decode_json_string_array("[]", "scrub_paths") == []
 
     def test_invalid_json_raises_value_error(self) -> None:
         with pytest.raises(ValueError, match="JSON-encoded array of strings"):
-            _decode_scrub_paths("not json")
+            decode_json_string_array("not json", "scrub_paths")
 
     def test_non_array_json_raises_value_error(self) -> None:
         with pytest.raises(ValueError, match="must encode an array"):
-            _decode_scrub_paths('{"a": 1}')
+            decode_json_string_array('{"a": 1}', "scrub_paths")
 
     def test_array_with_non_string_items_raises_value_error(self) -> None:
         with pytest.raises(ValueError, match="only strings"):
-            _decode_scrub_paths("[1, 2]")
+            decode_json_string_array("[1, 2]", "scrub_paths")
 
 
 class TestHandlePush:

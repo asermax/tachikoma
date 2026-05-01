@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from tachikoma.agent_defaults import AgentDefaults
 from tachikoma.database import Base
+from tachikoma.mcp_utils import decode_json_string_array
 from tachikoma.session_context import SessionContext
 from tachikoma.skills.registry import Skill, SkillRegistry
 from tachikoma.workflows.conditions import ConditionResult
@@ -21,7 +22,6 @@ from tachikoma.workflows.tools import (
     ListActiveWorkflowsArgs,
     StartWorkflowArgs,
     UpdateWorkflowStateArgs,
-    _decode_items,
     _evaluate_and_advance,
     _find_next_pending_step,
     _render_breadcrumb,
@@ -282,32 +282,32 @@ class TestPydanticModels:
 
 
 # ---------------------------------------------------------------------------
-# _decode_items
+# decode_json_string_array (for items parameter)
 # ---------------------------------------------------------------------------
 
 
 class TestDecodeItems:
     def test_valid_json_array_of_strings(self):
-        assert _decode_items('["a.md", "b.md"]') == ["a.md", "b.md"]
+        assert decode_json_string_array('["a.md", "b.md"]', "items") == ["a.md", "b.md"]
 
     def test_empty_array(self):
-        assert _decode_items("[]") == []
+        assert decode_json_string_array("[]", "items") == []
 
     def test_invalid_json_raises(self):
         with pytest.raises(ValueError, match="JSON-encoded array"):
-            _decode_items("not-json")
+            decode_json_string_array("not-json", "items")
 
     def test_non_array_json_raises(self):
         with pytest.raises(ValueError, match="must encode an array"):
-            _decode_items("{}")
+            decode_json_string_array("{}", "items")
 
     def test_non_string_items_raises(self):
         with pytest.raises(ValueError, match="only strings"):
-            _decode_items("[1, 2, 3]")
+            decode_json_string_array("[1, 2, 3]", "items")
 
     def test_mixed_types_raises(self):
         with pytest.raises(ValueError, match="only strings"):
-            _decode_items('["a", 1]')
+            decode_json_string_array('["a", 1]', "items")
 
 
 # ---------------------------------------------------------------------------

@@ -7,6 +7,7 @@ import mcp.types as types
 import pytest
 from pydantic import ValidationError
 
+from tachikoma.mcp_utils import decode_json_string_array
 from tachikoma.tasks import tools as tools_module
 from tachikoma.tasks.errors import TaskRepositoryError
 from tachikoma.tasks.model import ScheduleConfig, TaskDefinition
@@ -17,7 +18,6 @@ from tachikoma.tasks.tools import (
     ListTasksArgs,
     RunTaskNowArgs,
     UpdateTaskArgs,
-    _decode_skills,
     _format_schedule,
     _parse_schedule,
     create_task_tools_server,
@@ -1062,34 +1062,37 @@ class TestRunTaskNow:
 
 
 class TestDecodeSkills:
-    """Tests for _decode_skills helper (DLT-117)."""
+    """Tests for decode_json_string_array helper used by task tools (DLT-117)."""
 
     def test_valid_array(self) -> None:
         """AC: Valid JSON array of strings decoded correctly."""
-        assert _decode_skills('["research", "planning"]') == ["research", "planning"]
+        assert decode_json_string_array('["research", "planning"]', "skills") == [
+            "research",
+            "planning",
+        ]
 
     def test_empty_array(self) -> None:
         """AC: Empty array returns empty list."""
-        assert _decode_skills("[]") == []
+        assert decode_json_string_array("[]", "skills") == []
 
     def test_single_element(self) -> None:
         """AC: Single-element array works."""
-        assert _decode_skills('["research"]') == ["research"]
+        assert decode_json_string_array('["research"]', "skills") == ["research"]
 
     def test_invalid_json_raises_value_error(self) -> None:
         """AC: Invalid JSON raises ValueError."""
         with pytest.raises(ValueError, match="JSON-encoded array"):
-            _decode_skills("not-json")
+            decode_json_string_array("not-json", "skills")
 
     def test_non_array_raises_value_error(self) -> None:
         """AC: Non-array JSON raises ValueError."""
         with pytest.raises(ValueError, match="must encode an array"):
-            _decode_skills('{"key": "value"}')
+            decode_json_string_array('{"key": "value"}', "skills")
 
     def test_non_string_items_raises_value_error(self) -> None:
         """AC: Array with non-string items raises ValueError."""
         with pytest.raises(ValueError, match="only strings"):
-            _decode_skills('["valid", 123]')
+            decode_json_string_array('["valid", 123]', "skills")
 
 
 class TestTaskSkills:
