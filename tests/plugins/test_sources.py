@@ -1,6 +1,5 @@
 """Tests for plugin source models and alias validation.
 
-Tests for Batch 1: Plugin configuration models.
 Covers AC-PSD-3, AC-PSD-4, AC-PSD-5, AC-PSD-6, AC-PSD-10,
 AC-PSD-11, AC-PSD-12, AC-PSD-13.
 """

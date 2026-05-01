@@ -1,4 +1,1 @@
-"""Tests for boundary detection and summary processing.
-
-Detect conversation boundaries via topic analysis.
-"""
+"""Tests for boundary detection and summary processing."""

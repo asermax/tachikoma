@@ -1,9 +1,4 @@
-"""Tests for boundary detection.
-
-Detect conversation boundaries via topic analysis.
-Resume conversation on topic revisit.
-Include last exchange in session resumption candidates.
-"""
+"""Tests for boundary detection."""
 
 from datetime import UTC, datetime
 from pathlib import Path

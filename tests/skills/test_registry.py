@@ -1869,7 +1869,7 @@ class TestNamespacedRegistration:
 
 
 class TestNamespacedDepResolution:
-    """Tests for namespaced dependency resolution ( Step 4.5, S13)."""
+    """Tests for namespaced dependency resolution."""
 
     def _build_skills(self, skills_dir: Path, skills: dict[str, tuple[str, list[str]]]) -> None:
         """Create multiple skills with dependencies."""

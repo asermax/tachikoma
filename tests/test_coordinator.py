@@ -1,8 +1,5 @@
 """Coordinator integration tests.
 
-Core agent architecture.
-Session tracking integration.
-Post-processing pipeline integration.
 Mocks ClaudeSDKClient to test the coordinator's end-to-end behavior.
 """
 
@@ -220,7 +217,7 @@ class TestCoordinatorSendMessage:
         assert options.disallowed_tools == ["AskUserQuestion"]
 
     async def test_forwards_cwd_to_sdk_options(self, mock_sdk) -> None:
-        """AC (R8, ): Coordinator passes cwd to ClaudeAgentOptions."""
+        """AC (R8): Coordinator passes cwd to ClaudeAgentOptions."""
         client, mock_cls = mock_sdk
         client.receive_response.return_value = _mock_messages(
             make_assistant([TextBlock(text="hi")]),

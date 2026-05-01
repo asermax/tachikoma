@@ -3189,7 +3189,7 @@ class TestLoopValidationGates:
 
     @pytest.mark.asyncio
     async def test_items_only_allowed_on_start_action(self, repository):
-        """ (gate 3 hardening): items must not accompany non-start actions."""
+        """Gate 3 hardening: items must not accompany non-start actions."""
         state = _make_state(
             step_states={"01-plan": "started", "02-execute": "pending", "03-review": "pending"},
         )

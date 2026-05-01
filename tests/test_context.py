@@ -1,8 +1,4 @@
-"""Core context module tests.
-
-Load foundational context for personality and user knowledge.
-Persist session context to database.
-"""
+"""Core context module tests."""
 
 from pathlib import Path
 

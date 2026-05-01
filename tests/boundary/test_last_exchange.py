@@ -1,8 +1,4 @@
-"""Tests for LastExchangeProcessor.
-
-Include last exchange in session resumption candidates.
-Filter last exchange to final text response only.
-"""
+"""Tests for LastExchangeProcessor."""
 
 from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock

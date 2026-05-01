@@ -174,7 +174,7 @@ class TestSettingsModel:
         assert settings.agent.model == "opus"
 
     def test_data_path_returns_tachikoma_subfolder(self) -> None:
-        """AC (R1, ): data_path is .tachikoma under workspace path."""
+        """AC (R1): data_path is .tachikoma under workspace path."""
         ws = WorkspaceSettings(path=Path("/workspace"))
 
         assert ws.data_path == Path("/workspace/.tachikoma")
@@ -185,19 +185,19 @@ class TestSettingsModel:
             Settings.model_validate({"workspace": {"path": 123}})
 
     def test_default_logging_level_is_info(self) -> None:
-        """AC (R2, ): logging.level defaults to INFO."""
+        """AC (R2): logging.level defaults to INFO."""
         settings = Settings()
 
         assert settings.logging.level == "INFO"
 
     def test_default_logging_console_is_false(self) -> None:
-        """AC (R2, ): logging.console defaults to False."""
+        """AC (R2): logging.console defaults to False."""
         settings = Settings()
 
         assert settings.logging.console is False
 
     def test_invalid_logging_level_raises_validation_error(self) -> None:
-        """AC (R3, ): Invalid log level produces ValidationError."""
+        """AC (R3): Invalid log level produces ValidationError."""
         with pytest.raises(ValidationError):
             LoggingSettings(level="VERBOSE")
 
@@ -284,7 +284,7 @@ class TestDefaultConfigGeneration:
         assert "allowed_tools" in content
 
     def test_generated_file_contains_logging_section(self, tmp_path: Path) -> None:
-        """AC (R4, ): Generated file contains [logging] section."""
+        """AC (R4): Generated file contains [logging] section."""
         config_path = tmp_path / "config.toml"
         _generate_default_config(config_path)
 
@@ -491,7 +491,7 @@ class TestLoadSettings:
             settings.workspace = WorkspaceSettings(path=Path("/other"))
 
     def test_logging_level_from_config(self, tmp_path: Path) -> None:
-        """AC (R1, ): Logging level loaded from config."""
+        """AC (R1): Logging level loaded from config."""
         config_path = tmp_path / "config.toml"
         config_path.write_text('[logging]\nlevel = "DEBUG"\n')
 
@@ -500,7 +500,7 @@ class TestLoadSettings:
         assert settings.logging.level == "DEBUG"
 
     def test_invalid_logging_level_exits_with_error(self, tmp_path: Path, capsys) -> None:
-        """AC (R3, ): Invalid logging level exits with clear error."""
+        """AC (R3): Invalid logging level exits with clear error."""
         config_path = tmp_path / "config.toml"
         config_path.write_text('[logging]\nlevel = "VERBOSE"\n')
 
@@ -1091,7 +1091,7 @@ class TestBufferSettings:
 
 
 class TestPluginsSettings:
-    """Tests for Settings.plugins field ( , Batch 1).
+    """Tests for Settings.plugins field.
 
     Covers AC-PSD-1, AC-PSD-2, AC-PSD-6, AC-PSD-9, AC-PSD-14.
     """

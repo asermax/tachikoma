@@ -1,7 +1,6 @@
 """Tests for plugin config write-back via SettingsManager.
 
-Tests for Batch 1: TOML write-back helpers.
-Covers add/remove round-trips, comment preservation,
+Covers TOML write-back helpers: add/remove round-trips, comment preservation,
 KeyError for unknown aliases, and round-trip determinism.
 """
 

@@ -1,9 +1,4 @@
-"""Tests for skills bootstrap hook.
-
-Skill system foundation and sub-agent delegation.
-Multi-source registry and provider injection.
-Hot-reload skills at runtime (registry in extras).
-"""
+"""Tests for skills bootstrap hook."""
 
 from pathlib import Path
 from unittest.mock import patch

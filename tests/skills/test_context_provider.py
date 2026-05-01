@@ -1,10 +1,4 @@
-"""Tests for skills context provider.
-
-Skill detection and context injection.
-Registry injection via constructor.
-Registry injected via constructor.
-Per-message evaluation with metadata-based filtering.
-"""
+"""Tests for skills context provider."""
 
 from pathlib import Path
 
