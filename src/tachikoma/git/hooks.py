@@ -124,7 +124,7 @@ async def _sync_workspace(workspace_path: Path, settings) -> None:
         # Build agent defaults following the same pattern as __main__.py
         agent_defaults = agent_defaults_from_settings(settings)
 
-        result, _changed_files = await smart_pull(workspace_path, "origin", "HEAD", agent_defaults)
+        result, _ = await smart_pull(workspace_path, "origin", "HEAD", agent_defaults)
 
         # Log result
         if result == SYNC_RESULT["DIRTY_SKIPPED"]:
