@@ -108,7 +108,7 @@ TaskInstance (frozen dataclass)
 ├── started_at: datetime | None      (when execution began)
 ├── completed_at: datetime | None    (when execution finished)
 ├── result: str | None               (completion/failure summary)
-├── sdk_session_id: str | None       (SDK session to resume when pausing; set on needs_input)
+├── sdk_session_id: str | None       (SDK session to resume when pausing; set on await_response)
 ├── user_response: str | None        (pending reply from main agent; consumed atomically on resume)
 ├── updated_at: datetime | None      (auto-stamped via DES-009; anchors the wait_timeout sweep)
 └── created_at: datetime             (creation timestamp)
@@ -166,14 +166,14 @@ stateDiagram-v2
     pending --> running: execution starts
     running --> completed: evaluator marks done
     running --> failed: stuck/error/max iterations
-    running --> waiting: evaluator returns needs_input
+    running --> waiting: agent calls send_notification with await_response=true
     waiting --> running: user_response set + runner tick picks up
     waiting --> failed: wait_timeout expired
     completed --> [*]
     failed --> [*]
 ```
 
-Background tasks can cycle through `waiting` multiple times (each `needs_input` pause stores the latest `sdk_session_id`). The `waiting` state is only reachable for background tasks — session tasks run inside the main conversation and don't use the evaluator loop.
+Background tasks can cycle through `waiting` multiple times (each `await_response` pause stores the latest `sdk_session_id`). The `waiting` state is only reachable for background tasks — session tasks run inside the main conversation and don't use the evaluator loop.
 
 ## Data Flow
 

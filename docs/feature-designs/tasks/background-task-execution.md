@@ -54,8 +54,8 @@ Two components work together: the `BackgroundTaskRunner` (async loop picking up 
 
 | Layer/Component | Responsibility | Key Decisions |
 |-----------------|----------------|---------------|
-| `src/tachikoma/tasks/executor.py` | `background_task_runner()` — async loop picking up pending background instances; `BackgroundTaskExecutor` — manages single task's SDK session lifecycle with evaluator loop; injects current date/time in configured timezone into system prompt; registers notification MCP server per-execution; calls `dispatch_notification()` for automatic failure notifications; creates `StderrAccumulator` per execution and passes to `ClaudeAgentOptions(stderr=...)` — on failure, the accumulated stderr is included in the error log entry | Coordinator-like SDK client management; `asyncio.Semaphore` for concurrency; datetime injection via `get_timezone(settings)` + `datetime.now(tz)` prepended to `BACKGROUND_TASK_SYSTEM_PROMPT`; full `PreProcessingPipeline` (memory, projects, skills); separate `PostProcessingPipeline` with `EpisodicProcessor` (main phase) + `ProjectsProcessor` (pre_finalize phase) + `GitProcessor` (finalize phase); notification MCP server via DES-006 factory; shares the main agent's destructive-git deny hook, git-tools MCP server (see [workspace-version-tracking design](../../agent/workspace-version-tracking.md)), task-tools MCP server (same server the coordinator uses, injected via `extra_mcp_servers` so background agents can schedule follow-up work), and workflow-tools MCP server (see [workflow state machine spec](../../feature-specs/workflows/workflow-state-machine.md), injected via `extra_mcp_servers` so background agents can start, advance, and complete workflows during autonomous execution); pinned skills from the task definition are passed to the per-message pipeline via `IncomingMessage(text=prompt, pinned_skills=pinned_skills)` |
-| `src/tachikoma/notifications.py` | `Notification(BaseEvent[None])` — generic event type carrying the wrapped prompt, severity, and a `priority: Priority` field; `build_notification_prompt()` — template builder with source, timestamp, content; `dispatch_notification()` — shared dispatch (accepts `priority`, defaults to Normal for agent-driven, Urgent for failures); `create_notification_server()` — MCP tool factory (DES-006) producing `send_notification` tool with an optional `priority` argument (default Normal) | Standalone module outside tasks package for reusability; single dispatch path ensures consistent formatting; per-execution MCP server scopes tool to background sessions only; priority flows through the tool → `dispatch_notification()` → `Notification` event → priority buffer |
+| `src/tachikoma/tasks/executor.py` | `background_task_runner()` — async loop picking up pending background instances; `BackgroundTaskExecutor` — manages single task's SDK session lifecycle with evaluator loop; injects current date/time in configured timezone into system prompt; registers notification MCP server per-execution (passing `NotificationCycleState`); checks `NotificationCycleState.await_response_requested` after each `receive_response()` to detect `await_response` without calling the evaluator; calls `dispatch_notification()` for automatic failure notifications; creates `StderrAccumulator` per execution and passes to `ClaudeAgentOptions(stderr=...)` — on failure, the accumulated stderr is included in the error log entry | Coordinator-like SDK client management; `asyncio.Semaphore` for concurrency; datetime injection via `get_timezone(settings)` + `datetime.now(tz)` prepended to `BACKGROUND_TASK_SYSTEM_PROMPT`; full `PreProcessingPipeline` (memory, projects, skills); separate `PostProcessingPipeline` with `EpisodicProcessor` (main phase) + `ProjectsProcessor` (pre_finalize phase) + `GitProcessor` (finalize phase); notification MCP server via DES-006 factory with `NotificationCycleState` for `await_response` detection; evaluator loop with three statuses only (`stuck`, `complete`, `continue`); shares the main agent's destructive-git deny hook, git-tools MCP server (see [workspace-version-tracking design](../../agent/workspace-version-tracking.md)), task-tools MCP server (same server the coordinator uses, injected via `extra_mcp_servers` so background agents can schedule follow-up work), and workflow-tools MCP server (see [workflow state machine spec](../../feature-specs/workflows/workflow-state-machine.md), injected via `extra_mcp_servers` so background agents can start, advance, and complete workflows during autonomous execution); pinned skills from the task definition are passed to the per-message pipeline via `IncomingMessage(text=prompt, pinned_skills=pinned_skills)` |
+| `src/tachikoma/notifications.py` | `Notification(BaseEvent[None])` — generic event type carrying the wrapped prompt, severity, and a `priority: Priority` field; `NotificationCycleState` — mutable shared state object tracking whether `await_response` was requested during an evaluator loop iteration (created per-execution, reset per-iteration); `build_notification_prompt()` — template builder with source, timestamp, content; `dispatch_notification()` — shared dispatch (accepts `priority`, defaults to Normal for agent-driven, Urgent for failures); `create_notification_server()` — MCP tool factory (DES-006) producing `send_notification` tool with an optional `priority` argument (default Normal) and an `await_response` argument (default False) | Standalone module outside tasks package for reusability; single dispatch path ensures consistent formatting; per-execution MCP server scopes tool to background sessions only; `NotificationCycleState` is passed to `create_notification_server` and shared between the notification handler (sets flag) and the executor (reads flag); when `await_response=True`, the handler forces priority to Urgent, sets `response_instance_id`, and signals the executor via `cycle_state`; priority flows through the tool → `dispatch_notification()` → `Notification` event → priority buffer |
 
 ### Cross-Layer Contracts
 
@@ -82,22 +82,23 @@ sequenceDiagram
         Exec->>SDK: query(task.prompt)
         loop until complete/failed/max_iterations
             SDK-->>Exec: agent response
-            Exec->>Eval: assess(response, task_definition)
-            alt complete
-                Exec->>Repo: mark completed
-                Note over Exec: Agent may have called send_notification during execution
-            else needs_input
-                Note over Exec: Agent asked a clarifying question
+            Note over Exec: Check NotificationCycleState first
+            alt await_response_requested
                 Exec->>Repo: update_instance(status="waiting", sdk_session_id=...)
-                Exec->>Notif: dispatch_notification(..., response_instance_id=instance.id, priority=Urgent)
-                Notif->>Bus: dispatch(respondable Notification)
-                Note over Exec: Returns — semaphore slot released
-            else stuck/failed
-                Exec->>Repo: mark failed
-                Exec->>Notif: dispatch_notification(bus, source, error_msg, "error", instance_id, priority=Urgent)
-                Notif->>Bus: dispatch(Notification(prompt, severity="error", priority=Urgent))
-            else continue
-                Exec->>SDK: query(evaluator_feedback) [resume]
+                Note over Exec: Agent called send_notification(await_response=true)
+                Note over Exec: Evaluator NOT called — returns, semaphore released
+            else
+                Exec->>Eval: assess(response, task_definition)
+                alt complete
+                    Exec->>Repo: mark completed
+                    Note over Exec: Agent may have called send_notification during execution
+                else stuck/failed
+                    Exec->>Repo: mark failed
+                    Exec->>Notif: dispatch_notification(bus, source, error_msg, "error", instance_id, priority=Urgent)
+                    Notif->>Bus: dispatch(Notification(prompt, severity="error", priority=Urgent))
+                else continue
+                    Exec->>SDK: query(evaluator_feedback) [resume]
+                end
             end
         end
     end
@@ -141,21 +142,21 @@ sequenceDiagram
     participant Repo as TaskRepository
     participant Exec as BackgroundTaskExecutor
     participant SDK as ClaudeSDKClient
-    participant Eval as Evaluator
+    participant CycleState as NotificationCycleState
     participant Notif as tachikoma.notifications
     participant Bus as bubus.EventBus
     participant MainAgent as Main conversation agent
     participant RespondTool as respond_to_task (task-tools)
 
     rect rgba(255, 180, 50, 0.15)
-        Note over Exec,Eval: Pause
-        SDK-->>Exec: agent response with clarifying question
-        Exec->>Eval: assess(response)
-        Eval-->>Exec: needs_input (with rationale)
+        Note over Exec,CycleState: Pause (await_response path)
+        Exec->>CycleState: reset() before receive_response()
+        SDK-->>Exec: agent response (called send_notification with await_response=true)
+        Note over CycleState: await_response_requested = true
         Exec->>Repo: update_instance(status="waiting", sdk_session_id=<latest>)
         Exec->>Notif: dispatch_notification(..., response_instance_id=instance.id, priority=Urgent)
         Notif->>Bus: dispatch(Notification(respondable, Urgent))
-        Note over Exec: return — semaphore released
+        Note over Exec: Evaluator NOT called — return, semaphore released
     end
 
     Note over MainAgent: User replies in main conversation
@@ -171,7 +172,7 @@ sequenceDiagram
         Exec->>Repo: update_instance(status="running", user_response=None) [atomic]
         Exec->>SDK: ClaudeSDKClient(resume=instance.sdk_session_id)
         Exec->>SDK: query(consumed user_response)
-        Note over Exec,Eval: Re-enters evaluator loop; may pause again
+        Note over Exec,CycleState: Re-enters evaluator loop; may pause again via await_response
     end
 ```
 
@@ -179,7 +180,7 @@ sequenceDiagram
 - Runner ↔ Repository: queries ready instances (pending + waiting-with-response), marks as running, sweeps expired waiters
 - Executor ↔ SDK: per-task `ClaudeSDKClient` with `resume` for both in-tick multi-turn continuity and cross-tick pause/resume (same `sdk_session_id`)
 - Executor ↔ Evaluator: lightweight model assessment after each agent response
-- Executor ↔ Notification module: registers notification MCP server per-execution (agent can pass `priority`; default Normal), calls `dispatch_notification()` for failure notifications with Urgent priority and for pause notifications with `response_instance_id=instance.id` (respondable urgent)
+- Executor ↔ Notification module: registers notification MCP server per-execution (agent can pass `priority`; default Normal), creates `NotificationCycleState` per-execution and passes it to the notification server; calls `dispatch_notification()` for failure notifications with Urgent priority; when `await_response=True`, the handler sets `cycle_state.await_response_requested = True` and dispatches a respondable urgent notification with `response_instance_id=instance.id` (priority forced to Urgent)
 - Executor ↔ `respond_to_task` tool (task-management): the tool persists `user_response` on the instance; the runner picks up the next tick via the ready-instance union query — no direct coupling
 - Executor ↔ Pre-processing pipeline: full `PreProcessingPipeline` with memory, projects, skills providers; extracts MCP servers and agents into SDK options; pinned skills from the task definition are passed to the per-message pipeline via the `IncomingMessage` envelope so the skills provider loads them unconditionally
 - Executor ↔ Task tools: the task-tools MCP server is injected via `extra_mcp_servers` (wired in `__main__.py` alongside `git-tools` and `workflow-tools`) and merged into SDK options without shadowing per-invocation servers — enabling agents to call `create_task`, `list_tasks`, `get_task`, `update_task`, and `delete_task` during execution
@@ -223,21 +224,23 @@ sequenceDiagram
       system_prompt prefixed with current date/time in configured timezone)
    e. Enter ClaudeSDKClient context, call client.query(first_message)
    f. Evaluator loop (bounded by max_iterations):
-      i.   Consume agent response via receive_response() (DES-005), capturing the latest
+      i.   Reset NotificationCycleState (clear previous iteration's flag)
+      ii.  Consume agent response via receive_response() (DES-005), capturing the latest
            ResultMessage.sdk_session_id as sdk_session_id (seeded on resume with
-           instance.sdk_session_id so needs_input has a valid resume target even if
+           instance.sdk_session_id so await_response has a valid resume target even if
            the run errors before a ResultMessage arrives)
-      ii.  Evaluator assesses via ordered checklist: stuck / complete / needs_input / continue
-      iii. complete: break loop (agent may have called send_notification already)
-      iv.  stuck / max iterations: mark failed, dispatch urgent failure notification, break
-      v.   needs_input:
+      iii. If notif_state.await_response_requested:
            - If sdk_session_id is None: fail (cannot pause without session), break
            - update_instance(status="waiting", sdk_session_id=<captured>) — updated_at
              auto-stamps, anchoring the wait_timeout sweep
-           - dispatch_notification(..., response_instance_id=instance.id, priority=Urgent)
-             — respondable urgent notification with the agent's rationale
+           - The respondable urgent notification was already dispatched by the handler
+             during receive_response() (with response_instance_id=instance.id)
            - return (semaphore slot released; task will resume when user_response is set)
-      vi.  continue: client.query(evaluator_rationale) via the open session
+           — evaluator is NOT called
+      iv.  Evaluator assesses via ordered checklist: stuck / complete / continue
+      v.   complete: break loop (agent may have called send_notification already)
+      vi.  stuck / max iterations: mark failed, dispatch urgent failure notification, break
+      vii. continue: client.query(evaluator_rationale) via the open session
    g. On completion: run adapted post-processing pipeline on the executor's session
    h. On failure: dispatch_notification(bus, source, error_msg, "error", instance_id,
       priority=Urgent) — non-respondable (response_instance_id omitted)
@@ -248,7 +251,7 @@ sequenceDiagram
 
 The notification system uses a standalone `tachikoma.notifications` module (not inside the tasks package) with a single shared dispatch path for both agent-driven and automatic failure notifications, and delivery is routed through the priority buffer (see [delivery/priority-buffer](../../feature-designs/delivery/priority-buffer.md)).
 
-**Agent-driven notifications**: The executor registers a notification MCP server per-execution via `create_notification_server(bus, source, source_id)`, following the DES-006 factory pattern. The resulting `send_notification` tool is available only within that background task agent's session. The tool accepts a `message` and an optional `priority` (Urgent/Normal/Low, default Normal). The handler validates the message is non-empty, calls `dispatch_notification()` which builds a prompt via `build_notification_prompt()` (source, timestamp, content) and dispatches a `Notification` event carrying the priority field on the bus. The background task system prompt documents the three priority levels (Urgent for time-sensitive results, Normal for standard completion, Low for informational updates) so agents can choose appropriately.
+**Agent-driven notifications**: The executor registers a notification MCP server per-execution via `create_notification_server(bus, source, source_id, cycle_state=notif_state)`, following the DES-006 factory pattern. The resulting `send_notification` tool is available only within that background task agent's session. The tool accepts a `message`, an optional `priority` (Urgent/Normal/Low, default Normal), and an optional `await_response` (bool, default False). When `await_response=False` (default), the handler validates the message is non-empty, calls `dispatch_notification()` which builds a prompt via `build_notification_prompt()` (source, timestamp, content) and dispatches a `Notification` event carrying the priority field on the bus. When `await_response=True`, the handler sets `cycle_state.await_response_requested = True`, forces priority to Urgent, sets `response_instance_id=source_id`, and dispatches a respondable urgent notification — the executor will transition the task to `waiting` after the agent's response completes (without calling the evaluator). The background task system prompt documents the three priority levels (Urgent for time-sensitive results, Normal for standard completion, Low for informational updates) and explains that `await_response=true` is the only way to request user input.
 
 **Automatic failure notifications**: When the executor detects failure (stuck, error, max iterations), it calls `dispatch_notification()` directly with the error description, severity "error", and priority Urgent. This uses the same prompt template and dispatch path as agent-driven notifications, ensuring consistent formatting.
 
@@ -279,8 +282,8 @@ The notification system uses a standalone `tachikoma.notifications` module (not 
 
 ### Classifier-tier evaluator model
 
-**Choice**: Use `model=agent_defaults.classifier_model` (default `"haiku"`) for the evaluator assessment with a structured completion-signal checklist (not output quality judgment). The evaluator fits the "classifier" role in the DES-004 taxonomy — it applies a clear ordered checklist to map agent output to one of a small discrete set (`blocking_error | complete | needs_input | continue`).
-**Why**: The evaluator assesses workflow state via an ordered checklist, not output quality. A lightweight model is sufficient for this structured assessment and reduces cost/latency per evaluation turn. The checklist explicitly instructs the evaluator not to judge output correctness — only whether the agent finished its workflow steps.
+**Choice**: Use `model=agent_defaults.classifier_model` (default `"haiku"`) for the evaluator assessment with a structured completion-signal checklist (not output quality judgment). The evaluator fits the "classifier" role in the DES-004 taxonomy — it applies a clear ordered checklist to map agent output to one of a small discrete set (`blocking_error | complete | continue`). The evaluator does NOT classify `needs_input` — that is handled exclusively by `send_notification` with `await_response=true`.
+**Why**: The evaluator assesses workflow state via an ordered checklist, not output quality. A lightweight model is sufficient for this structured assessment and reduces cost/latency per evaluation turn. The checklist explicitly instructs the evaluator not to judge output correctness — only whether the agent finished its workflow steps. Removing `needs_input` from the evaluator eliminates fragile intent inference from free text and prevents duplicate notifications when the evaluator misclassifies.
 
 **Consequences**:
 - Pro: Low cost per evaluation (runs after every agent turn)
@@ -316,8 +319,8 @@ The notification system uses a standalone `tachikoma.notifications` module (not 
 
 ### Pause/resume via waiting state (not force-continue)
 
-**Choice**: When the evaluator returns `needs_input`, suspend the task (status `waiting`, store the latest `sdk_session_id`), dispatch a respondable urgent notification carrying the agent's question, and release. On the next runner tick, if `user_response` is present, resume the same SDK session by passing `resume=instance.sdk_session_id` to `ClaudeAgentOptions` and sending the consumed response as the next query.
-**Why**: Previously the executor injected a "proceed without user" message, forcing the agent to guess when it had explicitly asked. For multi-step background work (research with disambiguation, destructive actions needing confirmation), guessing was wrong. Persisting the session id and the user's response on the row — rather than keeping an agent process alive — lets the pause survive process restarts and span arbitrary idle time without holding resources.
+**Choice**: When the agent calls `send_notification` with `await_response=true`, the handler dispatches a respondable urgent notification and signals the executor via `NotificationCycleState.await_response_requested`. The executor transitions the task to `waiting` (storing the latest `sdk_session_id`) without calling the evaluator, and returns — releasing the semaphore slot. On the next runner tick, if `user_response` is present, resume the same SDK session by passing `resume=instance.sdk_session_id` to `ClaudeAgentOptions` and sending the consumed response as the next query. `await_response=true` is the **only** way to enter the `waiting` state — the evaluator does not produce a `needs_input` classification.
+**Why**: Previously the evaluator inferred `needs_input` from free text, which was fragile and frequently misclassified, producing duplicate notifications. Making `await_response` an explicit flag on the tool eliminates intent inference entirely — the agent deliberately opts into waiting. Persisting the session id and the user's response on the row — rather than keeping an agent process alive — lets the pause survive process restarts and span arbitrary idle time without holding resources.
 **Alternatives Considered**:
 - Keep the agent process alive waiting: requires holding a semaphore slot and an open SDK client for hours; does not survive restarts; prevents the main conversation from deferring the response
 - Inject "proceed without user" (previous behavior): forces wrong guesses for any question the agent can't answer from context
@@ -362,8 +365,8 @@ The notification system uses a standalone `tachikoma.notifications` module (not 
 
 ### Respondability dual-gate via `response_instance_id` + status check
 
-**Choice**: A notification is respondable when `Notification.response_instance_id` is set; the prompt body then includes explicit `respond_to_task(task_instance_id=..., response=...)` usage instructions. The `respond_to_task` tool itself enforces a server-side check that the target instance is in `waiting` status with no pending `user_response` — only then does it persist the response.
-**Why**: The prompt instructions guide the main agent toward the right action, but they are only a suggestion — the agent could still hallucinate a call, or be tricked into calling the tool by injected content. The tool-level status check is the authoritative gate: a call against a `running`, `completed`, `failed`, or already-responded instance returns an error without touching state. Both layers are necessary — the prompt makes the success path discoverable, the status check makes the failure paths safe.
+**Choice**: A notification is respondable when `Notification.response_instance_id` is set; the prompt body then includes explicit `respond_to_task(task_instance_id=..., response=...)` usage instructions. `response_instance_id` is set only when the agent calls `send_notification` with `await_response=true` — the handler forces priority to Urgent and sets `response_instance_id=instance.id`. The `respond_to_task` tool itself enforces a server-side check that the target instance is in `waiting` status with no pending `user_response` — only then does it persist the response.
+**Why**: The prompt instructions guide the main agent toward the right action, but they are only a suggestion — the agent could still hallucinate a call, or be tricked into calling the tool by injected content. The tool-level status check is the authoritative gate: a call against a `running`, `completed`, `failed`, or already-responded instance returns an error without touching state. Both layers are necessary — the prompt makes the success path discoverable, the status check makes the failure paths safe. The `await_response` flag is the sole trigger for respondable notifications — the evaluator no longer infers input needs.
 
 **Consequences**:
 - Pro: Non-respondable notifications (success/failure) cannot be accidentally responded to — the tool rejects them
@@ -396,17 +399,17 @@ The notification system uses a standalone `tachikoma.notifications` module (not 
 **When**: The evaluator detects stuck behavior
 **Then**: The instance is marked failed and `dispatch_notification()` is called with severity "error" and priority Urgent, dispatching a `Notification` event via `tachikoma.notifications`. The priority buffer places it at the front of the queue (Urgent tier) for quick delivery.
 
-### Scenario: Agent asks clarifying question (pause)
+### Scenario: Agent requests user input via await_response (pause)
 
-**Given**: A background task agent encounters ambiguity and asks a clarifying question
-**When**: The evaluator assesses the response and returns `needs_input`
-**Then**: The executor marks the instance `waiting` with the latest `sdk_session_id`, dispatches a respondable urgent `Notification` carrying the agent's rationale and `respond_to_task` usage hints, and returns — releasing the semaphore slot. The task's `updated_at` is auto-stamped (DES-009), anchoring the `wait_timeout` sweep.
+**Given**: A background task agent encounters ambiguity and needs user input
+**When**: The agent calls `send_notification(await_response=true, message="...")`
+**Then**: The notification handler sets `cycle_state.await_response_requested = True`, dispatches a respondable urgent `Notification` (priority forced to Urgent, `response_instance_id=instance.id`) carrying the agent's question and `respond_to_task` usage hints. After the agent's response completes, the executor detects `await_response_requested`, marks the instance `waiting` with the latest `sdk_session_id` (the evaluator is NOT called), and returns — releasing the semaphore slot. The task's `updated_at` is auto-stamped (DES-009), anchoring the `wait_timeout` sweep.
 
 ### Scenario: User responds — task resumes
 
 **Given**: A waiting task with `sdk_session_id` stored
 **When**: The main agent calls `respond_to_task(task_instance_id, response)` and persists `user_response`
-**Then**: On the next runner tick, `get_ready_background_instances()` returns the instance. The executor atomically transitions it to `running` (clearing `user_response` in the same UPDATE), constructs `ClaudeSDKClient(resume=sdk_session_id)`, and sends the consumed response as the next query. The evaluator loop re-enters; a second pause is supported if the agent asks again.
+**Then**: On the next runner tick, `get_ready_background_instances()` returns the instance. The executor atomically transitions it to `running` (clearing `user_response` in the same UPDATE), constructs `ClaudeSDKClient(resume=sdk_session_id)`, and sends the consumed response as the next query. The evaluator loop re-enters; a second pause is supported if the agent calls `send_notification(await_response=true)` again.
 
 ### Scenario: Wait timeout expires
 
@@ -435,10 +438,10 @@ The notification system uses a standalone `tachikoma.notifications` module (not 
 ### Scenario: Running task transitions to waiting frees a slot
 
 **Given**: Three running background tasks at the concurrency limit and a fourth pending instance
-**When**: One of the running tasks pauses (evaluator returns `needs_input`)
+**When**: One of the running tasks pauses (agent calls `send_notification` with `await_response=true`)
 **Then**: The executor returns and releases its semaphore slot on the way out. The next runner tick acquires the slot for the fourth pending instance while the waiting task stays out of the running pool.
 
 ## Notes
 
-- The evaluator uses `stderr_aware_query()` (not `ClaudeSDKClient`) for the assessment — it's a single-turn evaluation with no conversation continuity needed. The evaluator prompt uses an ordered checklist that assesses workflow completion signals, not output quality. Four statuses: `stuck`, `complete`, `needs_input`, `continue`
+- The evaluator uses `stderr_aware_query()` (not `ClaudeSDKClient`) for the assessment — it's a single-turn evaluation with no conversation continuity needed. The evaluator prompt uses an ordered checklist that assesses workflow completion signals, not output quality. Three statuses: `stuck`, `complete`, `continue`. The evaluator does NOT classify `needs_input` — that is handled exclusively by `send_notification` with `await_response=true`
 - Notifications (agent-driven and automatic failure) are delivered via the priority buffer — channels subscribe only to `BufferedDelivery` (see [delivery/priority-buffer](../../feature-designs/delivery/priority-buffer.md)). Message splitting and formatting still apply when the channel routes the buffered prompt through the coordinator

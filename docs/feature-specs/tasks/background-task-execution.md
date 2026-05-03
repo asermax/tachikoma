@@ -17,9 +17,9 @@ Background tasks execute in isolated parallel sessions without interrupting the 
 |----|-------------|
 | R0 | Execute pending background task instances in fresh isolated SDK sessions |
 | R1 | Adapted pipeline: full pre-processing (memory, projects, skills) and selective post-processing — episodic memory extraction, project submodule commit/push, and git commit (no facts, preferences, or core context extraction). Pinned skills from the task definition are loaded unconditionally before LLM-based classification |
-| R2 | Evaluator loop that assesses each agent response for completion using a lightweight model |
+| R2 | Evaluator loop that assesses each agent response for completion using a lightweight model (three statuses: `complete`, `stuck`, `continue` — no `needs_input` classification) |
 | R3 | Max iterations limit (configurable, default 10) — forces completion assessment and marks task as failed if not done |
-| R4 | Agent-driven success notifications via `send_notification` MCP tool during background task execution; automatic failure notifications dispatched by the executor. Notifications carry a priority field (Urgent/Normal/Low); `send_notification` accepts an optional priority (default Normal) and automatic failure notifications use Urgent. Delivery to the user is handled by the priority buffer (see [delivery/priority-buffer](../delivery/priority-buffer.md)) |
+| R4 | Agent-driven notifications via `send_notification` MCP tool during background task execution; automatic failure notifications dispatched by the executor. `send_notification` accepts an `await_response` flag (default `false`) — when `true`, it dispatches a respondable urgent notification and transitions the task to `waiting` (the only way to enter the waiting state). Notifications carry a priority field (Urgent/Normal/Low); `send_notification` accepts an optional priority (default Normal) and automatic failure notifications use Urgent. When `await_response=true`, priority is forced to Urgent regardless of the agent-specified value. Delivery to the user is handled by the priority buffer (see [delivery/priority-buffer](../delivery/priority-buffer.md)) |
 | R5 | Concurrency gating via configurable limit (default 3); excess instances remain pending until a slot opens |
 | R6 | Stuck/looping agent detection — evaluator detects unproductive iterations and marks the task as failed |
 | R7 | Background task agents share the main agent's restricted git surface: a destructive-git deny hook blocks `git push`, `git reset`, `git checkout .`, `git restore .`, `git clean`, and mutating `git remote` subcommands; `push` and `sync` MCP tools are available for on-demand push/sync operations |
@@ -41,12 +41,11 @@ Background tasks run in fresh SDK sessions separate from the main conversation, 
 
 ### Evaluator Loop (R2, R3, R6)
 
-After each agent response, a lightweight model assesses the agent's workflow state using an ordered structured checklist. The evaluator judges whether the agent finished its workflow — not whether the output content is correct or high-quality. Four statuses are possible: `complete` (workflow finished), `needs_input` (agent asked a clarifying question), `stuck` (blocking error), and `continue` (mid-workflow).
+After each agent response, a lightweight model assesses the agent's workflow state using an ordered structured checklist. The evaluator judges whether the agent finished its workflow — not whether the output content is correct or high-quality. Three statuses are possible: `complete` (workflow finished), `stuck` (blocking error), and `continue` (mid-workflow). The evaluator does NOT classify user input needs — that is handled exclusively by `send_notification` with `await_response=true` (see Notification behavior below).
 
 **Acceptance Criteria**:
-- Given a background task agent produces a response, then the evaluator assesses workflow completion using an ordered checklist: blocking error → complete → needs_input → continue
+- Given a background task agent produces a response, then the evaluator assesses workflow completion using an ordered checklist: blocking error → complete → continue
 - Given the evaluator determines the agent completed its workflow (announced completion, summarized results, or called `send_notification`), then the task instance is marked as `completed` — regardless of output quality
-- Given the evaluator detects the agent asked a clarifying question, then the executor transitions the instance to `waiting`, persists the current `sdk_session_id` for resume, and dispatches a respondable urgent `Notification` carrying the agent's question — on the next runner tick, if `user_response` is present, the task resumes in the same SDK session with the response as its next turn (see [task-management](../../feature-designs/tasks/task-management.md))
 - Given the evaluator detects the agent is stuck or looping, then the task instance is marked as `failed` and a notification is dispatched
 - Given the evaluator determines the agent is mid-workflow, then the agent receives feedback and continues working (next iteration)
 - Given the background task reaches the maximum iteration limit, then the task is marked as failed if not done
@@ -54,6 +53,8 @@ After each agent response, a lightweight model assesses the agent's workflow sta
 ### Notification (R4)
 
 Background task agents can send notifications to the user during execution via the `send_notification` MCP tool, which dispatches a generic `Notification` event (from `tachikoma.notifications`). The tool is only available during background task execution — the executor registers a notification MCP server per-execution using the DES-006 factory pattern. Failure notifications are dispatched automatically by the executor using the same shared `dispatch_notification()` function, ensuring consistent prompt formatting for both agent-driven and automatic notifications. Notifications carry a `priority` field (Urgent/Normal/Low); agents can pass a priority to `send_notification`, and automatic failure notifications default to Urgent. Channels do not handle `Notification` directly — the priority buffer subscribes to the event, enqueues each notification, and delivers it to the user as a new message turn when the conversation is idle (see [delivery/priority-buffer](../delivery/priority-buffer.md)).
+
+`send_notification` accepts an `await_response` flag (default `false`). When `true`, it is the **only** way to enter the `waiting` state — the evaluator does NOT classify input needs. The executor uses a `NotificationCycleState` (mutable shared state between the notification handler and executor) to detect that `await_response` was requested during the agent's response, then transitions the task to `waiting` without calling the evaluator. When `await_response=True`: priority is forced to Urgent (regardless of any agent-specified priority), `response_instance_id` is set to the task instance ID, execution pauses, and the user's response will resume the task in the same SDK session on the next runner tick.
 
 **Acceptance Criteria**:
 - Given a background task instance is being executed, then the `send_notification` MCP tool server is registered in the SDK client's MCP servers
@@ -66,6 +67,9 @@ Background task agents can send notifications to the user during execution via t
 - Given the `send_notification` MCP tool, then it is only available within a background task agent session — it is not exposed to the main conversation
 - Given the background task system prompt, then it documents the available priority levels (Urgent for time-sensitive results, Normal for standard completion results, Low for informational updates) and the default (Normal)
 - Given a `Notification` event is dispatched on the bus, then the priority buffer enqueues it for idle-gated delivery — no channel subscribes to `Notification` directly
+- Given a background task agent calls `send_notification(await_response=true, message="...")`, then a respondable urgent `Notification` is dispatched (with `response_instance_id=instance_id`, priority forced to Urgent), the task transitions to `waiting` with the current `sdk_session_id` preserved, and the evaluator is NOT called
+- Given `await_response=False` (default), then the notification is dispatched as a fire-and-forget info notification with the agent-specified priority (default Normal) — behavior unchanged
+- Given a `waiting` task created via `await_response=True`, when the `wait_timeout` expires, then the expired waiter sweep marks it failed with a non-respondable urgent notification (existing timeout behavior applies)
 
 ### Task Scheduling (R8)
 
