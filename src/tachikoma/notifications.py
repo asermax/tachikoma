@@ -5,6 +5,7 @@ and an MCP tool server factory for agent-driven notifications during
 background task execution.
 """
 
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Literal
 
@@ -130,9 +131,24 @@ async def dispatch_notification(
 # ---------------------------------------------------------------------------
 
 
+@dataclass
+class NotificationCycleState:
+    """Tracks whether await_response was requested during an evaluator loop iteration.
+
+    Created per-execution, reset per-iteration. The notification handler sets the
+    flag during receive_response(); the executor reads it after.
+    """
+
+    await_response_requested: bool = False
+
+    def reset(self) -> None:
+        self.await_response_requested = False
+
+
 class SendNotificationArgs(BaseModel):
     message: str
     priority: Literal["urgent", "normal", "low"] = "normal"
+    await_response: bool = False
 
 
 _PRIORITY_MAP: dict[str, Priority] = {
@@ -148,6 +164,8 @@ async def handle_send_notification(
     source: str,
     source_id: str,
     priority: str = "normal",
+    await_response: bool = False,
+    cycle_state: NotificationCycleState | None = None,
 ) -> dict:
     """Handle the send_notification tool invocation.
 
@@ -160,6 +178,10 @@ async def handle_send_notification(
         source: The notification source identifier.
         source_id: The originating entity ID.
         priority: Delivery priority — "urgent", "normal", or "low".
+        await_response: When true, the notification is respondable and the task
+            will transition to waiting for user input. Priority is forced to Urgent.
+        cycle_state: Optional shared state for the executor to check after the
+            agent's response completes.
 
     Returns:
         MCP tool response dict.
@@ -170,15 +192,28 @@ async def handle_send_notification(
             "content": [{"type": "text", "text": "Message cannot be empty."}],
         }
 
-    resolved_priority = _PRIORITY_MAP.get(priority, Priority.NORMAL)
-    await dispatch_notification(
-        bus,
-        source,
-        message,
-        "info",
-        source_id,
-        priority=resolved_priority,
-    )
+    if await_response:
+        if cycle_state is not None:
+            cycle_state.await_response_requested = True
+        await dispatch_notification(
+            bus,
+            source,
+            message,
+            "info",
+            source_id,
+            priority=Priority.URGENT,
+            response_instance_id=source_id,
+        )
+    else:
+        resolved_priority = _PRIORITY_MAP.get(priority, Priority.NORMAL)
+        await dispatch_notification(
+            bus,
+            source,
+            message,
+            "info",
+            source_id,
+            priority=resolved_priority,
+        )
 
     return {
         "content": [{"type": "text", "text": "Notification sent successfully."}],
@@ -189,6 +224,7 @@ def create_notification_server(
     bus: EventBus,
     source: str,
     source_id: str,
+    cycle_state: NotificationCycleState | None = None,
 ) -> McpSdkServerConfig:
     """Create an MCP server exposing the send_notification tool.
 
@@ -199,6 +235,8 @@ def create_notification_server(
         bus: The EventBus to dispatch Notification events on.
         source: Identifier for the notification source.
         source_id: ID of the originating entity.
+        cycle_state: Optional shared state for the executor to check after the
+            agent's response completes.
 
     Returns:
         McpSdkServerConfig for registration with ClaudeAgentOptions.mcp_servers.
@@ -210,7 +248,10 @@ def create_notification_server(
         "Use this to deliver progress updates or results to the user. "
         "The priority parameter controls delivery urgency: "
         "'urgent' for time-sensitive results, 'normal' for standard results (default), "
-        "'low' for informational updates that can wait.",
+        "'low' for informational updates that can wait. "
+        "Set await_response to true to request user input — this pauses execution "
+        "and the user's response will arrive as the next conversation turn. "
+        "When await_response is true, priority is forced to urgent.",
         SendNotificationArgs.model_json_schema(),
     )
     async def send_notification(args: dict) -> dict:
@@ -221,6 +262,8 @@ def create_notification_server(
             source,
             source_id,
             parsed.priority,
+            await_response=parsed.await_response,
+            cycle_state=cycle_state,
         )
 
     return create_sdk_mcp_server(

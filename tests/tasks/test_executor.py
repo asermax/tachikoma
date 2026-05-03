@@ -12,7 +12,12 @@ from claude_agent_sdk.types import AssistantMessage, ResultMessage, TextBlock
 from tachikoma.agent_defaults import AgentDefaults
 from tachikoma.buffer.priority import Priority
 from tachikoma.config import TaskSettings
-from tachikoma.notifications import Notification, handle_send_notification
+from tachikoma.notifications import (
+    Notification,
+    NotificationCycleState,
+    create_notification_server,
+    handle_send_notification,
+)
 from tachikoma.tasks.executor import (
     BACKGROUND_TASK_SYSTEM_PROMPT,
     BackgroundTaskExecutor,
@@ -550,8 +555,8 @@ class TestBackgroundTaskExecutor:
         assert "failed" in error_events[0].prompt.lower()
 
     @pytest.mark.asyncio
-    async def test_needs_input_transitions_to_waiting(self, repo: TaskRepository) -> None:
-        """AC: Executor transitions to waiting on needs_input."""
+    async def test_await_response_transitions_to_waiting(self, repo: TaskRepository) -> None:
+        """AC: send_notification(await_response=True) transitions to waiting without evaluator."""
         instance = _make_instance(
             "inst-1",
             task_type="background",
@@ -579,6 +584,16 @@ class TestBackgroundTaskExecutor:
             session_registry=_mock_session_registry(),
         )
 
+        # Capture the cycle_state created inside execute() so we can
+        # simulate the handler setting the flag during receive_response.
+        captured_cycle_state: list[NotificationCycleState] = []
+
+        original_create_server = create_notification_server
+
+        def _capturing_create_server(bus, source, source_id, cycle_state=None):
+            captured_cycle_state.append(cycle_state)
+            return original_create_server(bus, source, source_id, cycle_state=cycle_state)
+
         with patch("tachikoma.tasks.executor.ClaudeSDKClient") as mock_client_class:
             mock_client = AsyncMock()
             mock_client.__aenter__ = AsyncMock(return_value=mock_client)
@@ -586,17 +601,35 @@ class TestBackgroundTaskExecutor:
             mock_client_class.return_value = mock_client
 
             mock_client.query = AsyncMock()
-            mock_client.receive_response = _make_sdk_response(
-                text="What format?",
-                session_id="sdk-session-456",
-            )
+
+            async def _stream_then_flag():
+                """Yield SDK response, then simulate handler setting cycle_state."""
+                async for msg in _make_sdk_response(
+                    text="I need more info",
+                    session_id="sdk-session-456",
+                )():
+                    yield msg
+                # Simulate the notification handler setting the flag
+                if captured_cycle_state:
+                    captured_cycle_state[0].await_response_requested = True
+                    await handle_send_notification(
+                        message="What format should I use?",
+                        bus=bus,
+                        source="Background task: Test task",
+                        source_id="inst-1",
+                        await_response=True,
+                    )
+
+            mock_client.receive_response = _stream_then_flag
 
             with patch("tachikoma.sdk_query.stderr_aware_query") as mock_query:
-                mock_query.return_value = _make_eval_response(
-                    '{"status": "needs_input", "rationale": "What format should I use?"}',
-                )
+                # Evaluator should NOT be called
+                mock_query.side_effect = AssertionError("Evaluator should not be called")
 
-                with patch.object(
+                with patch(
+                    "tachikoma.tasks.executor.create_notification_server",
+                    side_effect=_capturing_create_server,
+                ), patch.object(
                     executor,
                     "_run_preprocessing",
                     return_value=_mock_preproc_result(),
@@ -741,10 +774,11 @@ class TestBackgroundTaskSystemPrompt:
         assert "low" in BACKGROUND_TASK_SYSTEM_PROMPT
         assert "priority" in BACKGROUND_TASK_SYSTEM_PROMPT
 
-    def test_mentions_asking_questions_section(self) -> None:
-        """AC: System prompt explains evaluator-mediated communication."""
-        assert "evaluator" in BACKGROUND_TASK_SYSTEM_PROMPT.lower()
-        assert "notification" in BACKGROUND_TASK_SYSTEM_PROMPT.lower()
+    def test_mentions_requesting_user_input_section(self) -> None:
+        """AC: System prompt documents await_response as the only way to request input."""
+        assert "await_response" in BACKGROUND_TASK_SYSTEM_PROMPT
+        assert "send_notification" in BACKGROUND_TASK_SYSTEM_PROMPT.lower()
+        assert "**only** way" in BACKGROUND_TASK_SYSTEM_PROMPT
 
 
 class TestExecutorResumePath:
@@ -865,7 +899,7 @@ class TestExecutorResumePath:
 
     @pytest.mark.asyncio
     async def test_resume_can_re_enter_waiting(self, repo: TaskRepository) -> None:
-        """AC: Resumed task can re-enter waiting on second needs_input."""
+        """AC: Resumed task can re-enter waiting via await_response=True."""
         instance = _make_instance(
             "inst-1",
             task_type="background",
@@ -895,6 +929,14 @@ class TestExecutorResumePath:
             session_registry=_mock_session_registry(),
         )
 
+        captured_cycle_state: list[NotificationCycleState] = []
+
+        original_create_server = create_notification_server
+
+        def _capturing_create_server(bus, source, source_id, cycle_state=None):
+            captured_cycle_state.append(cycle_state)
+            return original_create_server(bus, source, source_id, cycle_state=cycle_state)
+
         with patch("tachikoma.tasks.executor.ClaudeSDKClient") as mock_client_class:
             mock_client = AsyncMock()
             mock_client.__aenter__ = AsyncMock(return_value=mock_client)
@@ -902,17 +944,33 @@ class TestExecutorResumePath:
             mock_client_class.return_value = mock_client
 
             mock_client.query = AsyncMock()
-            mock_client.receive_response = _make_sdk_response(
-                text="Another question?",
-                session_id="sdk-session-789",
-            )
+
+            async def _stream_then_flag():
+                async for msg in _make_sdk_response(
+                    text="Another question?",
+                    session_id="sdk-session-789",
+                )():
+                    yield msg
+                if captured_cycle_state:
+                    captured_cycle_state[0].await_response_requested = True
+                    await handle_send_notification(
+                        message="Another question?",
+                        bus=bus,
+                        source="Background task: Test task",
+                        source_id="inst-1",
+                        await_response=True,
+                    )
+
+            mock_client.receive_response = _stream_then_flag
 
             with patch("tachikoma.sdk_query.stderr_aware_query") as mock_query:
-                mock_query.return_value = _make_eval_response(
-                    '{"status": "needs_input", "rationale": "Another question?"}',
-                )
+                # Evaluator should NOT be called
+                mock_query.side_effect = AssertionError("Evaluator should not be called")
 
-                with patch.object(
+                with patch(
+                    "tachikoma.tasks.executor.create_notification_server",
+                    side_effect=_capturing_create_server,
+                ), patch.object(
                     executor,
                     "_run_preprocessing",
                     return_value=_mock_preproc_result(),

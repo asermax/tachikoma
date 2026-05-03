@@ -33,6 +33,7 @@ from tachikoma.memory.context_provider import MemoryContextProvider
 from tachikoma.memory.episodic import EpisodicProcessor
 from tachikoma.message import IncomingMessage
 from tachikoma.notifications import (
+    NotificationCycleState,
     create_notification_server,
     dispatch_notification,
 )
@@ -162,9 +163,25 @@ You have access to the workflow management tools — `start_workflow`, `update_w
 
 Use `list_active_workflows` to check for already-running workflows, and `get_workflow_state` to recover context if you lose track of a workflow's ID.
 
-## Asking questions
+## Requesting user input
 
-Your messages are not delivered directly to the user — they pass through an evaluator that classifies your output. If you genuinely need user input to proceed, ask your question clearly in plain text. The evaluator will route your question to the user via a notification, and the user's response will arrive as the next conversation turn. You can ask questions multiple times if needed."""  # noqa: E501
+If you need user input to proceed, use `send_notification` with `await_response` set to `true`. This is the **only** way to request input — your messages are not delivered directly to the user.
+
+Example:
+```
+send_notification({
+  message: "Which database should I run the migration against — staging or production?",
+  await_response: true
+})
+```
+
+When `await_response` is true:
+- Your message is delivered to the user as an urgent notification
+- Execution pauses until the user replies
+- The user's response arrives as the next conversation turn
+- Priority is forced to urgent regardless of what you pass
+
+You can request input multiple times during a task if needed. Use this when you have a genuine blocking question — do not use it for questions you can answer from available context."""  # noqa: E501
 
 # Evaluator prompt for assessing task completion
 EVALUATOR_PROMPT_TEMPLATE = """You are a task completion evaluator for a background task agent. Your ONLY job is to classify the agent's current workflow state using the ordered rules below.
@@ -190,10 +207,7 @@ The `rationale` field explains why you chose this classification and must descri
 2. **Workflow complete**: Did the agent execute the requested actions and announce completion, summarize results, or produce final output? If the agent called `send_notification`, that is a strong signal of completion. Classify as complete even if the agent mentions optional follow-up actions it could take — completion announcements take precedence over hypothetical next steps.
    → {{"status": "complete", "rationale": "Brief factual summary of what the agent reported accomplishing"}}
 
-3. **Clarifying question**: Did the agent ask a question and is waiting for an answer instead of proceeding?
-   → {{"status": "needs_input", "rationale": "The exact question the agent asked"}}
-
-4. **Mid-workflow**: Is the agent still working — it announced next steps but hasn't executed them yet, or it's partway through a multi-step process?
+3. **Mid-workflow**: Is the agent still working — it announced next steps but hasn't executed them yet, or it's partway through a multi-step process?
    → {{"status": "continue", "rationale": "What the agent said it would do next but has not yet executed"}}
 
 Respond with ONLY a JSON object (no other text, no markdown formatting)."""  # noqa: E501
@@ -392,10 +406,13 @@ class BackgroundTaskExecutor:
                 pinned_skills=definition.skills if definition else (),
             )
 
+            notif_state = NotificationCycleState()
+
             preprocessing_result.mcp_servers["notifications"] = create_notification_server(
                 self._bus,
                 notification_source,
                 instance.id,
+                cycle_state=notif_state,
             )
 
             # Merge any always-on extra servers (e.g. git-tools) without
@@ -431,7 +448,7 @@ class BackgroundTaskExecutor:
 
             first_message = initial_query if resuming else preprocessing_result.prompt
             # On resume, seed the evaluator with the known session id so the
-            # needs_input branch has a valid resume target even if the run
+            # await_response branch has a valid resume target even if the run
             # errors before a ResultMessage is observed.
             initial_sdk_session_id = instance.sdk_session_id if resuming else None
 
@@ -444,6 +461,7 @@ class BackgroundTaskExecutor:
                     notification_source,
                     stderr_acc,
                     initial_sdk_session_id,
+                    notif_state,
                 )
 
         except asyncio.CancelledError:
@@ -483,8 +501,9 @@ class BackgroundTaskExecutor:
         notification_source: str,
         stderr_acc: StderrAccumulator,
         initial_sdk_session_id: str | None,
+        notif_state: NotificationCycleState,
     ) -> None:
-        """Run the evaluator loop until completion, failure, or waiting transition."""
+        """Run the evaluator loop until completion or failure."""
         sdk_session_id = initial_sdk_session_id
         response_text = ""
         iteration = 0
@@ -492,8 +511,9 @@ class BackgroundTaskExecutor:
 
         while iteration < max_iterations:
             iteration += 1
+            notif_state.reset()
 
-            # Collect response
+            # Collect response — handler may set notif_state flags during tool execution
             response_chunks: list[str] = []
             async for sdk_message in client.receive_response():
                 if isinstance(sdk_message, ResultMessage) and sdk_message.session_id:
@@ -506,7 +526,36 @@ class BackgroundTaskExecutor:
 
             response_text = "".join(response_chunks)
 
-            # Run evaluator
+            # Agent explicitly requested user input via await_response
+            if notif_state.await_response_requested:
+                if sdk_session_id is None:
+                    await self._fail_instance(
+                        instance.id,
+                        "Cannot pause — no SDK session ID captured yet",
+                    )
+                    await dispatch_notification(
+                        self._bus,
+                        notification_source,
+                        "Task failed: no session to resume from",
+                        "error",
+                        instance.id,
+                        priority=Priority.URGENT,
+                    )
+                    return
+
+                _log.info(
+                    "await_response requested for {inst_id}, transitioning to waiting",
+                    inst_id=instance.id,
+                )
+                await self._repository.update_instance(
+                    instance.id,
+                    status="waiting",
+                    sdk_session_id=sdk_session_id,
+                )
+                # Notification already dispatched by the handler
+                return
+
+            # Run evaluator (three statuses only: stuck, complete, continue)
             eval_result = await self._run_evaluator(
                 instance.prompt,
                 response_text,
@@ -535,42 +584,6 @@ class BackgroundTaskExecutor:
                     "error",
                     instance.id,
                     priority=Priority.URGENT,
-                )
-                return
-
-            if status == "needs_input":
-                if sdk_session_id is None:
-                    await self._fail_instance(
-                        instance.id,
-                        "Cannot pause — no SDK session ID captured yet",
-                    )
-                    await dispatch_notification(
-                        self._bus,
-                        notification_source,
-                        "Task failed: no session to resume from",
-                        "error",
-                        instance.id,
-                        priority=Priority.URGENT,
-                    )
-                    return
-
-                _log.info(
-                    "Agent requested input for {inst_id}, transitioning to waiting",
-                    inst_id=instance.id,
-                )
-                await self._repository.update_instance(
-                    instance.id,
-                    status="waiting",
-                    sdk_session_id=sdk_session_id,
-                )
-                await dispatch_notification(
-                    self._bus,
-                    notification_source,
-                    rationale,
-                    "info",
-                    instance.id,
-                    priority=Priority.URGENT,
-                    response_instance_id=instance.id,
                 )
                 return
 
