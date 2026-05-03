@@ -513,7 +513,8 @@ class BackgroundTaskExecutor:
             iteration += 1
             notif_state.reset()
 
-            # Collect response — handler may set notif_state flags during tool execution
+            # The notification handler may set await_response_requested during tool
+            # execution inside this stream — check it after, before running evaluator.
             response_chunks: list[str] = []
             async for sdk_message in client.receive_response():
                 if isinstance(sdk_message, ResultMessage) and sdk_message.session_id:
@@ -552,10 +553,9 @@ class BackgroundTaskExecutor:
                     status="waiting",
                     sdk_session_id=sdk_session_id,
                 )
-                # Notification already dispatched by the handler
                 return
 
-            # Run evaluator (three statuses only: stuck, complete, continue)
+            # Evaluator runs only when agent didn't explicitly request input
             eval_result = await self._run_evaluator(
                 instance.prompt,
                 response_text,
