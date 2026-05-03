@@ -2,6 +2,47 @@
 
 <!-- version list -->
 
+## v1.69.0 (2026-05-03)
+
+### Documentation
+
+- Align subsystem pattern docs with current code
+  ([`2ad8848`](https://github.com/asermax/tachikoma/commit/2ad8848405d05fdd958777073d63710e56d2867b))
+
+- Remove internal DLT tracking references from code and docs
+  ([`a3d5428`](https://github.com/asermax/tachikoma/commit/a3d5428dba3383c7d7fb5d0b6f1660eac8a62d96))
+
+- **adr**: Bump python-semantic-release action versions to v10.5.3 in ADR-010
+  ([`60b4db8`](https://github.com/asermax/tachikoma/commit/60b4db85b11a524db95117ba71a619b9c5b23bb1))
+
+- **adr**: Update ADR-006 install command from poetry to uv
+  ([`388f597`](https://github.com/asermax/tachikoma/commit/388f5970fa866d229602c6d074b121674aa2f1ef))
+
+- **tasks**: Update specs and designs for await_response notification mechanism
+  ([`3a51104`](https://github.com/asermax/tachikoma/commit/3a51104b96f934832acd3be9ed7253fd9a0d6e02))
+
+- **tests**: Clean up internal tracking references from test docstrings
+  ([`870d6d1`](https://github.com/asermax/tachikoma/commit/870d6d1c5f573d6ff205b0dde6c98c0afd3c2047))
+
+### Features
+
+- **tasks**: Replace evaluator-inferred needs_input with explicit await_response
+  ([`978109f`](https://github.com/asermax/tachikoma/commit/978109f21909083c62010263e04341ea81fe76b2))
+
+### Refactoring
+
+- **git**: Finish removing diffable DB tracking remnants
+  ([`00b6905`](https://github.com/asermax/tachikoma/commit/00b69050f0477373db5751ebd6b25cbbd9b0eb22))
+
+- **tasks**: Clarify notification handler comments in executor
+  ([`8aa1c62`](https://github.com/asermax/tachikoma/commit/8aa1c6219c72cd02ccce8538d7d0813a2405c996))
+
+### Testing
+
+- **tasks**: Extract shared await_response test helpers
+  ([`2a83e45`](https://github.com/asermax/tachikoma/commit/2a83e45ddd316133069ef83759fc11f46044722d))
+
+
 ## v1.68.2 (2026-05-01)
 
 ### Bug Fixes
