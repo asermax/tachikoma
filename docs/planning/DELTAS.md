@@ -178,49 +178,49 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 ### DLT-055: Plugin update mechanism
 **Status**: ✗ Defined
 **Depends on**: None
-**Priority**: 4 (Low)
+**Priority**: 2 (High)
 **Complexity**: Medium
 **Description**: Add an update mechanism to the plugin system that checks whether installed plugins' sources have newer versions available and synchronizes the local copy. Updates can be triggered explicitly by the user or run automatically at startup. The synchronization strategy depends on the source type (re-copy for local paths, pull for remote repositories). Failed updates should leave the existing plugin intact rather than corrupting it. This enables plugin authors to publish improvements and bug fixes that users can pull in without manually reinstalling.
 
 ### DLT-049: Plugin hook for custom context providers
 **Status**: ✗ Defined
 **Depends on**: None
-**Priority**: 4 (Low)
+**Priority**: 2 (High)
 **Complexity**: Easy
 **Description**: Allow plugins to contribute context providers that participate in the pre-processing pipeline. Plugin-declared providers implement the existing ContextProvider interface and are registered into the PreProcessingPipeline alongside built-in providers during plugin loading. This enables plugins to inject custom context (e.g., calendar events, external knowledge bases, CRM data) into every agent conversation without modifying the core system.
 
 ### DLT-050: Plugin hook for custom post-processors
 **Status**: ✗ Defined
 **Depends on**: None
-**Priority**: 4 (Low)
+**Priority**: 2 (High)
 **Complexity**: Easy
 **Description**: Allow plugins to contribute post-processors that participate in the post-processing pipeline. Plugin-declared processors implement the existing PostProcessor interface (or extend PromptDrivenProcessor) and are registered into the PostProcessingPipeline at a plugin-specified phase (main, pre_finalize, finalize) during plugin loading. This enables plugins to perform custom extraction, side effects, or integrations after a session closes (e.g., syncing extracted action items to a task tracker, sending conversation summaries to a webhook).
 
 ### DLT-051: Plugin hook for bundled skills
 **Status**: ✗ Defined
 **Depends on**: DLT-054
-**Priority**: 4 (Low)
+**Priority**: 2 (High)
 **Complexity**: Easy
 **Description**: Allow plugins to bundle pre-defined skills (with their agent definitions and MCP tool servers) that become available in the skill registry alongside user-authored skills. During plugin loading, each plugin's declared skill directories are added to the skill registry's search paths, making their skills discoverable by the skills context provider. This includes skills that provide MCP tool servers, which requires the skill-provided MCP tools capability to be in place. This enables plugins to ship ready-to-use capabilities (e.g., a "code review" plugin that includes a skill with specialized agents, prompts, and tools) without requiring users to manually copy skill files into the workspace.
 
 ### DLT-052: Concurrent secondary channels
 **Status**: ✗ Defined
 **Depends on**: None
-**Priority**: 5 (Backlog)
+**Priority**: 2 (High)
 **Complexity**: Medium
 **Description**: Support running multiple communication channels concurrently instead of the current single-channel-per-run model. A user designates one primary channel for interactive conversations (REPL or Telegram as today) while additional secondary channels run alongside it, each able to receive and respond to messages through the same assistant. This enables scenarios like receiving proactive notifications through Telegram while working interactively via the REPL, or running plugin-contributed channels alongside built-in ones. Secondary channels follow the same interface as primary channels but are distinguished from the primary so the system can route responses and notifications correctly.
 
 ### DLT-053: Plugin hook for secondary channels
 **Status**: ✗ Defined
 **Depends on**: DLT-052
-**Priority**: 4 (Low)
+**Priority**: 2 (High)
 **Complexity**: Easy
 **Description**: Allow plugins to contribute secondary channels that run alongside the primary channel. Plugin-declared channels implement the same channel interface used by the built-in REPL and Telegram channels and are launched as secondary channels during startup using the concurrent channel infrastructure. This enables plugins to add new communication surfaces (e.g., a Slack channel, a web API, a Matrix bridge) without modifying the core application.
 
 ### DLT-054: Skill-provided MCP tools
 **Status**: ✗ Defined
 **Depends on**: None
-**Priority**: 5 (Backlog)
+**Priority**: 2 (High)
 **Complexity**: Medium
 **Description**: Allow skills to expose MCP tool servers that become available to the main agent when the skill is activated. Currently skills can provide delegated agents but cannot give the main agent direct access to custom tools. This delta extends the skill definition format to declare MCP tool servers (either inline tool definitions or references to tool server scripts), and the skills context provider includes them in the ContextResult's mcp_servers field when the skill matches. This enables skills to provide interactive capabilities the agent can invoke directly (e.g., a "calendar" skill that provides tools to check availability and create events) rather than only through delegated agents.
 
@@ -612,28 +612,28 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 ### DLT-171: Plugin hook for per-message post-processors
 **Status**: ✗ Defined
 **Depends on**: None
-**Priority**: 4 (Low)
+**Priority**: 2 (High)
 **Complexity**: Easy
 **Description**: Allow plugins to contribute per-message post-processors that run after each agent response. Plugin-declared processors implement the existing MessagePostProcessor interface and are registered into the per-message post-processing pipeline alongside built-in processors (summary extraction, last exchange tracking) during plugin loading. Session-level post-processors run once at session close and are suited for batch extraction; per-message processors run after every response and are suited for real-time reactions to individual exchanges — for example, per-message logging, conditional notification triggers based on response content, or live sentiment tracking that needs per-exchange granularity rather than a session-level summary.
 
 ### DLT-172: Plugin configuration schema
 **Status**: ✗ Defined
 **Depends on**: None
-**Priority**: 3 (Medium)
+**Priority**: 2 (High)
 **Complexity**: Medium
 **Description**: Allow plugins to declare a configuration schema that users populate via Tachikoma's config.toml. The plugin manifest gains an optional `[config]` section describing typed settings with defaults and descriptions. During plugin loading, declared settings are validated against the schema and merged into the plugin's runtime context. This enables plugins to accept user-specific configuration (API keys, feature toggles, endpoint URLs) without relying on environment variables or separate config files, and gives plugin users a single configuration surface for all plugin settings alongside built-in configuration.
 
 ### DLT-173: Plugin lifecycle hooks and event bus access
 **Status**: ✗ Defined
 **Depends on**: None
-**Priority**: 3 (Medium)
+**Priority**: 2 (High)
 **Complexity**: Medium
 **Description**: Allow plugins to declare lifecycle hooks that run at specific points in the application lifecycle and subscribe to system events. The plugin manifest gains an optional `[hooks]` section declaring hook entry points (e.g., `init = "hooks/init.py"`), and an optional `[events]` section listing event types the plugin wants to receive. Init hooks run after plugin loading completes but before the first conversation, enabling startup tasks like establishing external connections, validating prerequisites, or registering event listeners. Event subscriptions let plugins react to system events — session open/close, coordinator idle, notification dispatch, and other published events — by routing matching events to declared handler functions. Failed init hooks and event handlers are isolated per-plugin and logged without blocking other plugins or application startup, consistent with the existing fail-safe loading pattern.
 
 ### DLT-174: Plugin-provided MCP tool servers
 **Status**: ✗ Defined
 **Depends on**: None
-**Priority**: 4 (Low)
+**Priority**: 2 (High)
 **Complexity**: Medium
 **Description**: Allow plugins to declare MCP tool servers in their manifest that become available to the main agent at all times, without going through the skill activation system. The plugin manifest gains an optional `tools` field listing tool server entry points. During plugin loading, declared tool servers are registered alongside built-in MCP tools and injected into every agent session. This provides a simpler, more direct path than bundling a skill with MCP tools (which requires skill activation to trigger tool availability), covering use cases like a weather plugin that provides a `get_weather` tool the agent should always have access to. Tool servers follow the same factory pattern used by skill-provided MCP tools for consistency.
 
