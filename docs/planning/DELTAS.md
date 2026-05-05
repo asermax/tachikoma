@@ -616,13 +616,6 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 **Complexity**: Easy
 **Description**: Allow plugins to contribute per-message post-processors that run after each agent response. Plugin-declared processors implement the existing MessagePostProcessor interface and are registered into the per-message post-processing pipeline alongside built-in processors (summary extraction, last exchange tracking) during plugin loading. Session-level post-processors run once at session close and are suited for batch extraction; per-message processors run after every response and are suited for real-time reactions to individual exchanges — for example, per-message logging, conditional notification triggers based on response content, or live sentiment tracking that needs per-exchange granularity rather than a session-level summary.
 
-### DLT-172: Plugin configuration schema
-**Status**: ⧗ Implementation
-**Depends on**: None
-**Priority**: 2 (High)
-**Complexity**: Medium
-**Description**: Allow plugins to declare a configuration schema that users populate via Tachikoma's config.toml. The plugin manifest gains an optional `[config]` section describing typed settings with defaults and descriptions. During plugin loading, declared settings are validated against the schema and merged into the plugin's runtime context. This enables plugins to accept user-specific configuration (API keys, feature toggles, endpoint URLs) without relying on environment variables or separate config files, and gives plugin users a single configuration surface for all plugin settings alongside built-in configuration.
-
 ### DLT-173: Plugin lifecycle hooks and event bus access
 **Status**: ✗ Defined
 **Depends on**: None
