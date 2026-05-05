@@ -91,6 +91,39 @@ class TestList:
         assert result[0].alias == "alpha"
 
 
+class TestFailedPlugins:
+    """failed_plugins() returns plugins with status != 'loaded'."""
+
+    def test_all_loaded_returns_empty(self, tmp_path: Path) -> None:
+        p = _make_plugin("alpha")
+        mgr = _make_manager(workspace=tmp_path, loaded={"alpha": p})
+        assert mgr.failed_plugins() == []
+
+    def test_one_failed_returns_it(self, tmp_path: Path) -> None:
+        loaded = _make_plugin("good", status="loaded")
+        failed = _make_plugin("bad", status="failed")
+        mgr = _make_manager(
+            workspace=tmp_path,
+            loaded={"good": loaded, "bad": failed},
+        )
+        result = mgr.failed_plugins()
+        assert len(result) == 1
+        assert result[0].alias == "bad"
+        assert result[0].status == "failed"
+
+    def test_mixed_returns_only_failed(self, tmp_path: Path) -> None:
+        p1 = _make_plugin("ok", status="loaded")
+        p2 = _make_plugin("stale", status="stale-fallback")
+        p3 = _make_plugin("bad", status="failed")
+        mgr = _make_manager(
+            workspace=tmp_path,
+            loaded={"ok": p1, "stale": p2, "bad": p3},
+        )
+        result = mgr.failed_plugins()
+        aliases = {p.alias for p in result}
+        assert aliases == {"stale", "bad"}
+
+
 class TestInstall:
     """AC-MCP-INST-1..6, INST-9."""
 
