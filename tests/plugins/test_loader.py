@@ -15,35 +15,7 @@ from tachikoma.plugins.loader import discover
 from tachikoma.plugins.reconciler import ReconcileOutcome, ReconciliationReport
 from tachikoma.plugins.sources import LocalPluginSource
 
-
-def _write_native_manifest(
-    plugin_dir: Path,
-    *,
-    name: str = "test-plugin",
-    description: str = "A test",
-    skills: list[str] | None = None,
-    config_sections: dict[str, dict[str, object]] | None = None,
-) -> None:
-    """Write a minimal tachikoma-plugin.toml into *plugin_dir*."""
-    plugin_dir.mkdir(parents=True, exist_ok=True)
-    lines = [
-        f'name = "{name}"',
-        f'description = "{description}"',
-    ]
-    if skills is not None:
-        lines.append(f"skills = {skills}")
-    if config_sections:
-        for field_name, fields in config_sections.items():
-            lines.append("")
-            lines.append(f"[config.{field_name}]")
-            for key, value in fields.items():
-                if isinstance(value, str):
-                    lines.append(f'{key} = "{value}"')
-                elif isinstance(value, bool):
-                    lines.append(f"{key} = {str(value).lower()}")
-                else:
-                    lines.append(f"{key} = {value}")
-    (plugin_dir / "tachikoma-plugin.toml").write_text("\n".join(lines) + "\n")
+from .conftest import write_native_manifest as _write_native_manifest
 
 
 def _make_skill_dir(base: Path, skill_name: str) -> Path:
@@ -261,7 +233,7 @@ class TestConfigValidation:
         _write_native_manifest(
             plugin_dir,
             name="weather",
-            config_sections={
+            config={
                 "api_key": {"type": "string", "description": "API key", "required": True},
                 "timeout": {
                     "type": "integer",
@@ -293,7 +265,7 @@ class TestConfigValidation:
         _write_native_manifest(
             plugin_dir,
             name="weather",
-            config_sections={
+            config={
                 "api_key": {"type": "string", "description": "API key", "required": True},
             },
         )
@@ -318,7 +290,7 @@ class TestConfigValidation:
         _write_native_manifest(
             plugin_dir,
             name="weather",
-            config_sections={
+            config={
                 "timeout": {"type": "integer", "description": "Timeout"},
             },
         )
@@ -343,7 +315,7 @@ class TestConfigValidation:
         _write_native_manifest(
             plugin_dir,
             name="weather",
-            config_sections={
+            config={
                 "timeout": {"type": "integer", "description": "Timeout", "default": 30},
                 "debug": {"type": "boolean", "description": "Debug", "default": False},
             },
@@ -368,7 +340,7 @@ class TestConfigValidation:
         _write_native_manifest(
             plugin_dir,
             name="weather",
-            config_sections={
+            config={
                 "region": {"type": "string", "description": "Region"},
             },
         )
@@ -434,7 +406,7 @@ class TestConfigValidation:
         _write_native_manifest(
             plugin_dir,
             name="weather",
-            config_sections={
+            config={
                 "api_key": {"type": "string", "description": "API key", "required": True},
             },
         )
@@ -462,7 +434,7 @@ class TestConfigValidation:
         _write_native_manifest(
             plugin_dir,
             name="weather",
-            config_sections={
+            config={
                 "timeout": {"type": "integer", "description": "Timeout", "default": 30},
             },
         )
@@ -488,7 +460,7 @@ class TestConfigValidation:
         _write_native_manifest(
             plugin_dir,
             name="weather",
-            config_sections={
+            config={
                 "api_key": {"type": "string", "description": "API key"},
             },
         )

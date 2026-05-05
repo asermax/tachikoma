@@ -31,35 +31,11 @@ from tachikoma.plugins.tools import (
     handle_remove_plugin,
 )
 
+from .conftest import make_plugin as _make_plugin
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
-
-
-def _make_plugin(
-    alias: str,
-    *,
-    status: str = "loaded",
-    config: dict[str, str | int | bool | float] | None = None,
-    config_schema: dict[str, ConfigFieldSchema] | None = None,
-    diagnostic: str | None = None,
-) -> LoadedPlugin:
-    return LoadedPlugin(
-        alias=alias,
-        source=LocalPluginSource(path=Path("/tmp/dummy")),
-        manifest=PluginManifest(
-            name=alias,
-            version="1.0.0",
-            description="Test plugin",
-            source_format="tachikoma",
-            skill_dirs=[],
-            config_schema=config_schema or {},
-        ),
-        status=status,
-        diagnostic=diagnostic,
-        plugin_dir=Path(f"/tmp/plugins/{alias}"),
-        config=config if config is not None else {},
-    )
 
 
 def _make_manager(loaded: dict[str, LoadedPlugin] | None = None) -> PluginManager:

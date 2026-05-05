@@ -25,26 +25,11 @@ from tachikoma.plugins.manifest import PluginManifest
 from tachikoma.plugins.materializer import MaterializeError
 from tachikoma.plugins.sources import LocalPluginSource
 
+from .conftest import make_plugin as _make_plugin
+
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
-
-
-def _make_plugin(alias: str, *, status: str = "loaded") -> LoadedPlugin:
-    return LoadedPlugin(
-        alias=alias,
-        source=LocalPluginSource(path=Path("/tmp/dummy")),
-        manifest=PluginManifest(
-            name=alias,
-            version="1.0.0",
-            description="Test plugin",
-            source_format="tachikoma",
-            skill_dirs=[],
-        ),
-        status=status,
-        diagnostic=None,
-        plugin_dir=Path(f"/tmp/plugins/{alias}"),
-    )
 
 
 def _make_settings_manager() -> MagicMock:

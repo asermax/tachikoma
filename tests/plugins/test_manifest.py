@@ -25,6 +25,8 @@ from tachikoma.plugins.manifest import (
     parse_manifest,
 )
 
+from .conftest import write_native_manifest as _write_native
+
 
 @pytest.fixture
 def plugin_dir(tmp_path: Path) -> Path:
@@ -32,40 +34,6 @@ def plugin_dir(tmp_path: Path) -> Path:
     p = tmp_path / "my-plugin"
     p.mkdir()
     return p
-
-
-def _write_native(
-    plugin_dir: Path,
-    *,
-    name: str = "test-plugin",
-    version: str | None = "1.0.0",
-    description: str = "A test plugin",
-    skills: list[str] | None = None,
-    config: dict[str, dict[str, object]] | None = None,
-) -> Path:
-    """Write a ``tachikoma-plugin.toml`` into *plugin_dir*."""
-    lines = [
-        f'name = "{name}"',
-        f'description = "{description}"',
-    ]
-    if version is not None:
-        lines.append(f'version = "{version}"')
-    if skills is not None:
-        lines.append(f"skills = {skills!r}")
-    if config is not None:
-        for field_name, field_def in config.items():
-            lines.append("")
-            lines.append(f"[config.{field_name}]")
-            for key, val in field_def.items():
-                if isinstance(val, str):
-                    lines.append(f'{key} = "{val}"')
-                elif isinstance(val, bool):
-                    lines.append(f"{key} = {str(val).lower()}")
-                else:
-                    lines.append(f"{key} = {val}")
-    toml_path = plugin_dir / "tachikoma-plugin.toml"
-    toml_path.write_text("\n".join(lines) + "\n")
-    return toml_path
 
 
 def _write_cc(
