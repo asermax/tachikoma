@@ -51,7 +51,7 @@ def build_event_registry() -> dict[str, type[BaseEvent]]:
     return registry
 
 
-def get_event_type(name: str) -> type:
+def get_event_type(name: str) -> type[BaseEvent]:
     """Look up an event type by snake_case name.
 
     Raises ``KeyError`` with valid names listed if *name* is unknown.

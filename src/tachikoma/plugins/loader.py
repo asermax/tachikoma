@@ -151,7 +151,7 @@ def _validate_handlers(
     manifest: PluginManifest,
     plugin_dir: Path,
     alias: str,
-) -> tuple[Callable[..., Any] | None, dict[type, Callable[..., Any]]]:
+) -> tuple[Callable[..., Any] | None, dict[type[BaseEvent], Callable[..., Any]]]:
     """Validate and resolve hook/event handlers declared in the manifest.
 
     Returns ``(init_hook, event_handlers)`` on success.
@@ -309,7 +309,7 @@ def _discover_one(
     # Status remains as reconciler set it (loaded or stale-fallback).
     # --- Handler validation (R7) ---
     init_hook_val: Callable[..., Any] | None = None
-    event_handlers_val: dict[type, Callable[..., Any]] = {}
+    event_handlers_val: dict[type[BaseEvent], Callable[..., Any]] = {}
     if validated_manifest.source_format == "tachikoma" and (
         validated_manifest.hooks or validated_manifest.events
     ):
