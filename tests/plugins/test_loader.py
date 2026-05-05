@@ -4,6 +4,7 @@ Covers:
 - Mixed report scenarios (loaded + stale-fallback + failed)
 - Manifest validation: AC-MP-8 (missing skill dir), AC-MP-6 (no manifest)
 - Per-plugin failure isolation (R9)
+- Config validation during discovery (R3, R4)
 """
 
 from __future__ import annotations
@@ -21,6 +22,7 @@ def _write_native_manifest(
     name: str = "test-plugin",
     description: str = "A test",
     skills: list[str] | None = None,
+    config_sections: dict[str, dict[str, object]] | None = None,
 ) -> None:
     """Write a minimal tachikoma-plugin.toml into *plugin_dir*."""
     plugin_dir.mkdir(parents=True, exist_ok=True)
@@ -30,6 +32,17 @@ def _write_native_manifest(
     ]
     if skills is not None:
         lines.append(f"skills = {skills}")
+    if config_sections:
+        for field_name, fields in config_sections.items():
+            lines.append("")
+            lines.append(f"[config.{field_name}]")
+            for key, value in fields.items():
+                if isinstance(value, str):
+                    lines.append(f'{key} = "{value}"')
+                elif isinstance(value, bool):
+                    lines.append(f"{key} = {str(value).lower()}")
+                else:
+                    lines.append(f"{key} = {value}")
     (plugin_dir / "tachikoma-plugin.toml").write_text("\n".join(lines) + "\n")
 
 
@@ -236,3 +249,258 @@ class TestDiscover:
         # Can be mutated in-place (important for Batch 5 listener).
         plugin.contributed_skills.append("mock-skill")
         assert plugin.contributed_skills == ["mock-skill"]
+
+
+class TestConfigValidation:
+    """Config validation during discovery (R3, R4)."""
+
+    def test_valid_config_loads_with_values(self, tmp_path: Path) -> None:
+        """Plugin with config schema + valid user values loads with config dict."""
+        install_dir = tmp_path / "plugins"
+        plugin_dir = install_dir / "weather"
+        _write_native_manifest(
+            plugin_dir,
+            name="weather",
+            config_sections={
+                "api_key": {"type": "string", "description": "API key", "required": True},
+                "timeout": {
+                    "type": "integer",
+                    "description": "Timeout",
+                    "default": 30,
+                },
+            },
+        )
+
+        source = LocalPluginSource(
+            path=tmp_path / "src",
+            config={"api_key": "sk-abc", "timeout": 60},
+        )
+        report = ReconciliationReport(
+            outcomes=[ReconcileOutcome(alias="weather", status="loaded", diagnostic=None)]
+        )
+        plugins = {"weather": source}
+
+        loaded = discover(install_dir, report, plugins)
+
+        plugin = loaded[0]
+        assert plugin.status == "loaded"
+        assert plugin.config == {"api_key": "sk-abc", "timeout": 60}
+
+    def test_required_field_missing_fails(self, tmp_path: Path) -> None:
+        """Plugin with missing required field fails with diagnostic."""
+        install_dir = tmp_path / "plugins"
+        plugin_dir = install_dir / "weather"
+        _write_native_manifest(
+            plugin_dir,
+            name="weather",
+            config_sections={
+                "api_key": {"type": "string", "description": "API key", "required": True},
+            },
+        )
+
+        source = LocalPluginSource(path=tmp_path / "src")
+        report = ReconciliationReport(
+            outcomes=[ReconcileOutcome(alias="weather", status="loaded", diagnostic=None)]
+        )
+        plugins = {"weather": source}
+
+        loaded = discover(install_dir, report, plugins)
+
+        plugin = loaded[0]
+        assert plugin.status == "failed"
+        assert "api_key" in plugin.diagnostic
+        assert "missing" in plugin.diagnostic.lower()
+
+    def test_type_mismatch_fails(self, tmp_path: Path) -> None:
+        """Plugin with type mismatch fails with diagnostic."""
+        install_dir = tmp_path / "plugins"
+        plugin_dir = install_dir / "weather"
+        _write_native_manifest(
+            plugin_dir,
+            name="weather",
+            config_sections={
+                "timeout": {"type": "integer", "description": "Timeout"},
+            },
+        )
+
+        source = LocalPluginSource(path=tmp_path / "src", config={"timeout": "not a number"})
+        report = ReconciliationReport(
+            outcomes=[ReconcileOutcome(alias="weather", status="loaded", diagnostic=None)]
+        )
+        plugins = {"weather": source}
+
+        loaded = discover(install_dir, report, plugins)
+
+        plugin = loaded[0]
+        assert plugin.status == "failed"
+        assert "timeout" in plugin.diagnostic
+        assert "integer" in plugin.diagnostic.lower()
+
+    def test_defaults_applied_no_user_values(self, tmp_path: Path) -> None:
+        """Plugin with all defaults and no user values loads with defaults."""
+        install_dir = tmp_path / "plugins"
+        plugin_dir = install_dir / "weather"
+        _write_native_manifest(
+            plugin_dir,
+            name="weather",
+            config_sections={
+                "timeout": {"type": "integer", "description": "Timeout", "default": 30},
+                "debug": {"type": "boolean", "description": "Debug", "default": False},
+            },
+        )
+
+        source = LocalPluginSource(path=tmp_path / "src")
+        report = ReconciliationReport(
+            outcomes=[ReconcileOutcome(alias="weather", status="loaded", diagnostic=None)]
+        )
+        plugins = {"weather": source}
+
+        loaded = discover(install_dir, report, plugins)
+
+        plugin = loaded[0]
+        assert plugin.status == "loaded"
+        assert plugin.config == {"timeout": 30, "debug": False}
+
+    def test_optional_no_default_absent_from_config(self, tmp_path: Path) -> None:
+        """Optional field without default and no user value is absent from config."""
+        install_dir = tmp_path / "plugins"
+        plugin_dir = install_dir / "weather"
+        _write_native_manifest(
+            plugin_dir,
+            name="weather",
+            config_sections={
+                "region": {"type": "string", "description": "Region"},
+            },
+        )
+
+        source = LocalPluginSource(path=tmp_path / "src")
+        report = ReconciliationReport(
+            outcomes=[ReconcileOutcome(alias="weather", status="loaded", diagnostic=None)]
+        )
+        plugins = {"weather": source}
+
+        loaded = discover(install_dir, report, plugins)
+
+        plugin = loaded[0]
+        assert plugin.status == "loaded"
+        assert "region" not in plugin.config
+
+    def test_no_config_schema_empty_dict(self, tmp_path: Path) -> None:
+        """Plugin with no config schema loads with empty config dict."""
+        install_dir = tmp_path / "plugins"
+        plugin_dir = install_dir / "simple"
+        _write_native_manifest(plugin_dir, name="simple")
+
+        source = LocalPluginSource(path=tmp_path / "src")
+        report = ReconciliationReport(
+            outcomes=[ReconcileOutcome(alias="simple", status="loaded", diagnostic=None)]
+        )
+        plugins = {"simple": source}
+
+        loaded = discover(install_dir, report, plugins)
+
+        plugin = loaded[0]
+        assert plugin.status == "loaded"
+        assert plugin.config == {}
+
+    def test_cc_plugin_with_user_config_empty_dict(self, tmp_path: Path) -> None:
+        """CC plugin with user config values loads with empty config (no schema)."""
+        install_dir = tmp_path / "plugins"
+        plugin_dir = install_dir / "cc-plugin"
+        plugin_dir.mkdir(parents=True, exist_ok=True)
+        cc_dir = plugin_dir / ".claude-plugin"
+        cc_dir.mkdir()
+        (cc_dir / "plugin.json").write_text('{"name": "cc-plugin"}')
+
+        source = LocalPluginSource(
+            path=tmp_path / "src",
+            config={"key": "value"},
+        )
+        report = ReconciliationReport(
+            outcomes=[ReconcileOutcome(alias="cc-plugin", status="loaded", diagnostic=None)]
+        )
+        plugins = {"cc-plugin": source}
+
+        loaded = discover(install_dir, report, plugins)
+
+        plugin = loaded[0]
+        assert plugin.status == "loaded"
+        assert plugin.config == {}
+
+    def test_unknown_user_keys_loaded_with_warning(self, tmp_path: Path) -> None:
+        """Unknown user keys produce warning, plugin still loads."""
+        install_dir = tmp_path / "plugins"
+        plugin_dir = install_dir / "weather"
+        _write_native_manifest(
+            plugin_dir,
+            name="weather",
+            config_sections={
+                "api_key": {"type": "string", "description": "API key", "required": True},
+            },
+        )
+
+        source = LocalPluginSource(
+            path=tmp_path / "src",
+            config={"api_key": "sk-abc", "unknown_key": "value"},
+        )
+        report = ReconciliationReport(
+            outcomes=[ReconcileOutcome(alias="weather", status="loaded", diagnostic=None)]
+        )
+        plugins = {"weather": source}
+
+        loaded = discover(install_dir, report, plugins)
+
+        plugin = loaded[0]
+        assert plugin.status == "loaded"
+        assert plugin.config == {"api_key": "sk-abc"}
+        assert "unknown_key" not in plugin.config
+
+    def test_float_to_integer_coercion(self, tmp_path: Path) -> None:
+        """Float 30.0 for integer field is coerced to 30."""
+        install_dir = tmp_path / "plugins"
+        plugin_dir = install_dir / "weather"
+        _write_native_manifest(
+            plugin_dir,
+            name="weather",
+            config_sections={
+                "timeout": {"type": "integer", "description": "Timeout", "default": 30},
+            },
+        )
+
+        # Simulate TOML producing 30.0 for an integer field
+        source = LocalPluginSource(path=tmp_path / "src", config={"timeout": 30.0})
+        report = ReconciliationReport(
+            outcomes=[ReconcileOutcome(alias="weather", status="loaded", diagnostic=None)]
+        )
+        plugins = {"weather": source}
+
+        loaded = discover(install_dir, report, plugins)
+
+        plugin = loaded[0]
+        assert plugin.status == "loaded"
+        assert plugin.config == {"timeout": 30}
+        assert isinstance(plugin.config["timeout"], int)
+
+    def test_empty_string_valid_value(self, tmp_path: Path) -> None:
+        """Empty string for optional string field is valid (distinct from unset)."""
+        install_dir = tmp_path / "plugins"
+        plugin_dir = install_dir / "weather"
+        _write_native_manifest(
+            plugin_dir,
+            name="weather",
+            config_sections={
+                "api_key": {"type": "string", "description": "API key"},
+            },
+        )
+
+        source = LocalPluginSource(path=tmp_path / "src", config={"api_key": ""})
+        report = ReconciliationReport(
+            outcomes=[ReconcileOutcome(alias="weather", status="loaded", diagnostic=None)]
+        )
+        plugins = {"weather": source}
+
+        loaded = discover(install_dir, report, plugins)
+
+        plugin = loaded[0]
+        assert plugin.status == "loaded"
+        assert plugin.config == {"api_key": ""}
