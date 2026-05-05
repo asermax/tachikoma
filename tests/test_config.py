@@ -1228,3 +1228,91 @@ class TestPluginsSettings:
 
         assert isinstance(plugin, GitPluginSource)
         assert plugin.git == "https://github.com/owner/repo.git"
+
+
+class TestPluginConfigSubtable:
+    """Tests for [plugins.<alias>.config] sub-table extraction (R2)."""
+
+    def test_config_subtable_attached_to_git_source(self, tmp_path: Path) -> None:
+        """R2: [plugins.weather.config] values attached to source model."""
+        config_path = tmp_path / "config.toml"
+        config_path.write_text(
+            '[plugins.weather]\n'
+            'git = "https://github.com/example/weather.git"\n'
+            'ref = "v1.0.0"\n\n'
+            '[plugins.weather.config]\n'
+            'api_key = "sk-test"\n'
+            'timeout = 60\n'
+        )
+
+        settings = load_settings(config_path)
+
+        plugin = settings.plugins["weather"]
+        assert isinstance(plugin, GitPluginSource)
+        assert plugin.config == {"api_key": "sk-test", "timeout": 60}
+
+    def test_config_subtable_attached_to_local_source(self, tmp_path: Path) -> None:
+        """R2: config sub-table works with local source."""
+        config_path = tmp_path / "config.toml"
+        config_path.write_text(
+            '[plugins.dev]\n'
+            'path = "/home/user/dev-plugin"\n\n'
+            '[plugins.dev.config]\n'
+            'debug = true\n'
+        )
+
+        settings = load_settings(config_path)
+
+        plugin = settings.plugins["dev"]
+        assert isinstance(plugin, LocalPluginSource)
+        assert plugin.config == {"debug": True}
+
+    def test_no_config_subtable_means_none(self, tmp_path: Path) -> None:
+        """R2: Plugin without .config sub-table has config=None."""
+        config_path = tmp_path / "config.toml"
+        config_path.write_text(
+            '[plugins.basic]\n'
+            'git = "https://github.com/example/basic.git"\n'
+            'ref = "v1.0.0"\n'
+        )
+
+        settings = load_settings(config_path)
+
+        plugin = settings.plugins["basic"]
+        assert plugin.config is None
+
+    def test_config_subtable_separate_from_source_fields(self, tmp_path: Path) -> None:
+        """R2: Source fields and config fields are cleanly separated."""
+        config_path = tmp_path / "config.toml"
+        config_path.write_text(
+            '[plugins.weather]\n'
+            'git = "https://github.com/example/weather.git"\n'
+            'ref = "v1.0.0"\n\n'
+            '[plugins.weather.config]\n'
+            'api_key = "sk-test"\n'
+        )
+
+        settings = load_settings(config_path)
+
+        plugin = settings.plugins["weather"]
+        assert isinstance(plugin, GitPluginSource)
+        assert plugin.git == "https://github.com/example/weather.git"
+        assert plugin.ref == "v1.0.0"
+        assert plugin.config == {"api_key": "sk-test"}
+
+    def test_config_key_matching_source_field_treated_as_config(self, tmp_path: Path) -> None:
+        """R2: Config key matching a source field name is a config value (no collision)."""
+        config_path = tmp_path / "config.toml"
+        config_path.write_text(
+            '[plugins.p]\n'
+            'path = "/home/user/plugin"\n\n'
+            '[plugins.p.config]\n'
+            'path = "some-value"\n'
+        )
+
+        settings = load_settings(config_path)
+
+        plugin = settings.plugins["p"]
+        assert isinstance(plugin, LocalPluginSource)
+        assert plugin.path == Path("/home/user/plugin")
+        assert plugin.config == {"path": "some-value"}
