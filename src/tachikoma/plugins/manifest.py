@@ -39,6 +39,7 @@ _CC_CONTRIBUTION_TYPES: tuple[str, ...] = (
     "mcpServers",
     "agents",
     "hooks",
+    "events",
     "lspServers",
     "monitors",
     "themes",
@@ -88,6 +89,29 @@ def _resolve_stays_within(plugin_dir: Path, rel: str) -> Path:
     return resolved
 
 
+def _validate_bare_module_names(values: dict[str, str]) -> dict[str, str]:
+    """Reject module names with empty strings, path separators, or ``..`` segments."""
+    for key, name in values.items():
+        if not name:
+            raise ValueError(
+                f"Module name for '{key}' must not be empty"
+            )
+        posix = PurePosixPath(name)
+        if posix.is_absolute():
+            raise ValueError(
+                f"Module name for '{key}' must be relative, got absolute: {name!r}"
+            )
+        if ".." in posix.parts:
+            raise ValueError(
+                f"Module name for '{key}' must not contain '..' segments, got {name!r}"
+            )
+        if len(posix.parts) > 1:
+            raise ValueError(
+                f"Module name for '{key}' must be a bare name (no path separators), got {name!r}"
+            )
+    return values
+
+
 # ---------------------------------------------------------------------------
 # Pydantic manifest models
 # ---------------------------------------------------------------------------
@@ -107,6 +131,8 @@ class TachikomaManifest(BaseModel):
     description: str
     skills: list[str] = Field(default_factory=list)
     config: dict[str, ConfigFieldSchema] = Field(default_factory=dict)
+    hooks: dict[str, str] = Field(default_factory=dict)
+    events: dict[str, str] = Field(default_factory=dict)
 
     # -- validators ----------------------------------------------------------
 
@@ -119,6 +145,11 @@ class TachikomaManifest(BaseModel):
     @classmethod
     def _validate_skills(cls, v: list[str]) -> list[str]:
         return _validate_skill_paths(v)
+
+    @field_validator("hooks", "events", mode="after")
+    @classmethod
+    def _validate_handler_names(cls, v: dict[str, str]) -> dict[str, str]:
+        return _validate_bare_module_names(v)
 
 
 class CcManifest(BaseModel):
@@ -166,6 +197,8 @@ class PluginManifest:
     skill_dirs: list[Path]
     ignored_cc_contributions: list[str] = field(default_factory=list)
     config_schema: dict[str, ConfigFieldSchema] = field(default_factory=dict)
+    hooks: dict[str, str] = field(default_factory=dict)
+    events: dict[str, str] = field(default_factory=dict)
 
 
 # ---------------------------------------------------------------------------
@@ -243,6 +276,8 @@ def _parse_native(plugin_dir: Path, manifest_path: Path) -> PluginManifest:
         source_format="tachikoma",
         skill_dirs=resolved_dirs,
         config_schema=parsed.config,
+        hooks=parsed.hooks,
+        events=parsed.events,
     )
 
 
