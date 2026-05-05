@@ -30,6 +30,7 @@ The `ANTHROPIC_API_KEY` is not managed by this system — the Claude SDK reads i
 | R11 | Update checking configuration: `[updates]` section for enabled flag and check interval |
 | R12 | Configuration disambiguation: system prompt must distinguish between Tachikoma config (TOML file) and Claude Code config (settings.json) so the agent routes settings requests to the correct system |
 | R13 | Plugin source declaration: `[plugins.<alias>]` sections in TOML config, each declaring a git/url/local source with alias validation and discriminated-union type enforcement |
+| R14 | Plugin user config values: `[plugins.<alias>.config]` sub-table for plugin-specific configuration values, extracted during plugin source validation and attached to source models |
 
 ## Behaviors
 
@@ -171,6 +172,15 @@ Plugin sources are declared as `[plugins.<alias>]` sub-tables in the TOML config
 - Given a git source with a SHA-shaped ref (40 hex chars), when loaded, then validation fails with a clear error (shallow clone requires a ref resolvable to a branch or tag)
 - Given `settings_manager.update_plugin_entry(alias, source)` is called, when saved, then the `[plugins.<alias>]` sub-table is created or replaced in the TOML file while preserving comments
 - Given `settings_manager.remove_plugin_entry(alias)` is called, when saved, then the `[plugins.<alias>]` sub-table is removed from the TOML file while preserving surrounding comments and other plugin entries
+
+### Plugin User Config (R14)
+
+The `[plugins.<alias>]` sub-table may contain an optional `config` sub-table holding user-provided configuration values for the plugin. These values are raw TOML values carried on the source model and validated against the plugin's declared config schema during discovery (see plugin-loading spec, R15).
+
+**Acceptance Criteria**:
+- Given `[plugins.weather.config]` with `api_key = "sk-..."` and `timeout = 60`, when loaded, the weather plugin's source model has `config = {"api_key": "sk-...", "timeout": 60}`
+- Given a plugin alias with no `.config` sub-table, when loaded, the source model has `config = None`
+- Given `[plugins.weather]` with source fields (`git`, `ref`) and a `[plugins.weather.config]` sub-table, when parsed, source fields and config values are cleanly separated — source fields drive source model construction, config values populate the `config` field
 
 ### Configuration Disambiguation (R12)
 

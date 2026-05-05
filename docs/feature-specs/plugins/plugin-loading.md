@@ -4,7 +4,7 @@
 
 ## Overview
 
-A directory-based plugin system that allows users to extend Tachikoma with third-party skills. Users declare plugin sources in a `[plugins]` config section — git repositories, HTTPS-served archives, or local filesystem paths. At startup, a bootstrap step reconciles the install directory with declared sources, parses each plugin's manifest, and registers contributed skill directories with the existing `SkillRegistry` under namespaced names of the form `<alias>:<skill-name>`. Three MCP tools (`install_plugin`, `list_plugins`, `remove_plugin`) let the agent manage plugins on the user's behalf without restart. Failures are isolated per plugin and never block startup.
+A directory-based plugin system that allows users to extend Tachikoma with third-party skills. Users declare plugin sources in a `[plugins]` config section — git repositories, HTTPS-served archives, or local filesystem paths. Plugins may declare typed configuration schemas in their manifests; users provide values in `[plugins.<alias>.config]` sub-tables. At startup, a bootstrap step reconciles the install directory with declared sources, parses each plugin's manifest (including config schemas), validates user config values against schemas, and registers contributed skill directories with the existing `SkillRegistry` under namespaced names of the form `<alias>:<skill-name>`. Three MCP tools (`install_plugin`, `list_plugins`, `remove_plugin`) let the agent manage plugins on the user's behalf without restart. Failures are isolated per plugin and never block startup; all plugin failures are consolidated into a single startup notification.
 
 This capability is scoped to **skills only**. Plugin contributions of MCP tool servers, slash commands, context providers, post-processors, secondary channels, and boundary hooks are out of scope and tracked by future deltas.
 
@@ -12,6 +12,8 @@ This capability is scoped to **skills only**. Plugin contributions of MCP tool s
 
 - As a Tachikoma user, I want to install third-party plugins that contribute skills so that I can extend the agent with capabilities authored by the community without modifying core code
 - As a plugin author, I want to declare my plugin's skills in a manifest so that Tachikoma can discover and register them automatically
+- As a plugin author, I want to declare typed configuration settings in my plugin manifest so that users can configure my plugin through Tachikoma's config.toml
+- As a plugin user, I want to configure plugin settings alongside built-in configuration in config.toml so that all settings live in one place
 - As the agent, I want to manage plugins via MCP tools so that I can install, list, and remove plugins on the user's behalf
 
 ## Requirements
@@ -29,9 +31,14 @@ This capability is scoped to **skills only**. Plugin contributions of MCP tool s
 | R8 | Resilient reconciliation: when a configured plugin's source cannot be re-materialized but the install directory still contains a valid manifest matching the alias, retain that copy, mark its status as `stale-fallback`, and log a warning |
 | R9 | Fail-safe loading: a plugin that fails to fetch, validate, or load is logged and skipped without affecting other plugins or core startup |
 | R10 | MCP tool `install_plugin` validates the source spec, materializes the plugin, parses its manifest, writes the config entry, and triggers a registry refresh |
-| R11 | MCP tool `list_plugins` returns all installed plugins with metadata (alias, source spec, ref, validation status, diagnostic message if non-loaded, and the namespaced names of contributed skills) |
+| R11 | MCP tool `list_plugins` returns all installed plugins with metadata (alias, source spec, ref, validation status, diagnostic message if non-loaded, the namespaced names of contributed skills, and config schema with current values) |
 | R12 | MCP tool `remove_plugin` removes a plugin's config entry and cleans up its install directory; the registry refreshes so the plugin's namespaced skills are no longer available |
 | R13 | The plugins install directory (`workspace/.tachikoma/plugins/`) is added to workspace `.gitignore` since it is regenerable from config |
+| R14 | Plugins declare typed configuration settings in manifest `[config.<field_name>]` sections with basic types (string, integer, boolean, float), optional defaults, and human-readable descriptions |
+| R15 | User config values live in `[plugins.<alias>.config]` sub-tables, validated against the manifest schema at load time; invalid config causes the plugin to fail with a diagnostic |
+| R16 | Plugin accesses validated config through a `config` dict on `LoadedPlugin`; plugins without config schema load normally with an empty dict |
+| R17 | `list_plugins` MCP tool output includes config schema, current values, and validation diagnostics for each plugin |
+| R18 | All failed plugins are grouped into a single startup notification; startup notifications are consolidated — plugin failures merged with restart notification into a single delivered message |
 
 ## Behaviors
 
@@ -97,14 +104,18 @@ The `install_plugin` MCP tool validates, materializes, and registers a plugin fr
 - Given install fails (source unreachable, manifest invalid), when the tool returns, then it returns an error naming the failure cause; config is not mutated
 - Given install succeeds, when `list_plugins` is invoked, then the new plugin appears with status `loaded`
 
-### MCP Tools — list (R11)
+### MCP Tools — list (R11, R17)
 
-The `list_plugins` MCP tool returns all installed plugins with metadata.
+The `list_plugins` MCP tool returns all installed plugins with metadata, including config schema and values.
 
 **Acceptance Criteria**:
-- Given plugins are installed, when `list_plugins` is invoked, then it returns one entry per plugin with alias, source spec, ref, status, diagnostic, and namespaced skill names
+- Given plugins are installed, when `list_plugins` is invoked, then it returns one entry per plugin with alias, source spec, ref, status, diagnostic, namespaced skill names, and config info (when applicable)
 - Given no plugins are installed, when `list_plugins` is invoked, then it returns an empty list
 - Given a plugin is in `stale-fallback` state, when listed, then its status and diagnostic message are included
+- Given a plugin with a config schema, when `list_plugins` is invoked, the entry includes a `config` key with schema (type, description, default, required), current value (user value, default if unset, or null if optional and unset)
+- Given a plugin with no config schema, when `list_plugins` is invoked, the config section is absent from the output
+- Given a plugin that failed config validation, when `list_plugins` is invoked, the output includes the config schema and a validation diagnostic
+- Given a plugin with all optional fields with defaults and no user values, when `list_plugins` is invoked, all fields show their default values
 
 ### MCP Tools — remove (R12)
 
@@ -122,6 +133,73 @@ The plugins install directory is excluded from version control since it is regen
 **Acceptance Criteria**:
 - Given a workspace `.gitignore` without an entry for `.tachikoma/plugins/`, when the plugins bootstrap hook runs, then the entry is appended; running the hook again does not produce a duplicate entry
 
+### Plugin Config Schema (R14, R15, R16)
+
+Plugin authors declare typed configuration settings in the manifest's `[config.<field_name>]` sections. Users provide values in `[plugins.<alias>.config]` sub-tables. Values are validated at load time against the schema. Plugins with invalid configuration fail to load with a diagnostic.
+
+**Manifest structure**:
+
+```toml
+[config.api_key]
+type = "string"
+description = "API key for the weather service"
+required = true
+
+[config.timeout]
+type = "integer"
+description = "Request timeout in seconds"
+default = 30
+```
+
+**Acceptance Criteria**:
+- Given a manifest with `[config.api_key]` declaring `type = "string"`, `required = true`, `description = "API key"`, when parsed, the plugin's config schema contains one required string field named `api_key`
+- Given a manifest with `[config.timeout]` declaring `type = "integer"`, `default = 30`, when parsed, the field is optional with default 30
+- Given a manifest with `[config.debug]` declaring `type = "boolean"`, `default = false`, when parsed, the field is optional with default false
+- Given a manifest with `[config.rate]` declaring `type = "float"`, `default = 1.5`, when parsed, the field is optional with default 1.5
+- Given a manifest without a `[config]` section, when parsed, the plugin loads normally with an empty config schema
+- Given a manifest config field with an unsupported type value (e.g., `"array"`), when loaded, the plugin fails with a diagnostic naming the field, invalid type, and valid types
+- Given a manifest config field with a default value that doesn't match the declared type, when parsed, the plugin fails with a diagnostic stating the default doesn't match
+- Given a manifest config field with both `required = true` and a default, when parsed, the plugin fails with a diagnostic stating required fields cannot have defaults
+- Given a manifest config field missing a description, when parsed, the plugin fails with a diagnostic stating description is required for all config fields
+- Given a required string field with no user value and no default, when the plugin loads, it fails with a diagnostic stating the field is required
+- Given a field declared as integer with a string user value, when the plugin loads, it fails with a diagnostic stating expected and actual types
+- Given a field declared as boolean with an integer user value, when the plugin loads, it fails with a diagnostic about type mismatch
+- Given a field declared as boolean with string `"true"`, when validated, validation fails (no string-to-bool coercion)
+- Given a field declared as integer with float `30.0` (zero-fraction), when validated, the value is coerced to integer `30`
+- Given a field declared as integer with float `30.5` (non-zero fraction), when validated, validation fails with a diagnostic about type mismatch
+- Given a field with a default value and no user override, when the plugin loads, the default is used
+- Given a field that is not required, has no default, and no user value, the runtime config dict does not contain a key for that field
+- Given an optional string field with no default and user value `""` (empty string), the runtime config contains `{"field": ""}` — empty string is a valid value, distinct from unset
+- Given a user provides a config key not declared in the schema, the plugin loads, a WARNING is logged with the unknown key name, and the key is not in runtime config
+- Given a loaded plugin with validated config, when code accesses `loaded_plugin.config`, it returns a dict mapping field names to validated values
+- Given a plugin with no config schema, when accessed at runtime, `loaded_plugin.config` returns an empty dict
+- Given a plugin with a config schema where all fields have defaults and no user values, `loaded_plugin.config` returns a dict populated with default values
+- Given `[plugins.weather.config]` with `api_key = "sk-..."` and `timeout = 60`, when config is loaded, the weather plugin receives `{"api_key": "sk-...", "timeout": 60}`
+- Given `[plugins.weather]` with source fields and a `[plugins.weather.config]` sub-table, when config is parsed, source and config fields are cleanly separated
+- Given a plugin alias with no `.config` sub-table, when config is loaded, the plugin receives only default values (or empty dict if no schema)
+- Given a CC plugin with user config values in `[plugins.p.config]`, when the plugin loads, the config is not validated (CC plugins have no schema) and `loaded_plugin.config` returns an empty dict
+
+### Startup Notification Consolidation (R18)
+
+Failed plugins are grouped into a single startup notification. Startup notifications are consolidated — plugin failures merged with the restart notification into a single delivered message. This is implemented by the `handle_restart_notification` function in the updates subsystem, which consolidates both restart and plugin failure signals.
+
+**Acceptance Criteria**:
+- Given two plugins fail to load during startup, when startup completes, a single notification is dispatched listing both failures
+- Given all plugins load successfully, when startup completes, no plugin failure notification is dispatched
+- Given a restart notification marker exists and one plugin failed config validation, when startup completes, a single consolidated notification is dispatched containing both the back-online message and plugin failure details
+- Given a restart notification marker exists and all plugins loaded successfully, when startup completes, the standard back-online notification is delivered (no plugin section)
+- Given no restart notification and plugin failures exist, when startup completes, only the plugin failure notification is delivered
+- Given neither restart notification nor plugin failures exist, when startup completes, no startup notification is dispatched
+- Given the restart notification marker is cleared during consolidation, the DES-011 consume-once pattern is preserved
+
 ## Out of Scope
 
 - Plugin contributions of MCP tool servers, slash commands, context providers, post-processors, secondary channels, and boundary hooks (deferred to future deltas)
+- Plugin config schema for Claude Code plugins (CC plugins have no config schema — `config_schema` is always empty dict)
+- Runtime config reload (modifying config.toml while Tachikoma is running does not reload plugin configs; changes take effect on next startup)
+- Environment variable substitution in config values (config values are literal TOML values)
+- Enum/constraint types (string with allowed values, numeric ranges) for tighter validation
+- Nested/grouped settings (tables within plugin config) for complex plugin configurations
+- Auto-generated config file includes plugin config keys with descriptions
+- Sensitive field marking and redaction (deferred to future delta)
+- Config migration across plugin versions (unknown keys are warned and ignored; new fields use defaults)
