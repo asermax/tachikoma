@@ -109,6 +109,8 @@ Settings (root, frozen)
     └── push_notifications: bool = True   (enables post-response push via copy+delete)
 └── plugins: dict[str, PluginSource] = {}  (alias → source; see plugins/sources.py)
     └── PluginSource = GitPluginSource | UrlPluginSource | LocalPluginSource (discriminated union)
+        └── Each variant carries optional config: dict[str, Any] | None = None
+            (raw user values from [plugins.<alias>.config] sub-tables)
 ```
 
 A module-level `SYSTEM_DISALLOWED_TOOLS: frozenset[str]` constant defines tools that are always blocked regardless of user configuration. A `field_validator` on `AgentSettings.disallowed_tools` merges this set into the user value after type validation, deduplicating via `dict.fromkeys` to preserve insertion order (user entries first, then system entries). This merge is transparent to all downstream consumers — the field type remains `list[str]`.
@@ -172,6 +174,10 @@ flowchart TD
 7. SettingsManager reloads frozen Settings via load_settings()
 8. Subsequent .settings access returns the updated snapshot
 ```
+
+### Plugin config sub-table extraction
+
+During `_validate_plugins` (a `model_validator` on `Settings`), each `[plugins.<alias>]` entry is parsed via `parse_plugin_source()`. The raw TOML dict includes any `[plugins.<alias>.config]` sub-table as a `config` key. `parse_plugin_source()` passes the full dict to the source variant's `model_validate`, which populates the `config` field on the source model. Source fields and config values are cleanly separated — source fields drive discriminator selection, config values attach as an opaque dict for later validation during plugin discovery.
 
 ### CLI override flow (runtime-only)
 

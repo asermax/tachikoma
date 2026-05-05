@@ -65,14 +65,15 @@ The plugin system is a self-contained `tachikoma/plugins/` package whose compone
 
 | Layer/Component | Responsibility | Key Decisions |
 |-----------------|----------------|---------------|
-| `src/tachikoma/plugins/sources.py` | Pydantic source models: `GitPluginSource`, `UrlPluginSource`, `LocalPluginSource`, discriminated union | Lives separately from `config.py` to keep config module from accumulating plugin validators |
-| `src/tachikoma/plugins/manifest.py` | `TachikomaManifest` and `CcManifest` Pydantic models; `parse_manifest()` with native-takes-precedence | Native strict, CC tolerant (`extra="ignore"`); path-traversal protection |
+| `src/tachikoma/plugins/sources.py` | Pydantic source models: `GitPluginSource`, `UrlPluginSource`, `LocalPluginSource`, discriminated union | Lives separately from `config.py` to keep config module from accumulating plugin validators; `config` field carries raw user values |
+| `src/tachikoma/plugins/config_schema.py` | `ConfigFieldSchema` Pydantic model; `ConfigDiagnostic` dataclass; `ConfigValidationResult` dataclass; `validate_config()` function | Separate module keeps config validation isolated from manifest parsing and loader orchestration |
+| `src/tachikoma/plugins/manifest.py` | `TachikomaManifest` and `CcManifest` Pydantic models; `parse_manifest()` with native-takes-precedence | Native strict, CC tolerant (`extra="ignore"`); path-traversal protection; `config` field parses `[config.<field_name>]` sections |
 | `src/tachikoma/plugins/materializer.py` | `materialize_git()`, `materialize_url()`, `materialize_local()` async functions; `_atomic_replace_dir()` helper | Stdlib only — `urllib`, `tarfile`, `zipfile`, `shutil`, `os`. Atomic-swap follows pip pattern |
 | `src/tachikoma/plugins/reconciler.py` | `reconcile()` walks config; dispatches to materializer; handles stale-fallback and orphan removal | Always-on re-materialization; per-plugin try/except |
-| `src/tachikoma/plugins/loader.py` | `discover()` scans install dir; parses manifests; validates skill directories | Runs after reconciler; failure of one plugin's manifest does not affect others |
-| `src/tachikoma/plugins/manager.py` | `PluginManager` class with `list()`, `install()`, `remove()`; owns `asyncio.Lock` | Single class matching tasks subsystem pattern; depends only on SettingsManager, EventBus, workspace_path |
+| `src/tachikoma/plugins/loader.py` | `discover()` scans install dir; parses manifests; validates skill directories; validates config against schema | Runs after reconciler; failure of one plugin's manifest or config does not affect others |
+| `src/tachikoma/plugins/manager.py` | `PluginManager` class with `list()`, `install()`, `remove()`, `failed_plugins()`; owns `asyncio.Lock` | Single class matching tasks subsystem pattern; depends only on SettingsManager, EventBus, workspace_path |
 | `src/tachikoma/plugins/events.py` | `PluginInstalled`, `PluginRemoving`, `PluginRemoved` event types | Follows ADR-009; `PluginRemoving` fires before directory deletion |
-| `src/tachikoma/plugins/tools.py` | `create_plugin_tools_server()` factory; three closure-captured tool functions | Follows DES-006; extracted handlers for testability |
+| `src/tachikoma/plugins/tools.py` | `create_plugin_tools_server()` factory; three closure-captured tool functions | Follows DES-006; extracted handlers for testability; `list_plugins` includes config schema/values/diagnostics |
 | `src/tachikoma/plugins/hooks.py` | `plugins_hook()` bootstrap callback | Follows DES-003; registered between git and skills hooks |
 | `src/tachikoma/skills/listeners.py` | `register_plugin_event_listeners()` subscribes to plugin events | Lives in skills module per decoupling decision; owns all registry mutation triggered by plugin events |
 | `src/tachikoma/skills/registry.py` (extension) | `add_namespaced_source()`, `remove_namespaced_source()`; `Skill.namespace` + `qualified_name`; `_namespaced_source_paths` tracking | Minimal-change extension — core `_discover` / `_load_skill` flow unchanged for default-namespace skills |
@@ -87,7 +88,8 @@ plugins_hook(ctx)
     ├── 1. Create .tachikoma/plugins/ (mkdir)
     ├── 2. Append .tachikoma/plugins/ to .gitignore (idempotent)
     ├── 3. report = reconcile(workspace_path, settings.plugins)
-    ├── 4. plugins = discover(install_dir)
+    ├── 4. plugins = discover(install_dir, plugin_sources)
+    │       └── For each plugin: parse manifest → validate config schema → LoadedPlugin
     ├── 5. manager = PluginManager(settings_manager, bus, workspace_path, loaded)
     ├── 6. ctx.extras["plugin_manager"] = manager
     └── 7. ctx.extras["plugin_skill_paths"] = [(alias, dir) for each loaded plugin skill dir]
@@ -138,6 +140,8 @@ remove_plugin(alias) [held under PluginManager._lock]
 
 - **`_atomic_replace_dir(new, dst)` helper**: shared between three materializer paths. Owns the pip-style triple-step swap with rollback.
 - **`run_git()` import**: reused from `git/sync.py` for the git materializer path.
+- **`ConfigFieldSchema`**: Pydantic model shared between manifest parsing (produces it) and config validation (consumes it). Lives in `config_schema.py` to avoid circular imports.
+- **`ConfigDiagnostic`**: Frozen dataclass used by validation to report issues. Consumed by loader (sets `LoadedPlugin.diagnostic`) and tools (surfaces in `list_plugins` output).
 
 ## Modeling
 
@@ -149,17 +153,46 @@ PluginSource = GitPluginSource | UrlPluginSource | LocalPluginSource
 GitPluginSource (frozen Pydantic, extra="forbid")
 ├── git: str                  (URL after gh:/github: shorthand expansion)
 ├── subdir: str | None = None
-└── ref: str                  (branch or tag name; SHA-shaped rejected)
+├── ref: str                  (branch or tag name; SHA-shaped rejected)
+└── config: dict[str, Any] | None = None   (raw user values from [plugins.<alias>.config])
 
 UrlPluginSource (frozen Pydantic, extra="forbid")
 ├── url: str                  (HTTPS-only, recognized archive extension)
-└── subdir: str | None = None
+├── subdir: str | None = None
+└── config: dict[str, Any] | None = None   (raw user values from [plugins.<alias>.config])
 
 LocalPluginSource (frozen Pydantic, extra="forbid")
-└── path: Path                (must be absolute)
+├── path: Path                (must be absolute)
+└── config: dict[str, Any] | None = None   (raw user values from [plugins.<alias>.config])
 ```
 
-Discriminated by the presence of `git` / `url` / `path`. Each variant uses `extra="forbid"` for fail-fast on misspelled keys.
+Discriminated by the presence of `git` / `url` / `path`. Each variant uses `extra="forbid"` for fail-fast on misspelled keys. The `config` field is nullable — `None` when no `[plugins.<alias>.config]` sub-table exists.
+
+### Config schema model
+
+```
+ConfigFieldSchema (frozen Pydantic, extra="forbid")
+├── type: Literal["string", "integer", "boolean", "float"]
+├── description: str
+├── default: str | int | bool | float | None = None
+├── required: bool = False
+│
+├── @model_validator(mode="after")
+│   ├── If required=true AND default is not None → ValueError
+│   └── If default is not None AND type(default) doesn't match declared type → ValueError
+
+ConfigDiagnostic (frozen dataclass)
+├── field: str | None          (None for non-field errors)
+├── message: str               (Human-readable diagnostic)
+
+ConfigValidationResult (frozen dataclass)
+├── values: dict[str, str | int | bool | float]   (validated values)
+├── diagnostics: list[ConfigDiagnostic]            (non-empty = failure)
+├── unknown_keys: list[str]                         (logged as warnings, not errors)
+└── is_valid: bool (property)                       (True when diagnostics is empty)
+```
+
+`validate_config()` always returns a `ConfigValidationResult` — never raises. When `is_valid` is false, `diagnostics` lists the failures. The caller checks `is_valid` to decide whether to use `values` or report the diagnostics.
 
 ### Manifest models
 
@@ -168,7 +201,8 @@ TachikomaManifest (Pydantic)             [tachikoma-plugin.toml]
 ├── name: str
 ├── version: str | None = None
 ├── description: str
-└── skills: list[str] = []                (relative paths to skill dirs)
+├── skills: list[str] = []                (relative paths to skill dirs)
+└── config: dict[str, ConfigFieldSchema] = {}  (declared settings from [config.<field_name>])
 
 CcManifest (Pydantic)                     [.claude-plugin/plugin.json]
 ├── name: str
@@ -182,10 +216,12 @@ PluginManifest (frozen dataclass)         [unified internal model]
 ├── version: str | None
 ├── description: str | None
 ├── source_format: Literal["tachikoma", "cc"]
-└── skill_dirs: list[Path]                (resolved absolute paths)
+├── skill_dirs: list[Path]                (resolved absolute paths)
+├── ignored_cc_contributions: list[str]   (silently ignored CC declarations)
+└── config_schema: dict[str, ConfigFieldSchema]   (empty dict for CC plugins)
 ```
 
-Native takes precedence when both manifests are present. Path-traversal protection rejects absolute paths, `..` segments, and paths resolving outside the plugin directory.
+Native takes precedence when both manifests are present. Path-traversal protection rejects absolute paths, `..` segments, and paths resolving outside the plugin directory. CC plugins have no config schema — `config_schema` is always an empty dict.
 
 ### LoadedPlugin record
 
@@ -196,8 +232,10 @@ LoadedPlugin (frozen dataclass)
 ├── manifest: PluginManifest | None
 ├── status: Literal["loaded", "stale-fallback", "failed"]
 ├── diagnostic: str | None
+├── plugin_dir: Path
 ├── contributed_skills: list[Skill]       (namespaced skills registered by SkillRegistry)
-└── plugin_dir: Path
+└── config: dict[str, str | int | bool | float]   (validated values; empty dict if no schema)
+```
 ```
 
 ### Skill (existing — extended)
@@ -255,6 +293,40 @@ skills_hook(ctx)
 
 __main__.py (after bootstrap)
     └── register plugin MCP tools server
+```
+
+### Config validation during discovery
+
+```
+_discover_one(outcome, install_dir, plugin_sources)
+    ├── Existing: parse manifest, validate skill dirs
+    ├── NEW: if manifest has config_schema:
+    │   ├── user_values = source.config or {}
+    │   ├── result = validate_config(manifest.config_schema, user_values)
+    │   ├── if not result.is_valid:
+    │   │   └── return LoadedPlugin(status="failed",
+    │   │           diagnostic=format_diagnostics(result.diagnostics), ...)
+    │   └── validated_config = result.values
+    ├── else:
+    │   └── validated_config = {}
+    └── return LoadedPlugin(..., config=validated_config)
+```
+
+### Startup notification consolidation
+
+```
+__main__.py (after bootstrap.run(), before channel.run())
+    ├── restart_notification = read_restart_notification()
+    ├── rollback_was_dispatched = ...
+    ├── plugin_manager = bootstrap.extras["plugin_manager"]
+    └── handle_restart_notification(bus, restart_notification,
+            rollback_was_dispatched, plugin_manager)
+            ├── clear_restart_notification()  # DES-011 consume-once
+            ├── Build restart content (if marker exists + no rollback)
+            ├── Collect failed_plugins from manager
+            ├── Build plugin failure summary (if any failures)
+            ├── Merge into single content string
+            └── dispatch_notification(bus, ...)  # single dispatch
 ```
 
 ## Key Decisions
@@ -320,6 +392,46 @@ __main__.py (after bootstrap)
 **Why**: Adding a separate source variant would proliferate types. Syntactic sugar at validation time gives uniform downstream code.
 **Consequences**: Pro: ergonomic TOML. Pro: uniform materializer logic. Con: minor typo surface.
 
+### Config values on PluginSource models
+
+**Choice**: Add `config: dict[str, Any] | None = None` to each source model variant, rather than a separate top-level `plugin_user_config` field on `Settings`.
+**Why**: Keeps user config values co-located with their plugin source declaration. The entire plugin definition (source + user values) travels together through the pipeline — from config parsing through discovery to the `LoadedPlugin`. Avoids threading a parallel dict through hooks and into the loader.
+**Alternatives Considered**: Separate `plugin_user_config` dict on Settings (requires parallel threading); lazy extraction by the loader (breaks clean data flow).
+**Consequences**: Pro: Single dict per alias carries everything. Con: Source models gain a field unrelated to their source-variant responsibility (mitigated: optional, nullable, defaults to None).
+
+### New `config_schema.py` module
+
+**Choice**: Create `plugins/config_schema.py` with the `ConfigFieldSchema` model, `validate_config()` function, and supporting types, rather than embedding in `manifest.py` or `loader.py`.
+**Why**: The config schema concern is self-contained — it has its own types, validation logic, and is consumed from two places (manifest parsing produces schemas, loader validates values against them). A dedicated module avoids bloating existing focused modules.
+**Alternatives Considered**: Embed in `manifest.py` (couples parsing with validation); embed in `loader.py` (harder to test in isolation).
+**Consequences**: Pro: Testable in isolation. Pro: Clean imports. Con: One more file (mitigated: small focused module).
+
+### No config schema support for CC plugins
+
+**Choice**: Only `tachikoma-plugin.toml` manifests support `[config]` sections. CC plugins have `config_schema = {}`.
+**Why**: CC plugins use JSON manifests with their own schema. Adding config schema support would require inventing a JSON equivalent that doesn't exist in the CC spec. Consistent with how CC plugins handle other Tachikoma-specific features (non-skill contributions silently ignored).
+**Consequences**: Pro: No CC schema invention needed; clean boundary. Con: CC plugin authors who want config must provide a `tachikoma-plugin.toml` (which takes precedence per manifest precedence rules).
+
+### Float-to-integer coercion for zero-fraction values
+
+**Choice**: When a field declares `type = "integer"` and the user provides a TOML float with zero fraction (e.g., `30.0`), coerce to integer `30`. Reject non-zero-fraction floats (e.g., `30.5`).
+**Why**: Some TOML generators or copy-paste scenarios produce `30.0` for what the user intends as an integer. Rejecting `30.0` would be pedantic. Rejecting `30.5` catches genuine mistakes.
+**Alternatives Considered**: No coercion (strict matching — surprising for `30.0`); coerce all numeric types (less justified for `int` → `float`).
+**Consequences**: Pro: Forgiving for the common zero-fraction case. Con: Asymmetric — only float→integer, not integer→float.
+
+### Explicit bool rejection for numeric types
+
+**Choice**: Reject `bool` values for integer and float fields, and reject `int` values for boolean fields.
+**Why**: `bool` is a subclass of `int` in Python (`True == 1`, `False == 0`). Accepting `bool` silently would cause surprising behavior (user passes `debug = true`, gets `debug = 1`). Explicit rejection forces correct type usage.
+**Consequences**: Pro: Type confusion caught early. Con: Slightly more verbose validation logic.
+
+### Consolidated startup notification via handle_restart_notification extension
+
+**Choice**: Extend `handle_restart_notification()` in `rollback.py` to accept an optional `PluginManager`, collect plugin failures, and merge them into the same notification dispatch as the restart announcement.
+**Why**: The restart notification handler already owns the DES-011 consume-once logic and conditional dispatch. Adding plugin failure collection keeps all startup notification logic in one place. A new function would duplicate the conditional logic or result in multiple dispatches.
+**Alternatives Considered**: New `dispatch_startup_notifications()` in `__main__.py` (duplicate logic or two dispatches); Plugin manager dispatches its own notification (no consolidation possible).
+**Consequences**: Pro: Single function owns all startup notification composition. Pro: DES-011 consume-once semantics preserved (follows DES-011 — marker cleared before side effects). Con: `rollback.py` gains optional `PluginManager` dependency (mitigated: `TYPE_CHECKING` import, optional parameter).
+
 ## System Behavior
 
 ### Invariants
@@ -329,6 +441,9 @@ __main__.py (after bootstrap)
 3. **Per-plugin failure isolation**: Any plugin failing at any stage does not affect other plugins or core startup.
 4. **Namespace isolation**: Plugin skills stored under `<alias>:<name>` cannot collide with default-namespace or other plugin skills.
 5. **Always-on re-materialization**: Every reconciliation pass re-materializes every declared plugin.
+6. **Config values are always validated**: A loaded plugin's `config` dict contains only values that passed type checking. No unvalidated user input reaches plugin code.
+7. **Config schema is optional**: Plugins without `[config]` sections load normally with `config = {}`. Users without `[plugins.<alias>.config]` sub-tables get default values (or empty dict if no schema).
+8. **Consolidation is additive**: Plugin failures are appended to the restart notification. Each can appear independently (restart only, failures only, both, neither).
 
 ### Scenario: Fresh workspace, no plugins configured
 
@@ -386,9 +501,75 @@ __main__.py (after bootstrap)
 **Then**: Leading colon stripped, resolved within anchor's namespace; chain returns `[code-review:linter, code-review:planner]`.
 **Rationale**: `:dep` is the explicit sibling-within-this-plugin syntax.
 
+### Scenario: Plugin with required config field, user provides value
+
+**Given**: Manifest declares `[config.api_key]` with `type = "string"`, `required = true`. User config has `[plugins.weather.config]` with `api_key = "sk-..."`.
+**When**: Plugin discovery runs.
+**Then**: `validate_config()` finds the required field present with correct type. `LoadedPlugin.config = {"api_key": "sk-..."}`.
+**Rationale**: Happy path — user provides all required config.
+
+### Scenario: Plugin with required config field, user omits value
+
+**Given**: Manifest declares `[config.api_key]` with `type = "string"`, `required = true`. No `[plugins.weather.config]` section.
+**When**: Plugin discovery runs.
+**Then**: Plugin status is `"failed"` with diagnostic: "Required config field 'api_key' is missing".
+**Rationale**: Fail-safe — required fields must be provided.
+
+### Scenario: Config type mismatch
+
+**Given**: Manifest declares `[config.timeout]` with `type = "integer"`. User provides `timeout = "thirty"` (string).
+**When**: Plugin discovery runs.
+**Then**: Plugin status is `"failed"` with diagnostic about expected vs actual type.
+**Rationale**: Strict type checking prevents runtime errors.
+
+### Scenario: Unknown user config key
+
+**Given**: Manifest declares `[config.api_key]`. User provides both `api_key` and `base_url` (undeclared).
+**When**: Plugin discovery runs.
+**Then**: Plugin loads normally. `base_url` triggers a WARNING log. Unknown key is NOT in runtime config.
+**Rationale**: Forward-compatible — unknown keys may be from a newer plugin version.
+
+### Scenario: Plugin with all-default config, no user values
+
+**Given**: Manifest declares fields with defaults. No `[plugins.weather.config]` section.
+**When**: Plugin discovery runs.
+**Then**: `LoadedPlugin.config` populated with default values.
+**Rationale**: Defaults apply when no user values are present.
+
+### Scenario: CC plugin with user config values
+
+**Given**: A CC plugin with no `tachikoma-plugin.toml`. User provides config values.
+**When**: Plugin discovery runs.
+**Then**: CC manifest has no config schema. User values are warned as unknown keys. Plugin loads with `config = {}`.
+**Rationale**: User config for a CC plugin without a schema is harmlessly ignored.
+
+### Scenario: Consolidated startup notification — restart + plugin failures
+
+**Given**: Restart notification marker exists. Two plugins failed config validation.
+**When**: `handle_restart_notification` runs after bootstrap.
+**Then**: Restart marker cleared (DES-011 consume-once). Single notification dispatched with restart content and plugin failure summary.
+**Rationale**: Single message is less noisy than separate notifications.
+
+### Scenario: Startup notification — plugin failures only, no restart
+
+**Given**: No restart notification marker. One plugin failed config validation.
+**When**: `handle_restart_notification` runs.
+**Then**: Plugin failure summary dispatched as standalone notification.
+**Rationale**: Plugin failures are worth notifying even without a restart signal.
+
+### Scenario: Startup notification — no restart, no failures
+
+**Given**: No restart notification marker. All plugins loaded successfully.
+**When**: `handle_restart_notification` runs.
+**Then**: No notification dispatched.
+**Rationale**: No news is good news.
+
 ## Notes
 
 - The plugin system reuses `tachikoma.git.sync.run_git()` for git materialization — no GitPython or dulwich dependency added.
 - CC plugins declaring non-skill contributions install successfully but those contributions are silently ignored (INFO log per type per plugin), enabling forward compatibility with future plugin contribution hooks (custom context providers, post-processors, bundled skills, secondary channels).
 - The `_namespaced_source_paths` tracking dict on `SkillRegistry` keeps install/remove symmetric — preventing monotonic growth of source lists across many install/remove cycles.
 - Plugin-specific configuration is managed through the existing TOML config under `[plugins]`, not through per-plugin config files.
+- Config values are NOT reloaded at runtime — changes to `config.toml` require a restart.
+- Config values appear in `list_plugins` output and may be logged. Sensitive field marking and redaction are deferred to a future delta.
+- The startup notification consolidation follows DES-011 consume-once semantics — the restart marker is cleared unconditionally before any side effects.
