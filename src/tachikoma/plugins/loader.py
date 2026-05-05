@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING, Literal
 
 from loguru import logger
 
+from tachikoma.plugins.config_schema import ConfigDiagnostic, validate_config
 from tachikoma.plugins.manifest import (
     PluginManifest,
     log_ignored_cc_contributions,
@@ -48,6 +49,9 @@ class LoadedPlugin:
         contributed_skills: Mutable list populated later by the skills
             listener after registry registration.  Frozen dataclasses still
             permit in-place mutation of mutable field values.
+        config: Validated config values. Populated when a plugin declares a
+            ``[config]`` schema in its manifest. Empty dict when no schema or
+            no user values.
     """
 
     alias: str
@@ -57,6 +61,7 @@ class LoadedPlugin:
     diagnostic: str | None
     plugin_dir: Path
     contributed_skills: list = field(default_factory=list)
+    config: dict[str, str | int | bool | float] = field(default_factory=dict)
 
 
 # ---------------------------------------------------------------------------
@@ -100,6 +105,11 @@ def discover(
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
+
+
+def _format_diagnostics(diagnostics: list[ConfigDiagnostic]) -> str:
+    """Join diagnostic messages into a single string."""
+    return "\n".join(d.message for d in diagnostics)
 
 
 def _discover_one(
@@ -170,6 +180,23 @@ def _discover_one(
     if validated_manifest.ignored_cc_contributions:
         log_ignored_cc_contributions(alias, validated_manifest)
 
+    # --- Config validation (R3, R4) ---
+    if validated_manifest.config_schema:
+        user_values = source.config if source.config is not None else {}
+        result = validate_config(validated_manifest.config_schema, user_values)
+        if not result.is_valid:
+            return LoadedPlugin(
+                alias=alias,
+                source=source,
+                manifest=validated_manifest,
+                status="failed",
+                diagnostic=_format_diagnostics(result.diagnostics),
+                plugin_dir=plugin_dir,
+            )
+        validated_config = result.values
+    else:
+        validated_config = {}
+
     # Status remains as reconciler set it (loaded or stale-fallback).
     return LoadedPlugin(
         alias=alias,
@@ -178,4 +205,5 @@ def _discover_one(
         status=outcome.status,
         diagnostic=outcome.diagnostic,
         plugin_dir=plugin_dir,
+        config=validated_config,
     )
