@@ -2,6 +2,107 @@
 
 <!-- version list -->
 
+## v1.70.0 (2026-05-05)
+
+### Documentation
+
+- **planning**: Add DLT-172 implementation plan
+  ([`bb2c676`](https://github.com/asermax/tachikoma/commit/bb2c6768397d062cfce6c102ff7a7b774d82b6ed))
+
+- **planning**: Add DLT-172 plugin configuration schema design
+  ([`05d5d11`](https://github.com/asermax/tachikoma/commit/05d5d11e96f017b918ab28d474c7aa9510174337))
+
+- **planning**: Add DLT-172 plugin configuration schema spec
+  ([`3c59a46`](https://github.com/asermax/tachikoma/commit/3c59a461e54900ae1086dd60bf76885538d41574))
+
+- **planning**: Elevate plugin system feature priorities
+  ([`66fa812`](https://github.com/asermax/tachikoma/commit/66fa8126ff8cc28d75f9bc48d88337fb7d8690b3))
+
+- **planning**: Flesh out DLT-172 plugin configuration schema design
+  ([`7e6e2e0`](https://github.com/asermax/tachikoma/commit/7e6e2e0606f1e212e0052043eb1b7dd0a5585096))
+
+- **planning**: Mark DLT-172 batch 2 as done
+  ([`2962b42`](https://github.com/asermax/tachikoma/commit/2962b427b03e754e1d936a9df934f297963fdd38))
+
+- **planning**: Mark DLT-172 batch 3 as done
+  ([`c3c0ccf`](https://github.com/asermax/tachikoma/commit/c3c0ccf75e35c0d652a2cabed322ea87da8f093d))
+
+- **planning**: Mark DLT-172 batch 4 as done
+  ([`5bc18db`](https://github.com/asermax/tachikoma/commit/5bc18db964e064b1a8044de9bc9ac5a334940df2))
+
+- **planning**: Mark DLT-172 batch 5 as done
+  ([`48803cc`](https://github.com/asermax/tachikoma/commit/48803ccaa20e1874f411b7f9737ff9975a72a604))
+
+- **planning**: Remove DLT-172 delta tracking
+  ([`0c6daf9`](https://github.com/asermax/tachikoma/commit/0c6daf9a08710d1d3177c60bdf705eb96824a11f))
+
+- **planning**: Update DLT-172 status to design complete
+  ([`67e817b`](https://github.com/asermax/tachikoma/commit/67e817b7c0ef69c66125ba9f4686e1e821939051))
+
+- **planning**: Update DLT-172 status to implementation
+  ([`8a78f52`](https://github.com/asermax/tachikoma/commit/8a78f52c3984269c29d14d453c7e35d21b80fce5))
+
+- **planning**: Update DLT-172 status to in-progress design
+  ([`3932c18`](https://github.com/asermax/tachikoma/commit/3932c189ba5df7143115fc76851f354920df1ae7))
+
+- **planning**: Update DLT-172 status to in-progress spec
+  ([`29be45b`](https://github.com/asermax/tachikoma/commit/29be45b7c39f4b462a881d1e9af97aad319e2645))
+
+- **planning**: Update DLT-172 status to plan
+  ([`386de78`](https://github.com/asermax/tachikoma/commit/386de78cde85d8130041015141ad731c3f366344))
+
+- **planning**: Update DLT-172 status to plan complete
+  ([`496d953`](https://github.com/asermax/tachikoma/commit/496d95355913e8ef53346967fdd8c163d71c39f9))
+
+- **plugins**: Reconcile DLT-172 config schema into feature designs
+  ([`5f312b4`](https://github.com/asermax/tachikoma/commit/5f312b4dc4036a296fdeab649e838fd50e75909d))
+
+- **plugins**: Reconcile DLT-172 config schema into feature specs
+  ([`881a3f3`](https://github.com/asermax/tachikoma/commit/881a3f3f8439448b867d9dd8d0e3af6c299fef71))
+
+### Features
+
+- **plugins**: Add config schema model and validation engine
+  ([`6aad944`](https://github.com/asermax/tachikoma/commit/6aad9447afd6e33fd96b77c6ad680dd21e673844))
+
+- **plugins**: Add failed_plugins query to manager
+  ([`2d3fab6`](https://github.com/asermax/tachikoma/commit/2d3fab62e67eab24c21081a8a1589fead1cea187))
+
+- **plugins**: Integrate config schema into manifest and source models
+  ([`de0a999`](https://github.com/asermax/tachikoma/commit/de0a999766c5ef428fb8880185295c469086f997))
+
+- **plugins**: Surface config schema and values in list_plugins
+  ([`7f19ba1`](https://github.com/asermax/tachikoma/commit/7f19ba1624d080a70329019d48e14c7482e5e5cd))
+
+- **plugins**: Validate plugin config during discovery
+  ([`0d8de53`](https://github.com/asermax/tachikoma/commit/0d8de53a0c3a2e70907f95a8ea0bb13c99218d53))
+
+- **updates**: Consolidate plugin failures into startup notification
+  ([`35c572c`](https://github.com/asermax/tachikoma/commit/35c572cb7abb977aaaef92bfeea3de54fda8a889))
+
+### Refactoring
+
+- **tests**: Extract shared plugin test helpers into conftest
+  ([`0dc1332`](https://github.com/asermax/tachikoma/commit/0dc1332bba567df5044e5d0cd1d77b62027d079d))
+
+### Testing
+
+- **config**: Add plugin config sub-table extraction tests
+  ([`571b3e3`](https://github.com/asermax/tachikoma/commit/571b3e36c471a579c50362a735ade483be8a410d))
+
+- **plugins**: Add config schema manifest parsing tests
+  ([`8fd3e1e`](https://github.com/asermax/tachikoma/commit/8fd3e1e33dca6400dbbd8b91b37df54d6bb5ea57))
+
+- **plugins**: Add config surfacing tests for list_plugins
+  ([`409e3f9`](https://github.com/asermax/tachikoma/commit/409e3f9a95bfd4885ae410b28c0958f2ceaa0cb7))
+
+- **plugins**: Add config validation discovery tests
+  ([`6610165`](https://github.com/asermax/tachikoma/commit/6610165c6538ff7f3711d72e7804b1ee0c31a0c4))
+
+- **plugins**: Add failed_plugins query tests
+  ([`a55dcd4`](https://github.com/asermax/tachikoma/commit/a55dcd481d306ccd924ce6410bc36743fbb00419))
+
+
 ## v1.69.0 (2026-05-03)
 
 ### Documentation
