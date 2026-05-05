@@ -6,10 +6,15 @@ consumed by the bootstrap hook and the plugin manager.
 
 from __future__ import annotations
 
+import importlib.util
+import inspect
+import sys
+import types
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from dataclasses import replace as _dc_replace
 from pathlib import Path
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 from loguru import logger
 
@@ -20,8 +25,11 @@ from tachikoma.plugins.manifest import (
     parse_manifest,
 )
 from tachikoma.plugins.reconciler import ReconcileOutcome, ReconciliationReport
+from tachikoma.plugins.registry import get_event_type
 
 if TYPE_CHECKING:
+    from bubus import BaseEvent
+
     from tachikoma.plugins.sources import PluginSource
 
 _log = logger.bind(component="plugins")
@@ -62,6 +70,9 @@ class LoadedPlugin:
     plugin_dir: Path
     contributed_skills: list = field(default_factory=list)
     config: dict[str, str | int | bool | float] = field(default_factory=dict)
+    init_hook: Callable[..., Any] | None = None
+    event_handlers: dict[type[BaseEvent], Callable[..., Any]] = field(default_factory=dict)
+    event_wrappers: list = field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------
@@ -110,6 +121,104 @@ def discover(
 def _format_diagnostics(diagnostics: list[ConfigDiagnostic]) -> str:
     """Join diagnostic messages into a single string."""
     return "\n".join(d.message for d in diagnostics)
+
+
+def _import_handler_module(path: Path, module_key: str) -> types.ModuleType:
+    """Import a handler module from a file path with a unique key in ``sys.modules``."""
+    spec = importlib.util.spec_from_file_location(module_key, path)
+    if spec is None:
+        raise ValueError(f"Could not create module spec for {path}")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[module_key] = module
+    try:
+        spec.loader.exec_module(module)  # type: ignore[union-attr]
+    except Exception as exc:
+        sys.modules.pop(module_key, None)
+        raise ValueError(f"Failed to import handler module {path}: {exc}") from exc
+    return module
+
+
+def _count_positional_params(func: Callable) -> int:
+    """Count positional-or-keyword parameters of *func*."""
+    return sum(
+        1
+        for p in inspect.signature(func).parameters.values()
+        if p.kind is inspect.Parameter.POSITIONAL_OR_KEYWORD
+    )
+
+
+def _validate_handlers(
+    manifest: PluginManifest,
+    plugin_dir: Path,
+    alias: str,
+) -> tuple[Callable[..., Any] | None, dict[type, Callable[..., Any]]]:
+    """Validate and resolve hook/event handlers declared in the manifest.
+
+    Returns ``(init_hook, event_handlers)`` on success.
+    Raises ``ValueError`` on any validation failure.
+    """
+    init_hook: Callable[..., Any] | None = None
+    event_handlers: dict[type[BaseEvent], Callable[..., Any]] = {}
+
+    for hook_type, module_name in manifest.hooks.items():
+        handler_path = plugin_dir / "hooks" / f"{module_name}.py"
+        if not handler_path.exists():
+            raise ValueError(
+                f"Hook handler file not found: {handler_path}"
+            )
+
+        module_key = f"tachikoma_plugin.{alias}.hooks.{module_name}"
+        module = _import_handler_module(handler_path, module_key)
+
+        func = getattr(module, hook_type, None)
+        if func is None or not callable(func):
+            raise ValueError(
+                f"Hook module hooks/{module_name}.py does not contain "
+                f"a callable '{hook_type}' function"
+            )
+
+        n_params = _count_positional_params(func)
+        if n_params != 1:
+            raise ValueError(
+                f"Hook handler '{hook_type}' in hooks/{module_name}.py must "
+                f"accept exactly 1 parameter, got {n_params}"
+            )
+
+        if hook_type == "init":
+            init_hook = func
+
+    for event_name, module_name in manifest.events.items():
+        try:
+            event_type = get_event_type(event_name)
+        except KeyError as exc:
+            raise ValueError(str(exc)) from exc
+
+        handler_path = plugin_dir / "events" / f"{module_name}.py"
+        if not handler_path.exists():
+            raise ValueError(
+                f"Event handler file not found: {handler_path}"
+            )
+
+        module_key = f"tachikoma_plugin.{alias}.events.{module_name}"
+        module = _import_handler_module(handler_path, module_key)
+
+        func = getattr(module, "handle", None)
+        if func is None or not callable(func):
+            raise ValueError(
+                f"Event handler module events/{module_name}.py does not contain "
+                f"a callable 'handle' function"
+            )
+
+        n_params = _count_positional_params(func)
+        if n_params != 2:
+            raise ValueError(
+                f"Event handler 'handle' in events/{module_name}.py must "
+                f"accept exactly 2 parameters, got {n_params}"
+            )
+
+        event_handlers[event_type] = func
+
+    return init_hook, event_handlers
 
 
 def _discover_one(
@@ -198,6 +307,27 @@ def _discover_one(
         validated_config = {}
 
     # Status remains as reconciler set it (loaded or stale-fallback).
+    # --- Handler validation (R7) ---
+    init_hook_val: Callable[..., Any] | None = None
+    event_handlers_val: dict[type, Callable[..., Any]] = {}
+    if validated_manifest.source_format == "tachikoma" and (
+        validated_manifest.hooks or validated_manifest.events
+    ):
+        try:
+            init_hook_val, event_handlers_val = _validate_handlers(
+                validated_manifest, plugin_dir, alias
+            )
+        except ValueError as exc:
+            _log.bind(plugin=alias).warning("Handler validation failed: {}", exc)
+            return LoadedPlugin(
+                alias=alias,
+                source=source,
+                manifest=validated_manifest,
+                status="failed",
+                diagnostic=f"Handler validation error: {exc}",
+                plugin_dir=plugin_dir,
+            )
+
     return LoadedPlugin(
         alias=alias,
         source=source,
@@ -206,4 +336,6 @@ def _discover_one(
         diagnostic=outcome.diagnostic,
         plugin_dir=plugin_dir,
         config=validated_config,
+        init_hook=init_hook_val,
+        event_handlers=event_handlers_val,
     )
