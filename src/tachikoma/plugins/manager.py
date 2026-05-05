@@ -121,6 +121,10 @@ class PluginManager:
         """Return all loaded plugins (caller should not mutate)."""
         return list(self._loaded.values())
 
+    def failed_plugins(self) -> list[LoadedPlugin]:
+        """Return plugins that failed to load (status != "loaded")."""
+        return [p for p in self._loaded.values() if p.status != "loaded"]
+
     async def install(
         self,
         source: PluginSource,
