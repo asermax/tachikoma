@@ -480,7 +480,12 @@ async def run(
             active_channel.attach_buffer(buffer)
 
             # Per DES-011: clear marker unconditionally before side effects.
-            await handle_restart_notification(bus, restart_notification, rollback_was_dispatched)
+            await handle_restart_notification(
+                bus,
+                restart_notification,
+                rollback_was_dispatched,
+                plugin_manager=bootstrap.extras["plugin_manager"],
+            )
 
             # Start channel with coordinator
             await active_channel.run(coordinator)

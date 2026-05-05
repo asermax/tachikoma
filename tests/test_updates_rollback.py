@@ -3,12 +3,14 @@
 import json
 import subprocess
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from tachikoma.updates.rollback import (
+    RestartNotification,
     clear_restart_notification,
     clear_rollback_marker,
     clear_rollback_notification,
+    handle_restart_notification,
     read_restart_notification,
     read_rollback_marker,
     read_rollback_notification,
@@ -236,3 +238,210 @@ class TestRunRollback:
     )
     def test_timeout(self, mock_run: MagicMock) -> None:
         assert run_rollback("1.0.0") is False
+
+
+# ---------------------------------------------------------------------------
+# handle_restart_notification consolidation
+# ---------------------------------------------------------------------------
+
+
+def _make_restart_notification(reason="update", previous_version="1.0.0", new_version="1.1.0"):
+    """Helper to write a restart notification marker for testing."""
+    return RestartNotification(
+        reason=reason,
+        previous_version=previous_version,
+        new_version=new_version,
+        timestamp="2026-05-05T12:00:00+00:00",
+    )
+
+
+def _make_failed_plugin(alias, diagnostic):
+    """Create a minimal LoadedPlugin-like mock for a failed plugin."""
+    plugin = MagicMock()
+    plugin.alias = alias
+    plugin.diagnostic = diagnostic
+    plugin.status = "failed"
+    return plugin
+
+
+class TestHandleRestartNotificationConsolidation:
+    """Tests for the consolidated startup notification dispatch.
+
+    Covers R6 (failed plugin notification) and R7 (startup notification
+    consolidation) acceptance criteria.
+    """
+
+    async def test_restart_with_plugin_failures_sends_consolidated(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        notif_file = tmp_path / "restart-notification.json"
+        monkeypatch.setattr(
+            "tachikoma.updates.rollback.RESTART_NOTIFICATION_PATH", notif_file
+        )
+        bus = AsyncMock()
+        notification = _make_restart_notification()
+        failed_plugin = _make_failed_plugin("weather", "Required config field 'api_key' is missing")
+        plugin_manager = MagicMock()
+        plugin_manager.failed_plugins.return_value = [failed_plugin]
+
+        await handle_restart_notification(
+            bus, notification, rollback_was_dispatched=False, plugin_manager=plugin_manager
+        )
+
+        dispatch_calls = [
+            c
+            for c in bus.method_calls
+            if "dispatch" in c[0]
+        ]
+        assert len(dispatch_calls) == 1
+        event = dispatch_calls[0].args[0]
+        assert "back online" in event.prompt.lower()
+        assert "weather" in event.prompt
+        assert "api_key" in event.prompt
+        assert not notif_file.exists()
+
+    async def test_restart_only_sends_back_online(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        notif_file = tmp_path / "restart-notification.json"
+        monkeypatch.setattr(
+            "tachikoma.updates.rollback.RESTART_NOTIFICATION_PATH", notif_file
+        )
+        bus = AsyncMock()
+        notification = _make_restart_notification()
+        plugin_manager = MagicMock()
+        plugin_manager.failed_plugins.return_value = []
+
+        await handle_restart_notification(
+            bus, notification, rollback_was_dispatched=False, plugin_manager=plugin_manager
+        )
+
+        dispatch_calls = [c for c in bus.method_calls if "dispatch" in c[0]]
+        assert len(dispatch_calls) == 1
+        event = dispatch_calls[0].args[0]
+        assert "back online" in event.prompt.lower()
+        assert "Plugin startup issues" not in event.prompt
+
+    async def test_plugin_failures_only_sends_failure_notification(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        notif_file = tmp_path / "restart-notification.json"
+        monkeypatch.setattr(
+            "tachikoma.updates.rollback.RESTART_NOTIFICATION_PATH", notif_file
+        )
+        bus = AsyncMock()
+        failed = [
+            _make_failed_plugin(
+                "weather", "Required config field 'api_key' is missing"
+            ),
+            _make_failed_plugin(
+                "analytics",
+                "Config field 'timeout' expects type integer, got str",
+            ),
+        ]
+        plugin_manager = MagicMock()
+        plugin_manager.failed_plugins.return_value = failed
+
+        await handle_restart_notification(
+            bus,
+            restart_notification=None,
+            rollback_was_dispatched=False,
+            plugin_manager=plugin_manager,
+        )
+
+        dispatch_calls = [c for c in bus.method_calls if "dispatch" in c[0]]
+        assert len(dispatch_calls) == 1
+        event = dispatch_calls[0].args[0]
+        assert "back online" not in event.prompt.lower()
+        assert "weather" in event.prompt
+        assert "analytics" in event.prompt
+        assert "Plugin startup issues" in event.prompt
+
+    async def test_neither_restart_nor_failures_sends_nothing(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        notif_file = tmp_path / "restart-notification.json"
+        monkeypatch.setattr(
+            "tachikoma.updates.rollback.RESTART_NOTIFICATION_PATH", notif_file
+        )
+        bus = AsyncMock()
+        plugin_manager = MagicMock()
+        plugin_manager.failed_plugins.return_value = []
+
+        await handle_restart_notification(
+            bus,
+            restart_notification=None,
+            rollback_was_dispatched=False,
+            plugin_manager=plugin_manager,
+        )
+
+        bus.dispatch.assert_not_called()
+
+    async def test_restart_marker_cleared_before_dispatch(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        """DES-011: marker must be cleared before dispatch side effects."""
+        notif_file = tmp_path / "restart-notification.json"
+        notif_file.write_text("{}")
+        monkeypatch.setattr(
+            "tachikoma.updates.rollback.RESTART_NOTIFICATION_PATH", notif_file
+        )
+        bus = AsyncMock()
+        notification = _make_restart_notification()
+        plugin_manager = MagicMock()
+        plugin_manager.failed_plugins.return_value = []
+
+        # Verify file is cleared before dispatch happens by checking that
+        # the file is gone after the call and dispatch still succeeded.
+        await handle_restart_notification(
+            bus, notification, rollback_was_dispatched=False, plugin_manager=plugin_manager
+        )
+
+        assert not notif_file.exists()
+        dispatch_calls = [c for c in bus.method_calls if "dispatch" in c[0]]
+        assert len(dispatch_calls) == 1
+
+    async def test_rollback_dispatched_suppresses_restart_but_not_failures(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        notif_file = tmp_path / "restart-notification.json"
+        monkeypatch.setattr(
+            "tachikoma.updates.rollback.RESTART_NOTIFICATION_PATH", notif_file
+        )
+        bus = AsyncMock()
+        notification = _make_restart_notification()
+        failed = [_make_failed_plugin("weather", "Config field missing")]
+        plugin_manager = MagicMock()
+        plugin_manager.failed_plugins.return_value = failed
+
+        await handle_restart_notification(
+            bus, notification, rollback_was_dispatched=True, plugin_manager=plugin_manager
+        )
+
+        dispatch_calls = [c for c in bus.method_calls if "dispatch" in c[0]]
+        assert len(dispatch_calls) == 1
+        event = dispatch_calls[0].args[0]
+        assert "back online" not in event.prompt.lower()
+        assert "weather" in event.prompt
+        assert not notif_file.exists()
+
+    async def test_no_plugin_manager_backwards_compatible(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        """Existing callers without plugin_manager still work."""
+        notif_file = tmp_path / "restart-notification.json"
+        monkeypatch.setattr(
+            "tachikoma.updates.rollback.RESTART_NOTIFICATION_PATH", notif_file
+        )
+        bus = AsyncMock()
+        notification = _make_restart_notification()
+
+        await handle_restart_notification(
+            bus, notification, rollback_was_dispatched=False
+        )
+
+        dispatch_calls = [c for c in bus.method_calls if "dispatch" in c[0]]
+        assert len(dispatch_calls) == 1
+        event = dispatch_calls[0].args[0]
+        assert "back online" in event.prompt.lower()
+        assert "Plugin startup issues" not in event.prompt

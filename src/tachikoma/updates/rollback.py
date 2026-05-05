@@ -17,7 +17,7 @@ import tempfile
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
 from bubus import EventBus
 from loguru import logger
@@ -25,6 +25,10 @@ from loguru import logger
 from tachikoma.buffer.priority import Priority
 from tachikoma.notifications import dispatch_notification
 from tachikoma.updates.apply import PACKAGE_NAME, UPGRADE_TIMEOUT
+
+if TYPE_CHECKING:
+    from tachikoma.plugins.loader import LoadedPlugin
+    from tachikoma.plugins.manager import PluginManager
 
 _log = logger.bind(component="updates")
 
@@ -203,29 +207,53 @@ async def handle_restart_notification(
     bus: EventBus,
     restart_notification: RestartNotification | None,
     rollback_was_dispatched: bool,
+    plugin_manager: PluginManager | None = None,
 ) -> None:
-    """Process restart notification marker after startup.
+    """Process restart notification marker and plugin failures after startup.
+
+    Consolidates restart back-online content and plugin load failure summaries
+    into a single notification dispatch.
 
     Implements DES-011 consume-once: clears the marker unconditionally
     before dispatching any side effect.
     """
-    if restart_notification is None:
+    # DES-011: clear marker unconditionally before side effects.
+    if restart_notification is not None:
+        clear_restart_notification()
+
+    parts: list[str] = []
+
+    if restart_notification is not None and not rollback_was_dispatched:
+        parts.append(build_back_online_content(restart_notification))
+
+    if plugin_manager is not None:
+        failed = plugin_manager.failed_plugins()
+        if failed:
+            parts.append(format_plugin_failures(failed))
+
+    if not parts:
         return
 
-    clear_restart_notification()
+    has_restart = restart_notification is not None and not rollback_was_dispatched
+    source = "Back Online" if has_restart else "Plugin Startup"
 
-    if rollback_was_dispatched:
-        return
-
-    content = build_back_online_content(restart_notification)
     await dispatch_notification(
         bus,
-        source="Back Online",
-        content=content,
+        source=source,
+        content="\n\n".join(parts),
         severity="info",
         priority=Priority.URGENT,
         source_id="restart_notification",
     )
+
+
+def format_plugin_failures(failed: list[LoadedPlugin]) -> str:
+    """Build a summary of failed plugins for a startup notification."""
+    lines = ["Plugin startup issues:"]
+    for plugin in failed:
+        diagnostic = plugin.diagnostic or "unknown error"
+        lines.append(f"- {plugin.alias}: {diagnostic}")
+    return "\n".join(lines)
 
 
 def run_rollback(version: str) -> bool:
