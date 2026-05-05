@@ -617,7 +617,7 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 **Description**: Allow plugins to contribute per-message post-processors that run after each agent response. Plugin-declared processors implement the existing MessagePostProcessor interface and are registered into the per-message post-processing pipeline alongside built-in processors (summary extraction, last exchange tracking) during plugin loading. Session-level post-processors run once at session close and are suited for batch extraction; per-message processors run after every response and are suited for real-time reactions to individual exchanges — for example, per-message logging, conditional notification triggers based on response content, or live sentiment tracking that needs per-exchange granularity rather than a session-level summary.
 
 ### DLT-172: Plugin configuration schema
-**Status**: ⧗ Plan
+**Status**: ✓ Plan
 **Depends on**: None
 **Priority**: 2 (High)
 **Complexity**: Medium
