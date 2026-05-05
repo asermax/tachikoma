@@ -156,6 +156,26 @@ async def handle_list_plugins(manager: PluginManager) -> dict:
             entry["diagnostic"] = p.diagnostic
         if p.contributed_skills:
             entry["namespaced_skills"] = [s.qualified_name for s in p.contributed_skills]
+        if p.manifest and p.manifest.config_schema:
+            config_info: dict[str, dict | str] = {}
+            for field_name, schema in p.manifest.config_schema.items():
+                field_info: dict = {
+                    "type": schema.type,
+                    "description": schema.description,
+                    "required": schema.required,
+                }
+                if schema.default is not None:
+                    field_info["default"] = schema.default
+                if field_name in p.config:
+                    field_info["value"] = p.config[field_name]
+                elif schema.default is not None:
+                    field_info["value"] = schema.default
+                else:
+                    field_info["value"] = None
+                config_info[field_name] = field_info
+            if p.status == "failed" and p.diagnostic:
+                config_info["validation_error"] = p.diagnostic
+            entry["config"] = config_info
         entries.append(entry)
 
     return {
