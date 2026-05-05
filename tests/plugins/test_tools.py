@@ -12,6 +12,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from pydantic import ValidationError
 
+from tachikoma.plugins.config_schema import ConfigFieldSchema
 from tachikoma.plugins.loader import LoadedPlugin
 from tachikoma.plugins.manager import (
     PluginAliasCollisionError,
@@ -35,7 +36,14 @@ from tachikoma.plugins.tools import (
 # ---------------------------------------------------------------------------
 
 
-def _make_plugin(alias: str, *, status: str = "loaded") -> LoadedPlugin:
+def _make_plugin(
+    alias: str,
+    *,
+    status: str = "loaded",
+    config: dict[str, str | int | bool | float] | None = None,
+    config_schema: dict[str, ConfigFieldSchema] | None = None,
+    diagnostic: str | None = None,
+) -> LoadedPlugin:
     return LoadedPlugin(
         alias=alias,
         source=LocalPluginSource(path=Path("/tmp/dummy")),
@@ -45,10 +53,12 @@ def _make_plugin(alias: str, *, status: str = "loaded") -> LoadedPlugin:
             description="Test plugin",
             source_format="tachikoma",
             skill_dirs=[],
+            config_schema=config_schema or {},
         ),
         status=status,
-        diagnostic=None,
+        diagnostic=diagnostic,
         plugin_dir=Path(f"/tmp/plugins/{alias}"),
+        config=config if config is not None else {},
     )
 
 
@@ -276,3 +286,130 @@ class TestCreatePluginToolsServer:
         manager = _make_manager()
         config = create_plugin_tools_server(manager)
         assert config is not None
+
+
+# ---------------------------------------------------------------------------
+# Step 13: Config surfacing in list_plugins
+# ---------------------------------------------------------------------------
+
+
+class TestHandleListPluginsConfig:
+    """R5 acceptance criteria — config info in list_plugins output."""
+
+    async def test_loaded_plugin_with_config_shows_schema_and_values(self) -> None:
+        schema = {
+            "api_key": ConfigFieldSchema(
+                type="string", description="API key", required=True
+            ),
+            "timeout": ConfigFieldSchema(
+                type="integer", description="Request timeout", default=30
+            ),
+        }
+        plugin = _make_plugin(
+            "weather",
+            config={"api_key": "sk-abc", "timeout": 60},
+            config_schema=schema,
+        )
+        manager = _make_manager(loaded={"weather": plugin})
+
+        result = await handle_list_plugins(manager)
+
+        payload = _parse_content(result)
+        entry = payload[0]
+        assert "config" in entry
+        cfg = entry["config"]
+
+        # Required string field with user value.
+        assert cfg["api_key"]["type"] == "string"
+        assert cfg["api_key"]["description"] == "API key"
+        assert cfg["api_key"]["required"] is True
+        assert cfg["api_key"]["value"] == "sk-abc"
+        assert "default" not in cfg["api_key"]
+
+        # Optional integer field with default, user override.
+        assert cfg["timeout"]["type"] == "integer"
+        assert cfg["timeout"]["description"] == "Request timeout"
+        assert cfg["timeout"]["required"] is False
+        assert cfg["timeout"]["default"] == 30
+        assert cfg["timeout"]["value"] == 60
+
+    async def test_plugin_without_config_schema_omits_config_key(self) -> None:
+        plugin = _make_plugin("bare")
+        manager = _make_manager(loaded={"bare": plugin})
+
+        result = await handle_list_plugins(manager)
+
+        payload = _parse_content(result)
+        assert "config" not in payload[0]
+
+    async def test_optional_field_uses_default_when_no_user_value(self) -> None:
+        schema = {
+            "debug": ConfigFieldSchema(
+                type="boolean", description="Enable debug", default=False
+            ),
+        }
+        plugin = _make_plugin("svc", config={"debug": False}, config_schema=schema)
+        manager = _make_manager(loaded={"svc": plugin})
+
+        result = await handle_list_plugins(manager)
+
+        payload = _parse_content(result)
+        assert payload[0]["config"]["debug"]["value"] is False
+        assert payload[0]["config"]["debug"]["default"] is False
+
+    async def test_optional_field_no_default_no_user_value_shows_null(self) -> None:
+        schema = {
+            "region": ConfigFieldSchema(
+                type="string", description="Region override"
+            ),
+        }
+        plugin = _make_plugin("svc", config={}, config_schema=schema)
+        manager = _make_manager(loaded={"svc": plugin})
+
+        result = await handle_list_plugins(manager)
+
+        payload = _parse_content(result)
+        assert payload[0]["config"]["region"]["value"] is None
+
+    async def test_failed_plugin_shows_schema_and_validation_error(self) -> None:
+        schema = {
+            "api_key": ConfigFieldSchema(
+                type="string", description="API key", required=True
+            ),
+        }
+        plugin = _make_plugin(
+            "weather",
+            status="failed",
+            config={},
+            config_schema=schema,
+            diagnostic="Required config field 'api_key' is missing.",
+        )
+        manager = _make_manager(loaded={"weather": plugin})
+
+        result = await handle_list_plugins(manager)
+
+        payload = _parse_content(result)
+        entry = payload[0]
+        assert entry["status"] == "failed"
+        assert "config" in entry
+        # Schema is still shown so user can see what's expected.
+        assert entry["config"]["api_key"]["type"] == "string"
+        assert entry["config"]["api_key"]["required"] is True
+        assert entry["config"]["api_key"]["value"] is None
+        assert entry["config"]["validation_error"] == "Required config field 'api_key' is missing."
+
+    async def test_plugin_with_no_manifest_omits_config_key(self) -> None:
+        plugin = LoadedPlugin(
+            alias="broken",
+            source=LocalPluginSource(path=Path("/tmp/dummy")),
+            manifest=None,
+            status="failed",
+            diagnostic="No manifest found",
+            plugin_dir=Path("/tmp/plugins/broken"),
+        )
+        manager = _make_manager(loaded={"broken": plugin})
+
+        result = await handle_list_plugins(manager)
+
+        payload = _parse_content(result)
+        assert "config" not in payload[0]
