@@ -158,4 +158,4 @@ def unsubscribe_plugin_events(wrappers: list) -> None:
     internal ``_active`` flag to ``False`` so subsequent calls become no-ops.
     """
     for wrapper in wrappers:
-        wrapper._deactivate()  # type: ignore[attr-defined]
+        wrapper._deactivate()
