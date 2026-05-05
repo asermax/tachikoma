@@ -18,6 +18,8 @@ def write_native_manifest(
     description: str = "A test plugin",
     skills: list[str] | None = None,
     config: dict[str, dict[str, object]] | None = None,
+    hooks: dict[str, str] | None = None,
+    events: dict[str, str] | None = None,
 ) -> Path:
     """Write a ``tachikoma-plugin.toml`` into *plugin_dir*."""
     plugin_dir.mkdir(parents=True, exist_ok=True)
@@ -40,6 +42,16 @@ def write_native_manifest(
                     lines.append(f"{key} = {str(val).lower()}")
                 else:
                     lines.append(f"{key} = {val}")
+    if hooks is not None:
+        lines.append("")
+        lines.append("[hooks]")
+        for key, val in hooks.items():
+            lines.append(f'{key} = "{val}"')
+    if events is not None:
+        lines.append("")
+        lines.append("[events]")
+        for key, val in events.items():
+            lines.append(f'{key} = "{val}"')
     toml_path = plugin_dir / "tachikoma-plugin.toml"
     toml_path.write_text("\n".join(lines) + "\n")
     return toml_path

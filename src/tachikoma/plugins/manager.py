@@ -15,7 +15,13 @@ from typing import TYPE_CHECKING
 
 from loguru import logger
 
+from tachikoma.plugins.context import PluginContext
 from tachikoma.plugins.events import PluginInstalled, PluginRemoved, PluginRemoving
+from tachikoma.plugins.lifecycle import (
+    _invoke_handler,
+    subscribe_plugin_events,
+    unsubscribe_plugin_events,
+)
 from tachikoma.plugins.loader import LoadedPlugin
 from tachikoma.plugins.manifest import parse_manifest
 from tachikoma.plugins.materializer import (
@@ -225,6 +231,29 @@ class PluginManager:
         )
         self._loaded[resolved_alias] = plugin
 
+        # Run init hook and subscribe events for the newly installed plugin.
+        ctx = PluginContext(
+            config=plugin.config,
+            event_bus=self._bus,
+            alias=resolved_alias,
+            install_path=target,
+        )
+        if plugin.init_hook is not None:
+            try:
+                async with asyncio.timeout(30):
+                    await _invoke_handler(plugin.init_hook, ctx)
+                subscribe_plugin_events(plugin, self._bus, ctx)
+            except TimeoutError:
+                _log.bind(plugin=resolved_alias).warning(
+                    "Init hook timed out after 30s during install"
+                )
+            except Exception:
+                _log.bind(plugin=resolved_alias).exception(
+                    "Init hook failed during install"
+                )
+        elif plugin.event_handlers:
+            subscribe_plugin_events(plugin, self._bus, ctx)
+
         await self._bus.dispatch(
             PluginInstalled(alias=resolved_alias, plugin=plugin)
         )
@@ -263,6 +292,10 @@ class PluginManager:
         await self._bus.dispatch(
             PluginRemoving(alias=alias, namespaced_skill_names=namespaced_skills)
         )
+
+        # Deactivate event wrappers so subsequent dispatches skip this plugin.
+        if plugin.event_wrappers:
+            unsubscribe_plugin_events(plugin.event_wrappers)
 
         rmtree_diagnostic: str | None = None
         try:
