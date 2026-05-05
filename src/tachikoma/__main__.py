@@ -213,6 +213,13 @@ async def run(
 
     settings = settings_manager.settings
 
+    # Run plugin init hooks after all subsystems are bootstrapped
+    # but before the coordinator processes any message.
+    from tachikoma.plugins.lifecycle import run_plugin_init_hooks  # noqa: PLC0415
+
+    plugin_manager = bootstrap.extras["plugin_manager"]
+    await run_plugin_init_hooks(plugin_manager.list_plugins(), bus)
+
     # Retrieve the shared database and subsystem objects from bootstrap
     database: Database = bootstrap.extras["database"]
     registry = bootstrap.extras["session_registry"]
