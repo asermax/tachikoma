@@ -41,6 +41,7 @@ def _write_native(
     version: str | None = "1.0.0",
     description: str = "A test plugin",
     skills: list[str] | None = None,
+    config: dict[str, dict[str, object]] | None = None,
 ) -> Path:
     """Write a ``tachikoma-plugin.toml`` into *plugin_dir*."""
     lines = [
@@ -51,6 +52,17 @@ def _write_native(
         lines.append(f'version = "{version}"')
     if skills is not None:
         lines.append(f"skills = {skills!r}")
+    if config is not None:
+        for field_name, field_def in config.items():
+            lines.append("")
+            lines.append(f"[config.{field_name}]")
+            for key, val in field_def.items():
+                if isinstance(val, str):
+                    lines.append(f'{key} = "{val}"')
+                elif isinstance(val, bool):
+                    lines.append(f"{key} = {str(val).lower()}")
+                else:
+                    lines.append(f"{key} = {val}")
     toml_path = plugin_dir / "tachikoma-plugin.toml"
     toml_path.write_text("\n".join(lines) + "\n")
     return toml_path
@@ -481,3 +493,161 @@ class TestPluginManifest:
             skill_dirs=[],
         )
         assert pm.ignored_cc_contributions == []
+
+
+class TestManifestConfigSchema:
+    """Tests for config schema parsing in manifests (R0, R1)."""
+
+    def test_single_config_field(self, plugin_dir: Path) -> None:
+        """R0: Manifest with [config.api_key] parses into config_schema dict."""
+        _write_native(
+            plugin_dir,
+            skills=[],
+            config={
+                "api_key": {
+                    "type": "string",
+                    "description": "API key for the service",
+                    "required": True,
+                },
+            },
+        )
+
+        result = parse_manifest(plugin_dir)
+        assert result is not None
+        assert "api_key" in result.config_schema
+        field = result.config_schema["api_key"]
+        assert field.type == "string"
+        assert field.description == "API key for the service"
+        assert field.required is True
+        assert field.default is None
+
+    def test_multiple_config_fields(self, plugin_dir: Path) -> None:
+        """R0, R1: Manifest with multiple config fields of different types."""
+        _write_native(
+            plugin_dir,
+            skills=[],
+            config={
+                "api_key": {
+                    "type": "string",
+                    "description": "API key",
+                    "required": True,
+                },
+                "timeout": {
+                    "type": "integer",
+                    "description": "Request timeout in seconds",
+                    "default": 30,
+                },
+                "debug": {
+                    "type": "boolean",
+                    "description": "Enable debug logging",
+                    "default": False,
+                },
+                "rate": {
+                    "type": "float",
+                    "description": "Rate limit multiplier",
+                    "default": 1.5,
+                },
+            },
+        )
+
+        result = parse_manifest(plugin_dir)
+        assert result is not None
+        assert len(result.config_schema) == 4
+
+        assert result.config_schema["api_key"].type == "string"
+        assert result.config_schema["api_key"].required is True
+
+        assert result.config_schema["timeout"].type == "integer"
+        assert result.config_schema["timeout"].default == 30
+
+        assert result.config_schema["debug"].type == "boolean"
+        assert result.config_schema["debug"].default is False
+
+        assert result.config_schema["rate"].type == "float"
+        assert result.config_schema["rate"].default == 1.5
+
+    def test_no_config_section_empty_schema(self, plugin_dir: Path) -> None:
+        """R0: Manifest without [config] section has empty config_schema."""
+        _write_native(plugin_dir, skills=[])
+
+        result = parse_manifest(plugin_dir)
+        assert result is not None
+        assert result.config_schema == {}
+
+    def test_cc_manifest_empty_schema(self, plugin_dir: Path) -> None:
+        """CC manifests have no config schema support — empty dict."""
+        _write_cc(plugin_dir)
+
+        result = parse_manifest(plugin_dir)
+        assert result is not None
+        assert result.config_schema == {}
+
+    def test_native_wins_cc_config_schema(self, plugin_dir: Path) -> None:
+        """When both manifests exist, native config schema is used."""
+        _write_native(
+            plugin_dir,
+            skills=[],
+            config={
+                "key": {
+                    "type": "string",
+                    "description": "A key",
+                },
+            },
+        )
+        _write_cc(plugin_dir)
+
+        result = parse_manifest(plugin_dir)
+        assert result is not None
+        assert result.source_format == "tachikoma"
+        assert "key" in result.config_schema
+
+    def test_unsupported_type_causes_parse_failure(self, plugin_dir: Path) -> None:
+        """R1: Unsupported type value causes manifest parse failure."""
+        _write_native(
+            plugin_dir,
+            skills=[],
+            config={
+                "items": {
+                    "type": "array",
+                    "description": "A list of items",
+                },
+            },
+        )
+
+        with pytest.raises(Exception):
+            parse_manifest(plugin_dir)
+
+    def test_required_plus_default_causes_parse_failure(self, plugin_dir: Path) -> None:
+        """R1: required=true and default together causes parse failure."""
+        _write_native(
+            plugin_dir,
+            skills=[],
+            config={
+                "key": {
+                    "type": "string",
+                    "description": "A key",
+                    "required": True,
+                    "default": "fallback",
+                },
+            },
+        )
+
+        with pytest.raises(Exception, match="required.*default|default.*required"):
+            parse_manifest(plugin_dir)
+
+    def test_default_type_mismatch_causes_parse_failure(self, plugin_dir: Path) -> None:
+        """R1: Default value type mismatch causes parse failure."""
+        _write_native(
+            plugin_dir,
+            skills=[],
+            config={
+                "timeout": {
+                    "type": "integer",
+                    "description": "Timeout",
+                    "default": "thirty",
+                },
+            },
+        )
+
+        with pytest.raises(Exception, match="[Dd]efault"):
+            parse_manifest(plugin_dir)
