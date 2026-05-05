@@ -18,6 +18,7 @@ from typing import Literal
 from loguru import logger
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from tachikoma.plugins.config_schema import ConfigFieldSchema
 from tachikoma.plugins.sources import ALIAS_PATTERN
 
 
@@ -105,6 +106,7 @@ class TachikomaManifest(BaseModel):
     version: str | None = None
     description: str
     skills: list[str] = Field(default_factory=list)
+    config: dict[str, ConfigFieldSchema] = Field(default_factory=dict)
 
     # -- validators ----------------------------------------------------------
 
@@ -163,6 +165,7 @@ class PluginManifest:
     source_format: Literal["tachikoma", "cc"]
     skill_dirs: list[Path]
     ignored_cc_contributions: list[str] = field(default_factory=list)
+    config_schema: dict[str, ConfigFieldSchema] = field(default_factory=dict)
 
 
 # ---------------------------------------------------------------------------
@@ -239,6 +242,7 @@ def _parse_native(plugin_dir: Path, manifest_path: Path) -> PluginManifest:
         description=parsed.description,
         source_format="tachikoma",
         skill_dirs=resolved_dirs,
+        config_schema=parsed.config,
     )
 
 

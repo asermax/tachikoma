@@ -7,6 +7,7 @@ and alias regex validation used by both config loading and install operations.
 
 import re
 from pathlib import Path
+from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -61,6 +62,10 @@ class GitPluginSource(BaseModel):
         description="Optional subdirectory within the repository",
     )
     ref: str = Field(description="Branch or tag name to check out")
+    config: dict[str, Any] | None = Field(
+        default=None,
+        description="User-provided config values from [plugins.<alias>.config]",
+    )
 
     @field_validator("git", mode="before")
     @classmethod
@@ -104,6 +109,10 @@ class UrlPluginSource(BaseModel):
         default=None,
         description="Optional subdirectory within the extracted archive",
     )
+    config: dict[str, Any] | None = Field(
+        default=None,
+        description="User-provided config values from [plugins.<alias>.config]",
+    )
 
     @field_validator("url", mode="after")
     @classmethod
@@ -133,6 +142,10 @@ class LocalPluginSource(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     path: Path = Field(description="Absolute path to the plugin directory")
+    config: dict[str, Any] | None = Field(
+        default=None,
+        description="User-provided config values from [plugins.<alias>.config]",
+    )
 
     @field_validator("path", mode="after")
     @classmethod
