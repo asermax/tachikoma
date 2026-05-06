@@ -2,6 +2,75 @@
 
 <!-- version list -->
 
+## v1.71.0 (2026-05-06)
+
+### Documentation
+
+- **planning**: Update DLT-173 status to Design
+  ([`e98034f`](https://github.com/asermax/tachikoma/commit/e98034f958da66e9fbb112b2a644836def651206))
+
+- **planning**: Update DLT-173 status to Design complete
+  ([`88f4074`](https://github.com/asermax/tachikoma/commit/88f40748c4a96191bfdb603469d3ed41e1d8aa22))
+
+- **planning**: Update DLT-173 status to Implementation complete
+  ([`2c09f1c`](https://github.com/asermax/tachikoma/commit/2c09f1c71ef3617e11565f6965073b7b5e796aee))
+
+- **planning**: Update DLT-173 status to Plan
+  ([`1d3cc7d`](https://github.com/asermax/tachikoma/commit/1d3cc7d3a50f405d7bbc3ba5e2c24b3138f775a6))
+
+- **planning**: Update DLT-173 status to Plan complete
+  ([`0091c36`](https://github.com/asermax/tachikoma/commit/0091c36d517707c51404e90daa541d226a692728))
+
+- **planning**: Update DLT-173 status to Spec
+  ([`ad46768`](https://github.com/asermax/tachikoma/commit/ad4676820094bd7c6f7de5ab1d41b23491ba4a9f))
+
+- **plugins**: Add delta spec for plugin lifecycle hooks and event bus access
+  ([`a6becc9`](https://github.com/asermax/tachikoma/commit/a6becc90e881dffd56bd9e14c33f62b4879c73d4))
+
+- **plugins**: Add DLT-173 design for plugin lifecycle hooks and event bus access
+  ([`c2de9eb`](https://github.com/asermax/tachikoma/commit/c2de9ebf48293373053d10249ca08f4ecaeeeaf0))
+
+- **plugins**: Add DLT-173 implementation plan for plugin lifecycle hooks
+  ([`3c25a23`](https://github.com/asermax/tachikoma/commit/3c25a235802e3c6b78a2fb8cbec54115162c5569))
+
+- **plugins**: Reconcile DLT-173 lifecycle hooks into feature documentation
+  ([`e96d42f`](https://github.com/asermax/tachikoma/commit/e96d42f3d7d8e0b5ee434ee842e6865e03d1034e))
+
+- **plugins**: Refine DLT-173 spec with expanded validation and runtime hooks
+  ([`b126cfb`](https://github.com/asermax/tachikoma/commit/b126cfba9eb8295771c6e8c1140038e8fd79b94e))
+
+- **plugins**: Start DLT-173 design phase
+  ([`34971b8`](https://github.com/asermax/tachikoma/commit/34971b8de8e45024f59673f7f1fb21cb19487879))
+
+### Features
+
+- **plugins**: Add handler validation to plugin loader
+  ([`05c12eb`](https://github.com/asermax/tachikoma/commit/05c12eb472c87bf58df20356faab90e7eb0c495b))
+
+- **plugins**: Add lifecycle execution for init hooks and event subscriptions
+  ([`6fb489c`](https://github.com/asermax/tachikoma/commit/6fb489c973f92da38a554a1ee9366b05cc97e2cb))
+
+- **plugins**: Add plugin context, event registry, and manifest hooks/events fields
+  ([`2f4d8a7`](https://github.com/asermax/tachikoma/commit/2f4d8a7f40bfbbe0ecf22d75a380bbf7eefdfb5c))
+
+- **plugins**: Integrate lifecycle hooks into manager install/remove
+  ([`4695d77`](https://github.com/asermax/tachikoma/commit/4695d77543c9efc6954c16bcf57d2c46f7a03f72))
+
+- **plugins**: Validate and pre-resolve handlers during install
+  ([`6b1f5ea`](https://github.com/asermax/tachikoma/commit/6b1f5ea5369981331ed394c2b21b1d7965601aca))
+
+### Refactoring
+
+- **plugins**: Extract init_plugin helper to eliminate duplicated init logic
+  ([`5ba89d5`](https://github.com/asermax/tachikoma/commit/5ba89d5672918261408168f65c78cbaa7753623e))
+
+- **plugins**: Remove unnecessary type ignore in lifecycle module
+  ([`b8f038a`](https://github.com/asermax/tachikoma/commit/b8f038accc43043fa34f4c0e04e68561ba4a61a2))
+
+- **plugins**: Tighten event type annotations to type[BaseEvent]
+  ([`8202f9c`](https://github.com/asermax/tachikoma/commit/8202f9c4a21242f9452c4006881dac43b3a8f9b4))
+
+
 ## v1.70.0 (2026-05-05)
 
 ### Documentation
