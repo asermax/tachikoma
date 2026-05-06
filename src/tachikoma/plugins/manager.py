@@ -22,7 +22,7 @@ from tachikoma.plugins.lifecycle import (
     subscribe_plugin_events,
     unsubscribe_plugin_events,
 )
-from tachikoma.plugins.loader import LoadedPlugin
+from tachikoma.plugins.loader import LoadedPlugin, _validate_handlers
 from tachikoma.plugins.manifest import parse_manifest
 from tachikoma.plugins.materializer import (
     MaterializeError,
@@ -221,6 +221,19 @@ class PluginManager:
 
         self._settings_manager.update_plugin_entry(resolved_alias, source)
 
+        # Validate handlers for Tachikoma-native plugins.
+        init_hook_val = None
+        event_handlers_val: dict = {}
+        if manifest.source_format == "tachikoma" and (manifest.hooks or manifest.events):
+            try:
+                init_hook_val, event_handlers_val = _validate_handlers(
+                    manifest, target, resolved_alias
+                )
+            except ValueError as exc:
+                _log.bind(plugin=resolved_alias).warning(
+                    "Handler validation failed during install: {}", exc
+                )
+
         plugin = LoadedPlugin(
             alias=resolved_alias,
             source=source,
@@ -228,6 +241,8 @@ class PluginManager:
             status="loaded",
             diagnostic=None,
             plugin_dir=target,
+            init_hook=init_hook_val,
+            event_handlers=event_handlers_val,
         )
         self._loaded[resolved_alias] = plugin
 
