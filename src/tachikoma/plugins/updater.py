@@ -14,7 +14,6 @@ import tempfile
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from urllib.request import urlopen
 
 from loguru import logger
 
@@ -22,16 +21,13 @@ from tachikoma.plugins.loader import LoadedPlugin
 from tachikoma.plugins.sources import GitPluginSource, UrlPluginSource
 from tachikoma.plugins.state import PluginState, PluginStateRepository
 
+from tachikoma.plugins.materializer import _download as _download_archive
+
 _log = logger.bind(component="plugins.updater")
 
 # Well-known branch names that should use refs/heads/ even though they
 # don't contain a slash.
 _BRANCH_REFS = frozenset({"main", "master"})
-
-
-# ---------------------------------------------------------------------------
-# Exceptions
-# ---------------------------------------------------------------------------
 
 
 class GitCheckError(Exception):
@@ -52,11 +48,6 @@ class GitCheckError(Exception):
         super().__init__(msg)
 
 
-# ---------------------------------------------------------------------------
-# Ref resolution helpers
-# ---------------------------------------------------------------------------
-
-
 def _resolve_ref_spec(ref: str) -> str:
     """Map a user-facing ref to a ``git ls-remote`` ref spec.
 
@@ -68,11 +59,6 @@ def _resolve_ref_spec(ref: str) -> str:
     if "/" in ref or ref in _BRANCH_REFS:
         return f"refs/heads/{ref}"
     return f"refs/tags/{ref}^{{}}"
-
-
-# ---------------------------------------------------------------------------
-# Git update detection
-# ---------------------------------------------------------------------------
 
 
 async def check_git_update(
@@ -114,7 +100,7 @@ async def check_git_update(
     if not output:
         raise GitCheckError(alias, source.git, "no output from ls-remote")
 
-    # First line: "<sha>\\t<ref>"
+    # ls-remote may return multiple matching refs; take the first
     first_line = output.splitlines()[0]
     remote_sha = first_line.split("\t", 1)[0].strip()
 
@@ -127,11 +113,6 @@ async def check_git_update(
     return remote_sha
 
 
-# ---------------------------------------------------------------------------
-# URL content hashing (for explicit URL updates)
-# ---------------------------------------------------------------------------
-
-
 async def compute_url_hash(source: UrlPluginSource) -> str:
     """Download the archive at *source.url* and return its SHA-256 hex digest.
 
@@ -141,26 +122,8 @@ async def compute_url_hash(source: UrlPluginSource) -> str:
 
     with tempfile.TemporaryDirectory() as tmp_dir:
         archive_path = Path(tmp_dir) / "archive"
-        await loop.run_in_executor(None, _download_to, source.url, archive_path)
+        await loop.run_in_executor(None, _download_archive, source.url, archive_path)
         return hashlib.file_digest(archive_path.open("rb"), "sha256").hexdigest()
-
-
-def _download_to(url: str, dest: Path) -> None:
-    """Blocking download helper (runs in executor)."""
-    with (
-        urlopen(url) as response,  # noqa: S310
-        open(dest, "wb") as f,
-    ):
-        while True:
-            chunk = response.read(64 * 1024)
-            if not chunk:
-                break
-            f.write(chunk)
-
-
-# ---------------------------------------------------------------------------
-# Daily check orchestrator
-# ---------------------------------------------------------------------------
 
 
 @dataclass(frozen=True)

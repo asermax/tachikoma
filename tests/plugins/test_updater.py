@@ -134,7 +134,7 @@ class TestComputeUrlHash:
         content = b"hello world"
         source = UrlPluginSource.model_validate({"url": "https://example.com/test.tar.gz"})
 
-        with patch("tachikoma.plugins.updater._download_to") as mock_dl:
+        with patch("tachikoma.plugins.updater._download_archive") as mock_dl:
             mock_dl.side_effect = lambda url, dest: dest.write_bytes(content)
             result = await compute_url_hash(source)
 
