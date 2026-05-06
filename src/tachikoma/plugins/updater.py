@@ -171,6 +171,27 @@ class PluginUpdateInfo:
     available_version: str
 
 
+@dataclass(frozen=True)
+class UpdateResult:
+    """Result of a single plugin update attempt."""
+
+    alias: str
+    status: str  # "updated", "failed", "skipped"
+    error: str | None = None
+    message: str | None = None
+
+
+@dataclass(frozen=True)
+class UpdateSummary:
+    """Aggregated result of a bulk plugin update."""
+
+    total: int
+    updated: int
+    skipped: int
+    failed: int
+    results: list[UpdateResult]
+
+
 async def run_daily_git_check(
     plugins: dict[str, LoadedPlugin],
     state_repo: PluginStateRepository,
@@ -249,9 +270,7 @@ async def run_daily_git_check(
                     created_at=state.created_at,
                 )
             )
-            updates.append(
-                PluginUpdateInfo(alias=alias, available_version=remote_sha)
-            )
+            updates.append(PluginUpdateInfo(alias=alias, available_version=remote_sha))
             _log.info(
                 "Update available for {alias}: {old} -> {new}",
                 alias=alias,

@@ -10,12 +10,17 @@ from __future__ import annotations
 
 import asyncio
 import shutil
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 from loguru import logger
 
-from tachikoma.plugins.events import PluginInstalled, PluginRemoved, PluginRemoving
+from tachikoma.plugins.events import (
+    PluginInstalled,
+    PluginRemoved,
+    PluginRemoving,
+)
 from tachikoma.plugins.lifecycle import (
     init_plugin,
     unsubscribe_plugin_events,
@@ -36,12 +41,14 @@ from tachikoma.plugins.sources import (
     UrlPluginSource,
     validate_alias,
 )
+from tachikoma.plugins.updater import UpdateResult, UpdateSummary
 
 if TYPE_CHECKING:
     from bubus import EventBus
 
     from tachikoma.config import SettingsManager
-    from tachikoma.plugins.state import PluginStateRepository
+
+from tachikoma.plugins.state import PluginState, PluginStateRepository
 
 _log = logger.bind(component="plugins")
 
@@ -123,6 +130,15 @@ class PluginManager:
         self._loaded: dict[str, LoadedPlugin] = dict(loaded)
         self._state_repo = state_repo
         self._lock = asyncio.Lock()
+        self._update_locks: dict[str, asyncio.Lock] = {}
+
+    def _get_update_lock(self, alias: str) -> asyncio.Lock:
+        """Return (or create) the per-plugin update lock for *alias*."""
+        return self._update_locks.setdefault(alias, asyncio.Lock())
+
+    def _cleanup_update_lock(self, alias: str) -> None:
+        """Remove the per-plugin update lock entry (called after plugin removal)."""
+        self._update_locks.pop(alias, None)
 
     def list_plugins(self) -> list[LoadedPlugin]:
         """Return all loaded plugins (caller should not mutate)."""
@@ -131,6 +147,249 @@ class PluginManager:
     def failed_plugins(self) -> list[LoadedPlugin]:
         """Return plugins that failed to load (status != "loaded")."""
         return [p for p in self._loaded.values() if p.status != "loaded"]
+
+    async def update(self, alias: str) -> UpdateResult:
+        """Update a single plugin.
+
+        Re-materializes from source, atomic-swaps, persists new version,
+        and re-registers the plugin's skills and events.
+
+        Returns:
+            An :class:`UpdateResult` indicating the outcome.
+        """
+        plugin = self._loaded.get(alias)
+        if plugin is None:
+            raise PluginNotFoundError(alias)
+
+        if isinstance(plugin.source, LocalPluginSource):
+            return UpdateResult(
+                alias=alias,
+                status="skipped",
+                message="Local plugins are always current (symlink-based). No update needed.",
+            )
+
+        lock = self._get_update_lock(alias)
+        if lock.locked():
+            return UpdateResult(
+                alias=alias,
+                status="failed",
+                error=f"Update already in progress for plugin '{alias}'",
+            )
+
+        async with lock:
+            return await self._update_locked(alias)
+
+    async def _update_locked(self, alias: str) -> UpdateResult:
+        """Core update logic, called while holding the per-plugin lock."""
+        plugin = self._loaded[alias]
+        source = plugin.source
+        install_dir = self._workspace_path / ".tachikoma" / "plugins"
+        staging_root = install_dir / ".staging"
+        staging_root.mkdir(parents=True, exist_ok=True)
+
+        staging = staging_root / f"update-{alias}"
+        if staging.exists():
+            shutil.rmtree(staging, ignore_errors=True)
+
+        try:
+            if isinstance(source, GitPluginSource):
+                result = await materialize_git(source, staging, alias=alias)
+            elif isinstance(source, UrlPluginSource):
+                result = await materialize_url(source, staging, alias=alias)
+            else:
+                return UpdateResult(
+                    alias=alias,
+                    status="skipped",
+                    message="Unsupported source type",
+                )
+        except MaterializeError as exc:
+            _cleanup(staging)
+            return UpdateResult(alias=alias, status="failed", error=str(exc))
+
+        # Parse manifest and validate handlers at the staging path.
+        try:
+            manifest = parse_manifest(staging)
+        except Exception as exc:
+            _cleanup(staging)
+            return UpdateResult(alias=alias, status="failed", error=f"Manifest parse error: {exc}")
+
+        if manifest is None:
+            _cleanup(staging)
+            return UpdateResult(
+                alias=alias,
+                status="failed",
+                error="No manifest found in updated plugin",
+            )
+
+        init_hook_val = None
+        event_handlers_val: dict = {}
+        if manifest.source_format == "tachikoma" and (manifest.hooks or manifest.events):
+            try:
+                init_hook_val, event_handlers_val = _validate_handlers(manifest, staging, alias)
+            except ValueError as exc:
+                _cleanup(staging)
+                return UpdateResult(
+                    alias=alias,
+                    status="failed",
+                    error=f"Handler validation error: {exc}",
+                )
+
+        # URL content-hash comparison: skip if same content.
+        if isinstance(source, UrlPluginSource):
+            state = await self._state_repo.get(alias)
+            if state is not None and state.installed_version == result.version:
+                _cleanup(staging)
+                return UpdateResult(
+                    alias=alias,
+                    status="skipped",
+                    message="Plugin is already up-to-date.",
+                )
+
+        # Atomic swap.
+        target = install_dir / alias
+        try:
+            _atomic_replace_dir(result.staging_dir, target)
+        except Exception as exc:
+            _cleanup(staging)
+            return UpdateResult(alias=alias, status="failed", error=f"Atomic swap failed: {exc}")
+
+        # Persist new version state.
+        existing_state = await self._state_repo.get(alias)
+        created_at = existing_state.created_at if existing_state else datetime.now(UTC)
+        await self._state_repo.upsert(
+            PluginState(
+                alias=alias,
+                installed_version=result.version,
+                update_status="up-to-date",
+                available_version=None,
+                last_checked_at=None,
+                diagnostic=None,
+                created_at=created_at,
+            )
+        )
+
+        # Re-register plugin (skills, events, init hook).
+        new_plugin = LoadedPlugin(
+            alias=alias,
+            source=source,
+            manifest=manifest,
+            status="loaded",
+            diagnostic=None,
+            plugin_dir=target,
+            init_hook=init_hook_val,
+            event_handlers=event_handlers_val,
+        )
+
+        reregister_error = await self._reregister_plugin(plugin, new_plugin)
+
+        if reregister_error is not None:
+            # Re-registration failed: keep new version on disk, retain old skills/events.
+            old_state = await self._state_repo.get(alias)
+            await self._state_repo.upsert(
+                PluginState(
+                    alias=alias,
+                    installed_version=result.version,
+                    update_status=old_state.update_status if old_state else "unknown",
+                    available_version=old_state.available_version if old_state else None,
+                    last_checked_at=old_state.last_checked_at if old_state else None,
+                    diagnostic=f"Re-registration failed: {reregister_error}",
+                    created_at=old_state.created_at if old_state else created_at,
+                )
+            )
+            return UpdateResult(
+                alias=alias,
+                status="failed",
+                error=f"Re-registration failed: {reregister_error}",
+            )
+
+        return UpdateResult(alias=alias, status="updated")
+
+    async def _reregister_plugin(
+        self, old_plugin: LoadedPlugin, new_plugin: LoadedPlugin
+    ) -> str | None:
+        """Unregister old plugin and register the new one.
+
+        Returns ``None`` on success, or an error string on failure.
+        On failure, the old plugin's skills and events remain active.
+        """
+        try:
+            # Signal that the old plugin is being removed.
+            namespaced_skills = [s.qualified_name for s in old_plugin.contributed_skills]
+            await self._bus.dispatch(
+                PluginRemoving(alias=old_plugin.alias, namespaced_skill_names=namespaced_skills)
+            )
+
+            # Deactivate old event wrappers.
+            if old_plugin.event_wrappers:
+                unsubscribe_plugin_events(old_plugin.event_wrappers)
+
+            # Remove old skills from registry.
+            await self._bus.dispatch(PluginRemoved(alias=old_plugin.alias))
+
+            # Store new plugin in loaded map.
+            self._loaded[new_plugin.alias] = new_plugin
+
+            # Register new skills and subscribe events.
+            await init_plugin(new_plugin, self._bus)
+
+            await self._bus.dispatch(PluginInstalled(alias=new_plugin.alias, plugin=new_plugin))
+
+            return None
+        except Exception as exc:
+            # Re-registration failed: restore old plugin in loaded map.
+            self._loaded[old_plugin.alias] = old_plugin
+            _log.bind(plugin=old_plugin.alias).exception("Re-registration failed: {}", exc)
+            return str(exc)
+
+    async def update_all(self) -> UpdateSummary:
+        """Update all plugins with available updates.
+
+        Iterates all loaded plugins sequentially. Skips local plugins and
+        those already up-to-date. Continues on individual failures.
+
+        Returns:
+            An :class:`UpdateSummary` with per-plugin results.
+        """
+        results: list[UpdateResult] = []
+
+        for alias in list(self._loaded.keys()):
+            plugin = self._loaded[alias]
+
+            if isinstance(plugin.source, LocalPluginSource):
+                results.append(
+                    UpdateResult(
+                        alias=alias,
+                        status="skipped",
+                        message="Local plugins are always current.",
+                    )
+                )
+                continue
+
+            state = await self._state_repo.get(alias)
+            if state is not None and state.update_status != "update-available":
+                results.append(
+                    UpdateResult(
+                        alias=alias,
+                        status="skipped",
+                        message="Plugin is already up-to-date.",
+                    )
+                )
+                continue
+
+            result = await self.update(alias)
+            results.append(result)
+
+        updated = sum(1 for r in results if r.status == "updated")
+        skipped = sum(1 for r in results if r.status == "skipped")
+        failed = sum(1 for r in results if r.status == "failed")
+
+        return UpdateSummary(
+            total=len(results),
+            updated=updated,
+            skipped=skipped,
+            failed=failed,
+            results=results,
+        )
 
     async def install(
         self,
@@ -249,9 +508,7 @@ class PluginManager:
 
         await init_plugin(plugin, self._bus)
 
-        await self._bus.dispatch(
-            PluginInstalled(alias=resolved_alias, plugin=plugin)
-        )
+        await self._bus.dispatch(PluginInstalled(alias=resolved_alias, plugin=plugin))
 
         return plugin
 
@@ -283,7 +540,6 @@ class PluginManager:
 
         namespaced_skills = [s.qualified_name for s in plugin.contributed_skills]
 
-
         await self._bus.dispatch(
             PluginRemoving(alias=alias, namespaced_skill_names=namespaced_skills)
         )
@@ -307,12 +563,11 @@ class PluginManager:
                 await loop.run_in_executor(None, shutil.rmtree, target)
         except OSError as exc:
             rmtree_diagnostic = f"Directory removal failed: {exc}"
-            _log.bind(plugin=alias).error(
-                "Failed to remove plugin directory: {}", exc
-            )
+            _log.bind(plugin=alias).error("Failed to remove plugin directory: {}", exc)
 
         del self._loaded[alias]
 
+        self._cleanup_update_lock(alias)
 
         await self._bus.dispatch(PluginRemoved(alias=alias))
 
