@@ -2,6 +2,128 @@
 
 <!-- version list -->
 
+## v1.72.0 (2026-05-06)
+
+### Bug Fixes
+
+- **plugins**: Add missing os import for symlink removal
+  ([`94247af`](https://github.com/asermax/tachikoma/commit/94247aff5c124a21876a638a37bf1aee4ba75828))
+
+- **plugins**: Handle symlinks correctly during removal
+  ([`d859706`](https://github.com/asermax/tachikoma/commit/d859706fe50ad3724e775c15550150272523a16f))
+
+### Chores
+
+- **deltas**: Remove completed DLT-055 delta artifacts
+  ([`294126b`](https://github.com/asermax/tachikoma/commit/294126b2f3e6242910100a7d5b123e35d6ede7d1))
+
+### Code Style
+
+- Apply ruff formatting across codebase
+  ([`02873dd`](https://github.com/asermax/tachikoma/commit/02873ddd7c15e74d5817f4a4dd88f2b65cedd7de))
+
+- **plugins**: Fix import ordering and formatting
+  ([`2f2c459`](https://github.com/asermax/tachikoma/commit/2f2c45949a8641c9bfcff9d43fdb347f2a1bbaac))
+
+### Documentation
+
+- **deltas**: Advance DLT-055 to design phase
+  ([`0483f44`](https://github.com/asermax/tachikoma/commit/0483f44f04140248b168022c6ebd09e48ee6c5eb))
+
+- **deltas**: Advance DLT-055 to plan phase
+  ([`965540d`](https://github.com/asermax/tachikoma/commit/965540dea4448ac224249deff609f2342e10b1d9))
+
+- **deltas**: Begin DLT-055 implementation phase
+  ([`1fb3cd6`](https://github.com/asermax/tachikoma/commit/1fb3cd648b7cb4b1e3c80b6ac2f310dd945b8f6b))
+
+- **deltas**: Complete DLT-055 plan phase
+  ([`c22bbb8`](https://github.com/asermax/tachikoma/commit/c22bbb80d8a58a7005dbccff9e1a8e0a2af13a17))
+
+- **deltas**: Mark DLT-055 batch 2 as done
+  ([`320f20d`](https://github.com/asermax/tachikoma/commit/320f20d6165945d96e5188068a9b36e1fb99e2b7))
+
+- **deltas**: Mark DLT-055 batch 4 as done
+  ([`4e66561`](https://github.com/asermax/tachikoma/commit/4e66561431b379d7bd8137bde2dd7132428cd367))
+
+- **deltas**: Mark DLT-055 batch 5 as done
+  ([`4f725a4`](https://github.com/asermax/tachikoma/commit/4f725a4624fbc4a1bfc75aa4754f6fbbdb342005))
+
+- **deltas**: Update DLT-055 plugin update mechanism status to spec
+  ([`47e7858`](https://github.com/asermax/tachikoma/commit/47e7858aaff101a7e4c3fb30352b9b4b581d0327))
+
+- **plugins**: Add DLT-055 plugin update mechanism specification
+  ([`71562bd`](https://github.com/asermax/tachikoma/commit/71562bdb8f1f25bb6e8a6cba32494218a9054fb3))
+
+- **plugins**: Advance DLT-055 to design phase
+  ([`85516f8`](https://github.com/asermax/tachikoma/commit/85516f8defa86bb896178a5e80dc767373d9ce5f))
+
+- **plugins**: Approve DLT-055 plugin update mechanism design
+  ([`305f304`](https://github.com/asermax/tachikoma/commit/305f30405a6a589b2342c30a29a52e43d279ed7a))
+
+- **plugins**: Reconcile DLT-055 update mechanism into feature docs
+  ([`260f600`](https://github.com/asermax/tachikoma/commit/260f6002854717d0b81da3e751aae916f9a29f86))
+
+- **plugins**: Refine DLT-055 spec with edge cases and precision
+  ([`ea620d0`](https://github.com/asermax/tachikoma/commit/ea620d0180ebecdbf204a9254eca575b166137ca))
+
+- **plugins**: Write DLT-055 plugin update mechanism design
+  ([`6466f77`](https://github.com/asermax/tachikoma/commit/6466f770960659d370f7f139ccbb51a2ae81fb71))
+
+- **plugins**: Write DLT-055 plugin update mechanism plan
+  ([`bac9f57`](https://github.com/asermax/tachikoma/commit/bac9f572090fae60d97cf1118308dec36308bd90))
+
+### Features
+
+- **plugins**: Add first-time-only install and local symlink migration
+  ([`b575126`](https://github.com/asermax/tachikoma/commit/b575126348935a3695d71c37870c77cb5ad3938b))
+
+- **plugins**: Add git update detection and daily check logic
+  ([`b2005dc`](https://github.com/asermax/tachikoma/commit/b2005dcde01a513a8575f6f7ba48dd29c0a53a18))
+
+- **plugins**: Add plugin state persistence layer
+  ([`fc304f9`](https://github.com/asermax/tachikoma/commit/fc304f972bbb5a1cd3d3b88091787584c9784d9c))
+
+- **plugins**: Add update and update-all MCP tools with update info
+  ([`061521f`](https://github.com/asermax/tachikoma/commit/061521f3b43090afb10ea0499e80585e58ca686f))
+
+- **plugins**: Add update result types and plugin update logic
+  ([`d588f34`](https://github.com/asermax/tachikoma/commit/d588f341d7e75f215e0632bb1d4143dd59c4322c))
+
+- **plugins**: Add version capture and MaterializationResult to materializers
+  ([`a3b8944`](https://github.com/asermax/tachikoma/commit/a3b89440792be139bb28178de5286408786b0c09))
+
+- **plugins**: Wire daily plugin update check into scheduler
+  ([`a11389c`](https://github.com/asermax/tachikoma/commit/a11389c80cdc1afd268b0b3ef7d024739328c21b))
+
+- **plugins**: Wire state repository into hooks and plugin manager
+  ([`64b7f09`](https://github.com/asermax/tachikoma/commit/64b7f09c803ea05d5209c3bf3f94fd7306dae4fc))
+
+### Refactoring
+
+- **plugins**: Expose loaded plugins through public method
+  ([`a15d2c7`](https://github.com/asermax/tachikoma/commit/a15d2c75a20e984be9b31e0bbe880d0c1a0d7553))
+
+- **plugins**: Reuse download helper from materializer
+  ([`5481cb9`](https://github.com/asermax/tachikoma/commit/5481cb9e2e20563b887e3956923b21cff80874ab))
+
+- **plugins**: Simplify state repository operations
+  ([`b2c278f`](https://github.com/asermax/tachikoma/commit/b2c278f17ecd031962bbdd38e6f3167e9b539c2b))
+
+### Testing
+
+- **plugins**: Add integration tests for plugin update flow
+  ([`33a80bf`](https://github.com/asermax/tachikoma/commit/33a80bfd112d9b40c02722a439932c2284f74403))
+
+- **plugins**: Add plugin state repository tests
+  ([`fc6f7c8`](https://github.com/asermax/tachikoma/commit/fc6f7c876a80a46abbfaf0a026f3493a5f21f946))
+
+- **plugins**: Add tests for update detection and daily check tick
+  ([`4744fed`](https://github.com/asermax/tachikoma/commit/4744fedba931ab9b1323f26c6f18fd6e1aa64fa3))
+
+- **plugins**: Add tests for update logic and MCP tools
+  ([`205ee5b`](https://github.com/asermax/tachikoma/commit/205ee5b8848d95d779e71d372d081d40d4b3f555))
+
+
 ## v1.71.0 (2026-05-06)
 
 ### Documentation
