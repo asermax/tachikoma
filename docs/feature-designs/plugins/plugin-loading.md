@@ -7,7 +7,7 @@
 
 ## Purpose
 
-This document explains the design rationale for the plugin loading system: how plugin sources are modeled and materialized, how manifests are parsed, how skills are registered under namespaced names, how event-based decoupling keeps the plugin manager and skills subsystem cleanly separated, and how MCP tools enable runtime plugin management.
+This document explains the design rationale for the plugin loading system: how plugin sources are modeled and materialized, how manifests are parsed, how skills are registered under namespaced names, how lifecycle hooks and event subscriptions extend the plugin system, how event-based decoupling keeps the plugin manager and skills subsystem cleanly separated, and how MCP tools enable runtime plugin management.
 
 ## Problem Context
 
@@ -15,7 +15,7 @@ Tachikoma's capabilities live in two layers — a core agent runtime and a per-w
 
 **Constraints:**
 - **Reuse, don't parallel.** Plugin skills must flow into the same `SkillRegistry` consumed by the per-message classifier and the coordinator's agent derivation.
-- **Skills only.** Plugins contributing MCP tool servers, slash commands, context providers, post-processors, secondary channels, and boundary hooks are deferred to future deltas. CC plugins that declare those surfaces install successfully, but their non-skill contributions are silently ignored.
+- **Skills only.** Plugins contributing MCP tool servers, slash commands, context providers, post-processors, secondary channels, and boundary hooks are deferred to future deltas. CC plugins that declare those surfaces install successfully, but their non-skill contributions are silently ignored. Plugins can declare init hooks and event subscriptions.
 - **Fail-safe.** A broken plugin must never block startup or affect other plugins. Per-plugin failure isolation applies in materialization, discovery, manifest parsing, and registry registration.
 - **CC compatibility.** Plugins shaped as Claude Code plugins are recognized so Tachikoma can benefit from the existing CC plugin community.
 - **Atomic on-disk state.** Mid-write failures during reconciliation must not leave a half-replaced plugin folder.
@@ -25,8 +25,10 @@ Tachikoma's capabilities live in two layers — a core agent runtime and a per-w
 - **`SkillRegistry`** — gains `add_namespaced_source(alias, path)` and `remove_namespaced_source(alias)`; `Skill` gains `namespace` and `qualified_name`.
 - **Bootstrap** — a new `plugins_hook` registers between `git_hook` and `skills_hook`.
 - **Configuration** — adds `plugins: dict[str, PluginSource]` with `update_plugin_entry` / `remove_plugin_entry` helpers.
-- **Event bus** (ADR-009) — three new events: `PluginInstalled`, `PluginRemoving`, `PluginRemoved`.
+- **Event bus** (ADR-009) — three new events: `PluginInstalled`, `PluginRemoving`, `PluginRemoved`. Plugin event handlers subscribe via `bus.on(EventType, wrapped_handler)`.
 - **Sessions** — on `PluginRemoving`, active session's already-injected plugin skill entries get a removal notice and `metadata["deleted"] = True`.
+- **Lifecycle hooks** — plugins can declare init hooks (run post-bootstrap, before channel start) and event subscriptions (routed through the event bus with per-plugin isolation).
+- **Handler validation** — hook and event handler entry points are validated at discovery time (file exists, imports, callable present, correct signature, known event types).
 
 ## Design Overview
 
@@ -41,13 +43,21 @@ The plugin system is a self-contained `tachikoma/plugins/` package whose compone
 │ Bootstrap (registration order)                               │
 │  git_hook → plugins_hook → skills_hook                       │
 ├──────────────────────────────────────────────────────────────┤
+│ __main__.py                                                  │
+│  After bootstrap.run(): run_plugin_init_hooks(manager, bus)  │
+├──────────────────────────────────────────────────────────────┤
 │ plugins/ package                                             │
 │  reconciler.py   walks config, dispatches per source kind    │
 │  materializer.py git / url / local + atomic-swap             │
 │  loader.py       scans install dir, parses manifests         │
+│                 + handler validation (hooks/events)          │
 │  manager.py      state + install/remove/list                 │
+│                 + init+subscribe on install, unsubscribe      │
 │  tools.py        MCP tools factory                           │
 │  events.py       PluginInstalled / Removing / Removed        │
+│  context.py      PluginContext frozen dataclass               │
+│  registry.py     auto-discovered event type registry         │
+│  lifecycle.py    init executor + subscribe/unsubscribe       │
 ├──────────────────────────────────────────────────────────────┤
 │ skills/ package (extensions)                                 │
 │  registry.py     add_namespaced_source(alias, path)          │
@@ -56,6 +66,10 @@ The plugin system is a self-contained `tachikoma/plugins/` package whose compone
 ├──────────────────────────────────────────────────────────────┤
 │ Session                                                      │
 │  context entries (marked deleted on PluginRemoving)          │
+├──────────────────────────────────────────────────────────────┤
+│ bubus EventBus                                               │
+│  bus.on(EventType, wrapped_handler)  — subscribe            │
+│  wrapper._deactivate()               — unsubscribe (flag)   │
 └──────────────────────────────────────────────────────────────┘
 ```
 
@@ -67,17 +81,21 @@ The plugin system is a self-contained `tachikoma/plugins/` package whose compone
 |-----------------|----------------|---------------|
 | `src/tachikoma/plugins/sources.py` | Pydantic source models: `GitPluginSource`, `UrlPluginSource`, `LocalPluginSource`, discriminated union | Lives separately from `config.py` to keep config module from accumulating plugin validators; `config` field carries raw user values |
 | `src/tachikoma/plugins/config_schema.py` | `ConfigFieldSchema` Pydantic model; `ConfigDiagnostic` dataclass; `ConfigValidationResult` dataclass; `validate_config()` function | Separate module keeps config validation isolated from manifest parsing and loader orchestration |
-| `src/tachikoma/plugins/manifest.py` | `TachikomaManifest` and `CcManifest` Pydantic models; `parse_manifest()` with native-takes-precedence | Native strict, CC tolerant (`extra="ignore"`); path-traversal protection; `config` field parses `[config.<field_name>]` sections |
+| `src/tachikoma/plugins/manifest.py` | `TachikomaManifest` and `CcManifest` Pydantic models; `parse_manifest()` with native-takes-precedence | Native strict, CC tolerant (`extra="ignore"`); path-traversal protection; `config` field parses `[config.<field_name>]` sections; `hooks`/`events` fields map hook/event type names to module names; `"events"` added to CC ignored contribution types |
 | `src/tachikoma/plugins/materializer.py` | `materialize_git()`, `materialize_url()`, `materialize_local()` async functions; `_atomic_replace_dir()` helper | Stdlib only — `urllib`, `tarfile`, `zipfile`, `shutil`, `os`. Atomic-swap follows pip pattern |
 | `src/tachikoma/plugins/reconciler.py` | `reconcile()` walks config; dispatches to materializer; handles stale-fallback and orphan removal | Always-on re-materialization; per-plugin try/except |
-| `src/tachikoma/plugins/loader.py` | `discover()` scans install dir; parses manifests; validates skill directories; validates config against schema | Runs after reconciler; failure of one plugin's manifest or config does not affect others |
-| `src/tachikoma/plugins/manager.py` | `PluginManager` class with `list()`, `install()`, `remove()`, `failed_plugins()`; owns `asyncio.Lock` | Single class matching tasks subsystem pattern; depends only on SettingsManager, EventBus, workspace_path |
+| `src/tachikoma/plugins/loader.py` | `discover()` scans install dir; parses manifests; validates skill directories; validates config against schema; validates hook/event handler entry points | Runs after reconciler; failure of one plugin's manifest or config does not affect others; handler validation imports modules via `importlib.util` and checks signatures via `inspect` |
+| `src/tachikoma/plugins/manager.py` | `PluginManager` class with `list()`, `install()`, `remove()`, `failed_plugins()`; owns `asyncio.Lock` | Single class matching tasks subsystem pattern; install runs init hook + subscribes events before `PluginInstalled`; remove unsubscribes during `PluginRemoving` |
+| `src/tachikoma/plugins/context.py` | `PluginContext` frozen dataclass | Frozen to prevent mutation by handlers; carries config + bus + alias + install_path |
+| `src/tachikoma/plugins/registry.py` | `build_event_registry()` auto-discovers `BaseEvent` subclasses; `get_event_type(name)` lookup | Imports all known event modules explicitly, walks `__subclasses__()` recursively; snake_case derived via regex |
+| `src/tachikoma/plugins/lifecycle.py` | `run_plugin_init_hooks()`, `init_plugin()`, `subscribe_plugin_events()`, `unsubscribe_plugin_events()` | Init hooks run with 30-second timeout; sync and async handlers both supported; active-flag wrapper for unsubscribe (bubus has no `off()`) |
 | `src/tachikoma/plugins/events.py` | `PluginInstalled`, `PluginRemoving`, `PluginRemoved` event types | Follows ADR-009; `PluginRemoving` fires before directory deletion |
 | `src/tachikoma/plugins/tools.py` | `create_plugin_tools_server()` factory; three closure-captured tool functions | Follows DES-006; extracted handlers for testability; `list_plugins` includes config schema/values/diagnostics |
 | `src/tachikoma/plugins/hooks.py` | `plugins_hook()` bootstrap callback | Follows DES-003; registered between git and skills hooks |
 | `src/tachikoma/skills/listeners.py` | `register_plugin_event_listeners()` subscribes to plugin events | Lives in skills module per decoupling decision; owns all registry mutation triggered by plugin events |
 | `src/tachikoma/skills/registry.py` (extension) | `add_namespaced_source()`, `remove_namespaced_source()`; `Skill.namespace` + `qualified_name`; `_namespaced_source_paths` tracking | Minimal-change extension — core `_discover` / `_load_skill` flow unchanged for default-namespace skills |
 | `src/tachikoma/config.py` (extension) | `plugins: dict[str, PluginSource]` field; `update_plugin_entry()` / `remove_plugin_entry()` methods | tomlkit super-table for sub-table write-back |
+| `src/tachikoma/__main__.py` (extension) | Calls `run_plugin_init_hooks()` after `bootstrap.run()`, before channel construction | Post-bootstrap timing ensures all subsystems initialized before plugin hooks run |
 
 ### Cross-Layer Contracts
 
@@ -89,7 +107,8 @@ plugins_hook(ctx)
     ├── 2. Append .tachikoma/plugins/ to .gitignore (idempotent)
     ├── 3. report = reconcile(workspace_path, settings.plugins)
     ├── 4. plugins = discover(install_dir, plugin_sources)
-    │       └── For each plugin: parse manifest → validate config schema → LoadedPlugin
+    │       └── For each plugin: parse manifest → validate config schema
+    │           → validate hook/event handlers → LoadedPlugin(init_hook, event_handlers)
     ├── 5. manager = PluginManager(settings_manager, bus, workspace_path, loaded)
     ├── 6. ctx.extras["plugin_manager"] = manager
     └── 7. ctx.extras["plugin_skill_paths"] = [(alias, dir) for each loaded plugin skill dir]
@@ -102,6 +121,15 @@ skills_hook(ctx)
 
 __main__.py (after bootstrap.run())
     ├── manager = bootstrap.extras["plugin_manager"]
+    ├── bus = bootstrap.extras["event_bus"]
+    ├── await run_plugin_init_hooks(manager.list_plugins(), bus)
+    │       ├── Sort loaded plugins by alias (alphabetical)
+    │       ├── For each plugin with status="loaded":
+    │       │   ├── If init_hook: create PluginContext, await with 30s timeout
+    │       │   │   ├── On success → subscribe_plugin_events(plugin, bus)
+    │       │   │   └── On failure → log ERROR, skip subscriptions
+    │       │   └── Elif event_handlers: subscribe_plugin_events(plugin, bus)
+    │       └── Log summary: initialized N, M failures
     └── plugin_tools_server = create_plugin_tools_server(manager)
 ```
 
@@ -116,8 +144,12 @@ install_plugin(source, alias=None) [held under PluginManager._lock]
     ├── 5. If collision → return error (config not mutated)
     ├── 6. _atomic_replace_dir(tmp_dir, install_dir / alias)
     ├── 7. settings_manager.update_plugin_entry(alias, source); save()
-    ├── 8. _loaded[alias] = LoadedPlugin(...)
-    └── 9. await bus.dispatch(PluginInstalled(alias, plugin))
+    ├── 8. _validate_handlers(manifest, target, alias)  → init_hook, event_handlers
+    ├── 9. _loaded[alias] = LoadedPlugin(..., init_hook, event_handlers)
+    ├── 10. await init_plugin(plugin, bus)
+    │       ├── If init_hook: await with 30s timeout, subscribe on success
+    │       └── Elif event_handlers: subscribe immediately
+    └── 11. await bus.dispatch(PluginInstalled(alias, plugin))
             └── skills listener: registry.add_namespaced_source + SkillsChanged
 ```
 
@@ -129,10 +161,12 @@ remove_plugin(alias) [held under PluginManager._lock]
     ├── 2. Collect namespaced_skill_names
     ├── 3. await bus.dispatch(PluginRemoving(alias, names))
     │       └── skills listener marks active session entries deleted
-    ├── 4. settings_manager.remove_plugin_entry(alias); save()
-    ├── 5. try _atomic_rmtree (errors recorded, not raised)
-    ├── 6. del _loaded[alias]
-    └── 7. await bus.dispatch(PluginRemoved(alias))
+    ├── 4. unsubscribe_plugin_events(plugin.event_wrappers)
+    │       └── wrapper._deactivate() for each registered wrapper
+    ├── 5. settings_manager.remove_plugin_entry(alias); save()
+    ├── 6. try _atomic_rmtree (errors recorded, not raised)
+    ├── 7. del _loaded[alias]
+    └── 8. await bus.dispatch(PluginRemoved(alias))
             └── skills listener: registry.remove_namespaced_source + SkillsChanged
 ```
 
@@ -202,7 +236,12 @@ TachikomaManifest (Pydantic)             [tachikoma-plugin.toml]
 ├── version: str | None = None
 ├── description: str
 ├── skills: list[str] = []                (relative paths to skill dirs)
-└── config: dict[str, ConfigFieldSchema] = {}  (declared settings from [config.<field_name>])
+├── config: dict[str, ConfigFieldSchema] = {}  (declared settings from [config.<field_name>])
+├── hooks: dict[str, str] = {}            (hook_type → module_name, e.g. "init" → "init")
+└── events: dict[str, str] = {}           (event_type_name → module_name, e.g. "coordinator_idle" → "on_idle")
+
+    @field_validator("hooks", "events", mode="after")
+    → values must be bare module names (no "..", no path separators, not empty)
 
 CcManifest (Pydantic)                     [.claude-plugin/plugin.json]
 ├── name: str
@@ -218,7 +257,9 @@ PluginManifest (frozen dataclass)         [unified internal model]
 ├── source_format: Literal["tachikoma", "cc"]
 ├── skill_dirs: list[Path]                (resolved absolute paths)
 ├── ignored_cc_contributions: list[str]   (silently ignored CC declarations)
-└── config_schema: dict[str, ConfigFieldSchema]   (empty dict for CC plugins)
+├── config_schema: dict[str, ConfigFieldSchema]   (empty dict for CC plugins)
+├── hooks: dict[str, str] = field(default_factory=dict)
+└── events: dict[str, str] = field(default_factory=dict)
 ```
 
 Native takes precedence when both manifests are present. Path-traversal protection rejects absolute paths, `..` segments, and paths resolving outside the plugin directory. CC plugins have no config schema — `config_schema` is always an empty dict.
@@ -234,7 +275,10 @@ LoadedPlugin (frozen dataclass)
 ├── diagnostic: str | None
 ├── plugin_dir: Path
 ├── contributed_skills: list[Skill]       (namespaced skills registered by SkillRegistry)
-└── config: dict[str, str | int | bool | float]   (validated values; empty dict if no schema)
+├── config: dict[str, str | int | bool | float]   (validated values; empty dict if no schema)
+├── init_hook: Callable[..., Any] | None = None   (resolved callable for "init" hook)
+├── event_handlers: dict[type[BaseEvent], Callable] = field(default_factory=dict)   (event_type → handler)
+└── event_wrappers: list = field(default_factory=list)   (wrapper objects with _deactivate() for unsubscribe)
 ```
 ```
 
@@ -269,6 +313,57 @@ PluginRemoved(BaseEvent[None])
 
 `PluginRemoving` fires before directory deletion so subscribers can access still-valid paths.
 
+### PluginContext
+
+```
+PluginContext (frozen dataclass)
+├── config: dict[str, str | int | bool | float]   (validated config values)
+├── event_bus: EventBus                            (reference, subscribe only — plugins cannot dispatch)
+├── alias: str                                     (plugin alias)
+└── install_path: Path                             (absolute path to plugin install directory)
+```
+
+Frozen to prevent mutation by handlers. Shared between init hooks and event handlers — both receive the same context. Created once per plugin at lifecycle execution time.
+
+### Event type registry
+
+```
+EVENT_REGISTRY: dict[str, type[BaseEvent]]
+    Built by: import all known event modules → walk BaseEvent.__subclasses__() recursively
+    → derive snake_case name from CamelCase class name via regex
+    → map name → class
+
+    Example mappings (at minimum):
+        "coordinator_idle"  → CoordinatorIdle
+        "notification"      → Notification
+        "skills_changed"    → SkillsChanged
+        "plugin_installed"  → PluginInstalled
+        "plugin_removing"   → PluginRemoving
+        "plugin_removed"    → PluginRemoved
+        "buffered_delivery" → BufferedDelivery
+        "restart_requested" → RestartRequested
+```
+
+Auto-discovered via `BaseEvent.__subclasses__()` walk. Adding a new event type to any imported module automatically makes it available to plugins. The import list is the only thing that needs updating when event modules are added.
+
+### Handler resolution
+
+```
+HandlerSpec (internal, not persisted)
+├── For hooks:
+│   ├── manifest key: hook type name (e.g., "init")
+│   ├── manifest value: module name (e.g., "startup")
+│   ├── resolved path: plugin_dir / "hooks" / "startup.py"
+│   ├── expected function name: hook type name (e.g., "init")
+│   └── expected parameter count: 1
+├── For events:
+│   ├── manifest key: event type name (e.g., "coordinator_idle")
+│   ├── manifest value: module name (e.g., "on_idle")
+│   ├── resolved path: plugin_dir / "events" / "on_idle.py"
+│   ├── expected function name: "handle"
+│   └── expected parameter count: 2
+```
+
 ## Data Flow
 
 ### Startup reconciliation
@@ -283,6 +378,7 @@ __main__.py → bootstrap.run() → plugins_hook
     │       ├── _atomic_replace_dir(staging, install_dir / alias)
     │       └── Record per-alias status (loaded / stale-fallback / failed)
     ├── discover(install_dir)
+    │   └── For each plugin: parse manifest → validate config → validate handlers
     ├── PluginManager(settings_manager, bus, workspace_path, loaded)
     └── ctx.extras populated
 
@@ -292,6 +388,7 @@ skills_hook(ctx)
     └── register_plugin_event_listeners(bus, registry, session_registry)
 
 __main__.py (after bootstrap)
+    ├── await run_plugin_init_hooks(manager.list_plugins(), bus)
     └── register plugin MCP tools server
 ```
 
@@ -300,7 +397,7 @@ __main__.py (after bootstrap)
 ```
 _discover_one(outcome, install_dir, plugin_sources)
     ├── Existing: parse manifest, validate skill dirs
-    ├── NEW: if manifest has config_schema:
+    ├── Existing: if manifest has config_schema:
     │   ├── user_values = source.config or {}
     │   ├── result = validate_config(manifest.config_schema, user_values)
     │   ├── if not result.is_valid:
@@ -309,7 +406,44 @@ _discover_one(outcome, install_dir, plugin_sources)
     │   └── validated_config = result.values
     ├── else:
     │   └── validated_config = {}
-    └── return LoadedPlugin(..., config=validated_config)
+    ├── NEW: if tachikoma-native manifest with hooks/events:
+    │   ├── _validate_handlers(manifest, plugin_dir, alias)
+    │   │   ├── For each (hook_type, module_name) in manifest.hooks:
+    │   │   │   ├── Resolve plugin_dir / "hooks" / {module_name}.py
+    │   │   │   ├── Check file exists
+    │   │   │   ├── importlib.util.spec_from_file_location → exec_module
+    │   │   │   ├── Check module has {hook_type} callable
+    │   │   │   ├── _count_positional_params(func) == 1
+    │   │   │   └── Store callable in init_hook
+    │   │   ├── For each (event_name, module_name) in manifest.events:
+    │   │   │   ├── Look up event_name in EVENT_REGISTRY (fail if unknown)
+    │   │   │   ├── Resolve plugin_dir / "events" / {module_name}.py
+    │   │   │   ├── Check file exists
+    │   │   │   ├── importlib.util.spec_from_file_location → exec_module
+    │   │   │   ├── Check module has "handle" callable
+    │   │   │   ├── _count_positional_params(func) == 2
+    │   │   │   └── Store event_type → callable in event_handlers
+    │   │   └── Return (init_hook, event_handlers) or raise ValueError
+    │   └── On failure: return LoadedPlugin(status="failed", diagnostic=...)
+    └── return LoadedPlugin(..., config=validated_config, init_hook=..., event_handlers=...)
+```
+
+### Init hooks and event subscription (post-bootstrap)
+
+```
+__main__.py (after bootstrap.run(), before channel construction)
+    └── await run_plugin_init_hooks(manager.list_plugins(), bus)
+            ├── Sort loaded plugins by alias (alphabetical)
+            ├── For each plugin with status="loaded":
+            │   ├── Create PluginContext(config, bus, alias, install_path)
+            │   ├── If init_hook:
+            │   │   ├── try: await asyncio.timeout(30): _invoke_handler(init_hook, ctx)
+            │   │   ├── except TimeoutError: log WARNING, skip subscriptions
+            │   │   ├── except Exception: log ERROR, skip subscriptions
+            │   │   └── On success: subscribe_plugin_events(plugin, bus, ctx)
+            │   └── Elif event_handlers:
+            │       └── subscribe_plugin_events(plugin, bus, ctx)
+            └── Log summary: initialized N plugins, M failures
 ```
 
 ### Startup notification consolidation
@@ -432,6 +566,55 @@ __main__.py (after bootstrap.run(), before channel.run())
 **Alternatives Considered**: New `dispatch_startup_notifications()` in `__main__.py` (duplicate logic or two dispatches); Plugin manager dispatches its own notification (no consolidation possible).
 **Consequences**: Pro: Single function owns all startup notification composition. Pro: DES-011 consume-once semantics preserved (follows DES-011 — marker cleared before side effects). Con: `rollback.py` gains optional `PluginManager` dependency (mitigated: `TYPE_CHECKING` import, optional parameter).
 
+### Auto-discovery event type registry
+
+**Choice**: Build the event type registry by importing all known event modules, then walking `BaseEvent.__subclasses__()` recursively and deriving snake_case names from class names.
+**Why**: Avoids maintaining a manual mapping of string names to classes. Adding a new event type to any imported module automatically makes it available to plugins. The module import list is the only thing that needs updating when event modules are added.
+**Alternatives Considered**: Static dict with explicit name → class mapping (simpler but every new event requires updating the dict); Fully automatic discovery without module imports (fragile — depends on import ordering).
+**Consequences**: Pro: New event types automatically available to plugins. Pro: snake_case convention matches TOML style. Con: Adding a new event module requires updating the registry's import list. Con: Event class names must follow CamelCase for correct snake_case derivation.
+
+### Post-bootstrap init hook execution
+
+**Choice**: Init hooks run after `bootstrap.run()` completes, before `channel.run()` starts, orchestrated by a `run_plugin_init_hooks()` call in `__main__.py` (not as a DES-003 bootstrap hook).
+**Why**: Guarantees all subsystems (sessions, tasks, skills, database) are fully initialized before plugin init hooks run. Plugin init hooks may need to interact with these subsystems. Running inside bootstrap would limit access to only earlier-initialized subsystems.
+**Alternatives Considered**: End of `plugins_hook` during bootstrap (simplest, but plugins can't access subsystems that haven't been bootstrapped yet); Separate bootstrap hook registered last (same timing but adds another hook for what is fundamentally a post-bootstrap concern).
+**Consequences**: Pro: Plugins have access to all initialized subsystems via the event bus. Pro: Clean separation — bootstrap handles subsystem init, post-bootstrap handles plugin lifecycle. Con: Init hooks are not visible in the bootstrap hook registry (mitigated by explicit call site in `__main__.py`).
+
+### LoadedPlugin field extensions for hooks and events
+
+**Choice**: Add `init_hook`, `event_handlers`, and `event_wrappers` fields directly to `LoadedPlugin`.
+**Why**: `LoadedPlugin` already carries manifest-level data and mutable runtime state (`contributed_skills`). Handler callables are resolved at discovery time alongside existing validation. A separate wrapper type would add complexity without clear benefit.
+**Alternatives Considered**: Separate `ResolvedPlugin` dataclass wrapping `LoadedPlugin` (cleaner separation but adds another type to thread through the system).
+**Consequences**: Pro: Single type flows through the entire plugin pipeline. Pro: Consistent with existing pattern of `contributed_skills` being populated after discovery. Con: `LoadedPlugin` gains three more fields (mitigated: all optional/default-empty).
+
+### Active-flag wrapper for event unsubscription
+
+**Choice**: Wrap each plugin event handler in a closure that checks an `_active` flag before dispatching. On plugin removal, set `_active = False` on all registered wrappers.
+**Why**: bubus `EventBus` (ADR-009) has no `off()` / `remove()` / `unsubscribe()` method. The handlers dict is a `defaultdict(list)` keyed by event class name, but directly manipulating it couples to bubus internals. The active-flag wrapper is self-contained.
+**Alternatives Considered**: Direct `bus.handlers[event_key].remove(handler)` (fragile across bubus versions); Maintain separate mapping and re-register all non-removed handlers on removal (complex, doesn't actually remove from bus).
+**Consequences**: Pro: No coupling to bubus internals. Pro: Simple implementation. Con: Minor memory retention — deactivated wrappers remain in bus handler list (acceptable since plugin removal is rare).
+
+### Handler validation during discovery (not manifest parsing)
+
+**Choice**: Handler entry points (file existence, import, callable check, signature validation) are validated during `discover()` in the loader, not during `parse_manifest()`.
+**Why**: Manifest parsing is a pure TOML/JSON concern — it validates syntax and basic structure. Handler validation requires filesystem access, dynamic imports, and event registry lookups. These are loader concerns. Keeping manifest parsing pure also means CC plugin manifests parse successfully without needing the event registry.
+**Alternatives Considered**: Validation during manifest parsing (couples manifest parsing to filesystem and importlib; CC manifests with hooks/events would need the registry to detect and ignore them).
+**Consequences**: Pro: Clean separation — manifest parsing handles syntax, loader handles semantics. Pro: Event type validation uses the fully-built registry. Pro: CC manifest handling unchanged.
+
+### Support for sync and async handlers
+
+**Choice**: Both init hooks and event handlers may be sync or async. The lifecycle module calls the function and checks `asyncio.iscoroutine(result)`, awaiting if needed.
+**Why**: Plugin authors may write simple sync handlers (e.g., `def init(ctx): ...`) or async handlers (e.g., `async def init(ctx): await some_async_setup()`). Supporting both removes a friction point.
+**Alternatives Considered**: Async-only (forces `async def` for trivial handlers); Sync-only (prevents async operations in handlers).
+**Consequences**: Pro: Plugin authors choose the style that fits. Con: `asyncio.timeout()` only enforces timeouts for async handlers. Sync blocking handlers bypass the timeout — documented as a known limitation.
+
+### Path resolution convention: `hooks/` and `events/` directories
+
+**Choice**: Module names in `[hooks]` and `[events]` are resolved as `{hooks|events}/{module_name}.py` relative to the plugin install directory.
+**Why**: Mirrors the convention used by skill directories — plugin authors declare a directory-relative path. Dedicated directories keep plugin organization clean and make the distinction visible at the filesystem level.
+**Alternatives Considered**: Single `handlers/` directory for both hooks and events (less organized); Flat layout (risks collision with other plugin files).
+**Consequences**: Pro: Clear directory convention consistent with `skills/`. Con: Plugin authors must create these directories (mitigated: discovery fails with clear diagnostic if expected file doesn't exist).
+
 ## System Behavior
 
 ### Invariants
@@ -444,6 +627,10 @@ __main__.py (after bootstrap.run(), before channel.run())
 6. **Config values are always validated**: A loaded plugin's `config` dict contains only values that passed type checking. No unvalidated user input reaches plugin code.
 7. **Config schema is optional**: Plugins without `[config]` sections load normally with `config = {}`. Users without `[plugins.<alias>.config]` sub-tables get default values (or empty dict if no schema).
 8. **Consolidation is additive**: Plugin failures are appended to the restart notification. Each can appear independently (restart only, failures only, both, neither).
+9. **Init-before-subscribe**: Event subscriptions are only registered after a successful init hook. Plugins without init hooks have events registered immediately.
+10. **Sequential init**: Init hooks run one at a time in alphabetical order by alias. No parallel execution.
+11. **Handler validation is complete**: A plugin with invalid handlers (missing file, import error, wrong signature, unknown event type) fails at discovery with a diagnostic — no partial handler registration.
+12. **Unsubscription is deactivation**: Removed plugins' event wrappers become no-ops but remain in the bus's handler list (bubus has no `off()` API).
 
 ### Scenario: Fresh workspace, no plugins configured
 
@@ -564,6 +751,76 @@ __main__.py (after bootstrap.run(), before channel.run())
 **Then**: No notification dispatched.
 **Rationale**: No news is good news.
 
+### Scenario: Plugin with init hook and event subscriptions (happy path)
+
+**Given**: A plugin with `[hooks] init = "init"` and `[events] coordinator_idle = "on_idle"`. Both handler files exist and are valid.
+**When**: Startup completes.
+**Then**: Init hook runs with PluginContext. On success, `on_idle` handler subscribed to `CoordinatorIdle`. Subsequent `CoordinatorIdle` events invoke the handler.
+**Rationale**: Full lifecycle — init prepares plugin, events keep it reacting.
+
+### Scenario: Init hook raises exception
+
+**Given**: Plugin A's init hook raises `ValueError`. Plugin B has a working init hook.
+**When**: Init hooks execute.
+**Then**: Plugin A's error logged at ERROR level. Plugin A's event subscriptions NOT registered. Plugin B's hook runs normally. Application startup proceeds.
+**Rationale**: Per-plugin isolation — one plugin's failure is contained.
+
+### Scenario: Init hook exceeds 30-second timeout
+
+**Given**: Plugin's init hook is async and takes longer than the timeout threshold.
+**When**: `asyncio.timeout()` fires.
+**Then**: `TimeoutError` caught, WARNING logged with plugin alias and timeout duration. Plugin's event subscriptions not registered.
+**Rationale**: Timeout prevents a stuck plugin from blocking startup indefinitely.
+
+### Scenario: Plugin with no init hook but with event subscriptions
+
+**Given**: A plugin with `[events] notification = "on_notify"` but no `[hooks]` section.
+**When**: Startup lifecycle runs.
+**Then**: No init hook called. Event handler subscribed immediately.
+**Rationale**: Init hooks are optional. Event subscriptions work independently.
+
+### Scenario: Event handler raises exception during dispatch
+
+**Given**: Plugin A's `handle` raises during `CoordinatorIdle` dispatch. Plugin B also subscribes to `CoordinatorIdle`.
+**When**: Event is dispatched.
+**Then**: Plugin A's error logged at ERROR level with plugin alias and event type. Plugin B's handler still invoked. Dispatch completes normally.
+**Rationale**: Event handler errors are isolated per-plugin per-handler.
+
+### Scenario: Plugin removed at runtime
+
+**Given**: Plugin with active event subscriptions.
+**When**: `remove_plugin` runs.
+**Then**: `PluginRemoving` dispatched. Event wrappers deactivated (`_active = False`). Config removed, directory deleted. `PluginRemoved` dispatched.
+**Rationale**: Clean removal — deactivation ensures no further handler invocations.
+
+### Scenario: Plugin installed at runtime with init hook
+
+**Given**: `install_plugin` called for a plugin declaring `[hooks] init = "init"`.
+**When**: Installation completes.
+**Then**: Materialize + validate succeeds. Init hook runs. On success, event subscriptions registered. `PluginInstalled` dispatched.
+**Rationale**: Runtime install mirrors startup lifecycle — init first, then subscribe, then announce.
+
+### Scenario: CC plugin with hooks/events contributions
+
+**Given**: A CC plugin with `"hooks": {"init": "init.py"}` or `"events"` in `plugin.json`.
+**When**: Manifest parsed.
+**Then**: `"hooks"` and `"events"` detected as ignored CC contribution types. INFO log emitted. Plugin loads normally with no hooks/events support.
+**Rationale**: Consistent with existing CC contribution handling.
+
+### Scenario: Unknown event type name in manifest
+
+**Given**: `[events] unknown_event = "handler"` in a Tachikoma-native manifest.
+**When**: Handler validation runs during discovery.
+**Then**: Plugin fails with diagnostic: "Unknown event type 'unknown_event'. Valid types: coordinator_idle, notification, ..."
+**Rationale**: Fail-fast — invalid event references caught early with a helpful error.
+
+### Scenario: Handler module with wrong signature
+
+**Given**: `events/on_idle.py` with `def handle(event, ctx, extra):` (3 params instead of 2).
+**When**: Handler validation runs during discovery.
+**Then**: Plugin fails with diagnostic about expected signature.
+**Rationale**: Strict signature validation prevents runtime errors from mismatched handler signatures.
+
 ## Notes
 
 - The plugin system reuses `tachikoma.git.sync.run_git()` for git materialization — no GitPython or dulwich dependency added.
@@ -573,3 +830,8 @@ __main__.py (after bootstrap.run(), before channel.run())
 - Config values are NOT reloaded at runtime — changes to `config.toml` require a restart.
 - Config values appear in `list_plugins` output and may be logged. Sensitive field marking and redaction are deferred to a future delta.
 - The startup notification consolidation follows DES-011 consume-once semantics — the restart marker is cleared unconditionally before any side effects.
+- Handler import uses `importlib.util.spec_from_file_location` with unique module keys (`tachikoma_plugin.{alias}.{hooks|events}.{module_name}`) to avoid `sys.modules` collisions.
+- The `asyncio.timeout()` approach (Python 3.11+) only enforces timeouts for async handlers. Sync blocking handlers are not timeout-protected — documented as a known limitation.
+- bubus uses event class `__name__` as the handler key (per ADR-009). The registry's snake_case derivation matches this convention.
+- Plugin event wrappers use an active-flag pattern (`_deactivate()`) for unsubscription since bubus has no `off()` API. Deactivated wrappers become no-ops but remain in the bus's handler list.
+- Init hooks run post-bootstrap (not as a DES-003 bootstrap hook) to guarantee all subsystems are initialized before plugin hooks execute.

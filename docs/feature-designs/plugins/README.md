@@ -8,7 +8,7 @@ Plugin system for extending Tachikoma with third-party capabilities.
 
 | Capability | Description | Status |
 |------------|-------------|--------|
-| [plugin-loading](plugin-loading.md) | Install, discover, and load plugins that contribute skills | ✓ |
+| [plugin-loading](plugin-loading.md) | Install, discover, and load plugins that contribute skills, lifecycle hooks, and event subscriptions | ✓ |
 
 ## Related Decisions
 

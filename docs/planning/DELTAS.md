@@ -616,13 +616,6 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 **Complexity**: Easy
 **Description**: Allow plugins to contribute per-message post-processors that run after each agent response. Plugin-declared processors implement the existing MessagePostProcessor interface and are registered into the per-message post-processing pipeline alongside built-in processors (summary extraction, last exchange tracking) during plugin loading. Session-level post-processors run once at session close and are suited for batch extraction; per-message processors run after every response and are suited for real-time reactions to individual exchanges — for example, per-message logging, conditional notification triggers based on response content, or live sentiment tracking that needs per-exchange granularity rather than a session-level summary.
 
-### DLT-173: Plugin lifecycle hooks and event bus access
-**Status**: ✓ Implementation
-**Depends on**: None
-**Priority**: 2 (High)
-**Complexity**: Medium
-**Description**: Allow plugins to declare lifecycle hooks that run at specific points in the application lifecycle and subscribe to system events. The plugin manifest gains an optional `[hooks]` section declaring hook entry points (e.g., `init = "hooks/init.py"`), and an optional `[events]` section listing event types the plugin wants to receive. Init hooks run after plugin loading completes but before the first conversation, enabling startup tasks like establishing external connections, validating prerequisites, or registering event listeners. Event subscriptions let plugins react to system events — session open/close, coordinator idle, notification dispatch, and other published events — by routing matching events to declared handler functions. Failed init hooks and event handlers are isolated per-plugin and logged without blocking other plugins or application startup, consistent with the existing fail-safe loading pattern.
-
 ### DLT-174: Plugin-provided MCP tool servers
 **Status**: ✗ Defined
 **Depends on**: None
