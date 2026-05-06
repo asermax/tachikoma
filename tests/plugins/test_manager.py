@@ -380,10 +380,10 @@ class TestRuntimeInstallWithHooks:
 
         mgr = _make_manager(workspace=tmp_path, bus=bus)
 
-        async def fake_invoke(func, *args):
-            call_order.append("init_hook")
-
         fake_init = MagicMock()
+
+        async def fake_init_plugin(plugin, bus):
+            call_order.append("init_hook")
 
         with (
             patch("tachikoma.plugins.manager.materialize_local", new_callable=AsyncMock),
@@ -393,8 +393,7 @@ class TestRuntimeInstallWithHooks:
                 "tachikoma.plugins.manager._validate_handlers",
                 return_value=(fake_init, {}),
             ),
-            patch("tachikoma.plugins.manager._invoke_handler", side_effect=fake_invoke),
-            patch("tachikoma.plugins.manager.subscribe_plugin_events"),
+            patch("tachikoma.plugins.manager.init_plugin", side_effect=fake_init_plugin),
         ):
             mock_parse.return_value = PluginManifest(
                 name="hooked",
@@ -418,7 +417,7 @@ class TestRuntimeInstallWithHooks:
         assert call_order == ["init_hook", "installed"]
 
     async def test_install_events_only_subscribed_immediately(self, tmp_path: Path) -> None:
-        """AC: Runtime install without init hook but with events → subscribed immediately."""
+        """AC: Runtime install without init hook but with events → init_plugin called."""
         bus = EventBus()
         mgr = _make_manager(workspace=tmp_path, bus=bus)
 
@@ -432,7 +431,10 @@ class TestRuntimeInstallWithHooks:
                 "tachikoma.plugins.manager._validate_handlers",
                 return_value=(None, {MagicMock(): fake_handler}),
             ),
-            patch("tachikoma.plugins.manager.subscribe_plugin_events") as mock_subscribe,
+            patch(
+                "tachikoma.plugins.manager.init_plugin",
+                new_callable=AsyncMock, return_value=True,
+            ) as mock_init,
         ):
             mock_parse.return_value = PluginManifest(
                 name="events-only",
@@ -447,13 +449,13 @@ class TestRuntimeInstallWithHooks:
                 LocalPluginSource(path=Path("/some/plugin")),
                 alias="events-only",
             )
-            mock_subscribe.assert_called_once()
+            mock_init.assert_called_once()
 
         await bus.wait_until_idle()
         await bus.stop()
 
     async def test_install_no_hooks_no_events_no_subscribe(self, tmp_path: Path) -> None:
-        """AC: Runtime install with no hooks/events → subscribe not called."""
+        """AC: Runtime install with no hooks/events → init_plugin still called."""
         bus = EventBus()
         mgr = _make_manager(workspace=tmp_path, bus=bus)
 
@@ -461,7 +463,10 @@ class TestRuntimeInstallWithHooks:
             patch("tachikoma.plugins.manager.materialize_local", new_callable=AsyncMock),
             patch("tachikoma.plugins.manager.parse_manifest") as mock_parse,
             patch("tachikoma.plugins.manager._atomic_replace_dir"),
-            patch("tachikoma.plugins.manager.subscribe_plugin_events") as mock_subscribe,
+            patch(
+                "tachikoma.plugins.manager.init_plugin",
+                new_callable=AsyncMock, return_value=True,
+            ) as mock_init,
         ):
             mock_parse.return_value = PluginManifest(
                 name="plain",
@@ -475,18 +480,15 @@ class TestRuntimeInstallWithHooks:
                 LocalPluginSource(path=Path("/some/plugin")),
                 alias="plain",
             )
-            mock_subscribe.assert_not_called()
+            mock_init.assert_called_once()
 
         await bus.wait_until_idle()
         await bus.stop()
 
     async def test_install_failed_init_still_succeeds(self, tmp_path: Path) -> None:
-        """AC: Runtime install with failed init → install succeeds, events not registered."""
+        """AC: Runtime install with failed init → install succeeds, init_plugin returns False."""
         bus = EventBus()
         mgr = _make_manager(workspace=tmp_path, bus=bus)
-
-        async def failing_invoke(func, *args):
-            raise RuntimeError("init boom")
 
         fake_init = MagicMock()
 
@@ -499,10 +501,9 @@ class TestRuntimeInstallWithHooks:
                 return_value=(fake_init, {}),
             ),
             patch(
-                "tachikoma.plugins.manager._invoke_handler",
-                side_effect=failing_invoke,
+                "tachikoma.plugins.manager.init_plugin",
+                new_callable=AsyncMock, return_value=False,
             ),
-            patch("tachikoma.plugins.manager.subscribe_plugin_events") as mock_subscribe,
         ):
             mock_parse.return_value = PluginManifest(
                 name="failing",
@@ -518,10 +519,7 @@ class TestRuntimeInstallWithHooks:
                 LocalPluginSource(path=Path("/some/plugin")),
                 alias="failing",
             )
-            # Install still succeeds
             assert result.alias == "failing"
-            # But events were not subscribed
-            mock_subscribe.assert_not_called()
 
         await bus.wait_until_idle()
         await bus.stop()

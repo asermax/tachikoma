@@ -39,6 +39,40 @@ async def _invoke_handler(func: Callable, *args: Any) -> Any:
 # ---------------------------------------------------------------------------
 
 
+async def init_plugin(plugin: LoadedPlugin, bus: Any) -> bool:
+    """Run a single plugin's init hook and subscribe its event handlers.
+
+    Returns ``True`` on success, ``False`` on failure (timeout or exception).
+    On failure, event handlers are *not* subscribed.
+    """
+    ctx = PluginContext(
+        config=plugin.config,
+        event_bus=bus,
+        alias=plugin.alias,
+        install_path=plugin.plugin_dir,
+    )
+
+    if plugin.init_hook is not None:
+        try:
+            async with asyncio.timeout(_INIT_TIMEOUT_SECONDS):
+                await _invoke_handler(plugin.init_hook, ctx)
+            _log.bind(plugin=plugin.alias).info("Init hook completed")
+            subscribe_plugin_events(plugin, bus, ctx)
+            return True
+        except TimeoutError:
+            _log.bind(plugin=plugin.alias).warning(
+                "Init hook timed out after {}s", _INIT_TIMEOUT_SECONDS
+            )
+            return False
+        except Exception:
+            _log.bind(plugin=plugin.alias).exception("Init hook failed")
+            return False
+
+    if plugin.event_handlers:
+        subscribe_plugin_events(plugin, bus, ctx)
+    return True
+
+
 async def run_plugin_init_hooks(
     plugins: list[LoadedPlugin],
     bus: Any,
@@ -58,33 +92,10 @@ async def run_plugin_init_hooks(
     failures = 0
 
     for plugin in loaded:
-        ctx = PluginContext(
-            config=plugin.config,
-            event_bus=bus,
-            alias=plugin.alias,
-            install_path=plugin.plugin_dir,
-        )
-
-        if plugin.init_hook is not None:
-            try:
-                async with asyncio.timeout(_INIT_TIMEOUT_SECONDS):
-                    await _invoke_handler(plugin.init_hook, ctx)
-                _log.bind(plugin=plugin.alias).info("Init hook completed")
-                subscribe_plugin_events(plugin, bus, ctx)
-                successes += 1
-            except TimeoutError:
-                _log.bind(plugin=plugin.alias).warning(
-                    "Init hook timed out after {}s", _INIT_TIMEOUT_SECONDS
-                )
-                failures += 1
-            except Exception:
-                _log.bind(plugin=plugin.alias).exception("Init hook failed")
-                failures += 1
-        elif plugin.event_handlers:
-            subscribe_plugin_events(plugin, bus, ctx)
+        if await init_plugin(plugin, bus):
             successes += 1
         else:
-            successes += 1
+            failures += 1
 
     _log.info(
         "Plugin init hooks complete: initialized={} failures={}",
