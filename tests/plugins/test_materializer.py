@@ -2,14 +2,17 @@
 
 Covers:
 - _atomic_replace_dir happy path and rollback
-- materialize_local happy and failure paths
-- materialize_git with mocked run_git
-- materialize_url with fixture-built archives, auto-strip, subdir
+- materialize_local happy and failure paths (now symlink-based)
+- materialize_git with mocked run_git (captures commit SHA)
+- materialize_url with fixture-built archives, auto-strip, subdir (captures content hash)
+- MaterializationResult return type
 """
 
 from __future__ import annotations
 
+import hashlib
 import io
+import os
 import tarfile
 import zipfile
 from pathlib import Path
@@ -18,6 +21,7 @@ from unittest.mock import patch
 import pytest
 
 from tachikoma.plugins.materializer import (
+    MaterializationResult,
     MaterializeError,
     _atomic_replace_dir,
     materialize_git,
@@ -119,25 +123,47 @@ class TestAtomicReplaceDir:
 
 
 # ===========================================================================
+# MaterializationResult
+# ===========================================================================
+
+
+class TestMaterializationResult:
+    """Tests for the MaterializationResult dataclass."""
+
+    def test_frozen(self) -> None:
+        result = MaterializationResult(staging_dir=Path("/tmp/staging"), version="abc")
+        with pytest.raises(AttributeError):
+            result.version = "def"  # type: ignore[misc]
+
+    def test_version_can_be_none(self) -> None:
+        result = MaterializationResult(staging_dir=Path("/tmp/staging"), version=None)
+        assert result.version is None
+
+
+# ===========================================================================
 # materialize_local
 # ===========================================================================
 
 
 class TestMaterializeLocal:
-    """Tests for local-path materialization."""
+    """Tests for local-path materialization (symlink-based)."""
 
     @pytest.mark.asyncio
-    async def test_happy_path(self, tmp_path: Path) -> None:
-        """Local source is copied into staging directory."""
+    async def test_happy_path_creates_symlink(self, tmp_path: Path) -> None:
+        """Local source creates a symlink pointing to source directory."""
         source_dir = tmp_path / "source"
         source_dir.mkdir()
         (source_dir / "file.txt").write_text("hello")
 
         staging = tmp_path / "staging"
         source = LocalPluginSource(path=source_dir)
-        await materialize_local(source, staging)
+        result = await materialize_local(source, staging)
 
-        assert staging.is_dir()
+        assert isinstance(result, MaterializationResult)
+        assert result.version is None
+        assert staging.is_symlink()
+        assert os.readlink(str(staging)) == str(source_dir)
+        # Verify symlink resolves to source content.
         assert (staging / "file.txt").read_text() == "hello"
 
     @pytest.mark.asyncio
@@ -153,7 +179,7 @@ class TestMaterializeLocal:
 
     @pytest.mark.asyncio
     async def test_permission_error(self, tmp_path: Path) -> None:
-        """MaterializeError when shutil.copytree raises PermissionError."""
+        """MaterializeError when os.symlink raises PermissionError."""
         source_dir = tmp_path / "source"
         source_dir.mkdir()
         (source_dir / "file.txt").write_text("hello")
@@ -163,7 +189,7 @@ class TestMaterializeLocal:
 
         with (
             patch(
-                "tachikoma.plugins.materializer.shutil.copytree",
+                "tachikoma.plugins.materializer.os.symlink",
                 side_effect=PermissionError("denied"),
             ),
             pytest.raises(MaterializeError) as exc_info,
@@ -184,21 +210,31 @@ class TestMaterializeGit:
     @pytest.mark.asyncio
     async def test_happy_path_no_subdir(self, tmp_path: Path) -> None:
         """Shallow clone is copied into staging with no subdir."""
-        # Simulate run_git by creating the clone dir with content.
         source = GitPluginSource(git="https://github.com/example/plugin.git", ref="v1.0.0")
         staging = tmp_path / "staging"
+        expected_sha = "a" * 40
 
         async def fake_run_git(*args: str, cwd: Path) -> None:
-            # args: clone --depth 1 --branch ref git url <clone_path>
             clone_path = Path(args[-1])
             clone_path.parent.mkdir(parents=True, exist_ok=True)
             clone_path.mkdir()
             (clone_path / "plugin.txt").write_text("from git")
 
-        with patch("tachikoma.plugins.materializer.run_git", side_effect=fake_run_git):
-            await materialize_git(source, staging, alias="my-plugin")
+        async def fake_run_git_capture(*args: str, cwd: Path) -> tuple[int, str]:
+            return 0, expected_sha
+
+        with (
+            patch("tachikoma.plugins.materializer.run_git", side_effect=fake_run_git),
+            patch(
+                "tachikoma.plugins.materializer.run_git_capture",
+                side_effect=fake_run_git_capture,
+            ),
+        ):
+            result = await materialize_git(source, staging, alias="my-plugin")
 
         assert (staging / "plugin.txt").read_text() == "from git"
+        assert isinstance(result, MaterializationResult)
+        assert result.version == expected_sha
 
     @pytest.mark.asyncio
     async def test_with_subdir(self, tmp_path: Path) -> None:
@@ -219,11 +255,21 @@ class TestMaterializeGit:
             sub.mkdir()
             (sub / "content.txt").write_text("plugin content")
 
-        with patch("tachikoma.plugins.materializer.run_git", side_effect=fake_run_git):
-            await materialize_git(source, staging, alias="subdir-plugin")
+        async def fake_run_git_capture(*args: str, cwd: Path) -> tuple[int, str]:
+            return 0, "b" * 40
+
+        with (
+            patch("tachikoma.plugins.materializer.run_git", side_effect=fake_run_git),
+            patch(
+                "tachikoma.plugins.materializer.run_git_capture",
+                side_effect=fake_run_git_capture,
+            ),
+        ):
+            result = await materialize_git(source, staging, alias="subdir-plugin")
 
         assert (staging / "content.txt").read_text() == "plugin content"
         assert not (staging / "other.txt").exists()
+        assert result.version == "b" * 40
 
     @pytest.mark.asyncio
     async def test_subdir_traversal_rejected(self, tmp_path: Path) -> None:
@@ -251,6 +297,32 @@ class TestMaterializeGit:
             await materialize_git(source, staging, alias="fail-plugin")
 
         assert exc_info.value.alias == "fail-plugin"
+
+    @pytest.mark.asyncio
+    async def test_rev_parse_failure_returns_none_version(self, tmp_path: Path) -> None:
+        """When git rev-parse fails, version is None (non-fatal)."""
+        source = GitPluginSource(git="https://github.com/example/plugin.git", ref="v1.0.0")
+        staging = tmp_path / "staging"
+
+        async def fake_run_git(*args: str, cwd: Path) -> None:
+            clone_path = Path(args[-1])
+            clone_path.parent.mkdir(parents=True, exist_ok=True)
+            clone_path.mkdir()
+            (clone_path / "plugin.txt").write_text("from git")
+
+        async def fake_run_git_capture(*args: str, cwd: Path) -> tuple[int, str]:
+            return 1, ""
+
+        with (
+            patch("tachikoma.plugins.materializer.run_git", side_effect=fake_run_git),
+            patch(
+                "tachikoma.plugins.materializer.run_git_capture",
+                side_effect=fake_run_git_capture,
+            ),
+        ):
+            result = await materialize_git(source, staging, alias="my-plugin")
+
+        assert result.version is None
 
 
 # ===========================================================================
@@ -300,11 +372,14 @@ class TestMaterializeUrl:
             "tachikoma.plugins.materializer.urlopen",
             side_effect=lambda url: _fake_url_open(url, archive_file),
         ):
-            await materialize_url(source, staging, alias="url-plugin")
+            result = await materialize_url(source, staging, alias="url-plugin")
 
         # Auto-strip: my-plugin-1.0 should be stripped, so content is at staging root.
         assert (staging / "tachikoma-plugin.toml").exists()
         assert (staging / "skills" / "code" / "SKILL.md").exists()
+        assert isinstance(result, MaterializationResult)
+        assert result.version is not None
+        assert len(result.version) == 64  # SHA-256 hex digest
 
     @pytest.mark.asyncio
     async def test_zip_no_auto_strip(self, tmp_path: Path) -> None:
@@ -325,10 +400,15 @@ class TestMaterializeUrl:
             "tachikoma.plugins.materializer.urlopen",
             side_effect=lambda url: _fake_url_open(url, archive_file),
         ):
-            await materialize_url(source, staging, alias="flat-plugin")
+            result = await materialize_url(source, staging, alias="flat-plugin")
 
         assert (staging / "tachikoma-plugin.toml").exists()
         assert (staging / "README.md").exists()
+        assert isinstance(result, MaterializationResult)
+        assert result.version is not None
+        # Verify the hash is correct.
+        expected_hash = hashlib.file_digest(archive_file.open("rb"), "sha256").hexdigest()
+        assert result.version == expected_hash
 
     @pytest.mark.asyncio
     async def test_subdir_after_auto_strip(self, tmp_path: Path) -> None:
@@ -353,11 +433,12 @@ class TestMaterializeUrl:
             "tachikoma.plugins.materializer.urlopen",
             side_effect=lambda url: _fake_url_open(url, archive_file),
         ):
-            await materialize_url(source, staging, alias="subdir-url")
+            result = await materialize_url(source, staging, alias="subdir-url")
 
         # Auto-strip promotes mono-1.0, then subdir="plugin" is resolved inside.
         assert (staging / "tachikoma-plugin.toml").exists()
         assert not (staging / "other").exists()
+        assert result.version is not None
 
     @pytest.mark.asyncio
     async def test_download_failure(self, tmp_path: Path) -> None:

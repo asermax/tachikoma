@@ -3,22 +3,27 @@
 Three async materializers (git, URL, local) each write content into a staging
 directory, which the reconciler then swaps into the install location via
 ``_atomic_replace_dir`` (pip-style triple-step rename).
+
+Each materializer returns a :class:`MaterializationResult` carrying the staging
+path and a version hash (git: commit SHA, url: content SHA-256, local: None).
 """
 
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import os
 import shutil
 import tarfile
 import tempfile
 import zipfile
+from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from urllib.request import urlopen
 
 from loguru import logger
 
-from tachikoma.git.sync import run_git
+from tachikoma.git.sync import run_git, run_git_capture
 from tachikoma.plugins.sources import GitPluginSource, LocalPluginSource, UrlPluginSource
 
 _log = logger.bind(component="plugins")
@@ -44,6 +49,20 @@ class MaterializeError(Exception):
         self.cause = cause
         detail = f"MaterializeError({alias!r}, {source!r}): {cause}"
         super().__init__(detail)
+
+
+@dataclass(frozen=True)
+class MaterializationResult:
+    """Result of a plugin materialization operation.
+
+    Attributes:
+        staging_dir: Path to the staging directory containing the materialized plugin.
+        version: Version hash of the materialized content. Git: 40-char commit SHA,
+            URL: SHA-256 hex digest of the archive, Local: None (symlinks have no version).
+    """
+
+    staging_dir: Path
+    version: str | None
 
 
 # ---------------------------------------------------------------------------
@@ -95,16 +114,25 @@ async def materialize_local(
     staging: Path,
     *,
     alias: str = "<unknown>",
-) -> None:
-    """Copy a local filesystem path into *staging*.
+) -> MaterializationResult:
+    """Create a symlink from *staging* to the local source path.
+
+    Local plugins are always current via symlink — no copy needed.
 
     Raises :class:`MaterializeError` on failure (missing path, permissions).
     """
-    loop = asyncio.get_running_loop()
+    if not source.path.exists():
+        raise MaterializeError(
+            alias,
+            f"local:{source.path}",
+            FileNotFoundError(f"Source path does not exist: {source.path}"),
+        )
     try:
-        await loop.run_in_executor(None, shutil.copytree, source.path, staging)
+        os.symlink(source.path, staging)
     except (FileNotFoundError, PermissionError, OSError) as exc:
         raise MaterializeError(alias, f"local:{source.path}", exc) from exc
+
+    return MaterializationResult(staging_dir=staging, version=None)
 
 
 async def materialize_git(
@@ -112,8 +140,10 @@ async def materialize_git(
     staging: Path,
     *,
     alias: str = "<unknown>",
-) -> None:
+) -> MaterializationResult:
     """Shallow-clone a git repo and copy into *staging*.
+
+    Captures the resolved commit SHA (40-char) via ``git rev-parse HEAD``.
 
     Raises :class:`MaterializeError` on failure.
     """
@@ -133,6 +163,10 @@ async def materialize_git(
                 cwd=Path(tmp_clone_dir),
             )
 
+            # Capture the resolved commit SHA.
+            rc, stdout = await run_git_capture("rev-parse", "HEAD", cwd=tmp_clone)
+            sha = stdout.strip() if rc == 0 else None
+
             src_root = tmp_clone
 
             if source.subdir is not None:
@@ -145,6 +179,8 @@ async def materialize_git(
         raise
     except (RuntimeError, OSError) as exc:
         raise MaterializeError(alias, f"git:{source.git}@{source.ref}", exc) from exc
+
+    return MaterializationResult(staging_dir=staging, version=sha)
 
 
 def _validate_subdir(base: Path, subdir: str) -> None:
@@ -162,12 +198,15 @@ async def materialize_url(
     staging: Path,
     *,
     alias: str = "<unknown>",
-) -> None:
+) -> MaterializationResult:
     """Download an archive from a URL, extract, auto-strip, and copy into *staging*.
+
+    Captures the SHA-256 content hash of the downloaded archive.
 
     Raises :class:`MaterializeError` on failure.
     """
     loop = asyncio.get_running_loop()
+    content_hash: str | None = None
 
     try:
         with tempfile.TemporaryDirectory() as tmp_dir:
@@ -176,6 +215,9 @@ async def materialize_url(
             # Download archive to a temp file.
             archive_path = tmp / "archive"
             await loop.run_in_executor(None, _download, source.url, archive_path)
+
+            # Compute SHA-256 content hash of the archive.
+            content_hash = hashlib.file_digest(archive_path.open("rb"), "sha256").hexdigest()
 
             # Extract into an extraction root.
             extract_root = tmp / "extract"
@@ -202,6 +244,8 @@ async def materialize_url(
         raise
     except Exception as exc:
         raise MaterializeError(alias, f"url:{source.url}", exc) from exc
+
+    return MaterializationResult(staging_dir=staging, version=content_hash)
 
 
 def _download(url: str, dest: Path) -> None:
