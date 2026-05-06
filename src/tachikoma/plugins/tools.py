@@ -19,7 +19,7 @@ from tachikoma.plugins.manager import (
     PluginInstallError,
     PluginNotFoundError,
 )
-from tachikoma.plugins.sources import parse_plugin_source
+from tachikoma.plugins.sources import LocalPluginSource, parse_plugin_source
 
 if TYPE_CHECKING:
     from tachikoma.plugins.manager import PluginManager
@@ -58,6 +58,10 @@ class InstallPluginArgs(BaseModel):
 
 
 class RemovePluginArgs(BaseModel):
+    alias: str
+
+
+class UpdatePluginArgs(BaseModel):
     alias: str
 
 
@@ -176,6 +180,19 @@ async def handle_list_plugins(manager: PluginManager) -> dict:
             if p.status == "failed" and p.diagnostic:
                 config_info["validation_error"] = p.diagnostic
             entry["config"] = config_info
+
+        # Update info from PluginState.
+        if not isinstance(p.source, LocalPluginSource):
+            state = await manager._state_repo.get(p.alias)
+            if state is not None:
+                entry["update_status"] = state.update_status
+                if state.installed_version is not None:
+                    entry["installed_version"] = state.installed_version
+                if state.available_version is not None:
+                    entry["available_version"] = state.available_version
+                if state.diagnostic is not None:
+                    entry["update_diagnostic"] = state.diagnostic
+
         entries.append(entry)
 
     return {
@@ -202,6 +219,64 @@ async def handle_remove_plugin(args: RemovePluginArgs, manager: PluginManager) -
 
     return {
         "content": [{"type": "text", "text": json.dumps(result, indent=2)}],
+    }
+
+
+async def handle_update_plugin(args: UpdatePluginArgs, manager: PluginManager) -> dict:
+    """Update a single plugin.
+
+    Returns the MCP envelope dict.
+    """
+    try:
+        result = await manager.update(args.alias)
+    except PluginNotFoundError as exc:
+        return {
+            "is_error": True,
+            "content": [{"type": "text", "text": str(exc)}],
+        }
+
+    if result.status == "failed":
+        return {
+            "is_error": True,
+            "content": [
+                {"type": "text", "text": result.error or f"Update failed for '{args.alias}'"}
+            ],
+        }
+
+    payload: dict = {"alias": result.alias, "status": result.status}
+    if result.message:
+        payload["message"] = result.message
+
+    return {
+        "content": [{"type": "text", "text": json.dumps(payload, indent=2)}],
+    }
+
+
+async def handle_update_all_plugins(manager: PluginManager) -> dict:
+    """Update all plugins with available updates.
+
+    Returns the MCP envelope dict.
+    """
+    summary = await manager.update_all()
+
+    payload = {
+        "total": summary.total,
+        "updated": summary.updated,
+        "skipped": summary.skipped,
+        "failed": summary.failed,
+        "results": [
+            {
+                "alias": r.alias,
+                "status": r.status,
+                **({"error": r.error} if r.error else {}),
+                **({"message": r.message} if r.message else {}),
+            }
+            for r in summary.results
+        ],
+    }
+
+    return {
+        "content": [{"type": "text", "text": json.dumps(payload, indent=2)}],
     }
 
 
@@ -275,8 +350,41 @@ def create_plugin_tools_server(manager: PluginManager) -> McpSdkServerConfig:
             }
         return await handle_remove_plugin(parsed, manager)
 
+    @tool(
+        "update_plugin",
+        "Update a single plugin to the latest version from its source.\n"
+        "\n"
+        "Parameters:\n"
+        "- alias (str, required): The plugin alias to update.\n"
+        "\n"
+        "Re-materializes the plugin from its source, updates the installed version, "
+        "and re-registers its skills. Local plugins cannot be updated (they are always current).",
+        UpdatePluginArgs.model_json_schema(),
+    )
+    async def update_plugin(args: dict) -> dict:
+        try:
+            parsed = UpdatePluginArgs.model_validate(args)
+        except ValidationError as exc:
+            return {
+                "is_error": True,
+                "content": [{"type": "text", "text": f"Invalid arguments: {exc}"}],
+            }
+        return await handle_update_plugin(parsed, manager)
+
+    @tool(
+        "update_all_plugins",
+        "Update all plugins that have available updates.\n"
+        "\n"
+        "Iterates all installed plugins, skips local plugins (always current) "
+        "and those already up-to-date, and applies updates to the rest. "
+        "Returns a summary with per-plugin results.",
+        {},
+    )
+    async def update_all_plugins(args: dict) -> dict:
+        return await handle_update_all_plugins(manager)
+
     return create_sdk_mcp_server(
         name="plugins",
         version="1.0.0",
-        tools=[install_plugin, list_plugins, remove_plugin],
+        tools=[install_plugin, list_plugins, remove_plugin, update_plugin, update_all_plugins],
     )
