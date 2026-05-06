@@ -1,7 +1,7 @@
 """Tests for the plugins bootstrap hook.
 
 Covers: fresh workspace setup, plugin loading, gitignore idempotency,
-and bus pre-condition enforcement.
+and bus/database pre-condition enforcement.
 """
 
 from __future__ import annotations
@@ -18,7 +18,12 @@ from tachikoma.plugins.manifest import PluginManifest
 from tachikoma.plugins.sources import LocalPluginSource
 
 
-def _make_ctx(workspace_path: Path, bus: EventBus | None = None, plugins: dict | None = None):
+def _make_ctx(
+    workspace_path: Path,
+    bus: EventBus | None = None,
+    plugins: dict | None = None,
+    database: object | None = MagicMock(),
+):
     ctx = MagicMock()
     ctx.settings_manager = MagicMock()
     ctx.settings_manager.settings = MagicMock()
@@ -26,6 +31,8 @@ def _make_ctx(workspace_path: Path, bus: EventBus | None = None, plugins: dict |
     ctx.settings_manager.settings.workspace.path = workspace_path
     ctx.settings_manager.settings.plugins = plugins or {}
     ctx.extras = {}
+    if database is not None:
+        ctx.extras["database"] = database
     if bus is not None:
         ctx.extras["event_bus"] = bus
     return ctx
@@ -73,6 +80,9 @@ class TestPluginsHook:
         # Manager in extras with no loaded plugins.
         manager = ctx.extras["plugin_manager"]
         assert manager.list_plugins() == []
+
+        # state_repo populated in extras.
+        assert "state_repo" in ctx.extras
 
         await bus.stop()
 
@@ -127,6 +137,17 @@ class TestPluginsHook:
         assert paths[0] == ("test-plugin", skill_dir)
 
         await bus.stop()
+
+    async def test_database_precondition_raises(self, tmp_path: Path) -> None:
+        """Missing database in extras → RuntimeError with clear message."""
+        ctx = _make_ctx(tmp_path, bus=EventBus(), database=None)
+
+        with (
+            patch("tachikoma.plugins.hooks.reconcile", new_callable=AsyncMock),
+            patch("tachikoma.plugins.hooks.discover"),
+            pytest.raises(RuntimeError, match="database"),
+        ):
+            await plugins_hook(ctx)
 
     async def test_bus_precondition_raises(self, tmp_path: Path) -> None:
         """Missing event_bus in extras → RuntimeError with clear message."""

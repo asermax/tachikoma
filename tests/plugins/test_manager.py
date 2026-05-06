@@ -48,11 +48,13 @@ def _make_manager(
     bus: EventBus | None = None,
 ) -> PluginManager:
     sm = _make_settings_manager()
+    state_repo = MagicMock()
     return PluginManager(
         settings_manager=sm,
         bus=bus or EventBus(),
         workspace_path=workspace,
         loaded=loaded or {},
+        state_repo=state_repo,
     )
 
 

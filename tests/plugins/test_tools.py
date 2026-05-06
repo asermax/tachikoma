@@ -44,11 +44,13 @@ def _make_manager(loaded: dict[str, LoadedPlugin] | None = None) -> PluginManage
     sm.settings.plugins = {}
     bus = MagicMock()
     bus.dispatch = AsyncMock()
+    state_repo = MagicMock()
     return PluginManager(
         settings_manager=sm,
         bus=bus,
         workspace_path=Path("/tmp/workspace"),
         loaded=loaded or {},
+        state_repo=state_repo,
     )
 
 

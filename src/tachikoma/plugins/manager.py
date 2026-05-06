@@ -41,6 +41,7 @@ if TYPE_CHECKING:
     from bubus import EventBus
 
     from tachikoma.config import SettingsManager
+    from tachikoma.plugins.state import PluginStateRepository
 
 _log = logger.bind(component="plugins")
 
@@ -114,11 +115,13 @@ class PluginManager:
         bus: EventBus,
         workspace_path: Path,
         loaded: dict[str, LoadedPlugin],
+        state_repo: PluginStateRepository,
     ) -> None:
         self._settings_manager = settings_manager
         self._bus = bus
         self._workspace_path = workspace_path
         self._loaded: dict[str, LoadedPlugin] = dict(loaded)
+        self._state_repo = state_repo
         self._lock = asyncio.Lock()
 
     def list_plugins(self) -> list[LoadedPlugin]:
