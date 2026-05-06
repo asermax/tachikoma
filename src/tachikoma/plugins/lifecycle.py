@@ -123,9 +123,7 @@ def subscribe_plugin_events(
         wrapper = _make_event_wrapper(handler, ctx, plugin.alias, event_type)
         bus.on(event_type, wrapper)
         plugin.event_wrappers.append(wrapper)
-        _log.bind(plugin=plugin.alias).debug(
-            "Subscribed to event: {}", event_type.__name__
-        )
+        _log.bind(plugin=plugin.alias).debug("Subscribed to event: {}", event_type.__name__)
 
 
 def _make_event_wrapper(
@@ -149,9 +147,7 @@ def _make_event_wrapper(
         try:
             await _invoke_handler(handler, event, ctx)
         except Exception:
-            _log.bind(plugin=alias).exception(
-                "Event handler failed: event={}", event_type.__name__
-            )
+            _log.bind(plugin=alias).exception("Event handler failed: event={}", event_type.__name__)
 
     def _deactivate() -> None:
         nonlocal _active

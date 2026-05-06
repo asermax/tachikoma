@@ -275,9 +275,7 @@ class TestHandleRestartNotificationConsolidation:
         self, tmp_path: Path, monkeypatch
     ) -> None:
         notif_file = tmp_path / "restart-notification.json"
-        monkeypatch.setattr(
-            "tachikoma.updates.rollback.RESTART_NOTIFICATION_PATH", notif_file
-        )
+        monkeypatch.setattr("tachikoma.updates.rollback.RESTART_NOTIFICATION_PATH", notif_file)
         bus = AsyncMock()
         notification = _make_restart_notification()
         failed_plugin = _make_failed_plugin("weather", "Required config field 'api_key' is missing")
@@ -288,11 +286,7 @@ class TestHandleRestartNotificationConsolidation:
             bus, notification, rollback_was_dispatched=False, plugin_manager=plugin_manager
         )
 
-        dispatch_calls = [
-            c
-            for c in bus.method_calls
-            if "dispatch" in c[0]
-        ]
+        dispatch_calls = [c for c in bus.method_calls if "dispatch" in c[0]]
         assert len(dispatch_calls) == 1
         event = dispatch_calls[0].args[0]
         assert "back online" in event.prompt.lower()
@@ -300,13 +294,9 @@ class TestHandleRestartNotificationConsolidation:
         assert "api_key" in event.prompt
         assert not notif_file.exists()
 
-    async def test_restart_only_sends_back_online(
-        self, tmp_path: Path, monkeypatch
-    ) -> None:
+    async def test_restart_only_sends_back_online(self, tmp_path: Path, monkeypatch) -> None:
         notif_file = tmp_path / "restart-notification.json"
-        monkeypatch.setattr(
-            "tachikoma.updates.rollback.RESTART_NOTIFICATION_PATH", notif_file
-        )
+        monkeypatch.setattr("tachikoma.updates.rollback.RESTART_NOTIFICATION_PATH", notif_file)
         bus = AsyncMock()
         notification = _make_restart_notification()
         plugin_manager = MagicMock()
@@ -326,14 +316,10 @@ class TestHandleRestartNotificationConsolidation:
         self, tmp_path: Path, monkeypatch
     ) -> None:
         notif_file = tmp_path / "restart-notification.json"
-        monkeypatch.setattr(
-            "tachikoma.updates.rollback.RESTART_NOTIFICATION_PATH", notif_file
-        )
+        monkeypatch.setattr("tachikoma.updates.rollback.RESTART_NOTIFICATION_PATH", notif_file)
         bus = AsyncMock()
         failed = [
-            _make_failed_plugin(
-                "weather", "Required config field 'api_key' is missing"
-            ),
+            _make_failed_plugin("weather", "Required config field 'api_key' is missing"),
             _make_failed_plugin(
                 "analytics",
                 "Config field 'timeout' expects type integer, got str",
@@ -361,9 +347,7 @@ class TestHandleRestartNotificationConsolidation:
         self, tmp_path: Path, monkeypatch
     ) -> None:
         notif_file = tmp_path / "restart-notification.json"
-        monkeypatch.setattr(
-            "tachikoma.updates.rollback.RESTART_NOTIFICATION_PATH", notif_file
-        )
+        monkeypatch.setattr("tachikoma.updates.rollback.RESTART_NOTIFICATION_PATH", notif_file)
         bus = AsyncMock()
         plugin_manager = MagicMock()
         plugin_manager.failed_plugins.return_value = []
@@ -383,9 +367,7 @@ class TestHandleRestartNotificationConsolidation:
         """DES-011: marker must be cleared before dispatch side effects."""
         notif_file = tmp_path / "restart-notification.json"
         notif_file.write_text("{}")
-        monkeypatch.setattr(
-            "tachikoma.updates.rollback.RESTART_NOTIFICATION_PATH", notif_file
-        )
+        monkeypatch.setattr("tachikoma.updates.rollback.RESTART_NOTIFICATION_PATH", notif_file)
         bus = AsyncMock()
         notification = _make_restart_notification()
         plugin_manager = MagicMock()
@@ -405,9 +387,7 @@ class TestHandleRestartNotificationConsolidation:
         self, tmp_path: Path, monkeypatch
     ) -> None:
         notif_file = tmp_path / "restart-notification.json"
-        monkeypatch.setattr(
-            "tachikoma.updates.rollback.RESTART_NOTIFICATION_PATH", notif_file
-        )
+        monkeypatch.setattr("tachikoma.updates.rollback.RESTART_NOTIFICATION_PATH", notif_file)
         bus = AsyncMock()
         notification = _make_restart_notification()
         failed = [_make_failed_plugin("weather", "Config field missing")]
@@ -430,15 +410,11 @@ class TestHandleRestartNotificationConsolidation:
     ) -> None:
         """Existing callers without plugin_manager still work."""
         notif_file = tmp_path / "restart-notification.json"
-        monkeypatch.setattr(
-            "tachikoma.updates.rollback.RESTART_NOTIFICATION_PATH", notif_file
-        )
+        monkeypatch.setattr("tachikoma.updates.rollback.RESTART_NOTIFICATION_PATH", notif_file)
         bus = AsyncMock()
         notification = _make_restart_notification()
 
-        await handle_restart_notification(
-            bus, notification, rollback_was_dispatched=False
-        )
+        await handle_restart_notification(bus, notification, rollback_was_dispatched=False)
 
         dispatch_calls = [c for c in bus.method_calls if "dispatch" in c[0]]
         assert len(dispatch_calls) == 1

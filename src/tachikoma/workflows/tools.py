@@ -102,7 +102,6 @@ def _validate_args(args: dict, model: type[BaseModel]):
         return None, _error_response(f"Invalid arguments: {exc}")
 
 
-
 def delete_scratchpad(scratchpad_path: str) -> None:
     Path(scratchpad_path).unlink(missing_ok=True)
 

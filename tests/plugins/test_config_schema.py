@@ -190,12 +190,9 @@ class TestConfigValidationResult:
         assert not result.is_valid
 
     def test_frozen(self) -> None:
-        result = ConfigValidationResult(
-            values={}, diagnostics=[], unknown_keys=[]
-        )
+        result = ConfigValidationResult(values={}, diagnostics=[], unknown_keys=[])
         with pytest.raises(AttributeError):
             result.values = {"x": 1}
-
 
 
 class TestValidateConfig:
@@ -222,9 +219,7 @@ class TestValidateConfig:
         See: R3 — required string field with no user value → failed.
         """
         schema = {
-            "api_key": ConfigFieldSchema(
-                type="string", description="API key", required=True
-            ),
+            "api_key": ConfigFieldSchema(type="string", description="API key", required=True),
         }
         result = validate_config(schema, {})
 
@@ -307,9 +302,7 @@ class TestValidateConfig:
         See: R3 — field with default and no user override → default used.
         """
         schema = {
-            "timeout": ConfigFieldSchema(
-                type="integer", description="Timeout", default=30
-            ),
+            "timeout": ConfigFieldSchema(type="integer", description="Timeout", default=30),
         }
         result = validate_config(schema, {})
 
@@ -345,9 +338,7 @@ class TestValidateConfig:
     def test_empty_string_not_treated_as_missing_for_required(self) -> None:
         """AC: Empty string satisfies required field (key is present)."""
         schema = {
-            "api_key": ConfigFieldSchema(
-                type="string", description="API key", required=True
-            ),
+            "api_key": ConfigFieldSchema(type="string", description="API key", required=True),
         }
         result = validate_config(schema, {"api_key": ""})
 
@@ -360,9 +351,7 @@ class TestValidateConfig:
         See: R3 — unknown key → plugin loaded, WARNING logged.
         """
         schema = {
-            "api_key": ConfigFieldSchema(
-                type="string", description="API key", required=True
-            ),
+            "api_key": ConfigFieldSchema(type="string", description="API key", required=True),
         }
         result = validate_config(
             schema,
@@ -393,9 +382,7 @@ class TestValidateConfig:
     def test_user_value_overrides_default(self) -> None:
         """AC: User-provided value takes precedence over default."""
         schema = {
-            "timeout": ConfigFieldSchema(
-                type="integer", description="Timeout", default=30
-            ),
+            "timeout": ConfigFieldSchema(type="integer", description="Timeout", default=30),
         }
         result = validate_config(schema, {"timeout": 60})
 
@@ -405,12 +392,8 @@ class TestValidateConfig:
     def test_multiple_errors_collected(self) -> None:
         """AC: Multiple validation failures are all reported."""
         schema = {
-            "key1": ConfigFieldSchema(
-                type="string", description="K1", required=True
-            ),
-            "key2": ConfigFieldSchema(
-                type="integer", description="K2", required=True
-            ),
+            "key1": ConfigFieldSchema(type="string", description="K1", required=True),
+            "key2": ConfigFieldSchema(type="integer", description="K2", required=True),
         }
         result = validate_config(schema, {"key2": "wrong"})
 

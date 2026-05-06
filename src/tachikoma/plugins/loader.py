@@ -163,9 +163,7 @@ def _validate_handlers(
     for hook_type, module_name in manifest.hooks.items():
         handler_path = plugin_dir / "hooks" / f"{module_name}.py"
         if not handler_path.exists():
-            raise ValueError(
-                f"Hook handler file not found: {handler_path}"
-            )
+            raise ValueError(f"Hook handler file not found: {handler_path}")
 
         module_key = f"tachikoma_plugin.{alias}.hooks.{module_name}"
         module = _import_handler_module(handler_path, module_key)
@@ -195,9 +193,7 @@ def _validate_handlers(
 
         handler_path = plugin_dir / "events" / f"{module_name}.py"
         if not handler_path.exists():
-            raise ValueError(
-                f"Event handler file not found: {handler_path}"
-            )
+            raise ValueError(f"Event handler file not found: {handler_path}")
 
         module_key = f"tachikoma_plugin.{alias}.events.{module_name}"
         module = _import_handler_module(handler_path, module_key)
@@ -265,8 +261,7 @@ def _discover_one(
             manifest=None,
             status="failed",
             diagnostic=(
-                "No manifest found "
-                "(expected tachikoma-plugin.toml or .claude-plugin/plugin.json)"
+                "No manifest found (expected tachikoma-plugin.toml or .claude-plugin/plugin.json)"
             ),
             plugin_dir=plugin_dir,
         )

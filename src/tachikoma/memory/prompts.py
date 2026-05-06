@@ -36,9 +36,7 @@ def permissions_section(memory_type: str, *, include_agent: bool = True) -> str:
     """Build the permissions section for a memory extraction prompt."""
     read_note = " (needed for validation)" if include_agent else ""
     agent_note = (
-        " You can use the Agent tool to spawn validation sub-agents."
-        if include_agent
-        else ""
+        " You can use the Agent tool to spawn validation sub-agents." if include_agent else ""
     )
     return f"""\
 ## Permissions

@@ -46,9 +46,7 @@ class TestHandlerValidationSuccess:
         """AC: hooks/init resolves to callable with correct signature."""
         install_dir = tmp_path / "plugins"
         p_dir = install_dir / "alpha"
-        _write_native_manifest(
-            p_dir, name="alpha", hooks={"init": "init"}
-        )
+        _write_native_manifest(p_dir, name="alpha", hooks={"init": "init"})
         _write_handler(p_dir, "hooks", "init", "def init(ctx): pass\n")
 
         source = _make_source(tmp_path)
@@ -69,9 +67,7 @@ class TestHandlerValidationSuccess:
             name="alpha",
             events={"coordinator_idle": "on_idle"},
         )
-        _write_handler(
-            p_dir, "events", "on_idle", "def handle(event, ctx): pass\n"
-        )
+        _write_handler(p_dir, "events", "on_idle", "def handle(event, ctx): pass\n")
 
         source = _make_source(tmp_path)
         report = ReconciliationReport(
@@ -92,9 +88,7 @@ class TestHandlerValidationSuccess:
             events={"coordinator_idle": "on_idle"},
         )
         _write_handler(p_dir, "hooks", "init", "def init(ctx): pass\n")
-        _write_handler(
-            p_dir, "events", "on_idle", "def handle(event, ctx): pass\n"
-        )
+        _write_handler(p_dir, "events", "on_idle", "def handle(event, ctx): pass\n")
 
         source = _make_source(tmp_path)
         report = ReconciliationReport(
@@ -117,12 +111,8 @@ class TestHandlerValidationSuccess:
                 "notification": "on_notify",
             },
         )
-        _write_handler(
-            p_dir, "events", "on_idle", "def handle(event, ctx): pass\n"
-        )
-        _write_handler(
-            p_dir, "events", "on_notify", "def handle(event, ctx): pass\n"
-        )
+        _write_handler(p_dir, "events", "on_idle", "def handle(event, ctx): pass\n")
+        _write_handler(p_dir, "events", "on_notify", "def handle(event, ctx): pass\n")
 
         source = _make_source(tmp_path)
         report = ReconciliationReport(
@@ -142,9 +132,7 @@ class TestCCPluginHooksIgnored:
         p_dir = install_dir / "alpha"
         cc_dir = p_dir / ".claude-plugin"
         cc_dir.mkdir(parents=True)
-        (cc_dir / "plugin.json").write_text(
-            '{"name": "alpha", "hooks": {"init": "init.py"}}'
-        )
+        (cc_dir / "plugin.json").write_text('{"name": "alpha", "hooks": {"init": "init.py"}}')
 
         source = _make_source(tmp_path)
         report = ReconciliationReport(
@@ -182,9 +170,7 @@ class TestHandlerValidationFailures:
         """AC: Missing hooks/init.py → fail with diagnostic naming file."""
         install_dir = tmp_path / "plugins"
         p_dir = install_dir / "alpha"
-        _write_native_manifest(
-            p_dir, name="alpha", hooks={"init": "init"}
-        )
+        _write_native_manifest(p_dir, name="alpha", hooks={"init": "init"})
         # Don't create hooks/init.py
 
         source = _make_source(tmp_path)
@@ -200,9 +186,7 @@ class TestHandlerValidationFailures:
         """AC: Missing events/on_idle.py → fail with diagnostic naming file."""
         install_dir = tmp_path / "plugins"
         p_dir = install_dir / "alpha"
-        _write_native_manifest(
-            p_dir, name="alpha", events={"coordinator_idle": "on_idle"}
-        )
+        _write_native_manifest(p_dir, name="alpha", events={"coordinator_idle": "on_idle"})
 
         source = _make_source(tmp_path)
         report = ReconciliationReport(
@@ -217,9 +201,7 @@ class TestHandlerValidationFailures:
         """AC: Syntax error in handler → fail with diagnostic including error."""
         install_dir = tmp_path / "plugins"
         p_dir = install_dir / "alpha"
-        _write_native_manifest(
-            p_dir, name="alpha", hooks={"init": "init"}
-        )
+        _write_native_manifest(p_dir, name="alpha", hooks={"init": "init"})
         _write_handler(p_dir, "hooks", "init", "def init(ctx\n")  # syntax error
 
         source = _make_source(tmp_path)
@@ -234,9 +216,7 @@ class TestHandlerValidationFailures:
         """AC: Module without 'init' function → fail with diagnostic."""
         install_dir = tmp_path / "plugins"
         p_dir = install_dir / "alpha"
-        _write_native_manifest(
-            p_dir, name="alpha", hooks={"init": "init"}
-        )
+        _write_native_manifest(p_dir, name="alpha", hooks={"init": "init"})
         _write_handler(p_dir, "hooks", "init", "# no init function here\n")
 
         source = _make_source(tmp_path)
@@ -252,9 +232,7 @@ class TestHandlerValidationFailures:
         """AC: Module without 'handle' function → fail with diagnostic."""
         install_dir = tmp_path / "plugins"
         p_dir = install_dir / "alpha"
-        _write_native_manifest(
-            p_dir, name="alpha", events={"coordinator_idle": "on_idle"}
-        )
+        _write_native_manifest(p_dir, name="alpha", events={"coordinator_idle": "on_idle"})
         _write_handler(p_dir, "events", "on_idle", "# no handle function\n")
 
         source = _make_source(tmp_path)
@@ -270,9 +248,7 @@ class TestHandlerValidationFailures:
         """AC: Init hook with wrong param count → fail with expected signature."""
         install_dir = tmp_path / "plugins"
         p_dir = install_dir / "alpha"
-        _write_native_manifest(
-            p_dir, name="alpha", hooks={"init": "init"}
-        )
+        _write_native_manifest(p_dir, name="alpha", hooks={"init": "init"})
         _write_handler(p_dir, "hooks", "init", "def init(a, b): pass\n")
 
         source = _make_source(tmp_path)
@@ -288,12 +264,8 @@ class TestHandlerValidationFailures:
         """AC: Event handler with wrong param count → fail with expected signature."""
         install_dir = tmp_path / "plugins"
         p_dir = install_dir / "alpha"
-        _write_native_manifest(
-            p_dir, name="alpha", events={"coordinator_idle": "on_idle"}
-        )
-        _write_handler(
-            p_dir, "events", "on_idle", "def handle(event): pass\n"
-        )
+        _write_native_manifest(p_dir, name="alpha", events={"coordinator_idle": "on_idle"})
+        _write_handler(p_dir, "events", "on_idle", "def handle(event): pass\n")
 
         source = _make_source(tmp_path)
         report = ReconciliationReport(
@@ -307,12 +279,8 @@ class TestHandlerValidationFailures:
         """AC: Unknown event type name → fail listing valid types."""
         install_dir = tmp_path / "plugins"
         p_dir = install_dir / "alpha"
-        _write_native_manifest(
-            p_dir, name="alpha", events={"unknown_event": "on_unknown"}
-        )
-        _write_handler(
-            p_dir, "events", "on_unknown", "def handle(event, ctx): pass\n"
-        )
+        _write_native_manifest(p_dir, name="alpha", events={"unknown_event": "on_unknown"})
+        _write_handler(p_dir, "events", "on_unknown", "def handle(event, ctx): pass\n")
 
         source = _make_source(tmp_path)
         report = ReconciliationReport(

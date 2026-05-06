@@ -120,9 +120,7 @@ async def _plugin_check_tick(manager, state_repo, bus: EventBus) -> None:
     for info in updates:
         short_sha = info.available_version[:8] if info.available_version else "?"
         lines.append(f"  - {info.alias} ({short_sha})")
-    lines.append(
-        "\nUse update_plugin(<alias>) or update_all_plugins() to apply updates."
-    )
+    lines.append("\nUse update_plugin(<alias>) or update_all_plugins() to apply updates.")
 
     await dispatch_notification(
         bus,
@@ -484,9 +482,7 @@ async def run(
                 Job(
                     name="plugin_update_check",
                     trigger=CronTrigger("17 3 * * *", tz),
-                    run=lambda: _plugin_check_tick(
-                        plugin_manager, plugin_state_repo, bus
-                    ),
+                    run=lambda: _plugin_check_tick(plugin_manager, plugin_state_repo, bus),
                 )
             )
 

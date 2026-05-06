@@ -197,10 +197,7 @@ def build_back_online_content(notification: RestartNotification) -> str:
             f"(upgraded from {notification.previous_version} "
             f"to {notification.new_version})."
         )
-    return (
-        f"Tachikoma is back online after a "
-        f"{notification.reason} restart."
-    )
+    return f"Tachikoma is back online after a {notification.reason} restart."
 
 
 async def handle_restart_notification(

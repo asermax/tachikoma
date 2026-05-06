@@ -93,14 +93,10 @@ def _validate_bare_module_names(values: dict[str, str]) -> dict[str, str]:
     """Reject module names with empty strings, path separators, or ``..`` segments."""
     for key, name in values.items():
         if not name:
-            raise ValueError(
-                f"Module name for '{key}' must not be empty"
-            )
+            raise ValueError(f"Module name for '{key}' must not be empty")
         posix = PurePosixPath(name)
         if posix.is_absolute():
-            raise ValueError(
-                f"Module name for '{key}' must be relative, got absolute: {name!r}"
-            )
+            raise ValueError(f"Module name for '{key}' must be relative, got absolute: {name!r}")
         if ".." in posix.parts:
             raise ValueError(
                 f"Module name for '{key}' must not contain '..' segments, got {name!r}"

@@ -347,9 +347,7 @@ class SessionRepository:
             return record.to_domain() if record else None
 
         except Exception as exc:
-            raise SessionRepositoryError(
-                f"Failed to update context entry {entry_id}"
-            ) from exc
+            raise SessionRepositoryError(f"Failed to update context entry {entry_id}") from exc
 
     async def find_context_entries_by_skill_name(
         self,

@@ -93,15 +93,11 @@ class TestOnPluginInstalled:
 
         skill_dir = tmp_path / "skills" / "linter"
         skill_dir.mkdir(parents=True)
-        (skill_dir / "SKILL.md").write_text(
-            "---\ndescription: A linter\n---\nLinter skill body"
-        )
+        (skill_dir / "SKILL.md").write_text("---\ndescription: A linter\n---\nLinter skill body")
 
         plugin = _make_plugin("code-review", skill_dirs=[tmp_path / "skills"])
 
-        await _dispatch_and_cleanup(
-            bus, PluginInstalled(alias="code-review", plugin=plugin)
-        )
+        await _dispatch_and_cleanup(bus, PluginInstalled(alias="code-review", plugin=plugin))
 
         assert "code-review:linter" in registry.skills
         assert len(plugin.contributed_skills) == 1
@@ -220,9 +216,7 @@ class TestOnPluginRemoved:
         # Pre-populate a skill.
         skill_dir = tmp_path / "skills" / "linter"
         skill_dir.mkdir(parents=True)
-        (skill_dir / "SKILL.md").write_text(
-            "---\ndescription: Linter\n---\nBody"
-        )
+        (skill_dir / "SKILL.md").write_text("---\ndescription: Linter\n---\nBody")
         registry.add_namespaced_source("cr", tmp_path / "skills")
         assert "cr:linter" in registry.skills
 

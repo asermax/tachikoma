@@ -62,9 +62,7 @@ def _mock_proc(returncode: int, stdout: str, stderr: str = "") -> MagicMock:
     """Create a mock subprocess with the given return code and output."""
     proc = MagicMock()
     proc.returncode = returncode
-    proc.communicate = AsyncMock(
-        return_value=(stdout.encode(), stderr.encode())
-    )
+    proc.communicate = AsyncMock(return_value=(stdout.encode(), stderr.encode()))
     return proc
 
 
@@ -292,9 +290,7 @@ class TestRunDailyGitCheck:
 
         plugins = {
             "plugin-a": _make_git_plugin("plugin-a"),
-            "plugin-b": _make_git_plugin(
-                "plugin-b", git="https://github.com/example/other.git"
-            ),
+            "plugin-b": _make_git_plugin("plugin-b", git="https://github.com/example/other.git"),
             "local-c": make_plugin("local-c"),
         }
 

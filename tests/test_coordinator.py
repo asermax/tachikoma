@@ -502,8 +502,7 @@ class TestCoordinatorSessionTracking:
 
 
 class TestTranscriptPathDerivation:
-    """Tests for _derive_transcript_path helper.
-    """
+    """Tests for _derive_transcript_path helper."""
 
     def test_basic_path_derivation(self) -> None:
         """Basic case: absolute cwd is sanitized and combined with session ID."""

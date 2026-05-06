@@ -24,9 +24,7 @@ def decode_json_string_array(raw: str, param_name: str) -> list[str]:
     try:
         decoded = json.loads(raw)
     except json.JSONDecodeError as exc:
-        raise ValueError(
-            f"{param_name} must be a JSON-encoded array of strings: {exc}"
-        ) from exc
+        raise ValueError(f"{param_name} must be a JSON-encoded array of strings: {exc}") from exc
     if not isinstance(decoded, list):
         raise ValueError(
             f"{param_name} JSON string must encode an array, got {type(decoded).__name__}"

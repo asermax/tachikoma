@@ -54,9 +54,7 @@ class TestGitPluginSource:
 
     def test_full_url_preserved(self) -> None:
         """AC-PSD-10: A full HTTPS URL is preserved unchanged."""
-        source = GitPluginSource(
-            git="https://gitlab.com/owner/repo.git", ref="v1.0.0"
-        )
+        source = GitPluginSource(git="https://gitlab.com/owner/repo.git", ref="v1.0.0")
 
         assert source.git == "https://gitlab.com/owner/repo.git"
 
@@ -193,10 +191,12 @@ class TestParsePluginSource:
 
     def test_git_variant_dispatched(self) -> None:
         """A dict with 'git' key dispatches to GitPluginSource."""
-        source = parse_plugin_source({
-            "git": "https://github.com/owner/repo.git",
-            "ref": "v1.0.0",
-        })
+        source = parse_plugin_source(
+            {
+                "git": "https://github.com/owner/repo.git",
+                "ref": "v1.0.0",
+            }
+        )
 
         assert isinstance(source, GitPluginSource)
 
@@ -215,11 +215,13 @@ class TestParsePluginSource:
     def test_multiple_sources_rejected(self) -> None:
         """AC-PSD-3: More than one discriminator field is rejected."""
         with pytest.raises(ValueError, match="mutually exclusive"):
-            parse_plugin_source({
-                "git": "https://github.com/owner/repo.git",
-                "url": "https://example.com/plugin.tar.gz",
-                "ref": "v1.0.0",
-            })
+            parse_plugin_source(
+                {
+                    "git": "https://github.com/owner/repo.git",
+                    "url": "https://example.com/plugin.tar.gz",
+                    "ref": "v1.0.0",
+                }
+            )
 
     def test_no_source_rejected(self) -> None:
         """AC-PSD-3: No discriminator field is rejected."""

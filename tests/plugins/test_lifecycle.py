@@ -92,6 +92,7 @@ class TestInitHookExecution:
         def make_hook(name: str):
             def hook(ctx: PluginContext) -> None:
                 order.append(name)
+
             return hook
 
         p1 = _make_plugin_with_hook("zeta", init_hook=make_hook("zeta"))
@@ -215,12 +216,8 @@ class TestErrorIsolation:
         def handler_b(event: object, ctx: PluginContext) -> None:
             b_received.append(event)
 
-        pa = _make_plugin_with_hook(
-            "alpha", event_handlers={CoordinatorIdle: handler_a}
-        )
-        pb = _make_plugin_with_hook(
-            "beta", event_handlers={CoordinatorIdle: handler_b}
-        )
+        pa = _make_plugin_with_hook("alpha", event_handlers={CoordinatorIdle: handler_a})
+        pb = _make_plugin_with_hook("beta", event_handlers={CoordinatorIdle: handler_b})
         await run_plugin_init_hooks([pa, pb], bus)
 
         await bus.dispatch(_idle_event())
@@ -228,12 +225,11 @@ class TestErrorIsolation:
 
     async def test_handler_return_value_ignored(self, bus: EventBus) -> None:
         """AC: Handler return values are ignored."""
+
         def handler(event: object, ctx: PluginContext) -> str:
             return "should be ignored"
 
-        plugin = _make_plugin_with_hook(
-            "alpha", event_handlers={CoordinatorIdle: handler}
-        )
+        plugin = _make_plugin_with_hook("alpha", event_handlers={CoordinatorIdle: handler})
         await run_plugin_init_hooks([plugin], bus)
 
         # Should not raise
@@ -245,6 +241,7 @@ class TestTimeout:
 
     async def test_init_hook_timeout(self) -> None:
         """AC: Init hook exceeding 30s is cancelled and logged."""
+
         async def slow_hook(ctx: PluginContext) -> None:
             await asyncio.sleep(60)
 
@@ -269,11 +266,11 @@ class TestUnsubscription:
         def handler(event: object, ctx: PluginContext) -> None:
             events_received.append(event)
 
-        plugin = _make_plugin_with_hook(
-            "alpha", event_handlers={CoordinatorIdle: handler}
-        )
+        plugin = _make_plugin_with_hook("alpha", event_handlers={CoordinatorIdle: handler})
         ctx = PluginContext(
-            config={}, event_bus=bus, alias="alpha",
+            config={},
+            event_bus=bus,
+            alias="alpha",
             install_path=Path("/tmp/alpha"),
         )
         subscribe_plugin_events(plugin, bus, ctx)

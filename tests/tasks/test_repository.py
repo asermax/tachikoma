@@ -251,8 +251,7 @@ class TestRepositoryInstanceCRUD:
 
 
 class TestGetActiveInstancePeriodAware:
-    """Tests for period-aware duplicate detection via scheduled_for param (S2).
-    """
+    """Tests for period-aware duplicate detection via scheduled_for param (S2)."""
 
     async def test_finds_pending_instance_matching_scheduled_for(
         self, repo: TaskRepository

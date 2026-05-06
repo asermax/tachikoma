@@ -61,8 +61,10 @@ class TestPluginsHook:
         bus = EventBus()
         ctx = _make_ctx(tmp_path, bus=bus)
 
-        with patch("tachikoma.plugins.hooks.reconcile", new_callable=AsyncMock) as mock_reconcile, \
-             patch("tachikoma.plugins.hooks.discover") as mock_discover:
+        with (
+            patch("tachikoma.plugins.hooks.reconcile", new_callable=AsyncMock) as mock_reconcile,
+            patch("tachikoma.plugins.hooks.discover") as mock_discover,
+        ):
             mock_reconcile.return_value = MagicMock(errors=[], any_errors=False)
             mock_discover.return_value = []
 
@@ -91,8 +93,10 @@ class TestPluginsHook:
         bus = EventBus()
         ctx = _make_ctx(tmp_path, bus=bus)
 
-        with patch("tachikoma.plugins.hooks.reconcile", new_callable=AsyncMock) as mock_reconcile, \
-             patch("tachikoma.plugins.hooks.discover") as mock_discover:
+        with (
+            patch("tachikoma.plugins.hooks.reconcile", new_callable=AsyncMock) as mock_reconcile,
+            patch("tachikoma.plugins.hooks.discover") as mock_discover,
+        ):
             mock_reconcile.return_value = MagicMock(errors=[], any_errors=False)
             mock_discover.return_value = []
 
@@ -125,8 +129,10 @@ class TestPluginsHook:
             ),
         )
 
-        with patch("tachikoma.plugins.hooks.reconcile", new_callable=AsyncMock) as mock_reconcile, \
-             patch("tachikoma.plugins.hooks.discover") as mock_discover:
+        with (
+            patch("tachikoma.plugins.hooks.reconcile", new_callable=AsyncMock) as mock_reconcile,
+            patch("tachikoma.plugins.hooks.discover") as mock_discover,
+        ):
             mock_reconcile.return_value = MagicMock(errors=[], any_errors=False)
             mock_discover.return_value = [plugin]
 
@@ -153,8 +159,10 @@ class TestPluginsHook:
         """Missing event_bus in extras → RuntimeError with clear message."""
         ctx = _make_ctx(tmp_path, bus=None)  # No bus.
 
-        with patch("tachikoma.plugins.hooks.reconcile", new_callable=AsyncMock) as mock_reconcile, \
-             patch("tachikoma.plugins.hooks.discover") as mock_discover:
+        with (
+            patch("tachikoma.plugins.hooks.reconcile", new_callable=AsyncMock) as mock_reconcile,
+            patch("tachikoma.plugins.hooks.discover") as mock_discover,
+        ):
             mock_reconcile.return_value = MagicMock(errors=[], any_errors=False)
             mock_discover.return_value = []
 

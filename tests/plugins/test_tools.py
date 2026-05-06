@@ -282,12 +282,8 @@ class TestHandleListPluginsConfig:
 
     async def test_loaded_plugin_with_config_shows_schema_and_values(self) -> None:
         schema = {
-            "api_key": ConfigFieldSchema(
-                type="string", description="API key", required=True
-            ),
-            "timeout": ConfigFieldSchema(
-                type="integer", description="Request timeout", default=30
-            ),
+            "api_key": ConfigFieldSchema(type="string", description="API key", required=True),
+            "timeout": ConfigFieldSchema(type="integer", description="Request timeout", default=30),
         }
         plugin = _make_plugin(
             "weather",
@@ -328,9 +324,7 @@ class TestHandleListPluginsConfig:
 
     async def test_optional_field_uses_default_when_no_user_value(self) -> None:
         schema = {
-            "debug": ConfigFieldSchema(
-                type="boolean", description="Enable debug", default=False
-            ),
+            "debug": ConfigFieldSchema(type="boolean", description="Enable debug", default=False),
         }
         plugin = _make_plugin("svc", config={"debug": False}, config_schema=schema)
         manager = _make_manager(loaded={"svc": plugin})
@@ -343,9 +337,7 @@ class TestHandleListPluginsConfig:
 
     async def test_optional_field_no_default_no_user_value_shows_null(self) -> None:
         schema = {
-            "region": ConfigFieldSchema(
-                type="string", description="Region override"
-            ),
+            "region": ConfigFieldSchema(type="string", description="Region override"),
         }
         plugin = _make_plugin("svc", config={}, config_schema=schema)
         manager = _make_manager(loaded={"svc": plugin})
@@ -357,9 +349,7 @@ class TestHandleListPluginsConfig:
 
     async def test_failed_plugin_shows_schema_and_validation_error(self) -> None:
         schema = {
-            "api_key": ConfigFieldSchema(
-                type="string", description="API key", required=True
-            ),
+            "api_key": ConfigFieldSchema(type="string", description="API key", required=True),
         }
         plugin = _make_plugin(
             "weather",
@@ -407,9 +397,7 @@ class TestHandleListPluginsConfig:
 class TestHandleUpdatePlugin:
     async def test_success(self) -> None:
         manager = _make_manager()
-        manager.update = AsyncMock(
-            return_value=UpdateResult(alias="code-review", status="updated")
-        )
+        manager.update = AsyncMock(return_value=UpdateResult(alias="code-review", status="updated"))
 
         args = UpdatePluginArgs(alias="code-review")
         result = await handle_update_plugin(args, manager)
@@ -423,7 +411,8 @@ class TestHandleUpdatePlugin:
         manager = _make_manager()
         manager.update = AsyncMock(
             return_value=UpdateResult(
-                alias="dev-tools", status="skipped",
+                alias="dev-tools",
+                status="skipped",
                 message="Local plugins are always current.",
             )
         )
@@ -449,7 +438,8 @@ class TestHandleUpdatePlugin:
         manager = _make_manager()
         manager.update = AsyncMock(
             return_value=UpdateResult(
-                alias="broken", status="failed",
+                alias="broken",
+                status="failed",
                 error="Network error",
             )
         )
@@ -524,15 +514,17 @@ class TestHandleListPluginsUpdateInfo:
         )
         manager = _make_manager(loaded={"code-review": plugin})
 
-        manager._state_repo.get = AsyncMock(return_value=PluginState(
-            alias="code-review",
-            installed_version="abc123",
-            update_status="update-available",
-            available_version="def456",
-            last_checked_at=None,
-            diagnostic=None,
-            created_at=__import__("datetime").datetime.now(__import__("datetime").UTC),
-        ))
+        manager._state_repo.get = AsyncMock(
+            return_value=PluginState(
+                alias="code-review",
+                installed_version="abc123",
+                update_status="update-available",
+                available_version="def456",
+                last_checked_at=None,
+                diagnostic=None,
+                created_at=__import__("datetime").datetime.now(__import__("datetime").UTC),
+            )
+        )
 
         result = await handle_list_plugins(manager)
 
@@ -558,8 +550,11 @@ class TestHandleListPluginsUpdateInfo:
             alias="fresh",
             source=GitPluginSource(git="https://github.com/test/fresh.git", ref="main"),
             manifest=PluginManifest(
-                name="fresh", version="1.0.0", description="Fresh",
-                source_format="tachikoma", skill_dirs=[],
+                name="fresh",
+                version="1.0.0",
+                description="Fresh",
+                source_format="tachikoma",
+                skill_dirs=[],
             ),
             status="loaded",
             diagnostic=None,
@@ -579,8 +574,11 @@ class TestHandleListPluginsUpdateInfo:
             alias="broken-update",
             source=GitPluginSource(git="https://github.com/test/plugin.git", ref="main"),
             manifest=PluginManifest(
-                name="broken-update", version="1.0.0", description="Test",
-                source_format="tachikoma", skill_dirs=[],
+                name="broken-update",
+                version="1.0.0",
+                description="Test",
+                source_format="tachikoma",
+                skill_dirs=[],
             ),
             status="loaded",
             diagnostic=None,
@@ -588,15 +586,17 @@ class TestHandleListPluginsUpdateInfo:
         )
         manager = _make_manager(loaded={"broken-update": plugin})
 
-        manager._state_repo.get = AsyncMock(return_value=PluginState(
-            alias="broken-update",
-            installed_version="abc123",
-            update_status="unknown",
-            available_version=None,
-            last_checked_at=None,
-            diagnostic="Re-registration failed: skill name collision",
-            created_at=__import__("datetime").datetime.now(__import__("datetime").UTC),
-        ))
+        manager._state_repo.get = AsyncMock(
+            return_value=PluginState(
+                alias="broken-update",
+                installed_version="abc123",
+                update_status="unknown",
+                available_version=None,
+                last_checked_at=None,
+                diagnostic="Re-registration failed: skill name collision",
+                created_at=__import__("datetime").datetime.now(__import__("datetime").UTC),
+            )
+        )
 
         result = await handle_list_plugins(manager)
 

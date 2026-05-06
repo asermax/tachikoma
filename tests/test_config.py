@@ -1106,7 +1106,7 @@ class TestPluginsSettings:
         """AC-PSD-1: A [plugins.code-review] git source is parsed correctly."""
         config_path = tmp_path / "config.toml"
         config_path.write_text(
-            '[plugins.code-review]\n'
+            "[plugins.code-review]\n"
             'git = "https://github.com/owner/repo.git"\n'
             'subdir = "plugin"\n'
             'ref = "v1.0.0"\n'
@@ -1125,10 +1125,7 @@ class TestPluginsSettings:
     def test_local_plugin_from_config(self, tmp_path: Path) -> None:
         """AC-PSD-2: A [plugins.dev-plugin] local source is parsed correctly."""
         config_path = tmp_path / "config.toml"
-        config_path.write_text(
-            '[plugins.dev-plugin]\n'
-            'path = "/home/user/dev/my-plugin"\n'
-        )
+        config_path.write_text('[plugins.dev-plugin]\npath = "/home/user/dev/my-plugin"\n')
 
         settings = load_settings(config_path)
 
@@ -1140,10 +1137,7 @@ class TestPluginsSettings:
     def test_url_plugin_from_config_no_subdir(self, tmp_path: Path) -> None:
         """AC-PSD-14: A URL source with no subdir parses correctly."""
         config_path = tmp_path / "config.toml"
-        config_path.write_text(
-            '[plugins.foo]\n'
-            'url = "https://example.com/plugin.tar.gz"\n'
-        )
+        config_path.write_text('[plugins.foo]\nurl = "https://example.com/plugin.tar.gz"\n')
 
         settings = load_settings(config_path)
 
@@ -1157,10 +1151,7 @@ class TestPluginsSettings:
     def test_invalid_alias_rejected(self, tmp_path: Path) -> None:
         """AC-PSD-6: An alias with reserved characters is rejected."""
         config_path = tmp_path / "config.toml"
-        config_path.write_text(
-            '[plugins."code:review"]\n'
-            'path = "/home/user/plugin"\n'
-        )
+        config_path.write_text('[plugins."code:review"]\npath = "/home/user/plugin"\n')
 
         with pytest.raises(SystemExit):
             load_settings(config_path)
@@ -1168,22 +1159,14 @@ class TestPluginsSettings:
     def test_uppercase_alias_rejected(self, tmp_path: Path) -> None:
         """AC-PSD-6: An uppercase alias is rejected."""
         config_path = tmp_path / "config.toml"
-        config_path.write_text(
-            '[plugins.CodeReview]\n'
-            'path = "/home/user/plugin"\n'
-        )
+        config_path.write_text('[plugins.CodeReview]\npath = "/home/user/plugin"\n')
 
         with pytest.raises(SystemExit):
             load_settings(config_path)
 
     def test_duplicate_alias_rejected_by_toml(self, tmp_path: Path) -> None:
         """AC-PSD-9: TOML duplicate keys are rejected by stdlib parser."""
-        toml_text = (
-            '[plugins.my-plugin]\n'
-            'path = "/a"\n'
-            '[plugins.my-plugin]\n'
-            'path = "/b"\n'
-        )
+        toml_text = '[plugins.my-plugin]\npath = "/a"\n[plugins.my-plugin]\npath = "/b"\n'
         with pytest.raises(tomllib.TOMLDecodeError):
             tomllib.loads(toml_text)
 
@@ -1191,10 +1174,10 @@ class TestPluginsSettings:
         """Multiple plugin entries are all parsed."""
         config_path = tmp_path / "config.toml"
         config_path.write_text(
-            '[plugins.alpha]\n'
+            "[plugins.alpha]\n"
             'git = "https://github.com/owner/alpha.git"\n'
             'ref = "v1.0.0"\n\n'
-            '[plugins.beta]\n'
+            "[plugins.beta]\n"
             'path = "/home/user/beta"\n'
         )
 
@@ -1216,11 +1199,7 @@ class TestPluginsSettings:
     def test_gh_shorthand_expanded_in_config(self, tmp_path: Path) -> None:
         """AC-PSD-10: gh: shorthand is expanded during config load."""
         config_path = tmp_path / "config.toml"
-        config_path.write_text(
-            '[plugins.code-review]\n'
-            'git = "gh:owner/repo"\n'
-            'ref = "v1.0.0"\n'
-        )
+        config_path.write_text('[plugins.code-review]\ngit = "gh:owner/repo"\nref = "v1.0.0"\n')
 
         settings = load_settings(config_path)
 
@@ -1237,12 +1216,12 @@ class TestPluginConfigSubtable:
         """R2: [plugins.weather.config] values attached to source model."""
         config_path = tmp_path / "config.toml"
         config_path.write_text(
-            '[plugins.weather]\n'
+            "[plugins.weather]\n"
             'git = "https://github.com/example/weather.git"\n'
             'ref = "v1.0.0"\n\n'
-            '[plugins.weather.config]\n'
+            "[plugins.weather.config]\n"
             'api_key = "sk-test"\n'
-            'timeout = 60\n'
+            "timeout = 60\n"
         )
 
         settings = load_settings(config_path)
@@ -1255,10 +1234,7 @@ class TestPluginConfigSubtable:
         """R2: config sub-table works with local source."""
         config_path = tmp_path / "config.toml"
         config_path.write_text(
-            '[plugins.dev]\n'
-            'path = "/home/user/dev-plugin"\n\n'
-            '[plugins.dev.config]\n'
-            'debug = true\n'
+            '[plugins.dev]\npath = "/home/user/dev-plugin"\n\n[plugins.dev.config]\ndebug = true\n'
         )
 
         settings = load_settings(config_path)
@@ -1271,9 +1247,7 @@ class TestPluginConfigSubtable:
         """R2: Plugin without .config sub-table has config=None."""
         config_path = tmp_path / "config.toml"
         config_path.write_text(
-            '[plugins.basic]\n'
-            'git = "https://github.com/example/basic.git"\n'
-            'ref = "v1.0.0"\n'
+            '[plugins.basic]\ngit = "https://github.com/example/basic.git"\nref = "v1.0.0"\n'
         )
 
         settings = load_settings(config_path)
@@ -1285,10 +1259,10 @@ class TestPluginConfigSubtable:
         """R2: Source fields and config fields are cleanly separated."""
         config_path = tmp_path / "config.toml"
         config_path.write_text(
-            '[plugins.weather]\n'
+            "[plugins.weather]\n"
             'git = "https://github.com/example/weather.git"\n'
             'ref = "v1.0.0"\n\n'
-            '[plugins.weather.config]\n'
+            "[plugins.weather.config]\n"
             'api_key = "sk-test"\n'
         )
 
@@ -1304,10 +1278,7 @@ class TestPluginConfigSubtable:
         """R2: Config key matching a source field name is a config value (no collision)."""
         config_path = tmp_path / "config.toml"
         config_path.write_text(
-            '[plugins.p]\n'
-            'path = "/home/user/plugin"\n\n'
-            '[plugins.p.config]\n'
-            'path = "some-value"\n'
+            '[plugins.p]\npath = "/home/user/plugin"\n\n[plugins.p.config]\npath = "some-value"\n'
         )
 
         settings = load_settings(config_path)

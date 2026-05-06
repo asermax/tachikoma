@@ -59,7 +59,5 @@ def get_event_type(name: str) -> type[BaseEvent]:
     registry = build_event_registry()
     if name not in registry:
         valid = ", ".join(sorted(registry.keys()))
-        raise KeyError(
-            f"Unknown event type '{name}'. Valid types: {valid}"
-        )
+        raise KeyError(f"Unknown event type '{name}'. Valid types: {valid}")
     return registry[name]

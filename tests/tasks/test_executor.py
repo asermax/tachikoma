@@ -643,13 +643,16 @@ class TestBackgroundTaskExecutor:
             with patch("tachikoma.sdk_query.stderr_aware_query") as mock_query:
                 mock_query.side_effect = AssertionError("Evaluator should not be called")
 
-                with patch(
-                    "tachikoma.tasks.executor.create_notification_server",
-                    side_effect=_make_cycle_state_capturing_server(captured_cycle_state),
-                ), patch.object(
-                    executor,
-                    "_run_preprocessing",
-                    return_value=_mock_preproc_result(),
+                with (
+                    patch(
+                        "tachikoma.tasks.executor.create_notification_server",
+                        side_effect=_make_cycle_state_capturing_server(captured_cycle_state),
+                    ),
+                    patch.object(
+                        executor,
+                        "_run_preprocessing",
+                        return_value=_mock_preproc_result(),
+                    ),
                 ):
                     await executor.execute(instance)
 
@@ -967,13 +970,16 @@ class TestExecutorResumePath:
             with patch("tachikoma.sdk_query.stderr_aware_query") as mock_query:
                 mock_query.side_effect = AssertionError("Evaluator should not be called")
 
-                with patch(
-                    "tachikoma.tasks.executor.create_notification_server",
-                    side_effect=_make_cycle_state_capturing_server(captured_cycle_state),
-                ), patch.object(
-                    executor,
-                    "_run_preprocessing",
-                    return_value=_mock_preproc_result(),
+                with (
+                    patch(
+                        "tachikoma.tasks.executor.create_notification_server",
+                        side_effect=_make_cycle_state_capturing_server(captured_cycle_state),
+                    ),
+                    patch.object(
+                        executor,
+                        "_run_preprocessing",
+                        return_value=_mock_preproc_result(),
+                    ),
                 ):
                     await executor.execute(instance)
 

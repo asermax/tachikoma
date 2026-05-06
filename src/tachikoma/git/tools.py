@@ -123,7 +123,6 @@ def _error(msg: str) -> dict:
     return {"is_error": True, "content": [{"type": "text", "text": msg}]}
 
 
-
 # --- Scrub helper ---
 
 

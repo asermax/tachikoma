@@ -54,9 +54,7 @@ Focus on what would be useful to remember, not a transcript of what happened.
 
 """
 
-EPISODIC_PROMPT = (
-    _BASE_PROMPT + "\n\n" + permissions_section("episodic", include_agent=False)
-)
+EPISODIC_PROMPT = _BASE_PROMPT + "\n\n" + permissions_section("episodic", include_agent=False)
 
 
 class EpisodicProcessor(PromptDrivenProcessor):

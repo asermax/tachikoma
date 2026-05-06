@@ -39,9 +39,7 @@ def validate_alias(alias: str) -> str:
         ValueError: If the alias does not match ``[a-z0-9][a-z0-9-]*``.
     """
     if not ALIAS_PATTERN.match(alias):
-        raise ValueError(
-            f"Invalid plugin alias '{alias}': must match [a-z0-9][a-z0-9-]*"
-        )
+        raise ValueError(f"Invalid plugin alias '{alias}': must match [a-z0-9][a-z0-9-]*")
     return alias
 
 
@@ -75,11 +73,11 @@ class GitPluginSource(BaseModel):
             return v
 
         if v.startswith(_GH_PREFIX):
-            remainder = v[len(_GH_PREFIX):]
+            remainder = v[len(_GH_PREFIX) :]
             return f"https://github.com/{remainder}.git"
 
         if v.startswith(_GITHUB_PREFIX):
-            remainder = v[len(_GITHUB_PREFIX):]
+            remainder = v[len(_GITHUB_PREFIX) :]
             return f"https://github.com/{remainder}.git"
 
         return v
@@ -89,9 +87,7 @@ class GitPluginSource(BaseModel):
     def reject_sha_shaped_refs(cls, v: str) -> str:
         """Reject refs that look like commit SHAs (7-40 hex characters)."""
         if _SHA_PATTERN.match(v):
-            raise ValueError(
-                f"ref must be a branch or tag name, not a commit SHA (got '{v}')"
-            )
+            raise ValueError(f"ref must be a branch or tag name, not a commit SHA (got '{v}')")
         return v
 
 
@@ -119,16 +115,12 @@ class UrlPluginSource(BaseModel):
     def enforce_https_and_extension(cls, v: str) -> str:
         """Enforce HTTPS scheme and recognized archive extension."""
         if not v.startswith("https://"):
-            raise ValueError(
-                f"Only HTTPS URLs are supported for plugin sources (got '{v}')"
-            )
+            raise ValueError(f"Only HTTPS URLs are supported for plugin sources (got '{v}')")
 
         lower = v.lower()
         if not any(lower.endswith(ext) for ext in _RECOGNIZED_ARCHIVE_EXTENSIONS):
             extensions = ", ".join(_RECOGNIZED_ARCHIVE_EXTENSIONS)
-            raise ValueError(
-                f"URL must end with one of {extensions} (got '{v}')"
-            )
+            raise ValueError(f"URL must end with one of {extensions} (got '{v}')")
 
         return v
 
@@ -152,9 +144,7 @@ class LocalPluginSource(BaseModel):
     def reject_relative_paths(cls, v: Path) -> Path:
         """Reject relative paths; only absolute paths are allowed."""
         if not v.is_absolute():
-            raise ValueError(
-                f"Plugin path must be absolute, got relative path '{v}'"
-            )
+            raise ValueError(f"Plugin path must be absolute, got relative path '{v}'")
         return v
 
 
@@ -183,15 +173,12 @@ def parse_plugin_source(data: dict) -> PluginSource:
 
     if len(populated_keys) == 0:
         raise ValueError(
-            "Plugin source must specify exactly one of 'git', 'url', or 'path'; "
-            "none were provided"
+            "Plugin source must specify exactly one of 'git', 'url', or 'path'; none were provided"
         )
 
     if len(populated_keys) > 1:
         names = ", ".join(f"'{k}'" for k in populated_keys)
-        raise ValueError(
-            f"Plugin source fields are mutually exclusive; found {names}"
-        )
+        raise ValueError(f"Plugin source fields are mutually exclusive; found {names}")
 
     key = populated_keys[0]
 

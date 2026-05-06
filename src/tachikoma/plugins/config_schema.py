@@ -68,19 +68,14 @@ class ConfigFieldSchema(BaseModel):
             expected_types = _TYPE_CHECKERS[self.type]
             if not isinstance(self.default, expected_types):
                 raise ValueError(
-                    f"Default value has type {_type_name(self.default)}, "
-                    f"expected {self.type}."
+                    f"Default value has type {_type_name(self.default)}, expected {self.type}."
                 )
             # bool is a subclass of int in Python — reject bool defaults for
             # integer/float fields, and reject int defaults for boolean fields.
             if self.type == "integer" and isinstance(self.default, bool):
-                raise ValueError(
-                    "Default value has type bool, expected integer."
-                )
+                raise ValueError("Default value has type bool, expected integer.")
             if self.type == "float" and isinstance(self.default, bool):
-                raise ValueError(
-                    "Default value has type bool, expected float."
-                )
+                raise ValueError("Default value has type bool, expected float.")
         return self
 
 

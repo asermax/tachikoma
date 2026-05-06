@@ -1,5 +1,4 @@
-"""Tests for task scheduler and instance generator.
-"""
+"""Tests for task scheduler and instance generator."""
 
 from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, patch

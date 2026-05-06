@@ -68,14 +68,10 @@ class TestUpdatePluginEntry:
     def test_comments_preserved_on_add(self, tmp_path: Path) -> None:
         """Comments and formatting are preserved when adding a plugin entry."""
         config_path = tmp_path / "config.toml"
-        config_path.write_text(
-            '# User comment\n[workspace]\npath = "~/tachikoma"\n'
-        )
+        config_path.write_text('# User comment\n[workspace]\npath = "~/tachikoma"\n')
 
         manager = SettingsManager(config_path)
-        source = GitPluginSource(
-            git="https://github.com/owner/repo.git", ref="v1.0.0"
-        )
+        source = GitPluginSource(git="https://github.com/owner/repo.git", ref="v1.0.0")
         manager.update_plugin_entry("my-plugin", source)
 
         content = config_path.read_text()
@@ -84,18 +80,14 @@ class TestUpdatePluginEntry:
 
     def test_invalid_alias_rejected(self, settings_manager: SettingsManager) -> None:
         """An invalid alias raises ValueError."""
-        source = GitPluginSource(
-            git="https://github.com/owner/repo.git", ref="v1.0.0"
-        )
+        source = GitPluginSource(git="https://github.com/owner/repo.git", ref="v1.0.0")
 
         with pytest.raises(ValueError, match="Invalid plugin alias"):
             settings_manager.update_plugin_entry("Bad:Alias", source)
 
     def test_add_multiple_entries(self, settings_manager: SettingsManager) -> None:
         """Multiple entries can be added sequentially."""
-        source1 = GitPluginSource(
-            git="https://github.com/owner/repo.git", ref="v1.0.0"
-        )
+        source1 = GitPluginSource(git="https://github.com/owner/repo.git", ref="v1.0.0")
         source2 = LocalPluginSource(path=Path("/home/user/plugin"))
 
         settings_manager.update_plugin_entry("git-plugin", source1)
@@ -107,12 +99,8 @@ class TestUpdatePluginEntry:
 
     def test_update_existing_entry(self, settings_manager: SettingsManager) -> None:
         """Updating an existing entry replaces it."""
-        source_v1 = GitPluginSource(
-            git="https://github.com/owner/repo.git", ref="v1.0.0"
-        )
-        source_v2 = GitPluginSource(
-            git="https://github.com/owner/repo.git", ref="v2.0.0"
-        )
+        source_v1 = GitPluginSource(git="https://github.com/owner/repo.git", ref="v1.0.0")
+        source_v2 = GitPluginSource(git="https://github.com/owner/repo.git", ref="v2.0.0")
 
         settings_manager.update_plugin_entry("my-plugin", source_v1)
         settings_manager.update_plugin_entry("my-plugin", source_v2)
@@ -127,9 +115,7 @@ class TestRemovePluginEntry:
 
     def test_remove_existing_entry(self, settings_manager: SettingsManager) -> None:
         """Removing an existing entry removes it from settings and TOML."""
-        source = GitPluginSource(
-            git="https://github.com/owner/repo.git", ref="v1.0.0"
-        )
+        source = GitPluginSource(git="https://github.com/owner/repo.git", ref="v1.0.0")
         settings_manager.update_plugin_entry("code-review", source)
 
         settings_manager.remove_plugin_entry("code-review")
@@ -152,9 +138,7 @@ class TestRemovePluginEntry:
 
     def test_remove_collapses_empty_parent(self, settings_manager: SettingsManager) -> None:
         """Removing the last entry collapses the [plugins] super-table."""
-        source = GitPluginSource(
-            git="https://github.com/owner/repo.git", ref="v1.0.0"
-        )
+        source = GitPluginSource(git="https://github.com/owner/repo.git", ref="v1.0.0")
         settings_manager.update_plugin_entry("only-plugin", source)
 
         settings_manager.remove_plugin_entry("only-plugin")
@@ -166,14 +150,10 @@ class TestRemovePluginEntry:
     def test_comments_preserved_on_remove(self, tmp_path: Path) -> None:
         """Comments and formatting are preserved when removing a plugin entry."""
         config_path = tmp_path / "config.toml"
-        config_path.write_text(
-            '# User comment\n[workspace]\npath = "~/tachikoma"\n'
-        )
+        config_path.write_text('# User comment\n[workspace]\npath = "~/tachikoma"\n')
 
         manager = SettingsManager(config_path)
-        source = GitPluginSource(
-            git="https://github.com/owner/repo.git", ref="v1.0.0"
-        )
+        source = GitPluginSource(git="https://github.com/owner/repo.git", ref="v1.0.0")
         manager.update_plugin_entry("temp-plugin", source)
         manager.remove_plugin_entry("temp-plugin")
 
@@ -184,9 +164,7 @@ class TestRemovePluginEntry:
 class TestRoundTripDeterminism:
     """Tests for install -> remove -> install determinism."""
 
-    def test_install_remove_install_deterministic(
-        self, settings_manager: SettingsManager
-    ) -> None:
+    def test_install_remove_install_deterministic(self, settings_manager: SettingsManager) -> None:
         """Install, remove, re-install of same plugin yields consistent state."""
         source = GitPluginSource(
             git="https://github.com/owner/repo.git",
@@ -213,13 +191,9 @@ class TestRoundTripDeterminism:
         # Settings also match
         assert "my-plugin" in settings_manager.settings.plugins
 
-    def test_toml_is_valid_after_operations(
-        self, settings_manager: SettingsManager
-    ) -> None:
+    def test_toml_is_valid_after_operations(self, settings_manager: SettingsManager) -> None:
         """TOML output is parseable after multiple operations."""
-        source = GitPluginSource(
-            git="https://github.com/owner/repo.git", ref="v1.0.0"
-        )
+        source = GitPluginSource(git="https://github.com/owner/repo.git", ref="v1.0.0")
 
         settings_manager.update_plugin_entry("plugin-a", source)
         settings_manager.update_plugin_entry("plugin-b", source)
@@ -234,9 +208,7 @@ class TestRoundTripDeterminism:
     def test_tomlkit_doc_round_trip(self, tmp_path: Path) -> None:
         """Verify tomlkit document structure after update_plugin_entry."""
         config_path = tmp_path / "config.toml"
-        config_path.write_text(
-            '[workspace]\npath = "~/tachikoma"\n'
-        )
+        config_path.write_text('[workspace]\npath = "~/tachikoma"\n')
 
         manager = SettingsManager(config_path)
         source = GitPluginSource(

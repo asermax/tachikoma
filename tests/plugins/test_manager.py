@@ -22,10 +22,10 @@ from tachikoma.plugins.manager import (
     PluginNotFoundError,
 )
 from tachikoma.plugins.manifest import PluginManifest
-from tachikoma.plugins.materializer import MaterializeError, MaterializationResult
+from tachikoma.plugins.materializer import MaterializationResult, MaterializeError
 from tachikoma.plugins.sources import GitPluginSource, LocalPluginSource, UrlPluginSource
 from tachikoma.plugins.state import PluginState
-from tachikoma.plugins.updater import UpdateResult, UpdateSummary
+from tachikoma.plugins.updater import UpdateResult
 
 from .conftest import make_plugin as _make_plugin
 
@@ -218,11 +218,14 @@ class TestInstall:
         """AC-MCP-INST-6: failure → temp cleanup, config not mutated."""
         mgr = _make_manager(workspace=tmp_path)
 
-        with patch(
-            "tachikoma.plugins.manager.materialize_local",
-            new_callable=AsyncMock,
-            side_effect=MaterializeError("test", "/plugin", FileNotFoundError("boom")),
-        ), pytest.raises(PluginInstallError):
+        with (
+            patch(
+                "tachikoma.plugins.manager.materialize_local",
+                new_callable=AsyncMock,
+                side_effect=MaterializeError("test", "/plugin", FileNotFoundError("boom")),
+            ),
+            pytest.raises(PluginInstallError),
+        ):
             await mgr.install(LocalPluginSource(path=Path("/plugin")))
 
         mgr._settings_manager.update_plugin_entry.assert_not_called()
@@ -370,9 +373,7 @@ class TestRemove:
 class TestRuntimeInstallWithHooks:
     """Runtime install with init hooks and event subscriptions."""
 
-    async def test_install_with_init_hook_runs_before_installed_event(
-        self, tmp_path: Path
-    ) -> None:
+    async def test_install_with_init_hook_runs_before_installed_event(self, tmp_path: Path) -> None:
         """AC: Runtime install with init hook — hook runs before PluginInstalled."""
         bus = EventBus()
         call_order: list[str] = []
@@ -437,7 +438,8 @@ class TestRuntimeInstallWithHooks:
             ),
             patch(
                 "tachikoma.plugins.manager.init_plugin",
-                new_callable=AsyncMock, return_value=True,
+                new_callable=AsyncMock,
+                return_value=True,
             ) as mock_init,
         ):
             mock_parse.return_value = PluginManifest(
@@ -469,7 +471,8 @@ class TestRuntimeInstallWithHooks:
             patch("tachikoma.plugins.manager._atomic_replace_dir"),
             patch(
                 "tachikoma.plugins.manager.init_plugin",
-                new_callable=AsyncMock, return_value=True,
+                new_callable=AsyncMock,
+                return_value=True,
             ) as mock_init,
         ):
             mock_parse.return_value = PluginManifest(
@@ -506,7 +509,8 @@ class TestRuntimeInstallWithHooks:
             ),
             patch(
                 "tachikoma.plugins.manager.init_plugin",
-                new_callable=AsyncMock, return_value=False,
+                new_callable=AsyncMock,
+                return_value=False,
             ),
         ):
             mock_parse.return_value = PluginManifest(
@@ -636,15 +640,17 @@ class TestUpdate:
         )
 
         state_repo = mgr._state_repo
-        state_repo.get = AsyncMock(return_value=PluginState(
-            alias="code-review",
-            installed_version="old_sha",
-            update_status="update-available",
-            available_version="abc123def456",
-            last_checked_at=None,
-            diagnostic=None,
-            created_at=__import__("datetime").datetime.now(__import__("datetime").UTC),
-        ))
+        state_repo.get = AsyncMock(
+            return_value=PluginState(
+                alias="code-review",
+                installed_version="old_sha",
+                update_status="update-available",
+                available_version="abc123def456",
+                last_checked_at=None,
+                diagnostic=None,
+                created_at=__import__("datetime").datetime.now(__import__("datetime").UTC),
+            )
+        )
         state_repo.upsert = AsyncMock()
 
         with (
@@ -655,7 +661,11 @@ class TestUpdate:
             ),
             patch("tachikoma.plugins.manager.parse_manifest") as mock_parse,
             patch("tachikoma.plugins.manager._atomic_replace_dir"),
-            patch("tachikoma.plugins.manager.init_plugin", new_callable=AsyncMock, return_value=True),
+            patch(
+                "tachikoma.plugins.manager.init_plugin",
+                new_callable=AsyncMock,
+                return_value=True,
+            ),
         ):
             mock_parse.return_value = PluginManifest(
                 name="code-review",
@@ -705,7 +715,10 @@ class TestUpdate:
                 new_callable=AsyncMock,
                 return_value=MaterializationResult(staging_dir=staging, version="new_sha"),
             ),
-            patch("tachikoma.plugins.manager.parse_manifest", side_effect=ValueError("bad manifest")),
+            patch(
+                "tachikoma.plugins.manager.parse_manifest",
+                side_effect=ValueError("bad manifest"),
+            ),
         ):
             result = await mgr.update("code-review")
 
@@ -740,15 +753,17 @@ class TestUpdate:
         mgr = _make_manager(workspace=tmp_path, loaded={"weather": plugin}, bus=bus)
 
         state_repo = mgr._state_repo
-        state_repo.get = AsyncMock(return_value=PluginState(
-            alias="weather",
-            installed_version="existing_hash",
-            update_status="up-to-date",
-            available_version=None,
-            last_checked_at=None,
-            diagnostic=None,
-            created_at=__import__("datetime").datetime.now(__import__("datetime").UTC),
-        ))
+        state_repo.get = AsyncMock(
+            return_value=PluginState(
+                alias="weather",
+                installed_version="existing_hash",
+                update_status="up-to-date",
+                available_version=None,
+                last_checked_at=None,
+                diagnostic=None,
+                created_at=__import__("datetime").datetime.now(__import__("datetime").UTC),
+            )
+        )
 
         staging = tmp_path / ".tachikoma" / "plugins" / ".staging" / "update-weather"
 
@@ -802,15 +817,21 @@ class TestUpdateAll:
         async def mock_get(alias):
             states = {
                 "code-review": PluginState(
-                    alias="code-review", installed_version="old",
-                    update_status="update-available", available_version="new",
-                    last_checked_at=None, diagnostic=None,
+                    alias="code-review",
+                    installed_version="old",
+                    update_status="update-available",
+                    available_version="new",
+                    last_checked_at=None,
+                    diagnostic=None,
                     created_at=__import__("datetime").datetime.now(__import__("datetime").UTC),
                 ),
                 "weather": PluginState(
-                    alias="weather", installed_version="hash1",
-                    update_status="up-to-date", available_version=None,
-                    last_checked_at=None, diagnostic=None,
+                    alias="weather",
+                    installed_version="hash1",
+                    update_status="up-to-date",
+                    available_version=None,
+                    last_checked_at=None,
+                    diagnostic=None,
                     created_at=__import__("datetime").datetime.now(__import__("datetime").UTC),
                 ),
             }
@@ -820,9 +841,11 @@ class TestUpdateAll:
 
         # Mock the actual update for code-review.
         with patch.object(
-            mgr, "update", new_callable=AsyncMock,
+            mgr,
+            "update",
+            new_callable=AsyncMock,
             return_value=UpdateResult(alias="code-review", status="updated"),
-        ) as mock_update:
+        ):
             summary = await mgr.update_all()
 
         await bus.wait_until_idle()
@@ -875,12 +898,17 @@ class TestReregisterPlugin:
         )
 
         state_repo = mgr._state_repo
-        state_repo.get = AsyncMock(return_value=PluginState(
-            alias="code-review", installed_version="old_sha",
-            update_status="update-available", available_version="new_sha",
-            last_checked_at=None, diagnostic=None,
-            created_at=__import__("datetime").datetime.now(__import__("datetime").UTC),
-        ))
+        state_repo.get = AsyncMock(
+            return_value=PluginState(
+                alias="code-review",
+                installed_version="old_sha",
+                update_status="update-available",
+                available_version="new_sha",
+                last_checked_at=None,
+                diagnostic=None,
+                created_at=__import__("datetime").datetime.now(__import__("datetime").UTC),
+            )
+        )
         state_repo.upsert = AsyncMock()
 
         with (
@@ -891,11 +919,18 @@ class TestReregisterPlugin:
             ),
             patch("tachikoma.plugins.manager.parse_manifest") as mock_parse,
             patch("tachikoma.plugins.manager._atomic_replace_dir"),
-            patch("tachikoma.plugins.manager.init_plugin", new_callable=AsyncMock, return_value=True),
+            patch(
+                "tachikoma.plugins.manager.init_plugin",
+                new_callable=AsyncMock,
+                return_value=True,
+            ),
         ):
             mock_parse.return_value = PluginManifest(
-                name="code-review", version="2.0.0", description="Updated",
-                source_format="tachikoma", skill_dirs=[],
+                name="code-review",
+                version="2.0.0",
+                description="Updated",
+                source_format="tachikoma",
+                skill_dirs=[],
             )
 
             result = await mgr.update("code-review")
@@ -924,12 +959,17 @@ class TestReregisterPlugin:
         )
 
         state_repo = mgr._state_repo
-        state_repo.get = AsyncMock(return_value=PluginState(
-            alias="code-review", installed_version="old_sha",
-            update_status="update-available", available_version="new_sha",
-            last_checked_at=None, diagnostic=None,
-            created_at=__import__("datetime").datetime.now(__import__("datetime").UTC),
-        ))
+        state_repo.get = AsyncMock(
+            return_value=PluginState(
+                alias="code-review",
+                installed_version="old_sha",
+                update_status="update-available",
+                available_version="new_sha",
+                last_checked_at=None,
+                diagnostic=None,
+                created_at=__import__("datetime").datetime.now(__import__("datetime").UTC),
+            )
+        )
         state_repo.upsert = AsyncMock()
 
         with (
@@ -947,8 +987,11 @@ class TestReregisterPlugin:
             ),
         ):
             mock_parse.return_value = PluginManifest(
-                name="code-review", version="2.0.0", description="Updated",
-                source_format="tachikoma", skill_dirs=[],
+                name="code-review",
+                version="2.0.0",
+                description="Updated",
+                source_format="tachikoma",
+                skill_dirs=[],
             )
 
             result = await mgr.update("code-review")

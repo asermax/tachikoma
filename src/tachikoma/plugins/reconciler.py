@@ -103,9 +103,7 @@ async def reconcile(
     for alias, source in plugins.items():
         try:
             await _reconcile_one(alias, source, install_dir, state_repo)
-            outcomes.append(
-                ReconcileOutcome(alias=alias, status="loaded", diagnostic=None)
-            )
+            outcomes.append(ReconcileOutcome(alias=alias, status="loaded", diagnostic=None))
         except MaterializeError as exc:
             outcomes.append(_handle_stale_fallback(alias, install_dir, exc))
         except Exception as exc:
@@ -232,9 +230,7 @@ async def _migrate_local_to_symlink(
                     _log.bind(plugin=alias).warning(
                         "Failed to restore backup during symlink migration: {}", exc
                     )
-            _log.bind(plugin=alias).warning(
-                "Symlink migration failed, retaining copy: {}", exc
-            )
+            _log.bind(plugin=alias).warning("Symlink migration failed, retaining copy: {}", exc)
     else:
         # Source path gone: retain copy, mark as stale-fallback.
         _log.bind(plugin=alias).warning(

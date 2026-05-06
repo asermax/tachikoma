@@ -15,10 +15,12 @@ from tachikoma.plugins.updater import PluginUpdateInfo
 def _make_git_plugin(alias: str) -> LoadedPlugin:
     return LoadedPlugin(
         alias=alias,
-        source=GitPluginSource.model_validate({
-            "git": f"https://github.com/example/{alias}.git",
-            "ref": "main",
-        }),
+        source=GitPluginSource.model_validate(
+            {
+                "git": f"https://github.com/example/{alias}.git",
+                "ref": "main",
+            }
+        ),
         manifest=None,
         status="loaded",
         diagnostic=None,
@@ -54,9 +56,7 @@ class TestPluginCheckTick:
 
     @patch("tachikoma.__main__.dispatch_notification")
     @patch("tachikoma.__main__.run_daily_git_check")
-    async def test_no_notification_when_no_updates(
-        self, mock_check, mock_dispatch
-    ) -> None:
+    async def test_no_notification_when_no_updates(self, mock_check, mock_dispatch) -> None:
         from tachikoma.__main__ import _plugin_check_tick  # noqa: PLC0415
 
         mock_check.return_value = []
@@ -73,9 +73,7 @@ class TestPluginCheckTick:
 
     @patch("tachikoma.__main__.dispatch_notification")
     @patch("tachikoma.__main__.run_daily_git_check")
-    async def test_notification_includes_multiple_plugins(
-        self, mock_check, mock_dispatch
-    ) -> None:
+    async def test_notification_includes_multiple_plugins(self, mock_check, mock_dispatch) -> None:
         from tachikoma.__main__ import _plugin_check_tick  # noqa: PLC0415
 
         mock_check.return_value = [

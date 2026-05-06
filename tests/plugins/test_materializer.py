@@ -290,10 +290,13 @@ class TestMaterializeGit:
         source = GitPluginSource(git="https://github.com/example/bad.git", ref="v1.0.0")
         staging = tmp_path / "staging"
 
-        with patch(
-            "tachikoma.plugins.materializer.run_git",
-            side_effect=RuntimeError("git clone failed: not found"),
-        ), pytest.raises(MaterializeError) as exc_info:
+        with (
+            patch(
+                "tachikoma.plugins.materializer.run_git",
+                side_effect=RuntimeError("git clone failed: not found"),
+            ),
+            pytest.raises(MaterializeError) as exc_info,
+        ):
             await materialize_git(source, staging, alias="fail-plugin")
 
         assert exc_info.value.alias == "fail-plugin"
@@ -446,10 +449,13 @@ class TestMaterializeUrl:
         source = UrlPluginSource(url="https://example.com/missing.tar.gz")
         staging = tmp_path / "staging"
 
-        with patch(
-            "tachikoma.plugins.materializer.urlopen",
-            side_effect=Exception("404 Not Found"),
-        ), pytest.raises(MaterializeError) as exc_info:
+        with (
+            patch(
+                "tachikoma.plugins.materializer.urlopen",
+                side_effect=Exception("404 Not Found"),
+            ),
+            pytest.raises(MaterializeError) as exc_info,
+        ):
             await materialize_url(source, staging, alias="dl-fail")
 
         assert exc_info.value.alias == "dl-fail"
@@ -466,8 +472,11 @@ class TestMaterializeUrl:
         )
         staging = tmp_path / "staging"
 
-        with patch(
-            "tachikoma.plugins.materializer.urlopen",
-            side_effect=lambda url: _fake_url_open(url, archive_file),
-        ), pytest.raises(MaterializeError):
+        with (
+            patch(
+                "tachikoma.plugins.materializer.urlopen",
+                side_effect=lambda url: _fake_url_open(url, archive_file),
+            ),
+            pytest.raises(MaterializeError),
+        ):
             await materialize_url(source, staging, alias="traversal")

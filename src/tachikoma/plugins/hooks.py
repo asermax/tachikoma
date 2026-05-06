@@ -65,10 +65,7 @@ async def plugins_hook(ctx: BootstrapContext) -> None:
     # Create state repository from database session.
     database = ctx.extras.get("database")
     if database is None:
-        msg = (
-            "plugins_hook requires ctx.extras['database'] to be populated "
-            "before bootstrap.run()."
-        )
+        msg = "plugins_hook requires ctx.extras['database'] to be populated before bootstrap.run()."
         raise RuntimeError(msg)
     state_repo = PluginStateRepository(database.session_factory)
 
@@ -81,7 +78,6 @@ async def plugins_hook(ctx: BootstrapContext) -> None:
         )
 
     loaded_plugins = discover(install_dir, report, settings.plugins)
-
 
     bus: EventBus | None = ctx.extras.get("event_bus")
     if bus is None:
