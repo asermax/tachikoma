@@ -9,6 +9,7 @@ event listener in the skills module.
 from __future__ import annotations
 
 import asyncio
+import os
 import shutil
 from datetime import UTC, datetime
 from pathlib import Path
