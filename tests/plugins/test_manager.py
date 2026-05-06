@@ -22,8 +22,10 @@ from tachikoma.plugins.manager import (
     PluginNotFoundError,
 )
 from tachikoma.plugins.manifest import PluginManifest
-from tachikoma.plugins.materializer import MaterializeError
-from tachikoma.plugins.sources import LocalPluginSource
+from tachikoma.plugins.materializer import MaterializeError, MaterializationResult
+from tachikoma.plugins.sources import GitPluginSource, LocalPluginSource, UrlPluginSource
+from tachikoma.plugins.state import PluginState
+from tachikoma.plugins.updater import UpdateResult, UpdateSummary
 
 from .conftest import make_plugin as _make_plugin
 
@@ -562,3 +564,422 @@ class TestRuntimeInstallWithHooks:
         assert result.alias == "fresh"
         assert len(installed_events) == 1
         assert installed_events[0].alias == "fresh"
+
+
+# ---------------------------------------------------------------------------
+# Update tests (Batch 4: Steps 8, 10)
+# ---------------------------------------------------------------------------
+
+
+def _make_git_plugin(alias: str) -> LoadedPlugin:
+    """Create a git-source LoadedPlugin for testing updates."""
+    return LoadedPlugin(
+        alias=alias,
+        source=GitPluginSource(git="https://github.com/test/plugin.git", ref="main"),
+        manifest=PluginManifest(
+            name=alias,
+            version="1.0.0",
+            description="Test plugin",
+            source_format="tachikoma",
+            skill_dirs=[],
+        ),
+        status="loaded",
+        diagnostic=None,
+        plugin_dir=Path(f"/tmp/plugins/{alias}"),
+    )
+
+
+def _make_url_plugin(alias: str) -> LoadedPlugin:
+    """Create a URL-source LoadedPlugin for testing updates."""
+    return LoadedPlugin(
+        alias=alias,
+        source=UrlPluginSource(url="https://example.com/plugin.tar.gz"),
+        manifest=PluginManifest(
+            name=alias,
+            version="1.0.0",
+            description="Test plugin",
+            source_format="tachikoma",
+            skill_dirs=[],
+        ),
+        status="loaded",
+        diagnostic=None,
+        plugin_dir=Path(f"/tmp/plugins/{alias}"),
+    )
+
+
+class TestUpdate:
+    """Tests for PluginManager.update()."""
+
+    async def test_update_not_found(self, tmp_path: Path) -> None:
+        mgr = _make_manager(workspace=tmp_path)
+
+        with pytest.raises(PluginNotFoundError):
+            await mgr.update("nonexistent")
+
+    async def test_update_local_returns_skipped(self, tmp_path: Path) -> None:
+        plugin = _make_plugin("local-dev")
+        mgr = _make_manager(workspace=tmp_path, loaded={"local-dev": plugin})
+
+        result = await mgr.update("local-dev")
+
+        assert result.status == "skipped"
+        assert "always current" in (result.message or "")
+
+    async def test_update_git_success(self, tmp_path: Path) -> None:
+        bus = EventBus()
+        plugin = _make_git_plugin("code-review")
+        mgr = _make_manager(workspace=tmp_path, loaded={"code-review": plugin}, bus=bus)
+
+        mat_result = MaterializationResult(
+            staging_dir=tmp_path / ".tachikoma" / "plugins" / ".staging" / "update-code-review",
+            version="abc123def456",
+        )
+
+        state_repo = mgr._state_repo
+        state_repo.get = AsyncMock(return_value=PluginState(
+            alias="code-review",
+            installed_version="old_sha",
+            update_status="update-available",
+            available_version="abc123def456",
+            last_checked_at=None,
+            diagnostic=None,
+            created_at=__import__("datetime").datetime.now(__import__("datetime").UTC),
+        ))
+        state_repo.upsert = AsyncMock()
+
+        with (
+            patch(
+                "tachikoma.plugins.manager.materialize_git",
+                new_callable=AsyncMock,
+                return_value=mat_result,
+            ),
+            patch("tachikoma.plugins.manager.parse_manifest") as mock_parse,
+            patch("tachikoma.plugins.manager._atomic_replace_dir"),
+            patch("tachikoma.plugins.manager.init_plugin", new_callable=AsyncMock, return_value=True),
+        ):
+            mock_parse.return_value = PluginManifest(
+                name="code-review",
+                version="2.0.0",
+                description="Updated",
+                source_format="tachikoma",
+                skill_dirs=[],
+            )
+
+            result = await mgr.update("code-review")
+
+        await bus.wait_until_idle()
+        await bus.stop()
+
+        assert result.status == "updated"
+        assert result.alias == "code-review"
+        state_repo.upsert.assert_called()
+
+    async def test_update_materialize_failure(self, tmp_path: Path) -> None:
+        bus = EventBus()
+        plugin = _make_git_plugin("code-review")
+        mgr = _make_manager(workspace=tmp_path, loaded={"code-review": plugin}, bus=bus)
+
+        with patch(
+            "tachikoma.plugins.manager.materialize_git",
+            new_callable=AsyncMock,
+            side_effect=MaterializeError("code-review", "git:test", RuntimeError("network")),
+        ):
+            result = await mgr.update("code-review")
+
+        await bus.wait_until_idle()
+        await bus.stop()
+
+        assert result.status == "failed"
+        assert "network" in result.error
+
+    async def test_update_manifest_parse_failure(self, tmp_path: Path) -> None:
+        bus = EventBus()
+        plugin = _make_git_plugin("code-review")
+        mgr = _make_manager(workspace=tmp_path, loaded={"code-review": plugin}, bus=bus)
+
+        staging = tmp_path / ".tachikoma" / "plugins" / ".staging" / "update-code-review"
+
+        with (
+            patch(
+                "tachikoma.plugins.manager.materialize_git",
+                new_callable=AsyncMock,
+                return_value=MaterializationResult(staging_dir=staging, version="new_sha"),
+            ),
+            patch("tachikoma.plugins.manager.parse_manifest", side_effect=ValueError("bad manifest")),
+        ):
+            result = await mgr.update("code-review")
+
+        await bus.wait_until_idle()
+        await bus.stop()
+
+        assert result.status == "failed"
+        assert "Manifest parse" in result.error
+
+    async def test_update_already_in_progress(self, tmp_path: Path) -> None:
+        bus = EventBus()
+        plugin = _make_git_plugin("code-review")
+        mgr = _make_manager(workspace=tmp_path, loaded={"code-review": plugin}, bus=bus)
+
+        # Acquire the lock manually to simulate in-progress update.
+        lock = mgr._get_update_lock("code-review")
+        await lock.acquire()
+
+        try:
+            result = await mgr.update("code-review")
+            assert result.status == "failed"
+            assert "already in progress" in result.error
+        finally:
+            lock.release()
+
+        await bus.wait_until_idle()
+        await bus.stop()
+
+    async def test_update_url_already_up_to_date(self, tmp_path: Path) -> None:
+        bus = EventBus()
+        plugin = _make_url_plugin("weather")
+        mgr = _make_manager(workspace=tmp_path, loaded={"weather": plugin}, bus=bus)
+
+        state_repo = mgr._state_repo
+        state_repo.get = AsyncMock(return_value=PluginState(
+            alias="weather",
+            installed_version="existing_hash",
+            update_status="up-to-date",
+            available_version=None,
+            last_checked_at=None,
+            diagnostic=None,
+            created_at=__import__("datetime").datetime.now(__import__("datetime").UTC),
+        ))
+
+        staging = tmp_path / ".tachikoma" / "plugins" / ".staging" / "update-weather"
+
+        with (
+            patch(
+                "tachikoma.plugins.manager.materialize_url",
+                new_callable=AsyncMock,
+                return_value=MaterializationResult(staging_dir=staging, version="existing_hash"),
+            ),
+            patch("tachikoma.plugins.manager.parse_manifest") as mock_parse,
+        ):
+            mock_parse.return_value = PluginManifest(
+                name="weather",
+                version="1.0.0",
+                description="Weather",
+                source_format="tachikoma",
+                skill_dirs=[],
+            )
+
+            result = await mgr.update("weather")
+
+        await bus.wait_until_idle()
+        await bus.stop()
+
+        assert result.status == "skipped"
+        assert "already up-to-date" in (result.message or "")
+
+
+class TestUpdateAll:
+    """Tests for PluginManager.update_all()."""
+
+    async def test_update_all_mixed_results(self, tmp_path: Path) -> None:
+        bus = EventBus()
+        git_plugin = _make_git_plugin("code-review")
+        local_plugin = _make_plugin("dev-tools")
+        url_plugin = _make_url_plugin("weather")
+
+        mgr = _make_manager(
+            workspace=tmp_path,
+            loaded={
+                "code-review": git_plugin,
+                "dev-tools": local_plugin,
+                "weather": url_plugin,
+            },
+            bus=bus,
+        )
+
+        # code-review has update available, weather is up-to-date, dev-tools is local.
+        state_repo = mgr._state_repo
+
+        async def mock_get(alias):
+            states = {
+                "code-review": PluginState(
+                    alias="code-review", installed_version="old",
+                    update_status="update-available", available_version="new",
+                    last_checked_at=None, diagnostic=None,
+                    created_at=__import__("datetime").datetime.now(__import__("datetime").UTC),
+                ),
+                "weather": PluginState(
+                    alias="weather", installed_version="hash1",
+                    update_status="up-to-date", available_version=None,
+                    last_checked_at=None, diagnostic=None,
+                    created_at=__import__("datetime").datetime.now(__import__("datetime").UTC),
+                ),
+            }
+            return states.get(alias)
+
+        state_repo.get = mock_get
+
+        # Mock the actual update for code-review.
+        with patch.object(
+            mgr, "update", new_callable=AsyncMock,
+            return_value=UpdateResult(alias="code-review", status="updated"),
+        ) as mock_update:
+            summary = await mgr.update_all()
+
+        await bus.wait_until_idle()
+        await bus.stop()
+
+        assert summary.total == 3
+        assert summary.skipped == 2  # dev-tools (local) + weather (up-to-date)
+        assert summary.updated == 1
+        assert summary.failed == 0
+
+    async def test_update_all_empty(self, tmp_path: Path) -> None:
+        bus = EventBus()
+        mgr = _make_manager(workspace=tmp_path, bus=bus)
+
+        summary = await mgr.update_all()
+
+        await bus.wait_until_idle()
+        await bus.stop()
+
+        assert summary.total == 0
+        assert summary.results == []
+
+
+class TestReregisterPlugin:
+    """Tests for the re-registration flow within update()."""
+
+    async def test_reregister_success_dispatches_lifecycle_events(self, tmp_path: Path) -> None:
+        bus = EventBus()
+        events_dispatched: list[str] = []
+
+        async def on_removing(event):
+            events_dispatched.append("removing")
+
+        async def on_removed(event):
+            events_dispatched.append("removed")
+
+        async def on_installed(event):
+            events_dispatched.append("installed")
+
+        bus.on(PluginRemoving, on_removing)
+        bus.on(PluginRemoved, on_removed)
+        bus.on(PluginInstalled, on_installed)
+
+        old_plugin = _make_git_plugin("code-review")
+        mgr = _make_manager(workspace=tmp_path, loaded={"code-review": old_plugin}, bus=bus)
+
+        mat_result = MaterializationResult(
+            staging_dir=tmp_path / ".tachikoma" / "plugins" / ".staging" / "update-code-review",
+            version="new_sha",
+        )
+
+        state_repo = mgr._state_repo
+        state_repo.get = AsyncMock(return_value=PluginState(
+            alias="code-review", installed_version="old_sha",
+            update_status="update-available", available_version="new_sha",
+            last_checked_at=None, diagnostic=None,
+            created_at=__import__("datetime").datetime.now(__import__("datetime").UTC),
+        ))
+        state_repo.upsert = AsyncMock()
+
+        with (
+            patch(
+                "tachikoma.plugins.manager.materialize_git",
+                new_callable=AsyncMock,
+                return_value=mat_result,
+            ),
+            patch("tachikoma.plugins.manager.parse_manifest") as mock_parse,
+            patch("tachikoma.plugins.manager._atomic_replace_dir"),
+            patch("tachikoma.plugins.manager.init_plugin", new_callable=AsyncMock, return_value=True),
+        ):
+            mock_parse.return_value = PluginManifest(
+                name="code-review", version="2.0.0", description="Updated",
+                source_format="tachikoma", skill_dirs=[],
+            )
+
+            result = await mgr.update("code-review")
+
+        await bus.wait_until_idle()
+        await bus.stop()
+
+        assert result.status == "updated"
+        assert "removing" in events_dispatched
+        assert "removed" in events_dispatched
+        assert "installed" in events_dispatched
+
+    async def test_reregister_failure_retains_old_plugin(self, tmp_path: Path) -> None:
+        bus = EventBus()
+        old_plugin = _make_git_plugin("code-review")
+        # Give the old plugin a contributed skill.
+        mock_skill = MagicMock()
+        mock_skill.qualified_name = "code-review:my-skill"
+        old_plugin.contributed_skills.append(mock_skill)
+
+        mgr = _make_manager(workspace=tmp_path, loaded={"code-review": old_plugin}, bus=bus)
+
+        mat_result = MaterializationResult(
+            staging_dir=tmp_path / ".tachikoma" / "plugins" / ".staging" / "update-code-review",
+            version="new_sha",
+        )
+
+        state_repo = mgr._state_repo
+        state_repo.get = AsyncMock(return_value=PluginState(
+            alias="code-review", installed_version="old_sha",
+            update_status="update-available", available_version="new_sha",
+            last_checked_at=None, diagnostic=None,
+            created_at=__import__("datetime").datetime.now(__import__("datetime").UTC),
+        ))
+        state_repo.upsert = AsyncMock()
+
+        with (
+            patch(
+                "tachikoma.plugins.manager.materialize_git",
+                new_callable=AsyncMock,
+                return_value=mat_result,
+            ),
+            patch("tachikoma.plugins.manager.parse_manifest") as mock_parse,
+            patch("tachikoma.plugins.manager._atomic_replace_dir"),
+            patch(
+                "tachikoma.plugins.manager.init_plugin",
+                new_callable=AsyncMock,
+                side_effect=RuntimeError("skill name collision"),
+            ),
+        ):
+            mock_parse.return_value = PluginManifest(
+                name="code-review", version="2.0.0", description="Updated",
+                source_format="tachikoma", skill_dirs=[],
+            )
+
+            result = await mgr.update("code-review")
+
+        await bus.wait_until_idle()
+        await bus.stop()
+
+        assert result.status == "failed"
+        assert "Re-registration failed" in result.error
+        # Old plugin is still in loaded map.
+        assert mgr._loaded["code-review"] is old_plugin
+        # Diagnostic was stored.
+        state_repo.upsert.assert_called()
+
+
+class TestCleanupUpdateLock:
+    """Tests for lock cleanup on plugin removal."""
+
+    async def test_remove_cleans_up_update_lock(self, tmp_path: Path) -> None:
+        bus = EventBus()
+        plugin = _make_plugin("temp")
+        mgr = _make_manager(workspace=tmp_path, loaded={"temp": plugin}, bus=bus)
+
+        # Create an update lock for the plugin.
+        mgr._get_update_lock("temp")
+        assert "temp" in mgr._update_locks
+
+        with patch("tachikoma.plugins.manager.shutil.rmtree"):
+            await mgr.remove("temp")
+
+        await bus.wait_until_idle()
+        await bus.stop()
+
+        assert "temp" not in mgr._update_locks
