@@ -7,7 +7,7 @@
 
 ## Purpose
 
-This document explains the design rationale for the plugin loading system: how plugin sources are modeled and materialized, how manifests are parsed, how skills are registered under namespaced names, how lifecycle hooks and event subscriptions extend the plugin system, how event-based decoupling keeps the plugin manager and skills subsystem cleanly separated, and how MCP tools enable runtime plugin management.
+This document explains the design rationale for the plugin loading system: how plugin sources are modeled and materialized, how manifests are parsed, how skills are registered under namespaced names, how lifecycle hooks and event subscriptions extend the plugin system, how event-based decoupling keeps the plugin manager and skills subsystem cleanly separated, how MCP tools enable runtime plugin management, and how version tracking, update detection, and update application keep installed plugins current.
 
 ## Problem Context
 
@@ -20,6 +20,7 @@ Tachikoma's capabilities live in two layers — a core agent runtime and a per-w
 - **CC compatibility.** Plugins shaped as Claude Code plugins are recognized so Tachikoma can benefit from the existing CC plugin community.
 - **Atomic on-disk state.** Mid-write failures during reconciliation must not leave a half-replaced plugin folder.
 - **No new long-lived dependencies.** The codebase reuses existing `git` subprocess and `tomlkit` rather than adding GitPython, dulwich, or similar.
+- **Fail-safe updates.** A failed update must leave the existing plugin intact and functional — no half-replaced directories. Updates use the existing atomic-swap pattern.
 
 **Interactions:**
 - **`SkillRegistry`** — gains `add_namespaced_source(alias, path)` and `remove_namespaced_source(alias)`; `Skill` gains `namespace` and `qualified_name`.
@@ -29,10 +30,16 @@ Tachikoma's capabilities live in two layers — a core agent runtime and a per-w
 - **Sessions** — on `PluginRemoving`, active session's already-injected plugin skill entries get a removal notice and `metadata["deleted"] = True`.
 - **Lifecycle hooks** — plugins can declare init hooks (run post-bootstrap, before channel start) and event subscriptions (routed through the event bus with per-plugin isolation).
 - **Handler validation** — hook and event handler entry points are validated at discovery time (file exists, imports, callable present, correct signature, known event types).
+- **PluginManager** — gains update operations, per-plugin update locks, and `PluginStateRepository` dependency.
+- **Materializer** — gains symlink path for local sources and `MaterializationResult` return type carrying version hashes.
+- **Reconciler** — changes from always-re-materialize to first-time-only install.
+- **MCP tools** — two new tools (`update_plugin`, `update_all_plugins`) alongside existing install/list/remove.
+- **Scheduler** — one new `CronTrigger` job for daily update checks (DES-010 central scheduler, not TaskDefinition).
+- **LoadedPlugin** — in-memory model unchanged; update status comes from `PluginState` lookup.
 
 ## Design Overview
 
-The plugin system is a self-contained `tachikoma/plugins/` package whose components map onto the existing subsystem pattern (bootstrap hook, manager class, event types, MCP tool factory). It plugs into the `SkillRegistry` at exactly one point — `add_namespaced_source(alias, path)` — and otherwise communicates outward via three typed events on the project's event bus.
+The plugin system is a self-contained `tachikoma/plugins/` package whose components map onto the existing subsystem pattern (bootstrap hook, manager class, event types, MCP tool factory). It plugs into the `SkillRegistry` at exactly one point — `add_namespaced_source(alias, path)` — and otherwise communicates outward via three typed events on the project's event bus. A persistent version-tracking layer and update mechanism add daily detection (via the central scheduler, DES-010) and on-demand application (via MCP tools).
 
 ```
 ┌──────────────────────────────────────────────────────────────┐
@@ -45,19 +52,29 @@ The plugin system is a self-contained `tachikoma/plugins/` package whose compone
 ├──────────────────────────────────────────────────────────────┤
 │ __main__.py                                                  │
 │  After bootstrap.run(): run_plugin_init_hooks(manager, bus)  │
+│  Scheduler job: plugin_update_check (CronTrigger, daily)     │
 ├──────────────────────────────────────────────────────────────┤
 │ plugins/ package                                             │
 │  reconciler.py   walks config, dispatches per source kind    │
+│                  first-time-only + symlink migration          │
 │  materializer.py git / url / local + atomic-swap             │
+│                  MaterializationResult with version hash      │
 │  loader.py       scans install dir, parses manifests         │
 │                 + handler validation (hooks/events)          │
-│  manager.py      state + install/remove/list                 │
+│  manager.py      state + install/remove/list/update          │
 │                 + init+subscribe on install, unsubscribe      │
-│  tools.py        MCP tools factory                           │
+│                 + per-plugin update locks                     │
+│  tools.py        MCP tools factory (5 tools)                 │
 │  events.py       PluginInstalled / Removing / Removed        │
 │  context.py      PluginContext frozen dataclass               │
 │  registry.py     auto-discovered event type registry         │
 │  lifecycle.py    init executor + subscribe/unsubscribe       │
+│  state.py        PluginState model + PluginStateRepository   │
+│  updater.py      update detection + daily check + results    │
+├──────────────────────────────────────────────────────────────┤
+│ PluginState (database table)                                 │
+│  alias (PK), installed_version, update_status,               │
+│  available_version, last_checked_at, diagnostic              │
 ├──────────────────────────────────────────────────────────────┤
 │ skills/ package (extensions)                                 │
 │  registry.py     add_namespaced_source(alias, path)          │
@@ -82,20 +99,22 @@ The plugin system is a self-contained `tachikoma/plugins/` package whose compone
 | `src/tachikoma/plugins/sources.py` | Pydantic source models: `GitPluginSource`, `UrlPluginSource`, `LocalPluginSource`, discriminated union | Lives separately from `config.py` to keep config module from accumulating plugin validators; `config` field carries raw user values |
 | `src/tachikoma/plugins/config_schema.py` | `ConfigFieldSchema` Pydantic model; `ConfigDiagnostic` dataclass; `ConfigValidationResult` dataclass; `validate_config()` function | Separate module keeps config validation isolated from manifest parsing and loader orchestration |
 | `src/tachikoma/plugins/manifest.py` | `TachikomaManifest` and `CcManifest` Pydantic models; `parse_manifest()` with native-takes-precedence | Native strict, CC tolerant (`extra="ignore"`); path-traversal protection; `config` field parses `[config.<field_name>]` sections; `hooks`/`events` fields map hook/event type names to module names; `"events"` added to CC ignored contribution types |
-| `src/tachikoma/plugins/materializer.py` | `materialize_git()`, `materialize_url()`, `materialize_local()` async functions; `_atomic_replace_dir()` helper | Stdlib only — `urllib`, `tarfile`, `zipfile`, `shutil`, `os`. Atomic-swap follows pip pattern |
-| `src/tachikoma/plugins/reconciler.py` | `reconcile()` walks config; dispatches to materializer; handles stale-fallback and orphan removal | Always-on re-materialization; per-plugin try/except |
+| `src/tachikoma/plugins/materializer.py` | `materialize_git()`, `materialize_url()`, `materialize_local()` async functions; `_atomic_replace_dir()` helper; `MaterializationResult` return type | Stdlib only — `urllib`, `tarfile`, `zipfile`, `shutil`, `os`. Atomic-swap follows pip pattern. `MaterializationResult` carries staging_dir + version hash (git SHA, URL hash, or null for local). Local sources use `os.symlink()` instead of `shutil.copytree()`. |
+| `src/tachikoma/plugins/reconciler.py` | `reconcile()` walks config; dispatches to materializer; handles stale-fallback and orphan removal | First-time-only materialization (skips existing installs); local symlink migration; accepts `PluginStateRepository` for initial state persistence; per-plugin try/except |
 | `src/tachikoma/plugins/loader.py` | `discover()` scans install dir; parses manifests; validates skill directories; validates config against schema; validates hook/event handler entry points | Runs after reconciler; failure of one plugin's manifest or config does not affect others; handler validation imports modules via `importlib.util` and checks signatures via `inspect` |
-| `src/tachikoma/plugins/manager.py` | `PluginManager` class with `list()`, `install()`, `remove()`, `failed_plugins()`; owns `asyncio.Lock` | Single class matching tasks subsystem pattern; install runs init hook + subscribes events before `PluginInstalled`; remove unsubscribes during `PluginRemoving` |
+| `src/tachikoma/plugins/manager.py` | `PluginManager` class with `list()`, `install()`, `remove()`, `update()`, `update_all()`, `failed_plugins()`; owns `asyncio.Lock` and per-plugin update lock map; `PluginStateRepository` dependency | Single class matching tasks subsystem pattern; install runs init hook + subscribes events before `PluginInstalled`; remove unsubscribes during `PluginRemoving`; update uses per-plugin locks with non-blocking acquisition; re-registration dispatches `PluginRemoving` → atomic swap → `PluginInstalled` |
 | `src/tachikoma/plugins/context.py` | `PluginContext` frozen dataclass | Frozen to prevent mutation by handlers; carries config + bus + alias + install_path |
 | `src/tachikoma/plugins/registry.py` | `build_event_registry()` auto-discovers `BaseEvent` subclasses; `get_event_type(name)` lookup | Imports all known event modules explicitly, walks `__subclasses__()` recursively; snake_case derived via regex |
 | `src/tachikoma/plugins/lifecycle.py` | `run_plugin_init_hooks()`, `init_plugin()`, `subscribe_plugin_events()`, `unsubscribe_plugin_events()` | Init hooks run with 30-second timeout; sync and async handlers both supported; active-flag wrapper for unsubscribe (bubus has no `off()`) |
 | `src/tachikoma/plugins/events.py` | `PluginInstalled`, `PluginRemoving`, `PluginRemoved` event types | Follows ADR-009; `PluginRemoving` fires before directory deletion |
-| `src/tachikoma/plugins/tools.py` | `create_plugin_tools_server()` factory; three closure-captured tool functions | Follows DES-006; extracted handlers for testability; `list_plugins` includes config schema/values/diagnostics |
-| `src/tachikoma/plugins/hooks.py` | `plugins_hook()` bootstrap callback | Follows DES-003; registered between git and skills hooks |
+| `src/tachikoma/plugins/tools.py` | `create_plugin_tools_server()` factory; five closure-captured tool functions (`install_plugin`, `list_plugins`, `remove_plugin`, `update_plugin`, `update_all_plugins`) | Follows DES-006; extracted handlers for testability; `list_plugins` includes config schema/values/diagnostics + update status from PluginState lookup |
+| `src/tachikoma/plugins/hooks.py` | `plugins_hook()` bootstrap callback | Follows DES-003; registered between git and skills hooks; creates `PluginStateRepository` and passes to reconciler and manager; stores `state_repo` in `ctx.extras` |
+| `src/tachikoma/plugins/state.py` | `PluginState` domain model (frozen dataclass), `PluginStateModel` ORM model, `PluginStateRepository` | Follows ADR-007 persistence pattern; repository encapsulates all DB access with `get()`, `upsert()`, `remove()` |
+| `src/tachikoma/plugins/updater.py` | `check_git_update()`, `compute_url_hash()`, `run_daily_git_check()`; `UpdateResult` and `UpdateSummary` dataclasses; `GitCheckError` exception | Update detection via `git ls-remote`; daily check iterates git-source plugins and updates PluginState; result types for MCP tool summaries |
 | `src/tachikoma/skills/listeners.py` | `register_plugin_event_listeners()` subscribes to plugin events | Lives in skills module per decoupling decision; owns all registry mutation triggered by plugin events |
 | `src/tachikoma/skills/registry.py` (extension) | `add_namespaced_source()`, `remove_namespaced_source()`; `Skill.namespace` + `qualified_name`; `_namespaced_source_paths` tracking | Minimal-change extension — core `_discover` / `_load_skill` flow unchanged for default-namespace skills |
 | `src/tachikoma/config.py` (extension) | `plugins: dict[str, PluginSource]` field; `update_plugin_entry()` / `remove_plugin_entry()` methods | tomlkit super-table for sub-table write-back |
-| `src/tachikoma/__main__.py` (extension) | Calls `run_plugin_init_hooks()` after `bootstrap.run()`, before channel construction | Post-bootstrap timing ensures all subsystems initialized before plugin hooks run |
+| `src/tachikoma/__main__.py` (extension) | Calls `run_plugin_init_hooks()` after `bootstrap.run()`, before channel construction; registers daily plugin update check as scheduler Job (CronTrigger, DES-010) | Post-bootstrap timing ensures all subsystems initialized before plugin hooks run; daily check is a scheduler Job (not a TaskDefinition) — system-internal housekeeping that doesn't need task-instance bookkeeping |
 
 ### Cross-Layer Contracts
 
@@ -105,13 +124,19 @@ The plugin system is a self-contained `tachikoma/plugins/` package whose compone
 plugins_hook(ctx)
     ├── 1. Create .tachikoma/plugins/ (mkdir)
     ├── 2. Append .tachikoma/plugins/ to .gitignore (idempotent)
-    ├── 3. report = reconcile(workspace_path, settings.plugins)
-    ├── 4. plugins = discover(install_dir, plugin_sources)
+    ├── 3. state_repo = PluginStateRepository(db_session_factory)
+    ├── 4. report = reconcile(workspace_path, settings.plugins, state_repo)
+    │       └── For each [plugins.<alias>]:
+    │           ├── If install_dir/<alias> exists: skip (symlink migration for local)
+    │           ├── Else: materialize → atomic swap → state_repo.upsert(alias, version)
+    │           └── Orphan cleanup (unchanged)
+    ├── 5. plugins = discover(install_dir, plugin_sources)
     │       └── For each plugin: parse manifest → validate config schema
     │           → validate hook/event handlers → LoadedPlugin(init_hook, event_handlers)
-    ├── 5. manager = PluginManager(settings_manager, bus, workspace_path, loaded)
-    ├── 6. ctx.extras["plugin_manager"] = manager
-    └── 7. ctx.extras["plugin_skill_paths"] = [(alias, dir) for each loaded plugin skill dir]
+    ├── 6. manager = PluginManager(settings_manager, bus, workspace_path, loaded, state_repo)
+    ├── 7. ctx.extras["plugin_manager"] = manager
+    ├── 8. ctx.extras["state_repo"] = state_repo
+    └── 9. ctx.extras["plugin_skill_paths"] = [(alias, dir) for each loaded plugin skill dir]
 
 skills_hook(ctx)
     ├── … existing default-source registry construction …
@@ -122,6 +147,7 @@ skills_hook(ctx)
 __main__.py (after bootstrap.run())
     ├── manager = bootstrap.extras["plugin_manager"]
     ├── bus = bootstrap.extras["event_bus"]
+    ├── state_repo = bootstrap.extras["state_repo"]
     ├── await run_plugin_init_hooks(manager.list_plugins(), bus)
     │       ├── Sort loaded plugins by alias (alphabetical)
     │       ├── For each plugin with status="loaded":
@@ -130,7 +156,9 @@ __main__.py (after bootstrap.run())
     │       │   │   └── On failure → log ERROR, skip subscriptions
     │       │   └── Elif event_handlers: subscribe_plugin_events(plugin, bus)
     │       └── Log summary: initialized N, M failures
-    └── plugin_tools_server = create_plugin_tools_server(manager)
+    ├── plugin_tools_server = create_plugin_tools_server(manager)
+    └── Register scheduler Job: plugin_update_check (CronTrigger, daily)
+            └── _plugin_check_tick(manager, state_repo, bus)
 ```
 
 **install_plugin flow (validate-then-write):**
@@ -170,10 +198,69 @@ remove_plugin(alias) [held under PluginManager._lock]
             └── skills listener: registry.remove_namespaced_source + SkillsChanged
 ```
 
+**Update application contract (update_plugin):**
+
+```
+apply_update(alias, manager, state_repo, bus)
+    ├── Validate: alias exists, not local-source, not already updating
+    ├── Acquire per-plugin lock (non-blocking → error if held)
+    ├── try:
+    │   ├── result = materialize_<kind>(source, staging_dir)
+    │   ├── manifest = parse_manifest(result.staging_dir)
+    │   ├── validate_handlers(manifest, result.staging_dir, alias)
+    │   ├── _atomic_replace_dir(result.staging_dir, install_dir / alias)
+    │   ├── Update PluginState:
+    │   │   ├── installed_version = result.version
+    │   │   ├── update_status = "up-to-date"
+    │   │   └── available_version = null
+    │   └── Re-register plugin:
+    │       ├── Dispatch PluginRemoving(alias, namespaced_skill_names)
+    │       ├── Unsubscribe old event wrappers
+    │       ├── Re-discover: parse manifest, validate handlers
+    │       ├── Re-register skills via add_namespaced_source
+    │       ├── Re-subscribe events
+    │       └── Dispatch PluginInstalled(alias, new_plugin)
+    ├── except: log error, existing plugin intact
+    └── finally: Release per-plugin lock
+```
+
+**Daily check contract:**
+
+```
+plugin_update_check_tick(manager, state_repo, bus)
+    ├── git_plugins = loaded plugins with GitPluginSource and status "loaded"
+    ├── updates_found = []
+    ├── For each git_plugin:
+    │   ├── remote_sha = git ls-remote <url> <ref_spec>
+    │   ├── If remote_sha == state.installed_version:
+    │   │   └── state_repo.upsert(alias, update_status="up-to-date", last_checked_at=now)
+    │   ├── If remote_sha != state.installed_version:
+    │   │   ├── state_repo.upsert(alias, update_status="update-available", available_version=remote_sha, last_checked_at=now)
+    │   │   └── updates_found.append(alias)
+    │   └── If error: retain previous status, log warning, update last_checked_at
+    └── If updates_found:
+        └── dispatch notification listing aliases + available versions
+```
+
+**Bulk update contract (update_all_plugins):**
+
+```
+apply_all_updates(manager, state_repo, bus)
+    ├── Collect all plugins with update_status = "update-available"
+    ├── Skip local-source plugins (report as skipped)
+    ├── results = []
+    ├── For each plugin (sequential):
+    │   ├── try: apply_update(alias, ...) → results.append({alias, status: "updated"})
+    │   └── except: results.append({alias, status: "failed", error: str(e)})
+    └── Return UpdateSummary: {total, updated, skipped, failed, results}
+```
+
 ### Shared Logic
 
 - **`_atomic_replace_dir(new, dst)` helper**: shared between three materializer paths. Owns the pip-style triple-step swap with rollback.
-- **`run_git()` import**: reused from `git/sync.py` for the git materializer path.
+- **`run_git()` import**: reused from `git/sync.py` for the git materializer path and for `git ls-remote` in the update detector.
+- **`MaterializationResult` dataclass**: shared between reconciler (first-time install captures version) and updater (update captures version). Replaces the previous bare `Path` return from materialize functions.
+- **`PluginStateRepository`**: shared between reconciler (initial state creation), daily check (status updates), updater (version updates), tools (status queries), and list_plugins (enrichment).
 - **`ConfigFieldSchema`**: Pydantic model shared between manifest parsing (produces it) and config validation (consumes it). Lives in `config_schema.py` to avoid circular imports.
 - **`ConfigDiagnostic`**: Frozen dataclass used by validation to report issues. Consumed by loader (sets `LoadedPlugin.diagnostic`) and tools (surfaces in `list_plugins` output).
 
@@ -227,6 +314,75 @@ ConfigValidationResult (frozen dataclass)
 ```
 
 `validate_config()` always returns a `ConfigValidationResult` — never raises. When `is_valid` is false, `diagnostics` lists the failures. The caller checks `is_valid` to decide whether to use `values` or report the diagnostics.
+
+### PluginState model (persistent version tracking)
+
+```
+PluginState (frozen dataclass)
+├── alias: str
+├── installed_version: str | None     (git: 40-char SHA, url: SHA-256 hex, local: null)
+├── update_status: Literal["unknown", "up-to-date", "update-available", "stale-fallback"]
+├── available_version: str | None     (remote SHA when update available)
+├── last_checked_at: datetime | None
+├── diagnostic: str | None            (re-registration failure info)
+└── created_at: datetime
+
+PluginStateModel (SQLAlchemy)
+├── __tablename__ = "plugin_state"
+├── alias: String (PK)
+├── installed_version: String (nullable)
+├── update_status: String (default "unknown")
+├── available_version: String (nullable)
+├── last_checked_at: DateTime (nullable)
+├── diagnostic: String (nullable)
+└── created_at: DateTime (server_default=now())
+
+PluginStateRepository
+├── __init__(session_factory)
+├── get(alias) -> PluginState | None
+├── upsert(state: PluginState) -> PluginState   (insert or update provided fields)
+└── remove(alias) -> None                        (called during plugin removal)
+```
+
+### MaterializationResult
+
+```
+MaterializationResult (dataclass)
+├── staging_dir: Path
+└── version: str | None
+    (git: full 40-char commit SHA from `git rev-parse HEAD` in clone)
+    (url: SHA-256 hex digest of downloaded archive via hashlib.file_digest)
+    (local: None — symlinks have no version state)
+```
+
+### Update result types
+
+```
+UpdateStatus = Literal["unknown", "up-to-date", "update-available", "stale-fallback"]
+
+UpdateResult (frozen dataclass)
+├── alias: str
+├── status: Literal["updated", "failed", "skipped"]
+├── error: str | None
+└── message: str | None
+
+UpdateSummary (frozen dataclass)
+├── total: int
+├── updated: int
+├── skipped: int
+├── failed: int
+└── results: list[UpdateResult]
+```
+
+### Per-plugin lock map
+
+```
+PluginManager._update_locks: dict[str, asyncio.Lock]
+    Lazily created per alias on first update attempt.
+    Non-blocking acquisition: if lock is held, return "update already in progress" error.
+    Released in finally block to ensure cleanup on all paths.
+    Cleared when plugin is removed.
+```
 
 ### Manifest models
 
@@ -366,20 +522,26 @@ HandlerSpec (internal, not persisted)
 
 ## Data Flow
 
-### Startup reconciliation
+### Startup reconciliation (changed)
 
 ```
 __main__.py → bootstrap.run() → plugins_hook
     ├── mkdir .tachikoma/plugins/
     ├── append .tachikoma/plugins/ to .gitignore (idempotent)
-    ├── reconcile(workspace, settings.plugins)
+    ├── state_repo = PluginStateRepository(db_session_factory)
+    ├── reconcile(workspace, settings.plugins, state_repo)
     │   └── For each [plugins.<alias>]:
-    │       ├── materialize_<kind>() → temp staging dir
-    │       ├── _atomic_replace_dir(staging, install_dir / alias)
-    │       └── Record per-alias status (loaded / stale-fallback / failed)
+    │       ├── If install_dir/<alias> exists with valid manifest:
+    │       │   ├── If local source AND not symlink: migrate to symlink
+    │       │   └── Skip materialization (ensure PluginState row exists)
+    │       ├── Else (first install):
+    │       │   ├── result = materialize_<kind>(source, staging_dir)
+    │       │   ├── _atomic_replace_dir(result.staging_dir, install_dir / alias)
+    │       │   └── state_repo.upsert(alias, installed_version=result.version, update_status="unknown")
+    │       └── Orphan cleanup (unchanged)
     ├── discover(install_dir)
     │   └── For each plugin: parse manifest → validate config → validate handlers
-    ├── PluginManager(settings_manager, bus, workspace_path, loaded)
+    ├── PluginManager(settings_manager, bus, workspace_path, loaded, state_repo)
     └── ctx.extras populated
 
 skills_hook(ctx)
@@ -389,7 +551,8 @@ skills_hook(ctx)
 
 __main__.py (after bootstrap)
     ├── await run_plugin_init_hooks(manager.list_plugins(), bus)
-    └── register plugin MCP tools server
+    ├── register plugin MCP tools server
+    └── register daily check scheduler Job (CronTrigger)
 ```
 
 ### Config validation during discovery
@@ -463,7 +626,65 @@ __main__.py (after bootstrap.run(), before channel.run())
             └── dispatch_notification(bus, ...)  # single dispatch
 ```
 
-## Key Decisions
+### Daily update check (new)
+
+```
+scheduler tick (CronTrigger, once daily)
+    └── plugin_update_check_tick(manager, state_repo, bus)
+        ├── git_plugins = loaded plugins with GitPluginSource
+        ├── For each git_plugin:
+        │   ├── remote_sha = run_git(["ls-remote", url, ref_spec])
+        │   │   └── ref_spec = "refs/heads/<ref>" or "refs/tags/<ref>^{}"
+        │   ├── Compare remote_sha with state.installed_version
+        │   └── Update PluginState accordingly
+        └── If any update-available:
+            └── dispatch_notification(bus, "Plugin updates available: ...")
+```
+
+### Single plugin update (new)
+
+```
+update_plugin(alias) MCP tool
+    └── manager.update(alias)
+        ├── Lookup plugin + state
+        ├── Validate (exists, not local, not locked)
+        ├── Acquire per-plugin lock (non-blocking)
+        ├── try:
+        │   ├── result = materialize_<kind>(source, staging_dir)
+        │   ├── parse_manifest + validate_handlers
+        │   ├── _atomic_replace_dir(result.staging_dir, install_dir)
+        │   ├── state_repo.upsert(alias, installed_version=result.version, update_status="up-to-date")
+        │   └── Re-register:
+        │       ├── Dispatch PluginRemoving → unsubscribe old wrappers
+        │       ├── Re-discover plugin at install_dir
+        │       ├── Dispatch PluginInstalled → add_namespaced_source
+        │       └── Subscribe new event handlers
+        ├── except: existing plugin intact, error returned
+        └── finally: Release lock
+```
+
+### Bulk plugin update (new)
+
+```
+update_all_plugins() MCP tool
+    └── manager.update_all()
+        ├── Query plugins with update_status = "update-available"
+        ├── For each (sequential):
+        │   ├── If local: record as skipped
+        │   ├── Else: apply_update(alias) → record result
+        │   └── Continue on failure
+        └── Return UpdateSummary
+```
+
+### list_plugins with update info (extended)
+
+```
+list_plugins() MCP tool
+    └── manager.list()
+        └── For each LoadedPlugin:
+            ├── Existing: alias, source, status, skills, config
+            └── NEW: lookup PluginState → append update_status, installed_version, available_version
+```
 
 ### Pip-style atomic-swap for directory replacement
 
@@ -615,6 +836,49 @@ __main__.py (after bootstrap.run(), before channel.run())
 **Alternatives Considered**: Single `handlers/` directory for both hooks and events (less organized); Flat layout (risks collision with other plugin files).
 **Consequences**: Pro: Clear directory convention consistent with `skills/`. Con: Plugin authors must create these directories (mitigated: discovery fails with clear diagnostic if expected file doesn't exist).
 
+### Dedicated database table for plugin state
+
+**Choice**: New `plugin_state` SQLAlchemy table with a `PluginStateRepository`, following the project's established persistence pattern (ADR-007).
+**Why**: Plugin version and update status must survive process restarts. A dedicated table provides structured, queryable storage with type-safe access through the repository pattern already used throughout the project.
+**Alternatives Considered**: JSON sidecar file (co-locates transient state with plugin files, risks getting out of sync); Key-value app_state table (ADR-013, mixes plugin-specific tracking with general-purpose state).
+**Consequences**: Pro: Structured, queryable, follows established patterns. Con: Requires an inline migration in `database.py`.
+
+### `git ls-remote` for update detection
+
+**Choice**: Use `git ls-remote` to resolve the remote ref SHA without downloading any git objects, then compare with the stored `installed_version`.
+**Why**: `git ls-remote` performs a single HTTP request (~1-5 KB transfer) returning only the ref-to-SHA mapping. Significantly lighter than `git fetch` for a detection-only check.
+**Alternatives Considered**: `git fetch` in existing clone (downloads objects unnecessarily for detection-only); HTTP HEAD request against GitHub API (GitHub-specific).
+**Consequences**: Pro: Minimal network overhead, no local state mutation during detection. Con: Needs `^{}` suffix for annotated tags to dereference to commit SHAs.
+
+### Re-clone for update application
+
+**Choice**: Reuse the existing `materialize_git()` function (fresh shallow clone) for applying git updates, rather than `git fetch` + `git checkout` in the existing clone.
+**Why**: Re-cloning reuses the battle-tested materializer and its atomic-swap logic. An in-place fetch+checkout would require new error paths for dirty working trees and shallow-boundary issues.
+**Alternatives Considered**: In-place `git fetch --depth=1` + `git checkout` (introduces git state management complexity).
+**Consequences**: Pro: Reuses proven materializer code. Pro: Clean state. Con: Downloads objects twice (once for ls-remote detection, once for clone — but clone is user-initiated and expected).
+
+### Per-plugin asyncio.Lock for update concurrency
+
+**Choice**: A lazily-populated `dict[str, asyncio.Lock]` on `PluginManager`. Non-blocking acquisition returns "update already in progress" error if held. Lock released in `finally` block.
+**Why**: Per-plugin locks allow different plugins to be updated concurrently. Using the existing global `_lock` would serialize everything unnecessarily.
+**Alternatives Considered**: Global PluginManager lock for updates (prevents concurrent updates for different plugins); `set[str]` tracking in-progress aliases (requires careful cleanup on all error paths; `asyncio.Lock` handles this naturally).
+**Consequences**: Pro: Precise concurrency control. Con: Lock map needs cleanup when plugins are removed.
+
+### Symlink creation for local sources
+
+**Choice**: Replace `shutil.copytree()` with `os.symlink()` for local-source plugins during materialization. Existing copies are replaced with symlinks on the next reconciliation.
+**Why**: Local plugins should always reflect live source. A symlink achieves this trivially — no copy, no update needed.
+**Migration path**: During reconciliation, if a local-source plugin's install directory is not a symlink, remove the directory and create a symlink. If the configured source path no longer exists, retain the copy and mark as `stale-fallback`.
+**Alternatives Considered**: Keep copy + filesystem watcher (over-engineered); Keep copy + periodic sync (defeats "always reflect live source" requirement).
+**Consequences**: Pro: Zero-copy, always current. Con: Symlinks break if the source path is moved or deleted.
+
+### LoadedPlugin unchanged; state looked up at query time
+
+**Choice**: `LoadedPlugin` does not gain update-status fields. Update status comes from `PluginState` lookup when needed (e.g., in `list_plugins`).
+**Why**: `LoadedPlugin` is a frozen dataclass representing in-memory registration state. Update status is persistence-layer data that changes asynchronously (daily checks). Coupling them would force updates to `LoadedPlugin` instances on every status change.
+**Alternatives Considered**: Add update fields to LoadedPlugin (would require re-creating the frozen dataclass on every status change).
+**Consequences**: Pro: Clean separation of concerns, LoadedPlugin stays unchanged. Con: `list_plugins` needs a join between in-memory plugins and database state (a simple dict lookup by alias).
+
 ## System Behavior
 
 ### Invariants
@@ -623,7 +887,7 @@ __main__.py (after bootstrap.run(), before channel.run())
 2. **Validate-then-write order**: `install_plugin` never mutates config until source is materialized and manifest parsed.
 3. **Per-plugin failure isolation**: Any plugin failing at any stage does not affect other plugins or core startup.
 4. **Namespace isolation**: Plugin skills stored under `<alias>:<name>` cannot collide with default-namespace or other plugin skills.
-5. **Always-on re-materialization**: Every reconciliation pass re-materializes every declared plugin.
+5. **First-time-only materialization**: Startup reconciliation only materializes plugins that don't have an existing install directory. Already-installed plugins are left untouched.
 6. **Config values are always validated**: A loaded plugin's `config` dict contains only values that passed type checking. No unvalidated user input reaches plugin code.
 7. **Config schema is optional**: Plugins without `[config]` sections load normally with `config = {}`. Users without `[plugins.<alias>.config]` sub-tables get default values (or empty dict if no schema).
 8. **Consolidation is additive**: Plugin failures are appended to the restart notification. Each can appear independently (restart only, failures only, both, neither).
@@ -631,6 +895,13 @@ __main__.py (after bootstrap.run(), before channel.run())
 10. **Sequential init**: Init hooks run one at a time in alphabetical order by alias. No parallel execution.
 11. **Handler validation is complete**: A plugin with invalid handlers (missing file, import error, wrong signature, unknown event type) fails at discovery with a diagnostic — no partial handler registration.
 12. **Unsubscription is deactivation**: Removed plugins' event wrappers become no-ops but remain in the bus's handler list (bubus has no `off()` API).
+13. **Version hashes captured at materialization**: Every materialization (first install or update) captures the version hash and persists it to `PluginState`.
+14. **Detection does not mutate on-disk state**: `git ls-remote` only reads remote refs. It does not fetch, modify the local clone, or change any files.
+15. **Update application is atomic**: The pip-style atomic swap applies to updates as well as installs. A failed update never leaves a half-replaced directory.
+16. **Re-registration is all-or-nothing**: On successful materialization, old skills/events are fully removed before new ones are registered. On re-registration failure, old skills/events remain active.
+17. **Local plugins have no version state**: Symlinks are always current. `installed_version` is null, `update_status` is not queried.
+18. **Daily check is stateless**: Each run checks all git-source plugins independently. A partially completed check does not affect the next run.
+19. **PluginState survives restarts**: The database table is the source of truth for version and update status across process restarts.
 
 ### Scenario: Fresh workspace, no plugins configured
 
@@ -821,6 +1092,104 @@ __main__.py (after bootstrap.run(), before channel.run())
 **Then**: Plugin fails with diagnostic about expected signature.
 **Rationale**: Strict signature validation prevents runtime errors from mismatched handler signatures.
 
+### Scenario: Fresh install of a git plugin (version captured)
+
+**Given**: `[plugins.code-review]` declares a git source with `ref = "v1.0.0"`. No existing install directory.
+**When**: Startup reconciliation runs.
+**Then**: `materialize_git()` performs shallow clone, captures commit SHA as version. `_atomic_replace_dir()` installs. `PluginState` created with `installed_version = <sha>`, `update_status = "unknown"`.
+**Rationale**: First install captures version for future comparison.
+
+### Scenario: Startup with existing git plugin (no re-materialize)
+
+**Given**: `[plugins.code-review]` declares a git source. `.tachikoma/plugins/code-review/` exists with valid manifest.
+**When**: Startup reconciliation runs.
+**Then**: Reconciler detects existing directory, skips materialization. `PluginState` retains previous values.
+**Rationale**: No unnecessary re-cloning on every restart.
+
+### Scenario: Daily check finds update
+
+**Given**: Git plugin `code-review` tracking branch `main`. Stored `installed_version = abc123`. Remote `refs/heads/main` now resolves to `def456`.
+**When**: Daily update check runs.
+**Then**: `git ls-remote` returns `def456`. Compared with stored `abc123` — differs. `PluginState` updated: `update_status = "update-available"`, `available_version = "def456"`. Notification dispatched listing `code-review`.
+**Rationale**: User is informed that an update exists and can choose to apply it.
+
+### Scenario: Daily check finds no update
+
+**Given**: Git plugin `code-review`. Remote SHA matches stored `installed_version`.
+**When**: Daily update check runs.
+**Then**: `PluginState` updated: `update_status = "up-to-date"`. No notification.
+**Rationale**: No news is good news.
+
+### Scenario: Daily check encounters network error
+
+**Given**: Git plugin `code-review`. Remote is unreachable.
+**When**: Daily update check runs.
+**Then**: `git ls-remote` fails. Previous `update_status` retained. `last_checked_at` updated. Error logged at WARNING level.
+**Rationale**: Transient network issues should not flip plugin status.
+
+### Scenario: update_plugin for git plugin
+
+**Given**: Git plugin `code-review` with `update_status = "update-available"`.
+**When**: `update_plugin("code-review")` invoked.
+**Then**: Acquire per-plugin lock. `materialize_git()` re-clones at the configured ref. Atomic swap replaces install directory. `PluginState` updated: `installed_version = <new sha>`, `update_status = "up-to-date"`. `PluginRemoving` dispatched (old skills removed), `PluginInstalled` dispatched (new skills registered). Lock released.
+**Rationale**: Full lifecycle — materialize, persist, re-register.
+
+### Scenario: update_plugin while update in progress
+
+**Given**: `update_plugin("code-review")` is running.
+**When**: Another `update_plugin("code-review")` is invoked.
+**Then**: Per-plugin lock is held. Non-blocking acquisition fails. Tool returns error: "Update already in progress for plugin 'code-review'".
+**Rationale**: Prevent concurrent modifications to the same plugin.
+
+### Scenario: update_plugin fails during materialization
+
+**Given**: Git plugin `code-review`. Remote is unreachable during re-clone.
+**When**: `update_plugin("code-review")` invoked.
+**Then**: `materialize_git()` raises. Staging directory cleaned up. Existing install directory untouched. `PluginState` unchanged. Lock released in `finally`. Error returned.
+**Rationale**: Failed updates must not corrupt existing state.
+
+### Scenario: update_plugin succeeds but re-registration fails
+
+**Given**: Plugin update materializes successfully, but new manifest declares a skill with a name that collides with an existing plugin.
+**When**: Re-registration runs.
+**Then**: Old skills remain registered. New materialized version stays on disk. `PluginState` gains a diagnostic about the re-registration failure. Error returned.
+**Rationale**: Spec requires old skills stay active on re-registration failure.
+
+### Scenario: update_plugin for local plugin
+
+**Given**: Local plugin `dev-tools` (symlink-based).
+**When**: `update_plugin("dev-tools")` invoked.
+**Then**: Tool returns informational message: "Local plugins are always current (symlink-based). No update needed."
+**Rationale**: Symlinks reflect live source at all times.
+
+### Scenario: update_all_plugins with mixed results
+
+**Given**: Three plugins: `code-review` (update-available), `weather` (up-to-date), `dev-tools` (local).
+**When**: `update_all_plugins()` invoked.
+**Then**: `code-review` updated (success). `weather` skipped (already current). `dev-tools` skipped (local). Summary returned: `{total: 3, updated: 1, skipped: 2, failed: 0, results: [...]}`.
+**Rationale**: Bulk operation handles each plugin independently; failures don't block others.
+
+### Scenario: Local plugin migration from copy to symlink
+
+**Given**: Local plugin `dev-tools` was installed before this feature as a directory copy. Source path still exists.
+**When**: Startup reconciliation runs.
+**Then**: Reconciler detects install directory is not a symlink and source is local. Replaces the directory with a symlink pointing to the configured path. `PluginState` updated: `installed_version = null`.
+**Rationale**: Existing installs migrate seamlessly.
+
+### Scenario: Local plugin migration — source path gone
+
+**Given**: Local plugin `dev-tools` installed as copy. Configured source path no longer exists.
+**When**: Startup reconciliation runs.
+**Then**: Migration skipped. Existing copy retained. `PluginState`: `update_status = "stale-fallback"` with diagnostic about missing source path.
+**Rationale**: Don't break existing functionality when source disappears.
+
+### Scenario: list_plugins with update info
+
+**Given**: `code-review` has `update_status = "update-available"`, `installed_version = "abc123"`, `available_version = "def456"`.
+**When**: `list_plugins()` invoked.
+**Then**: Output for `code-review` includes `update_status: "update-available"`, `installed_version: "abc123"`, `available_version: "def456"`.
+**Rationale**: User can see at a glance which plugins need attention.
+
 ## Notes
 
 - The plugin system reuses `tachikoma.git.sync.run_git()` for git materialization — no GitPython or dulwich dependency added.
@@ -835,3 +1204,9 @@ __main__.py (after bootstrap.run(), before channel.run())
 - bubus uses event class `__name__` as the handler key (per ADR-009). The registry's snake_case derivation matches this convention.
 - Plugin event wrappers use an active-flag pattern (`_deactivate()`) for unsubscription since bubus has no `off()` API. Deactivated wrappers become no-ops but remain in the bus's handler list.
 - Init hooks run post-bootstrap (not as a DES-003 bootstrap hook) to guarantee all subsystems are initialized before plugin hooks execute.
+- The daily update check uses `CronTrigger` on the central scheduler (DES-010), NOT a `TaskDefinition`. It is a scheduler Job (a zero-arg async tick function), not a task definition with instance generation and status tracking. The job is registered in `__main__.py` alongside other scheduler jobs.
+- Annotated tag dereferencing (`refs/tags/<tag>^{}`) is critical for correct SHA comparison — without it, annotated tags return the tag object SHA, not the commit SHA.
+- The per-plugin lock map is lazily populated and cleaned up on plugin removal. This avoids pre-allocating locks for plugins that never get updated.
+- `hashlib.file_digest()` is a Python 3.11+ addition that handles streaming internally — no manual chunked reads needed.
+- Existing databases get the `plugin_state` table via inline migration in `database.py`'s `_run_migrations()`. Pre-existing plugins get `PluginState` rows created during their first reconciliation (status "unknown").
+- The update detector reuses `run_git()` from `git/sync.py` for `git ls-remote` — same subprocess wrapper, same error handling.
