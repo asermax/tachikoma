@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Literal
 
-from sqlalchemy import DateTime, String, func, select
+from sqlalchemy import DateTime, String, delete, func, select
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.ext.asyncio import async_sessionmaker
 from sqlalchemy.orm import Mapped, mapped_column
@@ -114,15 +114,12 @@ class PluginStateRepository:
             await db.execute(stmt)
             await db.commit()
 
-        return await self.get(state.alias)  # type: ignore[return-value]
+        return state
 
     async def remove(self, alias: str) -> None:
         """Remove plugin state by alias."""
         async with self._session_factory() as db:
-            result = await db.execute(
-                select(PluginStateModel).where(PluginStateModel.alias == alias)
+            await db.execute(
+                delete(PluginStateModel).where(PluginStateModel.alias == alias)
             )
-            record = result.scalar_one_or_none()
-            if record is not None:
-                await db.delete(record)
-                await db.commit()
+            await db.commit()
