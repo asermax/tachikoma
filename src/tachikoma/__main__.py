@@ -53,6 +53,7 @@ from tachikoma.notifications import dispatch_notification
 from tachikoma.per_message_pre_processing import MessagePreProcessingPipeline
 from tachikoma.plugins.hooks import plugins_hook
 from tachikoma.plugins.tools import create_plugin_tools_server
+from tachikoma.plugins.updater import run_daily_git_check
 from tachikoma.post_processing import (
     FINALIZE_PHASE,
     PRE_FINALIZE_PHASE,
@@ -106,6 +107,30 @@ from tachikoma.workspace import workspace_hook
 _log = logger.bind(component="main")
 
 app = App()
+
+
+async def _plugin_check_tick(manager, state_repo, bus: EventBus) -> None:
+    """Daily tick: check git-source plugins for updates and notify."""
+    updates = await run_daily_git_check(manager._loaded, state_repo)
+
+    if not updates:
+        return
+
+    lines = ["Plugin updates available:\n"]
+    for info in updates:
+        short_sha = info.available_version[:8] if info.available_version else "?"
+        lines.append(f"  - {info.alias} ({short_sha})")
+    lines.append(
+        "\nUse update_plugin(<alias>) or update_all_plugins() to apply updates."
+    )
+
+    await dispatch_notification(
+        bus,
+        source="Plugin Update Check",
+        content="\n".join(lines),
+        severity="info",
+        source_id="plugin_update_check",
+    )
 
 
 def cli():
@@ -229,6 +254,7 @@ async def run(
     process_repository: ProcessRepository = bootstrap.extras["process_repository"]
     detached_log_dir: Path = bootstrap.extras["detached_process_log_dir"]
     app_state_repo = bootstrap.extras["app_state_repository"]
+    plugin_state_repo = bootstrap.extras["state_repo"]
 
     # Dispatch rollback notification if a previous update was rolled back
     if rollback_notification is not None:
@@ -453,6 +479,16 @@ async def run(
                         run=lambda: update_checker_tick(app_state_repo, bus),
                     )
                 )
+
+            jobs.append(
+                Job(
+                    name="plugin_update_check",
+                    trigger=CronTrigger("17 3 * * *", tz),
+                    run=lambda: _plugin_check_tick(
+                        plugin_manager, plugin_state_repo, bus
+                    ),
+                )
+            )
 
             scheduler_tasks.append(asyncio.create_task(scheduler(jobs), name="scheduler"))
 
