@@ -3,14 +3,20 @@
 Walks ``[plugins]`` config, dispatches each source to the appropriate
 materializer, performs atomic swap on success, and handles stale-fallback
 when a source is unreachable but a valid prior install exists.
+
+Reconciliation is first-time-only: already-installed plugins are left untouched.
+Local-source plugins installed as copies are migrated to symlinks.
 """
 
 from __future__ import annotations
 
+import contextlib
+import os
 import shutil
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
 from loguru import logger
 
@@ -28,6 +34,10 @@ from tachikoma.plugins.sources import (
     PluginSource,
     UrlPluginSource,
 )
+from tachikoma.plugins.state import PluginState
+
+if TYPE_CHECKING:
+    from tachikoma.plugins.state import PluginStateRepository
 
 _log = logger.bind(component="plugins")
 
@@ -70,13 +80,16 @@ class ReconciliationReport:
 async def reconcile(
     workspace_path: Path,
     plugins: dict[str, PluginSource],
+    state_repo: PluginStateRepository,
 ) -> ReconciliationReport:
     """Reconcile the plugin install directory with the declared config.
 
     Steps:
     1. Compute and create the install directory if missing.
     2. Remove orphan directories (subdirs of install_dir not in config, excluding ``.staging``).
-    3. For each (alias, source): materialize, atomic-swap, record outcome.
+    3. For each (alias, source):
+       - If already installed: skip materialization (migrate local copies to symlinks).
+       - If first-time: materialize, atomic-swap, persist initial PluginState.
        On failure: attempt stale-fallback or mark failed.
     """
     install_dir = workspace_path / ".tachikoma" / "plugins"
@@ -89,14 +102,14 @@ async def reconcile(
     outcomes: list[ReconcileOutcome] = []
     for alias, source in plugins.items():
         try:
-            await _reconcile_one(alias, source, install_dir)
+            await _reconcile_one(alias, source, install_dir, state_repo)
             outcomes.append(
                 ReconcileOutcome(alias=alias, status="loaded", diagnostic=None)
             )
         except MaterializeError as exc:
             outcomes.append(_handle_stale_fallback(alias, install_dir, exc))
         except Exception as exc:
-            # Catch unexpected errors so one bad plugin never blocks others (R9).
+            # Catch unexpected errors so one bad plugin never blocks others.
             msg = f"Unexpected error: {exc}"
             _log.bind(plugin=alias).error("Reconciliation failed: {}", msg)
             outcomes.append(
@@ -119,8 +132,27 @@ async def _reconcile_one(
     alias: str,
     source: PluginSource,
     install_dir: Path,
+    state_repo: PluginStateRepository,
 ) -> None:
-    """Materialize a single plugin and atomic-swap it into the install dir."""
+    """Reconcile a single plugin: skip if installed, migrate local symlinks, or materialize."""
+    target = install_dir / alias
+
+    # --- Already installed: skip materialization ---
+    if target.is_dir() or target.is_symlink():
+        manifest = None
+        if target.is_dir() and not target.is_symlink():
+            with contextlib.suppress(Exception):
+                manifest = parse_manifest(target)
+
+        if manifest is not None:
+            # Symlink migration for local sources installed as copies.
+            if isinstance(source, LocalPluginSource) and not target.is_symlink():
+                await _migrate_local_to_symlink(alias, source, target, state_repo)
+            # Ensure PluginState row exists for pre-existing installations.
+            await _ensure_state_row(alias, state_repo)
+            return
+
+    # --- First-time install ---
     staging = install_dir / f"{alias}.new"
 
     # Clean up any leftover staging dir from a prior failed attempt.
@@ -129,11 +161,11 @@ async def _reconcile_one(
 
     try:
         if isinstance(source, GitPluginSource):
-            await materialize_git(source, staging, alias=alias)
+            result = await materialize_git(source, staging, alias=alias)
         elif isinstance(source, UrlPluginSource):
-            await materialize_url(source, staging, alias=alias)
+            result = await materialize_url(source, staging, alias=alias)
         elif isinstance(source, LocalPluginSource):
-            await materialize_local(source, staging, alias=alias)
+            result = await materialize_local(source, staging, alias=alias)
         else:
             raise MaterializeError(
                 alias,
@@ -141,12 +173,99 @@ async def _reconcile_one(
                 f"Unknown source type: {type(source).__name__}",
             )
 
-        _atomic_replace_dir(staging, install_dir / alias)
+        _atomic_replace_dir(staging, target)
+
+        # Persist initial PluginState with installed version.
+        initial_state = PluginState(
+            alias=alias,
+            installed_version=result.version,
+            update_status="unknown",
+            available_version=None,
+            last_checked_at=None,
+            diagnostic=None,
+            created_at=datetime.now(UTC),
+        )
+        await state_repo.upsert(initial_state)
     except BaseException:
         # Clean up staging dir on any failure.
         if staging.exists():
             shutil.rmtree(staging, ignore_errors=True)
         raise
+
+
+async def _migrate_local_to_symlink(
+    alias: str,
+    source: LocalPluginSource,
+    target: Path,
+    state_repo: PluginStateRepository,
+) -> None:
+    """Migrate a local-source plugin from a directory copy to a symlink.
+
+    If the configured source path exists: replace directory with symlink atomically.
+    If the source path is gone: retain the copy and mark as stale-fallback.
+    """
+    if source.path.exists():
+        backup = target.with_name(target.name + ".migrate-old")
+        try:
+            os.rename(target, backup)
+            os.symlink(source.path, target)
+            # Verify the symlink resolves.
+            if not target.resolve().is_dir():
+                # Rollback: source path exists but isn't a valid dir.
+                os.remove(target)
+                os.rename(backup, target)
+                _log.bind(plugin=alias).warning(
+                    "Symlink target is not a valid directory: {}", source.path
+                )
+                return
+            # Success: remove backup.
+            shutil.rmtree(backup, ignore_errors=True)
+            _log.bind(plugin=alias).info(
+                "Migrated local plugin from copy to symlink: {}", source.path
+            )
+        except OSError as exc:
+            # On partial failure, retain the original directory.
+            if backup.exists() and not target.exists():
+                try:
+                    os.rename(backup, target)
+                except OSError:
+                    _log.bind(plugin=alias).warning(
+                        "Failed to restore backup during symlink migration: {}", exc
+                    )
+            _log.bind(plugin=alias).warning(
+                "Symlink migration failed, retaining copy: {}", exc
+            )
+    else:
+        # Source path gone: retain copy, mark as stale-fallback.
+        _log.bind(plugin=alias).warning(
+            "Local source path no longer exists: {}, retaining copy", source.path
+        )
+        state = PluginState(
+            alias=alias,
+            installed_version=None,
+            update_status="stale-fallback",
+            available_version=None,
+            last_checked_at=None,
+            diagnostic=f"Source path no longer exists: {source.path}",
+            created_at=datetime.now(UTC),
+        )
+        await state_repo.upsert(state)
+
+
+async def _ensure_state_row(alias: str, state_repo: PluginStateRepository) -> None:
+    """Ensure a PluginState row exists for pre-existing installations."""
+    existing = await state_repo.get(alias)
+    if existing is None:
+        state = PluginState(
+            alias=alias,
+            installed_version=None,
+            update_status="unknown",
+            available_version=None,
+            last_checked_at=None,
+            diagnostic=None,
+            created_at=datetime.now(UTC),
+        )
+        await state_repo.upsert(state)
 
 
 def _remove_orphans(install_dir: Path, configured_aliases: set[str]) -> None:
