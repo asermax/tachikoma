@@ -41,13 +41,14 @@ class TestPluginCheckTick:
         ]
 
         manager = MagicMock()
-        manager._loaded = {"plugin-a": _make_git_plugin("plugin-a")}
+        plugins = {"plugin-a": _make_git_plugin("plugin-a")}
+        manager.loaded_plugins.return_value = plugins
         state_repo = AsyncMock(spec=PluginStateRepository)
         bus = MagicMock(spec=EventBus)
 
         await _plugin_check_tick(manager, state_repo, bus)
 
-        mock_check.assert_awaited_once_with(manager._loaded, state_repo)
+        mock_check.assert_awaited_once_with(plugins, state_repo)
         mock_dispatch.assert_awaited_once()
         call_kwargs = mock_dispatch.call_args
         assert "plugin-a" in call_kwargs.kwargs["content"]
@@ -62,7 +63,7 @@ class TestPluginCheckTick:
         mock_check.return_value = []
 
         manager = MagicMock()
-        manager._loaded = {}
+        manager.loaded_plugins.return_value = {}
         state_repo = AsyncMock(spec=PluginStateRepository)
         bus = MagicMock(spec=EventBus)
 
@@ -82,7 +83,7 @@ class TestPluginCheckTick:
         ]
 
         manager = MagicMock()
-        manager._loaded = {
+        manager.loaded_plugins.return_value = {
             "plugin-a": _make_git_plugin("plugin-a"),
             "plugin-b": _make_git_plugin("plugin-b"),
         }

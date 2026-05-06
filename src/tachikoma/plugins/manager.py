@@ -145,6 +145,10 @@ class PluginManager:
         """Return all loaded plugins (caller should not mutate)."""
         return list(self._loaded.values())
 
+    def loaded_plugins(self) -> dict[str, LoadedPlugin]:
+        """Return loaded plugins keyed by alias (caller should not mutate)."""
+        return dict(self._loaded)
+
     def failed_plugins(self) -> list[LoadedPlugin]:
         """Return plugins that failed to load (status != "loaded")."""
         return [p for p in self._loaded.values() if p.status != "loaded"]
@@ -189,8 +193,7 @@ class PluginManager:
         staging_root.mkdir(parents=True, exist_ok=True)
 
         staging = staging_root / f"update-{alias}"
-        if staging.exists():
-            shutil.rmtree(staging, ignore_errors=True)
+        _cleanup(staging)
 
         try:
             if isinstance(source, GitPluginSource):
@@ -426,8 +429,7 @@ class PluginManager:
         staging_root.mkdir(parents=True, exist_ok=True)
 
         staging = staging_root / f"install-{alias or 'unknown'}"
-        if staging.exists():
-            shutil.rmtree(staging, ignore_errors=True)
+        _cleanup(staging)
 
         try:
             if isinstance(source, GitPluginSource):

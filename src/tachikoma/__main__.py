@@ -111,7 +111,7 @@ app = App()
 
 async def _plugin_check_tick(manager, state_repo, bus: EventBus) -> None:
     """Daily tick: check git-source plugins for updates and notify."""
-    updates = await run_daily_git_check(manager._loaded, state_repo)
+    updates = await run_daily_git_check(manager.loaded_plugins(), state_repo)
 
     if not updates:
         return
