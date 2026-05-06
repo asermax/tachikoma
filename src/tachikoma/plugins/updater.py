@@ -18,10 +18,9 @@ from pathlib import Path
 from loguru import logger
 
 from tachikoma.plugins.loader import LoadedPlugin
+from tachikoma.plugins.materializer import _download as _download_archive
 from tachikoma.plugins.sources import GitPluginSource, UrlPluginSource
 from tachikoma.plugins.state import PluginState, PluginStateRepository
-
-from tachikoma.plugins.materializer import _download as _download_archive
 
 _log = logger.bind(component="plugins.updater")
 

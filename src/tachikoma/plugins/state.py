@@ -119,7 +119,5 @@ class PluginStateRepository:
     async def remove(self, alias: str) -> None:
         """Remove plugin state by alias."""
         async with self._session_factory() as db:
-            await db.execute(
-                delete(PluginStateModel).where(PluginStateModel.alias == alias)
-            )
+            await db.execute(delete(PluginStateModel).where(PluginStateModel.alias == alias))
             await db.commit()
