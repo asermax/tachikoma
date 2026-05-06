@@ -88,6 +88,7 @@ class Database:
 
         import tachikoma.app_state  # noqa: F401, PLC0415
         import tachikoma.detached_processes.model  # noqa: F401, PLC0415
+        import tachikoma.plugins.state  # noqa: F401, PLC0415
         import tachikoma.sessions.model  # noqa: F401, PLC0415
         import tachikoma.tasks.model  # noqa: F401, PLC0415
         import tachikoma.workflows.model  # noqa: F401, PLC0415
@@ -317,6 +318,27 @@ class Database:
                     )
                 )
                 _log.info("Schema migration: added 'skills' column to task_definitions table")
+
+            # Check if plugin_state table exists
+            result = await conn.execute(
+                text("SELECT name FROM sqlite_master WHERE type='table' AND name='plugin_state'")
+            )
+            if result.fetchone() is None:
+                await conn.execute(
+                    text("""
+                        CREATE TABLE plugin_state (
+                            alias VARCHAR NOT NULL,
+                            installed_version VARCHAR,
+                            update_status VARCHAR DEFAULT 'unknown',
+                            available_version VARCHAR,
+                            last_checked_at DATETIME,
+                            diagnostic VARCHAR,
+                            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                            PRIMARY KEY (alias)
+                        )
+                    """)
+                )
+                _log.info("Schema migration: created 'plugin_state' table")
 
         _log.debug("Schema migrations completed: db_path={path}", path=self._db_path)
 
