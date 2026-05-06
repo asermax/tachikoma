@@ -558,7 +558,9 @@ class PluginManager:
 
         try:
             target = self._workspace_path / ".tachikoma" / "plugins" / alias
-            if target.exists():
+            if target.is_symlink():
+                os.remove(target)
+            elif target.exists():
                 loop = asyncio.get_running_loop()
                 await loop.run_in_executor(None, shutil.rmtree, target)
         except OSError as exc:

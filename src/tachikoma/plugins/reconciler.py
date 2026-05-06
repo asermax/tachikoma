@@ -278,14 +278,17 @@ def _remove_orphans(install_dir: Path, configured_aliases: set[str]) -> None:
         return
 
     for entry in install_dir.iterdir():
-        if not entry.is_dir():
+        if not entry.is_dir() and not entry.is_symlink():
             continue
         if entry.name == ".staging":
             continue
         if entry.name not in configured_aliases:
             _log.bind(plugin=entry.name).info("Removing orphan plugin directory: {}", entry)
             try:
-                shutil.rmtree(entry)
+                if entry.is_symlink():
+                    os.remove(entry)
+                else:
+                    shutil.rmtree(entry)
             except OSError as exc:
                 _log.bind(plugin=entry.name).warning(
                     "Failed to remove orphan directory {}: {}", entry, exc
