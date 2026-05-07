@@ -18,6 +18,7 @@ if TYPE_CHECKING:
 
     from tachikoma.per_message_pre_processing import MessagePreProcessingPipeline
     from tachikoma.plugins.manager import PluginManager
+    from tachikoma.post_processing import PostProcessingPipeline
     from tachikoma.pre_processing import PreProcessingPipeline
 
 _log = logger.bind(component="plugins.provider_listeners")
@@ -28,6 +29,7 @@ def register_plugin_provider_listeners(
     pre_pipeline: PreProcessingPipeline,
     msg_pre_pipeline: MessagePreProcessingPipeline,
     plugin_manager: PluginManager,
+    post_pipeline: PostProcessingPipeline,
 ) -> None:
     """Subscribe handlers for provider pipeline registration lifecycle events.
 
@@ -36,6 +38,7 @@ def register_plugin_provider_listeners(
         pre_pipeline: Session-gated pre-processing pipeline for ContextProvider registration.
         msg_pre_pipeline: Per-message pipeline for MessageContextProvider registration.
         plugin_manager: Plugin manager for looking up LoadedPlugin instances during removal.
+        post_pipeline: Post-processing pipeline for PostProcessor registration.
     """
 
     async def on_plugin_installed(event: PluginInstalled) -> None:
@@ -47,12 +50,16 @@ def register_plugin_provider_listeners(
         for provider in plugin.message_context_providers:
             msg_pre_pipeline.register(provider)
 
+        for processor in plugin.post_processors:
+            post_pipeline.register(processor)
+
         _log.info(
             "Plugin providers registered: alias={alias} "
-            "session={session_count} message={msg_count}",
+            "session={session_count} message={msg_count} post={post_count}",
             alias=event.alias,
             session_count=len(plugin.context_providers),
             msg_count=len(plugin.message_context_providers),
+            post_count=len(plugin.post_processors),
         )
 
     async def on_plugin_removing(event: PluginRemoving) -> None:
@@ -72,12 +79,16 @@ def register_plugin_provider_listeners(
         for provider in plugin.message_context_providers:
             msg_pre_pipeline.unregister(provider)
 
+        for processor in plugin.post_processors:
+            post_pipeline.unregister(processor)
+
         _log.info(
             "Plugin providers unregistered: alias={alias} "
-            "session={session_count} message={msg_count}",
+            "session={session_count} message={msg_count} post={post_count}",
             alias=event.alias,
             session_count=len(plugin.context_providers),
             msg_count=len(plugin.message_context_providers),
+            post_count=len(plugin.post_processors),
         )
 
     bus.on(PluginInstalled, on_plugin_installed)

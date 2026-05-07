@@ -310,7 +310,9 @@ async def run(
     # Wire provider listeners for plugin context provider lifecycle
     from tachikoma.plugins.provider_listeners import register_plugin_provider_listeners  # noqa: I001, PLC0415
 
-    register_plugin_provider_listeners(bus, pre_pipeline, msg_pre_pipeline, plugin_manager)
+    register_plugin_provider_listeners(
+        bus, pre_pipeline, msg_pre_pipeline, plugin_manager, pipeline
+    )
 
     # Create and configure the per-message post-processing pipeline
     msg_pipeline = MessagePostProcessingPipeline()
