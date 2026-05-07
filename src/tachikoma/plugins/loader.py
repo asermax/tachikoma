@@ -33,6 +33,7 @@ if TYPE_CHECKING:
     from bubus import BaseEvent
 
     from tachikoma.plugins.sources import PluginSource
+    from tachikoma.post_processing import PostProcessor
 
 _log = logger.bind(component="plugins")
 
@@ -77,6 +78,7 @@ class LoadedPlugin:
     event_wrappers: list = field(default_factory=list)
     context_providers: list[ContextProvider] = field(default_factory=list)
     message_context_providers: list[MessageContextProvider] = field(default_factory=list)
+    post_processors: list[PostProcessor] = field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------

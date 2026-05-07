@@ -426,17 +426,20 @@ class TestLogIgnoredCcContributions:
                 "themes",
                 "outputStyles",
                 "context_providers",
+                "post_processors",
             )
         }
         # mcpServers is a dict, not list
         extra["mcpServers"] = {"srv": {"command": "n"}}
         # context_providers is a dict, not list
         extra["context_providers"] = {"calendar": "calendar"}
+        # post_processors is a dict, not list
+        extra["post_processors"] = {"summary": "summary"}
         _write_cc(plugin_dir, extra=extra)
 
         result = parse_manifest(plugin_dir)
         assert result is not None
-        assert len(result.ignored_cc_contributions) == 9
+        assert len(result.ignored_cc_contributions) == 10
 
 
 class TestPluginManifest:
@@ -622,3 +625,65 @@ class TestManifestConfigSchema:
 
         with pytest.raises(Exception, match="[Dd]efault"):
             parse_manifest(plugin_dir)
+
+
+class TestPostProcessorsManifest:
+    """Tests for post_processors manifest field."""
+
+    def test_native_with_post_processors(self, plugin_dir: Path) -> None:
+        """Native TOML with [post_processors] section parses correctly."""
+        _write_native(
+            plugin_dir,
+            skills=[],
+            post_processors={"summary": "summary", "webhook": "webhook"},
+        )
+
+        result = parse_manifest(plugin_dir)
+        assert result is not None
+        assert result.post_processors == {"summary": "summary", "webhook": "webhook"}
+
+    def test_native_without_post_processors(self, plugin_dir: Path) -> None:
+        """Native TOML without [post_processors] defaults to empty dict."""
+        _write_native(plugin_dir, skills=[])
+
+        result = parse_manifest(plugin_dir)
+        assert result is not None
+        assert result.post_processors == {}
+
+    def test_post_processors_bare_module_validation(self, plugin_dir: Path) -> None:
+        """Path separators in post_processor module names are rejected."""
+        _write_native(
+            plugin_dir,
+            skills=[],
+            post_processors={"bad": "sub/dir"},
+        )
+        with pytest.raises(Exception, match="path separators"):
+            parse_manifest(plugin_dir)
+
+    def test_post_processors_dot_dot_rejected(self, plugin_dir: Path) -> None:
+        """ '..' segments in post_processor module names are rejected."""
+        _write_native(
+            plugin_dir,
+            skills=[],
+            post_processors={"bad": "../escape"},
+        )
+        with pytest.raises(Exception, match=r"'\.\.' segments"):
+            parse_manifest(plugin_dir)
+
+    def test_cc_with_post_processors_ignored(self, plugin_dir: Path) -> None:
+        """CC manifest with 'post_processors' key adds to ignored_cc_contributions."""
+        _write_cc(plugin_dir, extra={"post_processors": {"summary": "summary"}})
+
+        result = parse_manifest(plugin_dir)
+        assert result is not None
+        assert "post_processors" in result.ignored_cc_contributions
+        assert result.post_processors == {}
+
+    def test_cc_post_processors_logged_as_ignored(self, plugin_dir: Path) -> None:
+        """CC post_processors appears in log_ignored_cc_contributions output."""
+        _write_cc(plugin_dir, extra={"post_processors": {"summary": "summary"}})
+
+        result = parse_manifest(plugin_dir)
+        assert result is not None
+        logged = log_ignored_cc_contributions("test-alias", result)
+        assert "post_processors" in logged

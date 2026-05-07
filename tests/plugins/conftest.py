@@ -21,6 +21,7 @@ def write_native_manifest(
     hooks: dict[str, str] | None = None,
     events: dict[str, str] | None = None,
     context_providers: dict[str, str] | None = None,
+    post_processors: dict[str, str] | None = None,
 ) -> Path:
     """Write a ``tachikoma-plugin.toml`` into *plugin_dir*."""
     plugin_dir.mkdir(parents=True, exist_ok=True)
@@ -57,6 +58,11 @@ def write_native_manifest(
         lines.append("")
         lines.append("[context_providers]")
         for key, val in context_providers.items():
+            lines.append(f'{key} = "{val}"')
+    if post_processors is not None:
+        lines.append("")
+        lines.append("[post_processors]")
+        for key, val in post_processors.items():
             lines.append(f'{key} = "{val}"')
     toml_path = plugin_dir / "tachikoma-plugin.toml"
     toml_path.write_text("\n".join(lines) + "\n")
