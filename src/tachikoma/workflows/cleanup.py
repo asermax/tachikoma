@@ -11,7 +11,7 @@ from datetime import timedelta
 
 from loguru import logger
 
-from tachikoma.post_processing import PostProcessor
+from tachikoma.post_processing import PRE_FINALIZE_PHASE, PostProcessor
 from tachikoma.sessions.model import Session
 from tachikoma.workflows.repository import WorkflowStateRepository
 from tachikoma.workflows.tools import delete_scratchpad
@@ -28,6 +28,7 @@ class StaleWorkflowCleanupProcessor(PostProcessor):
     the configured threshold, and removes their scratchpad files.
     """
 
+    phase = PRE_FINALIZE_PHASE
     _status_message = "Cleaning up workflows..."
 
     def __init__(

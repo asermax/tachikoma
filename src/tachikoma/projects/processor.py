@@ -10,7 +10,7 @@ from loguru import logger
 from tachikoma.agent_defaults import AgentDefaults
 from tachikoma.git.processor import GIT_ALLOW, GIT_BASH_HOOK, GIT_TOOLS, query_and_consume
 from tachikoma.git.sync import PUSH_SUCCESS, smart_push
-from tachikoma.post_processing import PostProcessor
+from tachikoma.post_processing import PRE_FINALIZE_PHASE, PostProcessor
 from tachikoma.projects.git import is_dirty, list_submodules
 from tachikoma.sessions.model import Session
 
@@ -73,6 +73,7 @@ class ProjectsProcessor(PostProcessor):
     each submodule's remote. Runs in the pre_finalize phase before GitProcessor.
     """
 
+    phase = PRE_FINALIZE_PHASE
     _status_message = "Updating projects..."
 
     def __init__(self, agent_defaults: AgentDefaults) -> None:

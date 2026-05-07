@@ -55,8 +55,6 @@ from tachikoma.plugins.hooks import plugins_hook
 from tachikoma.plugins.tools import create_plugin_tools_server
 from tachikoma.plugins.updater import run_daily_git_check
 from tachikoma.post_processing import (
-    FINALIZE_PHASE,
-    PRE_FINALIZE_PHASE,
     PostProcessingPipeline,
     make_bash_deny_hook,
 )
@@ -295,16 +293,10 @@ async def run(
     pipeline.register(FactsProcessor(agent_defaults))
     pipeline.register(PreferencesProcessor(agent_defaults))
     pipeline.register(CoreContextProcessor(agent_defaults))
-    pipeline.register(ProjectsProcessor(agent_defaults), phase=PRE_FINALIZE_PHASE)
-    pipeline.register(
-        StaleWorkflowCleanupProcessor(workflow_repository),
-        phase=PRE_FINALIZE_PHASE,
-    )
-    pipeline.register(
-        TranscriptArchiveProcessor(agent_defaults),
-        phase=PRE_FINALIZE_PHASE,
-    )
-    pipeline.register(GitProcessor(agent_defaults), phase=FINALIZE_PHASE)
+    pipeline.register(ProjectsProcessor(agent_defaults))
+    pipeline.register(StaleWorkflowCleanupProcessor(workflow_repository))
+    pipeline.register(TranscriptArchiveProcessor(agent_defaults))
+    pipeline.register(GitProcessor(agent_defaults))
 
     # Create and configure the pre-processing pipeline (session-gated: projects)
     pre_pipeline = PreProcessingPipeline()

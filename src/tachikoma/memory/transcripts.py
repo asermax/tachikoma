@@ -11,7 +11,7 @@ from pathlib import Path
 from loguru import logger
 
 from tachikoma.agent_defaults import AgentDefaults
-from tachikoma.post_processing import PostProcessor
+from tachikoma.post_processing import PRE_FINALIZE_PHASE, PostProcessor
 from tachikoma.sessions.model import Session
 
 _log = logger.bind(component="transcript_archive")
@@ -26,6 +26,7 @@ class TranscriptArchiveProcessor(PostProcessor):
     and the git commit remain unaffected.
     """
 
+    phase = PRE_FINALIZE_PHASE
     _status_message = "Archiving transcript..."
 
     def __init__(self, agent_defaults: AgentDefaults) -> None:

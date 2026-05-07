@@ -10,7 +10,7 @@ from tachikoma.memory.prompts import (
     extraction_allow_rules,
     permissions_section,
 )
-from tachikoma.post_processing import UTILITY_BASH_HOOK, PromptDrivenProcessor
+from tachikoma.post_processing import MAIN_PHASE, UTILITY_BASH_HOOK, PromptDrivenProcessor
 
 _BASE_PROMPT = """\
 You are a memory extraction agent. Your task is to analyze the conversation \
@@ -109,6 +109,7 @@ class PreferencesProcessor(PromptDrivenProcessor):
     Creates or updates topic-named files in $WORKSPACE/memories/preferences/.
     """
 
+    phase = MAIN_PHASE
     _status_message = "Updating preferences..."
 
     def __init__(self, agent_defaults: AgentDefaults) -> None:

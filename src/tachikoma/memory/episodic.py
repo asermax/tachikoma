@@ -9,7 +9,7 @@ from tachikoma.memory.prompts import (
     extraction_allow_rules,
     permissions_section,
 )
-from tachikoma.post_processing import UTILITY_BASH_HOOK, PromptDrivenProcessor
+from tachikoma.post_processing import MAIN_PHASE, UTILITY_BASH_HOOK, PromptDrivenProcessor
 
 _BASE_PROMPT = """\
 You are a memory extraction agent. Your task is to analyze the conversation \
@@ -63,6 +63,7 @@ class EpisodicProcessor(PromptDrivenProcessor):
     Creates or updates date-stamped summary files in $WORKSPACE/memories/episodic/.
     """
 
+    phase = MAIN_PHASE
     _status_message = "Saving episodic memory..."
 
     def __init__(self, agent_defaults: AgentDefaults) -> None:

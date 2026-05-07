@@ -18,6 +18,7 @@ from tachikoma.context.tools import (
     parse_pending_signals,
 )
 from tachikoma.post_processing import (
+    MAIN_PHASE,
     UTILITY_BASH_HOOK,
     WORKSPACE_VALIDATION_SECTION,
     PromptDrivenProcessor,
@@ -305,6 +306,7 @@ class CoreContextProcessor(PromptDrivenProcessor):
     - Post-step: mtime comparison for observability logging
     """
 
+    phase = MAIN_PHASE
     _status_message = "Refreshing core context..."
 
     def __init__(self, agent_defaults: AgentDefaults) -> None:

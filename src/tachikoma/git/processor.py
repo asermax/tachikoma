@@ -10,6 +10,7 @@ from loguru import logger
 from tachikoma.agent_defaults import AgentDefaults
 from tachikoma.git.sync import PUSH_RESULT, PUSH_SUCCESS, has_uncommitted_changes, smart_push
 from tachikoma.post_processing import (
+    FINALIZE_PHASE,
     UTILITY_BASH_PREFIXES,
     PostProcessor,
     build_permissions_settings,
@@ -144,6 +145,7 @@ class GitProcessor(PostProcessor):
     Runs in the finalize phase after all other processors complete.
     """
 
+    phase = FINALIZE_PHASE
     _status_message = "Committing changes..."
 
     def __init__(self, agent_defaults: AgentDefaults) -> None:
