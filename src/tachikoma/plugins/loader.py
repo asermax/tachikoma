@@ -242,7 +242,7 @@ def _validate_providers(
     session_providers: list[ContextProvider] = []
     message_providers: list[MessageContextProvider] = []
 
-    for _name, module_name in manifest.context_providers.items():
+    for module_name in manifest.context_providers.values():
         provider_path = plugin_dir / "context_providers" / f"{module_name}.py"
         if not provider_path.exists():
             raise ValueError(f"Provider module file not found: {provider_path}")
@@ -338,7 +338,8 @@ def _discover_one(
             plugin_dir=plugin_dir,
         )
 
-    # --- Validate skill directories (AC-MP-8) ---
+    # Skill directories that don't exist are excluded rather than failing.
+
     valid_skill_dirs: list[Path] = []
     for skill_dir in manifest.skill_dirs:
         if skill_dir.is_dir():
@@ -356,7 +357,8 @@ def _discover_one(
     if validated_manifest.ignored_cc_contributions:
         log_ignored_cc_contributions(alias, validated_manifest)
 
-    # --- Config validation (R3, R4) ---
+
+
     if validated_manifest.config_schema:
         user_values = source.config if source.config is not None else {}
         result = validate_config(validated_manifest.config_schema, user_values)
@@ -374,7 +376,7 @@ def _discover_one(
         validated_config = {}
 
     # Status remains as reconciler set it (loaded or stale-fallback).
-    # --- Handler validation (R7) ---
+
     init_hook_val: Callable[..., Any] | None = None
     event_handlers_val: dict[type[BaseEvent], Callable[..., Any]] = {}
     if validated_manifest.source_format == "tachikoma" and (
@@ -395,7 +397,6 @@ def _discover_one(
                 plugin_dir=plugin_dir,
             )
 
-    # --- Provider validation ---
     session_providers: list[ContextProvider] = []
     message_providers: list[MessageContextProvider] = []
     if validated_manifest.source_format == "tachikoma" and validated_manifest.context_providers:
