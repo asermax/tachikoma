@@ -229,6 +229,23 @@ def _validate_handlers(
     return init_hook, event_handlers
 
 
+def _find_concrete_subclasses(
+    module: types.ModuleType,
+    base_classes: tuple[type, ...],
+) -> list[type]:
+    """Find concrete (non-abstract) subclasses of *base_classes* in *module*."""
+    found: list[type] = []
+    for attr_name in dir(module):
+        attr = getattr(module, attr_name)
+        if not inspect.isclass(attr):
+            continue
+        if inspect.isabstract(attr):
+            continue
+        if issubclass(attr, base_classes):
+            found.append(attr)
+    return found
+
+
 def _validate_providers(
     manifest: PluginManifest,
     plugin_dir: Path,
@@ -258,15 +275,9 @@ def _validate_providers(
         module_key = f"tachikoma_plugin.{alias}.context_providers.{module_name}"
         module = _import_handler_module(provider_path, module_key)
 
-        found_classes: list[type] = []
-        for attr_name in dir(module):
-            attr = getattr(module, attr_name)
-            if not inspect.isclass(attr):
-                continue
-            if inspect.isabstract(attr):
-                continue
-            if issubclass(attr, (ContextProvider, MessageContextProvider)):
-                found_classes.append(attr)
+        found_classes = _find_concrete_subclasses(
+            module, (ContextProvider, MessageContextProvider)
+        )
 
         if not found_classes:
             raise ValueError(
@@ -327,15 +338,7 @@ def _validate_post_processors(
         module_key = f"tachikoma_plugin.{alias}.post_processors.{module_name}"
         module = _import_handler_module(processor_path, module_key)
 
-        found_classes: list[type] = []
-        for attr_name in dir(module):
-            attr = getattr(module, attr_name)
-            if not inspect.isclass(attr):
-                continue
-            if inspect.isabstract(attr):
-                continue
-            if issubclass(attr, PostProcessor):
-                found_classes.append(attr)
+        found_classes = _find_concrete_subclasses(module, (PostProcessor,))
 
         if not found_classes:
             raise ValueError(
