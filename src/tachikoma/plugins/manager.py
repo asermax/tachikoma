@@ -26,7 +26,7 @@ from tachikoma.plugins.lifecycle import (
     init_plugin,
     unsubscribe_plugin_events,
 )
-from tachikoma.plugins.loader import LoadedPlugin, _validate_handlers
+from tachikoma.plugins.loader import LoadedPlugin, _validate_handlers, _validate_providers
 from tachikoma.plugins.manifest import parse_manifest
 from tachikoma.plugins.materializer import (
     MaterializeError,
@@ -238,6 +238,21 @@ class PluginManager:
                     error=f"Handler validation error: {exc}",
                 )
 
+        session_providers = []
+        message_providers = []
+        if manifest.source_format == "tachikoma" and manifest.context_providers:
+            try:
+                session_providers, message_providers = _validate_providers(
+                    manifest, staging, alias, plugin.config
+                )
+            except ValueError as exc:
+                _cleanup(staging)
+                return UpdateResult(
+                    alias=alias,
+                    status="failed",
+                    error=f"Provider validation error: {exc}",
+                )
+
         # URL content-hash comparison: skip if same content.
         if isinstance(source, UrlPluginSource):
             state = await self._state_repo.get(alias)
@@ -282,6 +297,8 @@ class PluginManager:
             plugin_dir=target,
             init_hook=init_hook_val,
             event_handlers=event_handlers_val,
+            context_providers=session_providers,
+            message_context_providers=message_providers,
         )
 
         reregister_error = await self._reregister_plugin(plugin, new_plugin)
@@ -497,6 +514,18 @@ class PluginManager:
                     "Handler validation failed during install: {}", exc
                 )
 
+        session_providers = []
+        message_providers = []
+        if manifest.source_format == "tachikoma" and manifest.context_providers:
+            try:
+                session_providers, message_providers = _validate_providers(
+                    manifest, target, resolved_alias, {}
+                )
+            except ValueError as exc:
+                _log.bind(plugin=resolved_alias).warning(
+                    "Provider validation failed during install: {}", exc
+                )
+
         plugin = LoadedPlugin(
             alias=resolved_alias,
             source=source,
@@ -506,6 +535,8 @@ class PluginManager:
             plugin_dir=target,
             init_hook=init_hook_val,
             event_handlers=event_handlers_val,
+            context_providers=session_providers,
+            message_context_providers=message_providers,
         )
         self._loaded[resolved_alias] = plugin
 

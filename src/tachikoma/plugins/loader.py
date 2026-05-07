@@ -18,6 +18,7 @@ from typing import TYPE_CHECKING, Any, Literal
 
 from loguru import logger
 
+from tachikoma.per_message_pre_processing import MessageContextProvider
 from tachikoma.plugins.config_schema import ConfigDiagnostic, validate_config
 from tachikoma.plugins.manifest import (
     PluginManifest,
@@ -26,13 +27,12 @@ from tachikoma.plugins.manifest import (
 )
 from tachikoma.plugins.reconciler import ReconcileOutcome, ReconciliationReport
 from tachikoma.plugins.registry import get_event_type
+from tachikoma.pre_processing import ContextProvider
 
 if TYPE_CHECKING:
     from bubus import BaseEvent
 
-    from tachikoma.per_message_pre_processing import MessageContextProvider
     from tachikoma.plugins.sources import PluginSource
-    from tachikoma.pre_processing import ContextProvider
 
 _log = logger.bind(component="plugins")
 
@@ -221,6 +221,74 @@ def _validate_handlers(
     return init_hook, event_handlers
 
 
+def _validate_providers(
+    manifest: PluginManifest,
+    plugin_dir: Path,
+    alias: str,
+    validated_config: dict[str, Any],
+) -> tuple[list[ContextProvider], list[MessageContextProvider]]:
+    """Validate and instantiate context providers declared in the manifest.
+
+    For each entry in ``manifest.context_providers``, imports the module,
+    discovers concrete provider classes, validates constructor signatures,
+    and instantiates with ``config=validated_config``.
+
+    Returns ``(session_providers, message_providers)`` on success.
+    Raises ``ValueError`` on any validation failure.
+    """
+    if not manifest.context_providers:
+        return ([], [])
+
+    session_providers: list[ContextProvider] = []
+    message_providers: list[MessageContextProvider] = []
+
+    for _name, module_name in manifest.context_providers.items():
+        provider_path = plugin_dir / "context_providers" / f"{module_name}.py"
+        if not provider_path.exists():
+            raise ValueError(f"Provider module file not found: {provider_path}")
+
+        module_key = f"tachikoma_plugin.{alias}.context_providers.{module_name}"
+        module = _import_handler_module(provider_path, module_key)
+
+        found_classes: list[type] = []
+        for attr_name in dir(module):
+            attr = getattr(module, attr_name)
+            if not inspect.isclass(attr):
+                continue
+            if inspect.isabstract(attr):
+                continue
+            if issubclass(attr, (ContextProvider, MessageContextProvider)):
+                found_classes.append(attr)
+
+        if not found_classes:
+            raise ValueError(
+                f"No concrete class implementing ContextProvider or "
+                f"MessageContextProvider found in module '{module_name}'"
+            )
+
+        for cls in found_classes:
+            sig = inspect.signature(cls.__init__)
+            if "config" not in sig.parameters:
+                raise ValueError(
+                    f"Provider class '{cls.__name__}' __init__ must accept "
+                    f"'config' as a keyword argument"
+                )
+
+            try:
+                instance = cls(config=validated_config)
+            except TypeError as exc:
+                raise ValueError(
+                    f"Provider class '{cls.__name__}' failed to instantiate: {exc}"
+                ) from exc
+
+            if issubclass(cls, ContextProvider):
+                session_providers.append(instance)
+            if issubclass(cls, MessageContextProvider):
+                message_providers.append(instance)
+
+    return (session_providers, message_providers)
+
+
 def _discover_one(
     outcome: ReconcileOutcome,
     install_dir: Path,
@@ -327,6 +395,25 @@ def _discover_one(
                 plugin_dir=plugin_dir,
             )
 
+    # --- Provider validation ---
+    session_providers: list[ContextProvider] = []
+    message_providers: list[MessageContextProvider] = []
+    if validated_manifest.source_format == "tachikoma" and validated_manifest.context_providers:
+        try:
+            session_providers, message_providers = _validate_providers(
+                validated_manifest, plugin_dir, alias, validated_config
+            )
+        except ValueError as exc:
+            _log.bind(plugin=alias).warning("Provider validation failed: {}", exc)
+            return LoadedPlugin(
+                alias=alias,
+                source=source,
+                manifest=validated_manifest,
+                status="failed",
+                diagnostic=f"Provider validation error: {exc}",
+                plugin_dir=plugin_dir,
+            )
+
     return LoadedPlugin(
         alias=alias,
         source=source,
@@ -337,4 +424,6 @@ def _discover_one(
         config=validated_config,
         init_hook=init_hook_val,
         event_handlers=event_handlers_val,
+        context_providers=session_providers,
+        message_context_providers=message_providers,
     )
