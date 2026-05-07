@@ -1512,3 +1512,150 @@ class TestMakeBashDenyHook:
         result = await self._run_hook(deny_hook, 'grep -E "pattern1|pattern2" file.txt')
 
         assert result == {}
+
+
+class TestPhaseAttribute:
+    """Tests for PostProcessor.phase class attribute and register() sentinel."""
+
+    def test_default_phase_is_main(self) -> None:
+        """AC: PostProcessor.phase defaults to MAIN_PHASE."""
+
+        class _DefaultProcessor(PostProcessor):
+            async def process(self, session: Session, *, extra: dict | None = None) -> None:
+                pass
+
+        assert _DefaultProcessor.phase == MAIN_PHASE
+        assert _DefaultProcessor().phase == MAIN_PHASE
+
+    def test_subclass_can_override_phase(self) -> None:
+        """AC: Subclasses can override phase with a different constant."""
+
+        class _PreFinalizeProcessor(PostProcessor):
+            phase = PRE_FINALIZE_PHASE
+
+            async def process(self, session: Session, *, extra: dict | None = None) -> None:
+                pass
+
+        assert _PreFinalizeProcessor.phase == PRE_FINALIZE_PHASE
+        assert _PreFinalizeProcessor().phase == PRE_FINALIZE_PHASE
+
+    def test_finalize_phase_override(self) -> None:
+        """AC: Subclasses can override phase with FINALIZE_PHASE."""
+
+        class _FinalizeProcessor(PostProcessor):
+            phase = FINALIZE_PHASE
+
+            async def process(self, session: Session, *, extra: dict | None = None) -> None:
+                pass
+
+        assert _FinalizeProcessor.phase == FINALIZE_PHASE
+
+    def test_register_reads_class_attribute_when_no_phase_kwarg(self) -> None:
+        """AC: register() without phase kwarg reads processor's class attribute."""
+
+        class _PreFinalizeProcessor(PostProcessor):
+            phase = PRE_FINALIZE_PHASE
+
+            async def process(self, session: Session, *, extra: dict | None = None) -> None:
+                pass
+
+        pipeline = PostProcessingPipeline(_make_mock_registry())
+        processor = _PreFinalizeProcessor()
+        pipeline.register(processor)
+
+        assert processor in pipeline._phases[PRE_FINALIZE_PHASE]
+        assert len(pipeline._phases[MAIN_PHASE]) == 0
+
+    def test_register_explicit_phase_overrides_class_attribute(self) -> None:
+        """AC: Explicit phase= kwarg takes precedence over class attribute."""
+
+        class _PreFinalizeProcessor(PostProcessor):
+            phase = PRE_FINALIZE_PHASE
+
+            async def process(self, session: Session, *, extra: dict | None = None) -> None:
+                pass
+
+        pipeline = PostProcessingPipeline(_make_mock_registry())
+        processor = _PreFinalizeProcessor()
+        pipeline.register(processor, phase=FINALIZE_PHASE)
+
+        assert processor not in pipeline._phases[PRE_FINALIZE_PHASE]
+        assert processor in pipeline._phases[FINALIZE_PHASE]
+
+    def test_register_default_phase_without_class_override(self) -> None:
+        """AC: Processor with default phase goes to main when no kwarg."""
+
+        class _MainProcessor(PostProcessor):
+            async def process(self, session: Session, *, extra: dict | None = None) -> None:
+                pass
+
+        pipeline = PostProcessingPipeline(_make_mock_registry())
+        processor = _MainProcessor()
+        pipeline.register(processor)
+
+        assert processor in pipeline._phases[MAIN_PHASE]
+
+    def test_invalid_phase_still_raises(self) -> None:
+        """AC: Invalid phase raises ValueError regardless of class attribute."""
+
+        class _DefaultProcessor(PostProcessor):
+            async def process(self, session: Session, *, extra: dict | None = None) -> None:
+                pass
+
+        pipeline = PostProcessingPipeline(_make_mock_registry())
+        processor = _DefaultProcessor()
+
+        with pytest.raises(ValueError, match="Invalid phase 'bad'"):
+            pipeline.register(processor, phase="bad")
+
+
+class TestUnregister:
+    """Tests for PostProcessingPipeline.unregister()."""
+
+    def test_removes_registered_processor(self) -> None:
+        """AC: unregister() removes a processor from its phase list."""
+        processor = _make_mock_processor()
+        pipeline = PostProcessingPipeline(_make_mock_registry())
+        pipeline.register(processor)
+
+        assert processor in pipeline._phases[MAIN_PHASE]
+        pipeline.unregister(processor)
+        assert processor not in pipeline._phases[MAIN_PHASE]
+
+    def test_removes_processor_from_correct_phase(self) -> None:
+        """AC: unregister() removes from the right phase, not all phases."""
+        main_proc = _make_mock_processor()
+        pre_fin_proc = _make_mock_processor()
+        pipeline = PostProcessingPipeline(_make_mock_registry())
+        pipeline.register(main_proc, phase=MAIN_PHASE)
+        pipeline.register(pre_fin_proc, phase=PRE_FINALIZE_PHASE)
+
+        pipeline.unregister(main_proc)
+
+        assert main_proc not in pipeline._phases[MAIN_PHASE]
+        assert pre_fin_proc in pipeline._phases[PRE_FINALIZE_PHASE]
+
+    def test_noop_for_unknown_processor(self) -> None:
+        """AC: unregister() with unknown processor is a safe no-op."""
+        processor = _make_mock_processor()
+        pipeline = PostProcessingPipeline(_make_mock_registry())
+
+        # Should not raise
+        pipeline.unregister(processor)
+
+    def test_removes_from_correct_phase_when_class_attribute_used(self) -> None:
+        """AC: unregister() works when processor was registered via class attribute."""
+
+        class _PreFinalizeProcessor(PostProcessor):
+            phase = PRE_FINALIZE_PHASE
+
+            async def process(self, session: Session, *, extra: dict | None = None) -> None:
+                pass
+
+        pipeline = PostProcessingPipeline(_make_mock_registry())
+        processor = _PreFinalizeProcessor()
+        pipeline.register(processor)
+
+        assert processor in pipeline._phases[PRE_FINALIZE_PHASE]
+        pipeline.unregister(processor)
+        assert processor not in pipeline._phases[PRE_FINALIZE_PHASE]

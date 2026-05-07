@@ -6,6 +6,7 @@ other post-conversation handlers.
 """
 
 import asyncio
+import contextlib
 import json
 import re
 from abc import ABC, abstractmethod
@@ -68,6 +69,7 @@ MAIN_PHASE = "main"
 PRE_FINALIZE_PHASE = "pre_finalize"
 FINALIZE_PHASE = "finalize"
 _VALID_PHASES = frozenset({MAIN_PHASE, PRE_FINALIZE_PHASE, FINALIZE_PHASE})
+_UNSET = object()
 
 
 class PostProcessor(ABC):
@@ -78,6 +80,7 @@ class PostProcessor(ABC):
     SDK coupling is inherited.
     """
 
+    phase: str = MAIN_PHASE
     _status_message: str = "Processing..."
 
     def status_message(self) -> str:
@@ -358,22 +361,39 @@ class PostProcessingPipeline:
             and session.processed_at >= last_message_time
         )
 
-    def register(self, processor: PostProcessor, phase: str = MAIN_PHASE) -> None:
+    def register(self, processor: PostProcessor, phase: str | object = _UNSET) -> None:
         """Register a processor to run on pipeline execution.
 
         Args:
             processor: The processor to register.
             phase: The phase to run this processor in. Must be "main", "pre_finalize",
-                or "finalize".
-                Defaults to "main" for backward compatibility.
+                or "finalize". When omitted, reads the processor's ``phase`` class
+                attribute (defaults to ``"main"``).
 
         Raises:
             ValueError: If phase is not a valid phase identifier.
         """
+        if phase is _UNSET:
+            phase = processor.phase
+        assert isinstance(phase, str)
         if phase not in _VALID_PHASES:
             valid_list = ", ".join(sorted(_VALID_PHASES))
             raise ValueError(f"Invalid phase '{phase}'. Valid phases: {valid_list}")
         self._phases[phase].append(processor)
+
+    def unregister(self, processor: PostProcessor) -> None:
+        """Unregister a processor from the pipeline.
+
+        Safe no-op if the processor is not in any phase list.
+        No lock needed — lifecycle events are serialized by the
+        plugin manager's async lock.
+
+        Args:
+            processor: The processor to unregister.
+        """
+        for phase_list in self._phases.values():
+            with contextlib.suppress(ValueError):
+                phase_list.remove(processor)
 
     async def run(
         self,
