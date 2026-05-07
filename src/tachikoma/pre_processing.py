@@ -126,6 +126,8 @@ class PreProcessingPipeline:
         """Unregister a provider from the pipeline.
 
         Safe no-op if the provider is not in the list.
+        No lock needed — lifecycle events are serialized by the
+        plugin manager's async lock.
 
         Args:
             provider: The provider to unregister.
