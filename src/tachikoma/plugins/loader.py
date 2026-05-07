@@ -339,8 +339,7 @@ def _validate_post_processors(
 
         if not found_classes:
             raise ValueError(
-                f"No concrete class implementing PostProcessor "
-                f"found in module '{module_name}'"
+                f"No concrete class implementing PostProcessor found in module '{module_name}'"
             )
 
         for cls in found_classes:
@@ -443,8 +442,6 @@ def _discover_one(
     # Log ignored CC contributions (AC-MP-3).
     if validated_manifest.ignored_cc_contributions:
         log_ignored_cc_contributions(alias, validated_manifest)
-
-
 
     if validated_manifest.config_schema:
         user_values = source.config if source.config is not None else {}

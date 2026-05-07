@@ -81,7 +81,9 @@ async def plugins_hook(ctx: BootstrapContext) -> None:
     agent_defaults = agent_defaults_from_settings(settings)
 
     loaded_plugins = discover(
-        install_dir, report, settings.plugins,
+        install_dir,
+        report,
+        settings.plugins,
         agent_defaults=agent_defaults,
     )
 
