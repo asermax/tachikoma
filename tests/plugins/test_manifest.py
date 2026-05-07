@@ -425,15 +425,18 @@ class TestLogIgnoredCcContributions:
                 "monitors",
                 "themes",
                 "outputStyles",
+                "context_providers",
             )
         }
         # mcpServers is a dict, not list
         extra["mcpServers"] = {"srv": {"command": "n"}}
+        # context_providers is a dict, not list
+        extra["context_providers"] = {"calendar": "calendar"}
         _write_cc(plugin_dir, extra=extra)
 
         result = parse_manifest(plugin_dir)
         assert result is not None
-        assert len(result.ignored_cc_contributions) == 8
+        assert len(result.ignored_cc_contributions) == 9
 
 
 class TestPluginManifest:

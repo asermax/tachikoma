@@ -44,6 +44,7 @@ _CC_CONTRIBUTION_TYPES: tuple[str, ...] = (
     "monitors",
     "themes",
     "outputStyles",
+    "context_providers",
 )
 
 
@@ -129,6 +130,7 @@ class TachikomaManifest(BaseModel):
     config: dict[str, ConfigFieldSchema] = Field(default_factory=dict)
     hooks: dict[str, str] = Field(default_factory=dict)
     events: dict[str, str] = Field(default_factory=dict)
+    context_providers: dict[str, str] = Field(default_factory=dict)
 
     # -- validators ----------------------------------------------------------
 
@@ -142,7 +144,7 @@ class TachikomaManifest(BaseModel):
     def _validate_skills(cls, v: list[str]) -> list[str]:
         return _validate_skill_paths(v)
 
-    @field_validator("hooks", "events", mode="after")
+    @field_validator("hooks", "events", "context_providers", mode="after")
     @classmethod
     def _validate_handler_names(cls, v: dict[str, str]) -> dict[str, str]:
         return _validate_bare_module_names(v)
@@ -195,6 +197,7 @@ class PluginManifest:
     config_schema: dict[str, ConfigFieldSchema] = field(default_factory=dict)
     hooks: dict[str, str] = field(default_factory=dict)
     events: dict[str, str] = field(default_factory=dict)
+    context_providers: dict[str, str] = field(default_factory=dict)
 
 
 # ---------------------------------------------------------------------------
@@ -274,6 +277,7 @@ def _parse_native(plugin_dir: Path, manifest_path: Path) -> PluginManifest:
         config_schema=parsed.config,
         hooks=parsed.hooks,
         events=parsed.events,
+        context_providers=parsed.context_providers,
     )
 
 

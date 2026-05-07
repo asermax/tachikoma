@@ -30,7 +30,9 @@ from tachikoma.plugins.registry import get_event_type
 if TYPE_CHECKING:
     from bubus import BaseEvent
 
+    from tachikoma.per_message_pre_processing import MessageContextProvider
     from tachikoma.plugins.sources import PluginSource
+    from tachikoma.pre_processing import ContextProvider
 
 _log = logger.bind(component="plugins")
 
@@ -73,6 +75,8 @@ class LoadedPlugin:
     init_hook: Callable[..., Any] | None = None
     event_handlers: dict[type[BaseEvent], Callable[..., Any]] = field(default_factory=dict)
     event_wrappers: list = field(default_factory=list)
+    context_providers: list[ContextProvider] = field(default_factory=list)
+    message_context_providers: list[MessageContextProvider] = field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------
