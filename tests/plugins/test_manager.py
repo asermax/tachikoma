@@ -27,6 +27,7 @@ from tachikoma.plugins.sources import GitPluginSource, LocalPluginSource, UrlPlu
 from tachikoma.plugins.state import PluginState
 from tachikoma.plugins.updater import UpdateResult
 
+from .conftest import make_agent_defaults
 from .conftest import make_plugin as _make_plugin
 
 # ---------------------------------------------------------------------------
@@ -57,6 +58,7 @@ def _make_manager(
         workspace_path=workspace,
         loaded=loaded or {},
         state_repo=state_repo,
+        agent_defaults=make_agent_defaults(workspace),
     )
 
 

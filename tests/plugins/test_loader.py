@@ -5,16 +5,27 @@ Covers:
 - Manifest validation: AC-MP-8 (missing skill dir), AC-MP-6 (no manifest)
 - Per-plugin failure isolation (R9)
 - Config validation during discovery (R3, R4)
+- Post-processor validation and discovery (DLT-050)
 """
 
 from __future__ import annotations
 
 from pathlib import Path
 
-from tachikoma.plugins.loader import discover
+from tachikoma.plugins.loader import (
+    _validate_post_processors,
+    discover,
+)
+from tachikoma.plugins.manifest import PluginManifest
 from tachikoma.plugins.reconciler import ReconcileOutcome, ReconciliationReport
 from tachikoma.plugins.sources import LocalPluginSource
+from tachikoma.post_processing import (
+    MAIN_PHASE,
+    PRE_FINALIZE_PHASE,
+    PostProcessor,
+)
 
+from .conftest import make_agent_defaults
 from .conftest import write_native_manifest as _write_native_manifest
 
 
@@ -66,7 +77,7 @@ class TestDiscover:
             "gamma": source,
         }
 
-        loaded = discover(install_dir, report, plugins)
+        loaded = discover(install_dir, report, plugins, make_agent_defaults(tmp_path))
 
         by_alias = {p.alias: p for p in loaded}
         assert by_alias["alpha"].status == "loaded"
@@ -95,7 +106,7 @@ class TestDiscover:
         )
         plugins = {"test-plugin": source}
 
-        loaded = discover(install_dir, report, plugins)
+        loaded = discover(install_dir, report, plugins, make_agent_defaults(tmp_path))
 
         assert len(loaded) == 1
         plugin = loaded[0]
@@ -121,7 +132,7 @@ class TestDiscover:
         )
         plugins = {"test-plugin": source}
 
-        loaded = discover(install_dir, report, plugins)
+        loaded = discover(install_dir, report, plugins, make_agent_defaults(tmp_path))
 
         assert loaded[0].status == "loaded"
         assert loaded[0].manifest is not None
@@ -140,7 +151,7 @@ class TestDiscover:
         )
         plugins = {"empty-plugin": source}
 
-        loaded = discover(install_dir, report, plugins)
+        loaded = discover(install_dir, report, plugins, make_agent_defaults(tmp_path))
 
         assert loaded[0].status == "failed"
         assert loaded[0].manifest is None
@@ -165,7 +176,7 @@ class TestDiscover:
         )
         plugins = {"bad-plugin": source}
 
-        loaded = discover(install_dir, report, plugins)
+        loaded = discover(install_dir, report, plugins, make_agent_defaults(tmp_path))
 
         assert loaded[0].status == "failed"
         assert loaded[0].diagnostic == "Source unreachable"
@@ -192,7 +203,7 @@ class TestDiscover:
         )
         plugins = {"good": source, "bad": source}
 
-        loaded = discover(install_dir, report, plugins)
+        loaded = discover(install_dir, report, plugins, make_agent_defaults(tmp_path))
 
         by_alias = {p.alias: p for p in loaded}
         assert by_alias["good"].status == "loaded"
@@ -212,7 +223,7 @@ class TestDiscover:
         )
         plugins = {"test": source}
 
-        loaded = discover(install_dir, report, plugins)
+        loaded = discover(install_dir, report, plugins, make_agent_defaults(tmp_path))
         plugin = loaded[0]
 
         # Starts empty.
@@ -252,7 +263,7 @@ class TestConfigValidation:
         )
         plugins = {"weather": source}
 
-        loaded = discover(install_dir, report, plugins)
+        loaded = discover(install_dir, report, plugins, make_agent_defaults(tmp_path))
 
         plugin = loaded[0]
         assert plugin.status == "loaded"
@@ -276,7 +287,7 @@ class TestConfigValidation:
         )
         plugins = {"weather": source}
 
-        loaded = discover(install_dir, report, plugins)
+        loaded = discover(install_dir, report, plugins, make_agent_defaults(tmp_path))
 
         plugin = loaded[0]
         assert plugin.status == "failed"
@@ -301,7 +312,7 @@ class TestConfigValidation:
         )
         plugins = {"weather": source}
 
-        loaded = discover(install_dir, report, plugins)
+        loaded = discover(install_dir, report, plugins, make_agent_defaults(tmp_path))
 
         plugin = loaded[0]
         assert plugin.status == "failed"
@@ -327,7 +338,7 @@ class TestConfigValidation:
         )
         plugins = {"weather": source}
 
-        loaded = discover(install_dir, report, plugins)
+        loaded = discover(install_dir, report, plugins, make_agent_defaults(tmp_path))
 
         plugin = loaded[0]
         assert plugin.status == "loaded"
@@ -351,7 +362,7 @@ class TestConfigValidation:
         )
         plugins = {"weather": source}
 
-        loaded = discover(install_dir, report, plugins)
+        loaded = discover(install_dir, report, plugins, make_agent_defaults(tmp_path))
 
         plugin = loaded[0]
         assert plugin.status == "loaded"
@@ -369,7 +380,7 @@ class TestConfigValidation:
         )
         plugins = {"simple": source}
 
-        loaded = discover(install_dir, report, plugins)
+        loaded = discover(install_dir, report, plugins, make_agent_defaults(tmp_path))
 
         plugin = loaded[0]
         assert plugin.status == "loaded"
@@ -393,7 +404,7 @@ class TestConfigValidation:
         )
         plugins = {"cc-plugin": source}
 
-        loaded = discover(install_dir, report, plugins)
+        loaded = discover(install_dir, report, plugins, make_agent_defaults(tmp_path))
 
         plugin = loaded[0]
         assert plugin.status == "loaded"
@@ -420,7 +431,7 @@ class TestConfigValidation:
         )
         plugins = {"weather": source}
 
-        loaded = discover(install_dir, report, plugins)
+        loaded = discover(install_dir, report, plugins, make_agent_defaults(tmp_path))
 
         plugin = loaded[0]
         assert plugin.status == "loaded"
@@ -446,7 +457,7 @@ class TestConfigValidation:
         )
         plugins = {"weather": source}
 
-        loaded = discover(install_dir, report, plugins)
+        loaded = discover(install_dir, report, plugins, make_agent_defaults(tmp_path))
 
         plugin = loaded[0]
         assert plugin.status == "loaded"
@@ -471,8 +482,360 @@ class TestConfigValidation:
         )
         plugins = {"weather": source}
 
-        loaded = discover(install_dir, report, plugins)
+        loaded = discover(install_dir, report, plugins, make_agent_defaults(tmp_path))
 
         plugin = loaded[0]
         assert plugin.status == "loaded"
         assert plugin.config == {"api_key": ""}
+
+
+# ---------------------------------------------------------------------------
+# Post-processor validation tests
+# ---------------------------------------------------------------------------
+
+_BASIC_PROCESSOR_CODE = '''\
+from tachikoma.post_processing import PostProcessor, MAIN_PHASE
+
+class BasicProcessor(PostProcessor):
+    phase = MAIN_PHASE
+
+    def __init__(self, *, config):
+        self.config = config
+
+    async def process(self, session, *, extra=None):
+        pass
+'''
+
+_PROCESSOR_PRE_FINALIZE_CODE = '''\
+from tachikoma.post_processing import PostProcessor, PRE_FINALIZE_PHASE
+
+class PreFinalizeProcessor(PostProcessor):
+    phase = PRE_FINALIZE_PHASE
+
+    def __init__(self, *, config):
+        self.config = config
+
+    async def process(self, session, *, extra=None):
+        pass
+'''
+
+_PROCESSOR_WITH_AGENT_DEFAULTS_CODE = '''\
+from tachikoma.post_processing import PostProcessor, MAIN_PHASE
+
+class SdkProcessor(PostProcessor):
+    phase = MAIN_PHASE
+
+    def __init__(self, *, config, agent_defaults):
+        self.config = config
+        self.agent_defaults = agent_defaults
+
+    async def process(self, session, *, extra=None):
+        pass
+'''
+
+_MULTI_PROCESSOR_CODE = '''\
+from tachikoma.post_processing import PostProcessor, MAIN_PHASE, PRE_FINALIZE_PHASE
+
+class FirstProcessor(PostProcessor):
+    phase = MAIN_PHASE
+
+    def __init__(self, *, config):
+        self.config = config
+
+    async def process(self, session, *, extra=None):
+        pass
+
+class SecondProcessor(PostProcessor):
+    phase = PRE_FINALIZE_PHASE
+
+    def __init__(self, *, config):
+        self.config = config
+
+    async def process(self, session, *, extra=None):
+        pass
+'''
+
+_NO_POST_PROCESSOR_CODE = '''\
+def some_function():
+    pass
+'''
+
+_INVALID_PHASE_CODE = '''\
+from tachikoma.post_processing import PostProcessor
+
+class BadPhaseProcessor(PostProcessor):
+    phase = "custom_phase"
+
+    def __init__(self, *, config):
+        self.config = config
+
+    async def process(self, session, *, extra=None):
+        pass
+'''
+
+_NO_CONFIG_PARAM_CODE = '''\
+from tachikoma.post_processing import PostProcessor, MAIN_PHASE
+
+class NoConfigProcessor(PostProcessor):
+    phase = MAIN_PHASE
+
+    def __init__(self):
+        pass
+
+    async def process(self, session, *, extra=None):
+        pass
+'''
+
+
+def _write_processor(base: Path, module_name: str, code: str) -> Path:
+    """Write a post-processor module file into post_processors/ directory."""
+    processor_dir = base / "post_processors"
+    processor_dir.mkdir(parents=True, exist_ok=True)
+    path = processor_dir / f"{module_name}.py"
+    path.write_text(code)
+    return path
+
+
+def _make_manifest(
+    *,
+    post_processors: dict[str, str] | None = None,
+) -> PluginManifest:
+    """Create a PluginManifest for testing post-processor validation."""
+    return PluginManifest(
+        name="test",
+        version="1.0.0",
+        description="Test",
+        source_format="tachikoma",
+        skill_dirs=[],
+        post_processors=post_processors or {},
+    )
+
+
+class TestValidatePostProcessors:
+    """Post-processor validation via _validate_post_processors()."""
+
+    def test_valid_basic_processor(self, tmp_path: Path) -> None:
+        """Valid PostProcessor subclass is accepted and instantiated."""
+        plugin_dir = tmp_path / "plugins" / "test"
+        _write_processor(plugin_dir, "basic", _BASIC_PROCESSOR_CODE)
+        manifest = _make_manifest(post_processors={"basic": "basic"})
+
+        result = _validate_post_processors(
+            manifest, plugin_dir, "test", {}, make_agent_defaults(tmp_path)
+        )
+
+        assert len(result) == 1
+        assert isinstance(result[0], PostProcessor)
+        assert result[0].config == {}
+        assert result[0].phase == MAIN_PHASE
+
+    def test_valid_processor_with_agent_defaults(self, tmp_path: Path) -> None:
+        """Processor accepting agent_defaults receives the AgentDefaults instance."""
+        plugin_dir = tmp_path / "plugins" / "test"
+        _write_processor(plugin_dir, "sdk", _PROCESSOR_WITH_AGENT_DEFAULTS_CODE)
+        manifest = _make_manifest(post_processors={"sdk": "sdk"})
+
+        ad = make_agent_defaults(tmp_path)
+        result = _validate_post_processors(manifest, plugin_dir, "test", {}, ad)
+
+        assert len(result) == 1
+        assert result[0].agent_defaults is ad
+
+    def test_agent_defaults_not_passed_when_not_accepted(self, tmp_path: Path) -> None:
+        """Processor without agent_defaults param does not receive it (no TypeError)."""
+        plugin_dir = tmp_path / "plugins" / "test"
+        _write_processor(plugin_dir, "basic", _BASIC_PROCESSOR_CODE)
+        manifest = _make_manifest(post_processors={"basic": "basic"})
+
+        # Should succeed without TypeError
+        result = _validate_post_processors(
+            manifest, plugin_dir, "test", {}, make_agent_defaults(tmp_path)
+        )
+
+        assert len(result) == 1
+        assert not hasattr(result[0], "agent_defaults")
+
+    def test_multiple_classes_in_one_module(self, tmp_path: Path) -> None:
+        """Module with multiple PostProcessor subclasses discovers all."""
+        plugin_dir = tmp_path / "plugins" / "test"
+        _write_processor(plugin_dir, "multi", _MULTI_PROCESSOR_CODE)
+        manifest = _make_manifest(post_processors={"multi": "multi"})
+
+        result = _validate_post_processors(
+            manifest, plugin_dir, "test", {}, make_agent_defaults(tmp_path)
+        )
+
+        assert len(result) == 2
+        phases = {p.phase for p in result}
+        assert phases == {MAIN_PHASE, PRE_FINALIZE_PHASE}
+
+    def test_module_file_not_found(self, tmp_path: Path) -> None:
+        """Missing post_processors/<name>.py raises ValueError."""
+        plugin_dir = tmp_path / "plugins" / "test"
+        manifest = _make_manifest(post_processors={"missing": "missing"})
+
+        try:
+            _validate_post_processors(
+                manifest, plugin_dir, "test", {}, make_agent_defaults(tmp_path)
+            )
+            assert False, "Should have raised ValueError"
+        except ValueError as exc:
+            assert "not found" in str(exc).lower()
+
+    def test_no_concrete_subclass(self, tmp_path: Path) -> None:
+        """Module with no concrete PostProcessor subclass raises ValueError."""
+        plugin_dir = tmp_path / "plugins" / "test"
+        _write_processor(plugin_dir, "empty", _NO_POST_PROCESSOR_CODE)
+        manifest = _make_manifest(post_processors={"empty": "empty"})
+
+        try:
+            _validate_post_processors(
+                manifest, plugin_dir, "test", {}, make_agent_defaults(tmp_path)
+            )
+            assert False, "Should have raised ValueError"
+        except ValueError as exc:
+            assert "No concrete class" in str(exc)
+
+    def test_invalid_phase_value(self, tmp_path: Path) -> None:
+        """Processor with invalid phase raises ValueError listing valid phases."""
+        plugin_dir = tmp_path / "plugins" / "test"
+        _write_processor(plugin_dir, "bad", _INVALID_PHASE_CODE)
+        manifest = _make_manifest(post_processors={"bad": "bad"})
+
+        try:
+            _validate_post_processors(
+                manifest, plugin_dir, "test", {}, make_agent_defaults(tmp_path)
+            )
+            assert False, "Should have raised ValueError"
+        except ValueError as exc:
+            msg = str(exc)
+            assert "custom_phase" in msg
+            assert "main" in msg or "finalize" in msg
+
+    def test_missing_config_parameter(self, tmp_path: Path) -> None:
+        """Processor without config param raises ValueError."""
+        plugin_dir = tmp_path / "plugins" / "test"
+        _write_processor(plugin_dir, "noconfig", _NO_CONFIG_PARAM_CODE)
+        manifest = _make_manifest(post_processors={"noconfig": "noconfig"})
+
+        try:
+            _validate_post_processors(
+                manifest, plugin_dir, "test", {}, make_agent_defaults(tmp_path)
+            )
+            assert False, "Should have raised ValueError"
+        except ValueError as exc:
+            assert "config" in str(exc)
+            assert "keyword argument" in str(exc)
+
+    def test_empty_manifest_returns_empty_list(self, tmp_path: Path) -> None:
+        """Manifest with no post_processors returns empty list."""
+        manifest = _make_manifest(post_processors=None)
+        result = _validate_post_processors(
+            manifest, tmp_path, "test", {}, make_agent_defaults(tmp_path)
+        )
+        assert result == []
+
+    def test_config_dict_passed_to_processor(self, tmp_path: Path) -> None:
+        """Validated config is passed through to processor constructor."""
+        plugin_dir = tmp_path / "plugins" / "test"
+        _write_processor(plugin_dir, "basic", _BASIC_PROCESSOR_CODE)
+        manifest = _make_manifest(post_processors={"basic": "basic"})
+
+        config = {"api_key": "sk-test", "timeout": 30}
+        result = _validate_post_processors(
+            manifest, plugin_dir, "test", config, make_agent_defaults(tmp_path)
+        )
+
+        assert len(result) == 1
+        assert result[0].config == config
+
+
+class TestDiscoverPostProcessors:
+    """discover() threads agent_defaults and populates post_processors."""
+
+    def test_discover_populates_post_processors(self, tmp_path: Path) -> None:
+        """Plugin with post_processors in manifest populates LoadedPlugin.post_processors."""
+        install_dir = tmp_path / "plugins"
+        plugin_dir = install_dir / "test"
+        _write_processor(plugin_dir, "basic", _BASIC_PROCESSOR_CODE)
+        _write_native_manifest(
+            plugin_dir,
+            name="test",
+            post_processors={"basic": "basic"},
+        )
+
+        source = LocalPluginSource(path=tmp_path / "src")
+        report = ReconciliationReport(
+            outcomes=[ReconcileOutcome(alias="test", status="loaded", diagnostic=None)]
+        )
+
+        loaded = discover(
+            install_dir, report, {"test": source}, make_agent_defaults(tmp_path)
+        )
+
+        assert loaded[0].status == "loaded"
+        assert len(loaded[0].post_processors) == 1
+        assert isinstance(loaded[0].post_processors[0], PostProcessor)
+
+    def test_discover_no_post_processors_empty_list(self, tmp_path: Path) -> None:
+        """Plugin without post_processors has empty list."""
+        install_dir = tmp_path / "plugins"
+        plugin_dir = install_dir / "test"
+        _write_native_manifest(plugin_dir, name="test")
+
+        source = LocalPluginSource(path=tmp_path / "src")
+        report = ReconciliationReport(
+            outcomes=[ReconcileOutcome(alias="test", status="loaded", diagnostic=None)]
+        )
+
+        loaded = discover(
+            install_dir, report, {"test": source}, make_agent_defaults(tmp_path)
+        )
+
+        assert loaded[0].status == "loaded"
+        assert loaded[0].post_processors == []
+
+    def test_discover_invalid_post_processor_fails_plugin(self, tmp_path: Path) -> None:
+        """Invalid post-processor causes plugin to fail with diagnostic."""
+        install_dir = tmp_path / "plugins"
+        plugin_dir = install_dir / "test"
+        # Declare a post-processor but don't create the module file
+        _write_native_manifest(
+            plugin_dir,
+            name="test",
+            post_processors={"missing": "missing"},
+        )
+
+        source = LocalPluginSource(path=tmp_path / "src")
+        report = ReconciliationReport(
+            outcomes=[ReconcileOutcome(alias="test", status="loaded", diagnostic=None)]
+        )
+
+        loaded = discover(
+            install_dir, report, {"test": source}, make_agent_defaults(tmp_path)
+        )
+
+        assert loaded[0].status == "failed"
+        assert "Post-processor" in loaded[0].diagnostic
+
+    def test_discover_agent_defaults_threaded_to_processor(self, tmp_path: Path) -> None:
+        """agent_defaults is threaded through discover() to processors that accept it."""
+        install_dir = tmp_path / "plugins"
+        plugin_dir = install_dir / "test"
+        _write_processor(plugin_dir, "sdk", _PROCESSOR_WITH_AGENT_DEFAULTS_CODE)
+        _write_native_manifest(
+            plugin_dir,
+            name="test",
+            post_processors={"sdk": "sdk"},
+        )
+
+        source = LocalPluginSource(path=tmp_path / "src")
+        report = ReconciliationReport(
+            outcomes=[ReconcileOutcome(alias="test", status="loaded", diagnostic=None)]
+        )
+
+        ad = make_agent_defaults(tmp_path)
+        loaded = discover(install_dir, report, {"test": source}, ad)
+
+        assert loaded[0].status == "loaded"
+        assert loaded[0].post_processors[0].agent_defaults is ad

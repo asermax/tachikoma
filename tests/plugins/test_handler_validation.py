@@ -18,6 +18,7 @@ from tachikoma.plugins.manifest import TachikomaManifest
 from tachikoma.plugins.reconciler import ReconcileOutcome, ReconciliationReport
 from tachikoma.plugins.sources import LocalPluginSource
 
+from .conftest import make_agent_defaults
 from .conftest import write_native_manifest as _write_native_manifest
 
 
@@ -53,7 +54,7 @@ class TestHandlerValidationSuccess:
         report = ReconciliationReport(
             outcomes=[ReconcileOutcome(alias="alpha", status="loaded", diagnostic=None)]
         )
-        loaded = discover(install_dir, report, {"alpha": source})
+        loaded = discover(install_dir, report, {"alpha": source}, make_agent_defaults(tmp_path))
         assert loaded[0].status == "loaded"
         assert loaded[0].init_hook is not None
         assert callable(loaded[0].init_hook)
@@ -73,7 +74,7 @@ class TestHandlerValidationSuccess:
         report = ReconciliationReport(
             outcomes=[ReconcileOutcome(alias="alpha", status="loaded", diagnostic=None)]
         )
-        loaded = discover(install_dir, report, {"alpha": source})
+        loaded = discover(install_dir, report, {"alpha": source}, make_agent_defaults(tmp_path))
         assert loaded[0].status == "loaded"
         assert len(loaded[0].event_handlers) == 1
 
@@ -94,7 +95,7 @@ class TestHandlerValidationSuccess:
         report = ReconciliationReport(
             outcomes=[ReconcileOutcome(alias="alpha", status="loaded", diagnostic=None)]
         )
-        loaded = discover(install_dir, report, {"alpha": source})
+        loaded = discover(install_dir, report, {"alpha": source}, make_agent_defaults(tmp_path))
         assert loaded[0].status == "loaded"
         assert loaded[0].init_hook is not None
         assert len(loaded[0].event_handlers) == 1
@@ -118,7 +119,7 @@ class TestHandlerValidationSuccess:
         report = ReconciliationReport(
             outcomes=[ReconcileOutcome(alias="alpha", status="loaded", diagnostic=None)]
         )
-        loaded = discover(install_dir, report, {"alpha": source})
+        loaded = discover(install_dir, report, {"alpha": source}, make_agent_defaults(tmp_path))
         assert loaded[0].status == "loaded"
         assert len(loaded[0].event_handlers) == 2
 
@@ -138,7 +139,7 @@ class TestCCPluginHooksIgnored:
         report = ReconciliationReport(
             outcomes=[ReconcileOutcome(alias="alpha", status="loaded", diagnostic=None)]
         )
-        loaded = discover(install_dir, report, {"alpha": source})
+        loaded = discover(install_dir, report, {"alpha": source}, make_agent_defaults(tmp_path))
         assert loaded[0].status == "loaded"
         assert loaded[0].init_hook is None
         assert "hooks" in loaded[0].manifest.ignored_cc_contributions
@@ -157,7 +158,7 @@ class TestCCPluginHooksIgnored:
         report = ReconciliationReport(
             outcomes=[ReconcileOutcome(alias="alpha", status="loaded", diagnostic=None)]
         )
-        loaded = discover(install_dir, report, {"alpha": source})
+        loaded = discover(install_dir, report, {"alpha": source}, make_agent_defaults(tmp_path))
         assert loaded[0].status == "loaded"
         assert len(loaded[0].event_handlers) == 0
         assert "events" in loaded[0].manifest.ignored_cc_contributions
@@ -177,7 +178,7 @@ class TestHandlerValidationFailures:
         report = ReconciliationReport(
             outcomes=[ReconcileOutcome(alias="alpha", status="loaded", diagnostic=None)]
         )
-        loaded = discover(install_dir, report, {"alpha": source})
+        loaded = discover(install_dir, report, {"alpha": source}, make_agent_defaults(tmp_path))
         assert loaded[0].status == "failed"
         assert "hooks" in loaded[0].diagnostic
         assert "init.py" in loaded[0].diagnostic
@@ -192,7 +193,7 @@ class TestHandlerValidationFailures:
         report = ReconciliationReport(
             outcomes=[ReconcileOutcome(alias="alpha", status="loaded", diagnostic=None)]
         )
-        loaded = discover(install_dir, report, {"alpha": source})
+        loaded = discover(install_dir, report, {"alpha": source}, make_agent_defaults(tmp_path))
         assert loaded[0].status == "failed"
         assert "events" in loaded[0].diagnostic
         assert "on_idle.py" in loaded[0].diagnostic
@@ -208,7 +209,7 @@ class TestHandlerValidationFailures:
         report = ReconciliationReport(
             outcomes=[ReconcileOutcome(alias="alpha", status="loaded", diagnostic=None)]
         )
-        loaded = discover(install_dir, report, {"alpha": source})
+        loaded = discover(install_dir, report, {"alpha": source}, make_agent_defaults(tmp_path))
         assert loaded[0].status == "failed"
         assert "import" in loaded[0].diagnostic.lower() or "syntax" in loaded[0].diagnostic.lower()
 
@@ -223,7 +224,7 @@ class TestHandlerValidationFailures:
         report = ReconciliationReport(
             outcomes=[ReconcileOutcome(alias="alpha", status="loaded", diagnostic=None)]
         )
-        loaded = discover(install_dir, report, {"alpha": source})
+        loaded = discover(install_dir, report, {"alpha": source}, make_agent_defaults(tmp_path))
         assert loaded[0].status == "failed"
         assert "init" in loaded[0].diagnostic
         assert "callable" in loaded[0].diagnostic.lower()
@@ -239,7 +240,7 @@ class TestHandlerValidationFailures:
         report = ReconciliationReport(
             outcomes=[ReconcileOutcome(alias="alpha", status="loaded", diagnostic=None)]
         )
-        loaded = discover(install_dir, report, {"alpha": source})
+        loaded = discover(install_dir, report, {"alpha": source}, make_agent_defaults(tmp_path))
         assert loaded[0].status == "failed"
         assert "handle" in loaded[0].diagnostic
         assert "callable" in loaded[0].diagnostic.lower()
@@ -255,7 +256,7 @@ class TestHandlerValidationFailures:
         report = ReconciliationReport(
             outcomes=[ReconcileOutcome(alias="alpha", status="loaded", diagnostic=None)]
         )
-        loaded = discover(install_dir, report, {"alpha": source})
+        loaded = discover(install_dir, report, {"alpha": source}, make_agent_defaults(tmp_path))
         assert loaded[0].status == "failed"
         assert "1 parameter" in loaded[0].diagnostic
         assert "2" in loaded[0].diagnostic
@@ -271,7 +272,7 @@ class TestHandlerValidationFailures:
         report = ReconciliationReport(
             outcomes=[ReconcileOutcome(alias="alpha", status="loaded", diagnostic=None)]
         )
-        loaded = discover(install_dir, report, {"alpha": source})
+        loaded = discover(install_dir, report, {"alpha": source}, make_agent_defaults(tmp_path))
         assert loaded[0].status == "failed"
         assert "2 parameter" in loaded[0].diagnostic
 
@@ -286,7 +287,7 @@ class TestHandlerValidationFailures:
         report = ReconciliationReport(
             outcomes=[ReconcileOutcome(alias="alpha", status="loaded", diagnostic=None)]
         )
-        loaded = discover(install_dir, report, {"alpha": source})
+        loaded = discover(install_dir, report, {"alpha": source}, make_agent_defaults(tmp_path))
         assert loaded[0].status == "failed"
         assert "unknown_event" in loaded[0].diagnostic
         assert "coordinator_idle" in loaded[0].diagnostic
@@ -341,7 +342,7 @@ class TestManifestModuleValidation:
         report = ReconciliationReport(
             outcomes=[ReconcileOutcome(alias="alpha", status="loaded", diagnostic=None)]
         )
-        loaded = discover(install_dir, report, {"alpha": source})
+        loaded = discover(install_dir, report, {"alpha": source}, make_agent_defaults(tmp_path))
         assert loaded[0].status == "loaded"
         assert loaded[0].init_hook is None
         assert len(loaded[0].event_handlers) == 0

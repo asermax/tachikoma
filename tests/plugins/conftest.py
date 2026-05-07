@@ -4,10 +4,16 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from tachikoma.agent_defaults import AgentDefaults
 from tachikoma.plugins.config_schema import ConfigFieldSchema
 from tachikoma.plugins.loader import LoadedPlugin
 from tachikoma.plugins.manifest import PluginManifest
 from tachikoma.plugins.sources import LocalPluginSource
+
+
+def make_agent_defaults(tmp_path: Path | None = None) -> AgentDefaults:
+    """Create a minimal AgentDefaults for testing."""
+    return AgentDefaults(cwd=tmp_path or Path("/tmp/test-workspace"))
 
 
 def write_native_manifest(

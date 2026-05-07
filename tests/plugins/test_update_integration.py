@@ -37,6 +37,8 @@ from tachikoma.plugins.updater import (
     run_daily_git_check,
 )
 
+from .conftest import make_agent_defaults
+
 # ---------------------------------------------------------------------------
 # Shared fixtures and helpers
 # ---------------------------------------------------------------------------
@@ -100,6 +102,7 @@ def _make_manager(
         workspace_path=workspace,
         loaded=loaded or {},
         state_repo=state_repo,
+        agent_defaults=make_agent_defaults(workspace),
     )
 
 

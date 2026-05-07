@@ -14,7 +14,7 @@ from tachikoma.plugins.reconciler import ReconcileOutcome, ReconciliationReport
 from tachikoma.plugins.sources import LocalPluginSource
 from tachikoma.pre_processing import ContextProvider
 
-from .conftest import write_native_manifest
+from .conftest import make_agent_defaults, write_native_manifest
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -162,7 +162,7 @@ def _discover_plugin(
     report = ReconciliationReport(
         outcomes=[ReconcileOutcome(alias=alias, status="loaded", diagnostic=None)]
     )
-    loaded = discover(install_dir, report, {alias: source})
+    loaded = discover(install_dir, report, {alias: source}, make_agent_defaults(tmp_path))
     return loaded[0]
 
 
@@ -339,7 +339,7 @@ class ConfigCaptureProvider(ContextProvider):
         report = ReconciliationReport(
             outcomes=[ReconcileOutcome(alias="alpha", status="loaded", diagnostic=None)]
         )
-        loaded = discover(install_dir, report, {"alpha": source})
+        loaded = discover(install_dir, report, {"alpha": source}, make_agent_defaults(tmp_path))
 
         assert loaded[0].status == "loaded"
         assert loaded[0].context_providers[0].config == {"key": "val"}
