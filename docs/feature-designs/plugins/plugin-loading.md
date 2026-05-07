@@ -15,7 +15,7 @@ Tachikoma's capabilities live in two layers — a core agent runtime and a per-w
 
 **Constraints:**
 - **Reuse, don't parallel.** Plugin skills must flow into the same `SkillRegistry` consumed by the per-message classifier and the coordinator's agent derivation.
-- **Skills only.** Plugins contributing MCP tool servers, slash commands, context providers, post-processors, secondary channels, and boundary hooks are deferred to future deltas. CC plugins that declare those surfaces install successfully, but their non-skill contributions are silently ignored. Plugins can declare init hooks and event subscriptions.
+- **Skills only.** Plugins contributing MCP tool servers, slash commands, post-processors, secondary channels, and boundary hooks are deferred to future deltas. CC plugins that declare those surfaces install successfully, but their non-skill contributions are silently ignored. Plugins can declare init hooks, event subscriptions, and context providers.
 - **Fail-safe.** A broken plugin must never block startup or affect other plugins. Per-plugin failure isolation applies in materialization, discovery, manifest parsing, and registry registration.
 - **CC compatibility.** Plugins shaped as Claude Code plugins are recognized so Tachikoma can benefit from the existing CC plugin community.
 - **Atomic on-disk state.** Mid-write failures during reconciliation must not leave a half-replaced plugin folder.
@@ -30,6 +30,7 @@ Tachikoma's capabilities live in two layers — a core agent runtime and a per-w
 - **Sessions** — on `PluginRemoving`, active session's already-injected plugin skill entries get a removal notice and `metadata["deleted"] = True`.
 - **Lifecycle hooks** — plugins can declare init hooks (run post-bootstrap, before channel start) and event subscriptions (routed through the event bus with per-plugin isolation).
 - **Handler validation** — hook and event handler entry points are validated at discovery time (file exists, imports, callable present, correct signature, known event types).
+- **Context providers** — plugins can declare context providers in their manifest; providers implement the existing `ContextProvider` and/or `MessageContextProvider` ABCs and are registered into the appropriate pipeline(s) via event-driven listeners. Provider listeners subscribe to `PluginInstalled`/`PluginRemoving` events, keeping `PluginManager` decoupled from pipeline internals.
 - **PluginManager** — gains update operations, per-plugin update locks, and `PluginStateRepository` dependency.
 - **Materializer** — gains symlink path for local sources and `MaterializationResult` return type carrying version hashes.
 - **Reconciler** — changes from always-re-materialize to first-time-only install.
@@ -71,6 +72,7 @@ The plugin system is a self-contained `tachikoma/plugins/` package whose compone
 │  lifecycle.py    init executor + subscribe/unsubscribe       │
 │  state.py        PluginState model + PluginStateRepository   │
 │  updater.py      update detection + daily check + results    │
+│  provider_listeners.py  event-driven pipeline reg/unreg     │
 ├──────────────────────────────────────────────────────────────┤
 │ PluginState (database table)                                 │
 │  alias (PK), installed_version, update_status,               │
@@ -111,10 +113,11 @@ The plugin system is a self-contained `tachikoma/plugins/` package whose compone
 | `src/tachikoma/plugins/hooks.py` | `plugins_hook()` bootstrap callback | Follows DES-003; registered between git and skills hooks; creates `PluginStateRepository` and passes to reconciler and manager; stores `state_repo` in `ctx.extras` |
 | `src/tachikoma/plugins/state.py` | `PluginState` domain model (frozen dataclass), `PluginStateModel` ORM model, `PluginStateRepository` | Follows ADR-007 persistence pattern; repository encapsulates all DB access with `get()`, `upsert()`, `remove()` |
 | `src/tachikoma/plugins/updater.py` | `check_git_update()`, `compute_url_hash()`, `run_daily_git_check()`; `UpdateResult` and `UpdateSummary` dataclasses; `GitCheckError` exception | Update detection via `git ls-remote`; daily check iterates git-source plugins and updates PluginState; result types for MCP tool summaries |
+| `src/tachikoma/plugins/provider_listeners.py` | `register_plugin_provider_listeners()` subscribes to plugin events for pipeline registration/unregistration | Follows `skills/listeners.py` decoupling pattern; registers providers into pipelines on `PluginInstalled`, unregisters on `PluginRemoving`; receives pipelines and `PluginManager` reference |
 | `src/tachikoma/skills/listeners.py` | `register_plugin_event_listeners()` subscribes to plugin events | Lives in skills module per decoupling decision; owns all registry mutation triggered by plugin events |
 | `src/tachikoma/skills/registry.py` (extension) | `add_namespaced_source()`, `remove_namespaced_source()`; `Skill.namespace` + `qualified_name`; `_namespaced_source_paths` tracking | Minimal-change extension — core `_discover` / `_load_skill` flow unchanged for default-namespace skills |
 | `src/tachikoma/config.py` (extension) | `plugins: dict[str, PluginSource]` field; `update_plugin_entry()` / `remove_plugin_entry()` methods | tomlkit super-table for sub-table write-back |
-| `src/tachikoma/__main__.py` (extension) | Calls `run_plugin_init_hooks()` after `bootstrap.run()`, before channel construction; registers daily plugin update check as scheduler Job (CronTrigger, DES-010) | Post-bootstrap timing ensures all subsystems initialized before plugin hooks run; daily check is a scheduler Job (not a TaskDefinition) — system-internal housekeeping that doesn't need task-instance bookkeeping |
+| `src/tachikoma/__main__.py` (extension) | Calls `run_plugin_init_hooks()` after `bootstrap.run()`, before channel construction; wires provider listeners after pipeline creation; registers daily plugin update check as scheduler Job (CronTrigger, DES-010) | Post-bootstrap timing ensures all subsystems initialized before plugin hooks run; provider listeners wired before coordinator construction so providers are registered before any message processing begins |
 
 ### Cross-Layer Contracts
 
@@ -253,6 +256,49 @@ apply_all_updates(manager, state_repo, bus)
     │   ├── try: apply_update(alias, ...) → results.append({alias, status: "updated"})
     │   └── except: results.append({alias, status: "failed", error: str(e)})
     └── Return UpdateSummary: {total, updated, skipped, failed, results}
+```
+
+**Provider discovery contract (loader.py):**
+
+```
+_validate_providers(manifest, plugin_dir, alias, validated_config)
+    → (list[ContextProvider], list[MessageContextProvider])
+
+For each (name, module_name) in manifest.context_providers:
+    1. Resolve plugin_dir / "context_providers" / "{module_name}.py"
+    2. Check file exists (else: raise ValueError with diagnostic)
+    3. Import via importlib.util.spec_from_file_location
+       Module key: "tachikoma_plugin.{alias}.context_providers.{module_name}"
+    4. Scan module for concrete provider classes:
+       - Skip non-class, abstract classes (inspect.isabstract)
+       - Check issubclass(cls, ContextProvider) and/or issubclass(cls, MessageContextProvider)
+    5. For each discovered class:
+       - Validate __init__ accepts "config" as keyword arg (inspect.signature)
+       - Instantiate: cls(config=validated_config)
+       - Catch TypeError from unimplemented abstract methods → re-raise as ValueError
+       - Route to appropriate list based on ABC membership
+    6. If no concrete provider classes found: raise ValueError with diagnostic
+    Return (session_providers, message_providers)
+```
+
+**Provider event listener contract (provider_listeners.py):**
+
+```
+register_plugin_provider_listeners(bus, pre_pipeline, msg_pre_pipeline, plugin_manager)
+
+on_plugin_installed(event):
+    plugin = plugin_manager lookup by event.alias
+    for provider in plugin.context_providers:
+        pre_pipeline.register(provider)
+    for provider in plugin.message_context_providers:
+        msg_pre_pipeline.register(provider)
+
+on_plugin_removing(event):
+    plugin = plugin_manager lookup by event.alias
+    for provider in plugin.context_providers:
+        pre_pipeline.unregister(provider)
+    for provider in plugin.message_context_providers:
+        msg_pre_pipeline.unregister(provider)
 ```
 
 ### Shared Logic
@@ -394,9 +440,10 @@ TachikomaManifest (Pydantic)             [tachikoma-plugin.toml]
 ├── skills: list[str] = []                (relative paths to skill dirs)
 ├── config: dict[str, ConfigFieldSchema] = {}  (declared settings from [config.<field_name>])
 ├── hooks: dict[str, str] = {}            (hook_type → module_name, e.g. "init" → "init")
-└── events: dict[str, str] = {}           (event_type_name → module_name, e.g. "coordinator_idle" → "on_idle")
+├── events: dict[str, str] = {}           (event_type_name → module_name, e.g. "coordinator_idle" → "on_idle")
+└── context_providers: dict[str, str] = {}    (entry_name → module_name, e.g. "calendar" → "calendar")
 
-    @field_validator("hooks", "events", mode="after")
+    @field_validator("hooks", "events", "context_providers", mode="after")
     → values must be bare module names (no "..", no path separators, not empty)
 
 CcManifest (Pydantic)                     [.claude-plugin/plugin.json]
@@ -415,7 +462,8 @@ PluginManifest (frozen dataclass)         [unified internal model]
 ├── ignored_cc_contributions: list[str]   (silently ignored CC declarations)
 ├── config_schema: dict[str, ConfigFieldSchema]   (empty dict for CC plugins)
 ├── hooks: dict[str, str] = field(default_factory=dict)
-└── events: dict[str, str] = field(default_factory=dict)
+├── events: dict[str, str] = field(default_factory=dict)
+└── context_providers: dict[str, str] = field(default_factory=dict)   (entry_name → module_name; CC plugins → ignored)
 ```
 
 Native takes precedence when both manifests are present. Path-traversal protection rejects absolute paths, `..` segments, and paths resolving outside the plugin directory. CC plugins have no config schema — `config_schema` is always an empty dict.
@@ -434,7 +482,9 @@ LoadedPlugin (frozen dataclass)
 ├── config: dict[str, str | int | bool | float]   (validated values; empty dict if no schema)
 ├── init_hook: Callable[..., Any] | None = None   (resolved callable for "init" hook)
 ├── event_handlers: dict[type[BaseEvent], Callable] = field(default_factory=dict)   (event_type → handler)
-└── event_wrappers: list = field(default_factory=list)   (wrapper objects with _deactivate() for unsubscribe)
+├── event_wrappers: list = field(default_factory=list)   (wrapper objects with _deactivate() for unsubscribe)
+├── context_providers: list[ContextProvider] = field(default_factory=list)   (instances registered in PreProcessingPipeline)
+└── message_context_providers: list[MessageContextProvider] = field(default_factory=list)   (instances registered in MessagePreProcessingPipeline)
 ```
 ```
 
@@ -588,7 +638,45 @@ _discover_one(outcome, install_dir, plugin_sources)
     │   │   │   └── Store event_type → callable in event_handlers
     │   │   └── Return (init_hook, event_handlers) or raise ValueError
     │   └── On failure: return LoadedPlugin(status="failed", diagnostic=...)
-    └── return LoadedPlugin(..., config=validated_config, init_hook=..., event_handlers=...)
+    ├── NEW: if manifest has context_providers:
+    │   ├── session_providers, msg_providers = _validate_providers(
+    │   │       manifest, plugin_dir, alias, validated_config)
+    │   └── On failure: return LoadedPlugin(status="failed", diagnostic=...)
+    └── return LoadedPlugin(..., config=validated_config, init_hook=..., event_handlers=...,
+                               context_providers=session_providers,
+                               message_context_providers=msg_providers)
+```
+
+### Provider registration on plugin install
+
+```
+PluginInstalled event dispatched
+    └── provider_listeners.on_plugin_installed(event)
+            ├── for provider in event.plugin.context_providers:
+            │   └── pre_pipeline.register(provider)
+            └── for provider in event.plugin.message_context_providers:
+                └── msg_pre_pipeline.register(provider)
+```
+
+### Provider unregistration on plugin remove
+
+```
+PluginRemoving event dispatched
+    └── provider_listeners.on_plugin_removing(event)
+            ├── plugin = plugin_manager lookup by event.alias
+            ├── for provider in plugin.context_providers:
+            │   └── pre_pipeline.unregister(provider)
+            └── for provider in plugin.message_context_providers:
+                └── msg_pre_pipeline.unregister(provider)
+```
+
+### Provider re-registration on plugin update
+
+```
+_reregister_plugin(old_plugin, new_plugin)
+    ├── Dispatch PluginRemoving → provider listener unregisters old providers
+    ├── ... existing re-registration flow ...
+    └── Dispatch PluginInstalled → provider listener registers new providers
 ```
 
 ### Init hooks and event subscription (post-bootstrap)
@@ -879,6 +967,40 @@ list_plugins() MCP tool
 **Alternatives Considered**: Add update fields to LoadedPlugin (would require re-creating the frozen dataclass on every status change).
 **Consequences**: Pro: Clean separation of concerns, LoadedPlugin stays unchanged. Con: `list_plugins` needs a join between in-memory plugins and database state (a simple dict lookup by alias).
 
+### Event-driven provider registration follows skills listener pattern
+
+**Choice**: Provider pipeline registration/unregistration is handled by event listeners (`PluginInstalled`, `PluginRemoving`), not by `PluginManager` directly.
+**Why**: Same decoupling pattern as the skills system — `PluginManager` has no pipeline dependencies, and all registration logic is owned by a listener module. The manager just dispatches lifecycle events; the listener translates them into pipeline mutations.
+**Alternatives Considered**: Manager receives pipeline references and registers directly (couples manager to pipeline internals); Provider registration inside `lifecycle.py` (conflates different concerns).
+**Consequences**: Pro: `PluginManager` unchanged — zero new dependencies. Pro: Consistent with established pattern. Con: One more listener module to maintain.
+
+### Provider instantiation during discovery, not during registration
+
+**Choice**: Provider instances are created during `_validate_providers()` in the loader, not during the `PluginInstalled` event handler.
+**Why**: The loader already has the validated config dict and the plugin directory. Instantiation during discovery allows validation to catch constructor signature errors early. The event handler receives pre-created instances and simply registers them.
+**Alternatives Considered**: Lazy instantiation during `PluginInstalled` (defers validation); Instantiation in the listener (adds unnecessary dependencies).
+**Consequences**: Pro: Early validation with clear diagnostics. Pro: Listener is a thin routing layer.
+
+### Identity-based pipeline unregistration
+
+**Choice**: Pipelines use `list.remove(provider)` (identity-based) in `unregister()`, not name-based or class-based lookup.
+**Why**: Provider instances are unique objects. Identity-based removal ensures the exact instance is removed. `list.remove()` is O(n) but provider lists are small (typically 1-5 entries per pipeline).
+**Alternatives Considered**: Name-based removal (requires unique names on the ABC); Dict-based registration (more complex for a rarely-called operation).
+**Consequences**: Pro: Simple and correct. Pro: No new provider naming requirements.
+
+### ABC inspection for pipeline routing
+
+**Choice**: Provider classes are inspected for `issubclass(cls, ContextProvider)` and `issubclass(cls, MessageContextProvider)` to determine which pipeline(s) to register in. Plugin authors don't specify the target pipeline in the manifest.
+**Why**: The ABC a class implements is the authoritative declaration of its behavior. Requiring a manifest-level routing field would create a second source of truth that could diverge from the actual implementation.
+**Alternatives Considered**: Manifest-level `pipeline` field (creates coupling); Separate manifest sections for session/message providers (prevents a single class from implementing both).
+**Consequences**: Pro: Single source of truth — the ABC determines routing. Pro: Plugin authors only need to implement the right interface. Con: Plugin authors must understand which ABC to implement.
+
+### Dual-ABC provider instance model
+
+**Choice**: When a class implements both `ContextProvider` and `MessageContextProvider`, a single instance is created and registered in both pipelines.
+**Why**: The provider is a single stateful object. Creating two instances would duplicate any internal state. Both `provide()` methods operate on the same instance identity.
+**Consequences**: Pro: Single instance, no duplicated state. Pro: `unregister()` from both pipelines removes the exact same object.
+
 ## System Behavior
 
 ### Invariants
@@ -902,6 +1024,8 @@ list_plugins() MCP tool
 17. **Local plugins have no version state**: Symlinks are always current. `installed_version` is null, `update_status` is not queried.
 18. **Daily check is stateless**: Each run checks all git-source plugins independently. A partially completed check does not affect the next run.
 19. **PluginState survives restarts**: The database table is the source of truth for version and update status across process restarts.
+20. **Provider instance identity**: A provider class implementing both `ContextProvider` and `MessageContextProvider` results in a single instance tracked in both `LoadedPlugin.context_providers` and `LoadedPlugin.message_context_providers`. Unregistration from both pipelines removes the same object reference.
+21. **Provider validation is complete**: A plugin with invalid context providers (missing file, import error, no valid ABC class, wrong constructor signature) fails at discovery with a diagnostic — no partial provider registration.
 
 ### Scenario: Fresh workspace, no plugins configured
 
@@ -1190,6 +1314,55 @@ list_plugins() MCP tool
 **Then**: Output for `code-review` includes `update_status: "update-available"`, `installed_version: "abc123"`, `available_version: "def456"`.
 **Rationale**: User can see at a glance which plugins need attention.
 
+### Scenario: Plugin with session-gated context provider
+
+**Given**: A `tachikoma-plugin.toml` with `[context_providers] calendar = "calendar"`. Module `context_providers/calendar.py` contains a class subclassing `ContextProvider` with valid `__init__(self, *, config)` and implemented `provide()` and `status_message()`.
+**When**: Plugin loads.
+**Then**: Provider discovered, instantiated with `config={validated_config}`, stored on `LoadedPlugin.context_providers`. On `PluginInstalled`, registered into `PreProcessingPipeline`. Next `pipeline.run()` includes the provider.
+**Rationale**: Full happy path for session-gated provider pipeline.
+
+### Scenario: Provider implementing both ABCs
+
+**Given**: A provider class that subclasses both `ContextProvider` and `MessageContextProvider`.
+**When**: Plugin loads.
+**Then**: Single instance created, registered in both `PreProcessingPipeline` and `MessagePreProcessingPipeline`. Both provider lists on `LoadedPlugin` reference it.
+**Rationale**: Dual-ABC support per design decision.
+
+### Scenario: Provider module with no valid class
+
+**Given**: Module `context_providers/calendar.py` containing only utility functions, no class implementing either ABC.
+**When**: Discovery runs.
+**Then**: Plugin fails with diagnostic: "No concrete class implementing ContextProvider or MessageContextProvider found in module 'calendar'".
+**Rationale**: Fail-fast catches configuration errors early.
+
+### Scenario: Plugin removed with active context providers
+
+**Given**: Plugin with registered providers in both pipelines.
+**When**: `remove_plugin` runs.
+**Then**: `PluginRemoving` dispatched → listener unregisters providers from both pipelines. Event wrappers deactivated. Config removed. Directory deleted. `PluginRemoved` dispatched.
+**Rationale**: Clean removal of providers alongside other plugin contributions.
+
+### Scenario: Plugin updated with new context providers
+
+**Given**: Plugin with registered providers.
+**When**: `update_plugin` runs with a new version.
+**Then**: `PluginRemoving` dispatched → old providers unregistered. New plugin discovered with new provider instances. `PluginInstalled` dispatched → new providers registered.
+**Rationale**: Full lifecycle re-registration for context providers.
+
+### Scenario: Plugin update fails provider validation
+
+**Given**: Updated plugin whose new provider fails validation (e.g., missing file).
+**When**: Re-registration runs.
+**Then**: Old providers remain active in pipelines. New materialized version stays on disk. Diagnostic stored in `PluginState`.
+**Rationale**: All-or-nothing re-registration — existing providers stay active on failure.
+
+### Scenario: CC plugin with context_providers contribution
+
+**Given**: CC plugin with `"context_providers": {"calendar": "calendar"}` in `plugin.json`.
+**When**: Manifest parsed.
+**Then**: `"context_providers"` detected as an ignored CC contribution type. INFO log emitted. Plugin loads normally with no provider support.
+**Rationale**: Consistent with existing CC contribution handling.
+
 ## Notes
 
 - The plugin system reuses `tachikoma.git.sync.run_git()` for git materialization — no GitPython or dulwich dependency added.
@@ -1210,3 +1383,8 @@ list_plugins() MCP tool
 - `hashlib.file_digest()` is a Python 3.11+ addition that handles streaming internally — no manual chunked reads needed.
 - Existing databases get the `plugin_state` table via inline migration in `database.py`'s `_run_migrations()`. Pre-existing plugins get `PluginState` rows created during their first reconciliation (status "unknown").
 - The update detector reuses `run_git()` from `git/sync.py` for `git ls-remote` — same subprocess wrapper, same error handling.
+- Provider modules live in `context_providers/<module_name>.py` relative to the plugin install directory — consistent with the `hooks/` and `events/` directory conventions. The `importlib.util.spec_from_file_location` module key uses `tachikoma_plugin.{alias}.context_providers.{module_name}` to avoid `sys.modules` collisions (same pattern as hooks and events).
+- Provider instances are created once during discovery and reused across the plugin's lifetime. No per-message instantiation. The `unregister()` method on pipelines is a safe no-op if the provider is not found in the list — handles edge cases where the same provider might be unregistered twice (e.g., during failed re-registration rollback).
+- Provider classes that are abstract (have unimplemented abstract methods) are skipped during discovery — only concrete classes are registered. This allows plugin authors to define base classes in the same module.
+- The `__main__.py` wiring point for provider listeners is immediately after pipeline creation and before coordinator construction, ensuring providers are registered before any message processing begins.
+- Adding `context_providers` and `message_context_providers` fields to `LoadedPlugin` is backward compatible — both use `field(default_factory=list)`, so existing code constructing `LoadedPlugin` without these fields continues to work.

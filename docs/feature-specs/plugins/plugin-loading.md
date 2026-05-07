@@ -6,7 +6,7 @@
 
 A directory-based plugin system that allows users to extend Tachikoma with third-party skills. Users declare plugin sources in a `[plugins]` config section — git repositories, HTTPS-served archives, or local filesystem paths. Plugins may declare typed configuration schemas in their manifests; users provide values in `[plugins.<alias>.config]` sub-tables. At startup, a bootstrap step reconciles the install directory with declared sources (first-time materialization for new plugins, symlink migration for existing local-source plugins, orphan cleanup), parses each plugin's manifest (including config schemas), validates user config values against schemas, and registers contributed skill directories with the existing `SkillRegistry` under namespaced names of the form `<alias>:<skill-name>`. Installed plugins track their resolved version (commit SHA for git, content hash for URL) and update status in a persistent database; a daily scheduler job checks git-source plugins for newer versions via `git ls-remote`. Five MCP tools (`install_plugin`, `list_plugins`, `remove_plugin`, `update_plugin`, `update_all_plugins`) let the agent manage plugins on the user's behalf without restart. Failures are isolated per plugin and never block startup; all plugin failures are consolidated into a single startup notification.
 
-This capability covers **skills, lifecycle hooks, and event subscriptions**. Plugin contributions of MCP tool servers, slash commands, context providers, post-processors, secondary channels, and boundary hooks are out of scope and tracked by future deltas.
+This capability covers **skills, lifecycle hooks, event subscriptions, and context providers**. Plugin contributions of MCP tool servers, slash commands, post-processors, secondary channels, and boundary hooks are out of scope and tracked by future deltas.
 
 ## User Stories
 
@@ -22,6 +22,8 @@ This capability covers **skills, lifecycle hooks, and event subscriptions**. Plu
 - As a Tachikoma user, I want to check whether my installed plugins have updates available so that I can stay current with bug fixes and improvements
 - As a Tachikoma user, I want to update one or all plugins on demand so that I can pull in new versions without manual reinstallation
 - As a Tachikoma user, I want to be notified when plugin updates are available so that I know when to take action
+- As a plugin author, I want to declare context providers in my plugin manifest so that my plugin can inject custom context (calendar events, CRM data, external knowledge) into every agent conversation without modifying core code
+- As a plugin author, I want my context providers to receive my plugin's validated config so that they can use plugin-specific settings in their context retrieval logic
 
 ## Requirements
 
@@ -65,6 +67,17 @@ This capability covers **skills, lifecycle hooks, and event subscriptions**. Plu
 | R35 | Failed updates leave existing plugin intact: staging directory cleaned up, existing install directory unchanged, PluginState unchanged; atomic swap guarantees no half-replaced directories |
 | R36 | Updated plugins are re-registered: old skills unregistered from SkillRegistry, old event subscriptions deactivated, new manifest parsed and validated, new skills registered, new events subscribed; if re-registration fails, old skills/events remain active and a diagnostic is stored in PluginState |
 | R37 | `list_plugins` output includes update status information: `update_status`, `installed_version`, and `available_version` from PluginState lookup; local-source plugins omit update fields (always current) |
+| R38 | Plugins can declare context providers in a `[context_providers]` manifest section mapping entry names to module names resolving to files in a `context_providers/` directory relative to the plugin install directory |
+| R39 | Plugin context providers implement the existing `ContextProvider` and/or `MessageContextProvider` ABCs — no new provider base class |
+| R40 | Provider classes are routed to the appropriate pipeline(s) based on ABC inspection: `ContextProvider` subclasses → session-gated `PreProcessingPipeline`, `MessageContextProvider` subclasses → per-message `MessagePreProcessingPipeline`, classes implementing both → both pipelines |
+| R41 | Plugin providers receive the plugin's validated config dict as a `config` keyword argument at construction; plugins with no config schema receive an empty dict |
+| R42 | Plugin provider failures are isolated — one plugin's broken provider doesn't break other providers or core providers; failures are logged per the existing error isolation pattern (DES-002) |
+| R43 | Provider modules are validated at discovery time — missing files, import errors, no class implementing a recognized ABC, or wrong constructor signature cause the plugin to fail with a diagnostic |
+| R44 | Multiple context providers per plugin are supported — the `[context_providers]` section can declare multiple entry points, and a single module can contain multiple provider classes |
+| R45 | CC plugins declaring `context_providers` contributions in their manifest have those entries silently ignored with an INFO log, consistent with other CC contribution handling |
+| R46 | Plugin context providers are re-registered on plugin update: old providers unregistered from pipelines, new providers discovered, validated, and registered |
+| R47 | Plugin context providers are removed from pipelines on plugin uninstall |
+| R48 | A single provider class implementing both `ContextProvider` and `MessageContextProvider` results in one instance registered in both pipelines |
 
 ## Behaviors
 
@@ -365,7 +378,62 @@ When a plugin is updated, its skills and event subscriptions are fully replaced 
 - Given a plugin whose updated manifest adds a new skill, when re-registration completes, the new skill is available under its namespaced name
 - Given a plugin update where materialization succeeds but re-registration fails (e.g., skill name collision), when the failure occurs, the new materialized version remains on disk but the plugin retains a diagnostic describing the failure and the previous version's skills and subscriptions remain active
 
-- Plugin contributions of MCP tool servers, slash commands, context providers, post-processors, secondary channels, and boundary hooks (deferred to future deltas)
+### Context Provider Manifest Declaration (R38, R44, R45)
+
+Plugins declare context providers in a `[context_providers]` section of `tachikoma-plugin.toml`, mapping entry names to module names. Module names resolve to files in a `context_providers/` directory relative to the plugin install directory. Multiple providers per plugin are supported.
+
+**Acceptance Criteria**:
+- Given a `tachikoma-plugin.toml` with `[context_providers] calendar = "calendar"` and `crm = "crm"`, when the manifest is parsed, the internal model contains two context provider entries resolving to `context_providers/calendar.py` and `context_providers/crm.py`
+- Given a `[context_providers]` section with a single entry, when the manifest is parsed, one provider entry is captured
+- Given a manifest without `[context_providers]`, when parsed, the plugin loads normally with no context provider contributions
+- Given a CC plugin with a `"context_providers"` contribution in `plugin.json`, when parsed, the contribution is silently ignored with an INFO log
+- Given a module name containing `..` segments, path separators, or other traversal patterns, when the manifest is validated, the plugin fails with a diagnostic about invalid module name — only bare module names are accepted
+
+### Context Provider Discovery and Validation (R39, R40, R43)
+
+Provider modules are discovered and validated during plugin loading. Each declared module is imported and its classes inspected for ABC conformance. Validation failures cause the plugin to fail with a diagnostic.
+
+**Acceptance Criteria**:
+- Given a provider module containing a class that subclasses `ContextProvider`, when discovery runs, the class is identified as a session-gated provider
+- Given a provider module containing a class that subclasses `MessageContextProvider`, when discovery runs, the class is identified as a per-message provider
+- Given a provider module containing a class that subclasses both `ContextProvider` and `MessageContextProvider`, when discovery runs, the class is identified for registration in both pipelines
+- Given a provider module where no class implements either ABC, when discovery runs, the plugin fails with a diagnostic stating that no class implements a recognized provider interface
+- Given a provider module where the file does not exist on disk, when discovery runs, the plugin fails with a diagnostic naming the missing file
+- Given a provider module that exists but cannot be imported (syntax error, missing dependency), when discovery runs, the plugin fails with a diagnostic including the import error message
+- Given a provider class that does not implement the required abstract methods (`provide()`, `status_message()`), when instantiation is attempted, the plugin fails with a diagnostic about missing abstract methods
+- Given a provider module containing multiple classes implementing the ABCs, when discovery runs, all concrete provider classes are discovered (abstract base classes are skipped)
+
+### Context Provider Instantiation (R41)
+
+Validated provider classes are instantiated with the plugin's validated config dict.
+
+**Acceptance Criteria**:
+- Given a validated provider class whose `__init__` accepts `config` as a keyword argument, when the loader instantiates it, the plugin's validated config dict is passed
+- Given a plugin with no config schema, when the provider is instantiated, an empty dict is passed as `config`
+- Given a provider class whose `__init__` does not accept `config` as a keyword argument, when the loader attempts instantiation, the plugin fails with a diagnostic stating the expected signature
+
+### Context Provider Pipeline Registration (R40, R42, R48)
+
+Provider instances are registered into the appropriate pipeline(s) based on ABC inspection. Plugin providers participate identically to built-in providers, with the same error isolation.
+
+**Acceptance Criteria**:
+- Given a plugin with a `ContextProvider` subclass, when loading completes, the provider is registered in the session-gated `PreProcessingPipeline` and participates in the next pre-processing run
+- Given a plugin with a `MessageContextProvider` subclass, when loading completes, the provider is registered in the per-message `MessagePreProcessingPipeline` and participates in the next message's pre-processing
+- Given a plugin with a provider implementing both ABCs, when loading completes, a single instance is registered in both pipelines
+- Given a plugin provider raises during `provide()`, when the pipeline runs, the failure is logged, other providers (built-in and plugin) complete normally, and the message proceeds with results from successful providers
+- Given a plugin provider returns a `ContextResult` with `mcp_servers`, `agents`, or `metadata`, when the pipeline collects results, these fields are available identically to built-in providers
+- Given a plugin provider that implements `status_message()`, when the pipeline runs with `on_status`, the provider's status messages are emitted identically to built-in providers
+
+### Context Provider Lifecycle (R46, R47)
+
+Plugin context providers are managed through the plugin lifecycle — re-registered on update, removed on uninstall.
+
+**Acceptance Criteria**:
+- Given a plugin with registered context providers, when the plugin is updated via `update_plugin`, old providers are unregistered from their pipelines, new providers are discovered, validated, and registered
+- Given a plugin with registered context providers, when `remove_plugin` runs, the providers are unregistered from their pipelines
+- Given an updated plugin whose new provider fails validation, when re-registration runs, old providers remain active and a diagnostic is stored
+
+- Plugin contributions of MCP tool servers, slash commands, post-processors, secondary channels, and boundary hooks (deferred to future deltas)
 - Plugin config schema for Claude Code plugins (CC plugins have no config schema — `config_schema` is always empty dict)
 - Runtime config reload (modifying config.toml while Tachikoma is running does not reload plugin configs; changes take effect on next startup)
 - Environment variable substitution in config values (config values are literal TOML values)

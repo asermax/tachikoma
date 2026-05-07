@@ -95,6 +95,7 @@ sequenceDiagram
 PreProcessingPipeline
 ├── _providers: list[ContextProvider]
 ├── register(provider: ContextProvider) → None
+├── unregister(provider: ContextProvider) → None  (safe no-op if not found; identity-based removal)
 └── run(message: str, *, on_status: StatusCallback | None = None) → list[ContextResult]
 
 ContextProvider (ABC)
@@ -114,6 +115,7 @@ MessagePreProcessingPipeline                           [runs on every message, n
 ├── _providers: list[MessageContextProvider]
 ├── _lock: asyncio.Lock                                (serializes concurrent invocations)
 ├── register(provider: MessageContextProvider) → None
+├── unregister(provider: MessageContextProvider) → None  (safe no-op if not found; identity-based removal; no lock needed — lifecycle events serialized by manager's async lock)
 └── run(message: IncomingMessage, *, existing_entries: list[SessionContextEntry] | None, sdk_session_id: str | None, on_status: StatusCallback | None = None) → list[ContextResult]
 
 MessageContextProvider (ABC)                            [standalone, not extending ContextProvider]
@@ -303,3 +305,4 @@ erDiagram
 - The pipeline supports both text context and structured data (via the `mcp_servers`, `agents`, and `metadata` fields on `ContextResult`). The coordinator persists text context as session context entries to the database and assembles them into the system prompt via `build_system_prompt()`. The `assemble_context()` function is retained for the background task executor path, which does not use database persistence. The coordinator extracts and merges `mcp_servers` from all results per-session and passes them to `ClaudeAgentOptions` in `_build_options()`. Agent definitions are derived from context entries + skill registry (not from pipeline results directly).
 - Unlike the session-gated pre-processing pipeline, the per-message pipeline has an internal lock for concurrent invocation safety. The session-gated pipeline has no lock because it is stateless and concurrent first-messages are prevented by the session registry.
 - The `MessageContextProvider` ABC is standalone (not extending `ContextProvider`) because the signatures are incompatible: `ContextProvider.provide()` returns `ContextResult | None` while `MessageContextProvider.provide()` returns `list[ContextResult] | None` and accepts `existing_entries`.
+- Both pipelines support dynamic provider registration/unregistration for plugin-contributed context providers. Plugins register providers into pipelines via event listeners triggered by `PluginInstalled` (register) and `PluginRemoving` (unregister) lifecycle events. Dynamically registered providers participate identically to built-in providers — they implement the same ABCs, return the same `ContextResult` types, and are subject to the same error isolation (DES-002). The `unregister()` method uses identity-based `list.remove()` and is a safe no-op if the provider is not found.

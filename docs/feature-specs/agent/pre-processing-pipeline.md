@@ -31,6 +31,7 @@ In addition to the session-gated pipeline (which runs on the first message of a 
 | R11 | Both pipelines accept an optional async status callback on `run()`; for each provider, the callback is invoked twice — once with the provider's start message before `provide()` runs, and once with the completion message after `provide()` returns — while preserving parallel execution of providers |
 | R12 | Both `ContextProvider` and `MessageContextProvider` ABCs expose abstract `status_message(result=None) -> str` — called with no args at start (returns start message) and with the `provide()` result at completion (returns completion message). Every concrete provider must implement it. When `provide()` returns `None`, the completion call passes `None` as `result`; the provider cannot distinguish this from the start call (both have `result=None`), so the completion message will match the start message |
 | R13 | Provider status messages include both start (before `provide()`) and completion (after `provide()`) emissions. The completion message reflects the result (e.g., "Found N relevant memories" vs "No relevant memories found"). If `provide()` raises, no completion message is emitted — the exception propagates past the completion code |
+| R14 | Both pipelines support dynamic provider registration and unregistration via `register()` and `unregister()` methods, enabling plugins to contribute providers at runtime alongside built-in providers |
 
 ## Behaviors
 
@@ -115,3 +116,13 @@ Both pipelines emit granular, provider-driven status messages so the coordinator
 - Given a provider raises inside `provide()`, when the pipeline runs, then only the start message was emitted (completion is unreachable because the exception propagates past the completion code), the exception is logged per DES-002, and sibling providers complete normally
 - Given a pipeline has zero registered providers, when `run()` is called with or without `on_status`, then no status callback invocations occur
 - Given a pipeline is run without `on_status`, when it executes, then no callback invocations occur — the parameter is optional
+
+### Dynamic Provider Management (R14)
+
+Providers can be registered and unregistered dynamically, enabling plugins to contribute providers at runtime. Dynamically registered providers participate identically to built-in providers.
+
+**Acceptance Criteria**:
+- Given a provider is registered via `register()`, when the pipeline runs, then it participates in parallel execution alongside existing providers
+- Given a provider is unregistered via `unregister()`, when the pipeline next runs, then it is no longer included in execution
+- Given `unregister()` is called with a provider not in the pipeline, when the call completes, then no exception is raised (safe no-op)
+- Given a dynamically registered provider returns a `ContextResult`, when the pipeline collects results, then its results are treated identically to built-in provider results
