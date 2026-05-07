@@ -315,6 +315,11 @@ async def run(
     msg_pre_pipeline.register(SkillsContextProvider(agent_defaults, skill_registry))
     msg_pre_pipeline.register(MemoryContextProvider(agent_defaults))
 
+    # Wire provider listeners for plugin context provider lifecycle
+    from tachikoma.plugins.provider_listeners import register_plugin_provider_listeners  # noqa: I001, PLC0415
+
+    register_plugin_provider_listeners(bus, pre_pipeline, msg_pre_pipeline, plugin_manager)
+
     # Create and configure the per-message post-processing pipeline
     msg_pipeline = MessagePostProcessingPipeline()
     msg_pipeline.register(SummaryProcessor(registry=registry, agent_defaults=agent_defaults))
