@@ -493,7 +493,7 @@ class TestConfigValidation:
 # Post-processor validation tests
 # ---------------------------------------------------------------------------
 
-_BASIC_PROCESSOR_CODE = '''\
+_BASIC_PROCESSOR_CODE = """\
 from tachikoma.post_processing import PostProcessor, MAIN_PHASE
 
 class BasicProcessor(PostProcessor):
@@ -504,9 +504,9 @@ class BasicProcessor(PostProcessor):
 
     async def process(self, session, *, extra=None):
         pass
-'''
+"""
 
-_PROCESSOR_PRE_FINALIZE_CODE = '''\
+_PROCESSOR_PRE_FINALIZE_CODE = """\
 from tachikoma.post_processing import PostProcessor, PRE_FINALIZE_PHASE
 
 class PreFinalizeProcessor(PostProcessor):
@@ -517,9 +517,9 @@ class PreFinalizeProcessor(PostProcessor):
 
     async def process(self, session, *, extra=None):
         pass
-'''
+"""
 
-_PROCESSOR_WITH_AGENT_DEFAULTS_CODE = '''\
+_PROCESSOR_WITH_AGENT_DEFAULTS_CODE = """\
 from tachikoma.post_processing import PostProcessor, MAIN_PHASE
 
 class SdkProcessor(PostProcessor):
@@ -531,9 +531,9 @@ class SdkProcessor(PostProcessor):
 
     async def process(self, session, *, extra=None):
         pass
-'''
+"""
 
-_MULTI_PROCESSOR_CODE = '''\
+_MULTI_PROCESSOR_CODE = """\
 from tachikoma.post_processing import PostProcessor, MAIN_PHASE, PRE_FINALIZE_PHASE
 
 class FirstProcessor(PostProcessor):
@@ -553,14 +553,14 @@ class SecondProcessor(PostProcessor):
 
     async def process(self, session, *, extra=None):
         pass
-'''
+"""
 
-_NO_POST_PROCESSOR_CODE = '''\
+_NO_POST_PROCESSOR_CODE = """\
 def some_function():
     pass
-'''
+"""
 
-_INVALID_PHASE_CODE = '''\
+_INVALID_PHASE_CODE = """\
 from tachikoma.post_processing import PostProcessor
 
 class BadPhaseProcessor(PostProcessor):
@@ -571,9 +571,9 @@ class BadPhaseProcessor(PostProcessor):
 
     async def process(self, session, *, extra=None):
         pass
-'''
+"""
 
-_NO_CONFIG_PARAM_CODE = '''\
+_NO_CONFIG_PARAM_CODE = """\
 from tachikoma.post_processing import PostProcessor, MAIN_PHASE
 
 class NoConfigProcessor(PostProcessor):
@@ -584,7 +584,7 @@ class NoConfigProcessor(PostProcessor):
 
     async def process(self, session, *, extra=None):
         pass
-'''
+"""
 
 
 def _write_processor(base: Path, module_name: str, code: str) -> Path:
@@ -769,9 +769,7 @@ class TestDiscoverPostProcessors:
             outcomes=[ReconcileOutcome(alias="test", status="loaded", diagnostic=None)]
         )
 
-        loaded = discover(
-            install_dir, report, {"test": source}, make_agent_defaults(tmp_path)
-        )
+        loaded = discover(install_dir, report, {"test": source}, make_agent_defaults(tmp_path))
 
         assert loaded[0].status == "loaded"
         assert len(loaded[0].post_processors) == 1
@@ -788,9 +786,7 @@ class TestDiscoverPostProcessors:
             outcomes=[ReconcileOutcome(alias="test", status="loaded", diagnostic=None)]
         )
 
-        loaded = discover(
-            install_dir, report, {"test": source}, make_agent_defaults(tmp_path)
-        )
+        loaded = discover(install_dir, report, {"test": source}, make_agent_defaults(tmp_path))
 
         assert loaded[0].status == "loaded"
         assert loaded[0].post_processors == []
@@ -811,9 +807,7 @@ class TestDiscoverPostProcessors:
             outcomes=[ReconcileOutcome(alias="test", status="loaded", diagnostic=None)]
         )
 
-        loaded = discover(
-            install_dir, report, {"test": source}, make_agent_defaults(tmp_path)
-        )
+        loaded = discover(install_dir, report, {"test": source}, make_agent_defaults(tmp_path))
 
         assert loaded[0].status == "failed"
         assert "Post-processor" in loaded[0].diagnostic

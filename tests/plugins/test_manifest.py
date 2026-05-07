@@ -661,7 +661,7 @@ class TestPostProcessorsManifest:
             parse_manifest(plugin_dir)
 
     def test_post_processors_dot_dot_rejected(self, plugin_dir: Path) -> None:
-        """ '..' segments in post_processor module names are rejected."""
+        """'..' segments in post_processor module names are rejected."""
         _write_native(
             plugin_dir,
             skills=[],

@@ -22,7 +22,7 @@ from .conftest import make_agent_defaults, write_native_manifest
 
 # Source code templates for different provider ABC types
 
-_SESSION_PROVIDER_CODE = '''\
+_SESSION_PROVIDER_CODE = """\
 from tachikoma.pre_processing import ContextProvider, ContextResult
 
 class TestProvider(ContextProvider):
@@ -32,9 +32,9 @@ class TestProvider(ContextProvider):
         return ContextResult(tag="test", content="data")
     def status_message(self, result=None):
         return "Test provider"
-'''
+"""
 
-_MESSAGE_PROVIDER_CODE = '''\
+_MESSAGE_PROVIDER_CODE = """\
 from tachikoma.per_message_pre_processing import MessageContextProvider
 from tachikoma.pre_processing import ContextResult
 
@@ -47,9 +47,9 @@ class TestMsgProvider(MessageContextProvider):
         return [ContextResult(tag="test", content="data")]
     def status_message(self, result=None):
         return "Test msg provider"
-'''
+"""
 
-_DUAL_ABC_PROVIDER_CODE = '''\
+_DUAL_ABC_PROVIDER_CODE = """\
 from tachikoma.pre_processing import ContextProvider, ContextResult
 from tachikoma.per_message_pre_processing import MessageContextProvider
 
@@ -60,14 +60,14 @@ class DualProvider(ContextProvider, MessageContextProvider):
         return ContextResult(tag="dual", content="data")
     def status_message(self, result=None):
         return "Dual provider"
-'''
+"""
 
-_NO_ABC_CODE = '''\
+_NO_ABC_CODE = """\
 def some_function():
     pass
-'''
+"""
 
-_ABSTRACT_BASE_CLASS_CODE = '''\
+_ABSTRACT_BASE_CLASS_CODE = """\
 from abc import ABC, abstractmethod
 from tachikoma.pre_processing import ContextProvider
 
@@ -88,9 +88,9 @@ class ConcreteProvider(ContextProvider):
         return ContextResult(tag="concrete", content="data")
     def status_message(self, result=None):
         return "Concrete provider"
-'''
+"""
 
-_MULTI_CLASS_CODE = '''\
+_MULTI_CLASS_CODE = """\
 from tachikoma.pre_processing import ContextProvider, ContextResult
 from tachikoma.per_message_pre_processing import MessageContextProvider
 
@@ -109,9 +109,9 @@ class SecondProvider(MessageContextProvider):
         return [ContextResult(tag="second", content="second data")]
     def status_message(self, result=None):
         return "Second"
-'''
+"""
 
-_NO_CONFIG_PARAM_CODE = '''\
+_NO_CONFIG_PARAM_CODE = """\
 from tachikoma.pre_processing import ContextProvider, ContextResult
 
 class NoConfigProvider(ContextProvider):
@@ -121,9 +121,9 @@ class NoConfigProvider(ContextProvider):
         return ContextResult(tag="test", content="data")
     def status_message(self, result=None):
         return "No config"
-'''
+"""
 
-_MISSING_ABSTRACT_METHOD_CODE = '''\
+_MISSING_ABSTRACT_METHOD_CODE = """\
 from tachikoma.pre_processing import ContextProvider
 
 class IncompleteProvider(ContextProvider):
@@ -131,7 +131,7 @@ class IncompleteProvider(ContextProvider):
         from tachikoma.pre_processing import ContextResult
         return ContextResult(tag="test", content="data")
     # Missing status_message()
-'''
+"""
 
 
 def _write_provider(base: Path, module_name: str, code: str) -> Path:
@@ -305,7 +305,7 @@ class TestProviderInstantiation:
 
     def test_config_dict_passed(self, tmp_path: Path) -> None:
         """R3: Provider receives validated config dict."""
-        code = '''\
+        code = """\
 from tachikoma.pre_processing import ContextProvider, ContextResult
 
 class ConfigCaptureProvider(ContextProvider):
@@ -315,7 +315,7 @@ class ConfigCaptureProvider(ContextProvider):
         return ContextResult(tag="test", content=str(self.config))
     def status_message(self, result=None):
         return "Config capture"
-'''
+"""
         p_dir = tmp_path / "plugins" / "alpha"
         _write_provider(p_dir, "capture", code)
 
@@ -346,7 +346,7 @@ class ConfigCaptureProvider(ContextProvider):
 
     def test_empty_dict_for_no_schema(self, tmp_path: Path) -> None:
         """R3: Plugin with no config schema passes empty dict."""
-        code = '''\
+        code = """\
 from tachikoma.pre_processing import ContextProvider, ContextResult
 
 class ConfigCaptureProvider(ContextProvider):
@@ -356,7 +356,7 @@ class ConfigCaptureProvider(ContextProvider):
         return ContextResult(tag="test", content=str(self.config))
     def status_message(self, result=None):
         return "Config capture"
-'''
+"""
         p_dir = tmp_path / "plugins" / "alpha"
         _write_provider(p_dir, "capture", code)
 

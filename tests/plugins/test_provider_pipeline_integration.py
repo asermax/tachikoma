@@ -69,9 +69,7 @@ class TestProviderPipelineIntegration:
     async def test_plugin_provider_result_collected(self) -> None:
         """R7: Plugin provider returns ContextResult — collected by pipeline."""
         plugin_provider = _PluginProvider(config={"key": "val"})
-        plugin_provider.set_result(
-            ContextResult(tag="calendar", content="Meeting at 3pm")
-        )
+        plugin_provider.set_result(ContextResult(tag="calendar", content="Meeting at 3pm"))
 
         pipeline = PreProcessingPipeline()
         pipeline.register(plugin_provider)
@@ -86,9 +84,7 @@ class TestProviderPipelineIntegration:
         failing = _FailingProvider()
         builtin = _BuiltinProvider(tag="projects")
         plugin_provider = _PluginProvider(config={})
-        plugin_provider.set_result(
-            ContextResult(tag="crm", content="CRM data")
-        )
+        plugin_provider.set_result(ContextResult(tag="crm", content="CRM data"))
 
         pipeline = PreProcessingPipeline()
         pipeline.register(failing)
@@ -103,9 +99,7 @@ class TestProviderPipelineIntegration:
     async def test_plugin_and_builtin_providers_concurrent(self) -> None:
         """R4: Plugin and built-in providers run concurrently."""
         plugin_provider = _PluginProvider(config={})
-        plugin_provider.set_result(
-            ContextResult(tag="plugin", content="plugin data")
-        )
+        plugin_provider.set_result(ContextResult(tag="plugin", content="plugin data"))
         builtin = _BuiltinProvider(tag="builtin")
 
         pipeline = PreProcessingPipeline()
@@ -119,6 +113,7 @@ class TestProviderPipelineIntegration:
 
     async def test_mcp_servers_in_context_result(self) -> None:
         """R7: Plugin provider returns ContextResult with mcp_servers."""
+
         @tool("test_tool", "A test tool", {})
         async def test_tool(args: dict) -> dict:
             return {"content": [{"type": "text", "text": "ok"}]}
