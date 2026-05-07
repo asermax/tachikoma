@@ -340,6 +340,49 @@ class TestMessagePreProcessingPipeline:
         assert kwargs["session_summary"] is None
         assert kwargs["session_last_exchange"] is None
 
+    def test_unregister_removes_registered_provider(self) -> None:
+        """AC: Registered provider is removed from the pipeline."""
+        provider = AsyncMock(spec=MessageContextProvider)
+
+        pipeline = MessagePreProcessingPipeline()
+        pipeline.register(provider)
+        assert provider in pipeline._providers
+
+        pipeline.unregister(provider)
+        assert provider not in pipeline._providers
+
+    def test_unregister_nonexistent_provider_is_noop(self) -> None:
+        """AC: Unregistering a provider not in the list raises no exception."""
+        provider = AsyncMock(spec=MessageContextProvider)
+
+        pipeline = MessagePreProcessingPipeline()
+        pipeline.unregister(provider)  # Should not raise
+
+        assert pipeline._providers == []
+
+    async def test_remaining_provider_runs_after_unregister(self) -> None:
+        """AC: After unregistering one provider, others still execute."""
+        provider_a = AsyncMock(spec=MessageContextProvider)
+        provider_a.provide.return_value = [
+            ContextResult(tag="skills", content="a", metadata={"skill_name": "a"}),
+        ]
+        provider_b = AsyncMock(spec=MessageContextProvider)
+        provider_b.provide.return_value = [
+            ContextResult(tag="skills", content="b", metadata={"skill_name": "b"}),
+        ]
+
+        pipeline = MessagePreProcessingPipeline()
+        pipeline.register(provider_a)
+        pipeline.register(provider_b)
+        pipeline.unregister(provider_a)
+
+        result = await pipeline.run(_msg())
+
+        provider_a.provide.assert_not_awaited()
+        provider_b.provide.assert_awaited_once()
+        assert len(result) == 1
+        assert result[0].metadata["skill_name"] == "b"
+
 
 class _NamedMessageProvider(MessageContextProvider):
     def __init__(

@@ -259,6 +259,45 @@ class TestPreProcessingPipeline:
 
         assert results == []
 
+    def test_unregister_removes_registered_provider(self) -> None:
+        """AC: Registered provider is removed from the pipeline."""
+        provider = _make_mock_provider()
+
+        pipeline = PreProcessingPipeline()
+        pipeline.register(provider)
+        assert provider in pipeline._providers
+
+        pipeline.unregister(provider)
+        assert provider not in pipeline._providers
+
+    def test_unregister_nonexistent_provider_is_noop(self) -> None:
+        """AC: Unregistering a provider not in the list raises no exception."""
+        provider = _make_mock_provider()
+
+        pipeline = PreProcessingPipeline()
+        pipeline.unregister(provider)  # Should not raise
+
+        assert pipeline._providers == []
+
+    async def test_remaining_provider_runs_after_unregister(self) -> None:
+        """AC: After unregistering one provider, others still execute."""
+        provider1 = _make_mock_provider()
+        provider1.provide.return_value = ContextResult(tag="memories", content="test")
+        provider2 = _make_mock_provider()
+        provider2.provide.return_value = ContextResult(tag="skills", content="test2")
+
+        pipeline = PreProcessingPipeline()
+        pipeline.register(provider1)
+        pipeline.register(provider2)
+        pipeline.unregister(provider1)
+
+        results = await pipeline.run("test")
+
+        provider1.provide.assert_not_awaited()
+        provider2.provide.assert_awaited_once_with("test")
+        assert len(results) == 1
+        assert results[0].tag == "skills"
+
 
 class TestAssembleContext:
     """Tests for assemble_context function."""

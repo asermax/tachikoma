@@ -9,6 +9,7 @@ determine what's already loaded and avoid redundant work.
 """
 
 import asyncio
+import contextlib
 from abc import ABC, abstractmethod
 
 from loguru import logger
@@ -115,6 +116,19 @@ class MessagePreProcessingPipeline:
             provider: The provider to register.
         """
         self._providers.append(provider)
+
+    def unregister(self, provider: MessageContextProvider) -> None:
+        """Unregister a provider from the pipeline.
+
+        Safe no-op if the provider is not in the list.
+        No lock needed — lifecycle events are serialized by the
+        plugin manager's async lock.
+
+        Args:
+            provider: The provider to unregister.
+        """
+        with contextlib.suppress(ValueError):
+            self._providers.remove(provider)
 
     async def run(
         self,

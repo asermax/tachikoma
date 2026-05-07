@@ -6,6 +6,7 @@ skill providers, and other context enrichment handlers.
 """
 
 import asyncio
+import contextlib
 import re
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
@@ -120,6 +121,17 @@ class PreProcessingPipeline:
             provider: The provider to register.
         """
         self._providers.append(provider)
+
+    def unregister(self, provider: ContextProvider) -> None:
+        """Unregister a provider from the pipeline.
+
+        Safe no-op if the provider is not in the list.
+
+        Args:
+            provider: The provider to unregister.
+        """
+        with contextlib.suppress(ValueError):
+            self._providers.remove(provider)
 
     async def run(
         self,
