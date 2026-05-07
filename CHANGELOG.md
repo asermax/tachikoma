@@ -2,6 +2,82 @@
 
 <!-- version list -->
 
+## v1.73.0 (2026-05-07)
+
+### Chores
+
+- **deltas**: Advance DLT-049 to design phase
+  ([`d6887b4`](https://github.com/asermax/tachikoma/commit/d6887b4281c62ddc4b2420d0b65b3725c14336a9))
+
+- **deltas**: Advance DLT-049 to implementation and mark batch 1 done
+  ([`3863bc2`](https://github.com/asermax/tachikoma/commit/3863bc2f4769704e148f1fbad0301cf494e3d293))
+
+- **deltas**: Advance DLT-049 to plan phase
+  ([`c5c6386`](https://github.com/asermax/tachikoma/commit/c5c6386199a72e169749b1ed044ec52163f02f4a))
+
+- **deltas**: Mark DLT-049 batch 2 done
+  ([`9dd25fa`](https://github.com/asermax/tachikoma/commit/9dd25fad83647dab53f13e220d4269d76cf3094e))
+
+- **deltas**: Mark DLT-049 batch 3 done
+  ([`8f54ab8`](https://github.com/asermax/tachikoma/commit/8f54ab8ea6798641c4e70e76efbd706b26d08d39))
+
+- **deltas**: Mark DLT-049 batch 4 done
+  ([`bd4ed4e`](https://github.com/asermax/tachikoma/commit/bd4ed4ed68a2ce32de0e70cd1c64c9e9cc6eb89e))
+
+- **deltas**: Mark DLT-049 batch 5 done
+  ([`8479435`](https://github.com/asermax/tachikoma/commit/8479435fe57636c8649e320a8d27cd27ccf73210))
+
+- **deltas**: Mark DLT-049 implementation complete
+  ([`ab0f098`](https://github.com/asermax/tachikoma/commit/ab0f0988e79f4a2eb144173562c9bea5f0f4e36c))
+
+- **deltas**: Start spec phase for DLT-049
+  ([`ab90223`](https://github.com/asermax/tachikoma/commit/ab9022390fdc18d7377c22a153215dabe4c0af0f))
+
+### Documentation
+
+- **deltas**: Add design for DLT-049 plugin context providers
+  ([`524d30f`](https://github.com/asermax/tachikoma/commit/524d30fe627b8d40c0537b1164512360d100c5b0))
+
+- **deltas**: Add implementation plan for DLT-049 plugin context providers
+  ([`f5a0441`](https://github.com/asermax/tachikoma/commit/f5a0441cd5c4905fda0415be1ec5e282f22f9258))
+
+- **deltas**: Add spec for DLT-049 plugin context providers
+  ([`3357b6d`](https://github.com/asermax/tachikoma/commit/3357b6d80b6090da442129257e28f9acc92c39e4))
+
+- **deltas**: Complete design phase for DLT-049
+  ([`c257a51`](https://github.com/asermax/tachikoma/commit/c257a515618e60a0dbb448909b0ac644b6aa9888))
+
+- **plugins**: Reconcile DLT-049 into feature documentation
+  ([`1f56d29`](https://github.com/asermax/tachikoma/commit/1f56d29e44fb36cfc8054e36bd4efad6085c4a36))
+
+- **pre-processing**: Clarify lock safety in unregister_provider
+  ([`58bb678`](https://github.com/asermax/tachikoma/commit/58bb6782de23487b9cda049864196f13bea2abda))
+
+### Features
+
+- **pipelines**: Add unregister method to pre-processing pipelines
+  ([`4a41ced`](https://github.com/asermax/tachikoma/commit/4a41ced070089650fcefd4b70986ef8531142476))
+
+- **plugins**: Add context_providers to manifest and LoadedPlugin
+  ([`a844087`](https://github.com/asermax/tachikoma/commit/a844087667032097a936114328a5da6c24371716))
+
+- **plugins**: Add event-driven provider listeners for plugin lifecycle
+  ([`5155590`](https://github.com/asermax/tachikoma/commit/5155590e5bc5109dbc000d512e1103769f1684c5))
+
+- **plugins**: Validate and instantiate context providers during plugin loading
+  ([`334b61d`](https://github.com/asermax/tachikoma/commit/334b61dfa0d60fc60252dc137ee9f96b240be987))
+
+### Refactoring
+
+- **plugins**: Clean up loader validation comments and unused variable
+  ([`6edfd79`](https://github.com/asermax/tachikoma/commit/6edfd7903794bfd8d20ed4103c2ccc749836d89c))
+
+### Testing
+
+- **plugins**: Add comprehensive tests for context provider system
+  ([`29debd7`](https://github.com/asermax/tachikoma/commit/29debd7de633d513b580393ec453ead6bc33a0d6))
+
+
 ## v1.72.0 (2026-05-06)
 
 ### Bug Fixes
