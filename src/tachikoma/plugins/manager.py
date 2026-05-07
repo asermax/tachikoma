@@ -26,7 +26,12 @@ from tachikoma.plugins.lifecycle import (
     init_plugin,
     unsubscribe_plugin_events,
 )
-from tachikoma.plugins.loader import LoadedPlugin, _validate_handlers, _validate_providers
+from tachikoma.plugins.loader import (
+    LoadedPlugin,
+    _validate_handlers,
+    _validate_post_processors,
+    _validate_providers,
+)
 from tachikoma.plugins.manifest import parse_manifest
 from tachikoma.plugins.materializer import (
     MaterializeError,
@@ -256,6 +261,20 @@ class PluginManager:
                     error=f"Provider validation error: {exc}",
                 )
 
+        post_processors = []
+        if manifest.source_format == "tachikoma" and manifest.post_processors:
+            try:
+                post_processors = _validate_post_processors(
+                    manifest, staging, alias, plugin.config, self._agent_defaults
+                )
+            except ValueError as exc:
+                _cleanup(staging)
+                return UpdateResult(
+                    alias=alias,
+                    status="failed",
+                    error=f"Post-processor validation error: {exc}",
+                )
+
         # URL content-hash comparison: skip if same content.
         if isinstance(source, UrlPluginSource):
             state = await self._state_repo.get(alias)
@@ -302,6 +321,7 @@ class PluginManager:
             event_handlers=event_handlers_val,
             context_providers=session_providers,
             message_context_providers=message_providers,
+            post_processors=post_processors,
         )
 
         reregister_error = await self._reregister_plugin(plugin, new_plugin)
@@ -529,6 +549,17 @@ class PluginManager:
                     "Provider validation failed during install: {}", exc
                 )
 
+        post_processors = []
+        if manifest.source_format == "tachikoma" and manifest.post_processors:
+            try:
+                post_processors = _validate_post_processors(
+                    manifest, target, resolved_alias, {}, self._agent_defaults
+                )
+            except ValueError as exc:
+                _log.bind(plugin=resolved_alias).warning(
+                    "Post-processor validation failed during install: {}", exc
+                )
+
         plugin = LoadedPlugin(
             alias=resolved_alias,
             source=source,
@@ -540,6 +571,7 @@ class PluginManager:
             event_handlers=event_handlers_val,
             context_providers=session_providers,
             message_context_providers=message_providers,
+            post_processors=post_processors,
         )
         self._loaded[resolved_alias] = plugin
 
