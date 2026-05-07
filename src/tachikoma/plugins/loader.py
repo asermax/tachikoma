@@ -27,13 +27,18 @@ from tachikoma.plugins.manifest import (
 )
 from tachikoma.plugins.reconciler import ReconcileOutcome, ReconciliationReport
 from tachikoma.plugins.registry import get_event_type
+from tachikoma.post_processing import (
+    _VALID_PHASES,
+    MAIN_PHASE,
+    PostProcessor,
+)
 from tachikoma.pre_processing import ContextProvider
 
 if TYPE_CHECKING:
     from bubus import BaseEvent
 
+    from tachikoma.agent_defaults import AgentDefaults
     from tachikoma.plugins.sources import PluginSource
-    from tachikoma.post_processing import PostProcessor
 
 _log = logger.bind(component="plugins")
 
@@ -90,6 +95,7 @@ def discover(
     install_dir: Path,
     report: ReconciliationReport,
     plugin_sources: dict[str, PluginSource],
+    agent_defaults: AgentDefaults,
 ) -> list[LoadedPlugin]:
     """Discover loaded plugins from the install directory.
 
@@ -101,7 +107,7 @@ def discover(
 
     for outcome in report.outcomes:
         try:
-            plugin = _discover_one(outcome, install_dir, plugin_sources)
+            plugin = _discover_one(outcome, install_dir, plugin_sources, agent_defaults)
         except Exception as exc:
             _log.bind(plugin=outcome.alias).error(
                 "Discovery failed for plugin {}: {}", outcome.alias, exc
@@ -291,10 +297,89 @@ def _validate_providers(
     return (session_providers, message_providers)
 
 
+def _validate_post_processors(
+    manifest: PluginManifest,
+    plugin_dir: Path,
+    alias: str,
+    validated_config: dict[str, Any],
+    agent_defaults: AgentDefaults,
+) -> list[PostProcessor]:
+    """Validate and instantiate post-processors declared in the manifest.
+
+    For each entry in ``manifest.post_processors``, imports the module,
+    discovers concrete PostProcessor subclasses, validates constructor
+    signatures and phase values, and instantiates with config and
+    conditionally with agent_defaults.
+
+    Returns the list of instantiated processors on success.
+    Raises ``ValueError`` on any validation failure.
+    """
+    if not manifest.post_processors:
+        return []
+
+    processors: list[PostProcessor] = []
+
+    for module_name in manifest.post_processors.values():
+        processor_path = plugin_dir / "post_processors" / f"{module_name}.py"
+        if not processor_path.exists():
+            raise ValueError(f"Post-processor module file not found: {processor_path}")
+
+        module_key = f"tachikoma_plugin.{alias}.post_processors.{module_name}"
+        module = _import_handler_module(processor_path, module_key)
+
+        found_classes: list[type] = []
+        for attr_name in dir(module):
+            attr = getattr(module, attr_name)
+            if not inspect.isclass(attr):
+                continue
+            if inspect.isabstract(attr):
+                continue
+            if issubclass(attr, PostProcessor):
+                found_classes.append(attr)
+
+        if not found_classes:
+            raise ValueError(
+                f"No concrete class implementing PostProcessor "
+                f"found in module '{module_name}'"
+            )
+
+        for cls in found_classes:
+            sig = inspect.signature(cls.__init__)
+            if "config" not in sig.parameters:
+                raise ValueError(
+                    f"Post-processor class '{cls.__name__}' __init__ must accept "
+                    f"'config' as a keyword argument"
+                )
+
+            phase_value = getattr(cls, "phase", MAIN_PHASE)
+            if phase_value not in _VALID_PHASES:
+                valid_list = ", ".join(sorted(_VALID_PHASES))
+                raise ValueError(
+                    f"Post-processor class '{cls.__name__}' declares invalid "
+                    f"phase '{phase_value}'. Valid phases: {valid_list}"
+                )
+
+            kwargs: dict[str, Any] = {"config": validated_config}
+            if "agent_defaults" in sig.parameters:
+                kwargs["agent_defaults"] = agent_defaults
+
+            try:
+                instance = cls(**kwargs)
+            except TypeError as exc:
+                raise ValueError(
+                    f"Post-processor class '{cls.__name__}' failed to instantiate: {exc}"
+                ) from exc
+
+            processors.append(instance)
+
+    return processors
+
+
 def _discover_one(
     outcome: ReconcileOutcome,
     install_dir: Path,
     plugin_sources: dict[str, PluginSource],
+    agent_defaults: AgentDefaults,
 ) -> LoadedPlugin:
     """Build a :class:`LoadedPlugin` for a single reconciliation outcome."""
     alias = outcome.alias
@@ -417,6 +502,23 @@ def _discover_one(
                 plugin_dir=plugin_dir,
             )
 
+    post_processors: list[PostProcessor] = []
+    if validated_manifest.source_format == "tachikoma" and validated_manifest.post_processors:
+        try:
+            post_processors = _validate_post_processors(
+                validated_manifest, plugin_dir, alias, validated_config, agent_defaults
+            )
+        except ValueError as exc:
+            _log.bind(plugin=alias).warning("Post-processor validation failed: {}", exc)
+            return LoadedPlugin(
+                alias=alias,
+                source=source,
+                manifest=validated_manifest,
+                status="failed",
+                diagnostic=f"Post-processor validation error: {exc}",
+                plugin_dir=plugin_dir,
+            )
+
     return LoadedPlugin(
         alias=alias,
         source=source,
@@ -429,4 +531,5 @@ def _discover_one(
         event_handlers=event_handlers_val,
         context_providers=session_providers,
         message_context_providers=message_providers,
+        post_processors=post_processors,
     )

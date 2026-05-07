@@ -47,6 +47,7 @@ from tachikoma.plugins.updater import UpdateResult, UpdateSummary
 if TYPE_CHECKING:
     from bubus import EventBus
 
+    from tachikoma.agent_defaults import AgentDefaults
     from tachikoma.config import SettingsManager
 
 from tachikoma.plugins.state import PluginState, PluginStateRepository
@@ -124,12 +125,14 @@ class PluginManager:
         workspace_path: Path,
         loaded: dict[str, LoadedPlugin],
         state_repo: PluginStateRepository,
+        agent_defaults: AgentDefaults,
     ) -> None:
         self._settings_manager = settings_manager
         self._bus = bus
         self._workspace_path = workspace_path
         self._loaded: dict[str, LoadedPlugin] = dict(loaded)
         self._state_repo = state_repo
+        self._agent_defaults = agent_defaults
         self._lock = asyncio.Lock()
         self._update_locks: dict[str, asyncio.Lock] = {}
 

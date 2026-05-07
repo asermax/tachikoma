@@ -13,6 +13,7 @@ from pathlib import Path
 from bubus import EventBus
 from loguru import logger
 
+from tachikoma.agent_defaults import agent_defaults_from_settings
 from tachikoma.bootstrap import BootstrapContext
 from tachikoma.plugins.loader import discover
 from tachikoma.plugins.manager import PluginManager
@@ -77,7 +78,12 @@ async def plugins_hook(ctx: BootstrapContext) -> None:
             failures=[f"{o.alias}: {o.diagnostic}" for o in failed],
         )
 
-    loaded_plugins = discover(install_dir, report, settings.plugins)
+    agent_defaults = agent_defaults_from_settings(settings)
+
+    loaded_plugins = discover(
+        install_dir, report, settings.plugins,
+        agent_defaults=agent_defaults,
+    )
 
     bus: EventBus | None = ctx.extras.get("event_bus")
     if bus is None:
@@ -94,6 +100,7 @@ async def plugins_hook(ctx: BootstrapContext) -> None:
         workspace_path=workspace_path,
         loaded={p.alias: p for p in loaded_plugins},
         state_repo=state_repo,
+        agent_defaults=agent_defaults,
     )
 
     ctx.extras["plugin_manager"] = manager
