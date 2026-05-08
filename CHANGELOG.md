@@ -2,6 +2,14 @@
 
 <!-- version list -->
 
+## v1.74.1 (2026-05-08)
+
+### Bug Fixes
+
+- **bootstrap**: Register database hook before plugins
+  ([`f9ae07c`](https://github.com/asermax/tachikoma/commit/f9ae07cd4a818a445e757940d4874cc0515d0285))
+
+
 ## v1.74.0 (2026-05-08)
 
 ### Chores
