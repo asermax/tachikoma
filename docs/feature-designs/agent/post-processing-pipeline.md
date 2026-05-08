@@ -126,10 +126,12 @@ PostProcessingPipeline
 ├── _is_processing: bool                     (transient flag, True during run())
 ├── is_processing: property                  (exposes _is_processing)
 ├── needs_processing(session, last_message_time) → bool  (False if processing or processed_at >= last_message_time)
-├── register(processor, phase="main") → None (validates phase, appends)
+├── register(processor, phase=_UNSET) → None (sentinel reads class attribute when omitted; validates phase, appends)
+├── unregister(processor) → None             (identity-based removal, safe no-op via contextlib.suppress(ValueError))
 └── run(session: Session) → None             (sets is_processing, loads context entries, builds summary, phases sequential with extra dict, processors parallel, mark_processed on completion)
 
 PostProcessor (ABC)
+├── phase: str = "main"                      (class attribute for phase declaration, inherited by subclasses)
 └── process(session: Session, *, extra: dict | None = None) → None     (abstract)
 
 build_context_summary(entries: list[SessionContextEntry]) → str | None  (standalone helper)
@@ -194,18 +196,20 @@ erDiagram
 - Pro: Future processors import from `post_processing.py`, not any specific domain
 - Pro: Consistent with bootstrap mechanism-vs-hook pattern
 
-### Phased execution via registration parameter
+### Phased execution via class attribute with backward-compatible parameter
 
-**Choice**: `register(processor, phase="main")` with default for backward compatibility.
-**Why**: The pipeline controls phase knowledge, not individual processors. The ABC stays clean (no phase property). Existing callers don't change — `register(proc)` defaults to `"main"`.
+**Choice**: `PostProcessor` gains a `phase: str = MAIN_PHASE` class attribute. `register()` uses a private sentinel `_UNSET = object()` as the default — when no explicit `phase` kwarg is provided, read `processor.phase`; when provided, use the explicit value.
+**Why**: The original design used `register(processor, phase="main")` with the pipeline controlling phase knowledge. The class attribute approach lets processors declare their phase declaratively (important for plugin processors that don't control the registration call site), while the sentinel preserves backward compatibility with existing call sites that pass `phase=` explicitly.
 **Alternatives Considered**:
-- ABC property (couples processor to phase concept)
+- ABC property with `None` default (ambiguous — could mean "not passed" or "explicitly passed None")
 - Separate register methods (less extensible)
+- Remove `phase` parameter entirely (breaks existing call sites)
 
 **Consequences**:
-- Pro: Zero changes to existing `register()` calls
-- Pro: ABC stays generic — processors don't know about phases
-- Pro: Phase ordering is pipeline's responsibility
+- Pro: Processors declare phase declaratively on their class
+- Pro: Existing `register(proc, phase=X)` calls continue working unchanged
+- Pro: Phase ordering remains the pipeline's responsibility
+- Con: Two ways to set phase (class attribute vs parameter) — but the parameter is only for backward compat
 
 ### Phase set as a fixed collection
 
@@ -268,6 +272,13 @@ erDiagram
 - Pro: Prompts include a Permissions section so agents understand their boundaries
 - Con: Glob/Grep don't support path-specific allow rules (allowed unrestricted)
 
+### Identity-based unregister with safe no-op
+
+**Choice**: `unregister(processor)` iterates all phase lists and calls `list.remove(processor)` with `contextlib.suppress(ValueError)`. Identity-based removal.
+**Why**: Needed for plugin removal — when a plugin is uninstalled, its processors must be removed from the pipeline. The safe no-op behavior (no error if processor not found) handles edge cases like double-unregistration during failed re-registration rollback. Mirrors `PreProcessingPipeline.unregister()`. No lock needed because lifecycle events are serialized by the plugin manager's async lock.
+**Alternatives Considered**: Name-based removal (requires unique names on the ABC); Dict-based registration (more complex for a rarely-called operation).
+**Consequences**: Pro: Simple and correct. Pro: No new naming requirements on processors. Con: `list.remove()` is O(n) but processor lists are small (typically 1-10 entries per phase).
+
 ## System Behavior
 
 ### Scenario: Normal phased execution
@@ -322,6 +333,27 @@ erDiagram
 **Then**: The pipeline logs the exception, passes `extra=None` to all processors, and continues normally. Processors run without a summary — equivalent to the prior behavior before context summaries were threaded through to processors.
 **Rationale**: Context summary is an optimization, not a critical path. Failures in loading entries should never prevent post-processing from running.
 
+### Scenario: Unregister processor not in pipeline
+
+**Given**: A `PostProcessingPipeline` with no registered processors from plugin X.
+**When**: `unregister(processor_from_x)` is called during plugin removal.
+**Then**: `list.remove()` raises `ValueError`, suppressed by `contextlib.suppress(ValueError)`. Safe no-op, consistent with `PreProcessingPipeline.unregister()`.
+**Rationale**: Plugin removal must be robust — a processor might already be unregistered (e.g., from a failed re-registration rollback).
+
+### Scenario: Built-in processor registration after refactor (backward compat)
+
+**Given**: `__main__.py` with `pipeline.register(ProjectsProcessor(agent_defaults), phase=PRE_FINALIZE_PHASE)`.
+**When**: The register call executes after the refactor.
+**Then**: The explicit `phase=PRE_FINALIZE_PHASE` argument takes precedence over the class attribute. The processor runs in the `pre_finalize` phase. The call site continues working without modification.
+**Rationale**: Backward compatibility — existing call sites don't need changes.
+
+### Scenario: Built-in processor after class attribute refactor
+
+**Given**: `ProjectsProcessor` with `phase = PRE_FINALIZE_PHASE` class attribute, and `__main__.py` refactored to `pipeline.register(ProjectsProcessor(agent_defaults))`.
+**When**: The register call executes.
+**Then**: No explicit `phase` kwarg (sentinel `_UNSET`) → `register()` reads `processor.phase` → `PRE_FINALIZE_PHASE`. Same behavior.
+**Rationale**: Class attribute is the primary mechanism; explicit parameter preserved for backward compat.
+
 ## Notes
 
 - The pipeline's `asyncio.Lock` serialization prevents overlapping runs. The `is_processing` flag provides a non-blocking check for callers who want to skip rather than wait.
@@ -331,3 +363,6 @@ erDiagram
 - The background task executor (`tasks/executor.py`) creates a separate `PostProcessingPipeline` instance with only `EpisodicProcessor` (main phase) and `GitProcessor` (finalize phase) — this is a distinct pipeline from the main conversation pipeline assembled in `__main__.py`. For synthetic sessions (background tasks), `mark_processed` is a no-op (session ID not in the database). See [background task execution design](../tasks/background-task-execution.md).
 - Context summary is built once before phases start and distributed to all processors. If `load_context_entries` fails, processors run without a summary. The summary is injected into prompt text (not `system_prompt_append`) so the forked agent sees it as actionable instructions.
 - The `extra` dict on `PostProcessor.process()` is keyword-only with default `None` — backward-compatible. Future enrichments can add additional keys to `extra` without changing the ABC signature again.
+- The `phase` class attribute on `PostProcessor` defaults to `MAIN_PHASE` and is read by `register()` via a sentinel default (`_UNSET`). Explicit `phase=` arguments take precedence for backward compatibility. Plugin processors declare phase declaratively on their class.
+- `unregister()` mirrors `PreProcessingPipeline.unregister()` — identity-based removal, safe no-op, no lock needed (lifecycle events serialized by plugin manager's async lock).
+- Plugin post-processors participate identically to built-in processors — same error isolation, same phase execution, same context summary distribution. Plugin processors extending `PromptDrivenProcessor` inherit DES-004 behavior automatically.

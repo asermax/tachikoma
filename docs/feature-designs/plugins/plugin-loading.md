@@ -15,7 +15,7 @@ Tachikoma's capabilities live in two layers — a core agent runtime and a per-w
 
 **Constraints:**
 - **Reuse, don't parallel.** Plugin skills must flow into the same `SkillRegistry` consumed by the per-message classifier and the coordinator's agent derivation.
-- **Skills only.** Plugins contributing MCP tool servers, slash commands, post-processors, secondary channels, and boundary hooks are deferred to future deltas. CC plugins that declare those surfaces install successfully, but their non-skill contributions are silently ignored. Plugins can declare init hooks, event subscriptions, and context providers.
+- **Skills only.** Plugins contributing MCP tool servers, slash commands, per-message post-processors, secondary channels, and boundary hooks are deferred to future deltas. CC plugins that declare those surfaces install successfully, but their non-skill contributions are silently ignored. Plugins can declare init hooks, event subscriptions, context providers, and session-level post-processors.
 - **Fail-safe.** A broken plugin must never block startup or affect other plugins. Per-plugin failure isolation applies in materialization, discovery, manifest parsing, and registry registration.
 - **CC compatibility.** Plugins shaped as Claude Code plugins are recognized so Tachikoma can benefit from the existing CC plugin community.
 - **Atomic on-disk state.** Mid-write failures during reconciliation must not leave a half-replaced plugin folder.
@@ -31,6 +31,7 @@ Tachikoma's capabilities live in two layers — a core agent runtime and a per-w
 - **Lifecycle hooks** — plugins can declare init hooks (run post-bootstrap, before channel start) and event subscriptions (routed through the event bus with per-plugin isolation).
 - **Handler validation** — hook and event handler entry points are validated at discovery time (file exists, imports, callable present, correct signature, known event types).
 - **Context providers** — plugins can declare context providers in their manifest; providers implement the existing `ContextProvider` and/or `MessageContextProvider` ABCs and are registered into the appropriate pipeline(s) via event-driven listeners. Provider listeners subscribe to `PluginInstalled`/`PluginRemoving` events, keeping `PluginManager` decoupled from pipeline internals.
+- **Post-processors** — plugins can declare session-level post-processors in their manifest; processors implement the existing `PostProcessor` interface (or extend `PromptDrivenProcessor`) and are registered into the `PostProcessingPipeline` at their declared phase via the same event-driven listeners. Phase is declared as a class attribute on the processor. `AgentDefaults` is created in `plugins_hook` and threaded through discovery for `PromptDrivenProcessor` instantiation.
 - **PluginManager** — gains update operations, per-plugin update locks, and `PluginStateRepository` dependency.
 - **Materializer** — gains symlink path for local sources and `MaterializationResult` return type carrying version hashes.
 - **Reconciler** — changes from always-re-materialize to first-time-only install.
@@ -103,17 +104,17 @@ The plugin system is a self-contained `tachikoma/plugins/` package whose compone
 | `src/tachikoma/plugins/manifest.py` | `TachikomaManifest` and `CcManifest` Pydantic models; `parse_manifest()` with native-takes-precedence | Native strict, CC tolerant (`extra="ignore"`); path-traversal protection; `config` field parses `[config.<field_name>]` sections; `hooks`/`events` fields map hook/event type names to module names; `"events"` added to CC ignored contribution types |
 | `src/tachikoma/plugins/materializer.py` | `materialize_git()`, `materialize_url()`, `materialize_local()` async functions; `_atomic_replace_dir()` helper; `MaterializationResult` return type | Stdlib only — `urllib`, `tarfile`, `zipfile`, `shutil`, `os`. Atomic-swap follows pip pattern. `MaterializationResult` carries staging_dir + version hash (git SHA, URL hash, or null for local). Local sources use `os.symlink()` instead of `shutil.copytree()`. |
 | `src/tachikoma/plugins/reconciler.py` | `reconcile()` walks config; dispatches to materializer; handles stale-fallback and orphan removal | First-time-only materialization (skips existing installs); local symlink migration; accepts `PluginStateRepository` for initial state persistence; per-plugin try/except |
-| `src/tachikoma/plugins/loader.py` | `discover()` scans install dir; parses manifests; validates skill directories; validates config against schema; validates hook/event handler entry points | Runs after reconciler; failure of one plugin's manifest or config does not affect others; handler validation imports modules via `importlib.util` and checks signatures via `inspect` |
-| `src/tachikoma/plugins/manager.py` | `PluginManager` class with `list()`, `install()`, `remove()`, `update()`, `update_all()`, `failed_plugins()`; owns `asyncio.Lock` and per-plugin update lock map; `PluginStateRepository` dependency | Single class matching tasks subsystem pattern; install runs init hook + subscribes events before `PluginInstalled`; remove unsubscribes during `PluginRemoving`; update uses per-plugin locks with non-blocking acquisition; re-registration dispatches `PluginRemoving` → atomic swap → `PluginInstalled` |
+| `src/tachikoma/plugins/loader.py` | `discover()` scans install dir; parses manifests; validates skill directories; validates config against schema; validates hook/event handler entry points; validates and instantiates post-processors | Runs after reconciler; failure of one plugin's manifest or config does not affect others; handler validation imports modules via `importlib.util` and checks signatures via `inspect`; post-processor validation follows DES-012 pattern |
+| `src/tachikoma/plugins/manager.py` | `PluginManager` class with `list()`, `install()`, `remove()`, `update()`, `update_all()`, `failed_plugins()`; owns `asyncio.Lock` and per-plugin update lock map; `PluginStateRepository` dependency; stores `AgentDefaults` | Single class matching tasks subsystem pattern; install runs init hook + subscribes events before `PluginInstalled`; remove unsubscribes during `PluginRemoving`; update uses per-plugin locks with non-blocking acquisition; re-registration dispatches `PluginRemoving` → atomic swap → `PluginInstalled`; `_agent_defaults` reused during runtime install/update validation |
 | `src/tachikoma/plugins/context.py` | `PluginContext` frozen dataclass | Frozen to prevent mutation by handlers; carries config + bus + alias + install_path |
 | `src/tachikoma/plugins/registry.py` | `build_event_registry()` auto-discovers `BaseEvent` subclasses; `get_event_type(name)` lookup | Imports all known event modules explicitly, walks `__subclasses__()` recursively; snake_case derived via regex |
 | `src/tachikoma/plugins/lifecycle.py` | `run_plugin_init_hooks()`, `init_plugin()`, `subscribe_plugin_events()`, `unsubscribe_plugin_events()` | Init hooks run with 30-second timeout; sync and async handlers both supported; active-flag wrapper for unsubscribe (bubus has no `off()`) |
 | `src/tachikoma/plugins/events.py` | `PluginInstalled`, `PluginRemoving`, `PluginRemoved` event types | Follows ADR-009; `PluginRemoving` fires before directory deletion |
 | `src/tachikoma/plugins/tools.py` | `create_plugin_tools_server()` factory; five closure-captured tool functions (`install_plugin`, `list_plugins`, `remove_plugin`, `update_plugin`, `update_all_plugins`) | Follows DES-006; extracted handlers for testability; `list_plugins` includes config schema/values/diagnostics + update status from PluginState lookup |
-| `src/tachikoma/plugins/hooks.py` | `plugins_hook()` bootstrap callback | Follows DES-003; registered between git and skills hooks; creates `PluginStateRepository` and passes to reconciler and manager; stores `state_repo` in `ctx.extras` |
+| `src/tachikoma/plugins/hooks.py` | `plugins_hook()` bootstrap callback | Follows DES-003; registered between git and skills hooks; creates `AgentDefaults` from settings and threads through discovery; creates `PluginStateRepository` and passes to reconciler and manager; stores `state_repo` in `ctx.extras` |
 | `src/tachikoma/plugins/state.py` | `PluginState` domain model (frozen dataclass), `PluginStateModel` ORM model, `PluginStateRepository` | Follows ADR-007 persistence pattern; repository encapsulates all DB access with `get()`, `upsert()`, `remove()` |
 | `src/tachikoma/plugins/updater.py` | `check_git_update()`, `compute_url_hash()`, `run_daily_git_check()`; `UpdateResult` and `UpdateSummary` dataclasses; `GitCheckError` exception | Update detection via `git ls-remote`; daily check iterates git-source plugins and updates PluginState; result types for MCP tool summaries |
-| `src/tachikoma/plugins/provider_listeners.py` | `register_plugin_provider_listeners()` subscribes to plugin events for pipeline registration/unregistration | Follows `skills/listeners.py` decoupling pattern; registers providers into pipelines on `PluginInstalled`, unregisters on `PluginRemoving`; receives pipelines and `PluginManager` reference |
+| `src/tachikoma/plugins/provider_listeners.py` | `register_plugin_provider_listeners()` subscribes to plugin events for pipeline registration/unregistration | Follows `skills/listeners.py` decoupling pattern; registers providers and post-processors into pipelines on `PluginInstalled`, unregisters on `PluginRemoving`; receives pre-processing, message pre-processing, and post-processing pipelines plus `PluginManager` reference |
 | `src/tachikoma/skills/listeners.py` | `register_plugin_event_listeners()` subscribes to plugin events | Lives in skills module per decoupling decision; owns all registry mutation triggered by plugin events |
 | `src/tachikoma/skills/registry.py` (extension) | `add_namespaced_source()`, `remove_namespaced_source()`; `Skill.namespace` + `qualified_name`; `_namespaced_source_paths` tracking | Minimal-change extension — core `_discover` / `_load_skill` flow unchanged for default-namespace skills |
 | `src/tachikoma/config.py` (extension) | `plugins: dict[str, PluginSource]` field; `update_plugin_entry()` / `remove_plugin_entry()` methods | tomlkit super-table for sub-table write-back |
@@ -133,13 +134,15 @@ plugins_hook(ctx)
     │           ├── If install_dir/<alias> exists: skip (symlink migration for local)
     │           ├── Else: materialize → atomic swap → state_repo.upsert(alias, version)
     │           └── Orphan cleanup (unchanged)
-    ├── 5. plugins = discover(install_dir, plugin_sources)
+    ├── 5. agent_defaults = agent_defaults_from_settings(settings)
+    ├── 6. plugins = discover(install_dir, plugin_sources, agent_defaults)
     │       └── For each plugin: parse manifest → validate config schema
-    │           → validate hook/event handlers → LoadedPlugin(init_hook, event_handlers)
-    ├── 6. manager = PluginManager(settings_manager, bus, workspace_path, loaded, state_repo)
-    ├── 7. ctx.extras["plugin_manager"] = manager
-    ├── 8. ctx.extras["state_repo"] = state_repo
-    └── 9. ctx.extras["plugin_skill_paths"] = [(alias, dir) for each loaded plugin skill dir]
+    │           → validate hook/event handlers → validate post-processors
+    │           → LoadedPlugin(init_hook, event_handlers, context_providers, post_processors)
+    ├── 7. manager = PluginManager(settings_manager, bus, workspace_path, loaded, state_repo, agent_defaults)
+    ├── 8. ctx.extras["plugin_manager"] = manager
+    ├── 9. ctx.extras["state_repo"] = state_repo
+    └── 10. ctx.extras["plugin_skill_paths"] = [(alias, dir) for each loaded plugin skill dir]
 
 skills_hook(ctx)
     ├── … existing default-source registry construction …
@@ -176,12 +179,15 @@ install_plugin(source, alias=None) [held under PluginManager._lock]
     ├── 6. _atomic_replace_dir(tmp_dir, install_dir / alias)
     ├── 7. settings_manager.update_plugin_entry(alias, source); save()
     ├── 8. _validate_handlers(manifest, target, alias)  → init_hook, event_handlers
-    ├── 9. _loaded[alias] = LoadedPlugin(..., init_hook, event_handlers)
-    ├── 10. await init_plugin(plugin, bus)
+    ├── 9. _validate_providers(manifest, target, alias, validated_config)  → session_providers, msg_providers
+    ├── 10. _validate_post_processors(manifest, target, alias, validated_config, self._agent_defaults)  → post_processors
+    ├── 11. _loaded[alias] = LoadedPlugin(..., init_hook, event_handlers, context_providers, message_context_providers, post_processors)
+    ├── 12. await init_plugin(plugin, bus)
     │       ├── If init_hook: await with 30s timeout, subscribe on success
     │       └── Elif event_handlers: subscribe immediately
-    └── 11. await bus.dispatch(PluginInstalled(alias, plugin))
+    └── 13. await bus.dispatch(PluginInstalled(alias, plugin))
             └── skills listener: registry.add_namespaced_source + SkillsChanged
+                provider listener: register providers + post-processors into pipelines
 ```
 
 **remove_plugin flow (event-first directory cleanup):**
@@ -191,7 +197,8 @@ remove_plugin(alias) [held under PluginManager._lock]
     ├── 1. If not found → return error
     ├── 2. Collect namespaced_skill_names
     ├── 3. await bus.dispatch(PluginRemoving(alias, names))
-    │       └── skills listener marks active session entries deleted
+    │       ├── skills listener marks active session entries deleted
+    │       └── provider listener unregisters providers + post-processors from pipelines
     ├── 4. unsubscribe_plugin_events(plugin.event_wrappers)
     │       └── wrapper._deactivate() for each registered wrapper
     ├── 5. settings_manager.remove_plugin_entry(alias); save()
@@ -281,10 +288,33 @@ For each (name, module_name) in manifest.context_providers:
     Return (session_providers, message_providers)
 ```
 
+**Post-processor discovery contract (loader.py):**
+
+```
+_validate_post_processors(manifest, plugin_dir, alias, validated_config, agent_defaults)
+    → list[PostProcessor]
+
+For each (name, module_name) in manifest.post_processors:
+    1. Resolve plugin_dir / "post_processors" / "{module_name}.py"
+    2. Check file exists (else: raise ValueError with diagnostic)
+    3. Import via _import_handler_module
+       Module key: "tachikoma_plugin.{alias}.post_processors.{module_name}"
+    4. Find concrete PostProcessor subclasses (DES-012)
+    5. For each class:
+       - Validate __init__ accepts "config" as keyword arg (inspect.signature)
+       - Validate phase attribute value against _VALID_PHASES (fail with diagnostic listing valid values)
+       - Build kwargs: config=validated_config
+       - If __init__ accepts "agent_defaults": add agent_defaults=agent_defaults
+       - Instantiate: cls(**kwargs)
+       - Catch TypeError → re-raise as ValueError
+    6. If no concrete classes found: raise ValueError with diagnostic
+    Return list[PostProcessor]
+```
+
 **Provider event listener contract (provider_listeners.py):**
 
 ```
-register_plugin_provider_listeners(bus, pre_pipeline, msg_pre_pipeline, plugin_manager)
+register_plugin_provider_listeners(bus, pre_pipeline, msg_pre_pipeline, post_pipeline, plugin_manager)
 
 on_plugin_installed(event):
     plugin = plugin_manager lookup by event.alias
@@ -292,6 +322,8 @@ on_plugin_installed(event):
         pre_pipeline.register(provider)
     for provider in plugin.message_context_providers:
         msg_pre_pipeline.register(provider)
+    for processor in plugin.post_processors:
+        post_pipeline.register(processor)
 
 on_plugin_removing(event):
     plugin = plugin_manager lookup by event.alias
@@ -299,6 +331,8 @@ on_plugin_removing(event):
         pre_pipeline.unregister(provider)
     for provider in plugin.message_context_providers:
         msg_pre_pipeline.unregister(provider)
+    for processor in plugin.post_processors:
+        post_pipeline.unregister(processor)
 ```
 
 ### Shared Logic
@@ -441,9 +475,10 @@ TachikomaManifest (Pydantic)             [tachikoma-plugin.toml]
 ├── config: dict[str, ConfigFieldSchema] = {}  (declared settings from [config.<field_name>])
 ├── hooks: dict[str, str] = {}            (hook_type → module_name, e.g. "init" → "init")
 ├── events: dict[str, str] = {}           (event_type_name → module_name, e.g. "coordinator_idle" → "on_idle")
-└── context_providers: dict[str, str] = {}    (entry_name → module_name, e.g. "calendar" → "calendar")
+├── context_providers: dict[str, str] = {}    (entry_name → module_name, e.g. "calendar" → "calendar")
+└── post_processors: dict[str, str] = {}      (entry_name → module_name; CC plugins → ignored)
 
-    @field_validator("hooks", "events", "context_providers", mode="after")
+    @field_validator("hooks", "events", "context_providers", "post_processors", mode="after")
     → values must be bare module names (no "..", no path separators, not empty)
 
 CcManifest (Pydantic)                     [.claude-plugin/plugin.json]
@@ -463,7 +498,8 @@ PluginManifest (frozen dataclass)         [unified internal model]
 ├── config_schema: dict[str, ConfigFieldSchema]   (empty dict for CC plugins)
 ├── hooks: dict[str, str] = field(default_factory=dict)
 ├── events: dict[str, str] = field(default_factory=dict)
-└── context_providers: dict[str, str] = field(default_factory=dict)   (entry_name → module_name; CC plugins → ignored)
+├── context_providers: dict[str, str] = field(default_factory=dict)   (entry_name → module_name; CC plugins → ignored)
+└── post_processors: dict[str, str] = field(default_factory=dict)    (entry_name → module_name; CC plugins → ignored)
 ```
 
 Native takes precedence when both manifests are present. Path-traversal protection rejects absolute paths, `..` segments, and paths resolving outside the plugin directory. CC plugins have no config schema — `config_schema` is always an empty dict.
@@ -484,7 +520,8 @@ LoadedPlugin (frozen dataclass)
 ├── event_handlers: dict[type[BaseEvent], Callable] = field(default_factory=dict)   (event_type → handler)
 ├── event_wrappers: list = field(default_factory=list)   (wrapper objects with _deactivate() for unsubscribe)
 ├── context_providers: list[ContextProvider] = field(default_factory=list)   (instances registered in PreProcessingPipeline)
-└── message_context_providers: list[MessageContextProvider] = field(default_factory=list)   (instances registered in MessagePreProcessingPipeline)
+├── message_context_providers: list[MessageContextProvider] = field(default_factory=list)   (instances registered in MessagePreProcessingPipeline)
+└── post_processors: list[PostProcessor] = field(default_factory=list)   (instances registered in PostProcessingPipeline)
 ```
 ```
 
@@ -1026,6 +1063,7 @@ list_plugins() MCP tool
 19. **PluginState survives restarts**: The database table is the source of truth for version and update status across process restarts.
 20. **Provider instance identity**: A provider class implementing both `ContextProvider` and `MessageContextProvider` results in a single instance tracked in both `LoadedPlugin.context_providers` and `LoadedPlugin.message_context_providers`. Unregistration from both pipelines removes the same object reference.
 21. **Provider validation is complete**: A plugin with invalid context providers (missing file, import error, no valid ABC class, wrong constructor signature) fails at discovery with a diagnostic — no partial provider registration.
+22. **Post-processor validation is complete**: A plugin with invalid post-processors (missing file, import error, no concrete PostProcessor subclass, wrong constructor signature, invalid phase value) fails at discovery with a diagnostic — no partial post-processor registration.
 
 ### Scenario: Fresh workspace, no plugins configured
 
@@ -1363,10 +1401,97 @@ list_plugins() MCP tool
 **Then**: `"context_providers"` detected as an ignored CC contribution type. INFO log emitted. Plugin loads normally with no provider support.
 **Rationale**: Consistent with existing CC contribution handling.
 
+### Phase as class attribute with backward-compatible sentinel parameter
+
+**Choice**: Add `phase: str = MAIN_PHASE` as a class attribute on `PostProcessor`. Update `register()` to use a private sentinel `_UNSET = object()` as the default — when no explicit `phase` kwarg is provided, read `processor.phase`; when provided, use the explicit value.
+
+**Why**: Plugin developers declare their phase declaratively on the class. But existing call sites use `register(SomeProcessor(), phase=PRE_FINALIZE_PHASE)` and must continue working without modification. A sentinel default cleanly distinguishes "not passed" from "passed as MAIN_PHASE".
+
+**Alternatives Considered**: Remove the `phase` parameter entirely (breaks existing call sites); Use `None` as default (ambiguous — could mean "not passed" or "explicitly passed None").
+
+**Consequences**: Pro: Built-in processor registrations work unchanged until refactored at convenience. Pro: Plugin processors declare their phase declaratively. Con: Two ways to set phase — but the parameter is only for backward compat.
+
+### Conditional agent_defaults injection via signature inspection
+
+**Choice**: Inspect the processor class's `__init__` signature. If it accepts `agent_defaults` as a keyword argument, pass the system's `AgentDefaults` instance during instantiation. Always pass `config=validated_config`.
+
+**Why**: `PromptDrivenProcessor` subclasses need `agent_defaults` to fork the SDK session. Plain `PostProcessor` subclasses don't. The conditional pattern avoids requiring every processor to accept an unused parameter.
+
+**Alternatives Considered**: Always pass `agent_defaults` (forces every processor's `__init__` to accept it); Check `issubclass(cls, PromptDrivenProcessor)` (misses custom base classes that fork the SDK without inheriting from `PromptDrivenProcessor`).
+
+**Consequences**: Pro: Only processors that need `agent_defaults` receive it. Pro: Signature-based detection works regardless of class hierarchy. Con: Plugin developers extending `PromptDrivenProcessor` must override `__init__` to accept both `config` and `agent_defaults`.
+
+### AgentDefaults created in plugins_hook for discovery
+
+**Choice**: `plugins_hook()` creates `AgentDefaults` via `agent_defaults_from_settings(settings)` before calling `discover()`, and passes it through the discovery chain. `PluginManager` stores it for reuse during runtime install/update.
+
+**Why**: `AgentDefaults` is needed during post-processor instantiation but is currently only created in `__main__.py` after bootstrap completes. Creating it in `plugins_hook()` works because `agent_defaults_from_settings()` is a pure function that only needs settings, which are already available. The frozen dataclass is immutable and identical to the one created in `__main__.py`.
+
+**Alternatives Considered**: Store classes instead of instances in `LoadedPlugin`, instantiate later (splits validation from instantiation, losing fail-fast); Move `AgentDefaults` creation to its own bootstrap hook (over-engineering for a single value).
+
+**Consequences**: Pro: Validation and instantiation stay together in discovery (fail fast). Pro: Same pattern for bootstrap discovery and runtime install/update. Con: `plugins_hook()` creates `AgentDefaults` as a side effect — but it's a pure dataclass with no side effects.
+
+### Phase validation at discovery time
+
+**Choice**: Phase value is validated in `_validate_post_processors()` during plugin discovery, not at `PostProcessingPipeline.register()` time. The pipeline's `register()` still validates phase for safety (defense-in-depth), but plugin processors with invalid phase values never reach registration.
+
+**Why**: Fail-fast at plugin load time gives immediate feedback to the developer with clear diagnostic messages listing valid phases.
+
+**Consequences**: Pro: Immediate, clear error messages during plugin loading. Pro: Invalid plugins are marked failed before any registration attempts. Con: Phase is validated twice (discovery + registration), but the redundancy provides defense-in-depth.
+
+### Scenario: Plugin with session-level post-processor
+
+**Given**: A `tachikoma-plugin.toml` with `[post_processors] summary = "summary"`. Module `post_processors/summary.py` contains a concrete `PostProcessor` subclass with valid `__init__(self, *, config)` and `phase = "main"`.
+**When**: Plugin loads.
+**Then**: Processor discovered, instantiated with `config={validated_config}`, stored on `LoadedPlugin.post_processors`. On `PluginInstalled`, registered into `PostProcessingPipeline` at the `main` phase. Next `pipeline.run()` includes the processor.
+**Rationale**: Full happy path for plugin post-processor pipeline.
+
+### Scenario: Plugin with PromptDrivenProcessor subclass
+
+**Given**: A post-processor module containing a class that extends `PromptDrivenProcessor` with `__init__(self, *, config, agent_defaults)`.
+**When**: The loader validates and instantiates it.
+**Then**: The class is accepted (concrete `PostProcessor` subclass). Instantiated with both `config=validated_config` and `agent_defaults=system_agent_defaults`. The processor inherits DES-004 behavior (resumption augmentation, context summary injection, permission scoping) from `PromptDrivenProcessor.process()`.
+**Rationale**: Plugin PromptDrivenProcessor subclasses get full DES-004 behavior automatically.
+
+### Scenario: Multiple post-processors in one module
+
+**Given**: A post-processor module containing two concrete `PostProcessor` subclasses (`SummaryProcessor` and `WebhookProcessor`).
+**When**: The loader validates it.
+**Then**: Both classes are discovered, validated, and instantiated. Both stored in `LoadedPlugin.post_processors` and registered at their respective declared phases.
+**Rationale**: Follows the context provider pattern where a single module can contribute multiple implementations.
+
+### Scenario: Invalid phase value on plugin post-processor
+
+**Given**: A plugin post-processor class with `phase = "custom_phase"`.
+**When**: The loader validates it during discovery.
+**Then**: The plugin fails with diagnostic listing valid phases. The processor is never registered.
+**Rationale**: Fail-fast at plugin load time with clear error.
+
+### Scenario: Plugin post-processor fails at runtime
+
+**Given**: A registered plugin post-processor that raises during `process()`.
+**When**: The pipeline runs.
+**Then**: The exception is caught by `asyncio.gather(return_exceptions=True)` and logged. Other processors in the same phase continue. Subsequent phases execute normally — same error isolation as built-in processors.
+**Rationale**: Plugin processor failures are handled identically to built-in processor failures.
+
+### Scenario: Plugin removal with registered post-processors
+
+**Given**: Plugin with registered post-processors.
+**When**: `remove_plugin` runs.
+**Then**: `PluginRemoving` dispatched → listener unregisters processors from `PostProcessingPipeline` (identity-based, safe no-op). Event wrappers deactivated. Config removed. Directory deleted. `PluginRemoved` dispatched.
+**Rationale**: Clean removal of post-processors alongside other plugin contributions.
+
+### Scenario: CC plugin with post_processors contribution
+
+**Given**: CC plugin with `"post_processors": {"summary": "summary"}` in `plugin.json`.
+**When**: Manifest parsed.
+**Then**: `"post_processors"` detected as an ignored CC contribution type. INFO log emitted. Plugin loads normally with no post-processor support.
+**Rationale**: Consistent with existing CC contribution handling.
+
 ## Notes
 
 - The plugin system reuses `tachikoma.git.sync.run_git()` for git materialization — no GitPython or dulwich dependency added.
-- CC plugins declaring non-skill contributions install successfully but those contributions are silently ignored (INFO log per type per plugin), enabling forward compatibility with future plugin contribution hooks (custom context providers, post-processors, bundled skills, secondary channels).
+- CC plugins declaring non-skill contributions install successfully but those contributions are silently ignored (INFO log per type per plugin), enabling forward compatibility with future plugin contribution hooks (custom context providers, per-message post-processors, bundled skills, secondary channels).
 - The `_namespaced_source_paths` tracking dict on `SkillRegistry` keeps install/remove symmetric — preventing monotonic growth of source lists across many install/remove cycles.
 - Plugin-specific configuration is managed through the existing TOML config under `[plugins]`, not through per-plugin config files.
 - Config values are NOT reloaded at runtime — changes to `config.toml` require a restart.
@@ -1387,4 +1512,9 @@ list_plugins() MCP tool
 - Provider instances are created once during discovery and reused across the plugin's lifetime. No per-message instantiation. The `unregister()` method on pipelines is a safe no-op if the provider is not found in the list — handles edge cases where the same provider might be unregistered twice (e.g., during failed re-registration rollback).
 - Provider classes that are abstract (have unimplemented abstract methods) are skipped during discovery — only concrete classes are registered. This allows plugin authors to define base classes in the same module.
 - The `__main__.py` wiring point for provider listeners is immediately after pipeline creation and before coordinator construction, ensuring providers are registered before any message processing begins.
-- Adding `context_providers` and `message_context_providers` fields to `LoadedPlugin` is backward compatible — both use `field(default_factory=list)`, so existing code constructing `LoadedPlugin` without these fields continues to work.
+- Adding `context_providers` and `message_context_providers` fields to `LoadedPlugin` is backward compatible — both use `field(default_factory=list)`, so existing code constructing `LoadedPlugin` without these fields continues to work. The same applies to `post_processors`.
+- Post-processor modules live in `post_processors/<module_name>.py` relative to the plugin install directory — consistent with the `context_providers/`, `hooks/`, and `events/` directory conventions. The module key uses `tachikoma_plugin.{alias}.post_processors.{module_name}`.
+- `AgentDefaults` is created in `plugins_hook()` (via `agent_defaults_from_settings(settings)`) separately from the instance created in `__main__.py`. Both are identical frozen dataclasses from the same settings — no shared state needed.
+- Plugin processors extending `PromptDrivenProcessor` automatically inherit DES-004 conventions (resumption augmentation, context summary injection, permission scoping). Processors that override `process()` must follow those conventions manually.
+- Post-processor validation follows the DES-012 plugin contribution validation pattern, mirroring the `_validate_providers()` structure with added phase validation and conditional `agent_defaults` injection.
+- The `post_processors` manifest field naming is designed for DLT-171 extensibility: `post_processors` for session-level, `message_post_processors` (future) for per-message — separate keys for separate pipelines and interfaces.
