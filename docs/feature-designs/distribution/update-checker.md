@@ -19,8 +19,8 @@ Tachikoma runs as a long-lived process that users interact with via Telegram or 
 - Must persist dedup state across restarts via the database (ADR-013)
 - Must follow the config pattern for `[updates]` settings (Pydantic, TOML)
 - The MCP tool runs inside the SDK's tool execution context, but `os.execv` must happen after full async cleanup
-- `uv tool upgrade` does not produce machine-readable output or distinct exit codes for "upgraded" vs "already up to date"
-- Editable/development installs are incompatible with `uv tool upgrade` — must be detected and reported
+- `uv tool install tachikoma-agent@latest` does not produce machine-readable output or distinct exit codes for "upgraded" vs "already up to date"
+- Editable/development installs are incompatible with `uv tool install` — must be detected and reported
 - A bare restart (no upgrade) must not write a rollback marker, otherwise the rollback path could activate spuriously when the running version is unchanged
 
 ## Design Overview
@@ -32,7 +32,7 @@ A lightweight subsystem composed of:
 3. **Config section** — `[updates]` in TOML with `enabled` and `check_interval`
 4. **Bootstrap hook** — creates the `AppStateRepository` and registers the scheduled job when enabled
 5. **MCP tools** — `check_updates` for on-demand checks, `apply_update` for applying upgrades, `restart` for triggering an in-place process restart
-6. **Upgrade executor** — detects editable installs, runs `uv tool upgrade`, reports structured result
+6. **Upgrade executor** — detects editable installs, runs `uv tool install tachikoma-agent@latest`, reports structured result
 7. **Restart event** — `RestartRequested` event type on the bus, consumed by channels to exit their loops
 8. **In-place restart** — after clean shutdown, `os.execv` replaces the process preserving PID and terminal
 9. **Rollback on failed startup** — if bootstrap fails after upgrade, automatically reinstalls the previous version and restarts; notifies the user through normal channels
@@ -183,7 +183,7 @@ Agent invokes apply_update tool
     → _is_editable_install() check (PEP 610 direct_url.json)
       → if editable: return error result
     → capture old_version via importlib.metadata
-    → subprocess.run(["uv", "tool", "upgrade", "tachikoma-agent"], timeout=120s)
+    → subprocess.run(["uv", "tool", "install", "tachikoma-agent@latest"], timeout=120s)
       → FileNotFoundError: return "uv not found" error
       → TimeoutExpired: return timeout error
       → non-zero exit: return error with stderr
@@ -341,10 +341,10 @@ See ADR-013 for the full decision rationale.
 
 **Choice**: Read `direct_url.json` from the distribution metadata via `importlib.metadata.distribution("tachikoma-agent").read_text("direct_url.json")`. If the JSON contains `"dir_info": {"editable": true}`, report that updates are not available for editable installs.
 
-**Why**: `uv tool upgrade` only works for tool installs (`uv tool install`). Editable installs (`uv pip install -e .`) are development setups where the source code is linked directly. Running `uv tool upgrade` on an editable install either fails silently or does nothing useful. Detecting this upfront gives a clear, actionable error message.
+**Why**: `uv tool install` only works for tool installs. Editable installs (`uv pip install -e .`) are development setups where the source code is linked directly. Running `uv tool install` on an editable install either fails silently or does nothing useful. Detecting this upfront gives a clear, actionable error message.
 
 **Alternatives Considered**:
-- **Try running `uv tool upgrade` and report failure**: Fragile — the command might succeed (doing nothing) or fail with an unclear error. Better to detect the condition explicitly.
+- **Try running `uv tool install` and report failure**: Fragile — the command might succeed (doing nothing) or fail with an unclear error. Better to detect the condition explicitly.
 - **Check if `sys.argv[0]` points to a `.venv`**: Indirect and unreliable. `direct_url.json` is the standard mechanism per PEP 610.
 
 **Consequences**:
@@ -354,7 +354,7 @@ See ADR-013 for the full decision rationale.
 
 ### System prompt injection in SYSTEM_PREAMBLE_TEMPLATE
 
-**Choice**: Add a `# Updates` section to the `SYSTEM_PREAMBLE_TEMPLATE` string in `context/loading.py`, placed between the existing `# Detached Processes` section and `# Context Documents`. The section documents all three update tools (`check_updates`, `apply_update`, `restart`) and explicitly describes the upgrade → restart two-step flow so the agent does not assume `apply_update` restarts on its own.
+**Choice**: Add a `# Updates` section to the `SYSTEM_PREAMBLE_TEMPLATE` string in `context/loading.py`, placed between the existing `# Detached Processes` section and `# Context Documents`. The section documents all three update tools (`check_updates`, `apply_update`, `restart`), explicitly describes the upgrade → restart two-step flow so the agent does not assume `apply_update` restarts on its own, and instructs the agent to never run `uv` upgrade commands directly and to wait for the post-restart "back online" notification before confirming success.
 
 **Why**: All other tool capabilities (tasks, workflows, projects, git, detached processes) are documented in the preamble. Adding update tools there is consistent and ensures the agent always knows about them. The preamble is rendered once at startup and included in every session's system prompt. Documenting the two-step flow in the preamble (in addition to each tool's own description) gives the agent reinforced guidance — the per-tool descriptions tell it what each tool does, and the preamble tells it how to compose them.
 
@@ -468,7 +468,7 @@ Using the in-memory `rollback_marker` from line 132 would misclassify Case B as 
 1. `apply_update` runs:
    - Editable check passes
    - Current version recorded from `importlib.metadata`
-   - `uv tool upgrade tachikoma-agent` runs via `subprocess.run` (timeout: 120s)
+   - `uv tool install tachikoma-agent@latest` runs via `subprocess.run` (timeout: 120s)
    - Exit code 0, version changed in metadata
    - Rollback marker written to temp dir with previous and target versions
    - Tool returns success message with version transition and the instruction to call `restart`
@@ -497,13 +497,13 @@ Using the in-memory `rollback_marker` from line 132 would misclassify Case B as 
 
 **Given**: The installed version matches the latest on PyPI
 **When**: The `apply_update` tool is invoked
-**Then**: Tool runs `uv tool upgrade` (exit code 0). Version metadata unchanged. Tool returns informational message with current version. No rollback marker written. Process continues normally — the agent has no reason to call `restart`.
+**Then**: Tool runs `uv tool install tachikoma-agent@latest` (exit code 0). Version metadata unchanged. Tool returns informational message with current version. No rollback marker written. Process continues normally — the agent has no reason to call `restart`.
 
 **Rationale**: Idempotent behavior — calling `apply_update` when already current is safe and informative.
 
 ### Scenario: Upgrade failure
 
-**Given**: `uv tool upgrade` fails (network error, permission denied, uv not found)
+**Given**: `uv tool install tachikoma-agent@latest` fails (network error, permission denied, uv not found)
 **When**: The tool returns a non-zero exit code or the subprocess cannot be launched
 **Then**: Tool reports the error with details (stderr, or "uv not found" message). No restart event fired. Process continues normally.
 
@@ -515,7 +515,7 @@ Using the in-memory `rollback_marker` from line 132 would misclassify Case B as 
 **When**: The `apply_update` tool checks `direct_url.json`
 **Then**: Tool detects `"editable": true` in `dir_info`, returns error explaining that updates require a tool install. No subprocess runs.
 
-**Rationale**: Prevents confusing failures from running `uv tool upgrade` on an incompatible install type.
+**Rationale**: Prevents confusing failures from running `uv tool install` on an incompatible install type.
 
 ### Scenario: Concurrent operations during restart
 

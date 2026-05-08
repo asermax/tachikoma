@@ -103,7 +103,7 @@ The agent can check for updates on demand via the `check_updates` MCP tool.
 The agent can apply an available upgrade via the `apply_update` MCP tool. Applying does not restart on its own — the agent calls `restart` separately to load the new code.
 
 **Acceptance Criteria**:
-- Given the user asks the agent to apply an update, when the `apply_update` tool is invoked, then it runs `uv tool upgrade tachikoma-agent` and returns the result
+- Given the user asks the agent to apply an update, when the `apply_update` tool is invoked, then it runs `uv tool install tachikoma-agent@latest` and returns the result
 - Given the upgrade command succeeds and installs a new version, when the tool completes, then it reports the old and new versions and instructs the agent to call `restart` to load the new code
 - Given the upgrade command succeeds, when the tool completes, then it does NOT trigger a restart on its own
 - Given the installed version is already the latest, when the upgrade command runs, then it reports "already up to date" with the current version

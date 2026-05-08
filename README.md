@@ -53,7 +53,7 @@ On first run, Tachikoma auto-generates its configuration file at `~/.config/tach
 ### Upgrading
 
 ```bash
-uv tool upgrade tachikoma-agent
+uv tool install tachikoma-agent@latest
 ```
 
 ## Development
