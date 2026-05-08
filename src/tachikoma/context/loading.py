@@ -460,9 +460,11 @@ after a timeout. Pass `signal` (e.g., "SIGINT") or `timeout=0` for fire-and-forg
 You have update management tools:
 - **check_updates** — Check whether a newer version of tachikoma-agent is available on PyPI \
 (read-only).
-- **apply_update** — Upgrade tachikoma-agent to the latest version using `uv tool upgrade`. \
-Only works for tool installs (not editable/development installs). Does NOT restart the \
-process — call `restart` afterward to load the new code.
+- **apply_update** — Upgrade tachikoma-agent to the latest version. Only works for tool \
+installs (not editable/development installs). Does NOT restart the process — call `restart` \
+afterward to load the new code. Never run `uv` upgrade commands directly in the shell — \
+always use this tool. Do NOT tell the user the upgrade succeeded until the post-restart \
+'back online' notification appears (automatic rollback handles bootstrap failures).
 - **restart** — Restart the tachikoma-agent process in place. Use after a successful \
 `apply_update`, or to load new code after a manual `uv tool install --force`, or to \
 resolve stale module/version cache issues. Warn the user before applying.

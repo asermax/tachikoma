@@ -51,7 +51,7 @@ def _is_editable_install() -> bool:
 
 
 def run_upgrade() -> UpgradeResult:
-    """Run ``uv tool upgrade`` and return a structured result."""
+    """Run ``uv tool install tachikoma-agent@latest`` and return a structured result."""
     if _is_editable_install():
         return UpgradeResult(
             old_version="",
@@ -68,7 +68,7 @@ def run_upgrade() -> UpgradeResult:
 
     try:
         proc = subprocess.run(
-            ["uv", "tool", "upgrade", PACKAGE_NAME],
+            ["uv", "tool", "install", f"{PACKAGE_NAME}@latest"],
             capture_output=True,
             text=True,
             timeout=UPGRADE_TIMEOUT,

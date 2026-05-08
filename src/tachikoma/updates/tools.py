@@ -129,9 +129,12 @@ def create_update_tools_server(bus: EventBus) -> McpSdkServerConfig:
 
     @tool(
         "apply_update",
-        "Upgrade tachikoma-agent to the latest version using `uv tool upgrade`. "
+        "Upgrade tachikoma-agent to the latest version using `uv tool install`. "
         "Only works for tool installs (not editable/development installs). "
-        "Does NOT restart the process — call `restart` afterward to load the new code.",
+        "Does NOT restart the process — call `restart` afterward to load the new code. "
+        "Do NOT run `uv` upgrade commands directly in the shell — always use this tool. "
+        "Do NOT tell the user the upgrade succeeded until the post-restart 'back online' "
+        "notification appears (automatic rollback handles the failure case).",
         ApplyUpdateArgs.model_json_schema(),
     )
     async def apply_update(args: dict) -> dict:
