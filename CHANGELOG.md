@@ -2,6 +2,102 @@
 
 <!-- version list -->
 
+## v1.74.0 (2026-05-08)
+
+### Chores
+
+- **deltas**: Mark DLT-050 batch 1 done and implementation in progress
+  ([`9440fb0`](https://github.com/asermax/tachikoma/commit/9440fb0f8359473b057e74df6199367feecc716f))
+
+- **deltas**: Mark DLT-050 batch 2 done
+  ([`a6fba05`](https://github.com/asermax/tachikoma/commit/a6fba05ea9d2e6bd7f751e6e677736334a9602b8))
+
+- **deltas**: Mark DLT-050 batch 3 done
+  ([`3fbb673`](https://github.com/asermax/tachikoma/commit/3fbb6730d474cbd76b548ad1f90df92f036b29d7))
+
+- **deltas**: Mark DLT-050 design in progress
+  ([`7f4ed84`](https://github.com/asermax/tachikoma/commit/7f4ed84952f61fa5432eb64f9f55897ea45a0bad))
+
+- **deltas**: Mark DLT-050 plan complete
+  ([`8aa45db`](https://github.com/asermax/tachikoma/commit/8aa45db5e84fa9e795f1f66f33a03ffb7f1582be))
+
+- **deltas**: Mark DLT-050 plan in progress
+  ([`1dce810`](https://github.com/asermax/tachikoma/commit/1dce810245f303e2fe85f762519117b7eeb5e366))
+
+- **deltas**: Mark DLT-050 spec complete
+  ([`99350a3`](https://github.com/asermax/tachikoma/commit/99350a3190c3125d2b993dca61f9ccbeea14cd65))
+
+- **deltas**: Mark DLT-050 spec in progress
+  ([`1b99be1`](https://github.com/asermax/tachikoma/commit/1b99be1e1d401c819fa547d39fc22938c597e669))
+
+### Code Style
+
+- **plugins**: Minor formatting cleanup in loader and hooks
+  ([`fba72de`](https://github.com/asermax/tachikoma/commit/fba72de4a58983a43eb247f67b9a082c0fc95982))
+
+### Documentation
+
+- **deltas**: Add DLT-050 design for plugin hook for custom post-processors
+  ([`7a530a2`](https://github.com/asermax/tachikoma/commit/7a530a219f78f6fd789d8a0d6e9044ae23c405bc))
+
+- **deltas**: Add DLT-050 implementation plan for plugin post-processors
+  ([`e47ab7f`](https://github.com/asermax/tachikoma/commit/e47ab7f4954b924941aed379302f74b49db04c5f))
+
+- **deltas**: Add DLT-050 spec for plugin hook for custom post-processors
+  ([`e7f5131`](https://github.com/asermax/tachikoma/commit/e7f51312022a1cbfec45d9942a3a3bce4ba9254f))
+
+- **deltas**: Complete DLT-050 design for plugin post-processors
+  ([`b5ac2b6`](https://github.com/asermax/tachikoma/commit/b5ac2b67b0122503d3351c719d3fd64ba671802f))
+
+- **deltas**: Mark DLT-050 batch 4 done
+  ([`f2a031d`](https://github.com/asermax/tachikoma/commit/f2a031d89c04df612115d65e7a141ca05c7f4339))
+
+- **deltas**: Remove completed DLT-050 working documents
+  ([`c10e0c9`](https://github.com/asermax/tachikoma/commit/c10e0c9b737b8e12907e8de04405e24f2975cb75))
+
+- **design**: Add DES-012 plugin contribution validation pattern
+  ([`5e907c1`](https://github.com/asermax/tachikoma/commit/5e907c119028673827870577e672d927c4ddcfc8))
+
+- **designs**: Reconcile feature designs with DLT-050 implementation
+  ([`86a91ed`](https://github.com/asermax/tachikoma/commit/86a91edce61e73c812c500a8befe305374e08adf))
+
+- **specs**: Reconcile feature specs with DLT-050 implementation
+  ([`2924324`](https://github.com/asermax/tachikoma/commit/292432499f5a3094897836aee50ae9e4f75548c8))
+
+### Features
+
+- **plugins**: Add post_processors to manifest and loaded plugin model
+  ([`75a2c2b`](https://github.com/asermax/tachikoma/commit/75a2c2b0ed6d66532e303b777a93738a8fbf5d83))
+
+- **plugins**: Integrate post-processor validation into install and update flows
+  ([`657fd12`](https://github.com/asermax/tachikoma/commit/657fd12de3ee7d999c2fbc1161e8bcee43f337c1))
+
+- **plugins**: Validate and discover plugin post-processors
+  ([`8b80f43`](https://github.com/asermax/tachikoma/commit/8b80f43759deb935063bfa95f344c91ccd2b06dc))
+
+- **plugins**: Wire post-processor registration into plugin lifecycle listeners
+  ([`8535089`](https://github.com/asermax/tachikoma/commit/85350898f2923d68dfd74a3881c54880a64c72f9))
+
+- **post-processing**: Add phase attribute and unregister to pipeline
+  ([`127a2eb`](https://github.com/asermax/tachikoma/commit/127a2eb5cacf71ee2b9d8e117b77ddecabcb7965))
+
+### Refactoring
+
+- **plugins**: Extract _find_concrete_subclasses helper
+  ([`0dcf7ec`](https://github.com/asermax/tachikoma/commit/0dcf7eca99609b38fe5c5df373237e0c7dcc1d01))
+
+- **post-processing**: Move phase declarations from registration to processor classes
+  ([`c979629`](https://github.com/asermax/tachikoma/commit/c979629fc82dfde05b0986b96e0477e58f6a33e7))
+
+### Testing
+
+- **plugins**: Add post-processor validation tests and update discover calls
+  ([`34fb600`](https://github.com/asermax/tachikoma/commit/34fb600c1df7b7bc09139828a7091304c164381c))
+
+- **plugins**: Normalize string quote style in test fixtures
+  ([`604433c`](https://github.com/asermax/tachikoma/commit/604433c450e96f5827f088b4fa6f46583fd2722f))
+
+
 ## v1.73.0 (2026-05-07)
 
 ### Chores
