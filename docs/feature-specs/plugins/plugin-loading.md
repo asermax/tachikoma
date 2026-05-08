@@ -6,7 +6,7 @@
 
 A directory-based plugin system that allows users to extend Tachikoma with third-party skills. Users declare plugin sources in a `[plugins]` config section — git repositories, HTTPS-served archives, or local filesystem paths. Plugins may declare typed configuration schemas in their manifests; users provide values in `[plugins.<alias>.config]` sub-tables. At startup, a bootstrap step reconciles the install directory with declared sources (first-time materialization for new plugins, symlink migration for existing local-source plugins, orphan cleanup), parses each plugin's manifest (including config schemas), validates user config values against schemas, and registers contributed skill directories with the existing `SkillRegistry` under namespaced names of the form `<alias>:<skill-name>`. Installed plugins track their resolved version (commit SHA for git, content hash for URL) and update status in a persistent database; a daily scheduler job checks git-source plugins for newer versions via `git ls-remote`. Five MCP tools (`install_plugin`, `list_plugins`, `remove_plugin`, `update_plugin`, `update_all_plugins`) let the agent manage plugins on the user's behalf without restart. Failures are isolated per plugin and never block startup; all plugin failures are consolidated into a single startup notification.
 
-This capability covers **skills, lifecycle hooks, event subscriptions, and context providers**. Plugin contributions of MCP tool servers, slash commands, post-processors, secondary channels, and boundary hooks are out of scope and tracked by future deltas.
+This capability covers **skills, lifecycle hooks, event subscriptions, context providers, and session-level post-processors**. Plugin contributions of MCP tool servers, slash commands, per-message post-processors, secondary channels, and boundary hooks are out of scope and tracked by future deltas.
 
 ## User Stories
 
@@ -24,6 +24,8 @@ This capability covers **skills, lifecycle hooks, event subscriptions, and conte
 - As a Tachikoma user, I want to be notified when plugin updates are available so that I know when to take action
 - As a plugin author, I want to declare context providers in my plugin manifest so that my plugin can inject custom context (calendar events, CRM data, external knowledge) into every agent conversation without modifying core code
 - As a plugin author, I want my context providers to receive my plugin's validated config so that they can use plugin-specific settings in their context retrieval logic
+- As a plugin author, I want to declare session-level post-processors in my plugin manifest so that my plugin can perform custom extraction, side effects, or integrations after a conversation session closes
+- As a plugin author, I want my post-processors to receive my plugin's validated config (and optionally agent_defaults for SDK-forking processors) so that they can use plugin-specific settings and fork the agent session when needed
 
 ## Requirements
 
@@ -78,6 +80,16 @@ This capability covers **skills, lifecycle hooks, event subscriptions, and conte
 | R46 | Plugin context providers are re-registered on plugin update: old providers unregistered from pipelines, new providers discovered, validated, and registered |
 | R47 | Plugin context providers are removed from pipelines on plugin uninstall |
 | R48 | A single provider class implementing both `ContextProvider` and `MessageContextProvider` results in one instance registered in both pipelines |
+| R49 | Plugins can declare session-level post-processors in a `[post_processors]` manifest section mapping entry names to module names resolving to files in a `post_processors/` directory relative to the plugin install directory |
+| R50 | Plugin post-processors implement the existing `PostProcessor` interface (or extend `PromptDrivenProcessor`) — no new processor base class |
+| R51 | Phase is declared as a class attribute on the processor (`phase: str = MAIN_PHASE`); validated at discovery time against valid phase values |
+| R52 | Plugin post-processors are registered into `PostProcessingPipeline` at their declared phase on `PluginInstalled`, unregistered on `PluginRemoving` — same event-driven pattern as context providers |
+| R53 | Plugin post-processors extending `PromptDrivenProcessor` receive `agent_defaults` at instantiation (only if their `__init__` accepts it) so they can fork the SDK session |
+| R54 | Plugin post-processors receive the plugin's validated config dict as a `config` keyword argument at construction; plugins with no config schema receive an empty dict |
+| R55 | CC plugins declaring `post_processors` contributions in their manifest have those entries silently ignored with an INFO log, consistent with other CC contribution handling |
+| R56 | Multiple post-processors per plugin are supported — the `[post_processors]` section can declare multiple entry points, and a single module can contain multiple `PostProcessor` subclasses |
+| R57 | Plugin post-processor failures at runtime are isolated by the existing pipeline error isolation (`asyncio.gather(return_exceptions=True)`) — one processor's failure doesn't block others or phases |
+| R58 | Plugin post-processors are re-registered on plugin update (unregister old, register new) and removed on plugin uninstall |
 
 ## Behaviors
 
@@ -433,7 +445,62 @@ Plugin context providers are managed through the plugin lifecycle — re-registe
 - Given a plugin with registered context providers, when `remove_plugin` runs, the providers are unregistered from their pipelines
 - Given an updated plugin whose new provider fails validation, when re-registration runs, old providers remain active and a diagnostic is stored
 
-- Plugin contributions of MCP tool servers, slash commands, post-processors, secondary channels, and boundary hooks (deferred to future deltas)
+### Post-Processor Manifest Declaration (R49, R55)
+
+Plugins declare session-level post-processors in a `[post_processors]` section of `tachikoma-plugin.toml`, mapping entry names to module names. Module names resolve to files in a `post_processors/` directory relative to the plugin install directory.
+
+**Acceptance Criteria**:
+- Given a `tachikoma-plugin.toml` with `[post_processors] summary = "summary"` and `webhook = "webhook"`, when the manifest is parsed, the internal model contains two post-processor entries resolving to `post_processors/summary.py` and `post_processors/webhook.py`
+- Given a `[post_processors]` section with a single entry, when the manifest is parsed, one post-processor entry is captured
+- Given a manifest without `[post_processors]`, when parsed, the plugin loads normally with no post-processor contributions
+- Given a CC plugin with a `"post_processors"` contribution in `plugin.json`, when parsed, the contribution is silently ignored with an INFO log, consistent with other CC contribution handling
+- Given a module name in `[post_processors]` containing `..` segments, path separators, or other traversal patterns, when the manifest is validated, the plugin fails with a diagnostic about invalid module name — only bare module names are accepted
+
+### Post-Processor Discovery and Validation (R50, R51, R56)
+
+Post-processor modules are discovered and validated during plugin loading. Each declared module is imported and its classes inspected for ABC conformance. Validation failures cause the plugin to fail with a diagnostic.
+
+**Acceptance Criteria**:
+- Given a post-processor module containing a concrete class that subclasses `PostProcessor`, when discovery runs, the class is discovered, validated, and instantiated
+- Given a post-processor module containing a concrete class that extends `PromptDrivenProcessor`, when discovery runs, the class is accepted and instantiated with both `config` and (if the `__init__` signature includes it) `agent_defaults`
+- Given a post-processor module where no class subclasses `PostProcessor`, when discovery runs, the plugin fails with a diagnostic stating that no class implements the PostProcessor interface
+- Given a post-processor module where the file does not exist on disk, when discovery runs, the plugin fails with a diagnostic naming the missing file
+- Given a post-processor module that exists but cannot be imported (syntax error, missing dependency), when discovery runs, the plugin fails with a diagnostic including the import error message
+- Given a post-processor class with no explicit `phase` attribute, when discovery runs, the processor defaults to the `main` phase
+- Given a post-processor class with `phase = "invalid_phase"`, when discovery runs, the plugin fails with a diagnostic listing valid phase values (main, pre_finalize, finalize)
+- Given a post-processor class whose `__init__` does not accept `config` as a keyword argument, when discovery runs, the plugin fails with a diagnostic stating the required parameter
+- Given a post-processor module containing multiple concrete `PostProcessor` subclasses, when discovery runs, all are discovered, validated, and instantiated
+
+### Post-Processor Instantiation (R53, R54)
+
+Validated post-processor classes are instantiated with the plugin's validated config dict. Processors whose `__init__` accepts `agent_defaults` receive the system's `AgentDefaults` instance.
+
+**Acceptance Criteria**:
+- Given a post-processor class whose `__init__` accepts `config` as a keyword argument, when the loader instantiates it, the plugin's validated config dict is passed
+- Given a plugin with no config schema, when the post-processor is instantiated, an empty dict is passed as `config`
+- Given a post-processor class whose `__init__` accepts `agent_defaults` as a keyword argument, when the loader instantiates it, the system's `AgentDefaults` instance is passed
+- Given a post-processor class whose `__init__` does not accept `agent_defaults`, when the loader instantiates it, `agent_defaults` is not passed (no TypeError raised)
+
+### Post-Processor Pipeline Registration (R52, R57)
+
+Post-processor instances are registered into the `PostProcessingPipeline` at their declared phase. Plugin post-processors participate identically to built-in processors, with the same error isolation.
+
+**Acceptance Criteria**:
+- Given a plugin with a post-processor declaring `phase = "main"`, when `PluginInstalled` fires, the processor is registered into the `PostProcessingPipeline` and participates in the next pipeline run
+- Given a plugin with a post-processor declaring `phase = "pre_finalize"`, when `PluginInstalled` fires, the processor is registered in the `pre_finalize` phase
+- Given a plugin post-processor that raises during `process()`, when the pipeline runs, the exception is caught by the existing `asyncio.gather(return_exceptions=True)` and logged; other processors in the same phase continue; subsequent phases execute normally
+- Given a plugin with no post-processors, when loading completes, no post-processor registration occurs
+
+### Post-Processor Lifecycle (R58)
+
+Plugin post-processors are managed through the plugin lifecycle — re-registered on update, removed on uninstall.
+
+**Acceptance Criteria**:
+- Given a plugin with registered post-processors, when the plugin is updated via `update_plugin`, old processors are unregistered from the pipeline, new processors are discovered, validated, and registered
+- Given a plugin with registered post-processors, when `remove_plugin` runs, the processors are unregistered from the pipeline during the `PluginRemoving` phase
+- Given an updated plugin whose new post-processor fails validation, when re-registration runs, old processors remain active and a diagnostic is stored
+
+- Plugin contributions of MCP tool servers, slash commands, per-message post-processors, secondary channels, and boundary hooks (deferred to future deltas)
 - Plugin config schema for Claude Code plugins (CC plugins have no config schema — `config_schema` is always empty dict)
 - Runtime config reload (modifying config.toml while Tachikoma is running does not reload plugin configs; changes take effect on next startup)
 - Environment variable substitution in config values (config values are literal TOML values)

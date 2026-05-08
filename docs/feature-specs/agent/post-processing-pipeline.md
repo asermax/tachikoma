@@ -29,19 +29,24 @@ A parallel concept — the `MessagePostProcessingPipeline` — follows a similar
 | R9 | Pipeline exposes `needs_processing(session, last_message_time)` to determine whether processing is needed (returns False when already processing or already processed since last message) |
 | R10 | Sub-agents spawned by fork/query helpers declare explicit tool restrictions and allow-only permission rules via `dontAsk` mode; each processor defines the exact tools and paths its agent needs (DES-004) |
 | R11 | Context summary distribution: before running phases, the pipeline builds a summary of session context entries (names/paths only) and passes it to all processors via an `extra` dict so prompt-driven processors can avoid re-extracting information already captured in loaded memories or skills |
+| R12 | Pipeline supports `unregister(processor)` for processor removal — identity-based removal, safe no-op when processor is not registered |
+| R13 | Phase is a class attribute on `PostProcessor` (default `MAIN_PHASE`); `register()` reads the class attribute when no explicit `phase` argument is provided (sentinel-based backward compatibility) |
+| R14 | Plugin-contributed post-processors participate in the pipeline identically to built-in processors — same error isolation, same phase execution, same context summary distribution |
 
 ## Behaviors
 
-### Processor Registration (R0, R1, R5)
+### Processor Registration (R0, R1, R5, R12, R13)
 
-Processors register with the pipeline, optionally declaring a phase. Invalid phases are rejected at registration.
+Processors declare their phase as a class attribute on `PostProcessor` (defaulting to `main`). The `register()` method reads the class attribute when no explicit `phase` argument is provided; explicit `phase` arguments take precedence for backward compatibility. Invalid phases are rejected at registration. Processors can be unregistered from the pipeline.
 
 **Acceptance Criteria**:
-- Given a processor is registered without a phase, when it is added to the pipeline, then it defaults to the main phase
-- Given a processor is registered with `phase="finalize"`, when it is added, then it is placed in the finalize phase
-- Given a processor is registered with `phase="pre_finalize"`, when it is added, then it is placed in the pre_finalize phase
+- Given a `PostProcessor` subclass without an explicit `phase` override, when it is registered with the pipeline, then it defaults to the main phase
+- Given a `PostProcessor` subclass with `phase = "pre_finalize"`, when it is registered without an explicit phase argument, then it is placed in the pre_finalize phase
+- Given a processor is registered with an explicit `phase="finalize"` argument, when it is added, then the explicit argument takes precedence over the class attribute
 - Given a processor is registered with an invalid phase, when `register()` is called, then a `ValueError` is raised listing valid phases
 - Given multiple processors register for the same phase, when the pipeline runs, then they execute in parallel
+- Given a processor that is registered in the pipeline, when `unregister(processor)` is called, then the processor is removed from its phase list
+- Given a processor that is not registered in any phase, when `unregister(processor)` is called, then the call succeeds silently with no error
 
 ### Phased Execution (R1, R2)
 
@@ -118,3 +123,12 @@ Before running phases, the pipeline loads session context entries from the regis
 - Given the registry fails to load context entries, when the pipeline runs, then processors run without a summary and no error is raised
 - Given a loaded memory file that already captures a fact from the conversation, when the facts processor runs, then the summary instructs it to update the existing file rather than create a duplicate
 - Given a non-prompt processor (git, projects, cleanup), when the pipeline runs, then it receives the `extra` dict but ignores it
+
+### Plugin-Contributed Processors (R14)
+
+Plugin post-processors participate in the pipeline identically to built-in processors. They are registered via event-driven listeners on `PluginInstalled`/`PluginRemoving` events, not directly by the coordinator. Plugin processors extending `PromptDrivenProcessor` automatically inherit DES-004 behavior (resumption augmentation, context summary injection, permission scoping).
+
+**Acceptance Criteria**:
+- Given a plugin post-processor registered in the `main` phase, when the pipeline runs, then it executes in parallel with built-in main-phase processors
+- Given a plugin post-processor that raises during `process()`, when the pipeline runs, then the exception is caught by the existing error isolation and other processors complete normally
+- Given a plugin post-processor extending `PromptDrivenProcessor`, when the pipeline runs, then it receives the context summary and applies resumption augmentation identically to built-in prompt-driven processors
