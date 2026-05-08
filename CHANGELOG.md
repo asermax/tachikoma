@@ -2,6 +2,19 @@
 
 <!-- version list -->
 
+## v1.74.2 (2026-05-08)
+
+### Bug Fixes
+
+- **updates**: Switch from uv tool upgrade to uv tool install @latest
+  ([`99ccd49`](https://github.com/asermax/tachikoma/commit/99ccd49b6f47b3af69068f5cbefb60a681f5dd02))
+
+### Documentation
+
+- **updates**: Reflect uv tool install @latest in documentation
+  ([`da33c04`](https://github.com/asermax/tachikoma/commit/da33c042b9157497c24bbcbf6eecffcded9ad175))
+
+
 ## v1.74.1 (2026-05-08)
 
 ### Bug Fixes
