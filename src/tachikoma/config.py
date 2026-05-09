@@ -301,6 +301,43 @@ class UpdatesSettings(BaseModel):
     )
 
 
+class MaintenanceSettings(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="ignore")
+
+    enabled: bool = Field(
+        default=True,
+        description="Whether memory maintenance scheduler jobs are enabled",
+    )
+    schedule: str = Field(
+        default="0 3 * * *",
+        description="Cron expression for nightly maintenance (shared across all three jobs)",
+    )
+    recent_days: int = Field(
+        default=15,
+        ge=1,
+        description="Days to keep as recent daily entries (cleaned for verbosity only)",
+    )
+    weekly_threshold_months: int = Field(
+        default=3,
+        ge=1,
+        description="Months after which weekly summaries are consolidated into monthly",
+    )
+    monthly_threshold_months: int = Field(
+        default=12,
+        ge=1,
+        description="Months after which monthly summaries are deleted",
+    )
+
+
+class MemorySettings(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="ignore")
+
+    maintenance: MaintenanceSettings = Field(
+        default_factory=MaintenanceSettings,
+        description="Memory maintenance configuration",
+    )
+
+
 class Settings(BaseModel):
     model_config = ConfigDict(frozen=True, extra="ignore")
 
@@ -317,6 +354,7 @@ class Settings(BaseModel):
     )
     tasks: TaskSettings = Field(default_factory=TaskSettings)
     updates: UpdatesSettings = Field(default_factory=UpdatesSettings)
+    memory: MemorySettings = Field(default_factory=MemorySettings)
     buffer: BufferSettings = Field(default_factory=BufferSettings)
     plugins: dict[str, PluginSource] = Field(
         default_factory=dict,
