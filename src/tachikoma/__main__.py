@@ -46,7 +46,10 @@ from tachikoma.memory import (
     MemoryContextProvider,
     PreferencesProcessor,
     TranscriptArchiveProcessor,
+    episodic_maintenance_tick,
+    facts_maintenance_tick,
     memory_hook,
+    preferences_maintenance_tick,
 )
 from tachikoma.message_post_processing import MessagePostProcessingPipeline
 from tachikoma.notifications import dispatch_notification
@@ -484,6 +487,29 @@ async def run(
                     run=lambda: _plugin_check_tick(plugin_manager, plugin_state_repo, bus),
                 )
             )
+
+            if settings.memory.maintenance.enabled:
+                maintenance_schedule = settings.memory.maintenance.schedule
+                maintenance_settings = settings.memory.maintenance
+                jobs.extend([
+                    Job(
+                        name="episodic_maintenance",
+                        trigger=CronTrigger(maintenance_schedule, tz),
+                        run=lambda: episodic_maintenance_tick(
+                            agent_defaults, maintenance_settings
+                        ),
+                    ),
+                    Job(
+                        name="facts_maintenance",
+                        trigger=CronTrigger(maintenance_schedule, tz),
+                        run=lambda: facts_maintenance_tick(agent_defaults),
+                    ),
+                    Job(
+                        name="preferences_maintenance",
+                        trigger=CronTrigger(maintenance_schedule, tz),
+                        run=lambda: preferences_maintenance_tick(agent_defaults),
+                    ),
+                ])
 
             scheduler_tasks.append(asyncio.create_task(scheduler(jobs), name="scheduler"))
 
