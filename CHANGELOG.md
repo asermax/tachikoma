@@ -2,6 +2,84 @@
 
 <!-- version list -->
 
+## v1.76.0 (2026-05-09)
+
+### Bug Fixes
+
+- **db**: Improve error message for missing migration SQL files
+  ([`9256f4f`](https://github.com/asermax/tachikoma/commit/9256f4f7fd96e827cbd13e1ac4cd091b284f2664))
+
+### Code Style
+
+- Reformat database migrations and plugin loader
+  ([`5473aa0`](https://github.com/asermax/tachikoma/commit/5473aa070818b3af682001d109513b9ec624b41b))
+
+- **db**: Remove step-numbered comments from migration runner
+  ([`2740e53`](https://github.com/asermax/tachikoma/commit/2740e53732c7766b86c5d687dccea8058d13e4a1))
+
+### Documentation
+
+- **db**: Update feature docs to reflect tracked migration system
+  ([`06718e6`](https://github.com/asermax/tachikoma/commit/06718e609285373efc2a7ae2d00f27ae024eb555))
+
+- **designs**: Add DLT-085 tracked schema migration system design
+  ([`4f7dfa0`](https://github.com/asermax/tachikoma/commit/4f7dfa0d4259a1295bfeb2ed1aaed57c815c35e4))
+
+- **designs**: Add tracked schema migration system design details for DLT-085
+  ([`d84705d`](https://github.com/asermax/tachikoma/commit/d84705d66b28f02e19b0deb28fa3f116301dcd51))
+
+- **planning**: Add DLT-085 tracked schema migration implementation plan
+  ([`be609c1`](https://github.com/asermax/tachikoma/commit/be609c1f12cf597e339acf5340e991a49d964bf5))
+
+- **planning**: Mark DLT-085 as in-progress design
+  ([`b908a7d`](https://github.com/asermax/tachikoma/commit/b908a7d0a10f18a7448c562c127630b5d2bc220e))
+
+- **planning**: Mark DLT-085 as in-progress spec
+  ([`67a3ad7`](https://github.com/asermax/tachikoma/commit/67a3ad7a9bed15b14306aaf37c912a6d28f84c55))
+
+- **planning**: Mark DLT-085 batch 1 complete and status as implementation
+  ([`cfff6ee`](https://github.com/asermax/tachikoma/commit/cfff6ee655e5b0b25518a11fa9dfcd95f2f2f8bb))
+
+- **planning**: Mark DLT-085 batch 2 complete
+  ([`d62d30b`](https://github.com/asermax/tachikoma/commit/d62d30b7c316d8d89447f054e88ccc038e117795))
+
+- **planning**: Mark DLT-085 design as complete
+  ([`03a7a1e`](https://github.com/asermax/tachikoma/commit/03a7a1e278f409219fd93a0546a1babfc569c1ca))
+
+- **planning**: Mark DLT-085 implementation complete
+  ([`9c511c8`](https://github.com/asermax/tachikoma/commit/9c511c8e2fc421f35a4ffbb9aa823d58c19e389f))
+
+- **planning**: Mark DLT-085 plan as complete
+  ([`48ab628`](https://github.com/asermax/tachikoma/commit/48ab62800b0a4b4603e2c6591bf5e21ee2a8da3a))
+
+- **planning**: Mark DLT-085 plan as in-progress
+  ([`526c4d1`](https://github.com/asermax/tachikoma/commit/526c4d150513de3da1731f943b9c940b95e15f6f))
+
+- **planning**: Remove completed DLT-085 delta working documents
+  ([`39f7a55`](https://github.com/asermax/tachikoma/commit/39f7a55fcb99a3b6e1409dac134abb3d88a7f3c9))
+
+- **specs**: Add DLT-085 tracked schema migration system spec
+  ([`f0efe7c`](https://github.com/asermax/tachikoma/commit/f0efe7c5b0c78de8a040373ae68700a8a5bbb026))
+
+### Features
+
+- **db**: Add tracked migration runner and integrate with database module
+  ([`a60113a`](https://github.com/asermax/tachikoma/commit/a60113a806e91d1c693abdaa67bc4fc5f7b9de90))
+
+- **db**: Add tracked schema migration definitions and initial baseline
+  ([`29ea46c`](https://github.com/asermax/tachikoma/commit/29ea46c642f97692038dfe9a335bd5c176f2f212))
+
+### Refactoring
+
+- **test**: Extract helpers to reduce duplication in migration tests
+  ([`5c0bb1a`](https://github.com/asermax/tachikoma/commit/5c0bb1aa6939105fcbda5906b378cf18591372fe))
+
+### Testing
+
+- **db**: Add tracked migration integration tests
+  ([`253ef0a`](https://github.com/asermax/tachikoma/commit/253ef0a768cef8d667adc431b00a8dfe4fcc1ded))
+
+
 ## v1.75.0 (2026-05-09)
 
 ### Chores
