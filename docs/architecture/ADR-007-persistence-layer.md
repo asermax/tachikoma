@@ -29,7 +29,7 @@ The pattern established:
 ### Positive
 
 - Typed ORM models with column-level type hints (`Mapped[str]`, `Mapped[datetime | None]`)
-- Built-in schema management — `create_all()` handles table creation without separate migration tooling
+- Schema management via `create_all()` for ORM-defined tables plus a tracked migration system for versioned schema changes. Migrations execute in deterministic order with per-migration transactions; a `schema_migrations` table records applied revisions.
 - Established pattern for future persistence (task queues, memory metadata can follow the same model/repository structure)
 - Familiar ecosystem — extensive documentation, community support, well-understood by the developer
 - Async-native — `create_async_engine` + `aiosqlite` integrates cleanly with the existing async architecture
