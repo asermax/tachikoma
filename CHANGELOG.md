@@ -2,6 +2,88 @@
 
 <!-- version list -->
 
+## v1.75.0 (2026-05-09)
+
+### Chores
+
+- Remove DLT-088 delta artifacts
+  ([`bc10f2b`](https://github.com/asermax/tachikoma/commit/bc10f2ba5366d58e6f4f8fb5f4f35e6db064881f))
+
+### Documentation
+
+- **memory**: Reconcile scheduled maintenance into feature docs
+  ([`ce5a99c`](https://github.com/asermax/tachikoma/commit/ce5a99c186a1dc9c2e1c51f6d98966c1e337bf5d))
+
+- **planning**: Add implementation plan for DLT-088
+  ([`2bbd23e`](https://github.com/asermax/tachikoma/commit/2bbd23ecdcd5ba97a6bd9cab08fb48776e864be1))
+
+- **planning**: Complete DLT-088 design and align spec terminology
+  ([`fd6c672`](https://github.com/asermax/tachikoma/commit/fd6c672d37cb5b5d91e27c57dea2ffd6171ae5e0))
+
+- **planning**: Mark DLT-088 as complete
+  ([`17e0bf6`](https://github.com/asermax/tachikoma/commit/17e0bf6666b0a448587f6d3b2521fe8bd25c333e))
+
+- **planning**: Mark DLT-088 batch 2 as done
+  ([`7aec095`](https://github.com/asermax/tachikoma/commit/7aec095ed788e68ecd310bc3820b540883dbeee5))
+
+- **planning**: Mark DLT-088 batch 3 as done
+  ([`00e50a7`](https://github.com/asermax/tachikoma/commit/00e50a77d55a7762175bc2dd2f71cd789e48f88d))
+
+- **planning**: Mark DLT-088 batch 4 as done
+  ([`5e548e7`](https://github.com/asermax/tachikoma/commit/5e548e7923fe7db7f21aa76c4ea9cfe0926c02d6))
+
+- **planning**: Mark DLT-088 batch 5 as done
+  ([`eaf532f`](https://github.com/asermax/tachikoma/commit/eaf532f8cb9e16cc16610a0695e93c4fce14f399))
+
+- **planning**: Update DLT-088 status to design complete
+  ([`b57e0ca`](https://github.com/asermax/tachikoma/commit/b57e0ca250e0b40bcbf98d733dd0130e40dcc6a4))
+
+- **planning**: Update DLT-088 status to design in progress
+  ([`6cc1d47`](https://github.com/asermax/tachikoma/commit/6cc1d47bb7e2d0b223ae52ad07eee45ac13b14e9))
+
+- **planning**: Update DLT-088 status to implementation
+  ([`fc5ef9e`](https://github.com/asermax/tachikoma/commit/fc5ef9e7a85aa702046882aee17aa20838fca946))
+
+- **planning**: Update DLT-088 status to plan complete
+  ([`cc5b8c6`](https://github.com/asermax/tachikoma/commit/cc5b8c692f5a2669805b9ba8ce02fba98cfd18af))
+
+- **planning**: Update DLT-088 status to plan in progress
+  ([`7a43d88`](https://github.com/asermax/tachikoma/commit/7a43d8859fe07ed0e1265043d50554b7e0f4fe8e))
+
+- **planning**: Update DLT-088 status to spec complete
+  ([`3c32c96`](https://github.com/asermax/tachikoma/commit/3c32c96eb06a6cb6b42181b659f167c8037bb46e))
+
+- **planning**: Update DLT-088 status to spec in progress
+  ([`4f1cbd9`](https://github.com/asermax/tachikoma/commit/4f1cbd95c5595be924b8d3661a81e5c7ebbb5b67))
+
+- **specs**: Add DLT-088 spec and design for scheduled memory store maintenance
+  ([`aa9b20c`](https://github.com/asermax/tachikoma/commit/aa9b20c4d7f684465146a6d6b3dd43e0bb2d173a))
+
+### Features
+
+- **config**: Add MemorySettings and MaintenanceSettings models
+  ([`5a1ca04`](https://github.com/asermax/tachikoma/commit/5a1ca04adea21ac6cd8c9aebae20ba7da1d320a1))
+
+- **memory**: Add maintenance tick functions and prompts
+  ([`99dcd29`](https://github.com/asermax/tachikoma/commit/99dcd29eeaeb29df5448a8f4dc80e5fd5718f945))
+
+- **memory**: Wire maintenance ticks into scheduler
+  ([`07f8549`](https://github.com/asermax/tachikoma/commit/07f8549d962f0fef38e939c6aae9be39e934128f))
+
+### Refactoring
+
+- **memory**: Extract shared maintenance tick helper
+  ([`b0551f9`](https://github.com/asermax/tachikoma/commit/b0551f99fa77f7c275eeca5a198e0211b6993cf1))
+
+- **post-processing**: Promote query_and_consume to shared infrastructure
+  ([`2994fbf`](https://github.com/asermax/tachikoma/commit/2994fbf54d33080754a2b42ec9e0e3946c3f8e04))
+
+### Testing
+
+- **memory**: Add maintenance, config, and bash hook tests
+  ([`1269b74`](https://github.com/asermax/tachikoma/commit/1269b748c288a340c716ac2d02bfa696d1b5353b))
+
+
 ## v1.74.2 (2026-05-08)
 
 ### Bug Fixes
