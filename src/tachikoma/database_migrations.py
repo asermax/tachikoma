@@ -98,7 +98,14 @@ async def run_pending_migrations(engine: AsyncEngine) -> None:
 
     # 5. Execute pending migrations in order, each in its own transaction
     for m in pending:
-        sql_content = importlib.resources.files("tachikoma").joinpath(m.sql_path).read_text("utf-8")
+        try:
+            resource = importlib.resources.files("tachikoma").joinpath(m.sql_path)
+            sql_content = resource.read_text("utf-8")
+        except FileNotFoundError as e:
+            raise RuntimeError(
+                f"Migration {m.revision} ({m.name}): SQL file not found: {m.sql_path}"
+            ) from e
+
         statements = [s.strip() for s in sql_content.split(";\n") if s.strip()]
 
         try:
