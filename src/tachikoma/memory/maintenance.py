@@ -1,8 +1,8 @@
-"""Scheduled memory maintenance for consolidation and cleanup.
+"""Scheduled maintenance for memory stores and context files.
 
 Memory stores grow unbounded without maintenance. Tick functions run
-periodically to consolidate episodic entries, prune stale facts, and
-deduplicate preferences.
+periodically to consolidate episodic entries, prune stale facts,
+deduplicate preferences, and clean up context files.
 """
 
 from pathlib import Path
@@ -12,6 +12,7 @@ from loguru import logger
 
 from tachikoma.agent_defaults import AgentDefaults
 from tachikoma.config import MaintenanceSettings
+from tachikoma.context.loading import CONTEXT_DIR_NAME
 from tachikoma.git.processor import GIT_ALLOW, GIT_BASH_HOOK, GIT_TOOLS
 from tachikoma.git.sync import has_uncommitted_changes
 from tachikoma.post_processing import (
@@ -62,7 +63,7 @@ async def git_commit_memory_changes(
         f"## Instructions\n\n"
         f"1. Run `git status` to see all uncommitted changes.\n"
         f"2. Run `git add memories/{memory_type}/` to stage only the maintenance changes.\n"
-        f"3. Run `git commit -m \"memory maintenance: {memory_type}\"`.\n\n"
+        f'3. Run `git commit -m "memory maintenance: {memory_type}"`.\n\n'
         f"## Constraints\n\n"
         f"- Only use: `git status`, `git add`, `git commit`\n"
         f"- Do NOT use: `git push`, `git branch`, `git checkout`, `git reset`, "
@@ -361,3 +362,158 @@ async def preferences_maintenance_tick(
     Evaluates preference files for redundancy and overlap.
     """
     await _run_maintenance_tick(agent_defaults, "preferences", PREFERENCES_MAINTENANCE_PROMPT)
+
+
+CONTEXT_MAINTENANCE_PROMPT = """\
+You are a memory maintenance agent performing context file cleanup.
+
+## Files
+
+You are responsible for three foundational context files:
+- `$WORKSPACE/context/SOUL.md` — Personality traits, tone, and behavioral guidelines
+- `$WORKSPACE/context/USER.md` — What the assistant knows about the user
+- `$WORKSPACE/context/AGENTS.md` — Operational instructions and workflow preferences
+
+## Pre-check
+
+If the `$WORKSPACE/context/` directory does not exist or none of the three \
+files exist, stop immediately — nothing to maintain.
+
+## Evaluation Criteria
+
+Read all three context files and evaluate each for three issues:
+
+### Staleness
+
+An entry is stale when it describes a state that is no longer accurate:
+- References to completed projects or resolved issues (check actual workspace \
+state to confirm — read project directories, check file existence)
+- Outdated role information, past events, or time-specific entries that are \
+no longer relevant
+- Technical details that reference outdated tools, versions, or configurations
+- Entries about resolved bugs or completed work — the fix is done, the \
+instruction is no longer needed
+- Content that duplicates what skill reference files already cover — skill \
+files are the authoritative source
+
+For stale entries:
+- Remove the entry entirely if it has no ongoing relevance
+- If the entry can be updated to reflect current state: edit it
+- Do NOT prune based on vague hints or assumptions — only remove when you \
+have clear evidence (e.g., the project directory no longer exists, the \
+referenced file has been deleted, the tool version has changed)
+
+### Redundancy
+
+Same information stated multiple times within or across files:
+- Keep the most complete and well-organized version
+- Remove duplicate entries
+
+### Overlap
+
+Related topics split across sections within the same file:
+- When two sections cover the same topic with semantically equivalent content, \
+merge them into one section combining the best of both
+- Only consolidate when sections are truly equivalent — related-but-distinct \
+topics must remain separate
+
+## Size Limits
+
+Enforce these size limits by pruning actively:
+- **USER.md**: Must stay under ~120 lines. When it exceeds the limit:
+  - Summarize verbose sections
+  - Remove stale sections
+  - Omit details that belong in facts/preferences memory files
+- **AGENTS.md**: Must stay under ~400 lines. When it exceeds the limit:
+  - Remove entries about resolved bugs or completed work
+  - Consolidate duplicated entries across sections
+  - Remove content that duplicates what skill reference files already cover
+
+## Constraints
+
+- **Cleanup-only**: Do NOT add new content — only clean and consolidate what \
+is already there
+- **Read-first**: Always read a file before modifying it
+- **Preserve structure**: Keep existing formatting and organization
+- **Conservative**: Only remove content with clear evidence of staleness
+- **SOUL.md**: Be especially conservative — personality traits and tone \
+guidelines should only be removed if the user has explicitly contradicted \
+them in context file entries or if they duplicate each other
+
+## Idempotency
+
+Before acting, check whether work has already been done:
+- If files are already clean and within size limits, do not re-process
+- If no changes are needed, exit with no changes
+
+## Permissions
+
+You can read files anywhere in the workspace (needed to validate claims \
+against actual project state). Edits and writes are restricted to \
+`$WORKSPACE/context/`. For Bash, read-only inspection commands (`ls`, `find`, \
+`file`, `echo`, `date`, `cat`, `head`, `tail`, `wc`, `stat`) are allowed — \
+other commands will be denied.
+"""
+
+
+async def git_commit_context_changes(
+    agent_defaults: AgentDefaults,
+) -> None:
+    """Stage and commit changes in the context directory.
+
+    No-ops if there are no uncommitted changes. Uses a scoped git agent
+    that only stages files under ``context/``.
+    """
+    if not await has_uncommitted_changes(agent_defaults.cwd):
+        _log.debug("No uncommitted changes, skipping commit: target=context")
+        return
+
+    _log.info("Committing maintenance changes: target=context")
+
+    prompt = (
+        "You are a git commit agent. Stage and commit context maintenance changes.\n\n"
+        "## Instructions\n\n"
+        "1. Run `git status` to see all uncommitted changes.\n"
+        "2. Run `git add context/` to stage only the maintenance changes.\n"
+        '3. Run `git commit -m "memory maintenance: context"`.\n\n'
+        "## Constraints\n\n"
+        "- Only use: `git status`, `git add`, `git commit`\n"
+        "- Do NOT use: `git push`, `git branch`, `git checkout`, `git reset`, "
+        "`git rebase`, `git merge`, `git stash`\n"
+        "- If there are no changes to commit, do nothing\n"
+    )
+    prompt = prompt.replace("$WORKSPACE", str(agent_defaults.cwd))
+
+    await query_and_consume(
+        prompt,
+        agent_defaults,
+        tools=GIT_TOOLS,
+        allow=GIT_ALLOW,
+        pre_tool_use_hooks=[GIT_BASH_HOOK],
+        model=agent_defaults.processor_model,
+    )
+
+
+async def context_maintenance_tick(
+    agent_defaults: AgentDefaults,
+) -> None:
+    """Run context file cleanup.
+
+    Evaluates context files for staleness, redundancy, and overlap,
+    enforcing size limits. Does not add new content.
+    """
+    scope = agent_defaults.cwd / CONTEXT_DIR_NAME
+    rules = maintenance_allow_rules(scope)
+    formatted = CONTEXT_MAINTENANCE_PROMPT.replace("$WORKSPACE", str(agent_defaults.cwd))
+
+    _log.info("Starting context maintenance tick")
+    await query_and_consume(
+        formatted,
+        agent_defaults,
+        tools=MAINTENANCE_TOOLS,
+        allow=rules,
+        pre_tool_use_hooks=[MAINTENANCE_BASH_HOOK],
+        model=agent_defaults.processor_model,
+    )
+    await git_commit_context_changes(agent_defaults)
+    _log.info("Context maintenance tick completed")

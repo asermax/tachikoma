@@ -46,6 +46,7 @@ from tachikoma.memory import (
     MemoryContextProvider,
     PreferencesProcessor,
     TranscriptArchiveProcessor,
+    context_maintenance_tick,
     episodic_maintenance_tick,
     facts_maintenance_tick,
     memory_hook,
@@ -508,6 +509,11 @@ async def run(
                         name="preferences_maintenance",
                         trigger=CronTrigger(maintenance_schedule, tz),
                         run=lambda: preferences_maintenance_tick(agent_defaults),
+                    ),
+                    Job(
+                        name="context_maintenance",
+                        trigger=CronTrigger(maintenance_schedule, tz),
+                        run=lambda: context_maintenance_tick(agent_defaults),
                     ),
                 ])
 

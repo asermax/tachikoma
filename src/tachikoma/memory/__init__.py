@@ -13,6 +13,7 @@ from tachikoma.memory.episodic import EpisodicProcessor
 from tachikoma.memory.facts import FactsProcessor
 from tachikoma.memory.hooks import memory_hook
 from tachikoma.memory.maintenance import (
+    context_maintenance_tick,
     episodic_maintenance_tick,
     facts_maintenance_tick,
     preferences_maintenance_tick,
@@ -26,6 +27,7 @@ __all__ = [
     "MemoryContextProvider",
     "PreferencesProcessor",
     "TranscriptArchiveProcessor",
+    "context_maintenance_tick",
     "episodic_maintenance_tick",
     "facts_maintenance_tick",
     "memory_hook",
