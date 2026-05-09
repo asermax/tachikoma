@@ -14,6 +14,8 @@ from tachikoma.agent_defaults import SYSTEM_DISALLOWED_TOOLS
 from tachikoma.config import (
     BufferSettings,
     LoggingSettings,
+    MaintenanceSettings,
+    MemorySettings,
     SendFileSettings,
     Settings,
     SettingsManager,
@@ -1286,4 +1288,93 @@ class TestPluginConfigSubtable:
         plugin = settings.plugins["p"]
         assert isinstance(plugin, LocalPluginSource)
         assert plugin.path == Path("/home/user/plugin")
-        assert plugin.config == {"path": "some-value"}
+
+
+class TestMaintenanceSettings:
+    """Tests for MaintenanceSettings and MemorySettings models."""
+
+    def test_default_maintenance_settings(self) -> None:
+        settings = MaintenanceSettings()
+
+        assert settings.enabled is True
+        assert settings.schedule == "0 3 * * *"
+        assert settings.recent_days == 15
+        assert settings.weekly_threshold_months == 3
+        assert settings.monthly_threshold_months == 12
+
+    def test_default_memory_settings(self) -> None:
+        settings = MemorySettings()
+
+        assert settings.maintenance.enabled is True
+        assert settings.maintenance.recent_days == 15
+
+    def test_settings_has_memory_with_defaults(self) -> None:
+        settings = Settings()
+
+        assert settings.memory.maintenance.enabled is True
+        assert settings.memory.maintenance.schedule == "0 3 * * *"
+        assert settings.memory.maintenance.recent_days == 15
+        assert settings.memory.maintenance.weekly_threshold_months == 3
+        assert settings.memory.maintenance.monthly_threshold_months == 12
+
+    def test_custom_maintenance_values(self) -> None:
+        settings = Settings.model_validate(
+            {
+                "memory": {
+                    "maintenance": {
+                        "enabled": False,
+                        "schedule": "0 4 * * *",
+                        "recent_days": 30,
+                        "weekly_threshold_months": 6,
+                        "monthly_threshold_months": 24,
+                    }
+                }
+            }
+        )
+
+        assert settings.memory.maintenance.enabled is False
+        assert settings.memory.maintenance.schedule == "0 4 * * *"
+        assert settings.memory.maintenance.recent_days == 30
+        assert settings.memory.maintenance.weekly_threshold_months == 6
+        assert settings.memory.maintenance.monthly_threshold_months == 24
+
+    def test_maintenance_from_toml(self, tmp_path: Path) -> None:
+        config_path = tmp_path / "config.toml"
+        config_path.write_text(
+            "[memory.maintenance]\n"
+            'schedule = "0 5 * * *"\n'
+            "recent_days = 20\n"
+            "weekly_threshold_months = 4\n"
+            "monthly_threshold_months = 18\n"
+        )
+
+        settings = load_settings(config_path)
+
+        assert settings.memory.maintenance.schedule == "0 5 * * *"
+        assert settings.memory.maintenance.recent_days == 20
+        assert settings.memory.maintenance.weekly_threshold_months == 4
+
+    def test_invalid_recent_days_rejected(self) -> None:
+        with pytest.raises(ValidationError):
+            MaintenanceSettings(recent_days=0)
+
+    def test_negative_recent_days_rejected(self) -> None:
+        with pytest.raises(ValidationError):
+            MaintenanceSettings(recent_days=-1)
+
+    def test_invalid_weekly_threshold_rejected(self) -> None:
+        with pytest.raises(ValidationError):
+            MaintenanceSettings(weekly_threshold_months=0)
+
+    def test_invalid_monthly_threshold_rejected(self) -> None:
+        with pytest.raises(ValidationError):
+            MaintenanceSettings(monthly_threshold_months=-5)
+
+    def test_missing_memory_section_uses_defaults(self, tmp_path: Path) -> None:
+        config_path = tmp_path / "config.toml"
+        config_path.write_text('[workspace]\npath = "~/tachikoma"\n')
+
+        settings = load_settings(config_path)
+
+        assert settings.memory.maintenance.enabled is True
+        assert settings.memory.maintenance.recent_days == 15

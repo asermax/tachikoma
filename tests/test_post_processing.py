@@ -16,7 +16,10 @@ from tachikoma.agent_defaults import AgentDefaults
 from tachikoma.post_processing import (
     FINALIZE_PHASE,
     MAIN_PHASE,
+    MAINTENANCE_BASH_HOOK,
+    MAINTENANCE_BASH_PREFIXES,
     PRE_FINALIZE_PHASE,
+    UTILITY_BASH_PREFIXES,
     PostProcessingPipeline,
     PostProcessor,
     PromptDrivenProcessor,
@@ -25,6 +28,7 @@ from tachikoma.post_processing import (
     fork_and_capture,
     fork_and_consume,
     make_bash_deny_hook,
+    query_and_consume,
 )
 from tachikoma.sessions.model import Session, SessionContextEntry
 
@@ -1659,3 +1663,77 @@ class TestUnregister:
         assert processor in pipeline._phases[PRE_FINALIZE_PHASE]
         pipeline.unregister(processor)
         assert processor not in pipeline._phases[PRE_FINALIZE_PHASE]
+
+
+class TestMaintenanceBashHook:
+    """Tests for MAINTENANCE_BASH_PREFIXES and MAINTENANCE_BASH_HOOK."""
+
+    @staticmethod
+    async def _run_hook(hook_matcher, command: str) -> dict:
+        hook = hook_matcher.hooks[0]
+        return await hook(
+            {"tool_input": {"command": command}},
+            None,
+            MagicMock(),
+        )
+
+    def test_prefixes_include_all_utility_prefixes(self) -> None:
+        for prefix in UTILITY_BASH_PREFIXES:
+            assert prefix in MAINTENANCE_BASH_PREFIXES
+
+    def test_prefixes_include_rm(self) -> None:
+        assert "rm " in MAINTENANCE_BASH_PREFIXES
+
+    def test_prefixes_count_is_utility_plus_one(self) -> None:
+        assert len(MAINTENANCE_BASH_PREFIXES) == len(UTILITY_BASH_PREFIXES) + 1
+
+    async def test_allows_rm(self) -> None:
+        result = await self._run_hook(MAINTENANCE_BASH_HOOK, "rm file.md")
+        assert result == {}
+
+    async def test_allows_rm_with_path(self) -> None:
+        result = await self._run_hook(MAINTENANCE_BASH_HOOK, "rm memories/episodic/old.md")
+        assert result == {}
+
+    async def test_allows_rm_recursive(self) -> None:
+        result = await self._run_hook(MAINTENANCE_BASH_HOOK, "rm -rf memories/episodic/old.md")
+        assert result == {}
+
+    async def test_allows_utility_commands(self) -> None:
+        for command in ("ls -la", "cat file.md", "grep pattern file.txt"):
+            result = await self._run_hook(MAINTENANCE_BASH_HOOK, command)
+            assert result == {}, f"{command!r} was denied: {result}"
+
+    async def test_denies_curl(self) -> None:
+        result = await self._run_hook(MAINTENANCE_BASH_HOOK, "curl http://example.com")
+        assert result["hookSpecificOutput"]["permissionDecision"] == "deny"
+
+    async def test_denies_python(self) -> None:
+        result = await self._run_hook(MAINTENANCE_BASH_HOOK, "python script.py")
+        assert result["hookSpecificOutput"]["permissionDecision"] == "deny"
+
+    async def test_denies_npm(self) -> None:
+        result = await self._run_hook(MAINTENANCE_BASH_HOOK, "npm install")
+        assert result["hookSpecificOutput"]["permissionDecision"] == "deny"
+
+    async def test_rm_not_path_scoped(self) -> None:
+        """rm is allowed regardless of path arguments — scoping is prompt-enforced."""
+        result = await self._run_hook(MAINTENANCE_BASH_HOOK, "rm /etc/passwd")
+        assert result == {}
+
+
+class TestQueryAndConsumeImport:
+    """Tests verifying query_and_consume is importable from tachikoma.post_processing."""
+
+    def test_importable_from_post_processing(self) -> None:
+        assert callable(query_and_consume)
+
+    def test_git_processor_imports_from_post_processing(self) -> None:
+        from tachikoma.git.processor import query_and_consume as git_qac  # noqa: PLC0415
+
+        assert git_qac is query_and_consume
+
+    def test_projects_processor_imports_from_post_processing(self) -> None:
+        from tachikoma.projects.processor import query_and_consume as proj_qac  # noqa: PLC0415
+
+        assert proj_qac is query_and_consume
