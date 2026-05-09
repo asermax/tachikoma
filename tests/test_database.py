@@ -5,19 +5,46 @@ and bootstrap hook.
 """
 
 import inspect
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 
 import aiosqlite
 import pytest
 from loguru import logger
 from sqlalchemy import text
-from sqlalchemy.ext.asyncio import create_async_engine
+from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 
 import tachikoma.database_migrations as dm
 from tachikoma.bootstrap import BootstrapContext
 from tachikoma.config import SettingsManager
 from tachikoma.database import Database, database_hook
 from tachikoma.database_migrations import MIGRATIONS, Migration, run_pending_migrations
+
+
+async def _create_engine_with_baseline(db_path: Path) -> AsyncEngine:
+    """Create an engine with schema_migrations table and 001 stamped."""
+    engine = create_async_engine(f"sqlite+aiosqlite:///{db_path}")
+    async with engine.begin() as conn:
+        await conn.execute(text(dm._SCHEMA_MIGRATIONS_DDL))
+        await conn.execute(
+            text(
+                "INSERT INTO schema_migrations (revision, name, applied_at)"
+                " VALUES ('001', 'initial_schema', datetime('now'))"
+            )
+        )
+    return engine
+
+
+@contextmanager
+def _patch_migrations(migrations: list[Migration]) -> Iterator[None]:
+    """Temporarily replace dm.MIGRATIONS with the given list."""
+    original = dm.MIGRATIONS
+    dm.MIGRATIONS = migrations
+    try:
+        yield
+    finally:
+        dm.MIGRATIONS = original
 
 
 class TestDatabaseInitialization:
@@ -401,107 +428,66 @@ class TestMigrationTracking:
     async def test_only_new_migrations_execute(self, tmp_path: Path) -> None:
         """R0: given '001' applied, only new '002' executes."""
         db_path = tmp_path / "tachikoma.db"
-        engine = create_async_engine(f"sqlite+aiosqlite:///{db_path}")
+        engine = await _create_engine_with_baseline(db_path)
 
-        # Create schema_migrations with '001' already applied
-        async with engine.begin() as conn:
-            await conn.execute(
-                text(
-                    "CREATE TABLE IF NOT EXISTS schema_migrations ("
-                    "revision VARCHAR NOT NULL PRIMARY KEY, "
-                    "name VARCHAR NOT NULL, "
-                    "applied_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP"
-                    ")"
-                )
-            )
-            await conn.execute(
-                text(
-                    "INSERT INTO schema_migrations (revision, name, applied_at)"
-                    " VALUES ('001', 'initial_schema', datetime('now'))"
-                )
-            )
-
-        # Create a temp SQL file for migration 002
         sql_file = tmp_path / "002_test.sql"
         sql_file.write_text("CREATE TABLE test_table (id INTEGER);\n")
 
-        # Patch MIGRATIONS to include our test migration
-        original_migrations = dm.MIGRATIONS
-        dm.MIGRATIONS = [
-            Migration("001", "initial_schema", "migrations/001_initial.sql"),
-            Migration("002", "test_migration", str(sql_file)),
-        ]
-
         try:
-            await run_pending_migrations(engine)
+            with _patch_migrations(
+                [
+                    Migration("001", "initial_schema", "migrations/001_initial.sql"),
+                    Migration("002", "test_migration", str(sql_file)),
+                ]
+            ):
+                await run_pending_migrations(engine)
+
+            async with aiosqlite.connect(db_path) as db:
+                cursor = await db.execute(
+                    "SELECT name FROM sqlite_master WHERE type='table' AND name='test_table'"
+                )
+                assert await cursor.fetchone() is not None
+
+                cursor = await db.execute(
+                    "SELECT revision FROM schema_migrations WHERE revision='002'"
+                )
+                assert await cursor.fetchone() is not None
         finally:
-            dm.MIGRATIONS = original_migrations
-
-        async with aiosqlite.connect(db_path) as db:
-            cursor = await db.execute(
-                "SELECT name FROM sqlite_master WHERE type='table' AND name='test_table'"
-            )
-            assert await cursor.fetchone() is not None
-
-            cursor = await db.execute("SELECT revision FROM schema_migrations WHERE revision='002'")
-            assert await cursor.fetchone() is not None
-
-        await engine.dispose()
+            await engine.dispose()
 
     async def test_migrations_run_in_order(self, tmp_path: Path) -> None:
         """R4: multiple pending migrations execute in registry list order."""
         db_path = tmp_path / "tachikoma.db"
-        engine = create_async_engine(f"sqlite+aiosqlite:///{db_path}")
+        engine = await _create_engine_with_baseline(db_path)
 
-        # Create schema_migrations with '001' already applied
-        async with engine.begin() as conn:
-            await conn.execute(
-                text(
-                    "CREATE TABLE IF NOT EXISTS schema_migrations ("
-                    "revision VARCHAR NOT NULL PRIMARY KEY, "
-                    "name VARCHAR NOT NULL, "
-                    "applied_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP"
-                    ")"
-                )
-            )
-            await conn.execute(
-                text(
-                    "INSERT INTO schema_migrations (revision, name, applied_at)"
-                    " VALUES ('001', 'initial_schema', datetime('now'))"
-                )
-            )
-
-        # Create SQL files for migrations 002 and 003
         sql_002 = tmp_path / "002_first.sql"
         sql_002.write_text("CREATE TABLE table_a (id INTEGER);\n")
 
         sql_003 = tmp_path / "002_second.sql"
         sql_003.write_text("CREATE TABLE table_b (id INTEGER);\n")
 
-        original_migrations = dm.MIGRATIONS
-        dm.MIGRATIONS = [
-            Migration("001", "initial_schema", "migrations/001_initial.sql"),
-            Migration("002", "first", str(sql_002)),
-            Migration("003", "second", str(sql_003)),
-        ]
-
         try:
-            await run_pending_migrations(engine)
+            with _patch_migrations(
+                [
+                    Migration("001", "initial_schema", "migrations/001_initial.sql"),
+                    Migration("002", "first", str(sql_002)),
+                    Migration("003", "second", str(sql_003)),
+                ]
+            ):
+                await run_pending_migrations(engine)
+
+            async with aiosqlite.connect(db_path) as db:
+                cursor = await db.execute(
+                    "SELECT revision, applied_at FROM schema_migrations"
+                    " WHERE revision IN ('002', '003') ORDER BY applied_at"
+                )
+                rows = await cursor.fetchall()
+
+            assert len(rows) == 2
+            assert rows[0][0] == "002"
+            assert rows[1][0] == "003"
         finally:
-            dm.MIGRATIONS = original_migrations
-
-        async with aiosqlite.connect(db_path) as db:
-            cursor = await db.execute(
-                "SELECT revision, applied_at FROM schema_migrations"
-                " WHERE revision IN ('002', '003') ORDER BY applied_at"
-            )
-            rows = await cursor.fetchall()
-
-        assert len(rows) == 2
-        assert rows[0][0] == "002"
-        assert rows[1][0] == "003"
-
-        await engine.dispose()
+            await engine.dispose()
 
     async def test_applied_revisions_match_registry(self, tmp_path: Path) -> None:
         """R0: after all migrations applied, schema_migrations rows match registry."""
@@ -525,227 +511,142 @@ class TestMigrationExecution:
     async def test_pending_migration_executes_sql_in_transaction(self, tmp_path: Path) -> None:
         """R5, R7: migration with multiple statements executes atomically."""
         db_path = tmp_path / "tachikoma.db"
-        engine = create_async_engine(f"sqlite+aiosqlite:///{db_path}")
+        engine = await _create_engine_with_baseline(db_path)
 
-        # Set up schema_migrations with 001 applied
-        async with engine.begin() as conn:
-            await conn.execute(
-                text(
-                    "CREATE TABLE IF NOT EXISTS schema_migrations ("
-                    "revision VARCHAR NOT NULL PRIMARY KEY, "
-                    "name VARCHAR NOT NULL, "
-                    "applied_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP"
-                    ")"
-                )
-            )
-            await conn.execute(
-                text(
-                    "INSERT INTO schema_migrations (revision, name, applied_at)"
-                    " VALUES ('001', 'initial_schema', datetime('now'))"
-                )
-            )
-
-        # Migration creates a table AND inserts a row
         sql_file = tmp_path / "002_atomic.sql"
         sql_file.write_text(
             "CREATE TABLE atomic_test (id INTEGER PRIMARY KEY, val TEXT);\n"
             "INSERT INTO atomic_test (id, val) VALUES (1, 'hello');\n"
         )
 
-        original_migrations = dm.MIGRATIONS
-        dm.MIGRATIONS = [
-            Migration("001", "initial_schema", "migrations/001_initial.sql"),
-            Migration("002", "atomic_test", str(sql_file)),
-        ]
-
         try:
-            await run_pending_migrations(engine)
+            with _patch_migrations(
+                [
+                    Migration("001", "initial_schema", "migrations/001_initial.sql"),
+                    Migration("002", "atomic_test", str(sql_file)),
+                ]
+            ):
+                await run_pending_migrations(engine)
+
+            async with aiosqlite.connect(db_path) as db:
+                cursor = await db.execute("SELECT val FROM atomic_test WHERE id=1")
+                row = await cursor.fetchone()
+                assert row is not None
+                assert row[0] == "hello"
+
+                cursor = await db.execute(
+                    "SELECT revision FROM schema_migrations WHERE revision='002'"
+                )
+                assert await cursor.fetchone() is not None
         finally:
-            dm.MIGRATIONS = original_migrations
-
-        async with aiosqlite.connect(db_path) as db:
-            cursor = await db.execute("SELECT val FROM atomic_test WHERE id=1")
-            row = await cursor.fetchone()
-            assert row is not None
-            assert row[0] == "hello"
-
-            cursor = await db.execute("SELECT revision FROM schema_migrations WHERE revision='002'")
-            assert await cursor.fetchone() is not None
-
-        await engine.dispose()
+            await engine.dispose()
 
     async def test_migration_failure_rolls_back_and_halts(self, tmp_path: Path) -> None:
         """R7: failing migration rolls back, raises RuntimeError, halts."""
         db_path = tmp_path / "tachikoma.db"
-        engine = create_async_engine(f"sqlite+aiosqlite:///{db_path}")
+        engine = await _create_engine_with_baseline(db_path)
 
-        # Set up schema_migrations with 001 applied
-        async with engine.begin() as conn:
-            await conn.execute(
-                text(
-                    "CREATE TABLE IF NOT EXISTS schema_migrations ("
-                    "revision VARCHAR NOT NULL PRIMARY KEY, "
-                    "name VARCHAR NOT NULL, "
-                    "applied_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP"
-                    ")"
-                )
-            )
-            await conn.execute(
-                text(
-                    "INSERT INTO schema_migrations (revision, name, applied_at)"
-                    " VALUES ('001', 'initial_schema', datetime('now'))"
-                )
-            )
-
-        # Bad migration: references nonexistent table
         sql_002 = tmp_path / "002_bad.sql"
         sql_002.write_text("INSERT INTO nonexistent_table VALUES (1);\n")
 
-        # Valid migration that should NOT execute after 002 fails
         sql_003 = tmp_path / "003_good.sql"
         sql_003.write_text("CREATE TABLE should_not_exist (id INTEGER);\n")
 
-        original_migrations = dm.MIGRATIONS
-        dm.MIGRATIONS = [
-            Migration("001", "initial_schema", "migrations/001_initial.sql"),
-            Migration("002", "bad_migration", str(sql_002)),
-            Migration("003", "good_migration", str(sql_003)),
-        ]
-
         try:
-            with pytest.raises(RuntimeError, match=r"Migration 002.*bad_migration"):
+            with (
+                _patch_migrations(
+                    [
+                        Migration("001", "initial_schema", "migrations/001_initial.sql"),
+                        Migration("002", "bad_migration", str(sql_002)),
+                        Migration("003", "good_migration", str(sql_003)),
+                    ]
+                ),
+                pytest.raises(RuntimeError, match=r"Migration 002.*bad_migration"),
+            ):
                 await run_pending_migrations(engine)
+
+            async with aiosqlite.connect(db_path) as db:
+                cursor = await db.execute(
+                    "SELECT revision FROM schema_migrations WHERE revision='002'"
+                )
+                assert await cursor.fetchone() is None
+
+                cursor = await db.execute(
+                    "SELECT name FROM sqlite_master WHERE type='table' AND name='should_not_exist'"
+                )
+                assert await cursor.fetchone() is None
         finally:
-            dm.MIGRATIONS = original_migrations
-
-        async with aiosqlite.connect(db_path) as db:
-            # 002 should NOT be stamped
-            cursor = await db.execute("SELECT revision FROM schema_migrations WHERE revision='002'")
-            assert await cursor.fetchone() is None
-
-            # 003 should NOT have executed
-            cursor = await db.execute(
-                "SELECT name FROM sqlite_master WHERE type='table' AND name='should_not_exist'"
-            )
-            assert await cursor.fetchone() is None
-
-        await engine.dispose()
+            await engine.dispose()
 
     async def test_failed_migration_retried_on_restart(self, tmp_path: Path) -> None:
         """R7: failed migration is not stamped and is re-attempted on next run."""
         db_path = tmp_path / "tachikoma.db"
-        engine = create_async_engine(f"sqlite+aiosqlite:///{db_path}")
+        engine = await _create_engine_with_baseline(db_path)
 
-        # Set up schema_migrations with 001 applied
-        async with engine.begin() as conn:
-            await conn.execute(
-                text(
-                    "CREATE TABLE IF NOT EXISTS schema_migrations ("
-                    "revision VARCHAR NOT NULL PRIMARY KEY, "
-                    "name VARCHAR NOT NULL, "
-                    "applied_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP"
-                    ")"
-                )
-            )
-            await conn.execute(
-                text(
-                    "INSERT INTO schema_migrations (revision, name, applied_at)"
-                    " VALUES ('001', 'initial_schema', datetime('now'))"
-                )
-            )
-
-        # Migration that will fail first, then succeed
         sql_file = tmp_path / "002_retry.sql"
         sql_file.write_text("INSERT INTO nonexistent_table VALUES (1);\n")
 
-        original_migrations = dm.MIGRATIONS
-        dm.MIGRATIONS = [
+        test_migrations = [
             Migration("001", "initial_schema", "migrations/001_initial.sql"),
             Migration("002", "retry_test", str(sql_file)),
         ]
 
-        # First attempt: fails
         try:
-            with pytest.raises(RuntimeError):
+            # First attempt: fails
+            with _patch_migrations(test_migrations), pytest.raises(RuntimeError):
                 await run_pending_migrations(engine)
+
+            async with aiosqlite.connect(db_path) as db:
+                cursor = await db.execute(
+                    "SELECT revision FROM schema_migrations WHERE revision='002'"
+                )
+                assert await cursor.fetchone() is None
+
+            # Fix the SQL and retry
+            sql_file.write_text("CREATE TABLE retry_table (id INTEGER);\n")
+
+            with _patch_migrations(test_migrations):
+                await run_pending_migrations(engine)
+
+            async with aiosqlite.connect(db_path) as db:
+                cursor = await db.execute(
+                    "SELECT revision FROM schema_migrations WHERE revision='002'"
+                )
+                assert await cursor.fetchone() is not None
+
+                cursor = await db.execute(
+                    "SELECT name FROM sqlite_master WHERE type='table' AND name='retry_table'"
+                )
+                assert await cursor.fetchone() is not None
         finally:
-            dm.MIGRATIONS = original_migrations
-
-        # Verify 002 not stamped
-        async with aiosqlite.connect(db_path) as db:
-            cursor = await db.execute("SELECT revision FROM schema_migrations WHERE revision='002'")
-            assert await cursor.fetchone() is None
-
-        # Fix the SQL and retry
-        sql_file.write_text("CREATE TABLE retry_table (id INTEGER);\n")
-        dm.MIGRATIONS = [
-            Migration("001", "initial_schema", "migrations/001_initial.sql"),
-            Migration("002", "retry_test", str(sql_file)),
-        ]
-
-        try:
-            await run_pending_migrations(engine)
-        finally:
-            dm.MIGRATIONS = original_migrations
-
-        # Verify 002 is now stamped and table exists
-        async with aiosqlite.connect(db_path) as db:
-            cursor = await db.execute("SELECT revision FROM schema_migrations WHERE revision='002'")
-            assert await cursor.fetchone() is not None
-
-            cursor = await db.execute(
-                "SELECT name FROM sqlite_master WHERE type='table' AND name='retry_table'"
-            )
-            assert await cursor.fetchone() is not None
-
-        await engine.dispose()
+            await engine.dispose()
 
     async def test_migration_logs_revision_and_name(self, tmp_path: Path) -> None:
         """R6: migration execution emits log with revision ID and name."""
         db_path = tmp_path / "tachikoma.db"
-        engine = create_async_engine(f"sqlite+aiosqlite:///{db_path}")
-
-        # Set up schema_migrations with 001 applied
-        async with engine.begin() as conn:
-            await conn.execute(
-                text(
-                    "CREATE TABLE IF NOT EXISTS schema_migrations ("
-                    "revision VARCHAR NOT NULL PRIMARY KEY, "
-                    "name VARCHAR NOT NULL, "
-                    "applied_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP"
-                    ")"
-                )
-            )
-            await conn.execute(
-                text(
-                    "INSERT INTO schema_migrations (revision, name, applied_at)"
-                    " VALUES ('001', 'initial_schema', datetime('now'))"
-                )
-            )
+        engine = await _create_engine_with_baseline(db_path)
 
         sql_file = tmp_path / "002_logging.sql"
         sql_file.write_text("CREATE TABLE log_test (id INTEGER);\n")
-
-        original_migrations = dm.MIGRATIONS
-        dm.MIGRATIONS = [
-            Migration("001", "initial_schema", "migrations/001_initial.sql"),
-            Migration("002", "logging_test", str(sql_file)),
-        ]
 
         log_messages: list[str] = []
         sink_id = logger.add(lambda msg: log_messages.append(str(msg)))
 
         try:
-            await run_pending_migrations(engine)
+            with _patch_migrations(
+                [
+                    Migration("001", "initial_schema", "migrations/001_initial.sql"),
+                    Migration("002", "logging_test", str(sql_file)),
+                ]
+            ):
+                await run_pending_migrations(engine)
         finally:
             logger.remove(sink_id)
-            dm.MIGRATIONS = original_migrations
+            await engine.dispose()
 
         log_output = " ".join(log_messages)
         assert "002" in log_output
         assert "logging_test" in log_output
-
-        await engine.dispose()
 
 
 class TestCodeCleanup:
