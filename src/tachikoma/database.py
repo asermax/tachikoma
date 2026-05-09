@@ -5,15 +5,14 @@ engine lifecycle. All ORM models inherit from Base; all repositories
 receive the shared session_factory.
 """
 
-from datetime import UTC, datetime
 from pathlib import Path
 
 from loguru import logger
-from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase
 
 from tachikoma.bootstrap import BootstrapContext
+from tachikoma.database_migrations import run_pending_migrations
 
 _log = logger.bind(component="database")
 
@@ -80,8 +79,8 @@ class Database:
         """Run schema migrations.
 
         Imports model modules so their ORM classes register on Base.metadata,
-        then uses create_all() for idempotent table creation. Pragma-based
-        column checks handle upgrades of existing databases.
+        then uses create_all() for idempotent table creation. Delegates to the
+        tracked migration runner for versioned schema changes.
         """
         if self._engine is None:
             return
@@ -96,249 +95,8 @@ class Database:
         async with self._engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
 
-            # Check for and add missing columns on existing databases
-
-            # Check if summary column exists on sessions table
-            result = await conn.execute(
-                text("SELECT * FROM pragma_table_info('sessions') WHERE name='summary'")
-            )
-            if result.fetchone() is None:
-                await conn.execute(text("ALTER TABLE sessions ADD COLUMN summary TEXT"))
-                _log.info("Schema migration: added 'summary' column to sessions table")
-
-            # Check if last_resumed_at column exists on sessions table
-            result = await conn.execute(
-                text("SELECT * FROM pragma_table_info('sessions') WHERE name='last_resumed_at'")
-            )
-            if result.fetchone() is None:
-                await conn.execute(text("ALTER TABLE sessions ADD COLUMN last_resumed_at DATETIME"))
-                _log.info("Schema migration: added 'last_resumed_at' column to sessions table")
-
-            # Check if processed_at column exists on sessions table
-            result = await conn.execute(
-                text("SELECT * FROM pragma_table_info('sessions') WHERE name='processed_at'")
-            )
-            if result.fetchone() is None:
-                await conn.execute(text("ALTER TABLE sessions ADD COLUMN processed_at DATETIME"))
-                _log.info("Schema migration: added 'processed_at' column to sessions table")
-
-            # Check if session_resumptions table exists
-            result = await conn.execute(
-                text(
-                    "SELECT name FROM sqlite_master"
-                    " WHERE type='table' AND name='session_resumptions'"
-                )
-            )
-            if result.fetchone() is None:
-                await conn.execute(
-                    text("""
-                        CREATE TABLE session_resumptions (
-                            id INTEGER PRIMARY KEY AUTOINCREMENT,
-                            session_id TEXT NOT NULL REFERENCES sessions(id),
-                            resumed_at DATETIME NOT NULL,
-                            previous_ended_at DATETIME NOT NULL
-                        )
-                    """)
-                )
-                await conn.execute(
-                    text(
-                        "CREATE INDEX ix_session_resumptions_session_id"
-                        " ON session_resumptions(session_id)"
-                    )
-                )
-                _log.info("Schema migration: created 'session_resumptions' table")
-
-            # Check if session_context_entries table exists
-            result = await conn.execute(
-                text(
-                    "SELECT name FROM sqlite_master"
-                    " WHERE type='table' AND name='session_context_entries'"
-                )
-            )
-            if result.fetchone() is None:
-                await conn.execute(
-                    text("""
-                        CREATE TABLE session_context_entries (
-                            id INTEGER PRIMARY KEY AUTOINCREMENT,
-                            session_id TEXT NOT NULL REFERENCES sessions(id),
-                            owner TEXT NOT NULL,
-                            content TEXT NOT NULL
-                        )
-                    """)
-                )
-                await conn.execute(
-                    text(
-                        "CREATE INDEX ix_session_context_entries_session_id"
-                        " ON session_context_entries(session_id)"
-                    )
-                )
-                _log.info("Schema migration: created 'session_context_entries' table")
-
-            # Check if notify column exists on task_definitions table (now removed)
-            result = await conn.execute(
-                text("SELECT * FROM pragma_table_info('task_definitions') WHERE name='notify'")
-            )
-            if result.fetchone() is not None:
-                await conn.execute(text("ALTER TABLE task_definitions DROP COLUMN notify"))
-                _log.info("Schema migration: dropped 'notify' column from task_definitions table")
-
-            # Check if error column exists on sessions table
-            result = await conn.execute(
-                text("SELECT * FROM pragma_table_info('sessions') WHERE name='error'")
-            )
-            if result.fetchone() is None:
-                await conn.execute(text("ALTER TABLE sessions ADD COLUMN error BOOLEAN DEFAULT 0"))
-                _log.info("Schema migration: added 'error' column to sessions table")
-
-            # Check if last_exchange column exists on sessions table
-            result = await conn.execute(
-                text("SELECT * FROM pragma_table_info('sessions') WHERE name='last_exchange'")
-            )
-            if result.fetchone() is None:
-                await conn.execute(text("ALTER TABLE sessions ADD COLUMN last_exchange TEXT"))
-                _log.info("Schema migration: added 'last_exchange' column to sessions table")
-
-            # Check if metadata column exists on session_context_entries table
-            result = await conn.execute(
-                text(
-                    "SELECT * FROM pragma_table_info('session_context_entries')"
-                    " WHERE name='metadata'"
-                )
-            )
-            if result.fetchone() is None:
-                await conn.execute(
-                    text("ALTER TABLE session_context_entries ADD COLUMN metadata TEXT")
-                )
-                _log.info(
-                    "Schema migration: added 'metadata' column to session_context_entries table"
-                )
-
-            # Check if sdk_session_id column exists on task_instances table
-            result = await conn.execute(
-                text(
-                    "SELECT * FROM pragma_table_info('task_instances') WHERE name='sdk_session_id'"
-                )
-            )
-            if result.fetchone() is None:
-                await conn.execute(
-                    text("ALTER TABLE task_instances ADD COLUMN sdk_session_id TEXT")
-                )
-                _log.info("Schema migration: added 'sdk_session_id' column to task_instances table")
-
-            # Check if user_response column exists on task_instances table
-            result = await conn.execute(
-                text("SELECT * FROM pragma_table_info('task_instances') WHERE name='user_response'")
-            )
-            if result.fetchone() is None:
-                await conn.execute(text("ALTER TABLE task_instances ADD COLUMN user_response TEXT"))
-                _log.info("Schema migration: added 'user_response' column to task_instances table")
-
-            # Check if updated_at column exists on task_instances table
-            result = await conn.execute(
-                text("SELECT * FROM pragma_table_info('task_instances') WHERE name='updated_at'")
-            )
-            if result.fetchone() is None:
-                await conn.execute(
-                    text("ALTER TABLE task_instances ADD COLUMN updated_at DATETIME")
-                )
-                _log.info("Schema migration: added 'updated_at' column to task_instances table")
-
-            # Check if since column exists on task_definitions table
-            result = await conn.execute(
-                text("SELECT * FROM pragma_table_info('task_definitions') WHERE name='since'")
-            )
-            if result.fetchone() is None:
-                since_default = datetime.now(UTC).isoformat()
-                await conn.execute(
-                    text(
-                        "ALTER TABLE task_definitions ADD COLUMN since DATETIME"
-                        f" NOT NULL DEFAULT '{since_default}'"
-                    )
-                )
-                _log.info("Schema migration: added 'since' column to task_definitions table")
-
-            # Check if stop_reason column exists on detached_processes table
-            result = await conn.execute(
-                text(
-                    "SELECT * FROM pragma_table_info('detached_processes') WHERE name='stop_reason'"
-                )
-            )
-            if result.fetchone() is None:
-                await conn.execute(
-                    text("ALTER TABLE detached_processes ADD COLUMN stop_reason TEXT")
-                )
-                _log.info(
-                    "Schema migration: added 'stop_reason' column to detached_processes table"
-                )
-
-            # Check if parent_workflow_id column exists on workflow_states table
-            result = await conn.execute(
-                text(
-                    "SELECT * FROM pragma_table_info('workflow_states')"
-                    " WHERE name='parent_workflow_id'"
-                )
-            )
-            if result.fetchone() is None:
-                await conn.execute(
-                    text("ALTER TABLE workflow_states ADD COLUMN parent_workflow_id TEXT")
-                )
-                _log.info(
-                    "Schema migration: added 'parent_workflow_id' column to workflow_states table"
-                )
-
-            # Check if parent_step_id column exists on workflow_states table
-            result = await conn.execute(
-                text(
-                    "SELECT * FROM pragma_table_info('workflow_states') WHERE name='parent_step_id'"
-                )
-            )
-            if result.fetchone() is None:
-                await conn.execute(
-                    text("ALTER TABLE workflow_states ADD COLUMN parent_step_id TEXT")
-                )
-                _log.info(
-                    "Schema migration: added 'parent_step_id' column to workflow_states table"
-                )
-
-            result = await conn.execute(
-                text("SELECT * FROM pragma_table_info('workflow_states') WHERE name='loop_state'")
-            )
-            if result.fetchone() is None:
-                await conn.execute(text("ALTER TABLE workflow_states ADD COLUMN loop_state TEXT"))
-                _log.info("Schema migration: added 'loop_state' column to workflow_states table")
-
-            # Check if skills column exists on task_definitions table
-            result = await conn.execute(
-                text("SELECT 1 FROM pragma_table_info('task_definitions') WHERE name='skills'")
-            )
-            if result.fetchone() is None:
-                await conn.execute(
-                    text(
-                        "ALTER TABLE task_definitions ADD COLUMN skills TEXT NOT NULL DEFAULT '[]'"
-                    )
-                )
-                _log.info("Schema migration: added 'skills' column to task_definitions table")
-
-            # Check if plugin_state table exists
-            result = await conn.execute(
-                text("SELECT name FROM sqlite_master WHERE type='table' AND name='plugin_state'")
-            )
-            if result.fetchone() is None:
-                await conn.execute(
-                    text("""
-                        CREATE TABLE plugin_state (
-                            alias VARCHAR NOT NULL,
-                            installed_version VARCHAR,
-                            update_status VARCHAR DEFAULT 'unknown',
-                            available_version VARCHAR,
-                            last_checked_at DATETIME,
-                            diagnostic VARCHAR,
-                            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-                            PRIMARY KEY (alias)
-                        )
-                    """)
-                )
-                _log.info("Schema migration: created 'plugin_state' table")
+        # Delegate to tracked migration runner
+        await run_pending_migrations(self._engine)
 
         _log.debug("Schema migrations completed: db_path={path}", path=self._db_path)
 

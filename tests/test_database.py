@@ -171,26 +171,21 @@ class TestDatabaseInitialization:
 
         assert len(loop_state_cols) == 1
 
-    async def test_loop_state_migration_adds_column_on_pre_existing_schema(
+    async def test_existing_install_stamps_initial_migration(
         self, tmp_path: Path
     ) -> None:
-        """migration adds loop_state to a pre-existing schema lacking it."""
+        """R2: existing install stamps migration 001 without executing SQL."""
         db_path = tmp_path / "tachikoma.db"
 
-        # Hand-build a pre-existing workflow_states schema (no loop_state column)
+        # Simulate a pre-existing database with a sessions table
         async with aiosqlite.connect(db_path) as db:
             await db.execute(
-                "CREATE TABLE workflow_states ("
+                "CREATE TABLE sessions ("
                 "id TEXT PRIMARY KEY, "
-                "skill_name TEXT NOT NULL, "
-                "workflow_name TEXT NOT NULL, "
-                "current_step TEXT, "
-                "step_states TEXT NOT NULL, "
-                "definition_snapshot TEXT NOT NULL, "
-                "scratchpad_path TEXT NOT NULL, "
-                "deleted_at DATETIME, "
-                "created_at DATETIME NOT NULL, "
-                "updated_at DATETIME NOT NULL"
+                "sdk_session_id TEXT, "
+                "transcript_path TEXT, "
+                "started_at DATETIME NOT NULL, "
+                "ended_at DATETIME"
                 ")"
             )
             await db.commit()
@@ -200,10 +195,14 @@ class TestDatabaseInitialization:
         await database.close()
 
         async with aiosqlite.connect(db_path) as db:
-            cursor = await db.execute("PRAGMA table_info('workflow_states')")
-            cols = {row[1] for row in await cursor.fetchall()}
+            cursor = await db.execute(
+                "SELECT revision, name FROM schema_migrations"
+            )
+            rows = await cursor.fetchall()
 
-        assert "loop_state" in cols
+        assert len(rows) == 1
+        assert rows[0][0] == "001"
+        assert rows[0][1] == "initial_schema"
 
 
 class TestDatabaseClose:

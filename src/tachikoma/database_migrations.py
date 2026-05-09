@@ -1,11 +1,26 @@
-"""Migration definitions and registry for tracked schema migrations.
+"""Migration definitions, registry, and runner for tracked schema migrations.
 
-Defines the Migration dataclass and an ordered registry of all known migrations.
-The registry is the single source of truth for migration metadata — position in
-the list determines execution order.
+Defines the Migration dataclass, an ordered registry of all known migrations,
+and an async runner that queries applied revisions, diffs against the registry,
+and executes pending migrations with per-migration transactions.
 """
 
+import importlib.resources
 from dataclasses import dataclass
+
+from loguru import logger
+from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncEngine
+
+_log = logger.bind(component="database")
+
+_SCHEMA_MIGRATIONS_DDL = """\
+CREATE TABLE IF NOT EXISTS schema_migrations (
+    revision VARCHAR NOT NULL PRIMARY KEY,
+    name VARCHAR NOT NULL,
+    applied_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+)
+"""
 
 
 @dataclass(frozen=True)
@@ -26,3 +41,93 @@ class Migration:
 MIGRATIONS: list[Migration] = [
     Migration("001", "initial_schema", "migrations/001_initial.sql"),
 ]
+
+
+async def run_pending_migrations(engine: AsyncEngine) -> None:
+    """Run any pending tracked migrations against the database.
+
+    Creates the ``schema_migrations`` table if absent, stamps the initial
+    migration (``001``) for both fresh and existing installs without executing
+    its SQL, then diffs applied revisions against the registry and executes
+    pending migrations in order — each in its own transaction.
+
+    Raises:
+        RuntimeError: If a migration fails, identifying revision and name.
+    """
+    # 1. Ensure schema_migrations table exists
+    async with engine.begin() as conn:
+        await conn.execute(text(_SCHEMA_MIGRATIONS_DDL))
+
+    # 2. Query applied revisions
+    async with engine.connect() as conn:
+        result = await conn.execute(text("SELECT revision FROM schema_migrations"))
+        applied_set = {row[0] for row in result.fetchall()}
+
+    # 3. First run: stamp "001" as applied without executing SQL
+    if not applied_set:
+        async with engine.connect() as conn:
+            result = await conn.execute(
+                text(
+                    "SELECT name FROM sqlite_master"
+                    " WHERE type='table' AND name='sessions'"
+                )
+            )
+            has_sessions = result.fetchone() is not None
+
+        install_type = "existing" if has_sessions else "fresh"
+
+        async with engine.begin() as conn:
+            await conn.execute(
+                text(
+                    "INSERT INTO schema_migrations (revision, name, applied_at)"
+                    " VALUES (:rev, :name, datetime('now'))"
+                ),
+                {"rev": "001", "name": "initial_schema"},
+            )
+
+        _log.info(
+            "Schema initialized ({type} install). Migration 001 stamped.",
+            type=install_type,
+        )
+
+        applied_set = {"001"}
+
+    # 4. Diff pending migrations
+    pending = [m for m in MIGRATIONS if m.revision not in applied_set]
+
+    if not pending:
+        _log.debug("Schema is up to date")
+        return
+
+    # 5. Execute pending migrations in order, each in its own transaction
+    for m in pending:
+        sql_content = (
+            importlib.resources.files("tachikoma")
+            .joinpath(m.sql_path)
+            .read_text("utf-8")
+        )
+        statements = [
+            s.strip() for s in sql_content.split(";\n") if s.strip()
+        ]
+
+        try:
+            async with engine.begin() as conn:
+                for statement in statements:
+                    await conn.execute(text(statement))
+                await conn.execute(
+                    text(
+                        "INSERT INTO schema_migrations (revision, name, applied_at)"
+                        " VALUES (:rev, :name, datetime('now'))"
+                    ),
+                    {"rev": m.revision, "name": m.name},
+                )
+        except Exception as e:
+            raise RuntimeError(
+                f"Migration {m.revision} ({m.name}) failed: {e}"
+            ) from e
+
+        _log.info(
+            "Applied migration {revision}: {name}",
+            revision=m.revision,
+            name=m.name,
+        )
