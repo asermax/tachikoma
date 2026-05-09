@@ -4,7 +4,7 @@
 
 ## Overview
 
-After a conversation ends, the system automatically extracts and persists learnings as structured markdown files. Each memory type has its own processor that forks the original SDK session and directs the agent to read existing memories, analyze the conversation, and create, update, or delete memory files as needed. Three memory types: episodic (date-stamped conversation summaries), facts (named files about the user and other factual information), and preferences (named files about how the user likes things). All memories are human-readable markdown in the workspace.
+After a conversation ends, the system automatically extracts and persists learnings as structured markdown files. Each memory type has its own processor that forks the original SDK session and directs the agent to read existing memories, analyze the conversation, and create, update, or delete memory files as needed. Three memory types: episodic (date-stamped conversation summaries), facts (named files about the user and other factual information), and preferences (named files about how the user likes things). All memories are human-readable markdown in the workspace. A nightly maintenance system reviews stored memories, consolidating episodic entries, pruning stale facts, and deduplicating preferences.
 
 The memory workspace also includes `memories/transcripts/`, a non-extractive subdirectory populated by a transcript archive processor that copies each conversation's SDK transcript into the workspace on session close. Archived transcripts are raw `.jsonl` files (not curated markdown) and are named by SDK session ID so the archived path is derivable without a dedicated model field.
 
@@ -12,6 +12,7 @@ The memory workspace also includes `memories/transcripts/`, a non-extractive sub
 
 - As the system, I need to automatically extract and persist learnings from completed conversations so that future sessions are contextually aware of past interactions, known preferences, and prior decisions
 - As a user, I want my memories stored as readable markdown files so that I can inspect, understand, and edit them directly
+- As the system, I need to periodically review and clean up stored memories so that the memory store remains useful and doesn't degrade over time from accumulated staleness, redundancy, and excessive verbosity
 
 ## Requirements
 
@@ -30,6 +31,14 @@ The memory workspace also includes `memories/transcripts/`, a non-extractive sub
 | R10 | Facts and preferences processors proactively prune stale, outdated, or superseded entries during extraction — removing or updating entries that the conversation contradicts, and merging overlapping files into one; episodic entries are never deleted for content reasons (only malformed filenames are consolidated) |
 | R11 | Before creating facts or preferences memory files, forked agents read the foundational context files from `$WORKSPACE/context/` (AGENTS.md, USER.md, SOUL.md) and skip creation when the information is already covered there; context files are the authoritative source for their respective categories |
 | R12 | The preferences processor also checks `AGENTS.md` inline before creating new preference files — if the information is already captured there (even in different words), the processor skips creating the file; gracefully proceeds normally if `AGENTS.md` doesn't exist or is empty |
+| R13 | Three nightly maintenance jobs — one per memory type (episodic, facts, preferences) — share a single configurable cron schedule and can be disabled via an `enabled` toggle |
+| R14 | Episodic maintenance applies tiered time windows: clean daily notes for verbosity (last N days), consolidate into weekly summaries, consolidate into monthly summaries, delete entries older than the configured monthly threshold |
+| R15 | Facts maintenance evaluates files for staleness, redundancy, and overlap — consolidating, editing within files, merging files, or removing obsolete files |
+| R16 | Preferences maintenance evaluates files for redundancy and overlap across files — consolidating, editing within files, merging files, or removing obsolete files |
+| R17 | All maintenance is agent-driven — agents read and edit memory files using fresh SDK sessions with read access anywhere in the workspace, write/edit access scoped to the target memory subdirectory, and bash restricted to utility commands plus `rm` for file deletion |
+| R18 | Maintenance is idempotent — running it multiple times produces the same result |
+| R19 | Maintenance handles errors gracefully — agent failures, malformed files, empty stores, and concurrent access do not corrupt the memory store; changes are automatically committed to git after each job completes |
+| R20 | Tiered time window thresholds and the maintenance schedule are configurable with sensible defaults |
 
 ## Behaviors
 
@@ -125,3 +134,66 @@ Before creating facts or preferences memory files, the forked agent reads the fo
 - Given a context file partially covers the topic but the conversation adds genuinely new details, when the agent runs, then it creates a file for the new information only
 - Given no context file covers the topic, when the agent runs, then it proceeds normally with file creation
 - Given `AGENTS.md` doesn't exist or is empty, when the preferences processor runs, then extraction proceeds normally without the inline dedup check (R12)
+
+### Scheduled Maintenance (R13, R17)
+
+Three maintenance jobs run on a shared nightly cron schedule. Each creates a fresh SDK session with scoped writer permissions — read access anywhere in the workspace, edit/write scoped to the relevant memory subdirectory, bash restricted to utility commands plus `rm`. The agent reads the subdirectory, performs maintenance autonomously, and commits changes to git.
+
+**Acceptance Criteria**:
+- Given maintenance is enabled in configuration, when the system starts, then three maintenance jobs are scheduled for periodic execution (episodic, facts, preferences)
+- Given a maintenance job fires, when the agent runs, then it uses a fresh SDK session with scoped access to the relevant memory subdirectory
+- Given a maintenance agent completes its work, then all file changes are committed to git — staging only the affected memory subdirectory
+- Given the memory store is empty, when a maintenance task runs, then it completes as a no-op with no git commit
+- Given maintenance is disabled in configuration, when the system starts, then no maintenance jobs are registered
+
+### Episodic Maintenance (R14)
+
+Applies tiered time-window consolidation: recent daily files are cleaned for verbosity, older files are consolidated into weekly summaries, even older files into monthly summaries, and files past the retention threshold are deleted. Tiered thresholds are configurable with sensible defaults.
+
+**Acceptance Criteria**:
+- Given episodic files within the recent window, when the maintenance agent processes them, then it reduces verbosity without deleting files or removing substantive content
+- Given episodic files in the weekly consolidation window, when the agent processes them, then it consolidates daily files into weekly summary files (YYYY-WNN.md), removing originals
+- Given episodic files in the monthly consolidation window, when the agent processes them, then it consolidates into monthly summary files (YYYY-MM.md), removing originals
+- Given episodic files older than the configured monthly threshold, when the agent processes them, then they are deleted
+- Given a weekly or monthly consolidation would create a summary file that already exists, when the agent processes the relevant files, then it merges new content into the existing summary
+- Given partial groups at week/month boundaries, when the agent processes them, then they are consolidated into a single summary for that period
+
+### Facts Maintenance (R15)
+
+Evaluates fact files for staleness (outdated information), redundancy (duplicate information across files), and overlap (related topics split across files). The agent consolidates, edits, merges, or removes files as needed.
+
+**Acceptance Criteria**:
+- Given the facts maintenance task runs, when it reads all fact files, then it evaluates each file for staleness, redundancy, and overlap
+- Given stale entries (outdated dates, completed projects, contradicted information), when the agent identifies them, then it removes or updates the entries
+- Given redundant entries (same information in different files), when the agent identifies duplicates, then it keeps the most complete version and removes duplicates
+- Given overlapping files (related topics split across files), when the agent identifies overlap, then it merges into a single consolidated file and removes originals
+- Given a fact file that is entirely obsolete, when the agent processes it, then it deletes the file
+
+### Preferences Maintenance (R16)
+
+Evaluates preference files for redundancy (same preference stated multiple times) and overlap (related preferences split across files). The agent consolidates, edits, merges, or removes files as needed.
+
+**Acceptance Criteria**:
+- Given the preferences maintenance task runs, when it reads all preference files, then it evaluates each file for redundancy and overlap
+- Given redundant preferences, when the agent identifies duplicates, then it deduplicates — keeping the most complete version
+- Given overlapping files, when the agent identifies overlap, then it merges into a single consolidated file and removes originals
+- Given a preference file that is entirely superseded or obsolete, when the agent processes it, then it deletes the file
+
+### Maintenance Configuration (R20)
+
+Tiered time window thresholds and schedule are configurable via the `[memory.maintenance]` TOML section with sensible defaults.
+
+**Acceptance Criteria**:
+- Given the configuration file, when the user inspects the memory maintenance section, then the cron schedule, time window thresholds, and enabled toggle are present with sensible defaults
+- Given custom values in configuration, when the maintenance tasks run, then they use the configured values instead of defaults
+
+### Idempotency and Error Handling (R18, R19)
+
+Maintenance is designed to be idempotent and handle errors gracefully. Agent failures are contained to the individual job, concurrent access is safe without locking, and git provides implicit rollback for maintenance mistakes.
+
+**Acceptance Criteria**:
+- Given the episodic maintenance task runs twice in succession, when no new conversations have occurred between runs, then the second run produces no changes
+- Given the facts or preferences maintenance task runs twice in succession, when no new information has been added, then the second run produces no changes
+- Given the maintenance agent fails or produces invalid output, when the error is caught, then the failure is logged and other maintenance jobs are unaffected
+- Given maintenance runs while a user is actively writing memories, when a file is modified during processing, then the agent's view reflects whatever state it read — no locking is required
+- Given maintenance modifies or deletes files, when the post-maintenance git commit runs, then the changes are committed

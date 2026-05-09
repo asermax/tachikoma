@@ -7,7 +7,7 @@
 
 ## Purpose
 
-This document explains the design rationale for memory extraction: how memory processors fork SDK sessions to extract memories, and how the bootstrap hook initializes the memory directory structure.
+This document explains the design rationale for memory extraction: how memory processors fork SDK sessions to extract memories, how the bootstrap hook initializes the memory directory structure, and how scheduled maintenance keeps the memory store healthy over time.
 
 For the post-processing pipeline infrastructure that memory processors plug into, see the [post-processing pipeline design](../agent/post-processing-pipeline.md).
 
@@ -20,12 +20,14 @@ Conversations are ephemeral — once a session ends, the context is lost. The as
 - The SDK's standalone `query()` function is the mechanism for session forking — it operates independently of the coordinator's `ClaudeSDKClient`
 - All file I/O is performed by the forked LLM agent, not by processor code — processors are thin orchestration wrappers
 - Memories are plain markdown files in the workspace — no database, human-readable and directly editable
+- Maintenance runs on a schedule, not triggered by messages — must not interfere with user conversations
 
 **Interactions:**
 - Coordinator (core-architecture): triggers pipeline on session close in `__aexit__`
 - Post-processing pipeline: memory processors register in the default `main` phase (see [pipeline design](../agent/post-processing-pipeline.md))
 - Sessions: provides the `Session` dataclass with `sdk_session_id` for forking
 - Workspace bootstrap: memory hook creates directory structure
+- Central scheduler (DES-010): drives maintenance tick functions on cron schedule
 
 ## Design Overview
 
@@ -68,18 +70,51 @@ For the context update processor that also runs in the main phase, see [core-con
 
 The memory package also owns `TranscriptArchiveProcessor` — a plain `PostProcessor` (not `PromptDrivenProcessor`) that copies the SDK-owned transcript into `memories/transcripts/<sdk-session-id>.jsonl` on session close. It is deterministic I/O with no LLM reasoning, registered in the `pre_finalize` phase so it runs after the extraction processors have read the SDK transcript and before the git commit processor stages the workspace. See the [post-processing pipeline design](../agent/post-processing-pipeline.md) for phase semantics.
 
+Three **maintenance tick functions** run as scheduled jobs (DES-010), each using `query_and_consume` (shared infrastructure in `post_processing.py`) with scoped writer permissions (DES-004) and a maintenance-specific bash gate that extends utility commands with `rm` for file deletion. Each tick performs its maintenance pass and commits changes via a scoped git agent.
+
+```
+┌──────────────────────────────────────────┐
+│              Central Scheduler           │
+│                (DES-010)                  │
+└──────────────┬───────────────────────────┘
+               │  cron trigger (shared)
+        ┌──────┼──────┐
+        ▼      ▼      ▼
+   ┌────────┐┌──────┐┌──────────┐
+   │Epi Tick││Facts ││Prefs Tick│
+   │(+cfg)  ││Tick  ││          │
+   └───┬────┘└──┬───┘└────┬─────┘
+       │        │         │
+       ▼        ▼         ▼
+   _run_maintenance_tick(type, prompt)
+       │
+       ▼
+   query_and_consume(prompt, ...,
+     tools, allow, MAINTENANCE_BASH_HOOK)
+       │
+       ▼
+   memories/<type>/
+       │
+       ▼
+   git_commit_memory_changes(type)
+       │
+       ▼
+   git add memories/<type>/ && commit
+```
+
 ## Components
 
 ### Implementation Structure
 
 | Layer/Component | Responsibility | Key Decisions |
 |-----------------|----------------|---------------|
-| `src/tachikoma/memory/__init__.py` | Re-exports: `EpisodicProcessor`, `FactsProcessor`, `PreferencesProcessor`, `TranscriptArchiveProcessor`, `memory_hook` | Clean public API for the memory package |
+| `src/tachikoma/memory/__init__.py` | Re-exports: `EpisodicProcessor`, `FactsProcessor`, `PreferencesProcessor`, `TranscriptArchiveProcessor`, `memory_hook`, `episodic_maintenance_tick`, `facts_maintenance_tick`, `preferences_maintenance_tick` | Clean public API for the memory package |
 | `src/tachikoma/memory/hooks.py` | `memory_hook`: creates `memories/` directory structure — `episodic/`, `facts/`, `preferences/`, and `transcripts/` subdirectories | Subsystem-owned hook pattern; registered after context hook; `transcripts/` lives alongside the extraction subdirectories because it is owned by the same package, even though it is populated by a deterministic processor |
 | `src/tachikoma/memory/episodic.py` | `EpisodicProcessor(PromptDrivenProcessor)` + `EPISODIC_PROMPT` constant | Extends DES-004 base class; prompt co-located with processor |
 | `src/tachikoma/memory/facts.py` | `FactsProcessor(PromptDrivenProcessor)` + `FACTS_PROMPT` constant | Extends DES-004 base class; prompt co-located with processor; prompt explicitly excludes one-time events (bug fixes, security incidents, deployments) with routing to episodic memory; includes concrete negative filename examples; adds pre-write durability check ("useful in a month?") |
 | `src/tachikoma/memory/preferences.py` | `PreferencesProcessor(PromptDrivenProcessor)` + `PREFERENCES_PROMPT` constant | Extends DES-004 base class; prompt co-located with processor |
 | `src/tachikoma/memory/transcripts.py` | `TranscriptArchiveProcessor(PostProcessor)` — copies `session.transcript_path` to `memories/transcripts/<sdk-session-id>.jsonl` via `shutil.copy2` | Plain `PostProcessor` (no sub-agent — deterministic I/O); self-healing `mkdir(parents=True, exist_ok=True)` inside `process()`; all errors (`FileNotFoundError`, `OSError`) logged and swallowed so the pipeline never crashes on archival failure |
+| `src/tachikoma/memory/maintenance.py` | Three tick functions (`episodic_maintenance_tick`, `facts_maintenance_tick`, `preferences_maintenance_tick`), shared `_run_maintenance_tick` helper, `git_commit_memory_changes` for post-agent commits, per-type maintenance prompts | Uses `query_and_consume` (shared in `post_processing.py`) with DES-004 tool scoping; follows DES-010 tick function pattern; `MAINTENANCE_BASH_HOOK` composes `UTILITY_BASH_PREFIXES` + `rm` via `make_bash_gate_hook`; `git_commit_memory_changes` runs scoped git agent per tick via `has_uncommitted_changes` gate |
 
 ### Cross-Layer Contracts
 
@@ -106,6 +141,35 @@ sequenceDiagram
 - Forked agents ↔ Workspace: agents read/write markdown files in `memories/` subdirectories
 - Bootstrap ↔ Memory hook: `memory_hook` creates directory structure on startup
 
+### Maintenance Cross-Layer Contract
+
+```mermaid
+sequenceDiagram
+    participant Scheduler as Central Scheduler
+    participant Tick as Maintenance Tick
+    participant SDK as query_and_consume
+    participant FS as Memory Files
+    participant Git as Git Commit Agent
+
+    rect rgba(0, 128, 255, 0.1)
+        Note over Scheduler,Git: Scheduled Maintenance
+        Scheduler->>Tick: cron trigger fires
+        Tick->>SDK: query_and_consume(prompt, tools, allow, hooks)
+        SDK->>FS: agent reads/writes/deletes memory files
+        SDK-->>Tick: async iterator consumed
+        Tick->>Git: git_commit_memory_changes(type)
+        Git->>FS: git add memories/<type>/ && git commit
+        Git-->>Tick: commit complete
+        Tick-->>Scheduler: tick complete
+    end
+```
+
+**Integration Points:**
+- Ticks ↔ Scheduler: `CronTrigger` fires on shared cron schedule; conditional on `enabled` flag (DES-010)
+- Ticks ↔ SDK: `query_and_consume` creates fresh sessions (no session forking — independent of conversations)
+- Maintenance agents ↔ Workspace: agents read/write/delete files in `memories/<type>/` subdirectory
+- Git commit ↔ Workspace: `has_uncommitted_changes` gates the commit; scoped `git add` stages only the affected subdirectory
+
 ## Modeling
 
 The domain model is minimal — no persistent entities or database tables. Memory files are unstructured markdown managed by forked LLM agents.
@@ -120,6 +184,24 @@ FactsProcessor(PromptDrivenProcessor)       [DES-004]
 PreferencesProcessor(PromptDrivenProcessor) [DES-004]
 └── PREFERENCES_PROMPT: str
 ```
+
+```
+MemoryMaintenance                              [DES-010 + DES-004]
+├── episodic_maintenance_tick(settings) → None   [tiered consolidation]
+├── facts_maintenance_tick() → None              [staleness/redundancy/overlap]
+├── preferences_maintenance_tick() → None        [redundancy/overlap]
+├── _run_maintenance_tick(type, prompt) → None   [shared composition helper]
+└── git_commit_memory_changes(type) → None       [scoped git add/commit]
+
+MaintenanceSettings(BaseModel)                  [in config.py]
+├── enabled: bool (default: true)
+├── schedule: str (default: "0 3 * * *")
+├── recent_days: int (default: 15)
+├── weekly_threshold_months: int (default: 3)
+└── monthly_threshold_months: int (default: 12)
+```
+
+Maintenance tick functions use `processor_model` (default haiku) for the same reason as extraction processors — mechanical work that doesn't benefit from higher-tier reasoning. Unlike extraction processors which extend `PromptDrivenProcessor` (pipeline-driven, session-forking), maintenance ticks are scheduler-driven and session-independent, so a shared helper function is the right abstraction.
 
 Each processor inherits `_prompt`, `_cwd`, and the default `process()` implementation from `PromptDrivenProcessor`. All three pass `model=agent_defaults.processor_model` at construction so their forks run on the configured mechanical-work model tier (default `"haiku"`). Mechanical extraction doesn't benefit from higher-tier reasoning, and smaller requests are less likely to trip upstream rate limits when the pipeline fires multiple forks concurrently on session close. The `processor_model` setting is shared across all post-processors (see DES-004 for the role taxonomy). For the base class, `PostProcessingPipeline`, `PostProcessor` ABC, and `fork_and_consume` models, see the [pipeline design](../agent/post-processing-pipeline.md).
 
@@ -159,6 +241,25 @@ Each processor inherits `_prompt`, `_cwd`, and the default `process()` implement
    - OSError → error log with traceback, return
 7. On success: info log with session id and destination path
 8. The finalize phase's GitProcessor picks up the new/updated file via its normal "stage everything in workspace" behavior
+```
+
+### Maintenance tick flow (per memory type)
+
+```
+1. Scheduler fires cron trigger for maintenance job
+2. Tick function builds scoped allow rules for memory subdirectory
+3. Tick function builds prompt with configured thresholds (episodic)
+   or fixed strategy (facts/preferences)
+4. _run_maintenance_tick calls query_and_consume with:
+   - MAINTENANCE_TOOLS (Read, Glob, Grep, Bash, Edit, Write)
+   - Scoped allow rules (Edit/Write path-scoped, Read/Glob/Grep/Bash unrestricted)
+   - MAINTENANCE_BASH_HOOK (utility commands + rm)
+   - processor_model for cost efficiency
+5. Agent reads directory, performs maintenance, exits
+6. git_commit_memory_changes checks for uncommitted changes
+   via has_uncommitted_changes():
+   - If changes exist: runs scoped git agent to stage and commit
+   - If no changes: skips (idempotent no-op)
 ```
 
 ## Key Decisions
@@ -221,7 +322,83 @@ Each processor inherits `_prompt`, `_cwd`, and the default `process()` implement
 - Pro: Processor survives directory deletion mid-run
 - Pro: No special-case error-handling branch required for the missing-directory AC
 
+### Scheduler jobs instead of task definitions
+
+**Choice**: Wire maintenance as scheduler jobs (like update checker, one-shot cleanup) rather than task definitions in the database.
+**Why**: Mixing system-owned behavior into the user-facing task subsystem creates confusing patterns — users would see system tasks they didn't create, and the task tools would need special-casing for system ownership. The scheduler tick pattern (DES-010) already exists for system-level work.
+
+**Consequences**:
+- Pro: Clean separation — system work stays in the scheduler, user work stays in the task subsystem
+- Con: No execution history in the database (only logs)
+
+### Post-maintenance git commit
+
+**Choice**: Each tick function runs a scoped git agent after the maintenance agent completes, gated by `has_uncommitted_changes`.
+**Why**: Maintenance changes (consolidated summaries, removed files, merged entries) should be committed promptly so git history reflects what happened. Without this, changes sit uncommitted until the next session close's git processor picks them up.
+
+**Consequences**:
+- Pro: Git history is a clear audit trail of maintenance activity
+- Con: Three extra agent calls per night (one per type), minimal cost since the commit agent is lightweight
+
+### Bash gate with rm for file deletion
+
+**Choice**: Extend `UTILITY_BASH_PREFIXES` with `rm` to create `MAINTENANCE_BASH_PREFIXES`, composed via `make_bash_gate_hook`.
+**Why**: Maintenance agents need to delete files (removing obsolete facts, deleting old episodic entries after consolidation). The existing utility hook only allows read-only commands.
+
+**Consequences**:
+- Pro: Simple, leverages existing DES-004 infrastructure
+- Con: `rm` is not path-scoped by the bash gate — mitigated by prompt restrictions (agent instructed to only delete in the target directory) and git rollback
+
+### Configuration in [memory.maintenance]
+
+**Choice**: New `[memory]` section in config.toml with a `[memory.maintenance]` subsection containing `enabled`, `schedule`, `recent_days`, `weekly_threshold_months`, and `monthly_threshold_months`.
+**Why**: Follows the existing nested config pattern. A new top-level `memory` section leaves room for future memory configuration without crowding existing sections. Existing configs work seamlessly — `extra="ignore"` and default factories apply.
+
+**Consequences**:
+- Pro: Clean config organization; memory settings are self-contained and discoverable
+- Con: One new Pydantic model and field on `Settings` (minor boilerplate)
+
+### Shared maintenance tick helper
+
+**Choice**: Extract `_run_maintenance_tick(type, prompt)` shared helper that handles the common pattern of building scoped rules, calling `query_and_consume`, and committing changes. Extraction processors don't use this helper — they extend `PromptDrivenProcessor` because they're pipeline-driven and need the session forking contract. Maintenance ticks are scheduler-driven and session-independent, so a shared function is the right abstraction.
+
+**Why**: All three maintenance ticks follow the same structure — only the prompt differs.
+
+**Consequences**:
+- Pro: Eliminates duplication across three tick functions
+- Pro: Single place to update if the maintenance execution pattern changes
+
 ## System Behavior
+
+### Scenario: Normal episodic maintenance run
+
+**Given**: The episodic directory has daily files spanning 4 months, including some already-consolidated weekly summaries from a previous run
+**When**: The episodic maintenance tick fires on its cron schedule
+**Then**: The agent cleans verbosity from recent files (last 15 days), consolidates older files into weekly summaries (merging into existing ones where present), and commits changes. A second run produces no changes (idempotent).
+
+### Scenario: Empty memory store
+
+**Given**: The memory directory for a type exists but is empty (no files)
+**When**: The maintenance tick fires
+**Then**: The agent reads the directory, finds nothing to process, exits with no changes. No git commit is attempted.
+
+### Scenario: Maintenance agent fails mid-run
+
+**Given**: The maintenance agent encounters an error partway through processing
+**When**: The error propagates out of `query_and_consume`
+**Then**: The scheduler's error containment catches it, logs the error, and other maintenance jobs are unaffected. Partial changes from the failed agent remain on disk uncommitted — this is the safe state, with git rollback available.
+
+### Scenario: Concurrent access during maintenance
+
+**Given**: A user is actively chatting while maintenance runs
+**When**: The maintenance agent reads and edits files that the post-processing pipeline might also be writing to
+**Then**: The agent's view reflects whatever state it read. No locking is needed — the worst case is that a file is processed in its next-run state on the following night. Git provides rollback for any mistakes.
+
+### Scenario: Configuration changes mid-stream
+
+**Given**: The user changes `recent_days` from 15 to 30 in config.toml
+**When**: The maintenance tick fires
+**Then**: The tick function reads the current config value at call time (passed through from the settings object). The agent uses the new threshold (30 days) for its consolidation decisions.
 
 ### Scenario: Normal shutdown with conversation history
 
@@ -300,6 +477,7 @@ Each processor inherits `_prompt`, `_cwd`, and the default `process()` implement
 - Forked sessions have no `max_turns` or `max_budget_usd` limits. Extraction prompts are focused, so sessions should be naturally short.
 - Memory extraction quality is an LLM behavioral concern. Prompts are the primary quality lever.
 - Forked sessions use `dontAsk` permission mode with explicit allow rules (DES-004). Read access is unrestricted; Edit/Write are path-scoped to the memory subdirectory.
+- Maintenance agents run on the `processor_model` tier (default haiku) — like extraction agents, maintenance is mechanical work that doesn't benefit from higher-tier reasoning.
 
 ### Workspace claim validation via in-agent sub-agents (facts, preferences, and context)
 
