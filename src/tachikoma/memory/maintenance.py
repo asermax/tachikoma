@@ -1,10 +1,12 @@
-"""Memory maintenance tick functions for scheduled memory store cleanup.
+"""Scheduled memory maintenance for consolidation and cleanup.
 
-Three tick functions (episodic, facts, preferences) each run an agent-driven
-maintenance pass via query_and_consume, then commit changes via git.
+Memory stores grow unbounded without maintenance. Tick functions run
+periodically to consolidate episodic entries, prune stale facts, and
+deduplicate preferences.
 """
 
 from pathlib import Path
+from typing import Literal
 
 from loguru import logger
 
@@ -20,6 +22,7 @@ from tachikoma.post_processing import (
 
 _log = logger.bind(component="memory.maintenance")
 
+MemoryType = Literal["episodic", "facts", "preferences"]
 MAINTENANCE_TOOLS = ["Read", "Glob", "Grep", "Bash", "Edit", "Write"]
 
 
@@ -41,7 +44,7 @@ def maintenance_allow_rules(scope: Path) -> list[str]:
 
 async def git_commit_memory_changes(
     agent_defaults: AgentDefaults,
-    memory_type: str,
+    memory_type: MemoryType,
 ) -> None:
     """Stage and commit changes in a memory subdirectory.
 
@@ -76,6 +79,29 @@ async def git_commit_memory_changes(
         pre_tool_use_hooks=[GIT_BASH_HOOK],
         model=agent_defaults.processor_model,
     )
+
+
+async def _run_maintenance_tick(
+    agent_defaults: AgentDefaults,
+    memory_type: MemoryType,
+    prompt: str,
+) -> None:
+    """Run a maintenance agent and commit any changes."""
+    scope = agent_defaults.cwd / "memories" / memory_type
+    rules = maintenance_allow_rules(scope)
+    formatted = prompt.replace("$WORKSPACE", str(agent_defaults.cwd))
+
+    _log.info("Starting {type} maintenance tick", type=memory_type)
+    await query_and_consume(
+        formatted,
+        agent_defaults,
+        tools=MAINTENANCE_TOOLS,
+        allow=rules,
+        pre_tool_use_hooks=[MAINTENANCE_BASH_HOOK],
+        model=agent_defaults.processor_model,
+    )
+    await git_commit_memory_changes(agent_defaults, memory_type)
+    _log.info("{type} maintenance tick completed", type=memory_type)
 
 
 EPISODIC_MAINTENANCE_PROMPT = """\
@@ -178,27 +204,12 @@ async def episodic_maintenance_tick(
     Applies tiered maintenance: clean recent entries, consolidate into
     weekly and monthly summaries, delete very old entries.
     """
-    scope = agent_defaults.cwd / "memories" / "episodic"
-    rules = maintenance_allow_rules(scope)
-
     prompt = EPISODIC_MAINTENANCE_PROMPT.format(
         recent_days=maintenance_settings.recent_days,
         weekly_threshold_months=maintenance_settings.weekly_threshold_months,
         monthly_threshold_months=maintenance_settings.monthly_threshold_months,
     )
-    prompt = prompt.replace("$WORKSPACE", str(agent_defaults.cwd))
-
-    _log.info("Starting episodic maintenance tick")
-    await query_and_consume(
-        prompt,
-        agent_defaults,
-        tools=MAINTENANCE_TOOLS,
-        allow=rules,
-        pre_tool_use_hooks=[MAINTENANCE_BASH_HOOK],
-        model=agent_defaults.processor_model,
-    )
-    await git_commit_memory_changes(agent_defaults, "episodic")
-    _log.info("Episodic maintenance tick completed")
+    await _run_maintenance_tick(agent_defaults, "episodic", prompt)
 
 
 FACTS_MAINTENANCE_PROMPT = """\
@@ -278,22 +289,7 @@ async def facts_maintenance_tick(
 
     Evaluates fact files for staleness, redundancy, and overlap.
     """
-    scope = agent_defaults.cwd / "memories" / "facts"
-    rules = maintenance_allow_rules(scope)
-
-    prompt = FACTS_MAINTENANCE_PROMPT.replace("$WORKSPACE", str(agent_defaults.cwd))
-
-    _log.info("Starting facts maintenance tick")
-    await query_and_consume(
-        prompt,
-        agent_defaults,
-        tools=MAINTENANCE_TOOLS,
-        allow=rules,
-        pre_tool_use_hooks=[MAINTENANCE_BASH_HOOK],
-        model=agent_defaults.processor_model,
-    )
-    await git_commit_memory_changes(agent_defaults, "facts")
-    _log.info("Facts maintenance tick completed")
+    await _run_maintenance_tick(agent_defaults, "facts", FACTS_MAINTENANCE_PROMPT)
 
 
 PREFERENCES_MAINTENANCE_PROMPT = """\
@@ -364,19 +360,4 @@ async def preferences_maintenance_tick(
 
     Evaluates preference files for redundancy and overlap.
     """
-    scope = agent_defaults.cwd / "memories" / "preferences"
-    rules = maintenance_allow_rules(scope)
-
-    prompt = PREFERENCES_MAINTENANCE_PROMPT.replace("$WORKSPACE", str(agent_defaults.cwd))
-
-    _log.info("Starting preferences maintenance tick")
-    await query_and_consume(
-        prompt,
-        agent_defaults,
-        tools=MAINTENANCE_TOOLS,
-        allow=rules,
-        pre_tool_use_hooks=[MAINTENANCE_BASH_HOOK],
-        model=agent_defaults.processor_model,
-    )
-    await git_commit_memory_changes(agent_defaults, "preferences")
-    _log.info("Preferences maintenance tick completed")
+    await _run_maintenance_tick(agent_defaults, "preferences", PREFERENCES_MAINTENANCE_PROMPT)
