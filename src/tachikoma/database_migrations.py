@@ -54,16 +54,13 @@ async def run_pending_migrations(engine: AsyncEngine) -> None:
     Raises:
         RuntimeError: If a migration fails, identifying revision and name.
     """
-    # 1. Ensure schema_migrations table exists
     async with engine.begin() as conn:
         await conn.execute(text(_SCHEMA_MIGRATIONS_DDL))
 
-    # 2. Query applied revisions
     async with engine.connect() as conn:
         result = await conn.execute(text("SELECT revision FROM schema_migrations"))
         applied_set = {row[0] for row in result.fetchall()}
 
-    # 3. First run: stamp "001" as applied without executing SQL
     if not applied_set:
         async with engine.connect() as conn:
             result = await conn.execute(
@@ -89,14 +86,12 @@ async def run_pending_migrations(engine: AsyncEngine) -> None:
 
         applied_set = {"001"}
 
-    # 4. Diff pending migrations
     pending = [m for m in MIGRATIONS if m.revision not in applied_set]
 
     if not pending:
         _log.debug("Schema is up to date")
         return
 
-    # 5. Execute pending migrations in order, each in its own transaction
     for m in pending:
         try:
             resource = importlib.resources.files("tachikoma").joinpath(m.sql_path)
