@@ -482,8 +482,6 @@ async def git_commit_context_changes(
         "`git rebase`, `git merge`, `git stash`\n"
         "- If there are no changes to commit, do nothing\n"
     )
-    prompt = prompt.replace("$WORKSPACE", str(agent_defaults.cwd))
-
     await query_and_consume(
         prompt,
         agent_defaults,
