@@ -275,9 +275,7 @@ def _validate_providers(
         module_key = f"tachikoma_plugin.{alias}.context_providers.{module_name}"
         module = _import_handler_module(provider_path, module_key)
 
-        found_classes = _find_concrete_subclasses(
-            module, (ContextProvider, MessageContextProvider)
-        )
+        found_classes = _find_concrete_subclasses(module, (ContextProvider, MessageContextProvider))
 
         if not found_classes:
             raise ValueError(

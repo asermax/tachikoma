@@ -67,10 +67,7 @@ async def run_pending_migrations(engine: AsyncEngine) -> None:
     if not applied_set:
         async with engine.connect() as conn:
             result = await conn.execute(
-                text(
-                    "SELECT name FROM sqlite_master"
-                    " WHERE type='table' AND name='sessions'"
-                )
+                text("SELECT name FROM sqlite_master WHERE type='table' AND name='sessions'")
             )
             has_sessions = result.fetchone() is not None
 
@@ -101,14 +98,8 @@ async def run_pending_migrations(engine: AsyncEngine) -> None:
 
     # 5. Execute pending migrations in order, each in its own transaction
     for m in pending:
-        sql_content = (
-            importlib.resources.files("tachikoma")
-            .joinpath(m.sql_path)
-            .read_text("utf-8")
-        )
-        statements = [
-            s.strip() for s in sql_content.split(";\n") if s.strip()
-        ]
+        sql_content = importlib.resources.files("tachikoma").joinpath(m.sql_path).read_text("utf-8")
+        statements = [s.strip() for s in sql_content.split(";\n") if s.strip()]
 
         try:
             async with engine.begin() as conn:
@@ -122,9 +113,7 @@ async def run_pending_migrations(engine: AsyncEngine) -> None:
                     {"rev": m.revision, "name": m.name},
                 )
         except Exception as e:
-            raise RuntimeError(
-                f"Migration {m.revision} ({m.name}) failed: {e}"
-            ) from e
+            raise RuntimeError(f"Migration {m.revision} ({m.name}) failed: {e}") from e
 
         _log.info(
             "Applied migration {revision}: {name}",
