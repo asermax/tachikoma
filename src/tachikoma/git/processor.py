@@ -3,8 +3,6 @@
 Spawns a Haiku agent to inspect and commit workspace changes after each session.
 """
 
-from claude_agent_sdk import ClaudeAgentOptions
-from claude_agent_sdk.types import HookMatcher
 from loguru import logger
 
 from tachikoma.agent_defaults import AgentDefaults
@@ -13,10 +11,9 @@ from tachikoma.post_processing import (
     FINALIZE_PHASE,
     UTILITY_BASH_PREFIXES,
     PostProcessor,
-    build_permissions_settings,
     make_bash_gate_hook,
+    query_and_consume,
 )
-from tachikoma.sdk_query import stderr_aware_query
 from tachikoma.sessions.model import Session
 
 _log = logger.bind(component="git")
@@ -77,64 +74,6 @@ GIT_ALLOW = ["Read", "Glob", "Grep", "Edit", "Write", "Bash(git *)"]
 GIT_BASH_HOOK = make_bash_gate_hook(
     ["git ", *UTILITY_BASH_PREFIXES],
 )
-
-
-async def query_and_consume(
-    prompt: str,
-    agent_defaults: AgentDefaults,
-    tools: list[str] | None = None,
-    allow: list[str] | None = None,
-    pre_tool_use_hooks: list[HookMatcher] | None = None,
-    model: str | None = None,
-) -> None:
-    """Spawn a fresh agent and consume its response.
-
-    Creates a fresh query() call with no session forking. Used for
-    tasks that don't need conversation context.
-
-    When ``tools`` and ``allow`` are provided, the agent uses
-    ``dontAsk`` permission mode with explicit allow rules instead of
-    ``bypassPermissions``.
-
-    Args:
-        prompt: The prompt to send to the agent.
-        agent_defaults: Common SDK options (cwd, cli_path, env).
-        tools: Optional tool restriction list for the agent.
-        allow: Optional allow-only permission rules for scoping.
-        pre_tool_use_hooks: Optional PreToolUse hook matchers.
-        model: Optional model alias for the spawned agent. When None
-            (the default), the SDK default model is used.
-
-    Raises:
-        Propagates: SDK errors from the query() call.
-    """
-    options = ClaudeAgentOptions(
-        cwd=agent_defaults.cwd,
-        cli_path=agent_defaults.cli_path,
-        env=agent_defaults.env,
-        disallowed_tools=list(agent_defaults.disallowed_tools),
-    )
-
-    if model is not None:
-        options.model = model
-
-    if tools is not None and allow is not None:
-        options.tools = tools
-        options.settings = build_permissions_settings(allow)
-        options.extra_args = {"permission-mode": "dontAsk"}
-    else:
-        options.permission_mode = "bypassPermissions"
-
-    if pre_tool_use_hooks is not None:
-        options.hooks = {"PreToolUse": pre_tool_use_hooks}
-
-    _log.debug("Spawning query agent")
-
-    # Fully consume the async iterator to ensure the agent completes
-    async for _ in stderr_aware_query(prompt=prompt, options=options):
-        pass
-
-    _log.debug("Query agent completed")
 
 
 class GitProcessor(PostProcessor):

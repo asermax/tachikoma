@@ -746,6 +746,11 @@ UTILITY_BASH_PREFIXES = [
 
 UTILITY_BASH_HOOK = make_bash_gate_hook(UTILITY_BASH_PREFIXES)
 
+# Extended utility prefixes that also allow file deletion (rm).
+# Used by maintenance agents that need to prune obsolete files.
+MAINTENANCE_BASH_PREFIXES = [*UTILITY_BASH_PREFIXES, "rm "]
+MAINTENANCE_BASH_HOOK = make_bash_gate_hook(MAINTENANCE_BASH_PREFIXES)
+
 
 def build_permissions_settings(allow: list[str]) -> str:
     """Build a settings JSON string with allow-only permission rules.
@@ -929,3 +934,61 @@ async def fork_and_capture(
     )
 
     return result
+
+
+async def query_and_consume(
+    prompt: str,
+    agent_defaults: AgentDefaults,
+    tools: list[str] | None = None,
+    allow: list[str] | None = None,
+    pre_tool_use_hooks: list[HookMatcher] | None = None,
+    model: str | None = None,
+) -> None:
+    """Spawn a fresh agent and consume its response.
+
+    Creates a fresh query() call with no session forking. Used for
+    tasks that don't need conversation context.
+
+    When ``tools`` and ``allow`` are provided, the agent uses
+    ``dontAsk`` permission mode with explicit allow rules instead of
+    ``bypassPermissions``.
+
+    Args:
+        prompt: The prompt to send to the agent.
+        agent_defaults: Common SDK options (cwd, cli_path, env).
+        tools: Optional tool restriction list for the agent.
+        allow: Optional allow-only permission rules for scoping.
+        pre_tool_use_hooks: Optional PreToolUse hook matchers.
+        model: Optional model alias for the spawned agent. When None
+            (the default), the SDK default model is used.
+
+    Raises:
+        Propagates: SDK errors from the query() call.
+    """
+    options = ClaudeAgentOptions(
+        cwd=agent_defaults.cwd,
+        cli_path=agent_defaults.cli_path,
+        env=agent_defaults.env,
+        disallowed_tools=list(agent_defaults.disallowed_tools),
+    )
+
+    if model is not None:
+        options.model = model
+
+    if tools is not None and allow is not None:
+        options.tools = tools
+        options.settings = build_permissions_settings(allow)
+        options.extra_args = {"permission-mode": "dontAsk"}
+    else:
+        options.permission_mode = "bypassPermissions"
+
+    if pre_tool_use_hooks is not None:
+        options.hooks = {"PreToolUse": pre_tool_use_hooks}
+
+    _log.debug("Spawning query agent")
+
+    # Fully consume the async iterator to ensure the agent completes
+    async for _ in stderr_aware_query(prompt=prompt, options=options):
+        pass
+
+    _log.debug("Query agent completed")

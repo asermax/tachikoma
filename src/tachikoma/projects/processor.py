@@ -8,9 +8,9 @@ import asyncio
 from loguru import logger
 
 from tachikoma.agent_defaults import AgentDefaults
-from tachikoma.git.processor import GIT_ALLOW, GIT_BASH_HOOK, GIT_TOOLS, query_and_consume
+from tachikoma.git.processor import GIT_ALLOW, GIT_BASH_HOOK, GIT_TOOLS
 from tachikoma.git.sync import PUSH_SUCCESS, smart_push
-from tachikoma.post_processing import PRE_FINALIZE_PHASE, PostProcessor
+from tachikoma.post_processing import PRE_FINALIZE_PHASE, PostProcessor, query_and_consume
 from tachikoma.projects.git import is_dirty, list_submodules
 from tachikoma.sessions.model import Session
 
