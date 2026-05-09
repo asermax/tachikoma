@@ -2,6 +2,24 @@
 
 <!-- version list -->
 
+## v1.77.0 (2026-05-09)
+
+### Documentation
+
+- **memory**: Update extraction docs for context maintenance tick
+  ([`e3117cd`](https://github.com/asermax/tachikoma/commit/e3117cdb664ddda77c949ce25fe896393ace47e3))
+
+### Features
+
+- **memory**: Add context maintenance tick for foundational context files
+  ([`8f6013d`](https://github.com/asermax/tachikoma/commit/8f6013d8802eca929e2056b9e380ceeaf5497efe))
+
+### Refactoring
+
+- **memory**: Remove redundant workspace placeholder replacement
+  ([`629ae29`](https://github.com/asermax/tachikoma/commit/629ae29293e925b0185601bc78869df6a2953cf3))
+
+
 ## v1.76.0 (2026-05-09)
 
 ### Bug Fixes
