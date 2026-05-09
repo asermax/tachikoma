@@ -70,7 +70,7 @@ For the context update processor that also runs in the main phase, see [core-con
 
 The memory package also owns `TranscriptArchiveProcessor` — a plain `PostProcessor` (not `PromptDrivenProcessor`) that copies the SDK-owned transcript into `memories/transcripts/<sdk-session-id>.jsonl` on session close. It is deterministic I/O with no LLM reasoning, registered in the `pre_finalize` phase so it runs after the extraction processors have read the SDK transcript and before the git commit processor stages the workspace. See the [post-processing pipeline design](../agent/post-processing-pipeline.md) for phase semantics.
 
-Three **maintenance tick functions** run as scheduled jobs (DES-010), each using `query_and_consume` (shared infrastructure in `post_processing.py`) with scoped writer permissions (DES-004) and a maintenance-specific bash gate that extends utility commands with `rm` for file deletion. Each tick performs its maintenance pass and commits changes via a scoped git agent.
+Three **maintenance tick functions** run as scheduled jobs (DES-010), each using `query_and_consume` (shared infrastructure in `post_processing.py`) with scoped writer permissions (DES-004) and a maintenance-specific bash gate that extends utility commands with `rm` for file deletion. Each tick performs its maintenance pass and commits changes via a scoped git agent. A fourth **context maintenance tick** follows the same pattern but targets the `context/` directory instead of `memories/<type>/`, using a standalone implementation since the path structure differs from the shared `_run_maintenance_tick` helper.
 
 ```
 ┌──────────────────────────────────────────┐
@@ -78,28 +78,27 @@ Three **maintenance tick functions** run as scheduled jobs (DES-010), each using
 │                (DES-010)                  │
 └──────────────┬───────────────────────────┘
                │  cron trigger (shared)
-        ┌──────┼──────┐
-        ▼      ▼      ▼
-   ┌────────┐┌──────┐┌──────────┐
-   │Epi Tick││Facts ││Prefs Tick│
-   │(+cfg)  ││Tick  ││          │
-   └───┬────┘└──┬───┘└────┬─────┘
-       │        │         │
-       ▼        ▼         ▼
-   _run_maintenance_tick(type, prompt)
-       │
-       ▼
-   query_and_consume(prompt, ...,
-     tools, allow, MAINTENANCE_BASH_HOOK)
-       │
-       ▼
-   memories/<type>/
-       │
-       ▼
-   git_commit_memory_changes(type)
-       │
-       ▼
-   git add memories/<type>/ && commit
+        ┌──────┼──────┬──────────┐
+        ▼      ▼      ▼          ▼
+   ┌────────┐┌──────┐┌──────────┐┌──────────┐
+   │Epi Tick││Facts ││Prefs Tick││Ctx Tick  │
+   │(+cfg)  ││Tick  ││          ││(context/)│
+   └───┬────┘└──┬───┘└────┬─────┘└────┬─────┘
+       │        │         │            │
+       ▼        ▼         ▼            ▼
+   _run_maintenance_tick()    context_maintenance_tick()
+       │                            │
+       ▼                            ▼
+   query_and_consume(...)      query_and_consume(...)
+       │                            │
+       ▼                            ▼
+   memories/<type>/            context/
+       │                            │
+       ▼                            ▼
+   git_commit_memory_changes   git_commit_context_changes()
+       │                            │
+       ▼                            ▼
+   git add memories/<type>/    git add context/ && commit
 ```
 
 ## Components
@@ -114,7 +113,7 @@ Three **maintenance tick functions** run as scheduled jobs (DES-010), each using
 | `src/tachikoma/memory/facts.py` | `FactsProcessor(PromptDrivenProcessor)` + `FACTS_PROMPT` constant | Extends DES-004 base class; prompt co-located with processor; prompt explicitly excludes one-time events (bug fixes, security incidents, deployments) with routing to episodic memory; includes concrete negative filename examples; adds pre-write durability check ("useful in a month?") |
 | `src/tachikoma/memory/preferences.py` | `PreferencesProcessor(PromptDrivenProcessor)` + `PREFERENCES_PROMPT` constant | Extends DES-004 base class; prompt co-located with processor |
 | `src/tachikoma/memory/transcripts.py` | `TranscriptArchiveProcessor(PostProcessor)` — copies `session.transcript_path` to `memories/transcripts/<sdk-session-id>.jsonl` via `shutil.copy2` | Plain `PostProcessor` (no sub-agent — deterministic I/O); self-healing `mkdir(parents=True, exist_ok=True)` inside `process()`; all errors (`FileNotFoundError`, `OSError`) logged and swallowed so the pipeline never crashes on archival failure |
-| `src/tachikoma/memory/maintenance.py` | Three tick functions (`episodic_maintenance_tick`, `facts_maintenance_tick`, `preferences_maintenance_tick`), shared `_run_maintenance_tick` helper, `git_commit_memory_changes` for post-agent commits, per-type maintenance prompts | Uses `query_and_consume` (shared in `post_processing.py`) with DES-004 tool scoping; follows DES-010 tick function pattern; `MAINTENANCE_BASH_HOOK` composes `UTILITY_BASH_PREFIXES` + `rm` via `make_bash_gate_hook`; `git_commit_memory_changes` runs scoped git agent per tick via `has_uncommitted_changes` gate |
+| `src/tachikoma/memory/maintenance.py` | Three memory tick functions (`episodic_maintenance_tick`, `facts_maintenance_tick`, `preferences_maintenance_tick`), shared `_run_maintenance_tick` helper, `git_commit_memory_changes` for post-agent commits, per-type maintenance prompts. Plus `context_maintenance_tick` (standalone, targets `context/`), `git_commit_context_changes`, and `CONTEXT_MAINTENANCE_PROMPT` | Uses `query_and_consume` (shared in `post_processing.py`) with DES-004 tool scoping; follows DES-010 tick function pattern; `MAINTENANCE_BASH_HOOK` composes `UTILITY_BASH_PREFIXES` + `rm` via `make_bash_gate_hook`; `git_commit_memory_changes` runs scoped git agent per tick via `has_uncommitted_changes` gate; context tick is standalone (not via shared helper) because the path structure (`context/` vs `memories/<type>/`) differs |
 
 ### Cross-Layer Contracts
 
@@ -190,8 +189,10 @@ MemoryMaintenance                              [DES-010 + DES-004]
 ├── episodic_maintenance_tick(settings) → None   [tiered consolidation]
 ├── facts_maintenance_tick() → None              [staleness/redundancy/overlap]
 ├── preferences_maintenance_tick() → None        [redundancy/overlap]
+├── context_maintenance_tick() → None            [staleness/redundancy/overlap/size limits]
 ├── _run_maintenance_tick(type, prompt) → None   [shared composition helper]
-└── git_commit_memory_changes(type) → None       [scoped git add/commit]
+├── git_commit_memory_changes(type) → None       [scoped git add/commit]
+└── git_commit_context_changes() → None          [scoped git add context/]
 
 MaintenanceSettings(BaseModel)                  [in config.py]
 ├── enabled: bool (default: true)
@@ -259,6 +260,24 @@ Each processor inherits `_prompt`, `_cwd`, and the default `process()` implement
 6. git_commit_memory_changes checks for uncommitted changes
    via has_uncommitted_changes():
    - If changes exist: runs scoped git agent to stage and commit
+   - If no changes: skips (idempotent no-op)
+```
+
+### Context maintenance tick flow
+
+```
+1. Scheduler fires cron trigger for context maintenance job
+2. context_maintenance_tick builds scoped allow rules for context/ directory
+3. context_maintenance_tick calls query_and_consume with:
+   - MAINTENANCE_TOOLS (Read, Glob, Grep, Bash, Edit, Write)
+   - Scoped allow rules (Edit/Write path-scoped to context/, Read unrestricted)
+   - MAINTENANCE_BASH_HOOK (utility commands only — no rm needed)
+   - processor_model for cost efficiency
+4. Agent reads context files, evaluates staleness/redundancy/overlap,
+   enforces size limits, exits
+5. git_commit_context_changes checks for uncommitted changes
+   via has_uncommitted_changes():
+   - If changes exist: runs scoped git agent to stage context/ and commit
    - If no changes: skips (idempotent no-op)
 ```
 
@@ -368,6 +387,16 @@ Each processor inherits `_prompt`, `_cwd`, and the default `process()` implement
 - Pro: Eliminates duplication across three tick functions
 - Pro: Single place to update if the maintenance execution pattern changes
 
+### Standalone context maintenance tick (not via shared helper)
+
+**Choice**: `context_maintenance_tick` is a standalone function rather than using `_run_maintenance_tick`. It has its own `git_commit_context_changes` helper instead of reusing `git_commit_memory_changes`.
+**Why**: The shared helper hardcodes the scope as `cwd / "memories" / memory_type`. Context files live at `cwd / "context"` — a different path structure that doesn't fit the `memories/<type>/` pattern. Generalizing the shared helper would add complexity for minimal reuse (one additional call site). The standalone approach keeps the shared helper simple and avoids changing existing memory tick behavior.
+
+**Consequences**:
+- Pro: No risk of breaking existing maintenance ticks
+- Pro: Context tick can evolve independently (e.g., different bash permissions, different commit strategy)
+- Con: ~15 lines of similar code duplicated between `context_maintenance_tick` and `_run_maintenance_tick` (acceptable for a single additional call site)
+
 ## System Behavior
 
 ### Scenario: Normal episodic maintenance run
@@ -399,6 +428,18 @@ Each processor inherits `_prompt`, `_cwd`, and the default `process()` implement
 **Given**: The user changes `recent_days` from 15 to 30 in config.toml
 **When**: The maintenance tick fires
 **Then**: The tick function reads the current config value at call time (passed through from the settings object). The agent uses the new threshold (30 days) for its consolidation decisions.
+
+### Scenario: Normal context maintenance run
+
+**Given**: AGENTS.md has accumulated entries about resolved bugs and USER.md has stale project references, plus AGENTS.md exceeds 400 lines
+**When**: The context maintenance tick fires on its cron schedule
+**Then**: The agent reads all three context files, removes stale entries, consolidates duplicate sections, prunes AGENTS.md to under 400 lines, and commits changes scoped to `context/`. A second run produces no changes (idempotent).
+
+### Scenario: Context files already clean
+
+**Given**: All three context files are within size limits and contain no stale, redundant, or overlapping content
+**When**: The context maintenance tick fires
+**Then**: The agent reads the files, determines no changes are needed, exits with no changes. No git commit is attempted.
 
 ### Scenario: Normal shutdown with conversation history
 

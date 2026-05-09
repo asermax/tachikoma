@@ -31,7 +31,7 @@ The memory workspace also includes `memories/transcripts/`, a non-extractive sub
 | R10 | Facts and preferences processors proactively prune stale, outdated, or superseded entries during extraction — removing or updating entries that the conversation contradicts, and merging overlapping files into one; episodic entries are never deleted for content reasons (only malformed filenames are consolidated) |
 | R11 | Before creating facts or preferences memory files, forked agents read the foundational context files from `$WORKSPACE/context/` (AGENTS.md, USER.md, SOUL.md) and skip creation when the information is already covered there; context files are the authoritative source for their respective categories |
 | R12 | The preferences processor also checks `AGENTS.md` inline before creating new preference files — if the information is already captured there (even in different words), the processor skips creating the file; gracefully proceeds normally if `AGENTS.md` doesn't exist or is empty |
-| R13 | Three nightly maintenance jobs — one per memory type (episodic, facts, preferences) — share a single configurable cron schedule and can be disabled via an `enabled` toggle |
+| R13 | Four nightly maintenance jobs — one per memory type (episodic, facts, preferences) and one for context files — share a single configurable cron schedule and can be disabled via an `enabled` toggle |
 | R14 | Episodic maintenance applies tiered time windows: clean daily notes for verbosity (last N days), consolidate into weekly summaries, consolidate into monthly summaries, delete entries older than the configured monthly threshold |
 | R15 | Facts maintenance evaluates files for staleness, redundancy, and overlap — consolidating, editing within files, merging files, or removing obsolete files |
 | R16 | Preferences maintenance evaluates files for redundancy and overlap across files — consolidating, editing within files, merging files, or removing obsolete files |
@@ -39,6 +39,7 @@ The memory workspace also includes `memories/transcripts/`, a non-extractive sub
 | R18 | Maintenance is idempotent — running it multiple times produces the same result |
 | R19 | Maintenance handles errors gracefully — agent failures, malformed files, empty stores, and concurrent access do not corrupt the memory store; changes are automatically committed to git after each job completes |
 | R20 | Tiered time window thresholds and the maintenance schedule are configurable with sensible defaults |
+| R21 | A fourth maintenance job cleans up foundational context files (SOUL.md, USER.md, AGENTS.md) — evaluating for staleness, redundancy, and overlap, enforcing size limits, and removing stale content — without adding new content; runs on the same schedule and governed by the same `enabled` toggle as the memory maintenance jobs |
 
 ## Behaviors
 
@@ -137,13 +138,13 @@ Before creating facts or preferences memory files, the forked agent reads the fo
 
 ### Scheduled Maintenance (R13, R17)
 
-Three maintenance jobs run on a shared nightly cron schedule. Each creates a fresh SDK session with scoped writer permissions — read access anywhere in the workspace, edit/write scoped to the relevant memory subdirectory, bash restricted to utility commands plus `rm`. The agent reads the subdirectory, performs maintenance autonomously, and commits changes to git.
+Four maintenance jobs run on a shared nightly cron schedule. Each creates a fresh SDK session with scoped writer permissions — read access anywhere in the workspace, edit/write scoped to the target directory, bash restricted to utility commands (plus `rm` for memory jobs). The agent reads the target files, performs maintenance autonomously, and commits changes to git.
 
 **Acceptance Criteria**:
-- Given maintenance is enabled in configuration, when the system starts, then three maintenance jobs are scheduled for periodic execution (episodic, facts, preferences)
-- Given a maintenance job fires, when the agent runs, then it uses a fresh SDK session with scoped access to the relevant memory subdirectory
-- Given a maintenance agent completes its work, then all file changes are committed to git — staging only the affected memory subdirectory
-- Given the memory store is empty, when a maintenance task runs, then it completes as a no-op with no git commit
+- Given maintenance is enabled in configuration, when the system starts, then four maintenance jobs are scheduled for periodic execution (episodic, facts, preferences, context)
+- Given a maintenance job fires, when the agent runs, then it uses a fresh SDK session with scoped access to the relevant directory
+- Given a maintenance agent completes its work, then all file changes are committed to git — staging only the affected directory
+- Given the memory store is empty or the context directory is absent, when a maintenance task runs, then it completes as a no-op with no git commit
 - Given maintenance is disabled in configuration, when the system starts, then no maintenance jobs are registered
 
 ### Episodic Maintenance (R14)
@@ -178,6 +179,18 @@ Evaluates preference files for redundancy (same preference stated multiple times
 - Given redundant preferences, when the agent identifies duplicates, then it deduplicates — keeping the most complete version
 - Given overlapping files, when the agent identifies overlap, then it merges into a single consolidated file and removes originals
 - Given a preference file that is entirely superseded or obsolete, when the agent processes it, then it deletes the file
+
+### Context Maintenance (R21)
+
+Evaluates the three foundational context files (SOUL.md, USER.md, AGENTS.md) for staleness, redundancy, and overlap. The agent cleans up existing content — removing stale entries, consolidating duplicate sections, and enforcing size limits — without adding new content. This complements the `CoreContextProcessor`'s reactive cleanup by providing a periodic sweep that catches things that accumulate between conversations.
+
+**Acceptance Criteria**:
+- Given the context maintenance task runs, when it reads all three context files, then it evaluates each for staleness, redundancy, and overlap
+- Given stale entries (completed projects, resolved issues, outdated tool references), when the agent identifies them, then it removes or updates the entries
+- Given redundant or overlapping sections within a file, when the agent identifies them, then it consolidates into a single section
+- Given USER.md exceeds ~120 lines or AGENTS.md exceeds ~400 lines, when the maintenance agent runs, then it prunes to bring files within limits
+- Given the context maintenance agent completes its work, then all file changes are committed to git — staging only `context/`
+- Given context files are already clean and within size limits, when the maintenance agent runs, then it exits with no changes (idempotent)
 
 ### Maintenance Configuration (R20)
 
