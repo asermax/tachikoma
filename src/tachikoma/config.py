@@ -84,7 +84,7 @@ class AgentSettings(BaseModel):
         description="Claude model to use (None = SDK default)",
     )
     allowed_tools: list[str] = Field(
-        default=["Read", "Glob", "Grep"],
+        default=["Read", "Glob", "Grep", "Edit(.claude/**)"],
         description="Tools the agent is allowed to use",
     )
     disallowed_tools: list[str] = Field(

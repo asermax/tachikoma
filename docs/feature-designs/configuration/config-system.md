@@ -83,7 +83,7 @@ Settings (root, frozen)
 │   └── data_path: Path (computed property: self.path / ".tachikoma")
 ├── agent: AgentSettings
 │   ├── model: str | None = None (SDK default)
-│   ├── allowed_tools: list[str] = ["Read", "Glob", "Grep"]
+│   ├── allowed_tools: list[str] = ["Read", "Glob", "Grep", "Edit(.claude/**)"]
 │   ├── disallowed_tools: list[str] = ["AskUserQuestion", "CronCreate", "CronDelete", "CronList"] (effective: ["AskUserQuestion", "CronCreate", "CronDelete", "CronList", "Skill"] after system merge)
 │   ├── cli_path: str | None = None (SDK bundled binary)
 │   ├── session_resume_window: int = 86400 (seconds; lookup window for session resumption matching)

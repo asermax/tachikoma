@@ -405,8 +405,8 @@ The `Result` event serves as a turn boundary. Channels can detect it to reset th
 
 ### Restricted tool set via allowed_tools
 
-**Choice**: Use `allowed_tools=["Read", "Glob", "Grep"]` to declare which tools are auto-approved
-**Why**: The `allowed_tools` list is a permission auto-approve list — under `permission_mode="bypassPermissions"`, all tools are already approved, so `allowed_tools` serves as a declarative record of the intended tool set. Note: the SDK has a known bug where an empty list `[]` is treated as falsy and never sent to the CLI (see DES-007), so a non-empty list is required to have effect. The tool list is configured via the configuration system (`agent.allowed_tools`) with these values as defaults.
+**Choice**: Use `allowed_tools=["Read", "Glob", "Grep", "Edit(.claude/**)"]` to declare which tools are auto-approved
+**Why**: The `allowed_tools` list is a permission auto-approve list — under `permission_mode="bypassPermissions"`, all tools are already approved, so `allowed_tools` serves as a declarative record of the intended tool set. The `Edit(.claude/**)` entry uses Claude Code's gitignore-style pattern syntax to auto-approve edits to any file under `.claude/` directories, since the agent legitimately manages its own configuration and skill files. Note: the SDK has a known bug where an empty list `[]` is treated as falsy and never sent to the CLI (see DES-007), so a non-empty list is required to have effect. The tool list is configured via the configuration system (`agent.allowed_tools`) with these values as defaults.
 
 **Consequences**:
 - Pro: Declarative record of the intended tool set

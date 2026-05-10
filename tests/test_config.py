@@ -59,7 +59,7 @@ class TestSettingsModel:
         """AC (R2): agent.allowed_tools defaults to Read, Glob, Grep."""
         settings = Settings()
 
-        assert settings.agent.allowed_tools == ["Read", "Glob", "Grep"]
+        assert settings.agent.allowed_tools == ["Read", "Glob", "Grep", "Edit(.claude/**)"]
 
     def test_default_agent_disallowed_tools(self) -> None:
         """AC (AC1): agent.disallowed_tools defaults to user defaults + system tools."""
@@ -162,7 +162,7 @@ class TestSettingsModel:
 
         assert settings.workspace.path == Path.home() / "tachikoma"
         assert settings.agent.model == "opus"
-        assert settings.agent.allowed_tools == ["Read", "Glob", "Grep"]
+        assert settings.agent.allowed_tools == ["Read", "Glob", "Grep", "Edit(.claude/**)"]
 
     def test_partial_config_uses_defaults_for_missing(self) -> None:
         """AC (R5): Missing sections use defaults."""
@@ -378,7 +378,7 @@ class TestLoadSettings:
 
         assert settings.workspace.path == Path.home() / "tachikoma"
         assert settings.agent.model == "opus"
-        assert settings.agent.allowed_tools == ["Read", "Glob", "Grep"]
+        assert settings.agent.allowed_tools == ["Read", "Glob", "Grep", "Edit(.claude/**)"]
 
     def test_partial_config_merges_with_defaults(self, tmp_path: Path) -> None:
         """AC (R1): Specified values are loaded, rest use defaults."""
@@ -480,7 +480,7 @@ class TestLoadSettings:
         settings = load_settings(config_path)
 
         # All agent defaults apply even though [agent] section is missing
-        assert settings.agent.allowed_tools == ["Read", "Glob", "Grep"]
+        assert settings.agent.allowed_tools == ["Read", "Glob", "Grep", "Edit(.claude/**)"]
 
     def test_returns_frozen_settings(self, tmp_path: Path) -> None:
         """Settings instance is immutable after loading."""
