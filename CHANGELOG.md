@@ -2,6 +2,27 @@
 
 <!-- version list -->
 
+## v1.79.0 (2026-05-10)
+
+### Documentation
+
+- **planning**: Add DLT-175 plugin hook for scheduled maintenance ticks
+  ([`69745b2`](https://github.com/asermax/tachikoma/commit/69745b2f7c5701f93cf079f5c47f8ba70f39ad0e))
+
+- **workflows**: Update condition evaluator description with retry behavior
+  ([`aa80ad9`](https://github.com/asermax/tachikoma/commit/aa80ad968bae0ae05197ceb48f3b4a0b47e5c60e))
+
+### Features
+
+- **workflows**: Add retry for non-JSON condition evaluator responses
+  ([`9f3a1ba`](https://github.com/asermax/tachikoma/commit/9f3a1ba6e75a3908f2fba222929fe734269fb25c))
+
+### Refactoring
+
+- **workflows**: Extract subagent call into helper function
+  ([`cd96082`](https://github.com/asermax/tachikoma/commit/cd960826ebdfa373ab2d904116e12041548531ed))
+
+
 ## v1.78.0 (2026-05-10)
 
 ### Code Style
