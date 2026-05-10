@@ -119,6 +119,15 @@ def _parse_evaluation_response(raw: str) -> ConditionResult:
     return ConditionResult(passes=passes, is_error=False, reason=str(reason))
 
 
+async def _call_subagent(
+    session: Session, prompt: str, agent_defaults: AgentDefaults,
+) -> str | None:
+    return await fork_and_capture(
+        session, prompt, agent_defaults,
+        tools=_TOOLS, allow=_ALLOW_RULES, model=agent_defaults.processor_model,
+    )
+
+
 async def evaluate_condition(
     condition_prompt: str,
     step_states: dict[str, StepState],
@@ -149,14 +158,7 @@ async def evaluate_condition(
     prompt = _build_evaluation_prompt(condition_prompt, step_states, scratchpad_path)
 
     try:
-        response = await fork_and_capture(
-            session,
-            prompt,
-            agent_defaults,
-            tools=_TOOLS,
-            allow=_ALLOW_RULES,
-            model=agent_defaults.processor_model,
-        )
+        response = await _call_subagent(session, prompt, agent_defaults)
     except Exception as exc:
         _log.warning("Condition evaluation failed: {err}", err=str(exc))
         return ConditionResult(
@@ -182,14 +184,7 @@ async def evaluate_condition(
     )
 
     try:
-        retry_response = await fork_and_capture(
-            session,
-            _RETRY_PROMPT,
-            agent_defaults,
-            tools=_TOOLS,
-            allow=_ALLOW_RULES,
-            model=agent_defaults.processor_model,
-        )
+        retry_response = await _call_subagent(session, _RETRY_PROMPT, agent_defaults)
     except Exception as exc:
         _log.warning("Condition evaluation retry failed: {err}", err=str(exc))
         return result
