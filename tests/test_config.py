@@ -56,7 +56,7 @@ class TestSettingsModel:
         assert settings.agent.model == "opus"
 
     def test_default_agent_allowed_tools(self) -> None:
-        """AC (R2): agent.allowed_tools defaults to Read, Glob, Grep."""
+        """AC (R2): agent.allowed_tools defaults to Read, Glob, Grep, Edit(.claude/**)."""
         settings = Settings()
 
         assert settings.agent.allowed_tools == ["Read", "Glob", "Grep", "Edit(.claude/**)"]
