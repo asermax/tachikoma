@@ -588,3 +588,10 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 **Complexity**: Medium
 **Description**: Allow plugins to declare MCP tool servers in their manifest that become available to the main agent at all times, without going through the skill activation system. The plugin manifest gains an optional `tools` field listing tool server entry points. During plugin loading, declared tool servers are registered alongside built-in MCP tools and injected into every agent session. This provides a simpler, more direct path than bundling a skill with MCP tools (which requires skill activation to trigger tool availability), covering use cases like a weather plugin that provides a `get_weather` tool the agent should always have access to. Tool servers follow the same factory pattern used by skill-provided MCP tools for consistency.
 
+### DLT-175: Plugin hook for scheduled maintenance ticks
+**Status**: ✗ Defined
+**Depends on**: None
+**Priority**: 4 (Low)
+**Complexity**: Easy
+**Description**: Allow plugins to declare scheduled ticks in their manifest that run on a cron schedule alongside built-in maintenance jobs. Plugin-declared ticks specify a tick function and an optional schedule override in the manifest, and are governed by the same maintenance enabled/schedule configuration as built-in ticks. During plugin loading, declared ticks are registered with the central scheduler and run automatically when the schedule fires.
+
