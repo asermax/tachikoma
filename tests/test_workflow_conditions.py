@@ -214,6 +214,143 @@ class TestEvaluateCondition:
 
     @pytest.mark.asyncio
     @patch("tachikoma.workflows.conditions.fork_and_capture", new_callable=AsyncMock)
+    async def test_non_json_first_response_retries_and_succeeds(self, mock_capture):
+        mock_capture.side_effect = [
+            "The condition is met because the file exists.",
+            '{"passes": true, "reason": "file exists"}',
+        ]
+
+        result = await evaluate_condition(
+            condition_prompt="Check if output.md exists",
+            step_states={},
+            scratchpad_path="/tmp/scratch.md",
+            workspace_path=Path("/tmp"),
+            agent_defaults=_make_defaults(),
+            sdk_session_id="sess-123",
+        )
+
+        assert result == ConditionResult(passes=True, is_error=False, reason="file exists")
+        assert mock_capture.call_count == 2
+
+    @pytest.mark.asyncio
+    @patch("tachikoma.workflows.conditions.fork_and_capture", new_callable=AsyncMock)
+    async def test_non_json_first_response_retries_and_fails(self, mock_capture):
+        mock_capture.side_effect = [
+            "The condition is met because the file exists.",
+            "Yes, the condition passes.",
+        ]
+
+        result = await evaluate_condition(
+            condition_prompt="test",
+            step_states={},
+            scratchpad_path="/tmp/scratch.md",
+            workspace_path=Path("/tmp"),
+            agent_defaults=_make_defaults(),
+            sdk_session_id="sess-123",
+        )
+
+        assert result.is_error is True
+        assert mock_capture.call_count == 2
+
+    @pytest.mark.asyncio
+    @patch("tachikoma.workflows.conditions.fork_and_capture", new_callable=AsyncMock)
+    async def test_valid_json_no_retry(self, mock_capture):
+        mock_capture.return_value = '{"passes": true, "reason": "ok"}'
+
+        await evaluate_condition(
+            condition_prompt="test",
+            step_states={},
+            scratchpad_path="/tmp/scratch.md",
+            workspace_path=Path("/tmp"),
+            agent_defaults=_make_defaults(),
+            sdk_session_id="sess-123",
+        )
+
+        mock_capture.assert_called_once()
+
+    @pytest.mark.asyncio
+    @patch("tachikoma.workflows.conditions.fork_and_capture", new_callable=AsyncMock)
+    async def test_empty_response_no_retry(self, mock_capture):
+        mock_capture.return_value = ""
+
+        result = await evaluate_condition(
+            condition_prompt="test",
+            step_states={},
+            scratchpad_path="/tmp/scratch.md",
+            workspace_path=Path("/tmp"),
+            agent_defaults=_make_defaults(),
+            sdk_session_id="sess-123",
+        )
+
+        assert result.is_error is True
+        mock_capture.assert_called_once()
+
+    @pytest.mark.asyncio
+    @patch("tachikoma.workflows.conditions.fork_and_capture", new_callable=AsyncMock)
+    async def test_retry_sdk_failure_returns_original_error(self, mock_capture):
+        mock_capture.side_effect = [
+            "I think the condition passes.",
+            RuntimeError("SDK timeout on retry"),
+        ]
+
+        result = await evaluate_condition(
+            condition_prompt="test",
+            step_states={},
+            scratchpad_path="/tmp/scratch.md",
+            workspace_path=Path("/tmp"),
+            agent_defaults=_make_defaults(),
+            sdk_session_id="sess-123",
+        )
+
+        assert result.is_error is True
+        assert "Non-JSON" in result.reason
+        assert mock_capture.call_count == 2
+
+    @pytest.mark.asyncio
+    @patch("tachikoma.workflows.conditions.fork_and_capture", new_callable=AsyncMock)
+    async def test_retry_empty_response_returns_original_error(self, mock_capture):
+        mock_capture.side_effect = [
+            "The condition is met.",
+            "",
+        ]
+
+        result = await evaluate_condition(
+            condition_prompt="test",
+            step_states={},
+            scratchpad_path="/tmp/scratch.md",
+            workspace_path=Path("/tmp"),
+            agent_defaults=_make_defaults(),
+            sdk_session_id="sess-123",
+        )
+
+        assert result.is_error is True
+        assert "Non-JSON" in result.reason
+        assert mock_capture.call_count == 2
+
+    @pytest.mark.asyncio
+    @patch("tachikoma.workflows.conditions.fork_and_capture", new_callable=AsyncMock)
+    async def test_retry_uses_same_session(self, mock_capture):
+        mock_capture.side_effect = [
+            "The condition is met.",
+            '{"passes": false, "reason": "no file"}',
+        ]
+
+        await evaluate_condition(
+            condition_prompt="test",
+            step_states={},
+            scratchpad_path="/tmp/scratch.md",
+            workspace_path=Path("/tmp"),
+            agent_defaults=_make_defaults(),
+            sdk_session_id="sess-123",
+        )
+
+        assert mock_capture.call_count == 2
+        first_session = mock_capture.call_args_list[0].args[0]
+        second_session = mock_capture.call_args_list[1].args[0]
+        assert first_session is second_session
+
+    @pytest.mark.asyncio
+    @patch("tachikoma.workflows.conditions.fork_and_capture", new_callable=AsyncMock)
     async def test_uses_processor_model(self, mock_capture):
         mock_capture.return_value = '{"passes": true, "reason": "ok"}'
 

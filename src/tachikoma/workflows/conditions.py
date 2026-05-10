@@ -30,6 +30,12 @@ _ALLOW_RULES = [
 
 _TOOLS = ["Read", "Glob", "Grep"]
 
+_RETRY_PROMPT = (
+    "Your previous response could not be parsed as JSON. "
+    'Please respond with ONLY a JSON object: '
+    '{"passes": true/false, "reason": "brief explanation"}'
+)
+
 _PROMPT_TEMPLATE = """\
 Evaluate this workflow step condition. You have read-only access to the workspace.
 
@@ -166,4 +172,29 @@ async def evaluate_condition(
             reason="Condition evaluator returned empty response",
         )
 
-    return _parse_evaluation_response(response)
+    result = _parse_evaluation_response(response)
+    if not result.is_error:
+        return result
+
+    _log.warning(
+        "Condition evaluator returned non-JSON, retrying: {reason}",
+        reason=result.reason,
+    )
+
+    try:
+        retry_response = await fork_and_capture(
+            session,
+            _RETRY_PROMPT,
+            agent_defaults,
+            tools=_TOOLS,
+            allow=_ALLOW_RULES,
+            model=agent_defaults.processor_model,
+        )
+    except Exception as exc:
+        _log.warning("Condition evaluation retry failed: {err}", err=str(exc))
+        return result
+
+    if not retry_response:
+        return result
+
+    return _parse_evaluation_response(retry_response)
