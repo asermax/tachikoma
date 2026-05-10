@@ -492,30 +492,32 @@ async def run(
             if settings.memory.maintenance.enabled:
                 maintenance_schedule = settings.memory.maintenance.schedule
                 maintenance_settings = settings.memory.maintenance
-                jobs.extend([
-                    Job(
-                        name="episodic_maintenance",
-                        trigger=CronTrigger(maintenance_schedule, tz),
-                        run=lambda: episodic_maintenance_tick(
-                            agent_defaults, maintenance_settings
+                jobs.extend(
+                    [
+                        Job(
+                            name="episodic_maintenance",
+                            trigger=CronTrigger(maintenance_schedule, tz),
+                            run=lambda: episodic_maintenance_tick(
+                                agent_defaults, maintenance_settings
+                            ),
                         ),
-                    ),
-                    Job(
-                        name="facts_maintenance",
-                        trigger=CronTrigger(maintenance_schedule, tz),
-                        run=lambda: facts_maintenance_tick(agent_defaults),
-                    ),
-                    Job(
-                        name="preferences_maintenance",
-                        trigger=CronTrigger(maintenance_schedule, tz),
-                        run=lambda: preferences_maintenance_tick(agent_defaults),
-                    ),
-                    Job(
-                        name="context_maintenance",
-                        trigger=CronTrigger(maintenance_schedule, tz),
-                        run=lambda: context_maintenance_tick(agent_defaults),
-                    ),
-                ])
+                        Job(
+                            name="facts_maintenance",
+                            trigger=CronTrigger(maintenance_schedule, tz),
+                            run=lambda: facts_maintenance_tick(agent_defaults),
+                        ),
+                        Job(
+                            name="preferences_maintenance",
+                            trigger=CronTrigger(maintenance_schedule, tz),
+                            run=lambda: preferences_maintenance_tick(agent_defaults),
+                        ),
+                        Job(
+                            name="context_maintenance",
+                            trigger=CronTrigger(maintenance_schedule, tz),
+                            run=lambda: context_maintenance_tick(agent_defaults),
+                        ),
+                    ]
+                )
 
             scheduler_tasks.append(asyncio.create_task(scheduler(jobs), name="scheduler"))
 
