@@ -2,6 +2,24 @@
 
 <!-- version list -->
 
+## v1.78.0 (2026-05-10)
+
+### Code Style
+
+- **main**: Reformat maintenance jobs list
+  ([`6d3f61f`](https://github.com/asermax/tachikoma/commit/6d3f61f205cf69686e49d11abdb8ed5e4e2edcf3))
+
+### Features
+
+- **agent**: Add Edit(.claude/**) to default allowed tools
+  ([`2630999`](https://github.com/asermax/tachikoma/commit/26309998c0ed88b3c0cd47840da8f401e57e8d33))
+
+### Testing
+
+- **config**: Update allowed_tools default test for Edit(.claude/**)
+  ([`6d4a0ff`](https://github.com/asermax/tachikoma/commit/6d4a0ffd7342e6f8e9a3266ba7a24cf25bb3cb25))
+
+
 ## v1.77.0 (2026-05-09)
 
 ### Documentation
