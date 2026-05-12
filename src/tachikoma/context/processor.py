@@ -142,6 +142,10 @@ step-by-step instructions that belong in skill references rather than \
 foundational context, outdated conventions
      - SOUL.md: personality adjustments that the user has contradicted or \
 reversed
+   - **Skill deduplication**: When the context summary lists active skills \
+with directory paths, read their SKILL.md before writing to AGENTS.md. If a \
+skill already covers the instruction or convention you're about to add, skip \
+it — skill files are the authoritative source for their domain.
    - **Consolidate duplicate sections**: If two sections in the same file \
 cover the same topic with semantically equivalent content, merge them into \
 one section combining the best of both. Only consolidate when sections are \

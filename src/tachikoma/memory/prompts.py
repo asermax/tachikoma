@@ -29,7 +29,21 @@ the new information, not a restatement of what's already in the context file
    - If no context file covers the topic, proceed normally
 
 This check prevents duplicating information across the memory system and the \
-context files, which would create confusion about which is authoritative."""
+context files, which would create confusion about which is authoritative.
+
+## Skill Deduplication
+
+The session context summary lists any active skills with their directory paths. \
+Skill files are the authoritative source for their domain — workflow instructions, \
+reference material, and domain conventions belong in skills, not in memory files.
+
+Before creating a memory file, check whether the topic overlaps with an active skill:
+1. If the context summary lists active skills, read their SKILL.md (use the \
+directory path provided) to understand what the skill covers
+2. If the information you're about to record is already fully captured by a \
+skill file, do NOT create a memory file for it — the skill is the source of truth
+3. If a skill partially covers the topic but the conversation adds genuinely new \
+details not in the skill, you MAY create a file — but only for the new information"""
 
 
 def permissions_section(memory_type: str, *, include_agent: bool = True) -> str:

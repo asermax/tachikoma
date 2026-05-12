@@ -44,6 +44,11 @@ lasting preference
    - Content already covered in AGENTS.md, SOUL.md, or skill reference \
 files → those files already capture it
 
+   **Skill deduplication**: When the context summary lists active skills with \
+directory paths, read their SKILL.md before creating a preference file. If a \
+skill already covers the preference or convention, do not create a memory \
+file — skill files are the authoritative source for their domain.
+
 3. **Before creating a new file**, search for existing overlap:
    - Use Grep to search existing files for the key topic or keywords
    - Also search `$WORKSPACE/context/AGENTS.md` for the same topic. If \
