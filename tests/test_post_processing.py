@@ -156,7 +156,8 @@ class TestBuildContextSummary:
         result = build_context_summary(entries)
         assert result is not None
         assert "- **wallet**" in result
-        assert "—" not in result.split("**wallet**")[1].split("\n")[0]
+        wallet_line = next(line for line in result.splitlines() if "**wallet**" in line)
+        assert "—" not in wallet_line
 
     def test_parses_project_names_from_content(self) -> None:
         content = "## Registered Projects\n\n- tachikoma: main\n- filadd: abc1234 (detached)"
