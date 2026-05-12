@@ -165,12 +165,7 @@ class SkillsContextProvider(MessageContextProvider):
                         ContextResult(
                             tag=SKILLS_OWNER,
                             content=render_skill_block(skill),
-                            metadata={
-                                SKILL_NAME_META_KEY: skill.qualified_name,
-                                "_pinned": True,
-                                "skill_description": skill.description,
-                                "skill_path": str(skill.path),
-                            },
+                            metadata=_skill_metadata(skill, pinned=True),
                         )
                     )
             loaded_names = seen
@@ -286,11 +281,7 @@ class SkillsContextProvider(MessageContextProvider):
                 ContextResult(
                     tag=SKILLS_OWNER,
                     content=render_skill_block(skill),
-                    metadata={
-                        SKILL_NAME_META_KEY: skill.qualified_name,
-                        "skill_description": skill.description,
-                        "skill_path": str(skill.path),
-                    },
+                    metadata=_skill_metadata(skill),
                 )
             )
 
@@ -299,6 +290,19 @@ class SkillsContextProvider(MessageContextProvider):
 
 SKILLS_OWNER = "skills"
 SKILL_NAME_META_KEY = "skill_name"
+SKILL_DESCRIPTION_META_KEY = "skill_description"
+SKILL_PATH_META_KEY = "skill_path"
+
+
+def _skill_metadata(skill: Skill, *, pinned: bool = False) -> dict[str, str | bool]:
+    metadata: dict[str, str | bool] = {
+        SKILL_NAME_META_KEY: skill.qualified_name,
+        SKILL_DESCRIPTION_META_KEY: skill.description,
+        SKILL_PATH_META_KEY: str(skill.path),
+    }
+    if pinned:
+        metadata["_pinned"] = True
+    return metadata
 
 
 def extract_skill_names(entries: list[SessionContextEntry]) -> set[str]:
