@@ -29,7 +29,7 @@ The memory workspace also includes `memories/transcripts/`, a non-extractive sub
 | R8 | Transcript archival is best-effort — failures (missing source, filesystem errors) are logged and swallowed, never crashing the conversation or blocking other post-processing |
 | R9 | Before writing facts or preferences memories that reference workspace state (file paths, configuration values, implementation details), forked agents validate claims against actual workspace files using internal sub-agents; invalid claims are omitted |
 | R10 | Facts and preferences processors proactively prune stale, outdated, or superseded entries during extraction — removing or updating entries that the conversation contradicts, and merging overlapping files into one; episodic entries are never deleted for content reasons (only malformed filenames are consolidated) |
-| R11 | Before creating facts or preferences memory files, forked agents read the foundational context files from `$WORKSPACE/context/` (AGENTS.md, USER.md, SOUL.md) and skip creation when the information is already covered there; context files are the authoritative source for their respective categories |
+| R11 | Before creating facts or preferences memory files, forked agents read the foundational context files from `$WORKSPACE/context/` (AGENTS.md, USER.md, SOUL.md) and skip creation when the information is already covered there; context files are the authoritative source for their respective categories; additionally, when the context summary lists active skills with directory paths, forked agents read their SKILL.md before creating files — skill files are the authoritative source for their domain |
 | R12 | The preferences processor also checks `AGENTS.md` inline before creating new preference files — if the information is already captured there (even in different words), the processor skips creating the file; gracefully proceeds normally if `AGENTS.md` doesn't exist or is empty |
 | R13 | Four nightly maintenance jobs — one per memory type (episodic, facts, preferences) and one for context files — share a single configurable cron schedule and can be disabled via an `enabled` toggle |
 | R14 | Episodic maintenance applies tiered time windows: clean daily notes for verbosity (last N days), consolidate into weekly summaries, consolidate into monthly summaries, delete entries older than the configured monthly threshold |
@@ -40,6 +40,7 @@ The memory workspace also includes `memories/transcripts/`, a non-extractive sub
 | R19 | Maintenance handles errors gracefully — agent failures, malformed files, empty stores, and concurrent access do not corrupt the memory store; changes are automatically committed to git after each job completes |
 | R20 | Tiered time window thresholds and the maintenance schedule are configurable with sensible defaults |
 | R21 | A fourth maintenance job cleans up foundational context files (SOUL.md, USER.md, AGENTS.md) — evaluating for staleness, redundancy, and overlap, enforcing size limits, and removing stale content — without adding new content; runs on the same schedule and governed by the same `enabled` toggle as the memory maintenance jobs |
+| R22 | Maintenance ticks (facts, preferences, context) receive the full skill catalog (name, description, absolute directory path) when a SkillRegistry is available, enabling agents to identify and remove context/memory entries that duplicate skill content; graceful no-op when the registry is unavailable or empty |
 
 ## Behaviors
 
@@ -127,14 +128,17 @@ Before writing facts or preferences memory files that contain claims about works
 
 ### Context File Deduplication (R11, R12)
 
-Before creating facts or preferences memory files, the forked agent reads the foundational context files and skips creation when the information is already covered there. Facts uses a shared `CONTEXT_DEDUP_SECTION` prompt that checks all context files (AGENTS.md, USER.md, SOUL.md). Preferences has an additional inline AGENTS.md check integrated directly into its extraction steps (read + overlap search), providing a focused dedup that specifically targets operational and workflow preferences.
+Before creating facts or preferences memory files, the forked agent reads the foundational context files and skips creation when the information is already covered there. Facts uses a shared `CONTEXT_DEDUP_SECTION` prompt that checks all context files (AGENTS.md, USER.md, SOUL.md) and also instructs the agent to read active skill files listed in the context summary. Preferences has an additional inline AGENTS.md check and skill dedup guidance integrated directly into its extraction steps, providing a focused dedup that specifically targets operational and workflow preferences.
 
 **Acceptance Criteria**:
 - Given a fact topic already covered in AGENTS.md, USER.md, or SOUL.md, when the facts processor runs, then the agent does not create a separate memory file
+- Given a fact topic already covered by an active skill file (listed in the context summary with a directory path), when the facts processor runs, then the agent reads the skill's SKILL.md and does not create a memory file that duplicates the skill's content
 - Given a preference topic already covered in AGENTS.md, when the preferences processor runs, then the agent does not create a separate memory file (R12)
+- Given a preference topic already covered by an active skill file (listed in the context summary with a directory path), when the preferences processor runs, then the agent reads the skill's SKILL.md and does not create a memory file that duplicates the skill's content
 - Given a context file partially covers the topic but the conversation adds genuinely new details, when the agent runs, then it creates a file for the new information only
-- Given no context file covers the topic, when the agent runs, then it proceeds normally with file creation
+- Given no context file or skill covers the topic, when the agent runs, then it proceeds normally with file creation
 - Given `AGENTS.md` doesn't exist or is empty, when the preferences processor runs, then extraction proceeds normally without the inline dedup check (R12)
+- Given the context summary lists no active skills, when either processor runs, then skill dedup guidance is harmlessly inert — no additional reads are performed
 
 ### Scheduled Maintenance (R13, R17)
 
@@ -159,9 +163,9 @@ Applies tiered time-window consolidation: recent daily files are cleaned for ver
 - Given a weekly or monthly consolidation would create a summary file that already exists, when the agent processes the relevant files, then it merges new content into the existing summary
 - Given partial groups at week/month boundaries, when the agent processes them, then they are consolidated into a single summary for that period
 
-### Facts Maintenance (R15)
+### Facts Maintenance (R15, R22)
 
-Evaluates fact files for staleness (outdated information), redundancy (duplicate information across files), and overlap (related topics split across files). The agent consolidates, edits, merges, or removes files as needed.
+Evaluates fact files for staleness (outdated information), redundancy (duplicate information across files), and overlap (related topics split across files). The agent consolidates, edits, merges, or removes files as needed. When the skill registry is available, the agent also receives the full skill catalog and can remove entries that duplicate skill content.
 
 **Acceptance Criteria**:
 - Given the facts maintenance task runs, when it reads all fact files, then it evaluates each file for staleness, redundancy, and overlap
@@ -169,20 +173,24 @@ Evaluates fact files for staleness (outdated information), redundancy (duplicate
 - Given redundant entries (same information in different files), when the agent identifies duplicates, then it keeps the most complete version and removes duplicates
 - Given overlapping files (related topics split across files), when the agent identifies overlap, then it merges into a single consolidated file and removes originals
 - Given a fact file that is entirely obsolete, when the agent processes it, then it deletes the file
+- Given the facts maintenance task runs with a non-empty skill registry, when the prompt is assembled, then it includes a skill catalog listing all skills with name, description, and absolute path, plus instructions to remove entries duplicating skill content
+- Given the skill registry is unavailable or empty, when the facts maintenance task runs, then the prompt contains no skill catalog section — identical to behavior before R22
 
-### Preferences Maintenance (R16)
+### Preferences Maintenance (R16, R22)
 
-Evaluates preference files for redundancy (same preference stated multiple times) and overlap (related preferences split across files). The agent consolidates, edits, merges, or removes files as needed.
+Evaluates preference files for redundancy (same preference stated multiple times) and overlap (related preferences split across files). The agent consolidates, edits, merges, or removes files as needed. When the skill registry is available, the agent also receives the full skill catalog and can remove entries that duplicate skill content.
 
 **Acceptance Criteria**:
 - Given the preferences maintenance task runs, when it reads all preference files, then it evaluates each file for redundancy and overlap
 - Given redundant preferences, when the agent identifies duplicates, then it deduplicates — keeping the most complete version
 - Given overlapping files, when the agent identifies overlap, then it merges into a single consolidated file and removes originals
 - Given a preference file that is entirely superseded or obsolete, when the agent processes it, then it deletes the file
+- Given the preferences maintenance task runs with a non-empty skill registry, when the prompt is assembled, then it includes a skill catalog listing all skills with name, description, and absolute path, plus instructions to remove entries duplicating skill content
+- Given the skill registry is unavailable or empty, when the preferences maintenance task runs, then the prompt contains no skill catalog section — identical to behavior before R22
 
-### Context Maintenance (R21)
+### Context Maintenance (R21, R22)
 
-Evaluates the three foundational context files (SOUL.md, USER.md, AGENTS.md) for staleness, redundancy, and overlap. The agent cleans up existing content — removing stale entries, consolidating duplicate sections, and enforcing size limits — without adding new content. This complements the `CoreContextProcessor`'s reactive cleanup by providing a periodic sweep that catches things that accumulate between conversations.
+Evaluates the three foundational context files (SOUL.md, USER.md, AGENTS.md) for staleness, redundancy, and overlap. The agent cleans up existing content — removing stale entries, consolidating duplicate sections, and enforcing size limits — without adding new content. This complements the `CoreContextProcessor`'s reactive cleanup by providing a periodic sweep that catches things that accumulate between conversations. When the skill registry is available, the agent also receives the full skill catalog and can remove entries that duplicate skill content.
 
 **Acceptance Criteria**:
 - Given the context maintenance task runs, when it reads all three context files, then it evaluates each for staleness, redundancy, and overlap
@@ -191,6 +199,8 @@ Evaluates the three foundational context files (SOUL.md, USER.md, AGENTS.md) for
 - Given USER.md exceeds ~120 lines or AGENTS.md exceeds ~400 lines, when the maintenance agent runs, then it prunes to bring files within limits
 - Given the context maintenance agent completes its work, then all file changes are committed to git — staging only `context/`
 - Given context files are already clean and within size limits, when the maintenance agent runs, then it exits with no changes (idempotent)
+- Given the context maintenance task runs with a non-empty skill registry, when the prompt is assembled, then it includes a skill catalog listing all skills with name, description, and absolute path, plus instructions to remove entries duplicating skill content
+- Given the skill registry is unavailable or empty, when the context maintenance task runs, then the prompt contains no skill catalog section — identical to behavior before R22
 
 ### Maintenance Configuration (R20)
 

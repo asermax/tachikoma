@@ -28,7 +28,7 @@ A parallel concept — the `MessagePostProcessingPipeline` — follows a similar
 | R8 | Pipeline tracks processing state: a transient `is_processing` flag prevents concurrent re-entry, and `mark_processed` is called on the session registry after all phases complete |
 | R9 | Pipeline exposes `needs_processing(session, last_message_time)` to determine whether processing is needed (returns False when already processing or already processed since last message) |
 | R10 | Sub-agents spawned by fork/query helpers declare explicit tool restrictions and allow-only permission rules via `dontAsk` mode; each processor defines the exact tools and paths its agent needs (DES-004) |
-| R11 | Context summary distribution: before running phases, the pipeline builds a summary of session context entries (names/paths only) and passes it to all processors via an `extra` dict so prompt-driven processors can avoid re-extracting information already captured in loaded memories or skills |
+| R11 | Context summary distribution: before running phases, the pipeline builds a summary of session context entries and passes it to all processors via an `extra` dict so prompt-driven processors can avoid re-extracting information already captured in loaded memories or skills; skill entries include the skill's name, one-line description, and absolute directory path so processors can read skill files for dedup |
 | R12 | Pipeline supports `unregister(processor)` for processor removal — identity-based removal, safe no-op when processor is not registered |
 | R13 | Phase is a class attribute on `PostProcessor` (default `MAIN_PHASE`); `register()` reads the class attribute when no explicit `phase` argument is provided (sentinel-based backward compatibility) |
 | R14 | Plugin-contributed post-processors participate in the pipeline identically to built-in processors — same error isolation, same phase execution, same context summary distribution |
@@ -115,10 +115,12 @@ Sub-agents spawned by processors declare explicit tool restrictions and allow-on
 
 ### Context Summary Distribution (R11)
 
-Before running phases, the pipeline loads session context entries from the registry, builds a concise summary (names/paths only, not full content), and passes it to all processors via an `extra` keyword argument on `process()`. Prompt-driven processors append the summary to their fork prompt with actionable instructions.
+Before running phases, the pipeline loads session context entries from the registry, builds a concise summary (not full content), and passes it to all processors via an `extra` keyword argument on `process()`. Prompt-driven processors append the summary to their fork prompt with actionable instructions. Skill entries include the skill's name, one-line description, and absolute directory path so processors can read skill files for dedup; legacy entries lacking this metadata fall back to name-only rendering.
 
 **Acceptance Criteria**:
 - Given a session with loaded memory files and active skills, when the pipeline runs, then all prompt-driven processors receive a context summary listing those memories and skills
+- Given a session with active skills that have enriched metadata, when the pipeline builds the context summary, then skill entries include the skill's name, one-line description, and absolute directory path
+- Given a session with active skills that lack enriched metadata (legacy entries), when the pipeline builds the context summary, then skill entries fall back to name-only rendering without error
 - Given a session with no context entries, when the pipeline runs, then `extra=None` is passed and processors behave exactly as before
 - Given the registry fails to load context entries, when the pipeline runs, then processors run without a summary and no error is raised
 - Given a loaded memory file that already captures a fact from the conversation, when the facts processor runs, then the summary instructs it to update the existing file rather than create a duplicate

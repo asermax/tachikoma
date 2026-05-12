@@ -37,6 +37,7 @@ This is distinct from memory extraction: memory processors create individual fil
 | R12 | Proactively prune stale sections from context files — remove or update outdated content (completed projects, past roles, reversed personality adjustments, obsolete instructions, resolved bugs, completed work, time-specific past events, procedural details that belong in skill references) when the conversation provides clear evidence; also consolidate semantically equivalent sections within the same file; ambiguous signals do not trigger pruning |
 | R13 | Detect corrections (explicit user corrections, implicit user corrections after agent errors, agent self-corrections) and extract concise behavioral instructions to AGENTS.md under domain-appropriate sections; entries are framed as positive instructions describing the correct behavior, not "don't/do" correction pairs; check for existing semantically similar entries before adding; corrections about communication style or tone route to SOUL.md |
 | R14 | Before writing context file updates that reference workspace state (file paths, project structure, configuration values, implementation details), validate verifiable claims against actual workspace files using haiku Explore sub-agents; invalid claims are omitted from context file updates |
+| R15 | Skill deduplication guidance — the processor prompt instructs the agent to read active skill files (listed in the context summary with directory paths) before writing to AGENTS.md; if a skill already covers the instruction or convention, the agent skips it — skill files are the authoritative source for their domain |
 
 ## Behaviors
 
@@ -156,6 +157,15 @@ The processor validates verifiable workspace claims before writing them to conte
 - Given a proposed context update containing a verifiable workspace claim (e.g., "the project uses poetry for dependency management"), when the processor runs, then it spawns a haiku Explore sub-agent to verify the claim against actual files before writing
 - Given a verifiable claim that is INVALID (e.g., claimed file doesn't exist or doesn't contain what's stated), when the processor runs, then the claim is omitted from the context file update
 - Given a proposed update containing only subjective information or user preferences, when the processor runs, then no validation sub-agents are spawned — subjective content passes through without verification
+
+### Skill Deduplication (R15)
+
+The processor prompt includes unconditional guidance instructing the agent to read active skill files before writing to AGENTS.md. Skill files are the authoritative source for their domain — operational conventions and workflow instructions belong in skills, not AGENTS.md.
+
+**Acceptance Criteria**:
+- Given a conversation where the agent is about to add an operational instruction to AGENTS.md, when the context summary lists an active skill whose directory path is available, then the processor reads the skill's SKILL.md first and skips the entry if the skill already covers it
+- Given the context summary lists no active skills or no directory paths, when the processor runs, then the skill dedup guidance is harmlessly inert — no additional reads are performed
+- Given the context summary lists active skills, when the agent prunes procedural details from AGENTS.md (R12), then it can cross-reference skill files to confirm the content is covered elsewhere
 
 ### Edge Cases
 
