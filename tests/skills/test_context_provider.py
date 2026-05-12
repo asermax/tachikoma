@@ -423,7 +423,11 @@ class TestSkillsContextProvider:
 
         assert result is not None
         assert len(result) == 1
-        assert result[0].metadata == {"skill_name": "my-skill"}
+        assert result[0].metadata == {
+            "skill_name": "my-skill",
+            "skill_description": "My",
+            "skill_path": str(skills_dir),
+        }
 
     async def test_empty_existing_entries_classifies_full_registry(
         self, mocker: MockerFixture, tmp_path: Path

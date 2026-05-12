@@ -129,7 +129,34 @@ class TestBuildContextSummary:
         ]
         result = build_context_summary(entries)
         assert result is not None
-        assert "**Active Skills:** code-review, reading-list" in result
+        assert "**Active Skills:**" in result
+        assert "- **code-review**" in result
+        assert "- **reading-list**" in result
+
+    def test_includes_skill_description_and_path(self) -> None:
+        entries = [
+            _make_entry(
+                "skills",
+                "content",
+                metadata={
+                    "skill_name": "wallet",
+                    "skill_description": "Crypto wallet management",
+                    "skill_path": "/path/to/skills/wallet",
+                },
+            ),
+        ]
+        result = build_context_summary(entries)
+        assert result is not None
+        assert "- **wallet** — Crypto wallet management: `/path/to/skills/wallet`" in result
+
+    def test_skill_without_enriched_metadata_falls_back_to_name(self) -> None:
+        entries = [
+            _make_entry("skills", "content", metadata={"skill_name": "wallet"}),
+        ]
+        result = build_context_summary(entries)
+        assert result is not None
+        assert "- **wallet**" in result
+        assert "—" not in result.split("**wallet**")[1].split("\n")[0]
 
     def test_parses_project_names_from_content(self) -> None:
         content = "## Registered Projects\n\n- tachikoma: main\n- filadd: abc1234 (detached)"
@@ -179,7 +206,8 @@ class TestBuildContextSummary:
         assert result is not None
         assert "**Foundational Context:** SOUL.md, USER.md" in result
         assert "**Loaded Memories:** memories/facts/python.md" in result
-        assert "**Active Skills:** reading-list" in result
+        assert "**Active Skills:**" in result
+        assert "- **reading-list**" in result
         assert "**Projects:** tachikoma" in result
         assert "**Previous Conversation:**" in result
         assert "Skip re-extracting information" in result

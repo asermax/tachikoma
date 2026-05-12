@@ -244,19 +244,34 @@ def build_context_summary(entries: list[SessionContextEntry]) -> str | None:
             has_content = True
             lines.append(f"**Loaded Memories:** {', '.join(paths)}")
 
-    # Skills: extract names from metadata
+    # Skills: extract enriched metadata (description, path) when available
     skill_entries = by_owner.get("skills", [])
     if skill_entries:
-        names = sorted(
-            {
-                e.metadata.get("skill_name")
-                for e in skill_entries
-                if e.metadata and e.metadata.get("skill_name")
-            }
-        )
-        if names:
+        skills_by_name: dict[str, dict[str, str | None]] = {}
+        for e in skill_entries:
+            if not e.metadata:
+                continue
+            name = e.metadata.get("skill_name")
+            if not name:
+                continue
+            skills_by_name.setdefault(name, {
+                "description": e.metadata.get("skill_description"),
+                "path": e.metadata.get("skill_path"),
+            })
+
+        if skills_by_name:
             has_content = True
-            lines.append(f"**Active Skills:** {', '.join(names)}")
+            skill_lines = []
+            for name in sorted(skills_by_name):
+                info = skills_by_name[name]
+                desc = info["description"]
+                path = info["path"]
+                if desc and path:
+                    skill_lines.append(f"- **{name}** — {desc}: `{path}`")
+                else:
+                    skill_lines.append(f"- **{name}**")
+            lines.append("**Active Skills:**")
+            lines.extend(skill_lines)
 
     # Projects: parse names from content lines like "- name: branch"
     project_entries = by_owner.get("projects", [])
@@ -301,7 +316,11 @@ def build_context_summary(entries: list[SessionContextEntry]) -> str | None:
         "loaded memory files — but do update those files if the conversation "
         "adds new details or corrections"
     )
-    lines.append("- Avoid duplicating content that was provided by active skills into memory files")
+    lines.append(
+        "- Avoid duplicating content that was provided by active skills into "
+        "memory files — when a skill's directory path is listed, read its "
+        "SKILL.md before writing entries on the same topic"
+    )
     lines.append(
         "- Understand that foundational context (SOUL/USER/AGENTS) shaped "
         "the agent's behavior during the conversation"

@@ -165,7 +165,12 @@ class SkillsContextProvider(MessageContextProvider):
                         ContextResult(
                             tag=SKILLS_OWNER,
                             content=render_skill_block(skill),
-                            metadata={SKILL_NAME_META_KEY: skill.qualified_name, "_pinned": True},
+                            metadata={
+                                SKILL_NAME_META_KEY: skill.qualified_name,
+                                "_pinned": True,
+                                "skill_description": skill.description,
+                                "skill_path": str(skill.path),
+                            },
                         )
                     )
             loaded_names = seen
@@ -281,7 +286,11 @@ class SkillsContextProvider(MessageContextProvider):
                 ContextResult(
                     tag=SKILLS_OWNER,
                     content=render_skill_block(skill),
-                    metadata={SKILL_NAME_META_KEY: skill.qualified_name},
+                    metadata={
+                        SKILL_NAME_META_KEY: skill.qualified_name,
+                        "skill_description": skill.description,
+                        "skill_path": str(skill.path),
+                    },
                 )
             )
 
