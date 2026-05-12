@@ -504,17 +504,23 @@ async def run(
                         Job(
                             name="facts_maintenance",
                             trigger=CronTrigger(maintenance_schedule, tz),
-                            run=lambda: facts_maintenance_tick(agent_defaults),
+                            run=lambda: facts_maintenance_tick(
+                                agent_defaults, skill_registry
+                            ),
                         ),
                         Job(
                             name="preferences_maintenance",
                             trigger=CronTrigger(maintenance_schedule, tz),
-                            run=lambda: preferences_maintenance_tick(agent_defaults),
+                            run=lambda: preferences_maintenance_tick(
+                                agent_defaults, skill_registry
+                            ),
                         ),
                         Job(
                             name="context_maintenance",
                             trigger=CronTrigger(maintenance_schedule, tz),
-                            run=lambda: context_maintenance_tick(agent_defaults),
+                            run=lambda: context_maintenance_tick(
+                                agent_defaults, skill_registry
+                            ),
                         ),
                     ]
                 )

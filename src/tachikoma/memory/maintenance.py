@@ -6,7 +6,7 @@ deduplicate preferences, and clean up context files.
 """
 
 from pathlib import Path
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
 from loguru import logger
 
@@ -21,10 +21,42 @@ from tachikoma.post_processing import (
     query_and_consume,
 )
 
+if TYPE_CHECKING:
+    from tachikoma.skills.registry import SkillRegistry
+
 _log = logger.bind(component="memory.maintenance")
 
 MemoryType = Literal["episodic", "facts", "preferences"]
 MAINTENANCE_TOOLS = ["Read", "Glob", "Grep", "Bash", "Edit", "Write"]
+
+
+def _build_skill_catalog_section(registry: "SkillRegistry | None") -> str | None:
+    """Build a skill catalog section for maintenance prompts.
+
+    Returns None when registry is None or has no skills registered.
+    """
+    if registry is None or not registry.skills:
+        return None
+
+    lines = [
+        "## Registered Skills",
+        "",
+        "The following skills are installed in the workspace. Skill files are the "
+        "authoritative source for their domain — read their SKILL.md before "
+        "removing content to confirm duplication.",
+        "",
+    ]
+    for name in sorted(registry.skills):
+        skill = registry.skills[name]
+        lines.append(f"- **{name}** — {skill.description}: `{skill.path}`")
+
+    lines.extend([
+        "",
+        "If a context/memory entry duplicates information already covered by a "
+        "skill file, remove the entry from the context/memory file — the skill "
+        "file already captures it.",
+    ])
+    return "\n".join(lines)
 
 
 def maintenance_allow_rules(scope: Path) -> list[str]:
@@ -86,11 +118,16 @@ async def _run_maintenance_tick(
     agent_defaults: AgentDefaults,
     memory_type: MemoryType,
     prompt: str,
+    skill_registry: "SkillRegistry | None" = None,
 ) -> None:
     """Run a maintenance agent and commit any changes."""
     scope = agent_defaults.cwd / "memories" / memory_type
     rules = maintenance_allow_rules(scope)
     formatted = prompt.replace("$WORKSPACE", str(agent_defaults.cwd))
+
+    catalog = _build_skill_catalog_section(skill_registry)
+    if catalog is not None:
+        formatted = f"{formatted}\n\n{catalog}"
 
     _log.info("Starting {type} maintenance tick", type=memory_type)
     await query_and_consume(
@@ -285,12 +322,15 @@ commands will be denied.
 
 async def facts_maintenance_tick(
     agent_defaults: AgentDefaults,
+    skill_registry: "SkillRegistry | None" = None,
 ) -> None:
     """Run facts memory cleanup.
 
     Evaluates fact files for staleness, redundancy, and overlap.
     """
-    await _run_maintenance_tick(agent_defaults, "facts", FACTS_MAINTENANCE_PROMPT)
+    await _run_maintenance_tick(
+        agent_defaults, "facts", FACTS_MAINTENANCE_PROMPT, skill_registry
+    )
 
 
 PREFERENCES_MAINTENANCE_PROMPT = """\
@@ -356,12 +396,15 @@ commands will be denied.
 
 async def preferences_maintenance_tick(
     agent_defaults: AgentDefaults,
+    skill_registry: "SkillRegistry | None" = None,
 ) -> None:
     """Run preferences memory cleanup.
 
     Evaluates preference files for redundancy and overlap.
     """
-    await _run_maintenance_tick(agent_defaults, "preferences", PREFERENCES_MAINTENANCE_PROMPT)
+    await _run_maintenance_tick(
+        agent_defaults, "preferences", PREFERENCES_MAINTENANCE_PROMPT, skill_registry
+    )
 
 
 CONTEXT_MAINTENANCE_PROMPT = """\
@@ -494,6 +537,7 @@ async def git_commit_context_changes(
 
 async def context_maintenance_tick(
     agent_defaults: AgentDefaults,
+    skill_registry: "SkillRegistry | None" = None,
 ) -> None:
     """Run context file cleanup.
 
@@ -503,6 +547,10 @@ async def context_maintenance_tick(
     scope = agent_defaults.cwd / CONTEXT_DIR_NAME
     rules = maintenance_allow_rules(scope)
     formatted = CONTEXT_MAINTENANCE_PROMPT.replace("$WORKSPACE", str(agent_defaults.cwd))
+
+    catalog = _build_skill_catalog_section(skill_registry)
+    if catalog is not None:
+        formatted = f"{formatted}\n\n{catalog}"
 
     _log.info("Starting context maintenance tick")
     await query_and_consume(
