@@ -2,6 +2,35 @@
 
 <!-- version list -->
 
+## v1.80.0 (2026-05-12)
+
+### Documentation
+
+- **specs**: Add skill deduplication requirements across extraction and context specs
+  ([`224dd45`](https://github.com/asermax/tachikoma/commit/224dd45c5c49f454aa56c743d9ad44e5e1b841fe))
+
+### Features
+
+- **maintenance**: Inject skill catalog into maintenance ticks
+  ([`89069b9`](https://github.com/asermax/tachikoma/commit/89069b93c75754bd2b91051cb934422feefc5df1))
+
+- **memory**: Add skill deduplication guidance to extraction and maintenance prompts
+  ([`78f5366`](https://github.com/asermax/tachikoma/commit/78f536646702dceb2deb69c95e73ec8a1bd2611b))
+
+- **skills**: Enrich context summary with skill description and path metadata
+  ([`e2a9c7a`](https://github.com/asermax/tachikoma/commit/e2a9c7aca5b52519ecc47da41a82be997e4e7d63))
+
+### Refactoring
+
+- **skills**: Extract skill metadata helper and add named constants
+  ([`a1a9009`](https://github.com/asermax/tachikoma/commit/a1a9009288bbcae811f23e7a10c7080253c94060))
+
+### Testing
+
+- Improve assertion readability in wallet dash check
+  ([`76c704d`](https://github.com/asermax/tachikoma/commit/76c704d2881072aa93331c2d7c5895961eaeece8))
+
+
 ## v1.79.0 (2026-05-10)
 
 ### Documentation
