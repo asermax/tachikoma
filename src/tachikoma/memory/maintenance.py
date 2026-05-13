@@ -15,6 +15,7 @@ from tachikoma.config import MaintenanceSettings
 from tachikoma.context.loading import CONTEXT_DIR_NAME
 from tachikoma.git.processor import GIT_ALLOW, GIT_BASH_HOOK, GIT_TOOLS
 from tachikoma.git.sync import has_uncommitted_changes
+from tachikoma.memory.prompts import STORE_PURPOSE_SECTION
 from tachikoma.post_processing import (
     MAINTENANCE_BASH_HOOK,
     abs_rule,
@@ -57,6 +58,67 @@ def _build_skill_catalog_section(registry: "SkillRegistry | None") -> str | None
         "file already captures it.",
     ])
     return "\n".join(lines)
+
+
+def _build_cross_store_manifest(workspace: Path, current_target: str) -> str | None:
+    """Build a cross-store manifest listing files in other information stores.
+
+    Returns None when no other stores have files.
+    """
+    store_map: dict[str, tuple[str, str]] = {
+        "episodic": ("Episodic Files", "memories/episodic"),
+        "facts": ("Facts Files", "memories/facts"),
+        "preferences": ("Preferences Files", "memories/preferences"),
+        "context": ("Context Files", "context"),
+    }
+
+    sections: list[str] = []
+    for target, (heading, rel_path) in store_map.items():
+        if target == current_target:
+            continue
+        directory = workspace / rel_path
+        if not directory.is_dir():
+            continue
+        files = sorted(f.name for f in directory.iterdir() if f.suffix == ".md")
+        if not files:
+            continue
+        lines = [f"### {heading}", ""]
+        for name in files:
+            lines.append(f"- `{rel_path}/{name}`")
+        sections.append("\n".join(lines))
+
+    if not sections:
+        return None
+
+    header = [
+        "## Cross-Store Visibility",
+        "",
+        "Files in other information stores (names and paths only, not content):",
+        "",
+    ]
+    return "\n".join(header) + "\n\n" + "\n\n".join(sections) + (
+        "\n\nIf a section in this store duplicates or contradicts content in a "
+        "listed file, reconcile per the authority hierarchy in your instructions."
+    )
+
+
+CONTRADICTION_DETECTION_SECTION = """\
+## Cross-Store Contradiction Detection
+
+When reviewing files in this store, check for contradictions against other stores:
+
+1. Read the files listed in the cross-store visibility section above
+2. Compare their content against the files you're maintaining in this store
+3. If you find contradictory information:
+   - Determine which store is more authoritative per the authority hierarchy \
+(Skills > Facts > Context)
+   - If this store is LESS authoritative: update or remove the contradicting \
+entry in this store to match the more authoritative source
+   - If this store is MORE authoritative: leave this store's entry unchanged \
+(the other store's maintenance tick will handle it)
+4. When information in this store duplicates detail from a more authoritative \
+store: trim this store's entry to a brief pointer (e.g., "See \
+memories/facts/X.md for details")"""
 
 
 def maintenance_allow_rules(scope: Path) -> list[str]:
@@ -128,6 +190,14 @@ async def _run_maintenance_tick(
     catalog = _build_skill_catalog_section(skill_registry)
     if catalog is not None:
         formatted = f"{formatted}\n\n{catalog}"
+
+    formatted = f"{formatted}\n\n{STORE_PURPOSE_SECTION}"
+
+    manifest = _build_cross_store_manifest(agent_defaults.cwd, memory_type)
+    if manifest is not None:
+        formatted = f"{formatted}\n\n{manifest}"
+
+    formatted = f"{formatted}\n\n{CONTRADICTION_DETECTION_SECTION}"
 
     _log.info("Starting {type} maintenance tick", type=memory_type)
     await query_and_consume(
@@ -551,6 +621,14 @@ async def context_maintenance_tick(
     catalog = _build_skill_catalog_section(skill_registry)
     if catalog is not None:
         formatted = f"{formatted}\n\n{catalog}"
+
+    formatted = f"{formatted}\n\n{STORE_PURPOSE_SECTION}"
+
+    manifest = _build_cross_store_manifest(agent_defaults.cwd, "context")
+    if manifest is not None:
+        formatted = f"{formatted}\n\n{manifest}"
+
+    formatted = f"{formatted}\n\n{CONTRADICTION_DETECTION_SECTION}"
 
     _log.info("Starting context maintenance tick")
     await query_and_consume(
