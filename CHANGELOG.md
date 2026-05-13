@@ -2,6 +2,27 @@
 
 <!-- version list -->
 
+## v1.81.0 (2026-05-13)
+
+### Documentation
+
+- Update memory extraction spec and design with cross-store requirements
+  ([`08e061b`](https://github.com/asermax/tachikoma/commit/08e061bfa0de8ff033ffc2c1fa3e34594b5c571f))
+
+### Features
+
+- **maintenance**: Add cross-store visibility and contradiction detection
+  ([`ba82c31`](https://github.com/asermax/tachikoma/commit/ba82c3169e60cb5fa348fd6795d971a1ca1bf17e))
+
+- **memory**: Add authority hierarchy and unified dedup to extraction processors
+  ([`2c6496f`](https://github.com/asermax/tachikoma/commit/2c6496f781d35d26f71354fee838fe5693a74afd))
+
+### Refactoring
+
+- **memory**: Extract cross-store section helper and harden manifest builder
+  ([`d22b1b3`](https://github.com/asermax/tachikoma/commit/d22b1b37476a13c7c8f078fcde8c5c0c075695ef))
+
+
 ## v1.80.0 (2026-05-12)
 
 ### Documentation
