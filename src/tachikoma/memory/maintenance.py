@@ -51,12 +51,14 @@ def _build_skill_catalog_section(registry: "SkillRegistry | None") -> str | None
         skill = registry.skills[name]
         lines.append(f"- **{name}** — {skill.description}: `{skill.path}`")
 
-    lines.extend([
-        "",
-        "If a context/memory entry duplicates information already covered by a "
-        "skill file, remove the entry from the context/memory file — the skill "
-        "file already captures it.",
-    ])
+    lines.extend(
+        [
+            "",
+            "If a context/memory entry duplicates information already covered by a "
+            "skill file, remove the entry from the context/memory file — the skill "
+            "file already captures it.",
+        ]
+    )
     return "\n".join(lines)
 
 
@@ -79,7 +81,10 @@ def _build_cross_store_manifest(workspace: Path, current_target: str) -> str | N
         directory = workspace / rel_path
         if not directory.is_dir():
             continue
-        files = sorted(f.name for f in directory.iterdir() if f.suffix == ".md")
+        try:
+            files = sorted(f.name for f in directory.iterdir() if f.suffix == ".md")
+        except OSError:
+            continue
         if not files:
             continue
         lines = [f"### {heading}", ""]
@@ -96,9 +101,14 @@ def _build_cross_store_manifest(workspace: Path, current_target: str) -> str | N
         "Files in other information stores (names and paths only, not content):",
         "",
     ]
-    return "\n".join(header) + "\n\n" + "\n\n".join(sections) + (
-        "\n\nIf a section in this store duplicates or contradicts content in a "
-        "listed file, reconcile per the authority hierarchy in your instructions."
+    return (
+        "\n".join(header)
+        + "\n\n"
+        + "\n\n".join(sections)
+        + (
+            "\n\nIf a section in this store duplicates or contradicts content in a "
+            "listed file, reconcile per the authority hierarchy in your instructions."
+        )
     )
 
 
@@ -119,6 +129,17 @@ entry in this store to match the more authoritative source
 4. When information in this store duplicates detail from a more authoritative \
 store: trim this store's entry to a brief pointer (e.g., "See \
 memories/facts/X.md for details")"""
+
+
+def _append_cross_store_sections(prompt: str, workspace: Path, current_target: str) -> str:
+    """Append store-purpose, cross-store manifest, and contradiction sections."""
+    prompt = f"{prompt}\n\n{STORE_PURPOSE_SECTION}"
+
+    manifest = _build_cross_store_manifest(workspace, current_target)
+    if manifest is not None:
+        prompt = f"{prompt}\n\n{manifest}"
+
+    return f"{prompt}\n\n{CONTRADICTION_DETECTION_SECTION}"
 
 
 def maintenance_allow_rules(scope: Path) -> list[str]:
@@ -191,13 +212,7 @@ async def _run_maintenance_tick(
     if catalog is not None:
         formatted = f"{formatted}\n\n{catalog}"
 
-    formatted = f"{formatted}\n\n{STORE_PURPOSE_SECTION}"
-
-    manifest = _build_cross_store_manifest(agent_defaults.cwd, memory_type)
-    if manifest is not None:
-        formatted = f"{formatted}\n\n{manifest}"
-
-    formatted = f"{formatted}\n\n{CONTRADICTION_DETECTION_SECTION}"
+    formatted = _append_cross_store_sections(formatted, agent_defaults.cwd, memory_type)
 
     _log.info("Starting {type} maintenance tick", type=memory_type)
     await query_and_consume(
@@ -398,9 +413,7 @@ async def facts_maintenance_tick(
 
     Evaluates fact files for staleness, redundancy, and overlap.
     """
-    await _run_maintenance_tick(
-        agent_defaults, "facts", FACTS_MAINTENANCE_PROMPT, skill_registry
-    )
+    await _run_maintenance_tick(agent_defaults, "facts", FACTS_MAINTENANCE_PROMPT, skill_registry)
 
 
 PREFERENCES_MAINTENANCE_PROMPT = """\
@@ -622,13 +635,7 @@ async def context_maintenance_tick(
     if catalog is not None:
         formatted = f"{formatted}\n\n{catalog}"
 
-    formatted = f"{formatted}\n\n{STORE_PURPOSE_SECTION}"
-
-    manifest = _build_cross_store_manifest(agent_defaults.cwd, "context")
-    if manifest is not None:
-        formatted = f"{formatted}\n\n{manifest}"
-
-    formatted = f"{formatted}\n\n{CONTRADICTION_DETECTION_SECTION}"
+    formatted = _append_cross_store_sections(formatted, agent_defaults.cwd, "context")
 
     _log.info("Starting context maintenance tick")
     await query_and_consume(
