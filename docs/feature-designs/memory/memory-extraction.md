@@ -110,10 +110,10 @@ Three **maintenance tick functions** run as scheduled jobs (DES-010), each using
 | `src/tachikoma/memory/__init__.py` | Re-exports: `EpisodicProcessor`, `FactsProcessor`, `PreferencesProcessor`, `TranscriptArchiveProcessor`, `memory_hook`, `episodic_maintenance_tick`, `facts_maintenance_tick`, `preferences_maintenance_tick` | Clean public API for the memory package |
 | `src/tachikoma/memory/hooks.py` | `memory_hook`: creates `memories/` directory structure — `episodic/`, `facts/`, `preferences/`, and `transcripts/` subdirectories | Subsystem-owned hook pattern; registered after context hook; `transcripts/` lives alongside the extraction subdirectories because it is owned by the same package, even though it is populated by a deterministic processor |
 | `src/tachikoma/memory/episodic.py` | `EpisodicProcessor(PromptDrivenProcessor)` + `EPISODIC_PROMPT` constant | Extends DES-004 base class; prompt co-located with processor |
-| `src/tachikoma/memory/facts.py` | `FactsProcessor(PromptDrivenProcessor)` + `FACTS_PROMPT` constant | Extends DES-004 base class; prompt co-located with processor; prompt explicitly excludes one-time events (bug fixes, security incidents, deployments) with routing to episodic memory; includes concrete negative filename examples; adds pre-write durability check ("useful in a month?") |
-| `src/tachikoma/memory/preferences.py` | `PreferencesProcessor(PromptDrivenProcessor)` + `PREFERENCES_PROMPT` constant | Extends DES-004 base class; prompt co-located with processor |
+| `src/tachikoma/memory/facts.py` | `FactsProcessor(PromptDrivenProcessor)` + `FACTS_PROMPT` constant | Extends DES-004 base class; prompt co-located with processor; prompt explicitly excludes one-time events (bug fixes, security incidents, deployments) with routing to episodic memory; includes concrete negative filename examples; adds pre-write durability check ("useful in a month?"); prompt uses shared `CONTEXT_DEDUP_SECTION` (context file + skill dedup) and `STORE_PURPOSE_SECTION` (authority hierarchy) |
+| `src/tachikoma/memory/preferences.py` | `PreferencesProcessor(PromptDrivenProcessor)` + `PREFERENCES_PROMPT` constant | Extends DES-004 base class; prompt co-located with processor; prompt uses shared `CONTEXT_DEDUP_SECTION` (context file + skill dedup) and `STORE_PURPOSE_SECTION` (authority hierarchy) alongside inline AGENTS.md check |
 | `src/tachikoma/memory/transcripts.py` | `TranscriptArchiveProcessor(PostProcessor)` — copies `session.transcript_path` to `memories/transcripts/<sdk-session-id>.jsonl` via `shutil.copy2` | Plain `PostProcessor` (no sub-agent — deterministic I/O); self-healing `mkdir(parents=True, exist_ok=True)` inside `process()`; all errors (`FileNotFoundError`, `OSError`) logged and swallowed so the pipeline never crashes on archival failure |
-| `src/tachikoma/memory/maintenance.py` | Three memory tick functions (`episodic_maintenance_tick`, `facts_maintenance_tick`, `preferences_maintenance_tick`), shared `_run_maintenance_tick` helper, `git_commit_memory_changes` for post-agent commits, per-type maintenance prompts. Plus `context_maintenance_tick` (standalone, targets `context/`), `git_commit_context_changes`, and `CONTEXT_MAINTENANCE_PROMPT` | Uses `query_and_consume` (shared in `post_processing.py`) with DES-004 tool scoping; follows DES-010 tick function pattern; `MAINTENANCE_BASH_HOOK` composes `UTILITY_BASH_PREFIXES` + `rm` via `make_bash_gate_hook`; `git_commit_memory_changes` runs scoped git agent per tick via `has_uncommitted_changes` gate; context tick is standalone (not via shared helper) because the path structure (`context/` vs `memories/<type>/`) differs |
+| `src/tachikoma/memory/maintenance.py` | Three memory tick functions (`episodic_maintenance_tick`, `facts_maintenance_tick`, `preferences_maintenance_tick`), shared `_run_maintenance_tick` helper, `git_commit_memory_changes` for post-agent commits, per-type maintenance prompts. Plus `context_maintenance_tick` (standalone, targets `context/`), `git_commit_context_changes`, `CONTEXT_MAINTENANCE_PROMPT`, `_build_cross_store_manifest` helper, `CONTRADICTION_DETECTION_SECTION` shared prompt constant | Uses `query_and_consume` (shared in `post_processing.py`) with DES-004 tool scoping; follows DES-010 tick function pattern; `MAINTENANCE_BASH_HOOK` composes `UTILITY_BASH_PREFIXES` + `rm` via `make_bash_gate_hook`; `git_commit_memory_changes` runs scoped git agent per tick via `has_uncommitted_changes` gate; context tick is standalone (not via shared helper) because the path structure (`context/` vs `memories/<type>/`) differs; ticks append `STORE_PURPOSE_SECTION`, cross-store manifest, and `CONTRADICTION_DETECTION_SECTION` to their prompts |
 
 ### Cross-Layer Contracts
 
@@ -191,6 +191,8 @@ MemoryMaintenance                              [DES-010 + DES-004]
 ├── preferences_maintenance_tick() → None        [redundancy/overlap]
 ├── context_maintenance_tick() → None            [staleness/redundancy/overlap/size limits]
 ├── _run_maintenance_tick(type, prompt) → None   [shared composition helper]
+├── _build_cross_store_manifest(cwd, target) → str | None  [cross-store file manifest from filesystem]
+├── CONTRADICTION_DETECTION_SECTION: str         [shared prompt for cross-store contradiction resolution]
 ├── git_commit_memory_changes(type) → None       [scoped git add/commit]
 └── git_commit_context_changes() → None          [scoped git add context/]
 
@@ -222,6 +224,10 @@ Each processor inherits `_prompt`, `_cwd`, and the default `process()` implement
       - Analyzes the conversation history (via the forked session)
       - For preferences: reads `$WORKSPACE/context/AGENTS.md` and skips
         creating files for preferences already captured there
+      - For facts/preferences: uses STORE_PURPOSE_SECTION to understand
+        the authority hierarchy for information routing
+      - For facts/preferences: uses shared CONTEXT_DEDUP_SECTION to check
+        context files and active skill files before creating memories
       - For facts/preferences: validates workspace-referencing claims by
         spawning read-only sub-agents (Agent tool, Explore type, haiku)
         to verify claims; omits claims that fail validation
@@ -251,13 +257,18 @@ Each processor inherits `_prompt`, `_cwd`, and the default `process()` implement
 2. Tick function builds scoped allow rules for memory subdirectory
 3. Tick function builds prompt with configured thresholds (episodic)
    or fixed strategy (facts/preferences)
-4. _run_maintenance_tick calls query_and_consume with:
+4. _run_maintenance_tick assembles the final prompt:
+   a. Appends skill catalog section (if registry has skills)
+   b. Appends STORE_PURPOSE_SECTION (authority hierarchy)
+   c. Appends cross-store manifest from _build_cross_store_manifest (if other stores have files)
+   d. Appends CONTRADICTION_DETECTION_SECTION
+5. _run_maintenance_tick calls query_and_consume with:
    - MAINTENANCE_TOOLS (Read, Glob, Grep, Bash, Edit, Write)
    - Scoped allow rules (Edit/Write path-scoped, Read/Glob/Grep/Bash unrestricted)
    - MAINTENANCE_BASH_HOOK (utility commands + rm)
    - processor_model for cost efficiency
-5. Agent reads directory, performs maintenance, exits
-6. git_commit_memory_changes checks for uncommitted changes
+6. Agent reads directory, performs maintenance, exits
+7. git_commit_memory_changes checks for uncommitted changes
    via has_uncommitted_changes():
    - If changes exist: runs scoped git agent to stage and commit
    - If no changes: skips (idempotent no-op)
@@ -268,14 +279,19 @@ Each processor inherits `_prompt`, `_cwd`, and the default `process()` implement
 ```
 1. Scheduler fires cron trigger for context maintenance job
 2. context_maintenance_tick builds scoped allow rules for context/ directory
-3. context_maintenance_tick calls query_and_consume with:
+3. context_maintenance_tick assembles the final prompt:
+   a. Appends skill catalog section (if registry has skills)
+   b. Appends STORE_PURPOSE_SECTION (authority hierarchy)
+   c. Appends cross-store manifest from _build_cross_store_manifest (if other stores have files)
+   d. Appends CONTRADICTION_DETECTION_SECTION
+4. context_maintenance_tick calls query_and_consume with:
    - MAINTENANCE_TOOLS (Read, Glob, Grep, Bash, Edit, Write)
    - Scoped allow rules (Edit/Write path-scoped to context/, Read unrestricted)
    - MAINTENANCE_BASH_HOOK (utility commands only — no rm needed)
    - processor_model for cost efficiency
-4. Agent reads context files, evaluates staleness/redundancy/overlap,
+5. Agent reads context files, evaluates staleness/redundancy/overlap,
    enforces size limits, exits
-5. git_commit_context_changes checks for uncommitted changes
+6. git_commit_context_changes checks for uncommitted changes
    via has_uncommitted_changes():
    - If changes exist: runs scoped git agent to stage context/ and commit
    - If no changes: skips (idempotent no-op)
@@ -396,6 +412,19 @@ Each processor inherits `_prompt`, `_cwd`, and the default `process()` implement
 - Pro: No risk of breaking existing maintenance ticks
 - Pro: Context tick can evolve independently (e.g., different bash permissions, different commit strategy)
 - Con: ~15 lines of similar code duplicated between `context_maintenance_tick` and `_run_maintenance_tick` (acceptable for a single additional call site)
+
+### Cross-store visibility and contradiction detection in maintenance
+
+**Choice**: Maintenance ticks (facts, preferences, context) append three shared sections to their prompts: `STORE_PURPOSE_SECTION` (defining each store's role and the authority hierarchy), a cross-store file manifest (built by `_build_cross_store_manifest` from filesystem listings), and `CONTRADICTION_DETECTION_SECTION` (instructions for resolving cross-store contradictions using the authority hierarchy). The manifest lists file names and paths only, not content — agents read the files themselves if needed.
+**Why**: Without cross-store visibility, maintenance agents operated in isolation — a fact file and a context file could contain contradictory information indefinitely because each store's maintenance tick only saw its own files. The manifest gives agents awareness of what exists elsewhere, and the contradiction detection section provides structured instructions for resolving conflicts using the authority hierarchy (Skills > Memory facts > Context files). The `STORE_PURPOSE_SECTION` reinforces correct information routing during cleanup.
+
+**Consequences**:
+- Pro: Cross-store contradictions are detected and resolved during normal maintenance cycles
+- Pro: Shared constants ensure consistent authority hierarchy and detection instructions across all ticks
+- Pro: Manifest is built from filesystem listings (no database dependency)
+- Pro: Omission-safe — when no other stores have files, the manifest section is silently omitted
+- Con: Maintenance agents read additional files from other stores (small overhead; agents only read when they detect potential contradictions)
+- Con: Contradiction resolution effectiveness depends on LLM interpretation
 
 ## System Behavior
 
@@ -547,14 +576,15 @@ Each processor inherits `_prompt`, `_cwd`, and the default `process()` implement
 
 ### Context file deduplication via prompt instruction (facts and preferences)
 
-**Choice**: Facts extraction uses a shared `CONTEXT_DEDUP_SECTION` prompt that checks all three foundational context files (AGENTS.md, USER.md, SOUL.md) before creating memory files. Preferences extraction uses an additional inline AGENTS.md check integrated directly into its extraction steps (step 1 reads AGENTS.md alongside existing preferences; step 3 searches AGENTS.md for overlap before creating files). The episodic processor does not include dedup — episodic memories are conversation summaries that do not duplicate context file content.
-**Why**: The prompts mentioned context files in their "DO NOT store" lists but this was passive guidance — agents never actively checked. This led to memory files that directly duplicated context file content (response gates, communication style, workflow details), creating confusion about which source was authoritative. The shared section in `prompts.py` makes the dedup instruction explicit for facts. For preferences, the inline AGENTS.md check targets the most common source of duplication (operational and workflow preferences captured in AGENTS.md) with graceful fallback when the file is absent.
+**Choice**: Both facts and preferences extraction use a shared `CONTEXT_DEDUP_SECTION` prompt that combines context file checking (reads all three foundational context files: AGENTS.md, USER.md, SOUL.md) and skill dedup (reads active skill files listed in the context summary) into a single unified section. Preferences extraction also has an additional inline AGENTS.md check integrated directly into its extraction steps (step 1 reads AGENTS.md alongside existing preferences; step 3 searches AGENTS.md for overlap before creating files). Both processors include `STORE_PURPOSE_SECTION` defining the authority hierarchy (Skills > Memory facts > Context files). The episodic processor does not include dedup — episodic memories are conversation summaries that do not duplicate context file content.
+**Why**: The prompts mentioned context files in their "DO NOT store" lists but this was passive guidance — agents never actively checked. This led to memory files that directly duplicated context file content (response gates, communication style, workflow details), creating confusion about which source was authoritative. Using a single shared section for both context file and skill dedup ensures consistent behavior across both processors. For preferences, the inline AGENTS.md check targets the most common source of duplication (operational and workflow preferences captured in AGENTS.md) with graceful fallback when the file is absent. The `STORE_PURPOSE_SECTION` gives agents explicit authority hierarchy guidance for routing decisions.
 
 **Consequences**:
 - Pro: No code changes beyond prompt text — consistent with DES-004 pattern
-- Pro: Shared section keeps facts dedup consistent and easy to update
+- Pro: Shared section keeps dedup consistent across both processors and easy to update
 - Pro: Preferences inline check is more targeted and contextual (integrated into extraction steps)
 - Pro: Context files remain authoritative; memory files supplement rather than duplicate
 - Pro: Graceful fallback for preferences when AGENTS.md is absent
+- Pro: Authority hierarchy is explicit rather than implicit
 - Con: Agents read additional files per extraction (small overhead; files are small)
 - Con: Dedup effectiveness depends on LLM interpretation of "already covered"

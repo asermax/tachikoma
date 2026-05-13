@@ -29,7 +29,7 @@ The memory workspace also includes `memories/transcripts/`, a non-extractive sub
 | R8 | Transcript archival is best-effort — failures (missing source, filesystem errors) are logged and swallowed, never crashing the conversation or blocking other post-processing |
 | R9 | Before writing facts or preferences memories that reference workspace state (file paths, configuration values, implementation details), forked agents validate claims against actual workspace files using internal sub-agents; invalid claims are omitted |
 | R10 | Facts and preferences processors proactively prune stale, outdated, or superseded entries during extraction — removing or updating entries that the conversation contradicts, and merging overlapping files into one; episodic entries are never deleted for content reasons (only malformed filenames are consolidated) |
-| R11 | Before creating facts or preferences memory files, forked agents read the foundational context files from `$WORKSPACE/context/` (AGENTS.md, USER.md, SOUL.md) and skip creation when the information is already covered there; context files are the authoritative source for their respective categories; additionally, when the context summary lists active skills with directory paths, forked agents read their SKILL.md before creating files — skill files are the authoritative source for their domain |
+| R11 | Before creating facts or preferences memory files, forked agents read the foundational context files from `$WORKSPACE/context/` (AGENTS.md, USER.md, SOUL.md) and skip creation when the information is already covered there; context files are the authoritative source for their respective categories; additionally, when the context summary lists active skills with directory paths, forked agents read their SKILL.md before creating files — skill files are the authoritative source for their domain; both processors use a shared `CONTEXT_DEDUP_SECTION` prompt constant that combines context file checking and skill dedup into a single unified section |
 | R12 | The preferences processor also checks `AGENTS.md` inline before creating new preference files — if the information is already captured there (even in different words), the processor skips creating the file; gracefully proceeds normally if `AGENTS.md` doesn't exist or is empty |
 | R13 | Four nightly maintenance jobs — one per memory type (episodic, facts, preferences) and one for context files — share a single configurable cron schedule and can be disabled via an `enabled` toggle |
 | R14 | Episodic maintenance applies tiered time windows: clean daily notes for verbosity (last N days), consolidate into weekly summaries, consolidate into monthly summaries, delete entries older than the configured monthly threshold |
@@ -41,6 +41,11 @@ The memory workspace also includes `memories/transcripts/`, a non-extractive sub
 | R20 | Tiered time window thresholds and the maintenance schedule are configurable with sensible defaults |
 | R21 | A fourth maintenance job cleans up foundational context files (SOUL.md, USER.md, AGENTS.md) — evaluating for staleness, redundancy, and overlap, enforcing size limits, and removing stale content — without adding new content; runs on the same schedule and governed by the same `enabled` toggle as the memory maintenance jobs |
 | R22 | Maintenance ticks (facts, preferences, context) receive the full skill catalog (name, description, absolute directory path) when a SkillRegistry is available, enabling agents to identify and remove context/memory entries that duplicate skill content; graceful no-op when the registry is unavailable or empty |
+| R23 | Both facts and preferences processors include a shared `STORE_PURPOSE_SECTION` defining the authority hierarchy (Skills > Memory facts > Context files) to guide correct information routing during extraction |
+| R24 | Maintenance ticks (facts, preferences, context) receive a cross-store file manifest listing files in other information stores (episodic, facts, preferences, context) so agents can detect cross-store contradictions; a shared `_build_cross_store_manifest` helper builds manifests from filesystem listings; the manifest lists file names and paths only, not content |
+| R25 | Maintenance ticks (facts, preferences, context) include contradiction detection instructions referencing the authority hierarchy (Skills > Memory facts > Context files); when a contradiction is found, the less authoritative store is updated or trimmed; a shared `CONTRADICTION_DETECTION_SECTION` prompt constant provides uniform instructions |
+| R26 | Maintenance ticks (facts, preferences, context) include `STORE_PURPOSE_SECTION` defining each store's role and the authority hierarchy, ensuring maintenance agents understand which store should hold what information |
+| R27 | `build_context_summary` includes the authority hierarchy (Skills > Memory facts > Context files) in its closing instructions, informing extraction processors about information routing priorities |
 
 ## Behaviors
 
@@ -126,9 +131,9 @@ Before writing facts or preferences memory files that contain claims about works
 - Given a memory with no workspace references (e.g., personal details, preferences, conversation summaries), when the agent prepares to write, no validation overhead is added
 - Given the agent identifies a verifiable claim, it spawns a read-only sub-agent to check the claim against the actual file and omits the claim if invalid
 
-### Context File Deduplication (R11, R12)
+### Context File Deduplication (R11, R12, R23)
 
-Before creating facts or preferences memory files, the forked agent reads the foundational context files and skips creation when the information is already covered there. Facts uses a shared `CONTEXT_DEDUP_SECTION` prompt that checks all context files (AGENTS.md, USER.md, SOUL.md) and also instructs the agent to read active skill files listed in the context summary. Preferences has an additional inline AGENTS.md check and skill dedup guidance integrated directly into its extraction steps, providing a focused dedup that specifically targets operational and workflow preferences.
+Before creating facts or preferences memory files, the forked agent reads the foundational context files and skips creation when the information is already covered there. Both processors use the shared `CONTEXT_DEDUP_SECTION` prompt that combines context file checking (AGENTS.md, USER.md, SOUL.md) and skill dedup (reading active skill files listed in the context summary) into a single unified section. Preferences has an additional inline AGENTS.md check integrated directly into its extraction steps, providing a focused dedup that specifically targets operational and workflow preferences. Both processors also include the shared `STORE_PURPOSE_SECTION` defining the authority hierarchy (Skills > Memory facts > Context files).
 
 **Acceptance Criteria**:
 - Given a fact topic already covered in AGENTS.md, USER.md, or SOUL.md, when the facts processor runs, then the agent does not create a separate memory file
@@ -139,6 +144,7 @@ Before creating facts or preferences memory files, the forked agent reads the fo
 - Given no context file or skill covers the topic, when the agent runs, then it proceeds normally with file creation
 - Given `AGENTS.md` doesn't exist or is empty, when the preferences processor runs, then extraction proceeds normally without the inline dedup check (R12)
 - Given the context summary lists no active skills, when either processor runs, then skill dedup guidance is harmlessly inert — no additional reads are performed
+- Given a conversation where new information emerges, when either the facts or preferences processor runs, then the `STORE_PURPOSE_SECTION` is included in the prompt, informing the agent of the authority hierarchy for correct information routing (R23)
 
 ### Scheduled Maintenance (R13, R17)
 
@@ -163,9 +169,9 @@ Applies tiered time-window consolidation: recent daily files are cleaned for ver
 - Given a weekly or monthly consolidation would create a summary file that already exists, when the agent processes the relevant files, then it merges new content into the existing summary
 - Given partial groups at week/month boundaries, when the agent processes them, then they are consolidated into a single summary for that period
 
-### Facts Maintenance (R15, R22)
+### Facts Maintenance (R15, R22, R24, R25, R26)
 
-Evaluates fact files for staleness (outdated information), redundancy (duplicate information across files), and overlap (related topics split across files). The agent consolidates, edits, merges, or removes files as needed. When the skill registry is available, the agent also receives the full skill catalog and can remove entries that duplicate skill content.
+Evaluates fact files for staleness (outdated information), redundancy (duplicate information across files), and overlap (related topics split across files). The agent consolidates, edits, merges, or removes files as needed. When the skill registry is available, the agent also receives the full skill catalog and can remove entries that duplicate skill content. The tick also receives a cross-store manifest listing files in other stores (preferences, context, episodic), contradiction detection instructions referencing the authority hierarchy, and store-purpose definitions.
 
 **Acceptance Criteria**:
 - Given the facts maintenance task runs, when it reads all fact files, then it evaluates each file for staleness, redundancy, and overlap
@@ -175,10 +181,14 @@ Evaluates fact files for staleness (outdated information), redundancy (duplicate
 - Given a fact file that is entirely obsolete, when the agent processes it, then it deletes the file
 - Given the facts maintenance task runs with a non-empty skill registry, when the prompt is assembled, then it includes a skill catalog listing all skills with name, description, and absolute path, plus instructions to remove entries duplicating skill content
 - Given the skill registry is unavailable or empty, when the facts maintenance task runs, then the prompt contains no skill catalog section — identical to behavior before R22
+- Given the facts maintenance task runs, when the prompt is assembled, then it includes the `STORE_PURPOSE_SECTION` defining the authority hierarchy (R26)
+- Given other information stores contain files, when the facts maintenance task runs, then the prompt includes a cross-store manifest listing those files by name and path (R24)
+- Given no other stores contain files, when the facts maintenance task runs, then the manifest section is omitted
+- Given the facts maintenance task runs, when the prompt is assembled, then it includes `CONTRADICTION_DETECTION_SECTION` instructing the agent to resolve contradictions in favor of the more authoritative store (R25)
 
-### Preferences Maintenance (R16, R22)
+### Preferences Maintenance (R16, R22, R24, R25, R26)
 
-Evaluates preference files for redundancy (same preference stated multiple times) and overlap (related preferences split across files). The agent consolidates, edits, merges, or removes files as needed. When the skill registry is available, the agent also receives the full skill catalog and can remove entries that duplicate skill content.
+Evaluates preference files for redundancy (same preference stated multiple times) and overlap (related preferences split across files). The agent consolidates, edits, merges, or removes files as needed. When the skill registry is available, the agent also receives the full skill catalog and can remove entries that duplicate skill content. The tick also receives a cross-store manifest listing files in other stores (facts, context, episodic), contradiction detection instructions referencing the authority hierarchy, and store-purpose definitions.
 
 **Acceptance Criteria**:
 - Given the preferences maintenance task runs, when it reads all preference files, then it evaluates each file for redundancy and overlap
@@ -187,10 +197,14 @@ Evaluates preference files for redundancy (same preference stated multiple times
 - Given a preference file that is entirely superseded or obsolete, when the agent processes it, then it deletes the file
 - Given the preferences maintenance task runs with a non-empty skill registry, when the prompt is assembled, then it includes a skill catalog listing all skills with name, description, and absolute path, plus instructions to remove entries duplicating skill content
 - Given the skill registry is unavailable or empty, when the preferences maintenance task runs, then the prompt contains no skill catalog section — identical to behavior before R22
+- Given the preferences maintenance task runs, when the prompt is assembled, then it includes the `STORE_PURPOSE_SECTION` defining the authority hierarchy (R26)
+- Given other information stores contain files, when the preferences maintenance task runs, then the prompt includes a cross-store manifest listing those files by name and path (R24)
+- Given no other stores contain files, when the preferences maintenance task runs, then the manifest section is omitted
+- Given the preferences maintenance task runs, when the prompt is assembled, then it includes `CONTRADICTION_DETECTION_SECTION` instructing the agent to resolve contradictions in favor of the more authoritative store (R25)
 
-### Context Maintenance (R21, R22)
+### Context Maintenance (R21, R22, R24, R25, R26)
 
-Evaluates the three foundational context files (SOUL.md, USER.md, AGENTS.md) for staleness, redundancy, and overlap. The agent cleans up existing content — removing stale entries, consolidating duplicate sections, and enforcing size limits — without adding new content. This complements the `CoreContextProcessor`'s reactive cleanup by providing a periodic sweep that catches things that accumulate between conversations. When the skill registry is available, the agent also receives the full skill catalog and can remove entries that duplicate skill content.
+Evaluates the three foundational context files (SOUL.md, USER.md, AGENTS.md) for staleness, redundancy, and overlap. The agent cleans up existing content — removing stale entries, consolidating duplicate sections, and enforcing size limits — without adding new content. This complements the `CoreContextProcessor`'s reactive cleanup by providing a periodic sweep that catches things that accumulate between conversations. When the skill registry is available, the agent also receives the full skill catalog and can remove entries that duplicate skill content. The tick also receives a cross-store manifest listing files in other stores (facts, preferences, episodic), contradiction detection instructions referencing the authority hierarchy, and store-purpose definitions.
 
 **Acceptance Criteria**:
 - Given the context maintenance task runs, when it reads all three context files, then it evaluates each for staleness, redundancy, and overlap
@@ -201,6 +215,10 @@ Evaluates the three foundational context files (SOUL.md, USER.md, AGENTS.md) for
 - Given context files are already clean and within size limits, when the maintenance agent runs, then it exits with no changes (idempotent)
 - Given the context maintenance task runs with a non-empty skill registry, when the prompt is assembled, then it includes a skill catalog listing all skills with name, description, and absolute path, plus instructions to remove entries duplicating skill content
 - Given the skill registry is unavailable or empty, when the context maintenance task runs, then the prompt contains no skill catalog section — identical to behavior before R22
+- Given the context maintenance task runs, when the prompt is assembled, then it includes the `STORE_PURPOSE_SECTION` defining the authority hierarchy (R26)
+- Given other information stores contain files, when the context maintenance task runs, then the prompt includes a cross-store manifest listing those files by name and path (R24)
+- Given no other stores contain files, when the context maintenance task runs, then the manifest section is omitted
+- Given the context maintenance task runs, when the prompt is assembled, then it includes `CONTRADICTION_DETECTION_SECTION` instructing the agent to resolve contradictions in favor of the more authoritative store (R25)
 
 ### Maintenance Configuration (R20)
 
