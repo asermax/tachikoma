@@ -307,6 +307,12 @@ def build_context_summary(entries: list[SessionContextEntry]) -> str | None:
 
     lines.append("")
     lines.append(
+        "Authority order: Skills (most authoritative) > Memory facts > "
+        "Context files (summaries and pointers). When creating or updating "
+        "memory files, prefer pointers over duplicating detailed content "
+        "that already exists in skills or fact files."
+    )
+    lines.append(
         "This context was already available to the agent. You should still "
         "search for existing files before creating or updating them (this "
         "list does not replace that search). Use this information to:"

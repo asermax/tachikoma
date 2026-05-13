@@ -8,6 +8,7 @@ from tachikoma.agent_defaults import AgentDefaults
 from tachikoma.memory.prompts import (
     CONTEXT_DEDUP_SECTION,
     EXTRACTION_TOOLS,
+    STORE_PURPOSE_SECTION,
     WORKSPACE_VALIDATION_SECTION,
     extraction_allow_rules,
     permissions_section,
@@ -99,6 +100,8 @@ Focus on accurate, stable reference information — not activity logs or documen
 
 FACTS_PROMPT = (
     _BASE_PROMPT
+    + STORE_PURPOSE_SECTION
+    + "\n\n"
     + CONTEXT_DEDUP_SECTION
     + "\n\n"
     + WORKSPACE_VALIDATION_SECTION

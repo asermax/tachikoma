@@ -6,7 +6,29 @@ from pathlib import Path
 
 from tachikoma.post_processing import WORKSPACE_VALIDATION_SECTION, abs_rule
 
-__all__ = ["WORKSPACE_VALIDATION_SECTION"]
+__all__ = ["STORE_PURPOSE_SECTION", "WORKSPACE_VALIDATION_SECTION"]
+
+STORE_PURPOSE_SECTION = """\
+## Store Purpose Definitions
+
+Each information store serves a distinct purpose. Use these definitions to \
+route information correctly:
+
+- **Skills** (workspace `skills/`): Authoritative operational reference — how \
+to use a tool, CLI commands, workflow steps, configuration. Most authoritative \
+source.
+- **Memory facts** (`memories/facts/`): Stable reference information — project \
+state, technical decisions, configuration, people, system architecture. Second \
+most authoritative.
+- **Memory preferences** (`memories/preferences/`): Subjective choices with \
+rationale — how the user wants things done, with context about why.
+- **Context files** (`context/`): Concise summaries and pointers — personality \
+(SOUL.md), user identity (USER.md), behavioral guidance (AGENTS.md). Context \
+should reference skills and facts rather than inlining their content.
+
+Authority order: Skills > Memory facts > Context files. When information \
+appears in multiple stores, the more authoritative source is correct. Context \
+files should contain summaries and pointers, not detailed operational content."""
 
 CONTEXT_DEDUP_SECTION = """\
 ## Context File Deduplication

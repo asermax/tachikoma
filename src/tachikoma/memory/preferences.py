@@ -5,7 +5,9 @@ Extracts user preferences from conversations.
 
 from tachikoma.agent_defaults import AgentDefaults
 from tachikoma.memory.prompts import (
+    CONTEXT_DEDUP_SECTION,
     EXTRACTION_TOOLS,
+    STORE_PURPOSE_SECTION,
     WORKSPACE_VALIDATION_SECTION,
     extraction_allow_rules,
     permissions_section,
@@ -43,11 +45,6 @@ lasting preference
    - A procedural workflow step → skill reference files
    - Content already covered in AGENTS.md, SOUL.md, or skill reference \
 files → those files already capture it
-
-   **Skill deduplication**: When the context summary lists active skills with \
-directory paths, read their SKILL.md before creating a preference file. If a \
-skill already covers the preference or convention, do not create a memory \
-file — skill files are the authoritative source for their domain.
 
 3. **Before creating a new file**, search for existing overlap:
    - Use Grep to search existing files for the key topic or keywords
@@ -104,7 +101,8 @@ preferences. Focus on genuine, stated choices — not facts, specs, or instructi
 """
 
 PREFERENCES_PROMPT = (
-    _BASE_PROMPT + WORKSPACE_VALIDATION_SECTION + "\n\n" + permissions_section("preferences")
+    _BASE_PROMPT + STORE_PURPOSE_SECTION + "\n\n" + CONTEXT_DEDUP_SECTION + "\n\n"
+    + WORKSPACE_VALIDATION_SECTION + "\n\n" + permissions_section("preferences")
 )
 
 
