@@ -425,10 +425,10 @@ triggers for action.
 
 When you see multiple narrow files about the same subject (per-date, \
 per-incident, per-PR, per-bug), merge them into a single broader topic file. \
-Example: `zenki-bug-2026-05-06.md`, `zenki-process.md`, and \
-`zenki-rollout-notes.md` should all be folded into `zenki.md`. Keep the most \
-durable, generally-useful information; discard the incident-specific noise. \
-Delete the merged-from files after consolidation.
+Example: `<project>-bug-<YYYY-MM-DD>.md`, `<project>-process.md`, and \
+`<project>-rollout-notes.md` should all be folded into `<project>.md`. Keep \
+the most durable, generally-useful information; discard the incident-specific \
+noise. Delete the merged-from files after consolidation.
 
 ### Aggressively prune resolved incidents
 
@@ -437,8 +437,6 @@ Files whose content carries headers like "Status: Completed", "Status: Merged", 
 belongs in episodic memory, not facts. Delete these files outright. If a fact \
 file mixes durable content with a resolved-incident section, strip the \
 resolved section and keep the rest.
-
-### Exit cleanly only when truly idle
 
 If no changes are needed, exit with no changes.
 
