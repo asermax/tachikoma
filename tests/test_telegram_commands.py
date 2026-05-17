@@ -30,6 +30,8 @@ def _make_telegram_channel() -> TelegramChannel:
     settings.push_notifications = False
 
     channel = TelegramChannel(settings, workspace_path=Path("/tmp/test"))
+    channel._bot = MagicMock()
+    channel._bot.set_my_commands = AsyncMock()
     coordinator = MagicMock()
     coordinator.enqueue = MagicMock()
     coordinator.enqueue_deferred = MagicMock()
