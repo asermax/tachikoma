@@ -416,9 +416,31 @@ delete it.
 
 ## Idempotency
 
-Before acting, check whether work has already been done:
-- If files are already deduplicated and consolidated, do not re-process.
-- If no changes are needed, exit with no changes.
+The goal is to leave the store materially smaller and more consolidated than \
+you found it. Treat absence of exact duplicates as insufficient grounds for \
+skipping — semantic overlap and per-incident granularity are also valid \
+triggers for action.
+
+### Consolidate narrow per-incident files into broader topic files
+
+When you see multiple narrow files about the same subject (per-date, \
+per-incident, per-PR, per-bug), merge them into a single broader topic file. \
+Example: `zenki-bug-2026-05-06.md`, `zenki-process.md`, and \
+`zenki-rollout-notes.md` should all be folded into `zenki.md`. Keep the most \
+durable, generally-useful information; discard the incident-specific noise. \
+Delete the merged-from files after consolidation.
+
+### Aggressively prune resolved incidents
+
+Files whose content carries headers like "Status: Completed", "Status: Merged", \
+"Status: Resolved", or "Status: Fixed" describe one-time events — that content \
+belongs in episodic memory, not facts. Delete these files outright. If a fact \
+file mixes durable content with a resolved-incident section, strip the \
+resolved section and keep the rest.
+
+### Exit cleanly only when truly idle
+
+If no changes are needed, exit with no changes.
 
 ## Permissions
 
@@ -513,9 +535,14 @@ the file if it becomes empty.
 
 ## Idempotency
 
-Before acting, check whether work has already been done:
-- If files are already deduplicated and consolidated, do not re-process.
-- If no changes are needed, exit with no changes.
+Treat absence of exact duplicates as insufficient grounds for skipping — \
+semantic overlap and split topics are also triggers for action. Actively \
+re-apply the Evaluation Criteria and Deletion sections above: merge \
+overlapping files even when they aren't word-for-word duplicates, and remove \
+reversed or superseded preferences even when they aren't explicitly \
+contradicted in a newer file.
+
+If no changes are needed, exit with no changes.
 
 ## Permissions
 
@@ -618,9 +645,13 @@ them in context file entries or if they duplicate each other
 
 ## Idempotency
 
-Before acting, check whether work has already been done:
-- If files are already clean and within size limits, do not re-process
-- If no changes are needed, exit with no changes
+Treat absence of obvious problems as insufficient grounds for skipping — \
+actively re-apply the Evaluation Criteria and Size Limits sections above. \
+Stale instructions added for resolved incidents, sections that duplicate skill \
+files, and entries that belong in facts/preferences memory accumulate quietly \
+between runs and won't always be flagged by a quick scan.
+
+If no changes are needed, exit with no changes.
 
 ## Permissions
 
