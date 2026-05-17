@@ -46,6 +46,8 @@ The memory workspace also includes `memories/transcripts/`, a non-extractive sub
 | R25 | Maintenance ticks (facts, preferences, context) include contradiction detection instructions referencing the authority hierarchy (Skills > Memory facts > Context files); when a contradiction is found, the less authoritative store is updated or trimmed; a shared `CONTRADICTION_DETECTION_SECTION` prompt constant provides uniform instructions |
 | R26 | Maintenance ticks (facts, preferences, context) include `STORE_PURPOSE_SECTION` defining each store's role and the authority hierarchy, ensuring maintenance agents understand which store should hold what information |
 | R27 | `build_context_summary` includes the authority hierarchy (Skills > Memory facts > Context files) in its closing instructions, informing extraction processors about information routing priorities |
+| R28 | Facts and preferences extraction prompts include a "File Consolidation at Write Time" section instructing agents to list the target directory before creating any new file, identify the broadest existing file that covers the topic, prefer updating that file over creating an incident- or date-specific sibling, and — when creation is unavoidable — use a broad topic name (project, system, tool, domain, or topic-area) so future related extracts can merge in |
+| R29 | Facts and preferences maintenance prompts include a "Cluster Consolidation" subsection instructing agents to group files by shared prefix or core topic and, when 3 or more files share a prefix/topic, merge them into a single broad-topic file using the same naming convention as extraction; episodic and context maintenance are excluded — episodic naming is date-based by design and context maintenance operates on a fixed three-file set |
 
 ## Behaviors
 
@@ -81,6 +83,8 @@ Named files about the user and other stable reference information — personal d
 - Given a facts file contains entries contradicted by the conversation, when the facts processor runs, then the agent updates or removes the stale entries (R10)
 - Given ambiguous signals ("I might switch..."), when the facts processor runs, then it retains existing entries unchanged — only clear evidence triggers pruning (R10)
 - Given a conversation about a one-time event (bug fix, security incident, outage, deployment), when the facts processor runs, then it does not create a facts file — that content belongs in episodic memory
+- Given a workspace where a broad-topic file (`<project>.md`, `<system>.md`, etc.) already exists in `memories/facts/`, when a conversation produces new facts about that same project/system, then the agent updates the existing broad-topic file and does not create an incident- or date-specific sibling (R28)
+- Given a workspace with no facts file covering the conversation's topic, when the facts processor creates a new file, then the filename is a broad topic name (project, system, tool, or domain) that future related extracts can merge into — never an incident-, bug-, patch-, or date-specific name (R28)
 
 ### Preferences Memories (R3)
 
@@ -95,6 +99,8 @@ Named files about how the user likes things — code style, communication, workf
 - Given ambiguous signals ("I might try..."), when the preferences processor runs, then it retains existing entries unchanged — only clear evidence triggers pruning (R10)
 - Given a preference already captured in `AGENTS.md`, when the preferences processor runs, then no preference file is created — the information is already stored where it belongs (R12)
 - Given `AGENTS.md` doesn't exist or is empty, when the preferences processor runs, then preference extraction proceeds normally without the dedup check (R12)
+- Given a workspace where a broad-topic preference file (`<topic-area>-style.md`, `<topic-area>-workflow.md`, etc.) already exists in `memories/preferences/`, when a conversation produces new preferences in that same topic area, then the agent updates the existing broad-topic file and does not create an occasion- or date-specific sibling (R28)
+- Given a workspace with no preference file covering the conversation's topic, when the preferences processor creates a new file, then the filename is a broad topic name (topic-area-style, topic-area-workflow, domain, or project) that future related extracts can merge into — never an occasion-, feedback-, or date-specific name (R28)
 
 ### Directory Structure and Bootstrap (R4, R6)
 
@@ -185,6 +191,8 @@ Evaluates fact files for staleness (outdated information), redundancy (duplicate
 - Given other information stores contain files, when the facts maintenance task runs, then the prompt includes a cross-store manifest listing those files by name and path (R24)
 - Given no other stores contain files, when the facts maintenance task runs, then the manifest section is omitted
 - Given the facts maintenance task runs, when the prompt is assembled, then it includes `CONTRADICTION_DETECTION_SECTION` instructing the agent to resolve contradictions in favor of the more authoritative store (R25)
+- Given 3 or more files in `memories/facts/` share the same prefix or core topic (project, system, tool, or domain), when the facts maintenance task runs, then the agent merges the cluster into a single broad-topic file (`<project>.md`, `<system>.md`, etc.) and deletes the original narrow files (R29)
+- Given fewer than 3 files share a prefix or topic, when the facts maintenance task runs, then it relies on the existing pairwise Overlap guidance rather than the Cluster Consolidation subsection — no forced consolidation occurs (R29)
 
 ### Preferences Maintenance (R16, R22, R24, R25, R26)
 
@@ -201,6 +209,8 @@ Evaluates preference files for redundancy (same preference stated multiple times
 - Given other information stores contain files, when the preferences maintenance task runs, then the prompt includes a cross-store manifest listing those files by name and path (R24)
 - Given no other stores contain files, when the preferences maintenance task runs, then the manifest section is omitted
 - Given the preferences maintenance task runs, when the prompt is assembled, then it includes `CONTRADICTION_DETECTION_SECTION` instructing the agent to resolve contradictions in favor of the more authoritative store (R25)
+- Given 3 or more files in `memories/preferences/` share the same prefix or core topic (style, workflow, communication, tooling, project, system, or domain), when the preferences maintenance task runs, then the agent merges the cluster into a single broad-topic file (`<topic-area>-style.md`, `<topic-area>-workflow.md`, etc.) and deletes the original narrow files (R29)
+- Given fewer than 3 files share a prefix or topic, when the preferences maintenance task runs, then it relies on the existing pairwise Overlap guidance rather than the Cluster Consolidation subsection — no forced consolidation occurs (R29)
 
 ### Context Maintenance (R21, R22, R24, R25, R26)
 

@@ -383,6 +383,31 @@ consolidated file.
 - Choose the best filename from the originals, or create a more descriptive one.
 - Remove the original files after merging.
 
+#### Cluster Consolidation
+
+Beyond pairwise overlap, look for clusters of many small files that fragment a \
+single broad topic into per-incident, per-bug, or per-date entries — this is \
+the main driver of facts directory bloat:
+
+- List all files (`ls $WORKSPACE/memories/facts/`) and group them by shared \
+prefix or core topic (project, system, tool, or domain).
+- When 3 or more files share the same prefix or core topic, treat them as a \
+cluster and consolidate aggressively:
+  - Merge all of the cluster's content into a single broad-topic file named \
+`<project>.md`, `<system>.md`, `<tool>.md`, or `<domain>.md` — the same \
+broad-topic convention used at extraction time.
+  - If a broad-topic file already exists in the cluster, merge the others \
+into it. Otherwise, pick a broad name and create the consolidated file.
+  - Delete the original narrow files after merging.
+- Generic examples of clusters to consolidate (patterns, not literal names): \
+files matching `<project>-<bug-description>-<YYYY-MM-DD>.md`, \
+`<project>-patch-<issue-id>.md`, `<system>-<incident>-<date>.md`, \
+`<topic>-session-<date>.md` — all of these should fold into the broad \
+`<project>.md`, `<system>.md`, or `<topic>.md` file.
+- Preserve substantive content during the merge; deduplicate restated \
+information and discard incidental detail that does not belong in stable \
+reference facts.
+
 ## Deletion
 
 - If a fact file is entirely obsolete (all entries stale, no useful content), \
@@ -451,6 +476,31 @@ across "python-style.md" and "code-formatting.md"), merge them into a single \
 consolidated file.
 - Choose the best filename from the originals, or create a more descriptive one.
 - Remove the original files after merging.
+
+#### Cluster Consolidation
+
+Beyond pairwise overlap, look for clusters of many small files that fragment a \
+single broad preference topic into per-occasion, per-feedback, or per-date \
+entries — this is the main driver of preferences directory bloat:
+
+- List all files (`ls $WORKSPACE/memories/preferences/`) and group them by \
+shared prefix or core topic (style, workflow, communication, tooling, \
+project, system, or domain).
+- When 3 or more files share the same prefix or core topic, treat them as a \
+cluster and consolidate aggressively:
+  - Merge all of the cluster's content into a single broad-topic file named \
+`<topic-area>-style.md`, `<topic-area>-workflow.md`, `<domain>.md`, or \
+`<project>.md` — the same broad-topic convention used at extraction time.
+  - If a broad-topic file already exists in the cluster, merge the others \
+into it. Otherwise, pick a broad name and create the consolidated file.
+  - Delete the original narrow files after merging.
+- Generic examples of clusters to consolidate (patterns, not literal names): \
+files matching `<topic-area>-feedback-<YYYY-MM-DD>.md`, \
+`<project>-preference-<issue-id>.md`, `<topic-area>-session-<date>.md`, \
+`<one-off>-incident-<date>.md` — all of these should fold into the broad \
+`<topic-area>-style.md`, `<topic-area>-workflow.md`, or `<topic>.md` file.
+- Preserve substantive content during the merge; deduplicate restated \
+preferences and keep only one clear statement per preference.
 
 ## Deletion
 

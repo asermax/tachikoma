@@ -56,7 +56,36 @@ of creating a new one
    - If the same preference appears in multiple files, consolidate into \
 the most specific file and remove it from the others
 
-4. Manage the preference files:
+4. **File Consolidation at Write Time**:
+   Before creating any new file, follow this sequence — these steps are \
+mandatory, not optional search hints:
+   - First, list the target directory: `ls $WORKSPACE/memories/preferences/`. \
+Read the directory contents in full before deciding to write.
+   - Identify which existing file (if any) covers the broadest preference \
+topic that encompasses the new information. Match by topic area (style, \
+workflow, communication, tooling), project, system, or domain — not by a \
+specific occasion, date, or one-off interaction.
+   - If a broad-topic file exists, UPDATE that file. Do NOT create an \
+occasion- or date-specific sibling alongside it (e.g., if \
+`<topic-area>-style.md` exists, do not also create \
+`<topic-area>-feedback-<YYYY-MM-DD>.md`).
+   - If multiple existing files cover overlapping aspects of the same topic, \
+prefer the most specific existing file that still covers the new information \
+broadly — and consider merging the narrower ones into it.
+   - Only create a new file when NO existing file covers the topic. When you \
+do create one, choose a broad topic name that future related extracts can \
+merge into — `<topic-area>-style.md`, `<topic-area>-workflow.md`, \
+`<domain>.md`, `<project>.md` — never a name scoped to one occasion, \
+feedback moment, or date.
+   - Positive examples (broad, future-mergeable): `<topic-area>-style.md`, \
+`<topic-area>-workflow.md`, `<domain>.md`, `<project>.md`, \
+`communication-style.md`, `code-formatting.md`.
+   - Negative examples (forbidden — too narrow): \
+`<topic-area>-feedback-<YYYY-MM-DD>.md`, \
+`<project>-preference-<issue-id>.md`, \
+`<topic-area>-session-<date>.md`, `<one-off>-incident-<date>.md`.
+
+5. Manage the preference files:
    - Create new files with descriptive names ONLY when no existing file \
 covers the topic
    - When updating a file, READ it first. If it already says what you're \
@@ -66,7 +95,7 @@ words, REPLACE the old version — don't add a second version.
    - Each file should have ONE clear statement per preference, not multiple \
 sections restating the same thing in different words
 
-5. **Prune stale and reversed preferences**:
+6. **Prune stale and reversed preferences**:
    - After reading existing files, actively look for preferences that may no \
 longer reflect the user's current stance:
      - Reversed preferences (e.g., file says "prefers dark mode" but user now \
@@ -80,16 +109,22 @@ is no longer relevant
    - **Do NOT prune based on**: vague hints ("I might try..."), single \
 exceptions to general rules, or assumptions not backed by conversation evidence
 
-6. Each preference file should contain:
+7. Each preference file should contain:
    - A clear statement of the preference
    - Brief context or an example (1-2 sentences)
    - When appropriate, how strongly the preference is held
    - Keep files under 30 lines. A preference that takes more to express \
 is probably a spec or design document, not a preference.
 
-7. **Important constraints**:
+8. **Important constraints**:
    - Only create or modify files within `$WORKSPACE/memories/preferences/`
-   - Use descriptive, topic-based filenames (not dates)
+   - Use descriptive, topic-based filenames (not dates). Good names: \
+`communication-style.md`, `code-formatting.md`, `<topic-area>-workflow.md`. \
+Bad names that fragment a broad topic into per-occasion files: \
+`<topic-area>-feedback-<YYYY-MM-DD>.md`, \
+`<project>-preference-<issue-id>.md`, \
+`<topic-area>-session-<date>.md` — use the broad `<topic-area>-style.md` \
+or `<topic-area>-workflow.md` form instead.
    - If no preference-related information emerged from the conversation, \
 it is perfectly acceptable to create no files
    - Do not infer preferences from silence — only record what the user \

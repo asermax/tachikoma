@@ -51,7 +51,32 @@ of creating a new one
    - If information is spread across multiple files about the same topic, \
 MERGE them into one file and delete the others
 
-4. Manage the fact files:
+4. **File Consolidation at Write Time**:
+   Before creating any new file, follow this sequence — these steps are \
+mandatory, not optional search hints:
+   - First, list the target directory: `ls $WORKSPACE/memories/facts/`. \
+Read the directory contents in full before deciding to write.
+   - Identify which existing file (if any) covers the broadest topic that \
+encompasses the new information. Match by project name, system name, tool, \
+or domain — not by incident, date, or specific event.
+   - If a broad-topic file exists, UPDATE that file. Do NOT create an \
+incident- or date-specific sibling alongside it (e.g., if `<project>.md` \
+exists, do not also create `<project>-<bug-description>-<YYYY-MM-DD>.md`).
+   - If multiple existing files cover overlapping aspects of the same topic, \
+prefer the most specific existing file that still covers the new information \
+broadly — and consider merging the narrower ones into it.
+   - Only create a new file when NO existing file covers the topic. When you \
+do create one, choose a broad topic name that future related extracts can \
+merge into — `<project>.md`, `<system>.md`, `<tool>.md`, `<domain>.md` — \
+never a name scoped to one incident, bug, patch, or date.
+   - Positive examples (broad, future-mergeable): `<project>.md`, \
+`<system>.md`, `<tool>.md`, `<domain>.md`, `work-info.md`, `tech-stack.md`.
+   - Negative examples (forbidden — too narrow): \
+`<project>-<bug-description>-<YYYY-MM-DD>.md`, \
+`<project>-patch-<issue-id>.md`, `<system>-<incident>-<date>.md`, \
+`<topic>-session-<date>.md`.
+
+5. Manage the fact files:
    - Create new files with descriptive names ONLY when no existing file \
 covers the topic
    - Update existing files when new information extends what's there
@@ -60,7 +85,7 @@ covers the topic
    - When updating a file, READ it first. If a section already covers what \
 you're about to add, update that section rather than appending a duplicate
 
-5. **Prune stale and redundant entries**:
+6. **Prune stale and redundant entries**:
    - After reading existing files, actively look for entries that may be \
 outdated or no longer accurate based on the conversation:
      - Information contradicted by new statements (e.g., file says "works at \
@@ -73,18 +98,22 @@ old, or delete the file if the entire topic is no longer relevant
    - **Do NOT prune based on**: vague hints ("I might switch..."), old dates \
 alone (age is not staleness), or assumptions not backed by conversation evidence
 
-6. Each fact file should contain:
+7. Each fact file should contain:
    - Clear, factual statements
    - Relevant context or details
    - Keep files under 40 lines. If a topic needs more detail, the detail \
 probably belongs in a project file, not in facts memory.
 
-7. **Important constraints**:
+8. **Important constraints**:
    - Only create or modify files within `$WORKSPACE/memories/facts/`
    - Use descriptive, topic-based filenames (not dates). Good names: \
 `work-info.md`, `key-people.md`, `tech-stack.md`. Bad names that indicate \
 the content belongs in episodic: `2026-04-15-outage.md`, \
-`bug-fix-session.md`, `security-incident-april.md`
+`bug-fix-session.md`, `security-incident-april.md`. Bad names that \
+fragment a broad topic into per-incident files: \
+`<project>-<bug-description>-<YYYY-MM-DD>.md`, \
+`<project>-patch-<issue-id>.md`, `<system>-<incident>-<date>.md` — use \
+the broad `<project>.md` or `<system>.md` form instead.
    - If no new factual information emerged from the conversation, \
 it is perfectly acceptable to create no files
    - Do not infer facts that weren't explicitly stated — only record \

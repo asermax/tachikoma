@@ -588,3 +588,17 @@ Each processor inherits `_prompt`, `_cwd`, and the default `process()` implement
 - Pro: Authority hierarchy is explicit rather than implicit
 - Con: Agents read additional files per extraction (small overhead; files are small)
 - Con: Dedup effectiveness depends on LLM interpretation of "already covered"
+
+### File consolidation at write time and during maintenance (facts and preferences)
+
+**Choice**: Facts and preferences extraction prompts include a "File Consolidation at Write Time" section that instructs the agent to list the target directory first, identify the broadest existing file that covers the topic, prefer updating it over creating a sibling, and — when creation is unavoidable — use a broad topic name (`<project>.md`, `<system>.md`, `<topic-area>-style.md`, etc.) so future related extracts merge in. The facts and preferences maintenance prompts include a matching "Cluster Consolidation" subsection that detects 3+ files sharing a prefix or core topic and merges them into a single broad-topic file using the same naming convention. Episodic maintenance is excluded because episodic names are date-based by design; context maintenance is excluded because it operates on a fixed three-file set, not a growing directory.
+
+**Why**: Extraction was already told to "search for existing overlap" but in practice produced narrow incident- and date-named files (e.g., per-bug, per-patch, per-occasion). Creation accumulated far faster than nightly maintenance could consolidate (creation vs. maintenance commits ran roughly 97% / 3%), and existing maintenance only caught obvious pairwise duplicates, not large same-prefix clusters. Sharpening extraction with explicit positive/negative examples discourages narrow files at write time, and giving maintenance a cluster-detection rule with the same naming convention ensures the two stages converge on the same target shape instead of fighting each other. The 3-file threshold is the smallest count that meaningfully signals "topic fragmentation" rather than ordinary pairwise overlap (which the existing Overlap section already handles). Generic placeholder examples (`<project>.md`, `<topic-area>-style.md`) keep the guidance portable across users of the same code.
+
+**Consequences**:
+- Pro: No code changes beyond prompt text — consistent with DES-004 pattern
+- Pro: Write-time and maintenance-time consolidation use the same naming convention, so the system converges instead of oscillating
+- Pro: Generic placeholders make the prompts portable; no workspace-specific names baked in
+- Pro: Episodic and context prompts are unchanged — the rule applies only where directory growth is unbounded
+- Con: Compliance depends on LLM interpretation; some narrow files will still slip through and require maintenance to clean up
+- Con: Aggressive cluster merging could occasionally combine genuinely distinct sub-topics under a single broad heading — mitigated by preserving substantive content during merge and by git rollback availability
