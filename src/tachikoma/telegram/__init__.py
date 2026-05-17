@@ -22,7 +22,7 @@ from typing import TYPE_CHECKING, Any
 from aiogram import Bot, Dispatcher, F, Router
 from aiogram.dispatcher.dispatcher import BackoffConfig
 from aiogram.exceptions import TelegramAPIError, TelegramBadRequest, TelegramRetryAfter
-from aiogram.types import Message
+from aiogram.types import BotCommand, Message
 from aiogram.utils.chat_action import ChatActionSender
 from bubus import EventBus
 from claude_agent_sdk.types import McpSdkServerConfig
@@ -647,6 +647,14 @@ class TelegramChannel(Channel):
             chat_id=self._settings.authorized_chat_id,
         )
 
+        try:
+            await self._bot.set_my_commands([
+                BotCommand(command="new", description="Start a new conversation"),
+                BotCommand(command="queue", description="Defer message for later processing"),
+            ])
+        except TelegramAPIError:
+            _log.warning("Failed to register bot commands (non-critical)")
+
         loop = asyncio.get_running_loop()
 
         def _request_shutdown(sig: signal.Signals) -> None:
@@ -712,6 +720,9 @@ class TelegramChannel(Channel):
             # (KD-6/S15).
             force_exit = await self._flush_buffer_on_shutdown(loop)
 
+            # Drain any remaining deferred messages before shutdown.
+            await self._drain_deferred_queue()
+
             for sig in (signal.SIGINT, signal.SIGTERM):
                 with contextlib.suppress(NotImplementedError, RuntimeError):
                     loop.remove_signal_handler(sig)
@@ -753,27 +764,84 @@ class TelegramChannel(Channel):
 
         return force_exit_triggered
 
+    def _detect_command(self, message: Message) -> tuple[str | None, str]:
+        """Detect a recognized bot command in the message.
+
+        Inspects ``message.entities`` for the first ``bot_command`` entity at
+        offset 0.  Returns ``(command_name, args)`` for recognized commands
+        (``/new``, ``/queue``) with non-empty arguments.  All other cases —
+        no entity, unrecognized command, bare command, whitespace-only args —
+        return ``(None, full_text)`` so the message is treated normally.
+
+        First command wins: ``/new /queue msg`` → ``("new", "/queue msg")``.
+        """
+        text = message.text or ""
+        if not message.entities:
+            return None, text
+
+        for entity in message.entities:
+            if entity.type == "bot_command" and entity.offset == 0:
+                raw = text[entity.offset : entity.offset + entity.length]
+                # Strip leading '/' and any '@botname' suffix
+                name = raw.lstrip("/")
+                if "@" in name:
+                    name = name.split("@", 1)[0]
+                args = text[entity.offset + entity.length :].strip()
+                if name in ("new", "queue") and args:
+                    return name, args
+                return None, text
+
+            # Only inspect the first entity at offset 0
+            break
+
+        return None, text
+
     async def _handle_message(self, message: Message) -> None:
         """Handle an incoming message from the authorized user."""
         if not message.text or not message.text.strip():
             _log.debug("Ignoring empty or non-text message")
             return
 
-        text = message.text.strip()
+        cmd_name, cmd_args = self._detect_command(message)
+        is_command = cmd_name is not None
 
         # Mid-exchange (any phase: boundary, pre-processing, SDK streaming,
-        # teardown): enqueue-only so the message lands in _message_buffer and
-        # the coordinator's forwarder routes it onto the live sdk_inbox as a
-        # steering message. Going through the lock would block until the whole
-        # in-flight exchange ends, turning this into a new turn instead.
+        # teardown): commands go to the deferred queue; normal messages are
+        # steered into the active session via enqueue-only.
         if self._delivery_lock.locked():
-            _log.debug("Mid-stream steering message")
-            self._coordinator.enqueue(IncomingMessage(text=text))
+            if is_command:
+                _log.debug("Deferring command: /{cmd}", cmd=cmd_name)
+                self._coordinator.enqueue_deferred(
+                    IncomingMessage(text=cmd_args, force_new=(cmd_name == "new"))
+                )
+            else:
+                _log.debug("Mid-stream steering message")
+                self._coordinator.enqueue(IncomingMessage(text=message.text.strip()))
             return
 
         async with self._delivery_lock:
-            self._coordinator.enqueue(IncomingMessage(text=text))
+            if is_command:
+                self._coordinator.enqueue(
+                    IncomingMessage(text=cmd_args, force_new=(cmd_name == "new"))
+                )
+            else:
+                self._coordinator.enqueue(IncomingMessage(text=message.text.strip()))
             await self._process_through_coordinator()
+            await self._drain_deferred_queue()
+
+    async def _drain_deferred_queue(self) -> None:
+        """Process all deferred messages sequentially.
+
+        Promotes each deferred message into the message buffer and delivers it
+        through the coordinator pipeline. Errors are caught per-item so one
+        failure does not block the rest of the queue.
+        """
+        while self._coordinator.has_deferred:
+            self._coordinator.promote_next_deferred()
+            try:
+                await self._process_through_coordinator()
+            except Exception:
+                _log.exception("Error processing deferred message, continuing drain")
 
     async def _handle_media(self, message: Message) -> None:
         """Handle an incoming media message from the authorized user."""
@@ -899,6 +967,7 @@ class TelegramChannel(Channel):
                     IncomingMessage(text=event.prompt, pinned_skills=event.pinned_skills())
                 )
                 await self._process_through_coordinator(on_complete=self._build_on_complete(event))
+                await self._drain_deferred_queue()
         except Exception:
             _log.exception(
                 "Error in detached delivery task: items={count}, shutdown={is_shutdown}",
