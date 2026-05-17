@@ -16,12 +16,13 @@ from claude_agent_sdk import CLIConnectionError, CLINotFoundError, ProcessError
 from cyclopts import App
 from loguru import logger
 
-from tachikoma.agent_defaults import agent_defaults_from_settings
+from tachikoma.agent_defaults import AgentDefaults, agent_defaults_from_settings
+from tachikoma.app_state import AppStateRepository
 from tachikoma.bootstrap import Bootstrap, BootstrapError
 from tachikoma.boundary import LastExchangeProcessor, SummaryProcessor
 from tachikoma.buffer.buffer import Buffer
 from tachikoma.buffer.factory import create_and_start_buffer
-from tachikoma.config import SettingsManager
+from tachikoma.config import Settings, SettingsManager
 from tachikoma.context import CoreContextProcessor, context_hook
 from tachikoma.coordinator import Coordinator
 from tachikoma.database import Database, database_hook
@@ -56,6 +57,8 @@ from tachikoma.message_post_processing import MessagePostProcessingPipeline
 from tachikoma.notifications import dispatch_notification
 from tachikoma.per_message_pre_processing import MessagePreProcessingPipeline
 from tachikoma.plugins.hooks import plugins_hook
+from tachikoma.plugins.manager import PluginManager
+from tachikoma.plugins.state import PluginStateRepository
 from tachikoma.plugins.tools import create_plugin_tools_server
 from tachikoma.plugins.updater import run_daily_git_check
 from tachikoma.post_processing import (
@@ -136,6 +139,111 @@ async def _plugin_check_tick(manager, state_repo, bus: EventBus) -> None:
 def cli():
     """Entry point for [project.scripts]."""
     app()
+
+
+def build_scheduler_jobs(
+    *,
+    settings: Settings,
+    tz: ZoneInfo,
+    task_repository: TaskRepository,
+    buffer: Buffer,
+    background_runner: BackgroundTaskRunner,
+    bus: EventBus,
+    agent_defaults: AgentDefaults,
+    skill_registry: SkillRegistry,
+    app_state_repo: AppStateRepository,
+    plugin_manager: PluginManager,
+    plugin_state_repo: PluginStateRepository,
+) -> list[Job]:
+    """Build the list of scheduler jobs from application settings and dependencies."""
+    jobs: list[Job] = [
+        Job(
+            name="instance_generator",
+            trigger=IntervalTrigger(GENERATION_INTERVAL_SECONDS),
+            run=lambda: instance_generator_tick(task_repository, settings.tasks),
+        ),
+        Job(
+            name="session_task_scheduler",
+            trigger=IntervalTrigger(settings.tasks.check_interval),
+            run=lambda: session_task_scheduler_tick(
+                task_repository, settings.tasks, buffer
+            ),
+        ),
+        Job(
+            name="background_task_runner",
+            trigger=IntervalTrigger(RUNNER_CHECK_INTERVAL_SECONDS),
+            run=background_runner.tick,
+        ),
+        Job(
+            name="expired_waiter_sweep",
+            trigger=IntervalTrigger(120),
+            run=lambda: expired_waiter_sweep(task_repository, settings.tasks, bus),
+        ),
+        Job(
+            name="one_shot_cleanup",
+            trigger=CronTrigger("0 3 * * *", tz),
+            run=lambda: one_shot_cleanup_tick(task_repository, settings.tasks),
+        ),
+    ]
+
+    if settings.updates.enabled:
+        jobs.append(
+            Job(
+                name="update_checker",
+                trigger=IntervalTrigger(settings.updates.check_interval),
+                run=lambda: update_checker_tick(app_state_repo, bus),
+            )
+        )
+
+    jobs.append(
+        Job(
+            name="plugin_update_check",
+            trigger=CronTrigger("17 3 * * *", tz),
+            run=lambda: _plugin_check_tick(plugin_manager, plugin_state_repo, bus),
+        )
+    )
+
+    if settings.memory.maintenance.enabled:
+        maintenance_schedule = settings.memory.maintenance.schedule
+        maintenance_settings = settings.memory.maintenance
+        jobs.extend(
+            [
+                Job(
+                    name="context_maintenance",
+                    trigger=CronTrigger(maintenance_schedule, tz),
+                    run=lambda: context_maintenance_tick(
+                        agent_defaults, skill_registry
+                    ),
+                    priority="low",
+                ),
+                Job(
+                    name="preferences_maintenance",
+                    trigger=CronTrigger(maintenance_schedule, tz),
+                    run=lambda: preferences_maintenance_tick(
+                        agent_defaults, skill_registry
+                    ),
+                    priority="low",
+                ),
+                Job(
+                    name="episodic_maintenance",
+                    trigger=CronTrigger(maintenance_schedule, tz),
+                    run=lambda: episodic_maintenance_tick(
+                        agent_defaults, maintenance_settings
+                    ),
+                    priority="low",
+                ),
+                Job(
+                    name="facts_maintenance",
+                    trigger=CronTrigger(maintenance_schedule, tz),
+                    run=lambda: facts_maintenance_tick(
+                        agent_defaults, skill_registry
+                    ),
+                    priority="low",
+                ),
+            ]
+        )
+
+    return jobs
 
 
 @app.command
@@ -442,90 +550,26 @@ async def run(
             )
 
             tz = get_timezone(settings.tasks)
-            jobs = [
-                Job(
-                    name="instance_generator",
-                    trigger=IntervalTrigger(GENERATION_INTERVAL_SECONDS),
-                    run=lambda: instance_generator_tick(task_repository, settings.tasks),
-                ),
-                Job(
-                    name="session_task_scheduler",
-                    trigger=IntervalTrigger(settings.tasks.check_interval),
-                    run=lambda: session_task_scheduler_tick(
-                        task_repository, settings.tasks, buffer
-                    ),
-                ),
-                Job(
-                    name="background_task_runner",
-                    trigger=IntervalTrigger(RUNNER_CHECK_INTERVAL_SECONDS),
-                    run=background_runner.tick,
-                ),
-                Job(
-                    name="expired_waiter_sweep",
-                    trigger=IntervalTrigger(120),
-                    run=lambda: expired_waiter_sweep(task_repository, settings.tasks, bus),
-                ),
-                Job(
-                    name="one_shot_cleanup",
-                    trigger=CronTrigger("0 3 * * *", tz),
-                    run=lambda: one_shot_cleanup_tick(task_repository, settings.tasks),
-                ),
-            ]
-
-            if settings.updates.enabled:
-                jobs.append(
-                    Job(
-                        name="update_checker",
-                        trigger=IntervalTrigger(settings.updates.check_interval),
-                        run=lambda: update_checker_tick(app_state_repo, bus),
-                    )
-                )
-
-            jobs.append(
-                Job(
-                    name="plugin_update_check",
-                    trigger=CronTrigger("17 3 * * *", tz),
-                    run=lambda: _plugin_check_tick(plugin_manager, plugin_state_repo, bus),
-                )
+            jobs = build_scheduler_jobs(
+                settings=settings,
+                tz=tz,
+                task_repository=task_repository,
+                buffer=buffer,
+                background_runner=background_runner,
+                bus=bus,
+                agent_defaults=agent_defaults,
+                skill_registry=skill_registry,
+                app_state_repo=app_state_repo,
+                plugin_manager=plugin_manager,
+                plugin_state_repo=plugin_state_repo,
             )
 
-            if settings.memory.maintenance.enabled:
-                maintenance_schedule = settings.memory.maintenance.schedule
-                maintenance_settings = settings.memory.maintenance
-                jobs.extend(
-                    [
-                        Job(
-                            name="episodic_maintenance",
-                            trigger=CronTrigger(maintenance_schedule, tz),
-                            run=lambda: episodic_maintenance_tick(
-                                agent_defaults, maintenance_settings
-                            ),
-                        ),
-                        Job(
-                            name="facts_maintenance",
-                            trigger=CronTrigger(maintenance_schedule, tz),
-                            run=lambda: facts_maintenance_tick(
-                                agent_defaults, skill_registry
-                            ),
-                        ),
-                        Job(
-                            name="preferences_maintenance",
-                            trigger=CronTrigger(maintenance_schedule, tz),
-                            run=lambda: preferences_maintenance_tick(
-                                agent_defaults, skill_registry
-                            ),
-                        ),
-                        Job(
-                            name="context_maintenance",
-                            trigger=CronTrigger(maintenance_schedule, tz),
-                            run=lambda: context_maintenance_tick(
-                                agent_defaults, skill_registry
-                            ),
-                        ),
-                    ]
+            scheduler_tasks.append(
+                asyncio.create_task(
+                    scheduler(jobs, max_concurrent_low=settings.scheduler.max_concurrent_low),
+                    name="scheduler",
                 )
-
-            scheduler_tasks.append(asyncio.create_task(scheduler(jobs), name="scheduler"))
+            )
 
             scheduler_tasks.append(
                 asyncio.create_task(
