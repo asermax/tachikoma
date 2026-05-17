@@ -2,6 +2,36 @@
 
 <!-- version list -->
 
+## v1.83.0 (2026-05-17)
+
+### Documentation
+
+- Update scheduler and memory docs with priority dispatch
+  ([`fcbb94b`](https://github.com/asermax/tachikoma/commit/fcbb94bf300da9e78518c21c04de21995cb4c529))
+
+- **planning**: Remove implemented workflow deltas (DLT-158, DLT-159)
+  ([`741d423`](https://github.com/asermax/tachikoma/commit/741d423a944cd0ec82eab55c28ce599f4bd3b58e))
+
+### Features
+
+- **scheduler**: Add priority and bounded dispatch to job scheduler
+  ([`7604405`](https://github.com/asermax/tachikoma/commit/7604405082aded40c5ee083594706d11dbd5b845))
+
+### Refactoring
+
+- **memory**: Generalize maintenance prompt example
+  ([`4b34cac`](https://github.com/asermax/tachikoma/commit/4b34cacc135a3e5e54e7f10c04a84aa19c80b2c1))
+
+- **memory**: Strengthen maintenance prompts to drive active consolidation
+  ([`839a411`](https://github.com/asermax/tachikoma/commit/839a411356fed622a53583178a0ccab5d3c453d2))
+
+- **scheduler**: Extract build_scheduler_jobs and assign low priority to maintenance
+  ([`99d7ea0`](https://github.com/asermax/tachikoma/commit/99d7ea0fb5b24ed3f295badd717cb2522d6e395f))
+
+- **scheduler**: Remove redundant locked check in bounded runner
+  ([`da1dfe0`](https://github.com/asermax/tachikoma/commit/da1dfe07669742e54272ffbe1c603a462612aefe))
+
+
 ## v1.82.0 (2026-05-17)
 
 ### Features
