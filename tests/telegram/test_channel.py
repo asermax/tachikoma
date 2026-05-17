@@ -869,6 +869,7 @@ class TestTelegramChannelStdinShutdown:
         channel._dispatcher.include_router = MagicMock()
         channel._dispatcher.shutdown = MagicMock()
         channel._bot = MagicMock()
+        channel._bot.set_my_commands = AsyncMock()
 
         return channel
 
@@ -903,7 +904,9 @@ class TestTelegramChannelStdinShutdown:
         loop.remove_reader = MagicMock()
 
         with patch("asyncio.get_running_loop", return_value=loop):
-            await channel.run(MagicMock())
+            coordinator = MagicMock()
+            coordinator.has_deferred = False
+            await channel.run(coordinator)
 
         # Simulate 'q' keypress via the captured callback
         assert captured_callback is not None
@@ -943,7 +946,9 @@ class TestTelegramChannelStdinShutdown:
         loop.remove_reader = MagicMock()
 
         with patch("asyncio.get_running_loop", return_value=loop):
-            await channel.run(MagicMock())
+            coordinator = MagicMock()
+            coordinator.has_deferred = False
+            await channel.run(coordinator)
 
         assert captured_callback is not None
         mock_sys.stdin.read.return_value = "Q"
@@ -982,7 +987,9 @@ class TestTelegramChannelStdinShutdown:
         loop.remove_reader = MagicMock()
 
         with patch("asyncio.get_running_loop", return_value=loop):
-            await channel.run(MagicMock())
+            coordinator = MagicMock()
+            coordinator.has_deferred = False
+            await channel.run(coordinator)
 
         assert captured_callback is not None
         mock_sys.stdin.read.return_value = "x"
@@ -1011,7 +1018,9 @@ class TestTelegramChannelStdinShutdown:
         loop.remove_reader = MagicMock()
 
         with patch("asyncio.get_running_loop", return_value=loop):
-            await channel.run(MagicMock())
+            coordinator = MagicMock()
+            coordinator.has_deferred = False
+            await channel.run(coordinator)
 
         loop.add_reader.assert_not_called()
         mock_termios.tcgetattr.assert_not_called()
@@ -1042,7 +1051,9 @@ class TestTelegramChannelStdinShutdown:
         loop.add_reader = MagicMock()
 
         with patch("asyncio.get_running_loop", return_value=loop):
-            await channel.run(MagicMock())
+            coordinator = MagicMock()
+            coordinator.has_deferred = False
+            await channel.run(coordinator)
 
         # Terminal settings restored
         mock_termios.tcsetattr.assert_called_once_with(0, 1, original_attrs)
@@ -1080,7 +1091,9 @@ class TestTelegramChannelStdinShutdown:
         loop.remove_reader = MagicMock()
 
         with patch("asyncio.get_running_loop", return_value=loop):
-            await channel.run(MagicMock())
+            coordinator = MagicMock()
+            coordinator.has_deferred = False
+            await channel.run(coordinator)
 
         assert captured_callback is not None
         mock_sys.stdin.read.return_value = ""
@@ -1601,6 +1614,7 @@ class TestDeliveryLock:
 
     def _make_channel(self) -> TelegramChannel:
         coordinator = MagicMock()
+        coordinator.has_deferred = False
         settings = MagicMock()
         settings.bot_token = "123456:ABCdef"
         settings.authorized_chat_id = 123
@@ -1755,6 +1769,7 @@ class TestTelegramChannelBufferFlush:
         channel._dispatcher.include_router = MagicMock()
         channel._dispatcher.shutdown = MagicMock()
         channel._bot = MagicMock()
+        channel._bot.set_my_commands = AsyncMock()
 
         mock_sys.stdin.isatty.return_value = False
 
@@ -1763,7 +1778,9 @@ class TestTelegramChannelBufferFlush:
         loop.remove_signal_handler = MagicMock()
 
         with patch("asyncio.get_running_loop", return_value=loop):
-            await channel.run(MagicMock())
+            coordinator = MagicMock()
+            coordinator.has_deferred = False
+            await channel.run(coordinator)
 
         buffer.flush_on_shutdown.assert_awaited_once()
 
@@ -1791,6 +1808,7 @@ class TestTelegramChannelBufferFlush:
         channel._dispatcher.include_router = MagicMock()
         channel._dispatcher.shutdown = MagicMock()
         channel._bot = MagicMock()
+        channel._bot.set_my_commands = AsyncMock()
 
         mock_sys.stdin.isatty.return_value = False
 
@@ -1799,7 +1817,9 @@ class TestTelegramChannelBufferFlush:
         loop.remove_signal_handler = MagicMock()
 
         with patch("asyncio.get_running_loop", return_value=loop):
-            await channel.run(MagicMock())
+            coordinator = MagicMock()
+            coordinator.has_deferred = False
+            await channel.run(coordinator)
 
     async def test_second_signal_during_flush_force_exits(self) -> None:
         """KD-6/S15: second SIGINT/SIGTERM during flush cancels and force-exits."""
