@@ -175,3 +175,293 @@ class TestScheduler:
             await task
 
         assert cancelled_seen.is_set()
+
+
+class TestPriorityDispatch:
+    """Tests for the priority-aware bounded dispatch mechanism."""
+
+    def test_default_priority_is_high(self) -> None:
+        job = Job("x", IntervalTrigger(10), noop)
+        assert job.priority == "high"
+
+    @pytest.mark.asyncio
+    async def test_low_priority_jobs_share_semaphore(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """AC2: With max_concurrent_low=1, only one low-priority job runs at a time."""
+        monkeypatch.setattr(scheduler_mod, "TICK_SECONDS", 0.01)
+
+        running = 0
+        max_running = 0
+        blocker = asyncio.Event()
+
+        async def tracked_job() -> None:
+            nonlocal running, max_running
+            running += 1
+            max_running = max(max_running, running)
+            await blocker.wait()
+            running -= 1
+
+        jobs = [
+            Job("low_a", IntervalTrigger(0.01), tracked_job, priority="low"),
+            Job("low_b", IntervalTrigger(0.01), tracked_job, priority="low"),
+        ]
+
+        task = asyncio.create_task(scheduler(jobs, max_concurrent_low=1))
+        await asyncio.sleep(0.1)
+        blocker.set()
+        await asyncio.sleep(0.05)
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
+
+        assert max_running == 1
+
+    @pytest.mark.asyncio
+    async def test_high_priority_bypasses_semaphore(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """AC3: High-priority job dispatches while a low-priority job holds the semaphore."""
+        monkeypatch.setattr(scheduler_mod, "TICK_SECONDS", 0.01)
+
+        high_entered = asyncio.Event()
+        low_blocker = asyncio.Event()
+
+        async def low_job() -> None:
+            await low_blocker.wait()
+
+        async def high_job() -> None:
+            high_entered.set()
+
+        jobs = [
+            Job("low", IntervalTrigger(0.01), low_job, priority="low"),
+            Job("high", IntervalTrigger(0.01), high_job, priority="high"),
+        ]
+
+        task = asyncio.create_task(scheduler(jobs, max_concurrent_low=1))
+        assert await asyncio.wait_for(high_entered.wait(), timeout=1)
+        low_blocker.set()
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
+
+    @pytest.mark.asyncio
+    async def test_low_priority_single_flight_during_semaphore_wait(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """AC7: A low-priority job awaiting the semaphore is still in-flight."""
+        monkeypatch.setattr(scheduler_mod, "TICK_SECONDS", 0.01)
+
+        second_started = asyncio.Event()
+        blocker = asyncio.Event()
+
+        async def blocking_job() -> None:
+            await blocker.wait()
+
+        async def waiting_job() -> None:
+            second_started.set()
+
+        jobs = [
+            Job("blocker", IntervalTrigger(0.01), blocking_job, priority="low"),
+            Job("waiter", IntervalTrigger(0.01), waiting_job, priority="low"),
+        ]
+
+        task = asyncio.create_task(scheduler(jobs, max_concurrent_low=1))
+        await asyncio.sleep(0.2)
+
+        # waiting_job should NOT have started — it's queued behind blocker
+        assert not second_started.is_set()
+
+        blocker.set()
+        await asyncio.sleep(0.1)
+        # Now waiting_job should have run
+        assert second_started.is_set()
+
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
+
+    @pytest.mark.asyncio
+    async def test_low_priority_exception_releases_semaphore(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """AC8: Exception in a low-priority job releases the semaphore."""
+        monkeypatch.setattr(scheduler_mod, "TICK_SECONDS", 0.01)
+
+        second_ran = asyncio.Event()
+
+        async def failing_job() -> None:
+            raise RuntimeError("boom")
+
+        async def succeeding_job() -> None:
+            second_ran.set()
+
+        jobs = [
+            Job("failer", IntervalTrigger(0.01), failing_job, priority="low"),
+            Job("succeeder", IntervalTrigger(0.01), succeeding_job, priority="low"),
+        ]
+
+        task = asyncio.create_task(scheduler(jobs, max_concurrent_low=1))
+        assert await asyncio.wait_for(second_ran.wait(), timeout=2)
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
+
+    @pytest.mark.asyncio
+    async def test_scheduler_works_without_low_priority_jobs(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Smoke: only high-priority jobs works identically to pre-priority behavior."""
+        monkeypatch.setattr(scheduler_mod, "TICK_SECONDS", 0.01)
+
+        ran = asyncio.Event()
+
+        async def simple_job() -> None:
+            ran.set()
+
+        jobs = [Job("simple", IntervalTrigger(0.01), simple_job)]
+        task = asyncio.create_task(scheduler(jobs, max_concurrent_low=1))
+        assert await asyncio.wait_for(ran.wait(), timeout=1)
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
+
+    @pytest.mark.asyncio
+    async def test_low_priority_dispatch_order_preserved(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """AC5/R8: Low-priority jobs dispatch in registration order under FIFO semaphore."""
+        monkeypatch.setattr(scheduler_mod, "TICK_SECONDS", 0.01)
+
+        acquired: list[str] = []
+        release_a = asyncio.Event()
+        release_b = asyncio.Event()
+        release_c = asyncio.Event()
+
+        async def job_a() -> None:
+            acquired.append("a")
+            await release_a.wait()
+
+        async def job_b() -> None:
+            acquired.append("b")
+            await release_b.wait()
+
+        async def job_c() -> None:
+            acquired.append("c")
+            await release_c.wait()
+
+        jobs = [
+            Job("a", IntervalTrigger(0.01), job_a, priority="low"),
+            Job("b", IntervalTrigger(0.01), job_b, priority="low"),
+            Job("c", IntervalTrigger(0.01), job_c, priority="low"),
+        ]
+
+        task = asyncio.create_task(scheduler(jobs, max_concurrent_low=1))
+        await asyncio.sleep(0.1)
+
+        assert acquired == ["a"]
+        release_a.set()
+        await asyncio.sleep(0.1)
+
+        assert acquired == ["a", "b"]
+        release_b.set()
+        await asyncio.sleep(0.1)
+
+        assert acquired == ["a", "b", "c"]
+        release_c.set()
+        await asyncio.sleep(0.05)
+
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
+
+    @pytest.mark.asyncio
+    async def test_cascaded_cancellation_with_pending_low_job(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """AC11: Cancelling scheduler cancels running low job and cleans up."""
+        monkeypatch.setattr(scheduler_mod, "TICK_SECONDS", 0.01)
+
+        running_cancelled = asyncio.Event()
+        blocker = asyncio.Event()
+
+        async def running_job() -> None:
+            try:
+                await blocker.wait()
+            except asyncio.CancelledError:
+                running_cancelled.set()
+                raise
+
+        async def waiting_job() -> None:
+            await asyncio.sleep(10)
+
+        jobs = [
+            Job("running", IntervalTrigger(0.01), running_job, priority="low"),
+            Job("waiting", IntervalTrigger(0.01), waiting_job, priority="low"),
+        ]
+
+        task = asyncio.create_task(scheduler(jobs, max_concurrent_low=1))
+        await asyncio.sleep(0.1)
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
+
+        # Running job got cancelled
+        assert running_cancelled.is_set()
+        # After cleanup, a fresh scheduler with a low-priority job can
+        # immediately acquire a fresh semaphore (proves no leak).
+        fresh_ran = asyncio.Event()
+
+        async def fresh_job() -> None:
+            fresh_ran.set()
+
+        fresh_jobs = [Job("fresh", IntervalTrigger(0.01), fresh_job, priority="low")]
+        fresh_task = asyncio.create_task(scheduler(fresh_jobs, max_concurrent_low=1))
+        assert await asyncio.wait_for(fresh_ran.wait(), timeout=1)
+        fresh_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await fresh_task
+
+    @pytest.mark.asyncio
+    async def test_unbounded_when_limit_exceeds_low_job_count(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """AC12: Low-priority jobs run concurrently when limit >= count of low jobs."""
+        monkeypatch.setattr(scheduler_mod, "TICK_SECONDS", 0.01)
+
+        both_running = asyncio.Event()
+        blocker = asyncio.Event()
+        running = 0
+
+        async def job_a() -> None:
+            nonlocal running
+            running += 1
+            if running == 2:
+                both_running.set()
+            await blocker.wait()
+            running -= 1
+
+        async def job_b() -> None:
+            nonlocal running
+            running += 1
+            if running == 2:
+                both_running.set()
+            await blocker.wait()
+            running -= 1
+
+        jobs = [
+            Job("a", IntervalTrigger(0.01), job_a, priority="low"),
+            Job("b", IntervalTrigger(0.01), job_b, priority="low"),
+        ]
+
+        task = asyncio.create_task(scheduler(jobs, max_concurrent_low=5))
+        assert await asyncio.wait_for(both_running.wait(), timeout=1)
+        blocker.set()
+        await asyncio.sleep(0.05)
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
+
+
+async def noop() -> None:
+    pass

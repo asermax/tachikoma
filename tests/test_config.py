@@ -16,6 +16,7 @@ from tachikoma.config import (
     LoggingSettings,
     MaintenanceSettings,
     MemorySettings,
+    SchedulerSettings,
     SendFileSettings,
     Settings,
     SettingsManager,
@@ -1378,3 +1379,41 @@ class TestMaintenanceSettings:
 
         assert settings.memory.maintenance.enabled is True
         assert settings.memory.maintenance.recent_days == 15
+
+
+class TestSchedulerSettings:
+    """Tests for SchedulerSettings model."""
+
+    def test_default_scheduler_settings(self) -> None:
+        settings = SchedulerSettings()
+        assert settings.max_concurrent_low == 1
+
+    def test_settings_has_scheduler_with_defaults(self) -> None:
+        settings = Settings()
+        assert settings.scheduler.max_concurrent_low == 1
+
+    def test_custom_max_concurrent_low(self) -> None:
+        settings = SchedulerSettings(max_concurrent_low=3)
+        assert settings.max_concurrent_low == 3
+
+    def test_invalid_max_concurrent_low_zero(self) -> None:
+        with pytest.raises(ValidationError):
+            SchedulerSettings(max_concurrent_low=0)
+
+    def test_invalid_max_concurrent_low_negative(self) -> None:
+        with pytest.raises(ValidationError):
+            SchedulerSettings(max_concurrent_low=-1)
+
+    def test_scheduler_from_toml(self, tmp_path: Path) -> None:
+        config_path = tmp_path / "config.toml"
+        config_path.write_text("[scheduler]\nmax_concurrent_low = 2\n")
+
+        settings = load_settings(config_path)
+        assert settings.scheduler.max_concurrent_low == 2
+
+    def test_missing_scheduler_section_uses_defaults(self, tmp_path: Path) -> None:
+        config_path = tmp_path / "config.toml"
+        config_path.write_text('[workspace]\npath = "~/tachikoma"\n')
+
+        settings = load_settings(config_path)
+        assert settings.scheduler.max_concurrent_low == 1

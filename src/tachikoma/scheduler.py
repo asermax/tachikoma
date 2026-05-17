@@ -18,7 +18,7 @@ import asyncio
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Protocol
+from typing import Literal, Protocol
 from zoneinfo import ZoneInfo
 
 from cronsim import CronSim
@@ -106,9 +106,10 @@ class Job:
     name: str
     trigger: Trigger
     run: Callable[[], Awaitable[None]]
+    priority: Literal["high", "low"] = "high"
 
 
-async def scheduler(jobs: list[Job]) -> None:
+async def scheduler(jobs: list[Job], max_concurrent_low: int = 1) -> None:
     """Dispatch jobs concurrently based on their triggers.
 
     Each tick: for every job that isn't already running and whose
@@ -117,12 +118,26 @@ async def scheduler(jobs: list[Job]) -> None:
     logged — a failing job never brings the scheduler down and never
     affects sibling jobs.
 
+    Low-priority jobs share a semaphore that bounds concurrency (default
+    1 = sequential). High-priority jobs dispatch immediately.
+
     On cancellation: all in-flight job tasks are cancelled and awaited
     before the scheduler itself re-raises.
     """
     in_flight: dict[str, asyncio.Task[None]] = {}
+    low_semaphore: asyncio.Semaphore | None = (
+        asyncio.Semaphore(max_concurrent_low)
+        if any(j.priority == "low" for j in jobs)
+        else None
+    )
 
-    _log.info("Scheduler started with {count} jobs", count=len(jobs))
+    _log.info(
+        "Scheduler started with {count} jobs "
+        "({low} low-priority, max_concurrent_low={limit})",
+        count=len(jobs),
+        low=sum(1 for j in jobs if j.priority == "low"),
+        limit=max_concurrent_low,
+    )
 
     try:
         while True:
@@ -138,8 +153,14 @@ async def scheduler(jobs: list[Job]) -> None:
                     continue
 
                 job.trigger.record_fire(now_utc)
+
+                if job.priority == "low" and low_semaphore is not None:
+                    coro = _run_bounded(low_semaphore, job)
+                else:
+                    coro = _run_guarded(job)
+
                 in_flight[job.name] = asyncio.create_task(
-                    _run_guarded(job),
+                    coro,
                     name=f"job:{job.name}",
                 )
 
@@ -174,3 +195,11 @@ async def _run_guarded(job: Job) -> None:
             name=job.name,
             err=str(exc),
         )
+
+
+async def _run_bounded(semaphore: asyncio.Semaphore, job: Job) -> None:
+    """Run a low-priority job gated by the shared semaphore."""
+    if semaphore.locked():
+        _log.debug("Job {name} waiting for low-priority slot", name=job.name)
+    async with semaphore:
+        await _run_guarded(job)

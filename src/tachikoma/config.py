@@ -338,6 +338,21 @@ class MemorySettings(BaseModel):
     )
 
 
+class SchedulerSettings(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="ignore")
+
+    max_concurrent_low: int = Field(
+        default=1,
+        ge=1,
+        description=(
+            "Max concurrent low-priority scheduler jobs "
+            "(default 1: low-priority jobs run sequentially). "
+            "Heavy/agent-spawning system ticks register as low-priority; "
+            "lightweight sweeps stay high-priority and bypass the limit."
+        ),
+    )
+
+
 class Settings(BaseModel):
     model_config = ConfigDict(frozen=True, extra="ignore")
 
@@ -355,6 +370,7 @@ class Settings(BaseModel):
     tasks: TaskSettings = Field(default_factory=TaskSettings)
     updates: UpdatesSettings = Field(default_factory=UpdatesSettings)
     memory: MemorySettings = Field(default_factory=MemorySettings)
+    scheduler: SchedulerSettings = Field(default_factory=SchedulerSettings)
     buffer: BufferSettings = Field(default_factory=BufferSettings)
     plugins: dict[str, PluginSource] = Field(
         default_factory=dict,
