@@ -96,7 +96,7 @@ convention = "google"
 asyncio_mode = "auto"
 testpaths = ["tests"]
 pythonpath = ["src"]
-addopts = "-m 'not slow' -n 2 --max-worker-restart=1"
+addopts = "-m 'not slow'"
 markers = [
     "slow: marks tests as slow (run with '-m slow' to include)",
 ]
