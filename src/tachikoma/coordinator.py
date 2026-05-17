@@ -258,6 +258,7 @@ class Coordinator:
         self._msg_pre_pipeline = msg_pre_pipeline
         self._skill_registry = skill_registry
         self._message_buffer: asyncio.Queue[IncomingMessage] = asyncio.Queue()
+        self._deferred_queue: asyncio.Queue[IncomingMessage] = asyncio.Queue()
 
         # Pending per-message post-processing task
         self._pending_msg_task: asyncio.Task[None] | None = None
@@ -487,6 +488,14 @@ class Coordinator:
                 except Exception as exc:
                     # Session tracking failures are logged but never crash the conversation
                     _log.exception("Failed to create session: err={err}", err=str(exc))
+
+            # force_new routing: skip boundary detection and force fresh session
+            if msg.force_new and active is not None:
+                _log.info("force_new: skipping boundary detection, transitioning session")
+                resumed = await self._handle_transition(active)
+                if self._registry is not None:
+                    active = await self._registry.get_active_session()
+                is_new_session = not resumed
 
             # Boundary detection: check if the message continues the current topic
             will_detect_boundary = (
@@ -1105,6 +1114,29 @@ providing context for what the user has been doing in the meantime.
         _log.debug("Message buffered: queue_size={n}", n=self._message_buffer.qsize())
         self._maybe_emit_idle()  # state capture only (idle->busy, never emits)
 
+    def enqueue_deferred(self, msg: IncomingMessage) -> None:
+        """Defer a message for processing after the current turn completes.
+
+        Messages sit in the deferred queue until the channel calls
+        ``promote_next_deferred()`` to move them into the message buffer.
+        """
+        self._deferred_queue.put_nowait(msg)
+        _log.debug("Message deferred: queue_size={n}", n=self._deferred_queue.qsize())
+
+    @property
+    def has_deferred(self) -> bool:
+        """Whether the deferred queue has items waiting to be promoted."""
+        return not self._deferred_queue.empty()
+
+    def promote_next_deferred(self) -> None:
+        """Move one item from the deferred queue to the message buffer."""
+        self._message_buffer.put_nowait(self._deferred_queue.get_nowait())
+        _log.debug(
+            "Promoted deferred message: deferred={d} buffer={b}",
+            d=self._deferred_queue.qsize(),
+            b=self._message_buffer.qsize(),
+        )
+
     @property
     def has_pending_messages(self) -> bool:
         """Whether the message buffer has items waiting to be processed."""
@@ -1117,11 +1149,13 @@ providing context for what the user has been doing in the meantime.
         Used by idle close to avoid interrupting:
         - Message exchange in progress (_client is not None)
         - Messages queued but not yet picked up (has_pending_messages)
+        - Deferred messages waiting to be promoted (has_deferred)
         - Per-message post-processing in flight (_pending_msg_task)
         """
         return (
             self._client is not None
             or self.has_pending_messages
+            or self.has_deferred
             or (self._pending_msg_task is not None and not self._pending_msg_task.done())
         )
 
