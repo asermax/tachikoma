@@ -199,7 +199,5 @@ async def _run_guarded(job: Job) -> None:
 
 async def _run_bounded(semaphore: asyncio.Semaphore, job: Job) -> None:
     """Run a low-priority job gated by the shared semaphore."""
-    if semaphore.locked():
-        _log.debug("Job {name} waiting for low-priority slot", name=job.name)
     async with semaphore:
         await _run_guarded(job)
