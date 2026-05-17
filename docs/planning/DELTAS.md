@@ -532,19 +532,6 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 **Complexity**: Medium
 **Description**: Tokens and other sensitive values currently sit as plaintext files under `.tachikoma/config/`, which means they are readable by the agent and end up in any transcript, context dump, or accidental commit. Introduce a secrets store where values live encrypted inside the repository and are accessed programmatically without ever exposing plaintext to the agent. Requirements: secrets live in the repo (encrypted, git-friendly), the store exposes a CLI suitable for piping values to command stdin or environment variables, the agent never sees plaintext at any layer (context, logs, tool output), and secret rotation is straightforward. Approaches to evaluate during speccing include age-encryption (simple, file-based, no daemon), SOPS (encrypted YAML/JSON with readable git diffs), and git-crypt (transparent per-pattern encryption). This delta delivers the store itself — encryption scheme, repo layout, CLI, and the access path used by downstream consumers such as the secure credential delivery mechanism (DLT-151).
 
-### DLT-158: Required step flag for workflow engine
-**Status**: ✗ Defined
-**Depends on**: None
-**Priority**: 3 (Medium)
-**Complexity**: Easy
-**Description**: Workflow steps currently expose a `skippable` frontmatter field that opts a step into user- or agent-initiated skipping, defaulting to false. "Non-skippable" is only enforced against the explicit skip action though — there is no positive way to declare that a step must always execute, and the semantic distinction between "off by default" and "must run" is not surfaced anywhere. Introduce an explicit `required: true` frontmatter field that marks a step as mandatory: when set, the workflow engine rejects any skip attempt regardless of source (user, agent action, future conditional or composition logic), and surfaces the requirement in the step listing output so the agent understands the constraint. Useful for steps that persist data, perform deployments, or otherwise produce effects that downstream steps assume have happened. Complements `skippable` without replacing it: `skippable=false` keeps today's meaning (skipping requires effort), while `required=true` is a strong guarantee that the engine enforces.
-
-### DLT-159: Conditional step execution for workflow engine
-**Status**: ✗ Defined
-**Depends on**: None
-**Priority**: 3 (Medium)
-**Complexity**: Medium
-**Description**: Workflow steps currently always execute in order, which forces authors to either write steps that no-op based on runtime state or split workflows into variants. Add a `condition` frontmatter field containing an expression the workflow engine evaluates before starting the step; if the expression resolves to false, the step is auto-skipped (independently of the `skippable` field) and the engine advances to the next step. The condition expression language should read from runtime state available to the engine — at minimum the workflow scratchpad, outputs of previous steps, and simple filesystem checks (file existence) — and should fail closed (unevaluable expressions skip the step and surface a warning rather than crashing the workflow). Example use cases from real workflows: "only run dashboard deploy if a plan was written", "only create calendar events if events exist in the scratchpad". Scope explicitly excludes cross-workflow composition (covered by DLT-161).
 
 ### DLT-166: Detect stuck processes via output patterns
 **Status**: ✗ Defined
