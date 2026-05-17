@@ -2,6 +2,19 @@
 
 <!-- version list -->
 
+## v1.82.0 (2026-05-17)
+
+### Features
+
+- **memory**: Consolidate facts and preferences into broad-topic files
+  ([`6f4e282`](https://github.com/asermax/tachikoma/commit/6f4e28226a5972b9ae0cd1fa85cae56180dceb77))
+
+### Refactoring
+
+- **memory**: Tighten facts/preferences prompts to reduce duplication
+  ([`114d756`](https://github.com/asermax/tachikoma/commit/114d756b022d1a9f4b87545f3248bb45b335daf6))
+
+
 ## v1.81.0 (2026-05-13)
 
 ### Documentation
