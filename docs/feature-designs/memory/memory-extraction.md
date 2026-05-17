@@ -76,16 +76,20 @@ Three **maintenance tick functions** run as scheduled jobs (DES-010), each using
 ┌──────────────────────────────────────────┐
 │              Central Scheduler           │
 │                (DES-010)                  │
+│   priority="low" → shared semaphore      │
+│   (max_concurrent_low=1 by default)      │
 └──────────────┬───────────────────────────┘
                │  cron trigger (shared)
-        ┌──────┼──────┬──────────┐
-        ▼      ▼      ▼          ▼
-   ┌────────┐┌──────┐┌──────────┐┌──────────┐
-   │Epi Tick││Facts ││Prefs Tick││Ctx Tick  │
-   │(+cfg)  ││Tick  ││          ││(context/)│
-   └───┬────┘└──┬───┘└────┬─────┘└────┬─────┘
-       │        │         │            │
-       ▼        ▼         ▼            ▼
+               │  ┌─── low-priority semaphore ───┐
+        ┌──────┼──┼──────┬──────────┐            │
+        ▼      ▼  ▼      ▼          ▼            │
+   ┌────────┐┌──────┐┌──────────┐┌──────────┐   │
+   │Epi Tick││Facts ││Prefs Tick││Ctx Tick  │   │
+   │(+cfg)  ││Tick  ││          ││(context/)│   │
+   │ [low]  ││[low] ││ [low]    ││ [low]    │   │
+   └───┬────┘└──┬───┘└────┬─────┘└────┬─────┘   │
+       │        │         │            │         │
+       ▼        ▼         ▼            ▼         │
    _run_maintenance_tick()    context_maintenance_tick()
        │                            │
        ▼                            ▼

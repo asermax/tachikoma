@@ -21,6 +21,25 @@ Two trigger kinds are provided:
 - `IntervalTrigger(seconds)` — fires every N seconds; first fire is immediate.
 - `CronTrigger(expression, tz)` — fires when a cron expression's next occurrence has passed. Seeds last-fire at construction so startup never triggers retroactive firings for past-today matches.
 
+## Priority and Bounded Dispatch
+
+Jobs declare a `priority: Literal["high", "low"]` (default `"high"`). High-priority jobs dispatch immediately — the current behavior. Low-priority jobs opt into a shared `asyncio.Semaphore` that bounds how many run at once, controlled by `max_concurrent_low` in the `[scheduler]` config section (default `1`).
+
+**When to use low priority**: Jobs that spawn LLM agents or otherwise hold significant resources (memory, compute) for minutes at a time. Currently the four memory-maintenance ticks (episodic, facts, preferences, context) register as low priority.
+
+**When to stay high priority**: Cheap sweeps, generators, and dispatch loops that complete in milliseconds — `instance_generator`, `session_task_scheduler`, `expired_waiter_sweep`, etc.
+
+```python
+Job(
+    name="episodic_maintenance",
+    trigger=CronTrigger("0 3 * * *", tz),
+    run=lambda: episodic_maintenance_tick(agent_defaults, settings),
+    priority="low",  # gates via shared semaphore
+)
+```
+
+The semaphore is allocated only when at least one low-priority job is registered. Low-priority jobs are wrapped in `_run_bounded(semaphore, job)` which uses `async with semaphore:` — guaranteeing release on success, exception, and cancellation. Single-flight semantics are preserved: a task awaiting the semaphore counts as in-flight, preventing re-dispatch from later ticks.
+
 ## When to Use
 
 Put work through the scheduler when:
@@ -95,8 +114,13 @@ jobs = [
     Job("background_runner",    IntervalTrigger(30), run=background_runner.tick),
     Job("expired_waiter_sweep", IntervalTrigger(120), lambda: expired_waiter_sweep(repo, settings, bus)),
     Job("one_shot_cleanup",     CronTrigger("0 3 * * *", tz), lambda: one_shot_cleanup_tick(repo, settings)),
+    Job("episodic_maintenance", CronTrigger("0 3 * * *", tz), lambda: episodic_maintenance_tick(...), priority="low"),
+    Job("facts_maintenance",    CronTrigger("0 3 * * *", tz), lambda: facts_maintenance_tick(...), priority="low"),
 ]
-scheduler_tasks.append(asyncio.create_task(scheduler(jobs), name="scheduler"))
+scheduler_tasks.append(asyncio.create_task(
+    scheduler(jobs, max_concurrent_low=settings.scheduler.max_concurrent_low),
+    name="scheduler",
+))
 
 # ... run application ...
 
@@ -122,6 +146,7 @@ await background_runner.shutdown()  # drain child tasks AFTER scheduler is down
 | State-owning jobs | Need a class + `shutdown()` rather than a plain function — slightly heavier than the raw loop, but shutdown is explicit and composable |
 | Startup semantics | `CronTrigger` seeds last-fire at construction to avoid retroactive firings; document this so "why didn't it fire at boot?" is answered |
 | Coupled loops | Loops tightly bound to an object's state are still left outside the scheduler (e.g., `Coordinator._idle_post_processing_loop`) — migrating them would leak that state into generic scheduler wiring |
+| Low-priority concurrency | `max_concurrent_low` bounds concurrent low-priority jobs (default 1: sequential); changing the value requires a restart since the semaphore is constructed once at scheduler start |
 
 ## Related Patterns
 
