@@ -57,10 +57,8 @@ of creating a new one
 the most specific file and remove it from the others
 
 4. **File Consolidation at Write Time**:
-   Before creating any new file, follow this sequence — these steps are \
-mandatory, not optional search hints:
-   - First, list the target directory: `ls $WORKSPACE/memories/preferences/`. \
-Read the directory contents in full before deciding to write.
+   Before creating any new file, follow this mandatory sequence:
+   - First, list the target directory: `ls $WORKSPACE/memories/preferences/`.
    - Identify which existing file (if any) covers the broadest preference \
 topic that encompasses the new information. Match by topic area (style, \
 workflow, communication, tooling), project, system, or domain — not by a \
@@ -120,11 +118,8 @@ is probably a spec or design document, not a preference.
    - Only create or modify files within `$WORKSPACE/memories/preferences/`
    - Use descriptive, topic-based filenames (not dates). Good names: \
 `communication-style.md`, `code-formatting.md`, `<topic-area>-workflow.md`. \
-Bad names that fragment a broad topic into per-occasion files: \
-`<topic-area>-feedback-<YYYY-MM-DD>.md`, \
-`<project>-preference-<issue-id>.md`, \
-`<topic-area>-session-<date>.md` — use the broad `<topic-area>-style.md` \
-or `<topic-area>-workflow.md` form instead.
+For per-occasion fragmentation patterns to avoid, see step 4's negative \
+examples.
    - If no preference-related information emerged from the conversation, \
 it is perfectly acceptable to create no files
    - Do not infer preferences from silence — only record what the user \

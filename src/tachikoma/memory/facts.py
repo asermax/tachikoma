@@ -52,10 +52,8 @@ of creating a new one
 MERGE them into one file and delete the others
 
 4. **File Consolidation at Write Time**:
-   Before creating any new file, follow this sequence — these steps are \
-mandatory, not optional search hints:
-   - First, list the target directory: `ls $WORKSPACE/memories/facts/`. \
-Read the directory contents in full before deciding to write.
+   Before creating any new file, follow this mandatory sequence:
+   - First, list the target directory: `ls $WORKSPACE/memories/facts/`.
    - Identify which existing file (if any) covers the broadest topic that \
 encompasses the new information. Match by project name, system name, tool, \
 or domain — not by incident, date, or specific event.
@@ -109,11 +107,8 @@ probably belongs in a project file, not in facts memory.
    - Use descriptive, topic-based filenames (not dates). Good names: \
 `work-info.md`, `key-people.md`, `tech-stack.md`. Bad names that indicate \
 the content belongs in episodic: `2026-04-15-outage.md`, \
-`bug-fix-session.md`, `security-incident-april.md`. Bad names that \
-fragment a broad topic into per-incident files: \
-`<project>-<bug-description>-<YYYY-MM-DD>.md`, \
-`<project>-patch-<issue-id>.md`, `<system>-<incident>-<date>.md` — use \
-the broad `<project>.md` or `<system>.md` form instead.
+`bug-fix-session.md`, `security-incident-april.md`. For per-incident \
+fragmentation patterns to avoid, see step 4's negative examples.
    - If no new factual information emerged from the conversation, \
 it is perfectly acceptable to create no files
    - Do not infer facts that weren't explicitly stated — only record \
