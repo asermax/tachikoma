@@ -779,20 +779,16 @@ class TelegramChannel(Channel):
         if not message.entities:
             return None, text
 
-        for entity in message.entities:
-            if entity.type == "bot_command" and entity.offset == 0:
-                raw = text[entity.offset : entity.offset + entity.length]
-                # Strip leading '/' and any '@botname' suffix
-                name = raw.lstrip("/")
-                if "@" in name:
-                    name = name.split("@", 1)[0]
-                args = text[entity.offset + entity.length :].strip()
-                if name in ("new", "queue") and args:
-                    return name, args
-                return None, text
-
-            # Only inspect the first entity at offset 0
-            break
+        entity = message.entities[0]
+        if entity.type == "bot_command" and entity.offset == 0:
+            raw = text[entity.offset : entity.offset + entity.length]
+            name = raw.lstrip("/")
+            if "@" in name:
+                name = name.split("@", 1)[0]
+            args = text[entity.offset + entity.length :].strip()
+            if name in ("new", "queue") and args:
+                return name, args
+            return None, text
 
         return None, text
 
@@ -803,29 +799,23 @@ class TelegramChannel(Channel):
             return
 
         cmd_name, cmd_args = self._detect_command(message)
-        is_command = cmd_name is not None
+        incoming = (
+            IncomingMessage(text=cmd_args, force_new=(cmd_name == "new"))
+            if cmd_name is not None
+            else IncomingMessage(text=message.text.strip())
+        )
 
-        # Mid-exchange (any phase: boundary, pre-processing, SDK streaming,
-        # teardown): commands go to the deferred queue; normal messages are
-        # steered into the active session via enqueue-only.
         if self._delivery_lock.locked():
-            if is_command:
+            if cmd_name is not None:
                 _log.debug("Deferring command: /{cmd}", cmd=cmd_name)
-                self._coordinator.enqueue_deferred(
-                    IncomingMessage(text=cmd_args, force_new=(cmd_name == "new"))
-                )
+                self._coordinator.enqueue_deferred(incoming)
             else:
                 _log.debug("Mid-stream steering message")
-                self._coordinator.enqueue(IncomingMessage(text=message.text.strip()))
+                self._coordinator.enqueue(incoming)
             return
 
         async with self._delivery_lock:
-            if is_command:
-                self._coordinator.enqueue(
-                    IncomingMessage(text=cmd_args, force_new=(cmd_name == "new"))
-                )
-            else:
-                self._coordinator.enqueue(IncomingMessage(text=message.text.strip()))
+            self._coordinator.enqueue(incoming)
             await self._process_through_coordinator()
             await self._drain_deferred_queue()
 
