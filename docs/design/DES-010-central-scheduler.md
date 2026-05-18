@@ -25,9 +25,11 @@ Two trigger kinds are provided:
 
 Jobs declare a `priority: Literal["high", "low"]` (default `"high"`). High-priority jobs dispatch immediately — the current behavior. Low-priority jobs opt into a shared `asyncio.Semaphore` that bounds how many run at once, controlled by `max_concurrent_low` in the `[scheduler]` config section (default `1`).
 
-**When to use low priority**: Jobs that spawn LLM agents or otherwise hold significant resources (memory, compute) for minutes at a time. Currently the four memory-maintenance ticks (episodic, facts, preferences, context) register as low priority.
+**When to use low priority**: Two categories qualify:
+1. **Heavy maintenance** — jobs that spawn LLM agents or otherwise hold significant resources (memory, compute) for minutes at a time (memory-maintenance ticks: episodic, facts, preferences, context).
+2. **Non-urgent housekeeping** — cleanups, nightly syncs, periodic update probes that do not need immediate execution and should yield to user-facing work (`one_shot_cleanup`, `plugin_update_check`, `update_checker`).
 
-**When to stay high priority**: Cheap sweeps, generators, and dispatch loops that complete in milliseconds — `instance_generator`, `session_task_scheduler`, `expired_waiter_sweep`, etc.
+**When to stay high priority**: Dispatch-driving jobs that directly affect timely user-facing behavior — `instance_generator`, `session_task_scheduler`, `background_task_runner`, `expired_waiter_sweep`. Also any frequent sweep (30–120s cadence) whose delay would slow the visible task pipeline or postpone urgent notifications.
 
 ```python
 Job(
@@ -113,7 +115,9 @@ jobs = [
     Job("instance_generator",   IntervalTrigger(60), lambda: instance_generator_tick(repo, settings)),
     Job("background_runner",    IntervalTrigger(30), run=background_runner.tick),
     Job("expired_waiter_sweep", IntervalTrigger(120), lambda: expired_waiter_sweep(repo, settings, bus)),
-    Job("one_shot_cleanup",     CronTrigger("0 3 * * *", tz), lambda: one_shot_cleanup_tick(repo, settings)),
+    Job("one_shot_cleanup",     CronTrigger("0 3 * * *", tz), lambda: one_shot_cleanup_tick(repo, settings), priority="low"),
+    Job("plugin_update_check",  CronTrigger("17 3 * * *", tz), lambda: plugin_check_tick(...), priority="low"),
+    Job("update_checker",       IntervalTrigger(86400), lambda: update_checker_tick(...), priority="low"),
     Job("episodic_maintenance", CronTrigger("0 3 * * *", tz), lambda: episodic_maintenance_tick(...), priority="low"),
     Job("facts_maintenance",    CronTrigger("0 3 * * *", tz), lambda: facts_maintenance_tick(...), priority="low"),
 ]

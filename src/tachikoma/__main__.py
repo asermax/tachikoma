@@ -183,6 +183,7 @@ def build_scheduler_jobs(
             name="one_shot_cleanup",
             trigger=CronTrigger("0 3 * * *", tz),
             run=lambda: one_shot_cleanup_tick(task_repository, settings.tasks),
+            priority="low",
         ),
     ]
 
@@ -192,6 +193,7 @@ def build_scheduler_jobs(
                 name="update_checker",
                 trigger=IntervalTrigger(settings.updates.check_interval),
                 run=lambda: update_checker_tick(app_state_repo, bus),
+                priority="low",
             )
         )
 
@@ -200,6 +202,7 @@ def build_scheduler_jobs(
             name="plugin_update_check",
             trigger=CronTrigger("17 3 * * *", tz),
             run=lambda: _plugin_check_tick(plugin_manager, plugin_state_repo, bus),
+            priority="low",
         )
     )
 
