@@ -37,6 +37,7 @@ Detects whether an incoming message continues the current conversation or starts
 | R18 | Include the last assistant response in boundary detection prompts for both the current session and candidate sessions, providing improved recency signal alongside summaries |
 | R19 | Short messages that serve as acknowledgments, confirmations, or brief responses (e.g., "yes", "ok", "go ahead", "sure", "no", "thanks") must be classified as continuations — they lack enough independent topic content to establish a new topic |
 | R20 | `detect_boundary()` accepts an optional async status callback and emits a single progress message (`"Analyzing message..."`) once, before the underlying classification query is issued |
+| R21 | `force_new` bypass: when `IncomingMessage.force_new` is True, boundary detection is skipped entirely and the coordinator unconditionally transitions to a fresh session (see [core-architecture](core-architecture.md) R20) |
 
 ## Behaviors
 
@@ -107,6 +108,7 @@ Boundary detection is a best-effort enhancement that never blocks normal message
 - Given an active session with no summary yet (first message in session, per-message pipeline hasn't run), when the next message arrives, then boundary detection is skipped and the message proceeds normally
 - Given the coordinator has no workspace directory configured, when a message arrives, then boundary detection is skipped
 - Given the boundary detector encounters an error (SDK failure, timeout, malformed response), when the error occurs, then it is logged and the message proceeds as a continuation (fail-open)
+- Given a message with `force_new=True`, when the coordinator processes it, then boundary detection is skipped entirely and a fresh session transition occurs (R21)
 - Given the LLM returns the string "null" instead of JSON null for the resume_session_id field (a known LLM behavior), when the detector normalizes the output, then the string "null" is treated identically to null and the message proceeds as a continuation
 - Given a topic shift triggers a session transition, when the SDK session ID is cleared, then the next message creates a fresh SDK session with no prior conversation context
 

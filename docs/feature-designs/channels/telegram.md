@@ -89,9 +89,9 @@ The key components:
 | Layer/Component | Responsibility | Key Decisions |
 |-----------------|----------------|---------------|
 | `src/tachikoma/__main__.py` | Cyclopts `App` entry point: `run()` subcommand with `--channel` flag (also the default for bare invocation); creates `SettingsManager`, applies CLI overrides, runs bootstrap, dispatches to channel. Registers `media_hook` in bootstrap sequence (after `tasks`, before `telegram`) | Replaces bare `asyncio.run(main())` with cyclopts; `cli()` wrapper as `[project.scripts]` entry point; integrates with SettingsManager + Bootstrap |
-| `src/tachikoma/telegram/__init__.py` | `TelegramChannel` class + `ResponseRenderer` class + `telegram_hook` function. Subscribes to `BufferedDelivery` events via `bus.on()` in `run()` (deferred until the coordinator is set). Shared `_process_through_coordinator()` method handles both user messages and buffered deliveries. `_handle_buffered_delivery()` spawns a detached `asyncio.Task` for the delivery work and returns immediately so the EventBus is freed (see DES-009). The `_deliver()` task acquires the delivery lock, routes `event.prompt` through the coordinator, fires per-item `on_delivered` callbacks, and calls `resolve_shutdown()` in a `finally` block for shutdown digests. `_handle_media` catch-all handler delegates to `media.py` functions for descriptor resolution, download, and description building. Channel-specific formatter maps (`TELEGRAM_TOOL_DISPLAY`, `TELEGRAM_TOOL_SUMMARY`) with `code_wrap()` utility for inline code wrapping of dynamic tool arguments (file paths, patterns, commands — but not Bash descriptions, which are plain text). `_send_shutdown_status()` manages a dedicated shutdown progress message (send on first call, edit on subsequent) using the same pattern as `ResponseRenderer.handle_status()`. In `run()`, sets `coordinator.shutdown_status_callback` to `_send_shutdown_status` so the coordinator emits bookend messages ("Shutting down..." / "Shutdown complete") and the pipeline emits per-processor status during shutdown post-processing | High cohesion between channel control flow and response rendering; only `BufferedDelivery` is observed — session tasks and notifications are enqueued into the priority buffer by their producers (see [delivery/priority-buffer](../delivery/priority-buffer.md)); shutdown progress follows existing status callback pattern from pre-processing |
+| `src/tachikoma/telegram/__init__.py` | `TelegramChannel` class + `ResponseRenderer` class + `telegram_hook` function. Subscribes to `BufferedDelivery` events via `bus.on()` in `run()` (deferred until the coordinator is set). Shared `_process_through_coordinator()` method handles both user messages and buffered deliveries. `_handle_buffered_delivery()` spawns a detached `asyncio.Task` for the delivery work and returns immediately so the EventBus is freed (see DES-009). The `_deliver()` task acquires the delivery lock, routes `event.prompt` through the coordinator, fires per-item `on_delivered` callbacks, and calls `resolve_shutdown()` in a `finally` block for shutdown digests. `_handle_media` catch-all handler delegates to `media.py` functions for descriptor resolution, download, and description building. Channel-specific formatter maps (`TELEGRAM_TOOL_DISPLAY`, `TELEGRAM_TOOL_SUMMARY`) with `code_wrap()` utility for inline code wrapping of dynamic tool arguments (file paths, patterns, commands — but not Bash descriptions, which are plain text). `_send_shutdown_status()` manages a dedicated shutdown progress message (send on first call, edit on subsequent) using the same pattern as `ResponseRenderer.handle_status()`. In `run()`, sets `coordinator.shutdown_status_callback` to `_send_shutdown_status` so the coordinator emits bookend messages ("Shutting down..." / "Shutdown complete") and the pipeline emits per-processor status during shutdown post-processing. `_detect_command()` inspects `bot_command` entities for `/new` and `/queue` command detection; `_handle_message()` routes commands to deferred queue (when busy) or immediate processing (when idle); `_drain_deferred_queue()` processes deferred messages sequentially after each delivery cycle. Registers commands via `bot.set_my_commands()` in `run()` | High cohesion between channel control flow and response rendering; only `BufferedDelivery` is observed — session tasks and notifications are enqueued into the priority buffer by their producers (see [delivery/priority-buffer](../delivery/priority-buffer.md)); shutdown progress follows existing status callback pattern from pre-processing; command detection uses Telegram-native entities (not string matching) |
 | `src/tachikoma/media.py` | Media descriptor table (`MEDIA_DESCRIPTORS`), `resolve_media()`, `download_media()`, `build_description()`, `generate_media_filename()`, `MediaTooLargeError`, `media_hook` bootstrap function. Constants: `MEDIA_TEMP_DIR`, `TELEGRAM_MAX_FILE_SIZE`, `MEDIA_CLEANUP_DAYS` | High cohesion between all media-related logic; bootstrap hook follows DES-003; descriptor table driven by ordered sequence for priority resolution |
-| `src/tachikoma/coordinator.py` | Existing + `enqueue()` method, `_message_buffer` queue, `has_pending_messages` property, `_message_source()` async generator passed to `client.connect()`, `shutdown_status_callback` attribute set by channels before polling starts to receive progress updates during shutdown post-processing | Message buffer replaces steer/pending-steers pattern; shutdown callback follows same StatusCallback pattern as pre-processing |
+| `src/tachikoma/coordinator.py` | Existing + `enqueue()` method, `_message_buffer` queue, `has_pending_messages` property, `_message_source()` async generator passed to `client.connect()`, `shutdown_status_callback` attribute set by channels before polling starts to receive progress updates during shutdown post-processing. Deferred queue: `_deferred_queue`, `enqueue_deferred()`, `has_deferred`, `promote_next_deferred()` for messages that should wait until the current turn completes. `force_new` routing in `send_message()` skips boundary detection and triggers fresh session transition | Message buffer replaces steer/pending-steers pattern; shutdown callback follows same StatusCallback pattern as pre-processing; deferred queue is coordinator-level (generic infrastructure) while drain loop is channel-level (delivery timing) |
 | `src/tachikoma/config.py` | `TelegramSettings` model added to `Settings` | Extends existing config; optional section (`None` when not configured) |
 | `src/tachikoma/display.py` | `TOOL_DISPLAY` map for live tool status formatting (present-progressive, Bash prefers description over command); `TOOL_SUMMARY` map and `summarize_tool_activity()` for post-hoc tool activity summaries (present-progressive matching active style, chronological ordering so the summary reads naturally top-to-bottom; when the display limit is exceeded, oldest entries are dropped preserving the most recent context); `summarize_tool_activity()` accepts optional `summary_map` parameter for channel-specific formatters; `format_tool_name()` for formatting MCP tool names into human-readable labels in fallback paths | Shared base formatters used directly by REPL; Telegram uses channel-specific formatter maps via `summary_map` parameter |
 | `src/tachikoma/telegram/pinning.py` | Pin/unpin MCP tool handlers + factory. Follows DES-006: `handle_pin_message()` and `handle_unpin_message()` extracted handlers, `UnpinMessageArgs` Pydantic model, `create_pinning_server()` factory. Pins use `disable_notification=False` so the pin action delivers the push notification. Factory returns `(McpSdkServerConfig, is_pinned_checker)` — the checker tests message IDs against a closure-captured `pinned_ids` set, enabling `notify()` to skip copy+delete for pinned messages. | Separate module from tools.py (unrelated concerns); getter captured as `Callable[[], int \| None]` to decouple from ResponseRenderer |
@@ -191,7 +191,7 @@ sequenceDiagram
 ```
 
 **Integration Points:**
-- Channel ↔ Coordinator: `send_message()` (async iterator yielding continuous stream from all re-queue iterations), `enqueue()` (sync buffer write)
+- Channel ↔ Coordinator: `send_message()` (async iterator yielding continuous stream from all re-queue iterations), `enqueue()` (sync buffer write), `enqueue_deferred()` (sync deferred queue write), `has_deferred` + `promote_next_deferred()` (drain control)
 - Channel ↔ aiogram: `Router` handler receives `Message`, `Bot` sends/edits messages
 - Channel ↔ `media.py`: function calls — `resolve_media()` for descriptor lookup, `download_media()` for file download, `build_description()` for text composition, `generate_media_filename()` for unique file naming
 - Renderer ↔ telegramify-markdown: converts accumulated markdown to `(text, entities)` tuples on each edit cycle
@@ -253,10 +253,14 @@ The renderer exposes a `reset()` method that clears all state for a new response
 ```
 Coordinator (existing)
 ├── _client: ClaudeSDKClient
-├── _message_buffer: asyncio.Queue[str]   (unbounded FIFO queue)
+├── _message_buffer: asyncio.Queue[IncomingMessage]   (unbounded FIFO queue)
+├── _deferred_queue: asyncio.Queue[IncomingMessage]   (unbounded FIFO queue for deferred messages)
 ├── has_pending_messages: bool             (property: True when buffer is non-empty)
+├── has_deferred: bool                     (property: True when deferred queue is non-empty)
 ├── send_message() → AsyncIterator        (re-queue loop: processes buffer until empty; no text parameter)
-├── enqueue(text) → None                  (sync, zero preconditions, puts message in buffer)
+├── enqueue(msg) → None                   (sync, zero preconditions, puts message in buffer)
+├── enqueue_deferred(msg) → None          (sync, puts message in deferred queue)
+├── promote_next_deferred() → None        (moves one item from deferred queue to message buffer)
 └── _message_source(initial, buffer)      (long-lived async generator passed to client.connect())
 ```
 
@@ -338,6 +342,7 @@ Splitting operates on the post-conversion text+entities via `telegramify_markdow
 11. Re-queue loop check: _message_buffer non-empty? → dequeue next, start new exchange in same session
 12. Buffer empty → generator returns
 13. on_complete callback is called after send_message() returns
+14. Deferred queue drain: while coordinator.has_deferred(), promote + _process_through_coordinator()
 ```
 
 The `Result` event serves as a turn boundary signal. The channel finalizes the current response and resets the renderer, so each buffered message gets its own Telegram response message(s). The coordinator's re-queue loop handles leftover messages internally — the channel sees one continuous event stream from `send_message()`.
@@ -535,6 +540,60 @@ The `Result` event serves as a turn boundary signal. The channel finalizes the c
 **Given**: Graceful shutdown begins with pending items in the priority buffer
 **When**: The buffer dispatches its digest `BufferedDelivery`
 **Then**: The channel routes the combined prompt through the coordinator as a single final exchange (sent via `coordinator.send_message()`, or `enqueue()` if an exchange is still in-flight). After the exchange completes, each item's `on_delivered` callback fires. The bot then stops polling.
+
+### Scenario: `/new` command while agent is busy
+
+**Given**: The agent is processing a message (delivery lock held)
+**When**: The user sends `/new let's talk about X`
+**Then**: `_detect_command()` finds the `bot_command` entity, extracts args "let's talk about X". Since the lock is held, the channel creates `IncomingMessage(text="let's talk about X", force_new=True)` and calls `coordinator.enqueue_deferred()`. No feedback is sent to the user. When the current turn completes, the drain loop promotes the message and processes it — the coordinator sees `force_new=True`, skips boundary detection, and triggers a fresh session transition (closing the current session with async post-processing, creating a new one).
+
+### Scenario: `/new` command while agent is idle
+
+**Given**: No exchange is in flight (delivery lock free)
+**When**: The user sends `/new fresh start`
+**Then**: The channel creates `IncomingMessage(text="fresh start", force_new=True)`, enqueues it normally, and processes it immediately. The coordinator skips boundary detection and transitions to a fresh session.
+
+### Scenario: `/queue` command while agent is busy
+
+**Given**: The agent is processing a message
+**When**: The user sends `/queue remind me about Y`
+**Then**: The channel creates `IncomingMessage(text="remind me about Y")` (force_new defaults False) and calls `coordinator.enqueue_deferred()`. When the current turn completes, the drain loop processes the message through normal boundary detection.
+
+### Scenario: `/queue` command while agent is idle
+
+**Given**: No exchange is in flight
+**When**: The user sends `/queue something`
+**Then**: The channel enqueues and processes immediately through normal boundary detection. The deferred queue is not involved.
+
+### Scenario: Bare `/new` with no arguments
+
+**Given**: The user sends just `/new` (no message body)
+**When**: `_detect_command()` runs
+**Then**: The command is detected but args is empty, so the method returns `(None, "/new")`. The message is treated as a normal text message — enqueued and processed through the usual path. The agent sees `/new` as literal text.
+
+### Scenario: Multiple deferred messages processed in FIFO order
+
+**Given**: During a long agent response, the user sends `/new topic A` then `/queue remind about B`
+**When**: The current turn completes
+**Then**: The drain loop processes them in order: first `/new topic A` (force_new=True, fresh session), then `/queue remind about B` (boundary detection on the new session). Each gets its own delivery cycle.
+
+### Scenario: Command arrives during drain
+
+**Given**: The drain loop is processing a deferred message
+**When**: The user sends `/new another topic`
+**Then**: The delivery lock is held, so the command is deferred via `enqueue_deferred()`. After the current drain item finishes, the drain loop picks up the new deferred message.
+
+### Scenario: Deferred message fails during drain
+
+**Given**: The drain loop is processing deferred messages
+**When**: Processing one deferred message raises an exception
+**Then**: The error is logged and the drain loop continues to the next item. One failing message does not block the rest of the queue.
+
+### Scenario: Graceful shutdown with deferred messages
+
+**Given**: The process receives SIGTERM while deferred messages are waiting
+**When**: The shutdown sequence runs
+**Then**: aiogram stops polling. The channel's `run()` method drains the deferred queue in its finally block (after buffer flush, before signal handler cleanup). Each message gets a full delivery cycle.
 
 ### Scenario: Graceful shutdown via q keypress
 

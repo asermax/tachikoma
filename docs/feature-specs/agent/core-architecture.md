@@ -36,6 +36,7 @@ The core agent loop: receive a user message, pass it to the Claude agent via the
 | R19 | Coordinator idle signaling: on every busy→idle transition, the coordinator dispatches a `CoordinatorIdle(timestamp)` event so the priority buffer can re-evaluate pending deliveries without polling |
 | R17 | Configurable tool blocking: specific tools can be unconditionally blocked via `disallowed_tools` config, defaulting to `["AskUserQuestion", "CronCreate", "CronDelete", "CronList"]` |
 | R18 | Text sanitization: the adapter strips invalid UTF-8 characters (surrogate code points, overlong encodings) from all SDK text before passing to domain types, preventing encoding failures in downstream consumers |
+| R20 | Deferred message queue: coordinator provides a deferred message queue (`enqueue_deferred`, `has_deferred`, `promote_next_deferred`) for messages that should wait until the current turn completes; `IncomingMessage` carries a `force_new` flag that, when True, causes the coordinator to skip boundary detection and force a fresh session transition |
 
 ## Behaviors
 
@@ -240,3 +241,16 @@ Whenever the coordinator transitions from busy to idle (an exchange completes or
 - Given the coordinator finishes processing an exchange and `is_busy` becomes False, when the busy→idle transition is observed, then a `CoordinatorIdle` event is dispatched on the bus with the transition timestamp
 - Given the coordinator is already idle when an operation completes (no state change), then no `CoordinatorIdle` event is dispatched
 - Given the event bus is unavailable at the coordinator, when the transition occurs, then the transition proceeds without error (idle signaling is best-effort)
+
+### Deferred Message Queue (R20)
+
+The coordinator provides a deferred message queue for messages that should wait until the current turn completes. Channels use this to hold command messages (`/new`, `/queue`) that should not be steered into the active session. The queue is ephemeral and in-memory (lost on process crash, drained on graceful shutdown).
+
+`IncomingMessage` carries a `force_new` flag. When True, the coordinator skips boundary detection and unconditionally triggers a fresh session transition — closing the current session (with async post-processing) and creating a new one before processing the message.
+
+**Acceptance Criteria**:
+- Given a message with `force_new=True` and an active session exists, when the coordinator processes it, then boundary detection is skipped, the current session is closed (with async post-processing), and a new session is created
+- Given a message with `force_new=True` and no active session, when the coordinator processes it, then a new session is created normally (no transition needed)
+- Given a message is enqueued via `enqueue_deferred()`, when the channel calls `promote_next_deferred()`, then the message moves from the deferred queue to the message buffer
+- Given the deferred queue has items, when `has_deferred` is checked, then it returns True
+- Given the coordinator has deferred messages, when `is_busy` is checked, then it returns True (deferred items count as busy)

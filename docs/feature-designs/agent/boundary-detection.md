@@ -154,6 +154,9 @@ erDiagram
    - If task pending: await it, log any errors
    - If no task: proceed immediately
 3. Coordinator checks for active session; creates one if needed (existing behavior)
+3a. If msg.force_new and active session exists:
+    → skip boundary detection, call _handle_transition(active) for fresh session,
+      re-fetch active session, set is_new_session = not resumed
 4. If active session exists AND session has a summary AND cwd is not None:
    a. Fetch recent closed session candidates via registry.get_recent_closed()
    b. Build SessionCandidate list via _sessions_to_candidates() helper (id + summary + last_exchange tuples)

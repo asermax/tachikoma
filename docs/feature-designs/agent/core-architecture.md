@@ -150,7 +150,7 @@ Note: `send_message()` is an async generator. The per-message pipeline launch ha
 **Integration Points:**
 - Coordinator ↔ SDK: per-message `async with ClaudeSDKClient(options)`, `query()` to send messages, iterate `receive_response()` for response stream (stops at `ResultMessage`). Uses `resume=sdk_session_id` for conversation continuity across messages
 - Coordinator ↔ Adapter: pure function call `adapt(sdk_message) -> list[AgentEvent]` (returns empty list for filtered messages)
-- Channel ↔ Coordinator: async iterator protocol
+- Channel ↔ Coordinator: async iterator protocol; `enqueue(msg)` (buffer write), `enqueue_deferred(msg)` (deferred queue write), `has_deferred` + `promote_next_deferred()` (drain control)
 - Coordinator ↔ SessionRegistry (optional): `create_session()` on first message, `update_metadata()` on Result events, `close_session()` on shutdown and on topic shift (see [sessions design](sessions.md))
 - Coordinator ↔ PreProcessingPipeline (optional): `pipeline.run(message)` in `send_message()`, on first message of new session (including after topic shift transition), before `client.query()` (see [pipeline design](pre-processing-pipeline.md))
 - Coordinator ↔ PostProcessingPipeline (optional): `pipeline.run(session)` in `__aexit__` (after session close) and as background task during topic shift transitions (see [pipeline design](post-processing-pipeline.md))
@@ -224,22 +224,30 @@ Coordinator
 ├── _client: ClaudeSDKClient | None       (set only during send_message, None between messages)
 ├── _last_message_time: datetime | None      (timestamp of last exchange, for idle gating)
 ├── _was_busy: bool                          (tracks prior is_busy state for busy→idle transition detection)
-├── is_busy → bool (property)                (True while an exchange is in progress)
+├── is_busy → bool (property)                (True while an exchange is in progress, messages pending, or deferred queue non-empty)
 ├── _maybe_emit_idle() → None                (dispatches CoordinatorIdle(now) on bus if state transitioned busy→idle; best-effort, swallows bus errors)
-├── _message_buffer: asyncio.Queue[str]   (unbounded FIFO queue for buffered messages)
+├── _message_buffer: asyncio.Queue[IncomingMessage]   (unbounded FIFO queue for buffered messages)
+├── _deferred_queue: asyncio.Queue[IncomingMessage]   (unbounded FIFO queue for deferred messages)
 ├── _pending_msg_task: asyncio.Task | None  (background per-message post-processing)
 ├── _background_tasks: list[asyncio.Task]   (session post-processing from topic shifts)
 ├── _build_options(resume=..., system_prompt_append=...) → ClaudeAgentOptions  (constructs per-message options; system_prompt_append is pre-built from build_system_prompt())
 ├── _handle_transition(session, *, resume_session_id=None) → bool  (True=resumed, False=fresh)
 ├── _persist_bridging_context(resumed_session, closed_at) → None  (assembles and saves bridging context to DB)
-├── enqueue(text) → None
+├── enqueue(msg) → None
 │   └── sync, zero preconditions, puts message into _message_buffer
+├── enqueue_deferred(msg) → None
+│   └── sync, puts message into _deferred_queue (for processing after current turn)
 ├── has_pending_messages → bool (property)
 │   └── checks if _message_buffer has pending items
+├── has_deferred → bool (property)
+│   └── checks if _deferred_queue is non-empty
+├── promote_next_deferred() → None
+│   └── moves one item from _deferred_queue to _message_buffer
 ├── send_message() → AsyncIterator[AgentEvent]
 │   └── guard clause returns if buffer empty; otherwise enters re-queue loop:
 │       each iteration creates fresh ClaudeSDKClient, runs full pipeline,
-│       awaits previous iteration's pending post-processing task, breaks when buffer empty
+│       awaits previous iteration's pending post-processing task, breaks when buffer empty;
+│       force_new routing: if msg.force_new and active session exists, skips boundary detection
 └── _message_source(initial, buffer) → AsyncGenerator[str]
     └── long-lived async generator: yields enriched initial message, then reads from buffer; passed to client.connect() as a concurrent SDK-managed task
 ```
@@ -271,6 +279,9 @@ The `enqueue()` method allows channels to buffer user messages at any time (sync
       as a background task drained through _drain_status_while_running;
       the detector emits "Analyzing message..." once before its query.
       → returns BoundaryResult(continues, resume_session_id)
+7a. If msg.force_new and active session exists:
+    → skip boundary detection, call _handle_transition(active) for fresh session,
+      re-fetch active session, set is_new_session = not resumed
 8. If topic shift → run _handle_transition(active, resume_session_id=result.resume_session_id)
    → returns bool (True=resumed, False=fresh); set is_new_session = not resumed;
    re-fetch active session

@@ -13,6 +13,7 @@ A Telegram bot that receives text messages and media messages from a single auth
 - As a user, I want messages I send during an active response to be processed so that I can provide follow-up input without waiting
 - As a user, I want to send images, voice messages, and other media through Telegram so that the agent can see and work with my non-text content
 - As a user, I want the agent to pin important messages in our Telegram chat so that key responses (summaries, decisions, reference material) stay accessible at the top of the conversation without me having to manually pin them, and I still receive a notification for the pinned message
+- As a user, I want to explicitly route messages to a new conversation or defer them for later processing so that I can manage multiple topics without the current session being disrupted
 
 ## Requirements
 
@@ -33,6 +34,7 @@ A Telegram bot that receives text messages and media messages from a single auth
 | R12 | Event bus integration: subscribe to `BufferedDelivery` events and route prompts through the coordinator as new message turns; flush pending buffer items on graceful shutdown (see [delivery/priority-buffer](../delivery/priority-buffer.md)) |
 | R13 | File delivery via `send_file` tool: the agent can send a file to the user's Telegram chat. Accepted `file_path` forms are workspace-relative, absolute paths inside the workspace, absolute paths under the system temporary directory, and absolute paths under operator-configured extra roots. Paths outside all allowed roots are rejected with an error that names the allowed roots. Only existing regular files can be sent. |
 | R14 | Message pinning: the agent can pin and unpin messages in the active Telegram chat. Pins trigger a push notification so the user sees the pinned message promptly. Both operations are idempotent. Permission failures and API errors return clear error responses to the agent |
+| R15 | Bot commands: `/new [message]` forces a fresh session (skipping boundary detection), `/queue [message]` defers the message for boundary-detected routing after the current turn. Commands are detected via Telegram native `bot_command` entities. Bare commands (no arguments) are treated as normal messages |
 
 ## Behaviors
 
@@ -48,7 +50,7 @@ The bot connects to the Telegram API at startup, validates the bot token, and be
 
 ### Message Receiving (R2)
 
-The bot accepts incoming text messages from the authorized user and forwards them to the coordinator. Messages arriving during an active response are buffered via `coordinator.enqueue()` and processed by the coordinator's re-queue loop within the same session, or as new sessions after the full stream completes.
+The bot accepts incoming text messages from the authorized user and forwards them to the coordinator. Messages arriving during an active response are buffered via `coordinator.enqueue()` and processed by the coordinator's re-queue loop within the same session, or as new sessions after the full stream completes. Bot commands (`/new`, `/queue`) are detected via `bot_command` entities and routed to either the deferred queue (when busy) or processed immediately (when idle) — see Bot Commands (R15).
 
 **Acceptance Criteria**:
 - Given the bot is running, when an authorized user sends a text message, then the message text is forwarded to the coordinator via `send_message()`
@@ -135,6 +137,36 @@ The bot handles polling disconnects and transient network errors gracefully.
 ### Graceful Shutdown (R7)
 
 The bot exits cleanly on signals or `q` keypress, delivering any partial response before stopping. The `q` shortcut is available when running in a TTY; non-TTY environments (e.g., systemd) use signals only. When post-processing is needed during shutdown, a dedicated Telegram message shows progress.
+
+**Graceful shutdown drain**: Deferred messages remaining in the queue when shutdown begins are drained before the process exits, ensuring queued messages are not lost on graceful shutdown.
+
+**Acceptance Criteria**:
+- Given messages are in the deferred queue when shutdown begins, when the shutdown sequence runs, then the queue is drained before the process exits (queued messages are not lost on graceful shutdown)
+
+### Bot Commands (R15)
+
+The bot detects `/new` and `/queue` commands via Telegram native `bot_command` entities. Commands are registered via `setMyCommands` for autocomplete discoverability.
+
+**`/new` command** — Forces a fresh session, skipping boundary detection entirely. The command prefix is stripped; the agent never sees it. Works when both busy (deferred) and idle (immediate).
+
+**`/queue` command** — Defers the message for boundary-detected routing after the current turn completes. When idle, bypasses the deferred queue entirely and processes immediately through normal boundary detection.
+
+**Command detection rules**: Bare commands (no arguments or whitespace-only) are treated as normal messages. First command wins on nested commands (`/new /queue msg` is treated as `/new` with message "/queue msg"). No user feedback is sent on queueing — silent operation.
+
+**Acceptance Criteria**:
+- Given the user sends `/new let's talk about X`, when the command is detected, then the command prefix is stripped, the active session (if any) is closed, and a new session is created with the message "let's talk about X"
+- Given the user sends `/new` alone (no message body), when the command is detected, then it is treated as a normal message (passed through to the agent as-is)
+- Given the agent is busy and the user sends `/new let's talk about X`, when the command is detected, then the message is deferred (not steered into the active session)
+- Given the agent is idle and the user sends `/new fresh start`, when the command is detected, then the current open session is closed (with async post-processing), a new session is created, and the message is processed
+- Given the agent is idle with no active session and the user sends `/new fresh start`, when the command is detected, then a new session is created and the message is processed (nothing to close)
+- Given the user sends `/queue remind me about Y`, when the command is detected and the agent is busy, then the message is deferred for processing after the current turn completes
+- Given the agent is idle and the user sends `/queue something`, when the command is detected, then it bypasses the deferred queue entirely and processes immediately through normal boundary detection
+- Given multiple command messages arrive during active processing, when the turn completes, then they are processed in FIFO order
+- Given the queue is being drained and a new command message arrives, when it is deferred, then it joins the end of the queue and is processed after existing items
+- Given a deferred message fails during drain, when the error is caught, then the error is logged and queue draining continues to the next item
+- Given the Telegram bot starts, when `setMyCommands` is called, then `/new` is registered with description "Start a new conversation" and `/queue` is registered with description "Defer message for later processing"
+- Given `setMyCommands` fails, when the error is caught, then a warning is logged but the bot continues running (non-critical)
+- Given no user feedback on queueing, when a message is deferred, then no acknowledgment or feedback is sent to the user
 
 **Acceptance Criteria**:
 - Given SIGTERM or SIGINT is received, when the bot is idle, then it stops polling and exits cleanly
@@ -329,7 +361,9 @@ The agent can pin and unpin messages in the active Telegram chat via two MCP too
 
 **Steering path (mid-exchange)**: If the user sends another message (text or media) while an exchange is in flight — at any phase: boundary detection, pre-processing, SDK streaming, or teardown — the channel checks `self._delivery_lock.locked()`. Because the lock is held by the in-flight exchange, it calls `coordinator.enqueue()` directly — bypassing the lock — and returns. The message lands in `_message_buffer`; once the coordinator's forwarder is alive (created right after pre-processing completes), it moves the message onto the per-turn `sdk_inbox` and the message source yields it to the SDK as a steering message that influences the in-flight response. If the message arrives after the SDK exchange has already torn down but before the lock is released, the coordinator's internal re-queue loop automatically processes it as a follow-up exchange within the same `send_message()` generator call, yielding its events as a continuation of the same stream. The channel sees one continuous event stream and renders all responses in order. (Buffered-delivery events from the priority buffer always start new exchanges via the lock and are never delivered as steering messages.)
 
-**Decision points**: Authorization check (authorized → process, unauthorized → drop). Message type check (text → process text, supported media → download/describe/process, unsupported → drop). Empty check (empty text → drop). File size check (within 20 MB → download, too large → error message). Download result (success → describe and enqueue, failure → error message). Message length check (under limit → continue editing, approaching limit → split at paragraph boundary). Error type (recoverable → show error, continue; non-recoverable → show error, log). Push notification check (enabled and message was sent → copy+delete unless pinned, disabled or no message → no-op, copy fails → preserve original, pinned → skip copy+delete entirely, pin action delivered the notification). Pin decision (agent calls pin_message after response → pinned with push notification, message stays at top of chat).
+**Command path**: If the user sends a recognized bot command (`/new` or `/queue` with arguments) while the agent is busy, the channel defers it via `coordinator.enqueue_deferred()` instead of steering it into the active session. When the current turn completes, the channel drains the deferred queue — promoting each message into the message buffer and processing it through the coordinator pipeline one at a time. `/new` messages carry `force_new=True`, which causes the coordinator to skip boundary detection and force a fresh session transition. `/queue` messages go through normal boundary detection when processed. When the agent is idle, commands are processed immediately without going through the deferred queue. Bare commands (no arguments) are treated as normal messages and follow the steering path.
+
+**Decision points**: Authorization check (authorized → process, unauthorized → drop). Message type check (text → process text, supported media → download/describe/process, unsupported → drop). Empty check (empty text → drop). Command detection (recognized command with args → `/new` or `/queue` routing, bare or unrecognized → normal message). Busy/idle check (busy + command → deferred queue, busy + normal → steering, idle + `/new` → immediate fresh session, idle + `/queue` → immediate boundary detection, idle + normal → immediate processing). File size check (within 20 MB → download, too large → error message). Download result (success → describe and enqueue, failure → error message). Message length check (under limit → continue editing, approaching limit → split at paragraph boundary). Error type (recoverable → show error, continue; non-recoverable → show error, log). Push notification check (enabled and message was sent → copy+delete unless pinned, disabled or no message → no-op, copy fails → preserve original, pinned → skip copy+delete entirely, pin action delivered the notification). Pin decision (agent calls pin_message after response → pinned with push notification, message stays at top of chat).
 
 **Exit points**: Response complete (Result event received), recoverable error (error shown, conversation continues), non-recoverable error (error shown, failure logged), media file too large (error message sent, conversation continues), media download failed (error message sent, conversation continues), unauthorized (silently dropped), unsupported message type or empty text (silently dropped), pin success (message pinned, ID returned), pin error (no message, permission denied, or API failure).
 
