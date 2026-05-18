@@ -94,6 +94,15 @@ sequenceDiagram
             end
         end
         Git->>Git: git status --porcelain (verify)
+        alt still dirty
+            Git->>Agent: query(cleanup_prompt, model="haiku")
+            Agent->>FS: git add -A + git commit
+            Agent-->>Git: complete
+            Git->>Git: git status --porcelain (second verify)
+            alt still dirty after retry
+                Git-->>Git: log warning
+            end
+        end
     else workspace clean
         Git-->>Pipeline: no-op
     end
@@ -203,7 +212,11 @@ git/tools.py
    └─ PUSH_FAILED/REBASE_FAILED → log warning, continue (commits intact)
 6. Run: git status --porcelain (verification)
    ├─ empty → log debug "all changes committed"
-   └─ non-empty → log warning "uncommitted changes remain after git processor"
+   └─ non-empty → retry once with cleanup prompt
+       a. Spawn: query_and_consume(_COMMIT_RETRY_PROMPT, agent_defaults)
+       b. Run: git status --porcelain (second verification)
+          ├─ empty → log debug "cleanup succeeded"
+          └─ non-empty → log warning "uncommitted changes remain after retry"
 ```
 
 ## Key Decisions
@@ -256,7 +269,15 @@ git/tools.py
 - Pro: Push failure handling is in Python (structured logging, exception handling) rather than relying on agent behavior
 - Con: None significant
 
-### Git package with separate hook and processor modules
+### Single retry with cleanup prompt for missed files
+
+**Choice**: After the commit agent completes and changes are pushed, verify the working tree is clean. If not, retry once with a focused cleanup prompt (`_COMMIT_RETRY_PROMPT`) that instructs the agent to stage and commit all remaining files. If changes still remain after the retry, log a warning — no further retries.
+**Why**: The commit agent uses selective `git add <files>` per group and may occasionally miss files (e.g., new untracked files not caught by the grouping heuristic). The main prompt already includes verification instructions, but a single retry with a blunt "commit everything remaining" prompt catches the tail case without adding significant latency or cost.
+
+**Consequences**:
+- Pro: Catches files missed by selective grouping without changing the agent's core commit strategy
+- Pro: Bounded — at most one retry, keeping total agent cost predictable
+- Con: Extra agent call in the failure path (rare, uses cheap Haiku model)
 
 **Choice**: `src/tachikoma/git/` package with `hooks.py` and `processor.py`.
 **Why**: Separates bootstrap concerns from runtime concerns. Follows the `memory/` package pattern.

@@ -34,10 +34,11 @@ Automatic git version tracking for all workspace file changes. Every modificatio
 | R15 | PreToolUse deny hook on every non-git-processor agent surface that blocks destructive bash git commands: `git push`, `git reset`, `git checkout .`, `git restore .`, `git clean`, and mutating `git remote` subcommands |
 | R16 | The deny hook splits compound commands (`&&`, `||`, `|`, `;`) and checks each sub-command independently |
 | R17 | Read-only git commands (`status`, `log`, `diff`, `show`, `fetch`, `branch`, `remote -v`) and `git clone` pass through the deny hook unimpeded |
+| R18 | After the commit agent completes and changes are pushed, the processor verifies the working tree is clean; if uncommitted changes remain, it retries once with a focused cleanup prompt before logging a warning |
 
 ## Behaviors
 
-### Git Post-Processor (R1, R2, R3, R4, R9, R10, R11, R13)
+### Git Post-Processor (R1, R2, R3, R4, R9, R10, R11, R13, R18)
 
 After all main-phase processors complete (memory extraction writes files), the git post-processor checks for uncommitted changes and spawns a Haiku agent to create cohesive commits.
 
@@ -47,6 +48,8 @@ After all main-phase processors complete (memory extraction writes files), the g
 - Given all changes belong to a single subdirectory, when the agent analyzes the diff, then it creates a single commit with a descriptive message
 - Given no uncommitted changes exist, when the git post-processor runs, then it completes as a no-op without spawning an agent
 - Given the agent completes, when the post-processor verifies the workspace, then it logs a warning if uncommitted changes remain
+- Given uncommitted changes remain after the first commit pass, when the processor detects them, then it spawns a cleanup agent once with a focused retry prompt to commit remaining files
+- Given the cleanup agent completes, when the post-processor verifies again, then it logs a warning if changes still remain (no further retries)
 - Given the agent commits some groups but fails mid-way, then partial commits remain as valid history and uncommitted changes are picked up on the next run
 - Given the projects post-processor has committed and pushed submodule changes in the pre_finalize phase, when the git post-processor runs in the finalize phase, then the resulting submodule reference changes appear in `git status` and are included in the workspace commits alongside other workspace changes
 - Given an `origin` remote is configured and changes were committed, when the commit agent completes, then the post-processor pushes using divergence detection: fetches from origin, detects divergence, pushes directly if ahead, attempts naive rebase then agent-driven conflict resolution if diverged, and logs at info level on success
@@ -66,6 +69,7 @@ The Haiku agent inspects the workspace and creates well-organized commits using 
 - Given the agent is spawned, then for git it uses only `git status`, `git diff`, `git add`, and `git commit` — no destructive/history-rewriting commands. The commit agent is additionally allowed a curated set of read-only inspection commands (`ls`, `find`, `file`, `echo`, `date`, `cat`, `head`, `tail`, `wc`, `stat`) and navigation commands (`cd`, `pwd`) to help it understand workspace state before grouping commits; all other bash commands are denied by the `PreToolUse` gate hook. Compound commands (joined by `&&`, `||`, `|`, or `;`) are split and each sub-command is validated independently.
 - Given the agent creates commits, then each commit message is descriptive and reflects the content of the group
 - Given the agent creates commits, then it does not create or switch branches (linear history)
+- Given the commit prompt, then it instructs the agent to verify the working tree is clean after committing and to go back and commit any files left behind
 
 ### Git Repo Initialization (R5, R6, R8, R14, R15, R16)
 

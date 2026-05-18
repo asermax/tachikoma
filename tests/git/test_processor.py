@@ -13,6 +13,7 @@ from pytest_mock import MockerFixture
 
 from tachikoma.agent_defaults import AgentDefaults
 from tachikoma.git.processor import (
+    _COMMIT_RETRY_PROMPT,
     GIT_ALLOW,
     GIT_BASH_HOOK,
     GIT_COMMIT_PROMPT,
@@ -84,13 +85,13 @@ class TestGitProcessor:
         mock_query.assert_not_awaited()
 
     async def test_logs_warning_if_changes_remain(self, mocker: MockerFixture) -> None:
-        """AC: Processor runs post-agent git status check and logs warning if changes remain."""
+        """AC: Processor retries once when changes remain, logs warning if still dirty."""
         mock_status = mocker.patch(
             "tachikoma.git.processor.has_uncommitted_changes",
             new_callable=AsyncMock,
-            side_effect=[True, True],  # First call: dirty, second call: still dirty
+            side_effect=[True, True, True],  # dirty → still dirty → still dirty after retry
         )
-        mocker.patch(
+        mock_query = mocker.patch(
             "tachikoma.git.processor.query_and_consume",
             new_callable=AsyncMock,
         )
@@ -103,8 +104,18 @@ class TestGitProcessor:
         processor = GitProcessor(AgentDefaults(cwd=Path("/workspace")))
         await processor.process(_make_session())
 
-        # Should have called status twice (before and after agent)
-        assert mock_status.call_count == 2
+        # Two query calls: initial commit + retry
+        assert mock_query.await_count == 2
+        mock_query.assert_any_await(
+            _COMMIT_RETRY_PROMPT,
+            AgentDefaults(cwd=Path("/workspace")),
+            tools=GIT_TOOLS,
+            allow=GIT_ALLOW,
+            pre_tool_use_hooks=[GIT_BASH_HOOK],
+            model="haiku",
+        )
+        # Three status checks: initial, after first pass, after retry
+        assert mock_status.call_count == 3
 
     async def test_calls_smart_push_after_commit(self, mocker: MockerFixture) -> None:
         """AC: Processor calls smart_push after committing (replaces bare push)."""
@@ -191,6 +202,67 @@ class TestGitProcessor:
 
         mock_smart_push.assert_not_awaited()
 
+    async def test_retries_once_when_changes_remain_after_first_pass(
+        self,
+        mocker: MockerFixture,
+    ) -> None:
+        """AC: Processor spawns a cleanup agent once when changes remain after first pass."""
+        mocker.patch(
+            "tachikoma.git.processor.has_uncommitted_changes",
+            new_callable=AsyncMock,
+            side_effect=[True, True, False],  # dirty → still dirty → clean after retry
+        )
+        mock_query = mocker.patch(
+            "tachikoma.git.processor.query_and_consume",
+            new_callable=AsyncMock,
+        )
+        mocker.patch(
+            "tachikoma.git.processor.smart_push",
+            new_callable=AsyncMock,
+            return_value=PUSH_RESULT["PUSHED"],
+        )
+
+        processor = GitProcessor(AgentDefaults(cwd=Path("/workspace")))
+        await processor.process(_make_session())
+
+        # Two query calls: initial commit + retry
+        assert mock_query.await_count == 2
+        # Second call uses the cleanup prompt
+        mock_query.assert_any_await(
+            _COMMIT_RETRY_PROMPT,
+            AgentDefaults(cwd=Path("/workspace")),
+            tools=GIT_TOOLS,
+            allow=GIT_ALLOW,
+            pre_tool_use_hooks=[GIT_BASH_HOOK],
+            model="haiku",
+        )
+
+    async def test_no_retry_when_first_pass_commits_everything(
+        self,
+        mocker: MockerFixture,
+    ) -> None:
+        """AC: No retry when the first commit pass leaves the working tree clean."""
+        mocker.patch(
+            "tachikoma.git.processor.has_uncommitted_changes",
+            new_callable=AsyncMock,
+            side_effect=[True, False],  # dirty → clean after first pass
+        )
+        mock_query = mocker.patch(
+            "tachikoma.git.processor.query_and_consume",
+            new_callable=AsyncMock,
+        )
+        mocker.patch(
+            "tachikoma.git.processor.smart_push",
+            new_callable=AsyncMock,
+            return_value=PUSH_RESULT["PUSHED"],
+        )
+
+        processor = GitProcessor(AgentDefaults(cwd=Path("/workspace")))
+        await processor.process(_make_session())
+
+        # Only one query call — no retry needed
+        mock_query.assert_awaited_once()
+
 
 class TestQueryAndConsume:
     """Tests for query_and_consume helper."""
@@ -272,6 +344,19 @@ class TestGitCommitPrompt:
     def test_includes_all_changes(self) -> None:
         """AC: Prompt instructs to include all non-ignored changes."""
         assert "untracked" in GIT_COMMIT_PROMPT.lower()
+
+    def test_instructs_verification_step(self) -> None:
+        """AC: Prompt requires verifying clean working tree after committing."""
+        assert "git status" in GIT_COMMIT_PROMPT
+        assert "verify the working tree" in GIT_COMMIT_PROMPT
+        assert "is clean" in GIT_COMMIT_PROMPT
+        assert "No files may be left behind" in GIT_COMMIT_PROMPT
+
+    def test_commit_retry_prompt_exists(self) -> None:
+        """AC: Cleanup retry prompt is defined."""
+        assert _COMMIT_RETRY_PROMPT
+        assert "remaining" in _COMMIT_RETRY_PROMPT.lower()
+        assert "git status" in _COMMIT_RETRY_PROMPT
 
 
 class TestGitBashHook:

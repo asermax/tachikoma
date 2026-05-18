@@ -39,7 +39,11 @@ and create cohesive, well-organized commits for ALL changes.
    - Use `git commit -m "<descriptive message>"` with a message that describes
      what changed and why
 
-5. Commit message guidelines:
+5. After committing all groups, run `git status` again to verify the working tree
+   is clean. If any files remain uncommitted, you MUST stage and commit them too.
+   No files may be left behind.
+
+6. Commit message guidelines:
    - Be descriptive but concise
    - Mention the type of change (e.g., "Update episodic memories", "Add new user preference")
    - Include the date for time-based files (e.g., "Update episodic memories for 2026-03-13")
@@ -56,6 +60,8 @@ and create cohesive, well-organized commits for ALL changes.
 - Commit EVERYTHING that shows up in `git status`, including ephemeral runtime files
   (session data, logs, caches). Anything not in `.gitignore` should be committed.
   Do NOT skip files because they look temporary — if git tracks them, commit them.
+- After you finish, `git status` must show a clean working tree. If it does not,
+  you have missed files — go back and commit them.
 - If there are no changes, do nothing
 
 Remember: These commits provide version history for the workspace. Good commit
@@ -67,6 +73,23 @@ You can read and modify files anywhere in the workspace. For Bash, `git` \
 commands and read-only inspection commands (`ls`, `find`, `file`, `echo`, \
 `date`, `cat`, `grep`, `head`, `tail`, `wc`, `stat`) are allowed — other commands \
 will be denied. Navigation commands (`cd`, `pwd`) are also allowed."""
+
+_COMMIT_RETRY_PROMPT = """You are a git commit agent performing a final cleanup pass.
+
+The previous commit agent left some files uncommitted. Your job is to commit
+ALL remaining changes — nothing may be left behind.
+
+## Instructions
+
+1. Run `git status` to see what remains uncommitted.
+2. Stage ALL remaining files with `git add` for each file or path shown.
+3. Commit them with an appropriate message.
+4. Run `git status` again to verify the working tree is clean.
+
+## Constraints
+
+- For git, use only: `git status`, `git diff`, `git add`, `git commit`
+- If there are no changes, do nothing"""
 
 
 GIT_TOOLS = ["Read", "Glob", "Grep", "Bash", "Edit", "Write"]
@@ -138,9 +161,23 @@ class GitProcessor(PostProcessor):
                 result=result,
             )
 
-        # Verify all changes were committed
+        # Verify all changes were committed — retry once if not
         still_dirty = await has_uncommitted_changes(self._cwd)
         if still_dirty:
-            _log.warning("Uncommitted changes remain after git processor")
+            _log.warning(
+                "Uncommitted changes remain after first commit pass, retrying with cleanup prompt"
+            )
+            await query_and_consume(
+                _COMMIT_RETRY_PROMPT,
+                self._agent_defaults,
+                tools=GIT_TOOLS,
+                allow=GIT_ALLOW,
+                pre_tool_use_hooks=[GIT_BASH_HOOK],
+                model=self._agent_defaults.processor_model,
+            )
+
+            still_dirty = await has_uncommitted_changes(self._cwd)
+            if still_dirty:
+                _log.warning("Uncommitted changes remain after git processor retry")
 
         _log.info("Processor completed: processor=GitProcessor")
