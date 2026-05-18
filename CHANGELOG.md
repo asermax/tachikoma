@@ -2,6 +2,14 @@
 
 <!-- version list -->
 
+## v1.85.0 (2026-05-18)
+
+### Features
+
+- **scheduler**: Assign low priority to housekeeping jobs
+  ([`ad662da`](https://github.com/asermax/tachikoma/commit/ad662da8a9af95e08ac4c211df07b8130f1be804))
+
+
 ## v1.84.0 (2026-05-18)
 
 ### Documentation
