@@ -2,6 +2,19 @@
 
 <!-- version list -->
 
+## v1.86.0 (2026-05-18)
+
+### Features
+
+- **git**: Add single retry with cleanup prompt for uncommitted changes
+  ([`fca7ce1`](https://github.com/asermax/tachikoma/commit/fca7ce199b05ba7cc040a27174c096aa798bf675))
+
+### Refactoring
+
+- **git**: Extract _run_commit_agent to reduce duplication
+  ([`55f0661`](https://github.com/asermax/tachikoma/commit/55f06615d7e3f97782f725851dee76f9b8f80576))
+
+
 ## v1.85.0 (2026-05-18)
 
 ### Features
