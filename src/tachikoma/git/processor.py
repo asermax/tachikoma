@@ -119,6 +119,16 @@ class GitProcessor(PostProcessor):
         self._agent_defaults = agent_defaults
         self._cwd = agent_defaults.cwd
 
+    async def _run_commit_agent(self, prompt: str) -> None:
+        await query_and_consume(
+            prompt,
+            self._agent_defaults,
+            tools=GIT_TOOLS,
+            allow=GIT_ALLOW,
+            pre_tool_use_hooks=[GIT_BASH_HOOK],
+            model=self._agent_defaults.processor_model,
+        )
+
     async def process(self, session: Session, *, extra: dict | None = None) -> None:
         """Commit and push workspace changes if any exist.
 
@@ -128,25 +138,15 @@ class GitProcessor(PostProcessor):
         """
         _log.info("Processor started: processor=GitProcessor")
 
-        # Check if there are any uncommitted changes
         is_dirty = await has_uncommitted_changes(self._cwd)
-
         if not is_dirty:
             _log.debug("Workspace is clean, no commits needed")
             return
 
         _log.debug("Workspace has uncommitted changes, spawning commit agent")
 
-        # Spawn agent to handle commits
         prompt = GIT_COMMIT_PROMPT.replace("$WORKSPACE", str(self._cwd))
-        await query_and_consume(
-            prompt,
-            self._agent_defaults,
-            tools=GIT_TOOLS,
-            allow=GIT_ALLOW,
-            pre_tool_use_hooks=[GIT_BASH_HOOK],
-            model=self._agent_defaults.processor_model,
-        )
+        await self._run_commit_agent(prompt)
 
         # Push to remote with divergence detection
         result = await smart_push(self._cwd, "origin", "HEAD", self._agent_defaults)
@@ -161,20 +161,12 @@ class GitProcessor(PostProcessor):
                 result=result,
             )
 
-        # Verify all changes were committed — retry once if not
         still_dirty = await has_uncommitted_changes(self._cwd)
         if still_dirty:
             _log.warning(
                 "Uncommitted changes remain after first commit pass, retrying with cleanup prompt"
             )
-            await query_and_consume(
-                _COMMIT_RETRY_PROMPT,
-                self._agent_defaults,
-                tools=GIT_TOOLS,
-                allow=GIT_ALLOW,
-                pre_tool_use_hooks=[GIT_BASH_HOOK],
-                model=self._agent_defaults.processor_model,
-            )
+            await self._run_commit_agent(_COMMIT_RETRY_PROMPT)
 
             still_dirty = await has_uncommitted_changes(self._cwd)
             if still_dirty:
