@@ -2,6 +2,77 @@
 
 <!-- version list -->
 
+## v1.84.0 (2026-05-18)
+
+### Documentation
+
+- Reconcile DLT-152 boundary-aware message queueing into feature docs
+  ([`65aaa92`](https://github.com/asermax/tachikoma/commit/65aaa924c786bdbd7b61609bf30494a4a17c56fd))
+
+- **planning**: Add DLT-152 boundary-aware message queueing design
+  ([`e99dd75`](https://github.com/asermax/tachikoma/commit/e99dd75da45c6b4c57618a10b809d593a53a6a92))
+
+- **planning**: Add DLT-152 boundary-aware message queueing implementation plan
+  ([`bc189de`](https://github.com/asermax/tachikoma/commit/bc189de448996fa9d5099360c5b5ee607e57ee77))
+
+- **planning**: Add DLT-152 boundary-aware message queueing spec
+  ([`b33dab6`](https://github.com/asermax/tachikoma/commit/b33dab6ff268a064f80d6b0b79c17c28b43de721))
+
+- **planning**: Approve DLT-152 boundary-aware message queueing design
+  ([`4acc8bb`](https://github.com/asermax/tachikoma/commit/4acc8bbca39840b5d1b9e845f6385a6ba8930872))
+
+- **planning**: Mark DLT-152 batch 2 as done
+  ([`f3fced3`](https://github.com/asermax/tachikoma/commit/f3fced317dfa070c780a83bc123ff150dc9b4515))
+
+- **planning**: Mark DLT-152 boundary-aware message queueing as complete
+  ([`ff51b03`](https://github.com/asermax/tachikoma/commit/ff51b034ba3479e112f7dcfd959fbe741c769b17))
+
+- **planning**: Update DLT-152 status to approved plan
+  ([`e46c851`](https://github.com/asermax/tachikoma/commit/e46c8512bb3cd1595c2a1a900f6048fb68d939d2))
+
+- **planning**: Update DLT-152 status to design
+  ([`ddf6511`](https://github.com/asermax/tachikoma/commit/ddf6511db9a26f922535ee84c5e9047a9743a01a))
+
+- **planning**: Update DLT-152 status to implementation
+  ([`0d14084`](https://github.com/asermax/tachikoma/commit/0d140849474e4945526271e12055de1320a58a34))
+
+- **planning**: Update DLT-152 status to plan
+  ([`2fce159`](https://github.com/asermax/tachikoma/commit/2fce1593ea490e6ac07037fec8b30c4bc586a9eb))
+
+- **planning**: Update DLT-152 status to spec
+  ([`ab722de`](https://github.com/asermax/tachikoma/commit/ab722dedfdc43e76d14e9c3a421ef2f037dfffba))
+
+### Features
+
+- **coordinator**: Add deferred message queue and force_new routing
+  ([`4091c65`](https://github.com/asermax/tachikoma/commit/4091c658eafc51ce25fd9570252e3e2e10a88f68))
+
+- **telegram**: Add command detection, deferred routing, and drain loop
+  ([`3195107`](https://github.com/asermax/tachikoma/commit/3195107d9875383da814062d3636941301bcc55a))
+
+### Refactoring
+
+- **telegram**: Simplify command detection and deduplicate message construction
+  ([`0ba0eb1`](https://github.com/asermax/tachikoma/commit/0ba0eb12cdf4f1e043a8c57bff62dfb42ce5ee80))
+
+### Testing
+
+- Remove pytest-xdist workaround no longer needed
+  ([`441987f`](https://github.com/asermax/tachikoma/commit/441987f21428257a161de1cbe246f0f040e48890))
+
+- Run pytest with xdist to prevent OOM on memory-constrained VPS
+  ([`b1b3f7a`](https://github.com/asermax/tachikoma/commit/b1b3f7aeb852c320aaf1c89beb167a24983cd4a8))
+
+- **telegram**: Add tests for command detection, routing, and drain loop
+  ([`601b64b`](https://github.com/asermax/tachikoma/commit/601b64b3a2acdd63a14f253d5aa4be12b6644acf))
+
+- **telegram**: Fix infinite loop and unawaitable mocks in channel tests
+  ([`4e93132`](https://github.com/asermax/tachikoma/commit/4e931321682e1d7c0a1558bc1cdf10588c543aa6))
+
+- **telegram**: Initialize bot mock in channel test fixture
+  ([`dd253f3`](https://github.com/asermax/tachikoma/commit/dd253f3adad98237a7201bdfa727b2864e3614b0))
+
+
 ## v1.83.0 (2026-05-17)
 
 ### Documentation
