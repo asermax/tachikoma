@@ -310,6 +310,27 @@ class TaskRepository:
         except Exception as exc:
             raise TaskRepositoryError("Failed to list expired waiting instances") from exc
 
+    async def list_stuck_running_instances(self, timeout_seconds: int) -> list[TaskInstance]:
+        """Return running instances whose started_at is older than timeout_seconds.
+
+        NULL started_at (legacy rows) are excluded.
+        """
+        try:
+            threshold = datetime.now(UTC) - timedelta(seconds=timeout_seconds)
+            async with self._session_factory() as db:
+                result = await db.execute(
+                    select(TaskInstanceRecord)
+                    .where(TaskInstanceRecord.status == "running")
+                    .where(TaskInstanceRecord.started_at.is_not(None))
+                    .where(TaskInstanceRecord.started_at < threshold)
+                )
+                records = result.scalars().all()
+
+            return [r.to_domain() for r in records]
+
+        except Exception as exc:
+            raise TaskRepositoryError("Failed to list stuck running instances") from exc
+
     async def get_active_instance_for_definition(
         self,
         definition_id: str,

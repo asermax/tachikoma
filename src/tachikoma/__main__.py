@@ -80,6 +80,7 @@ from tachikoma.tasks.executor import (
     RUNNER_CHECK_INTERVAL_SECONDS,
     BackgroundTaskRunner,
     expired_waiter_sweep,
+    stuck_running_sweep,
 )
 from tachikoma.tasks.hooks import tasks_hook
 from tachikoma.tasks.scheduler import (
@@ -178,6 +179,11 @@ def build_scheduler_jobs(
             name="expired_waiter_sweep",
             trigger=IntervalTrigger(120),
             run=lambda: expired_waiter_sweep(task_repository, settings.tasks, bus),
+        ),
+        Job(
+            name="stuck_running_sweep",
+            trigger=IntervalTrigger(120),
+            run=lambda: stuck_running_sweep(task_repository, settings.tasks, bus),
         ),
         Job(
             name="one_shot_cleanup",

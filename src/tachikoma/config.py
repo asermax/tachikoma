@@ -233,6 +233,11 @@ class TaskSettings(BaseModel):
         default=7200,
         description="Seconds a task may wait for user input before failing",
     )
+    running_timeout: int = Field(
+        default=1800,
+        ge=60,
+        description="Seconds a running task may execute before being marked stuck",
+    )
     timezone: str = Field(
         default="",
         validate_default=True,

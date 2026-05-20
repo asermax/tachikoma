@@ -121,6 +121,50 @@ async def expired_waiter_sweep(
         )
 
 
+async def stuck_running_sweep(
+    repository: TaskRepository,
+    settings: TaskSettings,
+    bus: EventBus,
+) -> None:
+    """Fail running instances that have exceeded the running_timeout."""
+    stuck = await repository.list_stuck_running_instances(settings.running_timeout)
+
+    for instance in stuck:
+        reason = f"Task exceeded running timeout of {settings.running_timeout}s"
+
+        definition = (
+            await repository.get_definition(instance.definition_id)
+            if instance.definition_id
+            else None
+        )
+        source = (
+            f"Background task: {definition.name}"
+            if definition
+            else f"Background task: {instance.prompt[:100]}"
+        )
+
+        await repository.update_instance(
+            instance.id,
+            status="failed",
+            completed_at=datetime.now(UTC),
+            result=reason,
+        )
+        await dispatch_notification(
+            bus,
+            source,
+            f"Task failed: {reason}",
+            "error",
+            instance.id,
+            priority=Priority.URGENT,
+        )
+
+    if stuck:
+        _log.info(
+            "Failed {count} stuck running instances past timeout",
+            count=len(stuck),
+        )
+
+
 # Background task system prompt
 BACKGROUND_TASK_SYSTEM_PROMPT = """You are a background task agent. You are executing a scheduled task autonomously. Complete the task described below. Your work will be saved automatically.
 
