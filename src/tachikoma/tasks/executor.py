@@ -76,28 +76,32 @@ _log = logger.bind(component="task_executor")
 RUNNER_CHECK_INTERVAL_SECONDS = 30
 
 
-async def expired_waiter_sweep(
+async def _resolve_source(
     repository: TaskRepository,
-    settings: TaskSettings,
+    instance: TaskInstance,
+) -> str:
+    """Resolve the notification source for an instance."""
+    definition = (
+        await repository.get_definition(instance.definition_id) if instance.definition_id else None
+    )
+    return (
+        f"Background task: {definition.name}"
+        if definition
+        else f"Background task: {instance.prompt[:100]}"
+    )
+
+
+async def _fail_timed_out_instances(
+    instances: list[TaskInstance],
+    repository: TaskRepository,
     bus: EventBus,
+    *,
+    reason: str,
+    log_message: str,
 ) -> None:
-    """Fail waiting instances that have exceeded the wait_timeout."""
-    expired = await repository.list_expired_waiting_instances(settings.wait_timeout)
-
-    for instance in expired:
-        reason = f"Task timed out waiting for user input after {settings.wait_timeout}s"
-
-        # Resolve notification source
-        definition = (
-            await repository.get_definition(instance.definition_id)
-            if instance.definition_id
-            else None
-        )
-        source = (
-            f"Background task: {definition.name}"
-            if definition
-            else f"Background task: {instance.prompt[:100]}"
-        )
+    """Fail instances and dispatch notifications for a sweep."""
+    for instance in instances:
+        source = await _resolve_source(repository, instance)
 
         await repository.update_instance(
             instance.id,
@@ -114,11 +118,24 @@ async def expired_waiter_sweep(
             priority=Priority.URGENT,
         )
 
-    if expired:
-        _log.info(
-            "Expired {count} waiting instances past timeout",
-            count=len(expired),
-        )
+    if instances:
+        _log.info(log_message, count=len(instances))
+
+
+async def expired_waiter_sweep(
+    repository: TaskRepository,
+    settings: TaskSettings,
+    bus: EventBus,
+) -> None:
+    """Fail waiting instances that have exceeded the wait_timeout."""
+    expired = await repository.list_expired_waiting_instances(settings.wait_timeout)
+    await _fail_timed_out_instances(
+        expired,
+        repository,
+        bus,
+        reason=f"Task timed out waiting for user input after {settings.wait_timeout}s",
+        log_message="Expired {count} waiting instances past timeout",
+    )
 
 
 async def stuck_running_sweep(
@@ -128,41 +145,13 @@ async def stuck_running_sweep(
 ) -> None:
     """Fail running instances that have exceeded the running_timeout."""
     stuck = await repository.list_stuck_running_instances(settings.running_timeout)
-
-    for instance in stuck:
-        reason = f"Task exceeded running timeout of {settings.running_timeout}s"
-
-        definition = (
-            await repository.get_definition(instance.definition_id)
-            if instance.definition_id
-            else None
-        )
-        source = (
-            f"Background task: {definition.name}"
-            if definition
-            else f"Background task: {instance.prompt[:100]}"
-        )
-
-        await repository.update_instance(
-            instance.id,
-            status="failed",
-            completed_at=datetime.now(UTC),
-            result=reason,
-        )
-        await dispatch_notification(
-            bus,
-            source,
-            f"Task failed: {reason}",
-            "error",
-            instance.id,
-            priority=Priority.URGENT,
-        )
-
-    if stuck:
-        _log.info(
-            "Failed {count} stuck running instances past timeout",
-            count=len(stuck),
-        )
+    await _fail_timed_out_instances(
+        stuck,
+        repository,
+        bus,
+        reason=f"Task exceeded running timeout of {settings.running_timeout}s",
+        log_message="Failed {count} stuck running instances past timeout",
+    )
 
 
 # Background task system prompt
