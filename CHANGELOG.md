@@ -2,6 +2,24 @@
 
 <!-- version list -->
 
+## v1.87.0 (2026-05-20)
+
+### Features
+
+- **tasks**: Add stuck running sweep for timed-out tasks
+  ([`6bdfa72`](https://github.com/asermax/tachikoma/commit/6bdfa7214279b32e5a42df5045c6fd7e078ab224))
+
+### Refactoring
+
+- **tasks**: Extract shared sweep helpers to reduce duplication
+  ([`b62fa98`](https://github.com/asermax/tachikoma/commit/b62fa9800caa25aaabb9cbebba3c97334bd282af))
+
+### Testing
+
+- **tasks**: Add tests for stuck running sweep
+  ([`81a829f`](https://github.com/asermax/tachikoma/commit/81a829faef34f1eac0be64a368be8500adf4ec2d))
+
+
 ## v1.86.0 (2026-05-18)
 
 ### Features
