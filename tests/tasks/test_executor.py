@@ -24,11 +24,12 @@ from tachikoma.tasks.executor import (
     BackgroundTaskRunner,
     _PreprocessingResult,
     expired_waiter_sweep,
+    stuck_running_sweep,
 )
 from tachikoma.tasks.model import ScheduleConfig, TaskDefinition
 from tachikoma.tasks.repository import TaskRepository
 
-from .conftest import _make_instance, _utcnow
+from .conftest import _make_definition, _make_instance, _utcnow
 
 
 def _mock_skill_registry() -> MagicMock:
@@ -1218,3 +1219,102 @@ class TestPinnedSkillsExecution:
                     await executor.execute(instance)
 
         assert captured_skills["skills"] == ()
+
+
+class TestStuckRunningSweep:
+    """Tests for the stuck running sweep."""
+
+    @pytest.mark.asyncio
+    async def test_fails_stuck_running_instance(self, repo: TaskRepository) -> None:
+        """AC1: Running instance older than timeout is marked failed."""
+        old_started = _utcnow() - timedelta(seconds=1900)
+        await repo.create_instance(
+            _make_instance(
+                "stuck-1",
+                task_type="background",
+                status="running",
+                started_at=old_started,
+            )
+        )
+
+        settings = TaskSettings(running_timeout=1800)
+        bus = EventBus()
+
+        bus.dispatch = AsyncMock()
+
+        await stuck_running_sweep(repo, settings, bus)
+
+        updated = await repo.get_instance("stuck-1")
+        assert updated is not None
+        assert updated.status == "failed"
+        assert "running timeout" in (updated.result or "").lower()
+
+    @pytest.mark.asyncio
+    async def test_ignores_recent_running_instance(self, repo: TaskRepository) -> None:
+        """AC4: Recent running instance is not swept."""
+        recent_started = _utcnow() - timedelta(seconds=100)
+        await repo.create_instance(
+            _make_instance(
+                "recent-1",
+                task_type="background",
+                status="running",
+                started_at=recent_started,
+            )
+        )
+
+        settings = TaskSettings(running_timeout=1800)
+        bus = EventBus()
+        bus.dispatch = AsyncMock()
+
+        await stuck_running_sweep(repo, settings, bus)
+
+        updated = await repo.get_instance("recent-1")
+        assert updated is not None
+        assert updated.status == "running"
+
+    @pytest.mark.asyncio
+    async def test_dispatches_urgent_notification(self, repo: TaskRepository) -> None:
+        """AC2: Swept instance dispatches urgent error notification."""
+        definition = _make_definition(definition_id="def-stuck", name="Stuck Task")
+        await repo.create_definition(definition)
+
+        old_started = _utcnow() - timedelta(seconds=1900)
+        await repo.create_instance(
+            _make_instance(
+                "stuck-2",
+                definition_id="def-stuck",
+                task_type="background",
+                status="running",
+                started_at=old_started,
+            )
+        )
+
+        settings = TaskSettings(running_timeout=1800)
+        bus = EventBus()
+
+        dispatched_events = []
+
+        async def capture_dispatch(event):
+            dispatched_events.append(event)
+
+        bus.dispatch = AsyncMock(side_effect=capture_dispatch)
+
+        await stuck_running_sweep(repo, settings, bus)
+
+        assert len(dispatched_events) == 1
+        notif = dispatched_events[0]
+        assert isinstance(notif, Notification)
+        assert notif.severity == "error"
+        assert notif.source_id == "stuck-2"
+        assert "Stuck Task" in notif.prompt
+
+    @pytest.mark.asyncio
+    async def test_noop_when_no_stuck_instances(self, repo: TaskRepository) -> None:
+        """AC4: No DB writes or notifications when no stuck instances."""
+        settings = TaskSettings(running_timeout=1800)
+        bus = EventBus()
+        bus.dispatch = AsyncMock()
+
+        await stuck_running_sweep(repo, settings, bus)
+
+        bus.dispatch.assert_not_called()
