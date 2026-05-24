@@ -253,7 +253,7 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 **Description**: When the process stops during session post-processing — whether from a crash, signal, or unhandled error — the work done by completed processors is preserved but remaining processors never run, leaving memory extraction, context updates, or git commits incomplete. This delta adds checkpoint tracking to the post-processing pipeline: each processor's completion is recorded as it finishes, and on startup the recovery hook detects sessions with incomplete post-processing and resumes from the last checkpoint, running only the processors that haven't completed yet. This prevents both data loss (skipped processors) and duplication (re-running completed ones).
 
 ### DLT-067: Telegram inline button support
-**Status**: ✓ Plan
+**Status**: ⧗ Implementation
 **Depends on**: None
 **Priority**: 2 (High)
 **Complexity**: Medium
