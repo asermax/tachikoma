@@ -27,7 +27,7 @@ from tachikoma.boundary import BoundaryResult
 from tachikoma.buffer.events import CoordinatorIdle
 from tachikoma.coordinator import Coordinator, _derive_transcript_path, _message_source
 from tachikoma.events import Error, Result, Status, TextChunk, ToolActivity
-from tachikoma.message import MessageEnvelope, TextMessage
+from tachikoma.message import ButtonTapMessage, MessageEnvelope, TextMessage
 from tachikoma.pre_processing import ContextResult
 from tachikoma.sessions.errors import SessionRepositoryError
 from tachikoma.sessions.model import Session, SessionContextEntry
@@ -4659,3 +4659,124 @@ class TestRequeueLoop:
         assert buffer_states[1] is True
         assert buffer_states[2] is False
         assert not coord.has_pending_messages
+
+
+class TestCoordinatorPreProcessingGating:
+    """Pre-processing pipelines are gated on msg.runs_pre_processing."""
+
+    async def _send_envelope(self, coord, envelope):
+        """Enqueue an envelope and collect all events from send_message()."""
+        coord.enqueue(envelope)
+        return [e async for e in coord.send_message()]
+
+    async def test_session_gated_pipeline_skipped_for_button_tap(
+        self,
+        mock_sdk,
+    ) -> None:
+        """ButtonTapMessage skips session-gated pre-processing on first message."""
+        client, _ = mock_sdk
+        client.receive_response.return_value = _mock_messages(
+            make_assistant([TextBlock(text="Got it")]),
+            make_result(),
+        )
+
+        pre_pipeline = _make_mock_pre_pipeline()
+        registry = _make_mock_registry(active_session=None)
+
+        async with Coordinator(registry=registry, pre_pipeline=pre_pipeline) as coord:
+            await self._send_envelope(coord, ButtonTapMessage("approve"))
+
+        pre_pipeline.run.assert_not_awaited()
+
+    async def test_per_message_pipeline_skipped_for_button_tap(
+        self,
+        mock_sdk,
+    ) -> None:
+        """ButtonTapMessage skips per-message pre-processing."""
+        client, _ = mock_sdk
+        client.receive_response.return_value = _mock_messages(
+            make_assistant([TextBlock(text="Done")]),
+            make_result(),
+        )
+
+        msg_pre_pipeline = MagicMock()
+        msg_pre_pipeline.run = AsyncMock(return_value=[])
+
+        active = Session(id="existing", started_at=datetime.now(UTC))
+        registry = _make_mock_registry()
+        registry.get_active_session.side_effect = [None, active, active]
+        registry.load_context_entries = AsyncMock(return_value=[])
+
+        async with Coordinator(
+            registry=registry, msg_pre_pipeline=msg_pre_pipeline
+        ) as coord:
+            await self._send_envelope(coord, ButtonTapMessage("yes"))
+
+        msg_pre_pipeline.run.assert_not_awaited()
+
+    async def test_both_pipelines_run_for_text_message(
+        self,
+        mock_sdk,
+    ) -> None:
+        """Regression: TextMessage still triggers both pre-processing pipelines."""
+        client, _ = mock_sdk
+        client.receive_response.return_value = _mock_messages(
+            make_assistant([TextBlock(text="hi")]),
+            make_result(),
+        )
+
+        pre_pipeline = _make_mock_pre_pipeline()
+        pre_pipeline.run.return_value = [ContextResult(tag="test", content="ctx")]
+
+        msg_pre_pipeline = MagicMock()
+        msg_pre_pipeline.run = AsyncMock(return_value=[])
+
+        registry = _make_mock_registry(active_session=None)
+        registry.load_context_entries = AsyncMock(return_value=[])
+
+        async with Coordinator(
+            registry=registry,
+            pre_pipeline=pre_pipeline,
+            msg_pre_pipeline=msg_pre_pipeline,
+        ) as coord:
+            await self._send_envelope(coord, TextMessage("hello"))
+
+        pre_pipeline.run.assert_awaited_once()
+        msg_pre_pipeline.run.assert_awaited_once()
+
+    async def test_boundary_detection_runs_for_button_tap(
+        self,
+        mock_sdk,
+        mocker,
+    ) -> None:
+        """Boundary detection runs unconditionally even for ButtonTapMessage."""
+        client, _ = mock_sdk
+        client.receive_response.return_value = _mock_messages(
+            make_assistant([TextBlock(text="ok")]),
+            make_result(),
+        )
+
+        active = Session(
+            id="existing",
+            started_at=datetime.now(UTC),
+            summary="Previous conversation about X",
+        )
+        registry = _make_mock_registry()
+        registry.get_active_session.side_effect = [active, active, active]
+        registry.load_context_entries = AsyncMock(return_value=[])
+
+        mock_boundary = mocker.patch(
+            "tachikoma.coordinator.detect_boundary",
+            return_value=BoundaryResult(continues=True),
+        )
+
+        async with Coordinator(
+            registry=registry,
+            agent_defaults=AgentDefaults(cwd=Path("/tmp")),
+        ) as coord:
+            await self._send_envelope(coord, ButtonTapMessage("yes"))
+
+        mock_boundary.assert_awaited_once()
+        call_msg_text = mock_boundary.await_args.args[0]
+        assert "`yes`" in call_msg_text
+        assert "tapped" in call_msg_text

@@ -562,7 +562,7 @@ class Coordinator:
                 await self._registry.save_context_entries(active.id, entries)
 
             # Run session-gated pre-processing pipeline on first message of new session
-            if is_new_session and self._pre_pipeline is not None:
+            if is_new_session and self._pre_pipeline is not None and msg.runs_pre_processing:
                 try:
                     pre_task = asyncio.create_task(
                         self._pre_pipeline.run(msg.sdk_input, on_status=on_status)
@@ -605,7 +605,11 @@ class Coordinator:
                         err=str(exc),
                     )
 
-            if self._msg_pre_pipeline is not None and active is not None:
+            if (
+                self._msg_pre_pipeline is not None
+                and active is not None
+                and msg.runs_pre_processing
+            ):
                 try:
                     msg_pre_task = asyncio.create_task(
                         self._msg_pre_pipeline.run(
