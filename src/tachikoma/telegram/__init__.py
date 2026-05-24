@@ -45,6 +45,7 @@ from tachikoma.media import (
     resolve_media,
 )
 from tachikoma.message import TextMessage
+from tachikoma.telegram.buttons import create_buttons_server
 from tachikoma.telegram.pinning import create_pinning_server
 from tachikoma.telegram.tools import create_send_file_server
 from tachikoma.updates.events import RestartRequested
@@ -617,7 +618,16 @@ class TelegramChannel(Channel):
             get_msg_id,
         )
         self._is_pinned = is_pinned
-        return {"send-file": server, "telegram-pinning": pinning_server}
+
+        buttons_server = create_buttons_server(
+            self._bot,
+            self._settings.authorized_chat_id,
+        )
+        return {
+            "send-file": server,
+            "telegram-pinning": pinning_server,
+            "telegram-buttons": buttons_server,
+        }
 
     def get_skill_sources(self) -> list[Path]:
         return [Path(__file__).parent / "skill"]
