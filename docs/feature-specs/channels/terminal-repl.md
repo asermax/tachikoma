@@ -60,7 +60,7 @@ The REPL accepts multiline input using prompt_toolkit with custom key bindings t
 
 ### Event Bus Integration (R5)
 
-The REPL subscribes to `BufferedDelivery` events dispatched by the priority buffer. Each delivery carries a ready-to-send prompt (single item or shutdown digest) which the REPL routes through the coordinator as a new message turn. The REPL does not subscribe to `Notification` or session-task events directly — the priority buffer handles enqueueing, ordering, and idle gating (see [delivery/priority-buffer](../delivery/priority-buffer.md)).
+The REPL subscribes to `BufferedDelivery` events dispatched by the priority buffer. Each delivery carries a ready-to-send prompt (single item or shutdown digest) which the REPL wraps in a `TextMessage` envelope (per [core-architecture](../agent/core-architecture.md) R21) and routes through the coordinator as a new message turn. The REPL does not subscribe to `Notification` or session-task events directly — the priority buffer handles enqueueing, ordering, and idle gating (see [delivery/priority-buffer](../delivery/priority-buffer.md)).
 
 **Acceptance Criteria**:
 - Given a `BufferedDelivery` event arrives while the REPL is waiting for input, then the REPL routes the event's prompt through `coordinator.send_message()` as a new message turn, renders the response normally, and fires the per-item `on_delivered` callbacks on completion

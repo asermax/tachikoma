@@ -44,7 +44,7 @@ Background-originated items — task notifications from the executor and ready s
 All buffered items reach the user as standalone conversation turns through the coordinator, never as steering messages appended to an in-flight exchange.
 
 **Acceptance Criteria**:
-- Given an item is buffered, when delivery conditions are met, then the buffer dispatches a `BufferedDelivery` event that the active channel routes through `coordinator.send_message()` as a new turn
+- Given an item is buffered, when delivery conditions are met, then the buffer dispatches a `BufferedDelivery` event that the active channel wraps in a `TextMessage` envelope (per [core-architecture](../agent/core-architecture.md) R21) and routes through `coordinator.send_message()` as a new turn
 - Given the coordinator is mid-response when the buffer determines an item is ready, then delivery waits for the next busy→idle transition before dispatching
 
 ### Unified Buffer (R1, R9)

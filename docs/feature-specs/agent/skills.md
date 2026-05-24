@@ -4,7 +4,7 @@
 
 ## Overview
 
-The skill system provides a structured way to organize, detect, and delegate specialized sub-agents. Skills are directory-based packages containing YAML-formatted agent definitions. A skill registry discovers all skills at startup, with on-demand refresh when marked dirty by a filesystem watcher. On each message, a skills context provider classifies which skills are relevant to the user's message, considering only skills not already in context. Skills can also be pinned — loaded unconditionally from the `IncomingMessage` envelope's `pinned_skills` field before classification runs, ensuring the agent always has specific domain knowledge. Skills can declare dependencies on other skills; when a skill is selected, the registry resolves its transitive dependency chain so that required foundations are injected alongside it. Newly detected skills (and their resolved dependencies) are appended as separate context entries with metadata identifying the skill name. Agents are derived from loaded skill entries and the skill registry on each message. Skills accumulate within a session — existing skills are never removed.
+The skill system provides a structured way to organize, detect, and delegate specialized sub-agents. Skills are directory-based packages containing YAML-formatted agent definitions. A skill registry discovers all skills at startup, with on-demand refresh when marked dirty by a filesystem watcher. On each message, a skills context provider classifies which skills are relevant to the user's message, considering only skills not already in context. Skills can also be pinned — loaded unconditionally from the message envelope's `pinned_skills` hook before classification runs, ensuring the agent always has specific domain knowledge. Skills can declare dependencies on other skills; when a skill is selected, the registry resolves its transitive dependency chain so that required foundations are injected alongside it. Newly detected skills (and their resolved dependencies) are appended as separate context entries with metadata identifying the skill name. Agents are derived from loaded skill entries and the skill registry on each message. Skills accumulate within a session — existing skills are never removed.
 
 Skills can come from three sources: built-in (shipped with the package), workspace (user-authored in `workspace/skills/`), and plugin-installed (third-party plugins under `workspace/.tachikoma/plugins/<alias>/`). Plugin skills are registered under namespaced names of the form `<alias>:<skill-name>`, isolated from built-in, workspace, and other plugin skills.
 
@@ -52,7 +52,7 @@ Skills can come from three sources: built-in (shipped with the package), workspa
 | R30 | Skill registry discovers workflow definitions alongside skills and exposes them for lookup |
 | R31 | Built-in `workflow-authoring-guide` skill ships with the package |
 | R32 | Skills can declare direct dependencies via a `depends_on` frontmatter list; the registry exposes a resolver that returns the transitive chain (deps-first, anchor-last, cycle-tolerant, unknown-dep-tolerant, memoized with invalidation on refresh/add_source); the context provider expands each classification-detected skill through the resolver and emits resolved deps as additional context entries, deduped against skills already loaded in the session. For plugin skills, dependency resolution uses explicit-prefix rules: bare `dep` resolves in default namespace (built-in + workspace), `:dep` (leading colon) resolves in the skill's own plugin namespace, `<other>:dep` resolves in the named plugin namespace |
-| R33 | Pinned skills — skills listed in the `IncomingMessage.pinned_skills` field are resolved (including transitive dependencies) and injected unconditionally before LLM-based classification runs, ensuring the agent always has specific domain knowledge regardless of classifier accuracy for terse prompts. Plugin skills are pinned using their qualified form (`<alias>:<skill-name>`) |
+| R33 | Pinned skills — skills listed in the message envelope's `pinned_skills` hook are resolved (including transitive dependencies) and injected unconditionally before LLM-based classification runs, ensuring the agent always has specific domain knowledge regardless of classifier accuracy for terse prompts. Plugin skills are pinned using their qualified form (`<alias>:<skill-name>`) |
 
 ## Behaviors
 
@@ -154,7 +154,7 @@ A filesystem watcher monitors `workspace/skills/` for changes and marks the regi
 
 ### Skill Detection (R9, R12, R13, R25, R26, R28)
 
-On each message, the skills context provider classifies which skills are relevant to the user's message, considering only skills not already in context. Classification uses the same unified process for both initial and subsequent evaluations. The provider reads `message.text` for classification and `message.pinned_skills` for pinned skill resolution.
+On each message, the skills context provider classifies which skills are relevant to the user's message, considering only skills not already in context. Classification uses the same unified process for both initial and subsequent evaluations. The provider reads `message.sdk_input` for classification and `message.pinned_skills` for pinned skill resolution — both hooks live on the `MessageEnvelope` base.
 
 **Acceptance Criteria**:
 - Given skills exist in the registry and an active session has skills A and B loaded, when a message relevant to skill C arrives, then skill C is classified, loaded, and appended to context
@@ -216,7 +216,7 @@ Detection failures are handled gracefully without blocking the message.
 
 ### Pinned Skills (R33)
 
-When the `IncomingMessage` envelope carries pinned skill names, the provider resolves and injects them unconditionally before the classification step. Pinned skills ensure the agent always has specific domain knowledge, even when the LLM classifier might not select the right skills for a terse task prompt.
+When the message envelope's `pinned_skills` hook carries skill names, the provider resolves and injects them unconditionally before the classification step. Pinned skills ensure the agent always has specific domain knowledge, even when the LLM classifier might not select the right skills for a terse task prompt.
 
 **Acceptance Criteria**:
 - Given `message.pinned_skills` contains skill names, when the provider runs, then each pinned skill is resolved through the registry's transitive dependency resolver and injected as context entries before classification runs

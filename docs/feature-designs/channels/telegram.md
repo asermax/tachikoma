@@ -89,12 +89,13 @@ The key components:
 | Layer/Component | Responsibility | Key Decisions |
 |-----------------|----------------|---------------|
 | `src/tachikoma/__main__.py` | Cyclopts `App` entry point: `run()` subcommand with `--channel` flag (also the default for bare invocation); creates `SettingsManager`, applies CLI overrides, runs bootstrap, dispatches to channel. Registers `media_hook` in bootstrap sequence (after `tasks`, before `telegram`) | Replaces bare `asyncio.run(main())` with cyclopts; `cli()` wrapper as `[project.scripts]` entry point; integrates with SettingsManager + Bootstrap |
-| `src/tachikoma/telegram/__init__.py` | `TelegramChannel` class + `ResponseRenderer` class + `telegram_hook` function. Subscribes to `BufferedDelivery` events via `bus.on()` in `run()` (deferred until the coordinator is set). Shared `_process_through_coordinator()` method handles both user messages and buffered deliveries. `_handle_buffered_delivery()` spawns a detached `asyncio.Task` for the delivery work and returns immediately so the EventBus is freed (see DES-009). The `_deliver()` task acquires the delivery lock, routes `event.prompt` through the coordinator, fires per-item `on_delivered` callbacks, and calls `resolve_shutdown()` in a `finally` block for shutdown digests. `_handle_media` catch-all handler delegates to `media.py` functions for descriptor resolution, download, and description building. Channel-specific formatter maps (`TELEGRAM_TOOL_DISPLAY`, `TELEGRAM_TOOL_SUMMARY`) with `code_wrap()` utility for inline code wrapping of dynamic tool arguments (file paths, patterns, commands — but not Bash descriptions, which are plain text). `_send_shutdown_status()` manages a dedicated shutdown progress message (send on first call, edit on subsequent) using the same pattern as `ResponseRenderer.handle_status()`. In `run()`, sets `coordinator.shutdown_status_callback` to `_send_shutdown_status` so the coordinator emits bookend messages ("Shutting down..." / "Shutdown complete") and the pipeline emits per-processor status during shutdown post-processing. `_detect_command()` inspects `bot_command` entities for `/new` and `/queue` command detection; `_handle_message()` routes commands to deferred queue (when busy) or immediate processing (when idle); `_drain_deferred_queue()` processes deferred messages sequentially after each delivery cycle. Registers commands via `bot.set_my_commands()` in `run()` | High cohesion between channel control flow and response rendering; only `BufferedDelivery` is observed — session tasks and notifications are enqueued into the priority buffer by their producers (see [delivery/priority-buffer](../delivery/priority-buffer.md)); shutdown progress follows existing status callback pattern from pre-processing; command detection uses Telegram-native entities (not string matching) |
+| `src/tachikoma/telegram/__init__.py` | `TelegramChannel` class + `ResponseRenderer` class + `telegram_hook` function. Subscribes to `BufferedDelivery` events via `bus.on()` in `run()` (deferred until the coordinator is set). Shared `_process_through_coordinator()` method handles both user messages and buffered deliveries. `_handle_buffered_delivery()` spawns a detached `asyncio.Task` for the delivery work and returns immediately so the EventBus is freed (see DES-009). The `_deliver()` task acquires the delivery lock, wraps `event.prompt` in a `TextMessage` envelope, routes it through the coordinator, fires per-item `on_delivered` callbacks, and calls `resolve_shutdown()` in a `finally` block for shutdown digests. `_handle_media` catch-all handler delegates to `media.py` functions for descriptor resolution, download, and description building. Channel-specific formatter maps (`TELEGRAM_TOOL_DISPLAY`, `TELEGRAM_TOOL_SUMMARY`) with `code_wrap()` utility for inline code wrapping of dynamic tool arguments (file paths, patterns, commands — but not Bash descriptions, which are plain text). `_send_shutdown_status()` manages a dedicated shutdown progress message (send on first call, edit on subsequent) using the same pattern as `ResponseRenderer.handle_status()`. In `run()`, sets `coordinator.shutdown_status_callback` to `_send_shutdown_status` so the coordinator emits bookend messages ("Shutting down..." / "Shutdown complete") and the pipeline emits per-processor status during shutdown post-processing. `_detect_command()` inspects `bot_command` entities for `/new` and `/queue` command detection; `_handle_message()` routes commands to deferred queue (when busy) or immediate processing (when idle); `_drain_deferred_queue()` processes deferred messages sequentially after each delivery cycle. Registers commands via `bot.set_my_commands()` in `run()`. **Inline button taps**: registers an aiogram `@router.callback_query(F.data.startswith("btn"))` handler `_handle_callback_query` alongside the existing message and media handlers. The handler runs `answer()` first (so the spinner always clears), checks `callback.from_user.id` against the configured authorized user, schedules `_remove_keyboard()` as a detached task on `_delivery_tasks` when `single_use=True`, unpacks the callback data via `_unpack()` from `buttons.py`, constructs a `ButtonTapMessage(value=…)` envelope, and routes via the same `_delivery_lock.locked()` busy/idle branching as `_handle_message`/`_handle_media`. `_remove_keyboard()` calls `bot.edit_message_reply_markup(reply_markup=None)` and swallows `TelegramBadRequest("message is not modified")` as a no-op (consistent with `_flush`/`_send_chunks`). All producer sites in this module construct `TextMessage` envelopes at the coordinator boundary (text path, media path, command paths, buffered-delivery path) | High cohesion between channel control flow and response rendering; only `BufferedDelivery` is observed — session tasks and notifications are enqueued into the priority buffer by their producers (see [delivery/priority-buffer](../delivery/priority-buffer.md)); shutdown progress follows existing status callback pattern from pre-processing; command detection uses Telegram-native entities (not string matching); tap acknowledgement runs before the auth check (otherwise unauthorized users would stare at a stuck spinner); keyboard removal is detached so a slow/failing edit cannot delay envelope routing |
 | `src/tachikoma/media.py` | Media descriptor table (`MEDIA_DESCRIPTORS`), `resolve_media()`, `download_media()`, `build_description()`, `generate_media_filename()`, `MediaTooLargeError`, `media_hook` bootstrap function. Constants: `MEDIA_TEMP_DIR`, `TELEGRAM_MAX_FILE_SIZE`, `MEDIA_CLEANUP_DAYS` | High cohesion between all media-related logic; bootstrap hook follows DES-003; descriptor table driven by ordered sequence for priority resolution |
 | `src/tachikoma/coordinator.py` | Existing + `enqueue()` method, `_message_buffer` queue, `has_pending_messages` property, `_message_source()` async generator passed to `client.connect()`, `shutdown_status_callback` attribute set by channels before polling starts to receive progress updates during shutdown post-processing. Deferred queue: `_deferred_queue`, `enqueue_deferred()`, `has_deferred`, `promote_next_deferred()` for messages that should wait until the current turn completes. `force_new` routing in `send_message()` skips boundary detection and triggers fresh session transition | Message buffer replaces steer/pending-steers pattern; shutdown callback follows same StatusCallback pattern as pre-processing; deferred queue is coordinator-level (generic infrastructure) while drain loop is channel-level (delivery timing) |
 | `src/tachikoma/config.py` | `TelegramSettings` model added to `Settings` | Extends existing config; optional section (`None` when not configured) |
 | `src/tachikoma/display.py` | `TOOL_DISPLAY` map for live tool status formatting (present-progressive, Bash prefers description over command); `TOOL_SUMMARY` map and `summarize_tool_activity()` for post-hoc tool activity summaries (present-progressive matching active style, chronological ordering so the summary reads naturally top-to-bottom; when the display limit is exceeded, oldest entries are dropped preserving the most recent context); `summarize_tool_activity()` accepts optional `summary_map` parameter for channel-specific formatters; `format_tool_name()` for formatting MCP tool names into human-readable labels in fallback paths | Shared base formatters used directly by REPL; Telegram uses channel-specific formatter maps via `summary_map` parameter |
 | `src/tachikoma/telegram/pinning.py` | Pin/unpin MCP tool handlers + factory. Follows DES-006: `handle_pin_message()` and `handle_unpin_message()` extracted handlers, `UnpinMessageArgs` Pydantic model, `create_pinning_server()` factory. Pins use `disable_notification=False` so the pin action delivers the push notification. Factory returns `(McpSdkServerConfig, is_pinned_checker)` — the checker tests message IDs against a closure-captured `pinned_ids` set, enabling `notify()` to skip copy+delete for pinned messages. | Separate module from tools.py (unrelated concerns); getter captured as `Callable[[], int \| None]` to decouple from ResponseRenderer |
+| `src/tachikoma/telegram/buttons.py` | `present_buttons` MCP tool handler + factory. Follows DES-006: `handle_present_buttons()` extracted handler, `PresentButtonsArgs` Pydantic model with `prompt: str`, `buttons: str` (JSON-encoded list-of-lists per DES-006 array-arg pattern), `single_use: bool = True`; module-level `_decode_buttons()` parses and validates the JSON string, `_pack(value, single_use)` and `_unpack(data)` own the `callback_data` wire format (`"btn1:<value>"` single-use, `"btnN:<value>"` multi-use). `create_buttons_server(bot, chat_id)` factory returns the `McpSdkServerConfig`. Handler builds raw `InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text=label, callback_data=_pack(value, single_use)) …]])`, calls `bot.send_message(chat_id, prompt, reply_markup=markup)`, returns the sent message ID on success or `{is_error: True, …}` on validation/API failure. Per-button `value` is capped at 58 UTF-8 bytes (Telegram's 64-byte `callback_data` limit minus the 5-byte prefix). | Separate module — buttons are an unrelated concern, same pattern as `pinning.py`; `_pack`/`_unpack` are imported by the channel's callback handler (single source of truth for the wire format); single-use bit encoded into `callback_data` itself so semantics survive across process restarts (no per-message DB state); raw `InlineKeyboardMarkup` over `InlineKeyboardBuilder` because the agent already chose the row layout |
 
 ### Event Rendering
 
@@ -185,8 +186,44 @@ sequenceDiagram
         Media-->>Channel: dest_path
         Channel->>Media: build_description(label, metadata, path, caption)
         Media-->>Channel: description text
-        Channel->>Coord: enqueue(description)
+        Channel->>Coord: enqueue(TextMessage(text=description))
         Channel->>Channel: _process_through_coordinator()
+    end
+```
+
+#### Inline button tap flow
+
+```mermaid
+sequenceDiagram
+    actor User
+    participant TG as Telegram API
+    participant Router as aiogram Router
+    participant Chan as TelegramChannel
+    participant Coord as Coordinator
+    participant SDK as ClaudeSDKClient
+
+    User->>TG: tap button
+    TG->>Router: CallbackQuery
+    Router->>Chan: _handle_callback_query(cb)
+    Chan->>TG: callback_query.answer()
+    Note over Chan: broad-except on answer() — never blocks routing
+
+    alt cb.from_user.id != authorized_chat_id
+        Note over Chan: drop — no keyboard removal, no envelope
+    else authorized
+        Chan-)+TG: detached Task: edit_message_reply_markup(None) if single-use
+        Note over Chan: log + swallow errors; "message is not modified" → no-op
+
+        Chan->>Chan: ButtonTapMessage(value=_unpack(cb.data))
+
+        alt _delivery_lock.locked() (mid-exchange)
+            Chan->>Coord: enqueue(tap)
+            Note over Coord: forwarder routes onto live sdk_inbox<br/>as steering message
+            Coord->>SDK: yield _user_message(tap.sdk_input)
+        else idle
+            Chan->>Coord: enqueue(tap) + _process_through_coordinator()
+            Note over Coord: send_message() picks tap up,<br/>skips pre-processing (runs_pre_processing=False),<br/>runs boundary detection on sdk_input,<br/>yields _user_message(tap.sdk_input) to SDK
+        end
     end
 ```
 
@@ -200,6 +237,8 @@ sequenceDiagram
 - `media_hook` ↔ Bootstrap: follows DES-003 pattern (defined in media module, registered in __main__.py)
 - Channel ↔ Event bus: subscribes to `BufferedDelivery` (unified buffered-item delivery) via `bus.on()` in `run()` (see ADR-009 and [delivery/priority-buffer](../delivery/priority-buffer.md))
 - Channel ↔ pinning.py: `create_pinning_server()` factory called in `get_mcp_servers()` — captures `Bot`, chat ID, and a locally-defined `get_msg_id()` function that safely resolves `_active_renderer.get_last_message_id()` (returns `None` when no renderer is active). Returns a tuple of `(McpSdkServerConfig, is_pinned_checker)` where the checker tests message IDs against a closure-captured `pinned_ids` set. The channel stores the checker and passes it to each new `ResponseRenderer` so `notify()` can skip copy+delete for pinned messages.
+- Channel ↔ buttons.py: `create_buttons_server(bot, chat_id)` factory called in `get_mcp_servers()` — produces the `telegram-buttons` server (third entry alongside `send-file` and `telegram-pinning`). The channel also imports `_unpack` from `buttons.py` for use in `_handle_callback_query`, making `buttons.py` the single source of truth for the `callback_data` wire format on both the producing and consuming sides.
+- Channel ↔ aiogram callback router: new `@router.callback_query(F.data.startswith("btn"))` handler registered alongside the message and media handlers. Authorization happens in-handler (post-`answer()`) rather than at the router level, so unauthorized taps still clear their originator's spinner before being dropped.
 
 ## Modeling
 
@@ -253,8 +292,8 @@ The renderer exposes a `reset()` method that clears all state for a new response
 ```
 Coordinator (existing)
 ├── _client: ClaudeSDKClient
-├── _message_buffer: asyncio.Queue[IncomingMessage]   (unbounded FIFO queue)
-├── _deferred_queue: asyncio.Queue[IncomingMessage]   (unbounded FIFO queue for deferred messages)
+├── _message_buffer: asyncio.Queue[MessageEnvelope]   (unbounded FIFO queue; envelopes per DES-013)
+├── _deferred_queue: asyncio.Queue[MessageEnvelope]   (unbounded FIFO queue for deferred envelopes)
 ├── has_pending_messages: bool             (property: True when buffer is non-empty)
 ├── has_deferred: bool                     (property: True when deferred queue is non-empty)
 ├── send_message() → AsyncIterator        (re-queue loop: processes buffer until empty; no text parameter)
@@ -503,7 +542,7 @@ The `Result` event serves as a turn boundary signal. The channel finalizes the c
 
 **Given**: An exchange for message A is in flight (any phase: boundary detection, pre-processing, SDK streaming, or teardown — not just streaming)
 **When**: The user sends message B
-**Then**: `_handle_message` checks `self._delivery_lock.locked()`. Because the lock is held by A's `_process_through_coordinator()` call, it calls `coordinator.enqueue("B")` directly (bypassing the lock) and returns. The message lands in `_message_buffer`. As soon as the coordinator's forwarder is alive (after pre-processing completes), it moves B onto the per-turn `sdk_inbox` and the message source yields it to the SDK as a steering message — B influences A's in-flight response rather than being held back as a separate turn. If B arrives after the SDK exchange has torn down (forwarder gone, `sdk_inbox` torn down) but before the lock is released, the coordinator's re-queue loop in `send_message()` picks B up and processes it as a follow-up exchange within the same generator call, yielding its events as a continuation of the same stream. B is never stranded in the buffer.
+**Then**: `_handle_message` checks `self._delivery_lock.locked()`. Because the lock is held by A's `_process_through_coordinator()` call, it constructs a `TextMessage` envelope for B and calls `coordinator.enqueue(envelope)` directly (bypassing the lock), then returns. The envelope lands in `_message_buffer`. As soon as the coordinator's forwarder is alive (after pre-processing completes), it moves B onto the per-turn `sdk_inbox` and the message source yields `_user_message(B.sdk_input)` to the SDK as a steering message — B influences A's in-flight response rather than being held back as a separate turn. If B arrives after the SDK exchange has torn down (forwarder gone, `sdk_inbox` torn down) but before the lock is released, the coordinator's re-queue loop in `send_message()` picks B up and processes it as a follow-up exchange within the same generator call, yielding its events as a continuation of the same stream. B is never stranded in the buffer.
 
 ### Scenario: Message splitting at paragraph boundary
 
@@ -545,19 +584,19 @@ The `Result` event serves as a turn boundary signal. The channel finalizes the c
 
 **Given**: The agent is processing a message (delivery lock held)
 **When**: The user sends `/new let's talk about X`
-**Then**: `_detect_command()` finds the `bot_command` entity, extracts args "let's talk about X". Since the lock is held, the channel creates `IncomingMessage(text="let's talk about X", force_new=True)` and calls `coordinator.enqueue_deferred()`. No feedback is sent to the user. When the current turn completes, the drain loop promotes the message and processes it — the coordinator sees `force_new=True`, skips boundary detection, and triggers a fresh session transition (closing the current session with async post-processing, creating a new one).
+**Then**: `_detect_command()` finds the `bot_command` entity, extracts args "let's talk about X". Since the lock is held, the channel creates `TextMessage(text="let's talk about X", force_new=True)` and calls `coordinator.enqueue_deferred()`. No feedback is sent to the user. When the current turn completes, the drain loop promotes the envelope and processes it — the coordinator sees `force_new=True`, skips boundary detection, and triggers a fresh session transition (closing the current session with async post-processing, creating a new one).
 
 ### Scenario: `/new` command while agent is idle
 
 **Given**: No exchange is in flight (delivery lock free)
 **When**: The user sends `/new fresh start`
-**Then**: The channel creates `IncomingMessage(text="fresh start", force_new=True)`, enqueues it normally, and processes it immediately. The coordinator skips boundary detection and transitions to a fresh session.
+**Then**: The channel creates `TextMessage(text="fresh start", force_new=True)`, enqueues it normally, and processes it immediately. The coordinator skips boundary detection and transitions to a fresh session.
 
 ### Scenario: `/queue` command while agent is busy
 
 **Given**: The agent is processing a message
 **When**: The user sends `/queue remind me about Y`
-**Then**: The channel creates `IncomingMessage(text="remind me about Y")` (force_new defaults False) and calls `coordinator.enqueue_deferred()`. When the current turn completes, the drain loop processes the message through normal boundary detection.
+**Then**: The channel creates `TextMessage(text="remind me about Y")` (force_new defaults False) and calls `coordinator.enqueue_deferred()`. When the current turn completes, the drain loop processes the envelope through normal boundary detection.
 
 ### Scenario: `/queue` command while agent is idle
 
@@ -748,6 +787,54 @@ The `Result` event serves as a turn boundary signal. The channel finalizes the c
 **When**: The agent calls `pin_message`
 **Then**: Telegram returns a `TelegramAPIError`; the tool returns the error details as `is_error: true`
 
+### Scenario: Inline button tap while idle
+
+**Given**: Agent called `present_buttons(prompt="Continue?", buttons='[[{"label":"Yes","value":"yes"},{"label":"No","value":"no"}]]', single_use=True)` mid-conversation; user is idle.
+**When**: User taps **Yes**; the bot's `CallbackQuery` handler runs.
+**Then**: `callback.answer()` clears the spinner. Auth check passes. A detached task fires `edit_message_reply_markup(reply_markup=None)`. The handler unpacks `("yes", True)` from `"btn1:yes"`. `_delivery_lock` is free, so the handler acquires it, enqueues `ButtonTapMessage(value="yes")`, and processes through the coordinator. The coordinator skips pre-processing (`runs_pre_processing=False`), runs boundary detection on the rendered prose (no shift detected — active session continues), yields `_user_message("The user tapped the option `yes` out of the options you displayed.")` to the SDK, and the agent responds normally. Telegram shows the original prompt with no keyboard attached.
+
+### Scenario: Inline button tap while agent is mid-stream
+
+**Given**: Agent is streaming a response to a prior typed message (delivery lock held); user taps a button on an earlier message.
+**When**: `_handle_callback_query` runs.
+**Then**: `answer()` clears the spinner. Auth passes. Detached task removes the keyboard. `_delivery_lock.locked()` is True, so the handler calls `coordinator.enqueue(ButtonTapMessage(...))` and returns. The forwarder picks up the envelope and pushes it onto the per-turn `sdk_inbox`. `_message_source` yields `_user_message(env.sdk_input)` to the SDK as a steering message in the active session.
+
+### Scenario: Unauthorized tap (group chat)
+
+**Given**: Bot is in a group chat alongside other users; a non-authorized member taps a button.
+**When**: The handler runs.
+**Then**: `callback.answer()` clears the originator's spinner. `callback.from_user.id != authorized_chat_id`. Handler logs at debug and returns. No keyboard removal occurs (the prompt remains tappable for the authorized user). No envelope is constructed.
+
+### Scenario: Stale tap across restart
+
+**Given**: Process restarted; user taps a button on a message sent before the restart.
+**When**: The handler runs.
+**Then**: `answer()` succeeds (Telegram allows answering queries within the 24-hour callback window). Auth passes. `callback.message` may be a regular `Message` or an `InaccessibleMessage` (>48h); either way the handler accesses only `callback.message.chat.id` and `callback.message.message_id`, both present on `InaccessibleMessage` per aiogram 3.x. Keyboard removal is attempted; if Telegram returns "message to edit not found" the detached task logs at warning and the tap still routes. `ButtonTapMessage` is enqueued; the coordinator picks it up and (because there's no active session) creates a fresh session. The session-gated and per-message pipelines are skipped because `runs_pre_processing=False` — a tap value carries no semantic intent the providers can act on. The agent decides from context how to respond.
+
+### Scenario: Two taps in rapid succession on a single-use prompt
+
+**Given**: User taps **Yes**, then within ~100ms taps **No** before the first keyboard-removal edit completes.
+**When**: Both handlers run.
+**Then**: Both taps are acknowledged independently. The first detached removal task removes the keyboard. The second issues the same edit and Telegram responds with `TelegramBadRequest("message is not modified")`; the task catches this specific error and treats it as a no-op. Both envelopes are enqueued in FIFO order. The agent sees both taps as separate turns; the system does not deduplicate per R5 AC.
+
+### Scenario: `present_buttons` rejected for malformed JSON or oversized value
+
+**Given**: Agent calls `present_buttons(prompt="…", buttons="not valid json")` or supplies a value over 58 bytes.
+**When**: `_decode_buttons` runs inside the tool wrapper.
+**Then**: It raises `ValueError` with a message naming the offending field; the wrapper catches it and returns `{is_error: True, content: [...]}`. No Telegram message is sent. The agent can self-correct.
+
+### Scenario: Telegram rate-limits `send_message` during button presentation
+
+**Given**: Agent calls `present_buttons` while Telegram is rate-limiting the bot.
+**When**: `bot.send_message(...)` raises `TelegramRetryAfter`.
+**Then**: Caught as `TelegramAPIError`; the tool returns `is_error: True` with the API error details. No automatic retry — the agent decides whether to retry, fall back to a typed prompt, or inform the user.
+
+### Scenario: REPL channel — no `present_buttons` tool
+
+**Given**: Agent is running with the REPL channel.
+**When**: Agent processes messages.
+**Then**: `Repl.get_mcp_servers()` returns `{}`; the buttons server (which lives only in `TelegramChannel.get_mcp_servers()`) is not registered. The `present_buttons` tool name is unknown to the agent — same behavior as `send_file` and `pin_message` in REPL today.
+
 ## Notes
 
 - aiogram 3.x docs: https://docs.aiogram.dev/en/dev/
@@ -771,3 +858,6 @@ The `Result` event serves as a turn boundary signal. The channel finalizes the c
 - The `pinning.py` module follows DES-006 (SDK MCP tool server factory) — same structure as `tools.py` for `send_file`, but as a separate module since pinning and file delivery are unrelated concerns. The factory returns a tuple `(McpSdkServerConfig, is_pinned_checker)` — the checker is a closure-captured function that tests message IDs against an internal `pinned_ids` set. The channel stores the checker and passes it to each `ResponseRenderer` via the `is_pinned` keyword argument. The renderer uses this in `notify()` to skip the copy+delete pattern for pinned messages, since the pin action itself delivers the push notification via `disable_notification=False`.
 - The factory captures a `Callable[[], int | None]` getter rather than the renderer instance, keeping `pinning.py` free of any import or knowledge of the `ResponseRenderer` class. The getter is a locally-defined function in `get_mcp_servers()` that safely handles the case where `_active_renderer` is `None`
 - Tool descriptions in the `@tool()` decorators serve as the agent's primary documentation — no separate system prompt instructions needed, following the same approach as `send_file`
+- The `buttons.py` module follows DES-006 (SDK MCP tool server factory) — same structure as `pinning.py`, separate module because buttons are an unrelated concern. The `buttons` argument uses the DES-006 array-arg JSON-string pattern (the SDK MCP transport rejects array-typed arguments); a module-level `_decode_buttons()` helper parses and validates inside the wrapper. The `callback_data` wire format is `"btn1:<value>"` for single-use buttons and `"btnN:<value>"` for multi-use; `_pack` and `_unpack` in `buttons.py` are the single source of truth and are imported by `TelegramChannel._handle_callback_query`. Encoding the single-use bit into `callback_data` keeps the semantics stateless across process restarts — no per-message DB table needed.
+- `_handle_callback_query` ordering matters: `answer()` is always called first (so unauthorized originators' spinners still clear), then the `from_user.id` auth check, then the detached keyboard-removal task, then envelope construction, then the `_delivery_lock.locked()` busy/idle branch (identical to `_handle_message` / `_handle_media`). Keyboard removal runs as a detached task on `_delivery_tasks` so a slow or failing edit cannot delay routing. Per-button `value` is capped at 58 UTF-8 bytes (64-byte `callback_data` limit minus the 5-byte prefix); the cap is enforced in `_decode_buttons` and documented in the tool description for the agent.
+- All envelope producer sites in this channel (text, media, command, buffered-delivery, callback-query) construct envelopes at the coordinator boundary per [DES-013](../../design/DES-013-typed-envelope-with-property-hooks.md) — `TextMessage` for typed and buffered paths, `ButtonTapMessage` for taps. The base `MessageEnvelope` type is what the coordinator's queues carry.

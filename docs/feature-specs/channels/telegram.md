@@ -14,6 +14,7 @@ A Telegram bot that receives text messages and media messages from a single auth
 - As a user, I want to send images, voice messages, and other media through Telegram so that the agent can see and work with my non-text content
 - As a user, I want the agent to pin important messages in our Telegram chat so that key responses (summaries, decisions, reference material) stay accessible at the top of the conversation without me having to manually pin them, and I still receive a notification for the pinned message
 - As a user, I want to explicitly route messages to a new conversation or defer them for later processing so that I can manage multiple topics without the current session being disrupted
+- As a user, I want to answer the agent's structured prompts by tapping a button instead of typing so that I can quickly respond to yes/no, multiple-choice, or confirm/cancel prompts without keyboard input on my phone
 
 ## Requirements
 
@@ -35,6 +36,7 @@ A Telegram bot that receives text messages and media messages from a single auth
 | R13 | File delivery via `send_file` tool: the agent can send a file to the user's Telegram chat. Accepted `file_path` forms are workspace-relative, absolute paths inside the workspace, absolute paths under the system temporary directory, and absolute paths under operator-configured extra roots. Paths outside all allowed roots are rejected with an error that names the allowed roots. Only existing regular files can be sent. |
 | R14 | Message pinning: the agent can pin and unpin messages in the active Telegram chat. Pins trigger a push notification so the user sees the pinned message promptly. Both operations are idempotent. Permission failures and API errors return clear error responses to the agent |
 | R15 | Bot commands: `/new [message]` forces a fresh session (skipping boundary detection), `/queue [message]` defers the message for boundary-detected routing after the current turn. Commands are detected via Telegram native `bot_command` entities. Bare commands (no arguments) are treated as normal messages |
+| R16 | Inline button presentation and tap routing: the agent can present a prompt with a configurable layout of tappable inline buttons via a `present_buttons` MCP tool. User taps arrive as `CallbackQuery` events, are acknowledged to Telegram immediately (independent of agent state), authorized against `from_user.id`, and routed back to the coordinator as `ButtonTapMessage` envelopes carrying the tapped value. By default the inline keyboard is removed from the message after any tap (`single_use=True`); the agent can opt out with `single_use=False`. Unauthorized taps are still acknowledged so the originator's spinner clears, then silently dropped. Stale taps (after restart or past the prompt's topic) are routed normally — the agent disambiguates from conversation context. Keyboard-removal failures never block tap routing. Telegram API failures during button presentation surface a clear error result to the tool call |
 
 ## Behaviors
 
@@ -252,6 +254,35 @@ The agent can pin and unpin messages in the active Telegram chat via two MCP too
 - Given the bot lacks pin permissions in a group/channel, when `pin_message` or `unpin_message` is called, then the tool returns `{"is_error": true, "content": [{"type": "text", "text": "Failed to pin/unpin message: <API error details>"}]}`
 - Given the Telegram channel is active, when the channel's `get_mcp_servers()` is called, then a "telegram-pinning" server is included with both tools
 
+### Inline Button Support (R16)
+
+The agent presents a structured prompt and a layout of tappable buttons via the `present_buttons` MCP tool. Each button declares a visible `label` and a machine-readable `value`; the layout is fully agent-controlled (rows are an outer list, buttons within a row are an inner list). The tool sends a fresh Telegram message with the prompt and the inline keyboard and returns the sent message's ID on success. Per-button `value` must fit Telegram's 64-byte `callback_data` limit minus the wire-format prefix (5 bytes); `label` must be non-empty; at least one non-empty row is required.
+
+When the user taps a button, the bot's `CallbackQuery` handler runs in a fixed order: acknowledge the tap immediately via `callback_query.answer()` (so the user's spinner clears regardless of agent state), check `callback.from_user.id` against the configured authorized user, schedule keyboard removal as a detached task when `single_use=True`, build a `ButtonTapMessage` envelope carrying the tapped value, and route it through the coordinator using the same busy/idle branching as typed messages (mid-stream taps steer into the in-flight session; idle taps start a fresh processing cycle).
+
+Unauthorized taps are still acknowledged so the originator's spinner clears; no value reaches the agent and the keyboard is not removed. Stale taps (e.g., after a process restart or after the conversation has moved on) are routed like any other tap — the agent decides what to do from conversation context. Keyboard-removal failures (message deleted, edit rate-limited, "message is not modified" on duplicate taps) are logged but never block tap routing.
+
+**Acceptance Criteria**:
+
+- Given the agent calls `present_buttons` with a prompt and a single row of buttons (e.g. `[[{label: "Yes", value: "yes"}, {label: "No", value: "no"}]]`), when the tool executes, then a new Telegram message is sent in the authorized chat with the prompt text and a one-row inline keyboard containing those two buttons, and the tool returns the sent message ID
+- Given the agent calls the tool with multiple rows of buttons, when the tool executes, then the inline keyboard renders each inner list as a separate row in the order provided
+- Given the REPL channel is active (not Telegram), when the agent processes messages, then the button-presentation tool is not registered (consistent with `send_file` / `pin_message` REPL behavior)
+- Given the user taps a button while the agent is idle, when the bot receives the `CallbackQuery`, then `callback_query.answer()` is called before any work that depends on agent state
+- Given the user taps a button while the agent is mid-stream on another message, when the bot receives the `CallbackQuery`, then the tap is still acknowledged immediately — agent busyness never delays the acknowledgement
+- Given `callback_query.answer()` raises a Telegram API error (e.g., the query is too old), when the error occurs, then it is logged and tap processing continues without crashing
+- Given the user taps a button with value `"approve"`, when the tap is routed, then it is enqueued as a `ButtonTapMessage` envelope carrying `value="approve"` and the SDK input is rendered as an explicit prose framing (e.g. *"The user tapped the option `approve` out of the options you displayed."*) so the agent unambiguously distinguishes the turn from typed text
+- Given the user taps a button while the agent is idle, when the tap is routed, then it is enqueued and processed as a fresh turn through the normal coordinator pipeline
+- Given the user taps a button while the agent is mid-exchange (delivery lock held), when the tap is routed, then the value is enqueued into the coordinator's message buffer so the SDK forwarder can steer it into the in-flight session
+- Given a button is presented with default `single_use=True`, when any button on that message is tapped, then the message's inline keyboard is removed so the user cannot tap again
+- Given a button is presented with `single_use=False`, when any button on that message is tapped, then the keyboard remains attached and further taps from the same message are routed normally
+- Given a tap arrives where `CallbackQuery.from_user.id` matches the configured authorized user, when the bot processes it, then it follows the normal tap path
+- Given the bot is in a group chat and a non-authorized member taps a button, when the `CallbackQuery` arrives, then `from_user.id` does not match, `callback_query.answer()` is still called so the originator's spinner clears, and the tap is silently dropped — no value reaches the agent, no keyboard removal for that prompt
+- Given the bot process restarts and the user taps a button on a message that pre-dates the restart, when the tap arrives, then it is acknowledged and routed to the agent as a normal tap; the agent receives the value and decides from context how to respond
+- Given the Telegram API returns a rate-limit error during button presentation, when the tool catches the error, then it returns `is_error: True` with the API error details so the agent can decide whether to retry
+- Given the agent provides a button whose `value` exceeds Telegram's 64-byte limit minus the 5-byte wire prefix (≤ 58 bytes), an empty `label` / `value`, an empty list of rows, or an empty row, when the tool validates inputs, then it returns `is_error: True` naming the offending field
+- Given the keyboard-removal edit fails (e.g., message was deleted), when the failure occurs, then it is logged at warning level and the tap value is still routed to the agent
+- Given two taps on the same `single_use=True` prompt arrive in rapid succession, when the second keyboard-removal edit runs after the first has already removed the keyboard, then Telegram's "message is not modified" response is treated as success/no-op
+
 ## User Flow
 
 ### Breadboard: Telegram Message Flow
@@ -351,6 +382,78 @@ The agent can pin and unpin messages in the active Telegram chat via two MCP too
               - API failure
 ```
 
+### Breadboard: Inline Button Tap
+
+```
+  Agent calls present_buttons
+  ---------------------------
+  - prompt + button rows
+  - single_use flag (default true)
+        |
+        v
+  Bot sends new message
+  ---------------------
+  - prompt + inline keyboard
+  - returns message_id
+        |
+        v
+       (waits)
+        |
+        v
+  User taps a button
+  ------------------
+  - CallbackQuery arrives
+        |
+      +-+----+
+      |      |
+      v      v
+  Authorized   Unauthorized
+  ----------   ------------
+  |            - answer()
+  |              (spinner clears)
+  |            - silently dropped
+  v
+  Acknowledge immediately
+  -----------------------
+  - callback_query.answer()
+  - independent of agent state
+        |
+        +------------+
+        |            |
+        v            v
+  Remove keyboard   Route tap
+  ---------------   ---------
+  - if single_use:   - wrap value in
+    edit_message_      ButtonTapMessage
+    reply_markup       envelope
+    (None)           - enqueue to
+  - failures log     coordinator
+    and continue     - stale taps
+                       flow here too
+                       (agent
+                        disambiguates)
+                       |
+                  +----+----+
+                  |         |
+                  v         v
+              Agent busy   Agent idle
+              ----------   ----------
+              - enqueue    - enqueue +
+                (steer)      process
+                  |           |
+                  +-----+-----+
+                        |
+                        v
+              Agent processes tap
+              -------------------
+              - SDK input renders
+                envelope as explicit
+                tap prose carrying
+                the value
+              - agent responds
+                normally
+```
+
 ### Flow Description
 
 **Entry point**: User sends a message (text or media) to the Telegram bot from any Telegram client.
@@ -363,7 +466,9 @@ The agent can pin and unpin messages in the active Telegram chat via two MCP too
 
 **Command path**: If the user sends a recognized bot command (`/new` or `/queue` with arguments) while the agent is busy, the channel defers it via `coordinator.enqueue_deferred()` instead of steering it into the active session. When the current turn completes, the channel drains the deferred queue — promoting each message into the message buffer and processing it through the coordinator pipeline one at a time. `/new` messages carry `force_new=True`, which causes the coordinator to skip boundary detection and force a fresh session transition. `/queue` messages go through normal boundary detection when processed. When the agent is idle, commands are processed immediately without going through the deferred queue. Bare commands (no arguments) are treated as normal messages and follow the steering path.
 
-**Decision points**: Authorization check (authorized → process, unauthorized → drop). Message type check (text → process text, supported media → download/describe/process, unsupported → drop). Empty check (empty text → drop). Command detection (recognized command with args → `/new` or `/queue` routing, bare or unrecognized → normal message). Busy/idle check (busy + command → deferred queue, busy + normal → steering, idle + `/new` → immediate fresh session, idle + `/queue` → immediate boundary detection, idle + normal → immediate processing). File size check (within 20 MB → download, too large → error message). Download result (success → describe and enqueue, failure → error message). Message length check (under limit → continue editing, approaching limit → split at paragraph boundary). Error type (recoverable → show error, continue; non-recoverable → show error, log). Push notification check (enabled and message was sent → copy+delete unless pinned, disabled or no message → no-op, copy fails → preserve original, pinned → skip copy+delete entirely, pin action delivered the notification). Pin decision (agent calls pin_message after response → pinned with push notification, message stays at top of chat).
+**Tap path**: The agent calls `present_buttons` to send a fresh Telegram message carrying the prompt and an inline keyboard. When the user taps a button, the bot's `CallbackQuery` handler acknowledges the tap immediately (no waiting on the agent), runs the authorization check against `from_user.id`, schedules keyboard removal as a detached task for `single_use=True` prompts, wraps the chosen value in a `ButtonTapMessage` envelope, and routes it through the coordinator using the same busy/idle branching as typed messages (mid-stream taps steer into the in-flight session; idle taps acquire the lock and start a fresh cycle). The SDK-input shaping step renders the envelope as explicit prose so the agent unambiguously recognizes the turn as a tap and not typed text. Stale taps (after restart or past the original topic) follow the same path — the agent disambiguates from conversation context. Unauthorized taps are acknowledged then dropped. Keyboard-removal failures are logged but never block tap routing.
+
+**Decision points**: Authorization check (authorized → process, unauthorized → drop; for taps the unauthorized branch still acknowledges to clear the spinner before dropping). Message type check (text → process text, supported media → download/describe/process, unsupported → drop, callback_query → tap path). Empty check (empty text → drop). Command detection (recognized command with args → `/new` or `/queue` routing, bare or unrecognized → normal message). Busy/idle check (busy + command → deferred queue, busy + normal → steering, idle + `/new` → immediate fresh session, idle + `/queue` → immediate boundary detection, idle + normal → immediate processing, busy + tap → enqueue for steering, idle + tap → enqueue + process). File size check (within 20 MB → download, too large → error message). Download result (success → describe and enqueue, failure → error message). Message length check (under limit → continue editing, approaching limit → split at paragraph boundary). Error type (recoverable → show error, continue; non-recoverable → show error, log). Push notification check (enabled and message was sent → copy+delete unless pinned, disabled or no message → no-op, copy fails → preserve original, pinned → skip copy+delete entirely, pin action delivered the notification). Pin decision (agent calls pin_message after response → pinned with push notification, message stays at top of chat). `single_use` flag on tap (True → remove keyboard on first tap; False → keep keyboard for further taps).
 
 **Exit points**: Response complete (Result event received), recoverable error (error shown, conversation continues), non-recoverable error (error shown, failure logged), media file too large (error message sent, conversation continues), media download failed (error message sent, conversation continues), unauthorized (silently dropped), unsupported message type or empty text (silently dropped), pin success (message pinned, ID returned), pin error (no message, permission denied, or API failure).
 

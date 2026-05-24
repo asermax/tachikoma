@@ -37,7 +37,7 @@ Detects whether an incoming message continues the current conversation or starts
 | R18 | Include the last assistant response in boundary detection prompts for both the current session and candidate sessions, providing improved recency signal alongside summaries |
 | R19 | Short messages that serve as acknowledgments, confirmations, or brief responses (e.g., "yes", "ok", "go ahead", "sure", "no", "thanks") must be classified as continuations — they lack enough independent topic content to establish a new topic |
 | R20 | `detect_boundary()` accepts an optional async status callback and emits a single progress message (`"Analyzing message..."`) once, before the underlying classification query is issued |
-| R21 | `force_new` bypass: when `IncomingMessage.force_new` is True, boundary detection is skipped entirely and the coordinator unconditionally transitions to a fresh session (see [core-architecture](core-architecture.md) R20) |
+| R21 | `force_new` bypass: when the message envelope's `force_new` hook is True, boundary detection is skipped entirely and the coordinator unconditionally transitions to a fresh session (see [core-architecture](core-architecture.md) R20) |
 
 ## Behaviors
 

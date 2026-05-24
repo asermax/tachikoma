@@ -36,7 +36,8 @@ The core agent loop: receive a user message, pass it to the Claude agent via the
 | R19 | Coordinator idle signaling: on every busy→idle transition, the coordinator dispatches a `CoordinatorIdle(timestamp)` event so the priority buffer can re-evaluate pending deliveries without polling |
 | R17 | Configurable tool blocking: specific tools can be unconditionally blocked via `disallowed_tools` config, defaulting to `["AskUserQuestion", "CronCreate", "CronDelete", "CronList"]` |
 | R18 | Text sanitization: the adapter strips invalid UTF-8 characters (surrogate code points, overlong encodings) from all SDK text before passing to domain types, preventing encoding failures in downstream consumers |
-| R20 | Deferred message queue: coordinator provides a deferred message queue (`enqueue_deferred`, `has_deferred`, `promote_next_deferred`) for messages that should wait until the current turn completes; `IncomingMessage` carries a `force_new` flag that, when True, causes the coordinator to skip boundary detection and force a fresh session transition |
+| R20 | Deferred message queue: coordinator provides a deferred message queue (`enqueue_deferred`, `has_deferred`, `promote_next_deferred`) for messages that should wait until the current turn completes; message envelopes expose a `force_new` hook that, when True, causes the coordinator to skip boundary detection and force a fresh session transition |
+| R21 | Typed message envelope: the coordinator's message-buffer / deferred-queue / per-turn inbox carry a `MessageEnvelope` abstract base with property hooks for the per-kind behavior consumers depend on — `sdk_input` (the string yielded to the SDK), `pinned_skills`, `force_new`, and `runs_pre_processing`. Concrete subtypes include `TextMessage` (text + pinned_skills + force_new) and `ButtonTapMessage` (value, with `runs_pre_processing=False` so the per-message pre-processing pipeline is skipped for taps). SDK-input shaping happens at a single rendering site reading `envelope.sdk_input`. Producers (channels, task executor, priority-buffer consumers) construct envelopes at the coordinator boundary. See [DES-013](../../design/DES-013-typed-envelope-with-property-hooks.md) |
 
 ## Behaviors
 
@@ -246,7 +247,7 @@ Whenever the coordinator transitions from busy to idle (an exchange completes or
 
 The coordinator provides a deferred message queue for messages that should wait until the current turn completes. Channels use this to hold command messages (`/new`, `/queue`) that should not be steered into the active session. The queue is ephemeral and in-memory (lost on process crash, drained on graceful shutdown).
 
-`IncomingMessage` carries a `force_new` flag. When True, the coordinator skips boundary detection and unconditionally triggers a fresh session transition — closing the current session (with async post-processing) and creating a new one before processing the message.
+Message envelopes expose a `force_new` hook on the base. When True, the coordinator skips boundary detection and unconditionally triggers a fresh session transition — closing the current session (with async post-processing) and creating a new one before processing the message.
 
 **Acceptance Criteria**:
 - Given a message with `force_new=True` and an active session exists, when the coordinator processes it, then boundary detection is skipped, the current session is closed (with async post-processing), and a new session is created
@@ -254,3 +255,13 @@ The coordinator provides a deferred message queue for messages that should wait 
 - Given a message is enqueued via `enqueue_deferred()`, when the channel calls `promote_next_deferred()`, then the message moves from the deferred queue to the message buffer
 - Given the deferred queue has items, when `has_deferred` is checked, then it returns True
 - Given the coordinator has deferred messages, when `is_busy` is checked, then it returns True (deferred items count as busy)
+
+### Typed Message Envelope (R21)
+
+The coordinator's message-buffer, deferred queue, and per-turn SDK inbox all carry the abstract `MessageEnvelope` base. Concrete subtypes own their per-kind behavior via property hooks (`sdk_input`, `pinned_skills`, `force_new`, `runs_pre_processing`) — consumers (pipelines, boundary detector, SDK rendering site) read the hooks without `isinstance`-checking the subtype. SDK-input shaping happens at a single site reading `envelope.sdk_input`, so structure survives all the way to the SDK boundary and every message path (initial, steered, re-queued) renders identically.
+
+**Acceptance Criteria**:
+- Given a `TextMessage` envelope with text and optional `pinned_skills` / `force_new`, when it flows through the coordinator, then `sdk_input` returns the text as-is, boundary detection consumes the text, the skill classifier honors `pinned_skills`, and `force_new=True` skips boundary detection
+- Given a `ButtonTapMessage` envelope carrying a value, when it flows through the coordinator, then `sdk_input` renders an explicit prose framing the agent recognizes as a tap, `runs_pre_processing` returns False so both pre-processing pipelines are skipped, and boundary detection still runs on `sdk_input`
+- Given a producer site (REPL, Telegram text/media/commands, priority-buffer delivery, task executor), when it enqueues a message at the coordinator boundary, then it constructs a `TextMessage` envelope carrying the same fields it previously passed (`text`, `pinned_skills`, `force_new`)
+- Given an envelope reaches the coordinator's `_message_source`, when it is shaped into SDK input, then it passes through one rendering site — initial, steered, and re-queued envelopes all use the same path

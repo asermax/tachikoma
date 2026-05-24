@@ -197,6 +197,31 @@ AgentEvent (base)
 - **Status**: `message: str` — a transient, granular status update forwarded by the coordinator. Boundary detection, the session-gated pre-processing pipeline, and the per-message pre-processing pipeline each emit their own user-facing description (e.g. `"Analyzing message..."`, `"Searching memories..."`, `"Detecting relevant skills..."`) via a `StatusCallback`; the coordinator yields those as `Status` events on the stream while the originating work runs concurrently in a background task. Providers emit both start and completion messages (e.g. `"Searching memories..."` → `"Found 3 relevant memories"`)
 - **Error**: `message: str`, `recoverable: bool` — something went wrong; recoverable errors let the conversation continue, non-recoverable errors signal exit
 
+### Message envelope hierarchy
+
+The coordinator's message-buffer / deferred-queue / per-turn SDK inbox all carry a `MessageEnvelope` abstract base with property hooks for the per-kind behavior consumers depend on. Concrete subtypes override only the hooks whose value differs from the default. Consumers (pipelines, boundary detector, SDK rendering site) read the hooks; they never `isinstance`-check the subtype. This pattern is captured in [DES-013](../../design/DES-013-typed-envelope-with-property-hooks.md).
+
+```
+MessageEnvelope (abstract)
+├── sdk_input              → str            (required: text yielded to the SDK)
+├── pinned_skills          → tuple[str,...] (default: ())
+├── force_new              → bool           (default: False)
+└── runs_pre_processing    → bool           (default: True)
+
+TextMessage(MessageEnvelope)                 — typed user input (and any non-tap producer)
+├── text: str
+├── pinned_skills: tuple[str, ...] = ()
+├── force_new: bool = False
+└── sdk_input → text
+
+ButtonTapMessage(MessageEnvelope)            — Telegram inline-button tap
+├── value: str
+├── sdk_input → "The user tapped the option `<value>` out of the options you displayed."
+└── runs_pre_processing → False
+```
+
+The base type is the queue element type for `_message_buffer`, `_deferred_queue`, and the per-turn SDK inbox. SDK-input shaping happens at exactly one site — `_message_source` reads `envelope.sdk_input` for both the initial envelope and every envelope read from the per-turn inbox. The coordinator gates both pre-processing pipelines on `envelope.runs_pre_processing`; boundary detection and cold-start resume read `envelope.sdk_input` unconditionally. Adding a future envelope subtype (e.g., the modality-aware envelope DLT-125 anticipates) is one new class — no consumer site changes.
+
 ### SDK Message → AgentEvent mapping
 
 | SDK Type | Content/Field | AgentEvent | Notes |
@@ -226,8 +251,8 @@ Coordinator
 ├── _was_busy: bool                          (tracks prior is_busy state for busy→idle transition detection)
 ├── is_busy → bool (property)                (True while an exchange is in progress, messages pending, or deferred queue non-empty)
 ├── _maybe_emit_idle() → None                (dispatches CoordinatorIdle(now) on bus if state transitioned busy→idle; best-effort, swallows bus errors)
-├── _message_buffer: asyncio.Queue[IncomingMessage]   (unbounded FIFO queue for buffered messages)
-├── _deferred_queue: asyncio.Queue[IncomingMessage]   (unbounded FIFO queue for deferred messages)
+├── _message_buffer: asyncio.Queue[MessageEnvelope]   (unbounded FIFO queue for buffered envelopes; concrete subtypes today are TextMessage and ButtonTapMessage)
+├── _deferred_queue: asyncio.Queue[MessageEnvelope]   (unbounded FIFO queue for deferred envelopes)
 ├── _pending_msg_task: asyncio.Task | None  (background per-message post-processing)
 ├── _background_tasks: list[asyncio.Task]   (session post-processing from topic shifts)
 ├── _build_options(resume=..., system_prompt_append=...) → ClaudeAgentOptions  (constructs per-message options; system_prompt_append is pre-built from build_system_prompt())
@@ -317,20 +342,26 @@ The `enqueue()` method allows channels to buffer user messages at any time (sync
 ### Message buffer flow
 
 ```
-1. Channel calls coordinator.enqueue("msg_A") → message placed in _message_buffer
+1. Channel calls coordinator.enqueue(env_A) — env_A is a MessageEnvelope (typically TextMessage)
 2. Channel calls send_message() (if idle)
 3. send_message() guard clause: buffer non-empty → enter re-queue loop
-4. Dequeue msg_A, run full pipeline (boundary detection, pre-processing, SDK client creation)
-5. _message_source yields enriched initial message to client.connect() (SDK-managed concurrent task)
-6. Events for msg_A stream back, channel renders them
-7. Meanwhile, user sends "msg_B" → channel calls coordinator.enqueue("msg_B")
-8. _message_source reads "msg_B" from buffer, yields it to the SDK
-9. Events for msg_B stream back through the same send_message() iteration
-10. msg_B completes → Result event, exchange teardown (forwarder cancelled, client disconnected, _drain_back())
+4. Dequeue env_A; run full pipeline:
+   - boundary detection reads env_A.sdk_input
+   - both pre-processing pipelines gated on env_A.runs_pre_processing
+     (skipped for envelopes that opt out — e.g. ButtonTapMessage)
+   - SDK client creation
+5. _message_source(env_A, sdk_inbox) yields _user_message(env_A.sdk_input) to client.connect()
+6. Events for env_A stream back, channel renders them
+7. Meanwhile, user sends another message → channel calls coordinator.enqueue(env_B)
+8. _message_source reads env_B from sdk_inbox, yields _user_message(env_B.sdk_input)
+9. Events for env_B stream back through the same send_message() iteration
+10. env_B completes → Result event, exchange teardown (forwarder cancelled, client disconnected, _drain_back())
 11. Per-message post-processing launched as background task (_pending_msg_task)
 12. Re-queue loop check: _message_buffer empty? → break → generator returns
-13. If more messages arrived during teardown → loop back to step 4 (await previous _pending_msg_task, dequeue next, new exchange in same session via resume)
+13. If more envelopes arrived during teardown → loop back to step 4 (await previous _pending_msg_task, dequeue next, new exchange in same session via resume)
 ```
+
+`_drain_back` recovers envelopes from the per-turn inbox directly and pushes them back to `_message_buffer` unchanged — no string-to-envelope re-wrap. The forwarder's cancellation-defence `finally` clause re-enqueues an envelope (not a derived string) if cancellation lands between `get()` and `put_nowait()`.
 
 The `Result` event serves as a turn boundary. Channels can detect it to reset their rendering state between buffered messages. The re-queue loop inside `send_message()` ensures all buffered messages are processed within the same generator call, with each iteration running a full pipeline exchange. The generator returns only when the buffer is empty after teardown.
 
@@ -385,6 +416,22 @@ The `Result` event serves as a turn boundary. Channels can detect it to reset th
 ```
 
 ## Key Decisions
+
+### Message envelope hook surface ([DES-013](../../design/DES-013-typed-envelope-with-property-hooks.md))
+
+**Choice**: `MessageEnvelope` is an abstract base class with property hooks (`sdk_input`, `pinned_skills`, `force_new`, `runs_pre_processing`); subtypes override the hooks. Coordinator and pipelines invoke the hooks; they never `isinstance`-check the envelope or call into per-subtype helpers. SDK-input shaping is a single rendering site reading `envelope.sdk_input` at the `_message_source` boundary.
+**Why**: Adding a new envelope subtype (future media subtypes per DLT-125, future first-class command envelopes) means writing one new class. Consumers — coordinator, providers, post-processors — don't change. Defaults on the base mean subtypes only override what's actually different. The single rendering site keeps the SDK contract honest and prevents the forwarder from stripping structure before consumers can see it.
+**Alternatives Considered**:
+- **Pydantic discriminated union with a `Literal` tag**: adds Pydantic boilerplate for a value that never crosses a serialization boundary; consumers still need to dispatch on the tag.
+- **Runtime-checkable `Protocol`**: avoids inheritance but loses default values on the base — every subtype must implement every hook, even the ones it would inherit verbatim.
+- **External dispatch table (`render_sdk_input(env)` switching on type)**: every new subtype requires editing the dispatcher in the coordinator — exactly the smearing the hook approach avoids.
+
+**Consequences**:
+- Pro: New envelope kinds extend the type without touching consumers
+- Pro: Type checker catches missing hook overrides via abstract-method errors
+- Pro: Default values on the base mean subtypes only override what's actually different
+- Pro: One rendering site = one source of truth for the SDK contract; `_drain_back` recovers envelopes directly without re-wrapping derived strings
+- Con: The `@property @abstractmethod` + `@dataclass(frozen=True)` interaction has to be done carefully so dataclass machinery doesn't shadow the abstract property
 
 ### Per-message ClaudeSDKClient with resume
 

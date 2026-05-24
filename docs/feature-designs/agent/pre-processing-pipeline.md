@@ -56,7 +56,7 @@ A `PreProcessingPipeline` manages registered `ContextProvider` instances. Provid
 | Layer/Component | Responsibility | Key Decisions |
 |-----------------|----------------|---------------|
 | `src/tachikoma/pre_processing.py` | `ContextProvider` ABC (interface only), `ContextResult` dataclass (with `__post_init__` tag validation via regex, optional `agents` field for structured data, optional `metadata` field for structured data passage), `PreProcessingPipeline` class (parallel execution with error isolation), `assemble_context()` standalone function | Mirrors `post_processing.py` pattern — mechanism separate from domain; assembly function is a pure standalone helper; no serialization lock needed (unlike post-processing) because the pipeline is stateless; `agents` field uses a specific named property (not generic extras) for type safety |
-| `src/tachikoma/per_message_pre_processing.py` | `MessageContextProvider` ABC (standalone, not extending ContextProvider), `MessagePreProcessingPipeline` class (parallel execution with error isolation, internal lock) | Mirrors `message_post_processing.py` pattern; runs on every message (not session-gated); providers receive the `IncomingMessage` envelope (not a raw string), existing entries, and SDK session ID; extended with `sdk_session_id: str | None = None` keyword arg on both `provide()` and `run()`, following the same pass-through pattern as the existing `existing_entries` parameter; has internal lock for concurrent invocation safety |
+| `src/tachikoma/per_message_pre_processing.py` | `MessageContextProvider` ABC (standalone, not extending ContextProvider), `MessagePreProcessingPipeline` class (parallel execution with error isolation, internal lock) | Mirrors `message_post_processing.py` pattern; runs on every message (not session-gated); providers receive the `MessageEnvelope` (typically a `TextMessage`; see [DES-013](../../design/DES-013-typed-envelope-with-property-hooks.md)), existing entries, and SDK session ID; extended with `sdk_session_id: str | None = None` keyword arg on both `provide()` and `run()`, following the same pass-through pattern as the existing `existing_entries` parameter; has internal lock for concurrent invocation safety. The coordinator gates the pipeline on `envelope.runs_pre_processing`, skipping providers entirely for envelopes that opt out (e.g., a `ButtonTapMessage` carries no semantic intent the providers can act on) |
 
 ### Cross-Layer Contracts
 
@@ -116,10 +116,10 @@ MessagePreProcessingPipeline                           [runs on every message, n
 ├── _lock: asyncio.Lock                                (serializes concurrent invocations)
 ├── register(provider: MessageContextProvider) → None
 ├── unregister(provider: MessageContextProvider) → None  (safe no-op if not found; identity-based removal; no lock needed — lifecycle events serialized by manager's async lock)
-└── run(message: IncomingMessage, *, existing_entries: list[SessionContextEntry] | None, sdk_session_id: str | None, on_status: StatusCallback | None = None) → list[ContextResult]
+└── run(message: MessageEnvelope, *, existing_entries: list[SessionContextEntry] | None, sdk_session_id: str | None, on_status: StatusCallback | None = None) → list[ContextResult]
 
 MessageContextProvider (ABC)                            [standalone, not extending ContextProvider]
-├── provide(message: IncomingMessage, *, existing_entries: list[SessionContextEntry] | None, sdk_session_id: str | None) → list[ContextResult] | None
+├── provide(message: MessageEnvelope, *, existing_entries: list[SessionContextEntry] | None, sdk_session_id: str | None) → list[ContextResult] | None
 └── status_message(result: list[ContextResult] | None = None) → str  (abstract; no result → start message, with result → completion message)
 ```
 

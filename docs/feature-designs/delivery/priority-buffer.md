@@ -102,7 +102,7 @@ async def _handle_buffered_delivery(self, event: BufferedDelivery) -> None:
 async def _deliver(self, event: BufferedDelivery) -> None:
     try:
         async with self._delivery_lock:
-            # 1. coordinator.enqueue(event.prompt)
+            # 1. coordinator.enqueue(TextMessage(text=event.prompt, pinned_skills=event.pinned_skills()))
             # 2. async for ev in coordinator.send_message(): render(ev)
             # 3. For each item: if item.on_delivered: await item.on_delivered()
     except Exception:
@@ -111,6 +111,8 @@ async def _deliver(self, event: BufferedDelivery) -> None:
         if event.is_shutdown_digest:
             buffer.resolve_shutdown()  # ensures flush_on_shutdown completes
 ```
+
+The envelope wrapping at step 1 follows the coordinator's typed-envelope contract ([DES-013](../../design/DES-013-typed-envelope-with-property-hooks.md)) — `BufferedDelivery` consumers (Telegram and REPL today) construct `TextMessage` envelopes at the coordinator boundary, threading the delivery's prompt and pinned skills through the envelope's hooks.
 
 **Integration Points:**
 - Buffer ↔ Bus: subscribes to `Notification` and `CoordinatorIdle`; dispatches `BufferedDelivery`

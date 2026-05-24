@@ -14,3 +14,4 @@
 | [DES-010](DES-010-central-scheduler.md) | Central Scheduler for Time-Based Recurring Work | Python / Architecture | 2026-04-19 |
 | [DES-011](DES-011-cross-restart-temp-marker-files.md) | Cross-Restart Temp Marker Files | Python / Architecture | 2026-04-29 |
 | [DES-012](DES-012-plugin-contribution-validation.md) | Plugin Contribution Validation | Python / Plugins | 2026-05-08 |
+| [DES-013](DES-013-typed-envelope-with-property-hooks.md) | Typed Envelope with Property Hooks | Python / Architecture | 2026-05-24 |
