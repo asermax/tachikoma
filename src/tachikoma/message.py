@@ -40,3 +40,21 @@ class TextMessage(MessageEnvelope):
     @property
     def sdk_input(self) -> str:
         return self.text
+
+
+@dataclass(frozen=True)
+class ButtonTapMessage(MessageEnvelope):
+    """Envelope for a Telegram inline-button tap."""
+
+    value: str
+
+    @property
+    def sdk_input(self) -> str:
+        return (
+            f"The user tapped the option `{self.value}` "
+            "out of the options you displayed."
+        )
+
+    @property
+    def runs_pre_processing(self) -> bool:
+        return False
