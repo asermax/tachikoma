@@ -1,24 +1,42 @@
 """Message envelope types for the coordinator boundary."""
 
+from abc import ABC, abstractmethod
 from dataclasses import dataclass
 
 
-@dataclass(frozen=True)
-class IncomingMessage:
-    """Transport envelope at the coordinator enqueue boundary.
+class MessageEnvelope(ABC):
+    """Abstract base for the coordinator's message envelopes.
 
-    Carries the message text and optional pinned skill names.  Regular user
-    messages construct this with text only (``pinned_skills`` defaults empty).
-    Session task deliveries carry skill names that were declared on the task
-    definition.
-
-    ``force_new`` is True when the message should skip boundary detection and
-    unconditionally start a fresh session (e.g. via the ``/new`` command).
-
-    This is a thin interim envelope — a future typed message envelope will
-    subsume it with a richer type carrying content-type and media metadata.
+    Every envelope can render itself into an SDK input string via
+    ``sdk_input``.  Subtypes override property hooks for behavior
+    that differs from the defaults (e.g. pre-processing opt-out).
     """
+
+    @property
+    @abstractmethod
+    def sdk_input(self) -> str: ...
+
+    @property
+    def pinned_skills(self) -> tuple[str, ...]:
+        return ()
+
+    @property
+    def force_new(self) -> bool:
+        return False
+
+    @property
+    def runs_pre_processing(self) -> bool:
+        return True
+
+
+@dataclass(frozen=True)
+class TextMessage(MessageEnvelope):
+    """Envelope for typed user input (and any non-tap producer)."""
 
     text: str
     pinned_skills: tuple[str, ...] = ()
     force_new: bool = False
+
+    @property
+    def sdk_input(self) -> str:
+        return self.text

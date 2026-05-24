@@ -13,7 +13,7 @@ from claude_agent_sdk.types import ResultMessage
 from loguru import logger
 
 from tachikoma.agent_defaults import AgentDefaults
-from tachikoma.message import IncomingMessage
+from tachikoma.message import MessageEnvelope
 from tachikoma.per_message_pre_processing import (
     MessageContextProvider,
     render_conversation_context,
@@ -127,7 +127,7 @@ class SkillsContextProvider(MessageContextProvider):
 
     async def provide(
         self,
-        message: IncomingMessage,
+        message: MessageEnvelope,
         *,
         existing_entries: list[SessionContextEntry] | None = None,
         sdk_session_id: str | None = None,
@@ -189,7 +189,7 @@ class SkillsContextProvider(MessageContextProvider):
             agents_context=agents_context,
             conversation_context_section=conversation_context_section,
             skills=skills_list,
-            message=message.text,
+            message=message.sdk_input,
         )
 
         # Tool-less agent (see DES-007 "Disabling Tools"):

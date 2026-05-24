@@ -19,7 +19,7 @@ from tachikoma.memory.context_provider import (
     extract_memory_paths,
     parse_memory_entries,
 )
-from tachikoma.message import IncomingMessage
+from tachikoma.message import TextMessage
 from tachikoma.sessions.model import SessionContextEntry
 
 
@@ -124,7 +124,7 @@ class TestMemoryContextProvider:
         mock_query.return_value = _make_query_result(_NO_RELEVANT_MEMORIES)
 
         provider = MemoryContextProvider(AgentDefaults(cwd=tmp_path))
-        await provider.provide(IncomingMessage(text="Hello"))
+        await provider.provide(TextMessage(text="Hello"))
 
         mock_query.assert_called_once()
         call_kwargs = mock_query.call_args[1]
@@ -153,7 +153,7 @@ class TestMemoryContextProvider:
         )
 
         provider = MemoryContextProvider(AgentDefaults(cwd=tmp_path))
-        result = await provider.provide(IncomingMessage(text="What restaurants do I like?"))
+        result = await provider.provide(TextMessage(text="What restaurants do I like?"))
 
         assert result is not None
         assert len(result) == 2
@@ -190,7 +190,7 @@ class TestMemoryContextProvider:
 
         provider = MemoryContextProvider(AgentDefaults(cwd=tmp_path))
         result = await provider.provide(
-            IncomingMessage(text="What hobbies do I have?"),
+            TextMessage(text="What hobbies do I have?"),
             existing_entries=existing,
         )
 
@@ -216,7 +216,7 @@ class TestMemoryContextProvider:
         (memories_dir / "ok.md").write_text("OK content")
 
         provider = MemoryContextProvider(AgentDefaults(cwd=tmp_path))
-        result = await provider.provide(IncomingMessage(text="Hello"))
+        result = await provider.provide(TextMessage(text="Hello"))
 
         assert result is not None
         assert len(result) == 1
@@ -232,7 +232,7 @@ class TestMemoryContextProvider:
         mock_query.return_value = _make_query_result(_NO_RELEVANT_MEMORIES)
 
         provider = MemoryContextProvider(AgentDefaults(cwd=tmp_path))
-        result = await provider.provide(IncomingMessage(text="What's the weather?"))
+        result = await provider.provide(TextMessage(text="What's the weather?"))
 
         assert result is None
 
@@ -246,7 +246,7 @@ class TestMemoryContextProvider:
         mock_query.side_effect = RuntimeError("SDK error")
 
         provider = MemoryContextProvider(AgentDefaults(cwd=tmp_path))
-        result = await provider.provide(IncomingMessage(text="Hello"))
+        result = await provider.provide(TextMessage(text="Hello"))
 
         assert result is None
 
@@ -260,7 +260,7 @@ class TestMemoryContextProvider:
         mock_query.return_value = _make_query_result("Error occurred", is_error=True)
 
         provider = MemoryContextProvider(AgentDefaults(cwd=tmp_path))
-        result = await provider.provide(IncomingMessage(text="Hello"))
+        result = await provider.provide(TextMessage(text="Hello"))
 
         assert result is None
 
@@ -283,7 +283,7 @@ class TestMemoryContextProvider:
         )
 
         provider = MemoryContextProvider(AgentDefaults(cwd=tmp_path))
-        result = await provider.provide(IncomingMessage(text="Hello"))
+        result = await provider.provide(TextMessage(text="Hello"))
 
         assert result is not None
         assert len(result) == 1
@@ -299,7 +299,7 @@ class TestMemoryContextProvider:
         mock_query.return_value = _make_query_result(_NO_RELEVANT_MEMORIES)
 
         provider = MemoryContextProvider(AgentDefaults(cwd=tmp_path))
-        await provider.provide(IncomingMessage(text="What restaurant did I like?"))
+        await provider.provide(TextMessage(text="What restaurant did I like?"))
 
         mock_query.assert_called_once()
         call_kwargs = mock_query.call_args[1]
@@ -336,7 +336,7 @@ class TestMemoryContextProvider:
         ]
 
         provider = MemoryContextProvider(AgentDefaults(cwd=tmp_path))
-        result = await provider.provide(IncomingMessage(text="Hello"), existing_entries=existing)
+        result = await provider.provide(TextMessage(text="Hello"), existing_entries=existing)
 
         assert result is None
 
@@ -350,7 +350,7 @@ class TestMemoryContextProvider:
         mock_query.return_value = _make_query_result(None)
 
         provider = MemoryContextProvider(AgentDefaults(cwd=tmp_path))
-        result = await provider.provide(IncomingMessage(text="Hello"))
+        result = await provider.provide(TextMessage(text="Hello"))
 
         assert result is None
 
@@ -564,7 +564,7 @@ class TestSnippetBehavior:
         )
 
         provider = MemoryContextProvider(AgentDefaults(cwd=tmp_path))
-        result = await provider.provide(IncomingMessage(text="What happened on April 6?"))
+        result = await provider.provide(TextMessage(text="What happened on April 6?"))
 
         assert result is not None
         assert len(result) == 1
@@ -588,7 +588,7 @@ class TestSnippetBehavior:
         )
 
         provider = MemoryContextProvider(AgentDefaults(cwd=tmp_path))
-        result = await provider.provide(IncomingMessage(text="Hello"))
+        result = await provider.provide(TextMessage(text="Hello"))
 
         assert result is not None
         assert result[0].content.startswith(
@@ -612,7 +612,7 @@ class TestSnippetBehavior:
         )
 
         provider = MemoryContextProvider(AgentDefaults(cwd=tmp_path))
-        result = await provider.provide(IncomingMessage(text="What restaurants?"))
+        result = await provider.provide(TextMessage(text="What restaurants?"))
 
         assert result is not None
         assert result[0].content == "Italian places"
@@ -641,7 +641,7 @@ class TestSnippetBehavior:
         )
 
         provider = MemoryContextProvider(AgentDefaults(cwd=tmp_path))
-        result = await provider.provide(IncomingMessage(text="Tell me about food and April 6"))
+        result = await provider.provide(TextMessage(text="Tell me about food and April 6"))
 
         assert result is not None
         assert len(result) == 2
@@ -675,7 +675,7 @@ class TestSnippetBehavior:
         )
 
         provider = MemoryContextProvider(AgentDefaults(cwd=tmp_path))
-        result = await provider.provide(IncomingMessage(text="Hello"))
+        result = await provider.provide(TextMessage(text="Hello"))
 
         assert result is None
 
@@ -694,7 +694,7 @@ class TestConversationContextInjection:
 
         provider = MemoryContextProvider(AgentDefaults(cwd=tmp_path))
         await provider.provide(
-            IncomingMessage(text="Hello"),
+            TextMessage(text="Hello"),
             session_summary="We discussed restaurants",
             session_last_exchange="I like Italian food",
         )
@@ -717,7 +717,7 @@ class TestConversationContextInjection:
         mock_query.return_value = _make_query_result(_NO_RELEVANT_MEMORIES)
 
         provider = MemoryContextProvider(AgentDefaults(cwd=tmp_path))
-        await provider.provide(IncomingMessage(text="Hello"))
+        await provider.provide(TextMessage(text="Hello"))
 
         mock_query.assert_called_once()
         call_kwargs = mock_query.call_args[1]
@@ -734,7 +734,7 @@ class TestConversationContextInjection:
         mock_query.return_value = _make_query_result(_NO_RELEVANT_MEMORIES)
 
         provider = MemoryContextProvider(AgentDefaults(cwd=tmp_path))
-        await provider.provide(IncomingMessage(text="Hello"), sdk_session_id="session-123")
+        await provider.provide(TextMessage(text="Hello"), sdk_session_id="session-123")
 
         mock_query.assert_called_once()
         call_kwargs = mock_query.call_args[1]

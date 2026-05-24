@@ -18,7 +18,7 @@ from tachikoma.buffer.events import BufferedDelivery
 from tachikoma.buffer.items import BufferedItem
 from tachikoma.buffer.priority import Priority
 from tachikoma.events import Error, Result, TextChunk, ToolActivity
-from tachikoma.message import IncomingMessage
+from tachikoma.message import TextMessage
 from tachikoma.repl import Renderer, Repl
 
 
@@ -290,7 +290,7 @@ class TestReplMultilineInput:
 
         await repl.run(coordinator)
 
-        coordinator.enqueue.assert_called_once_with(IncomingMessage(text="line1\nline2\nline3"))
+        coordinator.enqueue.assert_called_once_with(TextMessage(text="line1\nline2\nline3"))
 
 
 class TestReplBufferIntegration:
@@ -340,7 +340,7 @@ class TestReplBufferIntegration:
         for task in tasks:
             await task
 
-        coordinator.enqueue.assert_called_with(IncomingMessage(text="from-buffer"))
+        coordinator.enqueue.assert_called_with(TextMessage(text="from-buffer"))
 
     async def test_second_sigint_cancels_flush_and_interrupts(
         self,

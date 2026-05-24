@@ -18,7 +18,7 @@ from claude_agent_sdk.types import ResultMessage
 from loguru import logger
 
 from tachikoma.agent_defaults import AgentDefaults
-from tachikoma.message import IncomingMessage
+from tachikoma.message import MessageEnvelope
 from tachikoma.per_message_pre_processing import (
     MessageContextProvider,
     render_conversation_context,
@@ -247,7 +247,7 @@ class MemoryContextProvider(MessageContextProvider):
 
     async def provide(
         self,
-        message: IncomingMessage,
+        message: MessageEnvelope,
         *,
         existing_entries: list[SessionContextEntry] | None = None,
         sdk_session_id: str | None = None,
@@ -273,7 +273,7 @@ class MemoryContextProvider(MessageContextProvider):
             session_summary, session_last_exchange
         )
         prompt = MEMORY_SEARCH_PROMPT.replace("$WORKSPACE", workspace).format(
-            message=message.text, conversation_context_section=conversation_context_section
+            message=message.sdk_input, conversation_context_section=conversation_context_section
         )
 
         options = ClaudeAgentOptions(

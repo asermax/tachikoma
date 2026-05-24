@@ -44,7 +44,7 @@ from tachikoma.media import (
     generate_media_filename,
     resolve_media,
 )
-from tachikoma.message import IncomingMessage
+from tachikoma.message import TextMessage
 from tachikoma.telegram.pinning import create_pinning_server
 from tachikoma.telegram.tools import create_send_file_server
 from tachikoma.updates.events import RestartRequested
@@ -800,9 +800,9 @@ class TelegramChannel(Channel):
 
         cmd_name, cmd_args = self._detect_command(message)
         incoming = (
-            IncomingMessage(text=cmd_args, force_new=(cmd_name == "new"))
+            TextMessage(text=cmd_args, force_new=(cmd_name == "new"))
             if cmd_name is not None
-            else IncomingMessage(text=message.text.strip())
+            else TextMessage(text=message.text.strip())
         )
 
         if self._delivery_lock.locked():
@@ -877,11 +877,11 @@ class TelegramChannel(Channel):
         # the full rationale.
         if self._delivery_lock.locked():
             _log.debug("Mid-stream steering media message")
-            self._coordinator.enqueue(IncomingMessage(text=description))
+            self._coordinator.enqueue(TextMessage(text=description))
             return
 
         async with self._delivery_lock:
-            self._coordinator.enqueue(IncomingMessage(text=description))
+            self._coordinator.enqueue(TextMessage(text=description))
             await self._process_through_coordinator()
 
     async def _send_shutdown_status(self, message: str) -> None:
@@ -954,7 +954,7 @@ class TelegramChannel(Channel):
         try:
             async with self._delivery_lock:
                 self._coordinator.enqueue(
-                    IncomingMessage(text=event.prompt, pinned_skills=event.pinned_skills())
+                    TextMessage(text=event.prompt, pinned_skills=event.pinned_skills())
                 )
                 await self._process_through_coordinator(on_complete=self._build_on_complete(event))
                 await self._drain_deferred_queue()

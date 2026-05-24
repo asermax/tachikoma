@@ -13,7 +13,7 @@ from aiogram.exceptions import TelegramAPIError, TelegramBadRequest, TelegramRet
 
 from tachikoma.buffer.events import BufferedDelivery
 from tachikoma.events import Error, Result, ToolActivity
-from tachikoma.message import IncomingMessage
+from tachikoma.message import TextMessage
 from tachikoma.telegram import (
     TELEGRAM_TOOL_DISPLAY,
     TELEGRAM_TOOL_SUMMARY,
@@ -1679,7 +1679,7 @@ class TestDeliveryLock:
         finally:
             channel._delivery_lock.release()
 
-        channel._coordinator.enqueue.assert_called_once_with(IncomingMessage(text="hey"))
+        channel._coordinator.enqueue.assert_called_once_with(TextMessage(text="hey"))
         channel._process_through_coordinator.assert_not_called()
 
     async def test_handle_media_steers_when_lock_held(self) -> None:

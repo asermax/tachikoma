@@ -31,7 +31,7 @@ from tachikoma.config import TaskSettings
 from tachikoma.git.processor import GitProcessor
 from tachikoma.memory.context_provider import MemoryContextProvider
 from tachikoma.memory.episodic import EpisodicProcessor
-from tachikoma.message import IncomingMessage
+from tachikoma.message import TextMessage
 from tachikoma.notifications import (
     NotificationCycleState,
     create_notification_server,
@@ -671,7 +671,7 @@ class BackgroundTaskExecutor:
                 )
 
             per_message_results = await msg_pipeline.run(
-                IncomingMessage(text=prompt, pinned_skills=pinned_skills)
+                TextMessage(text=prompt, pinned_skills=pinned_skills)
             )
 
             all_results = (results or []) + per_message_results

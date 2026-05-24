@@ -15,7 +15,7 @@ from abc import ABC, abstractmethod
 from loguru import logger
 
 from tachikoma.events import StatusCallback
-from tachikoma.message import IncomingMessage
+from tachikoma.message import MessageEnvelope
 from tachikoma.pre_processing import ContextResult
 from tachikoma.sessions.model import SessionContextEntry
 
@@ -60,7 +60,7 @@ class MessageContextProvider(ABC):
     @abstractmethod
     async def provide(
         self,
-        message: IncomingMessage,
+        message: MessageEnvelope,
         *,
         existing_entries: list[SessionContextEntry] | None = None,
         sdk_session_id: str | None = None,
@@ -132,7 +132,7 @@ class MessagePreProcessingPipeline:
 
     async def run(
         self,
-        message: IncomingMessage,
+        message: MessageEnvelope,
         *,
         existing_entries: list[SessionContextEntry] | None = None,
         sdk_session_id: str | None = None,

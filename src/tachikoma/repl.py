@@ -21,7 +21,7 @@ from tachikoma.buffer.events import BufferedDelivery
 from tachikoma.channel import Channel
 from tachikoma.display import TOOL_DISPLAY, format_tool_name
 from tachikoma.events import AgentEvent, Error, Result, Status, TextChunk, ToolActivity
-from tachikoma.message import IncomingMessage
+from tachikoma.message import TextMessage
 from tachikoma.updates.events import RestartRequested
 
 if TYPE_CHECKING:
@@ -162,7 +162,7 @@ class Repl(Channel):
 
                 try:
                     async with self._delivery_lock:
-                        self._coordinator.enqueue(IncomingMessage(text=text))
+                        self._coordinator.enqueue(TextMessage(text=text))
                         async for event in self._coordinator.send_message():
                             if not self._renderer.render(event):
                                 return
@@ -226,8 +226,8 @@ class Repl(Channel):
 
         return force_exit_triggered
 
-    async def _execute_through_coordinator(self, msg: IncomingMessage) -> bool:
-        """Send an IncomingMessage through the coordinator and render the response.
+    async def _execute_through_coordinator(self, msg: TextMessage) -> bool:
+        """Send a TextMessage through the coordinator and render the response.
 
         Returns False if the REPL should exit.
         """
@@ -257,7 +257,7 @@ class Repl(Channel):
             f"\n[dim italic]📋 {label}:[/dim italic]",
         )
 
-        msg = IncomingMessage(text=event.prompt, pinned_skills=event.pinned_skills())
+        msg = TextMessage(text=event.prompt, pinned_skills=event.pinned_skills())
         if not await self._execute_through_coordinator(msg):
             return
 

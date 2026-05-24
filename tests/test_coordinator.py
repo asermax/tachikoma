@@ -27,7 +27,7 @@ from tachikoma.boundary import BoundaryResult
 from tachikoma.buffer.events import CoordinatorIdle
 from tachikoma.coordinator import Coordinator, _derive_transcript_path, _message_source
 from tachikoma.events import Error, Result, Status, TextChunk, ToolActivity
-from tachikoma.message import IncomingMessage
+from tachikoma.message import MessageEnvelope, TextMessage
 from tachikoma.pre_processing import ContextResult
 from tachikoma.sessions.errors import SessionRepositoryError
 from tachikoma.sessions.model import Session, SessionContextEntry
@@ -41,7 +41,7 @@ async def _mock_messages(*messages):
 
 async def _send(coord, text):
     """Enqueue a message and collect all events from send_message()."""
-    coord.enqueue(IncomingMessage(text=text))
+    coord.enqueue(TextMessage(text=text))
     return [e async for e in coord.send_message()]
 
 
@@ -939,14 +939,14 @@ class TestCoordinatorMessageBuffer:
     async def test_enqueue_always_succeeds(self) -> None:
         """AC: enqueue() succeeds on a bare coordinator (no client needed)."""
         coord = Coordinator()
-        coord.enqueue(IncomingMessage(text="hello"))
+        coord.enqueue(TextMessage(text="hello"))
 
         assert coord._message_buffer.qsize() == 1
 
     async def test_enqueue_is_synchronous(self) -> None:
         """AC: enqueue() is a plain method, not a coroutine."""
         coord = Coordinator()
-        result = coord.enqueue(IncomingMessage(text="hello"))
+        result = coord.enqueue(TextMessage(text="hello"))
 
         assert result is None
 
@@ -986,8 +986,8 @@ class TestCoordinatorMessageBuffer:
         ]
 
         async with Coordinator() as coord:
-            coord.enqueue(IncomingMessage(text="will survive"))
-            coord.enqueue(IncomingMessage(text="initial"))
+            coord.enqueue(TextMessage(text="will survive"))
+            coord.enqueue(TextMessage(text="initial"))
             events = [e async for e in coord.send_message()]
 
         error_events = [e for e in events if isinstance(e, Error)]
@@ -3162,7 +3162,7 @@ class TestIsBusy:
     async def test_busy_when_messages_pending(self) -> None:
         """AC: has_pending_messages (buffer not empty) means busy."""
         async with Coordinator() as coord:
-            coord.enqueue(IncomingMessage(text="pending message"))
+            coord.enqueue(TextMessage(text="pending message"))
 
             assert coord.has_pending_messages is True
             assert coord.is_busy is True
@@ -3358,7 +3358,7 @@ class TestIdlePostProcessingLoop:
         coord._last_message_time = datetime.now(UTC) - timedelta(seconds=400)
 
         # Make coordinator busy
-        coord.enqueue(IncomingMessage(text="pending"))
+        coord.enqueue(TextMessage(text="pending"))
 
         assert coord.is_busy is True
 
@@ -3468,7 +3468,7 @@ class TestIdlePostProcessingShutdown:
             pipeline=pipeline,
             session_idle_timeout=1,
         ) as coord:
-            coord.enqueue(IncomingMessage(text="hello"))
+            coord.enqueue(TextMessage(text="hello"))
 
             async def consume():
                 return [e async for e in coord.send_message()]
@@ -3979,8 +3979,8 @@ class TestCoordinatorIdleEmission:
         bus.dispatch = lambda event: idle_events.append(event)  # type: ignore[assignment]
 
         async with Coordinator(bus=bus) as coord:
-            coord.enqueue(IncomingMessage(text="test"))
-            coord.enqueue(IncomingMessage(text="test2"))
+            coord.enqueue(TextMessage(text="test"))
+            coord.enqueue(TextMessage(text="test2"))
 
             # enqueue only captures state; doesn't emit because it goes idle->busy
             assert len(idle_events) == 0
@@ -4029,14 +4029,14 @@ class TestCoordinatorTeardownRace:
         ]
 
         async with Coordinator() as coord:
-            coord.enqueue(IncomingMessage(text="initial"))
+            coord.enqueue(TextMessage(text="initial"))
             events = []
             enqueued_late = False
             async for event in coord.send_message():
                 events.append(event)
                 if isinstance(event, Result) and not enqueued_late:
                     # Simulates a message arriving during the teardown window
-                    coord.enqueue(IncomingMessage(text="late"))
+                    coord.enqueue(TextMessage(text="late"))
                     enqueued_late = True
 
         result_events = [e for e in events if isinstance(e, Result)]
@@ -4074,7 +4074,7 @@ class TestCoordinatorTeardownRace:
 
             coord._forwarder = _tracking_forwarder.__get__(coord, Coordinator)  # type: ignore[method-assign]
 
-            coord.enqueue(IncomingMessage(text="initial"))
+            coord.enqueue(TextMessage(text="initial"))
             async for _ in coord.send_message():
                 pass
 
@@ -4091,14 +4091,14 @@ class TestCoordinatorTeardownRace:
         ]
 
         async with Coordinator() as coord:
-            coord.enqueue(IncomingMessage(text="initial"))
-            coord.enqueue(IncomingMessage(text="A"))  # will be pulled by forwarder into sdk_inbox
+            coord.enqueue(TextMessage(text="initial"))
+            coord.enqueue(TextMessage(text="A"))  # will be pulled by forwarder into sdk_inbox
             events = []
             enqueued_b = False
             async for event in coord.send_message():
                 events.append(event)
                 if isinstance(event, Result) and not enqueued_b:
-                    coord.enqueue(IncomingMessage(text="B"))  # enqueued during teardown window
+                    coord.enqueue(TextMessage(text="B"))  # enqueued during teardown window
                     enqueued_b = True
 
         # "A" was moved to sdk_inbox by forwarder → drain_back recovered it first
@@ -4136,17 +4136,17 @@ class TestCoordinatorTeardownRace:
         ]
 
         async with Coordinator() as coord:
-            coord.enqueue(IncomingMessage(text="initial"))
+            coord.enqueue(TextMessage(text="initial"))
             events = []
             enqueued_a = False
             enqueued_b = False
             async for event in coord.send_message():
                 events.append(event)
                 if isinstance(event, TextChunk) and not enqueued_a:
-                    coord.enqueue(IncomingMessage(text="A"))  # mid-stream steering, consumed by SDK
+                    coord.enqueue(TextMessage(text="A"))  # mid-stream steering, consumed by SDK
                     enqueued_a = True
                 elif isinstance(event, Result) and not enqueued_b:
-                    coord.enqueue(IncomingMessage(text="B"))  # re-processed by re-queue loop
+                    coord.enqueue(TextMessage(text="B"))  # re-processed by re-queue loop
                     enqueued_b = True
 
         result_events = [e for e in events if isinstance(e, Result)]
@@ -4178,10 +4178,10 @@ class TestCoordinatorTeardownRace:
         client.receive_response.return_value = _response_driving_gen()
 
         async with Coordinator() as coord:
-            coord.enqueue(IncomingMessage(text="initial"))
+            coord.enqueue(TextMessage(text="initial"))
             async for event in coord.send_message():
                 if isinstance(event, TextChunk):
-                    coord.enqueue(IncomingMessage(text="follow-up"))
+                    coord.enqueue(TextMessage(text="follow-up"))
 
         assert [m["message"]["content"] for m in yielded] == ["initial", "follow-up"]
 
@@ -4211,11 +4211,11 @@ class TestCoordinatorTeardownRace:
         client.receive_response.return_value = _response_driving_gen()
 
         async with Coordinator() as coord:
-            coord.enqueue(IncomingMessage(text="initial"))
+            coord.enqueue(TextMessage(text="initial"))
             async for event in coord.send_message():
                 if isinstance(event, TextChunk):
-                    coord.enqueue(IncomingMessage(text="x"))
-                    coord.enqueue(IncomingMessage(text="y"))
+                    coord.enqueue(TextMessage(text="x"))
+                    coord.enqueue(TextMessage(text="y"))
 
         assert [m["message"]["content"] for m in yielded] == ["initial", "x", "y"]
 
@@ -4234,16 +4234,16 @@ class TestCoordinatorTeardownRace:
         ]
 
         async with Coordinator() as coord:
-            coord.enqueue(IncomingMessage(text="initial"))
+            coord.enqueue(TextMessage(text="initial"))
             # moved into sdk_inbox by forwarder during the turn
-            coord.enqueue(IncomingMessage(text="A"))
+            coord.enqueue(TextMessage(text="A"))
             events = []
             enqueued_b = False
             async for event in coord.send_message():
                 events.append(event)
                 if isinstance(event, Error) and not enqueued_b:
                     # enqueued after the error, during teardown
-                    coord.enqueue(IncomingMessage(text="B"))
+                    coord.enqueue(TextMessage(text="B"))
                     enqueued_b = True
 
         # First exchange errored, then re-queue loop processed A and B
@@ -4266,11 +4266,11 @@ class TestCoordinatorTeardownRace:
         bus.dispatch = lambda event: idle_events.append(event)  # type: ignore[assignment]
 
         async with Coordinator(bus=bus) as coord:
-            coord.enqueue(IncomingMessage(text="initial"))
+            coord.enqueue(TextMessage(text="initial"))
             enqueued_late = False
             async for event in coord.send_message():
                 if isinstance(event, Result) and not enqueued_late:
-                    coord.enqueue(IncomingMessage(text="late"))
+                    coord.enqueue(TextMessage(text="late"))
                     enqueued_late = True
 
         assert not coord.has_pending_messages
@@ -4289,7 +4289,7 @@ class TestCoordinatorTeardownRace:
         bus.dispatch = lambda event: idle_events.append(event)  # type: ignore[assignment]
 
         async with Coordinator(bus=bus) as coord:
-            coord.enqueue(IncomingMessage(text="initial"))
+            coord.enqueue(TextMessage(text="initial"))
             async for _ in coord.send_message():
                 pass
 
@@ -4311,10 +4311,10 @@ class TestMessageSourceCancellation:
 
     async def test_item_in_inbox_not_consumed_on_close(self) -> None:
         """Closing the generator while suspended at a yield does not consume inbox items."""
-        inbox: asyncio.Queue[str] = asyncio.Queue()
-        inbox.put_nowait("x")
+        inbox: asyncio.Queue[MessageEnvelope] = asyncio.Queue()
+        inbox.put_nowait(TextMessage(text="x"))
 
-        gen = _message_source("initial", inbox)
+        gen = _message_source(TextMessage(text="initial"), inbox)
 
         msg = await gen.__anext__()
         assert msg["message"]["content"] == "initial"
@@ -4324,14 +4324,14 @@ class TestMessageSourceCancellation:
         await gen.aclose()
 
         assert inbox.qsize() == 1
-        assert inbox.get_nowait() == "x"
+        assert inbox.get_nowait() == TextMessage(text="x")
 
     async def test_yielded_item_not_re_enqueued_on_close(self) -> None:
         """An item that was yielded to the consumer is not recovered on close."""
-        inbox: asyncio.Queue[str] = asyncio.Queue()
-        inbox.put_nowait("x")
+        inbox: asyncio.Queue[MessageEnvelope] = asyncio.Queue()
+        inbox.put_nowait(TextMessage(text="x"))
 
-        gen = _message_source("initial", inbox)
+        gen = _message_source(TextMessage(text="initial"), inbox)
 
         msg1 = await gen.__anext__()
         assert msg1["message"]["content"] == "initial"
@@ -4347,9 +4347,9 @@ class TestMessageSourceCancellation:
 
     async def test_close_with_empty_inbox_is_noop(self) -> None:
         """Closing a generator that has no local item and an empty inbox is a no-op."""
-        inbox: asyncio.Queue[str] = asyncio.Queue()
+        inbox: asyncio.Queue[MessageEnvelope] = asyncio.Queue()
 
-        gen = _message_source("initial", inbox)
+        gen = _message_source(TextMessage(text="initial"), inbox)
         msg = await gen.__anext__()
         assert msg["message"]["content"] == "initial"
 
@@ -4373,8 +4373,8 @@ class TestForwarderCancellation:
     async def test_item_survives_cancellation_after_forward(self) -> None:
         """Item moved from buffer to inbox before cancellation is not lost."""
         coord = Coordinator()
-        inbox: asyncio.Queue[str] = asyncio.Queue()
-        coord._message_buffer.put_nowait(IncomingMessage(text="x"))
+        inbox: asyncio.Queue[MessageEnvelope] = asyncio.Queue()
+        coord._message_buffer.put_nowait(TextMessage(text="x"))
 
         task = asyncio.create_task(coord._forwarder(inbox))
         await asyncio.sleep(0)  # forwarder moves "x" into inbox
@@ -4384,13 +4384,13 @@ class TestForwarderCancellation:
             await task
 
         assert inbox.qsize() == 1
-        assert inbox.get_nowait() == "x"
+        assert inbox.get_nowait() == TextMessage(text="x")
         assert coord._message_buffer.empty()
 
     async def test_cancellation_with_empty_buffer_loses_nothing(self) -> None:
         """Forwarder cancelled while awaiting on empty buffer: no spurious items appear."""
         coord = Coordinator()
-        inbox: asyncio.Queue[str] = asyncio.Queue()
+        inbox: asyncio.Queue[MessageEnvelope] = asyncio.Queue()
 
         task = asyncio.create_task(coord._forwarder(inbox))
         await asyncio.sleep(0)
@@ -4405,9 +4405,9 @@ class TestForwarderCancellation:
     async def test_multiple_items_survive_cancellation(self) -> None:
         """Multiple items forwarded before cancellation preserve order."""
         coord = Coordinator()
-        inbox: asyncio.Queue[str] = asyncio.Queue()
-        coord._message_buffer.put_nowait(IncomingMessage(text="a"))
-        coord._message_buffer.put_nowait(IncomingMessage(text="b"))
+        inbox: asyncio.Queue[MessageEnvelope] = asyncio.Queue()
+        coord._message_buffer.put_nowait(TextMessage(text="a"))
+        coord._message_buffer.put_nowait(TextMessage(text="b"))
 
         task = asyncio.create_task(coord._forwarder(inbox))
         await asyncio.sleep(0)
@@ -4417,16 +4417,16 @@ class TestForwarderCancellation:
         with contextlib.suppress(asyncio.CancelledError):
             await task
 
-        forwarded: list[str] = []
+        forwarded: list[MessageEnvelope] = []
         while not inbox.empty():
             forwarded.append(inbox.get_nowait())
-        assert forwarded == ["a", "b"]
+        assert forwarded == [TextMessage(text="a"), TextMessage(text="b")]
         assert coord._message_buffer.empty()
 
     async def test_pending_recovered_on_put_failure(self) -> None:
         """S4b `pending is not None` branch: put_nowait failure re-enqueues to buffer."""
         coord = Coordinator()
-        coord._message_buffer.put_nowait(IncomingMessage(text="x"))
+        coord._message_buffer.put_nowait(TextMessage(text="x"))
 
         class _FailingQueue(asyncio.Queue[str]):
             def put_nowait(self, item: str) -> None:
@@ -4455,13 +4455,13 @@ class TestRequeueLoop:
         ]
 
         async with Coordinator() as coord:
-            coord.enqueue(IncomingMessage(text="A"))
+            coord.enqueue(TextMessage(text="A"))
             events = []
             enqueued_b = False
             async for event in coord.send_message():
                 events.append(event)
                 if isinstance(event, Result) and not enqueued_b:
-                    coord.enqueue(IncomingMessage(text="B"))
+                    coord.enqueue(TextMessage(text="B"))
                     enqueued_b = True
 
         result_events = [e for e in events if isinstance(e, Result)]
@@ -4487,15 +4487,15 @@ class TestRequeueLoop:
         ]
 
         async with Coordinator() as coord:
-            coord.enqueue(IncomingMessage(text="A"))
+            coord.enqueue(TextMessage(text="A"))
             events = []
             enqueued_extra = False
             async for event in coord.send_message():
                 events.append(event)
                 if isinstance(event, Result) and not enqueued_extra:
-                    coord.enqueue(IncomingMessage(text="B"))
-                    coord.enqueue(IncomingMessage(text="C"))
-                    coord.enqueue(IncomingMessage(text="D"))
+                    coord.enqueue(TextMessage(text="B"))
+                    coord.enqueue(TextMessage(text="C"))
+                    coord.enqueue(TextMessage(text="D"))
                     enqueued_extra = True
 
         # Verify all four exchanges happened via the captured generators
@@ -4549,11 +4549,11 @@ class TestRequeueLoop:
         # Don't use async with — check state before __aexit__ clears it
         await coord.__aenter__()
         try:
-            coord.enqueue(IncomingMessage(text="A"))
+            coord.enqueue(TextMessage(text="A"))
             enqueued_late = False
             async for event in coord.send_message():
                 if isinstance(event, Result) and not enqueued_late:
-                    coord.enqueue(IncomingMessage(text="late"))
+                    coord.enqueue(TextMessage(text="late"))
                     enqueued_late = True
 
             # After generator completes, the last iteration's task is still pending
@@ -4577,13 +4577,13 @@ class TestRequeueLoop:
         ]
 
         async with Coordinator() as coord:
-            coord.enqueue(IncomingMessage(text="A"))
+            coord.enqueue(TextMessage(text="A"))
             events = []
             enqueued_b = False
             async for event in coord.send_message():
                 events.append(event)
                 if isinstance(event, Result) and not enqueued_b:
-                    coord.enqueue(IncomingMessage(text="B"))
+                    coord.enqueue(TextMessage(text="B"))
                     enqueued_b = True
 
         error_events = [e for e in events if isinstance(e, Error)]
@@ -4599,8 +4599,8 @@ class TestRequeueLoop:
         ]
 
         async with Coordinator() as coord:
-            coord.enqueue(IncomingMessage(text="A"))
-            coord.enqueue(IncomingMessage(text="B"))
+            coord.enqueue(TextMessage(text="A"))
+            coord.enqueue(TextMessage(text="B"))
             # Use explicit generator control to stop after first exchange's Result
             gen = coord.send_message()
             async for event in gen:
@@ -4622,13 +4622,13 @@ class TestRequeueLoop:
         ]
 
         async with Coordinator() as coord:
-            coord.enqueue(IncomingMessage(text="A"))
+            coord.enqueue(TextMessage(text="A"))
             events = []
             enqueued_late = False
             async for event in coord.send_message():
                 events.append(event)
                 if isinstance(event, Result) and not enqueued_late:
-                    coord.enqueue(IncomingMessage(text="late"))
+                    coord.enqueue(TextMessage(text="late"))
                     enqueued_late = True
 
         result_events = [e for e in events if isinstance(e, Result)]
@@ -4646,9 +4646,9 @@ class TestRequeueLoop:
         buffer_states: list[bool] = []
 
         async with Coordinator() as coord:
-            coord.enqueue(IncomingMessage(text="A"))
-            coord.enqueue(IncomingMessage(text="B"))
-            coord.enqueue(IncomingMessage(text="C"))
+            coord.enqueue(TextMessage(text="A"))
+            coord.enqueue(TextMessage(text="B"))
+            coord.enqueue(TextMessage(text="C"))
             async for event in coord.send_message():
                 if isinstance(event, Result):
                     buffer_states.append(coord.has_pending_messages)

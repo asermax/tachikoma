@@ -4,7 +4,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 from claude_agent_sdk.types import AgentDefinition
 
-from tachikoma.message import IncomingMessage
+from tachikoma.message import MessageEnvelope, TextMessage
 from tachikoma.per_message_pre_processing import (
     MessageContextProvider,
     MessagePreProcessingPipeline,
@@ -32,9 +32,9 @@ def _make_entry(
     )
 
 
-def _msg(text: str = "hello", **kwargs) -> IncomingMessage:
-    """Create an IncomingMessage for testing."""
-    return IncomingMessage(text=text, **kwargs)
+def _msg(text: str = "hello", **kwargs) -> TextMessage:
+    """Create an TextMessage for testing."""
+    return TextMessage(text=text, **kwargs)
 
 
 class TestExtractSkillNames:
@@ -395,7 +395,7 @@ class _NamedMessageProvider(MessageContextProvider):
 
     async def provide(
         self,
-        message: IncomingMessage,
+        message: MessageEnvelope,
         *,
         existing_entries=None,
         sdk_session_id=None,

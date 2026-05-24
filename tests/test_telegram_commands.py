@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 from aiogram.types import MessageEntity
 
-from tachikoma.message import IncomingMessage
+from tachikoma.message import TextMessage
 from tachikoma.telegram import TelegramChannel
 
 
@@ -128,7 +128,7 @@ class TestHandleMessageRouting:
 
         await ch._handle_message(msg)
 
-        ch._coordinator.enqueue.assert_called_once_with(IncomingMessage(text="hello"))
+        ch._coordinator.enqueue.assert_called_once_with(TextMessage(text="hello"))
         ch._coordinator.enqueue_deferred.assert_not_called()
 
     async def test_busy_normal_message_enqueues_steering(self) -> None:
@@ -140,7 +140,7 @@ class TestHandleMessageRouting:
 
         await ch._handle_message(msg)
 
-        ch._coordinator.enqueue.assert_called_once_with(IncomingMessage(text="hello"))
+        ch._coordinator.enqueue.assert_called_once_with(TextMessage(text="hello"))
         ch._coordinator.enqueue_deferred.assert_not_called()
         ch._delivery_lock.release()
 
@@ -155,7 +155,7 @@ class TestHandleMessageRouting:
         await ch._handle_message(msg)
 
         ch._coordinator.enqueue.assert_called_once_with(
-            IncomingMessage(text="fresh start", force_new=True)
+            TextMessage(text="fresh start", force_new=True)
         )
         ch._coordinator.enqueue_deferred.assert_not_called()
 
@@ -169,7 +169,7 @@ class TestHandleMessageRouting:
         await ch._handle_message(msg)
 
         ch._coordinator.enqueue.assert_called_once_with(
-            IncomingMessage(text="something")
+            TextMessage(text="something")
         )
         ch._coordinator.enqueue_deferred.assert_not_called()
 
@@ -182,7 +182,7 @@ class TestHandleMessageRouting:
         await ch._handle_message(msg)
 
         ch._coordinator.enqueue_deferred.assert_called_once_with(
-            IncomingMessage(text="fresh start", force_new=True)
+            TextMessage(text="fresh start", force_new=True)
         )
         ch._coordinator.enqueue.assert_not_called()
         ch._delivery_lock.release()
@@ -196,7 +196,7 @@ class TestHandleMessageRouting:
         await ch._handle_message(msg)
 
         ch._coordinator.enqueue_deferred.assert_called_once_with(
-            IncomingMessage(text="remind me")
+            TextMessage(text="remind me")
         )
         ch._coordinator.enqueue.assert_not_called()
         ch._delivery_lock.release()
@@ -210,7 +210,7 @@ class TestHandleMessageRouting:
         msg = _make_message("/new", [_make_entity("/new")])
         await ch._handle_message(msg)
 
-        ch._coordinator.enqueue.assert_called_once_with(IncomingMessage(text="/new"))
+        ch._coordinator.enqueue.assert_called_once_with(TextMessage(text="/new"))
 
     async def test_bare_new_when_busy_treated_as_normal(self) -> None:
         """/new (bare) when busy is steered as a normal message."""
@@ -220,7 +220,7 @@ class TestHandleMessageRouting:
         msg = _make_message("/new", [_make_entity("/new")])
         await ch._handle_message(msg)
 
-        ch._coordinator.enqueue.assert_called_once_with(IncomingMessage(text="/new"))
+        ch._coordinator.enqueue.assert_called_once_with(TextMessage(text="/new"))
         ch._coordinator.enqueue_deferred.assert_not_called()
         ch._delivery_lock.release()
 

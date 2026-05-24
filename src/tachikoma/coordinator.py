@@ -46,7 +46,7 @@ from tachikoma.events import (
     TextChunk,
     ToolActivity,
 )
-from tachikoma.message import IncomingMessage
+from tachikoma.message import MessageEnvelope
 from tachikoma.message_post_processing import MessagePostProcessingPipeline
 from tachikoma.per_message_pre_processing import MessagePreProcessingPipeline
 from tachikoma.post_processing import PostProcessingPipeline
@@ -94,8 +94,8 @@ def _user_message(content: str) -> dict[str, Any]:
 
 
 async def _message_source(
-    initial: str,
-    inbox: asyncio.Queue[str],
+    initial: MessageEnvelope,
+    inbox: asyncio.Queue[MessageEnvelope],
 ) -> AsyncIterator[dict[str, Any]]:
     """Long-lived generator feeding messages from per-turn inbox to SDK.
 
@@ -107,16 +107,16 @@ async def _message_source(
     not dropped.
     """
     _log.debug("Message source: yielding initial message")
-    yield _user_message(initial)
+    yield _user_message(initial.sdk_input)
 
-    pending: str | None = None
+    pending: MessageEnvelope | None = None
     try:
         while True:
             pending = await inbox.get()
-            text_to_yield = pending
+            envelope = pending
             pending = None
             _log.debug("Message source: yielding buffered message")
-            yield _user_message(text_to_yield)
+            yield _user_message(envelope.sdk_input)
     finally:
         if pending is not None:
             inbox.put_nowait(pending)
@@ -257,8 +257,8 @@ class Coordinator:
         self._msg_pipeline = msg_pipeline
         self._msg_pre_pipeline = msg_pre_pipeline
         self._skill_registry = skill_registry
-        self._message_buffer: asyncio.Queue[IncomingMessage] = asyncio.Queue()
-        self._deferred_queue: asyncio.Queue[IncomingMessage] = asyncio.Queue()
+        self._message_buffer: asyncio.Queue[MessageEnvelope] = asyncio.Queue()
+        self._deferred_queue: asyncio.Queue[MessageEnvelope] = asyncio.Queue()
 
         # Pending per-message post-processing task
         self._pending_msg_task: asyncio.Task[None] | None = None
@@ -435,7 +435,7 @@ class Coordinator:
 
         while True:  # Re-queue loop: processes leftover messages after exchange teardown
             msg = self._message_buffer.get_nowait()
-            _log.debug("Message received: length={n}", n=len(msg.text))
+            _log.debug("Message received: length={n}", n=len(msg.sdk_input))
 
             # Track last message time for idle gating
             self._last_message_time = datetime.now(UTC)
@@ -472,7 +472,7 @@ class Coordinator:
 
                     if active is None:
                         cold_start_task = asyncio.create_task(
-                            self._attempt_cold_start_resume(msg.text, on_status=on_status)
+                            self._attempt_cold_start_resume(msg.sdk_input, on_status=on_status)
                         )
                         async for event in _drain_status_while_running(
                             cold_start_task, status_queue
@@ -513,7 +513,7 @@ class Coordinator:
 
                     boundary_task: asyncio.Task[BoundaryResult] = asyncio.create_task(
                         detect_boundary(
-                            msg.text,
+                            msg.sdk_input,
                             active,
                             self._agent_defaults,
                             candidates=candidates,
@@ -565,7 +565,7 @@ class Coordinator:
             if is_new_session and self._pre_pipeline is not None:
                 try:
                     pre_task = asyncio.create_task(
-                        self._pre_pipeline.run(msg.text, on_status=on_status)
+                        self._pre_pipeline.run(msg.sdk_input, on_status=on_status)
                     )
                     async for event in _drain_status_while_running(pre_task, status_queue):
                         yield event
@@ -663,8 +663,8 @@ class Coordinator:
             final_text_group: list[str] = []
             had_tool_activity = False
 
-            sdk_inbox: asyncio.Queue[str] = asyncio.Queue()
-            message_source = _message_source(msg.text, sdk_inbox)
+            sdk_inbox: asyncio.Queue[MessageEnvelope] = asyncio.Queue()
+            message_source = _message_source(msg, sdk_inbox)
             transport = FilePromptTransport(prompt=message_source, options=options)
             client = ClaudeSDKClient(options, transport=transport)
 
@@ -762,7 +762,7 @@ class Coordinator:
                     self._pending_msg_task = asyncio.create_task(
                         self._msg_pipeline.run(
                             current_session,
-                            msg.text,
+                            msg.sdk_input,
                             response_text,
                             final_text=final_text,
                         )
@@ -1061,7 +1061,7 @@ providing context for what the user has been doing in the meantime.
                 err=str(exc),
             )
 
-    async def _forwarder(self, inbox: asyncio.Queue[str]) -> None:
+    async def _forwarder(self, inbox: asyncio.Queue[MessageEnvelope]) -> None:
         """Forward items from _message_buffer to the per-turn SDK inbox.
 
         The try/finally re-enqueues a held item on cancellation as
@@ -1069,28 +1069,28 @@ providing context for what the user has been doing in the meantime.
         land between get() and the synchronous put_nowait(), but the
         guard keeps the invariant robust to future edits.
         """
-        pending: IncomingMessage | None = None
+        pending: MessageEnvelope | None = None
         try:
             while True:
                 pending = await self._message_buffer.get()
-                inbox.put_nowait(pending.text)
+                inbox.put_nowait(pending)
                 pending = None
         finally:
             if pending is not None:
                 self._message_buffer.put_nowait(pending)
 
-    def _drain_back(self, inbox: asyncio.Queue[str]) -> None:
+    def _drain_back(self, inbox: asyncio.Queue[MessageEnvelope]) -> None:
         """Recover items from per-turn inbox and re-populate _message_buffer in order.
 
         Must be called after the forwarder has been cancelled and awaited
         and after client.disconnect() has returned — otherwise either could
         still consume from or push into the queues mid-drain.
         """
-        recovered: list[IncomingMessage] = []
+        recovered: list[MessageEnvelope] = []
         while not inbox.empty():
-            recovered.append(IncomingMessage(text=inbox.get_nowait()))
+            recovered.append(inbox.get_nowait())
 
-        pending: list[IncomingMessage] = []
+        pending: list[MessageEnvelope] = []
         while not self._message_buffer.empty():
             pending.append(self._message_buffer.get_nowait())
 
@@ -1102,7 +1102,7 @@ providing context for what the user has been doing in the meantime.
         if self._client is not None:
             await self._client.interrupt()
 
-    def enqueue(self, msg: IncomingMessage) -> None:
+    def enqueue(self, msg: MessageEnvelope) -> None:
         """Buffer a message for processing.
 
         Always succeeds regardless of coordinator state.  If a session is
@@ -1114,7 +1114,7 @@ providing context for what the user has been doing in the meantime.
         _log.debug("Message buffered: queue_size={n}", n=self._message_buffer.qsize())
         self._maybe_emit_idle()  # state capture only (idle->busy, never emits)
 
-    def enqueue_deferred(self, msg: IncomingMessage) -> None:
+    def enqueue_deferred(self, msg: MessageEnvelope) -> None:
         """Defer a message for processing after the current turn completes.
 
         Messages sit in the deferred queue until the channel calls
