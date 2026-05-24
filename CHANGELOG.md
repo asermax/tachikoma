@@ -2,6 +2,75 @@
 
 <!-- version list -->
 
+## v1.88.0 (2026-05-24)
+
+### Documentation
+
+- Reconcile DLT-067 into feature documentation
+  ([`e443f7d`](https://github.com/asermax/tachikoma/commit/e443f7da0724274ee7b97e92fb7e811ea335431a))
+
+- **deltas**: Add DLT-067 design for Telegram inline buttons
+  ([`7a79878`](https://github.com/asermax/tachikoma/commit/7a7987829e031b9be0023cf9cafb8964e77090bd))
+
+- **deltas**: Add DLT-067 implementation plan
+  ([`fe2398b`](https://github.com/asermax/tachikoma/commit/fe2398b891cf11cd0a186f4a5e68d03ee8233f65))
+
+- **deltas**: Add DLT-067 spec for Telegram inline buttons
+  ([`887ea42`](https://github.com/asermax/tachikoma/commit/887ea422f14283f52eb9644131391492868173c0))
+
+- **deltas**: Expand DLT-067 design with full problem context and approach
+  ([`14f0919`](https://github.com/asermax/tachikoma/commit/14f09191ecb1f7d2f991fb7fd0682aeefb1bc211))
+
+- **deltas**: Expand DLT-067 spec with message envelope abstraction
+  ([`5704ce2`](https://github.com/asermax/tachikoma/commit/5704ce2c9e5ec88ed97cbe63604c5e870a790743))
+
+- **deltas**: Mark DLT-067 as spec in progress
+  ([`908ab37`](https://github.com/asermax/tachikoma/commit/908ab37c14dc274bfe213429b9e6e9ebeb0d3fdd))
+
+- **deltas**: Mark DLT-067 batch 1 complete, move to implementation phase
+  ([`adacbb1`](https://github.com/asermax/tachikoma/commit/adacbb158827b372870968b8a09c0472aa30b46f))
+
+- **deltas**: Mark DLT-067 batch 2 complete
+  ([`a0401a9`](https://github.com/asermax/tachikoma/commit/a0401a95feb1d8ed5dd2e435e0f7e99f8cd93787))
+
+- **deltas**: Mark DLT-067 batch 3 complete
+  ([`d49891f`](https://github.com/asermax/tachikoma/commit/d49891fa8268ad06e682d5d0ad2426d31f23681a))
+
+- **deltas**: Mark DLT-067 batch 4 complete
+  ([`c79e109`](https://github.com/asermax/tachikoma/commit/c79e10941bd4cd6666bfe5ce3e97d75e2c56e669))
+
+- **deltas**: Mark DLT-067 design complete
+  ([`870c1e5`](https://github.com/asermax/tachikoma/commit/870c1e5bb28b7d85d4978ebac03307498ca16273))
+
+- **deltas**: Mark DLT-067 design complete
+  ([`965947c`](https://github.com/asermax/tachikoma/commit/965947c3d09130306d28291430ef2ddc5aac1453))
+
+- **deltas**: Mark DLT-067 spec complete
+  ([`4b6236e`](https://github.com/asermax/tachikoma/commit/4b6236e0d2e7a597e707243aba9a3871e27e2aaa))
+
+- **deltas**: Move DLT-067 to plan phase
+  ([`5248c59`](https://github.com/asermax/tachikoma/commit/5248c595350ca67605ce8088882e77695cb5f934))
+
+### Features
+
+- **coordinator**: Gate pre-processing on msg.runs_pre_processing
+  ([`3e78323`](https://github.com/asermax/tachikoma/commit/3e7832330c8abe309ed3e5106ec72ae05b639471))
+
+- **message**: Add ButtonTapMessage envelope subtype
+  ([`e4612e1`](https://github.com/asermax/tachikoma/commit/e4612e1f94ef0c17d1b31c8433debb3813732ce7))
+
+- **telegram**: Add CallbackQuery handler for inline button taps
+  ([`6f34ddc`](https://github.com/asermax/tachikoma/commit/6f34ddc5317998cb5eb4322836d0d8a45de12a4e))
+
+- **telegram**: Add present_buttons MCP tool
+  ([`eebeebe`](https://github.com/asermax/tachikoma/commit/eebeebec7dd7d47e5ef7032b57b47823f84cf20c))
+
+### Refactoring
+
+- **message**: Replace IncomingMessage with MessageEnvelope ABC and TextMessage subtype
+  ([`94b6f47`](https://github.com/asermax/tachikoma/commit/94b6f47e1c57aec59f8cf36037a1c92269533891))
+
+
 ## v1.87.0 (2026-05-20)
 
 ### Features
