@@ -22,7 +22,7 @@ from typing import TYPE_CHECKING, Any
 from aiogram import Bot, Dispatcher, F, Router
 from aiogram.dispatcher.dispatcher import BackoffConfig
 from aiogram.exceptions import TelegramAPIError, TelegramBadRequest, TelegramRetryAfter
-from aiogram.types import BotCommand, Message
+from aiogram.types import BotCommand, CallbackQuery, Message
 from aiogram.utils.chat_action import ChatActionSender
 from bubus import EventBus
 from claude_agent_sdk.types import McpSdkServerConfig
@@ -44,8 +44,8 @@ from tachikoma.media import (
     generate_media_filename,
     resolve_media,
 )
-from tachikoma.message import TextMessage
-from tachikoma.telegram.buttons import create_buttons_server
+from tachikoma.message import ButtonTapMessage, TextMessage
+from tachikoma.telegram.buttons import _unpack, create_buttons_server
 from tachikoma.telegram.pinning import create_pinning_server
 from tachikoma.telegram.tools import create_send_file_server
 from tachikoma.updates.events import RestartRequested
@@ -581,6 +581,9 @@ class TelegramChannel(Channel):
             | F.animation,
         )(self._handle_media)
 
+        # Register callback query handler for inline button taps
+        self._router.callback_query(F.data.startswith("btn"))(self._handle_callback_query)
+
         # Include router in dispatcher
         self._dispatcher.include_router(self._router)
 
@@ -893,6 +896,88 @@ class TelegramChannel(Channel):
         async with self._delivery_lock:
             self._coordinator.enqueue(TextMessage(text=description))
             await self._process_through_coordinator()
+
+    async def _handle_callback_query(self, callback: CallbackQuery) -> None:
+        """Handle an inline button tap (CallbackQuery).
+
+        Ordering follows the design's Tap routing sequence:
+        answer → auth → detached keyboard removal → unpack → envelope → lock branching.
+        """
+        # 1. Acknowledge first — clears the originator's spinner regardless of agent state.
+        try:
+            await callback.answer()
+        except Exception:
+            _log.exception("callback_query.answer() failed; continuing")
+
+        # 2. In-handler auth (not router filter — see KD-6).
+        if callback.from_user.id != self._settings.authorized_chat_id:
+            _log.debug("Dropping unauthorized tap from user={uid}", uid=callback.from_user.id)
+            return
+
+        # 3. Validate callback data.
+        if callback.data is None:
+            return
+
+        # 4. Unpack the callback_data to recover (value, single_use).
+        try:
+            value, single_use = _unpack(callback.data)
+        except ValueError:
+            _log.warning("Unrecognized callback_data: {data!r}", data=callback.data)
+            return
+
+        # 5. Schedule detached keyboard removal when single-use and message is present.
+        if single_use and callback.message is not None:
+            task = asyncio.create_task(
+                self._remove_keyboard(callback.message.chat.id, callback.message.message_id),
+            )
+            self._delivery_tasks.add(task)
+            task.add_done_callback(self._delivery_tasks.discard)
+
+        # 6. Build envelope.
+        tap = ButtonTapMessage(value=value)
+
+        # 7. DES-009 lock branching (mirrors _handle_message / _handle_media).
+        if self._delivery_lock.locked():
+            self._coordinator.enqueue(tap)
+            return
+
+        async with self._delivery_lock:
+            self._coordinator.enqueue(tap)
+            await self._process_through_coordinator()
+            await self._drain_deferred_queue()
+
+    async def _remove_keyboard(self, chat_id: int, message_id: int) -> None:
+        """Remove the inline keyboard from a message (detached task).
+
+        Log-and-swallow errors. "message is not modified" is treated as no-op.
+        """
+        try:
+            await self._bot.edit_message_reply_markup(
+                chat_id=chat_id,
+                message_id=message_id,
+                reply_markup=None,
+            )
+        except TelegramBadRequest as e:
+            if "message is not modified" in str(e):
+                _log.debug(
+                    "Keyboard already removed: chat={chat} msg={msg}",
+                    chat=chat_id,
+                    msg=message_id,
+                )
+            else:
+                _log.warning(
+                    "Failed to remove keyboard: chat={chat} msg={msg}: {err}",
+                    chat=chat_id,
+                    msg=message_id,
+                    err=e,
+                )
+        except TelegramAPIError:
+            _log.warning(
+                "Failed to remove keyboard: chat={chat} msg={msg}",
+                chat=chat_id,
+                msg=message_id,
+                exc_info=True,
+            )
 
     async def _send_shutdown_status(self, message: str) -> None:
         """Send or update a dedicated shutdown progress message."""
