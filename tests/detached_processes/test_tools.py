@@ -581,6 +581,30 @@ async def test_start_process_no_cgroup_uses_default_limit(repo):
 
 
 @pytest.mark.asyncio
+async def test_start_process_no_default_no_per_process_no_cgroup(repo):
+    """No config default and no per-process limit means no cgroup, even when available."""
+    mock_bus = AsyncMock()
+    log_dir = Path("/tmp/test-logs")
+    tools = _build_tools_map(
+        repo,
+        mock_bus,
+        log_dir,
+        cgroup_available=True,
+        cgroup_parent_path="/sys/fs/cgroup",
+        default_memory_limit_mb=None,
+    )
+
+    with patch("tachikoma.detached_processes.tools.spawn_process") as mock_spawn:
+        mock_spawn.return_value = _make_record(record_id="sp-no-default")
+        result = await tools["start_process"]({"name": "test", "command": "echo hi"})
+
+    assert result.get("is_error") is not True
+    _, kwargs = mock_spawn.call_args
+    assert kwargs["memory_limit_bytes"] is None
+    assert kwargs["cgroup_parent_path"] is None
+
+
+@pytest.mark.asyncio
 async def test_start_process_cgroup_available_passes_limit(repo):
     """When cgroup_available=True, effective limit is converted to bytes."""
     mock_bus = AsyncMock()
