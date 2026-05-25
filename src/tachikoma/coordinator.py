@@ -750,7 +750,13 @@ class Coordinator:
                 self._client = None
 
             # Trigger per-message post-processing after response completes
-            if self._msg_pipeline is not None and active is not None and self._registry is not None:
+            # (skipped for envelopes that opt out of pre-processing, e.g. reactions)
+            if (
+                msg.runs_pre_processing
+                and self._msg_pipeline is not None
+                and active is not None
+                and self._registry is not None
+            ):
                 # Re-fetch session to get latest metadata (may have been updated)
                 current_session = await self._registry.get_active_session()
                 if current_session is not None:
