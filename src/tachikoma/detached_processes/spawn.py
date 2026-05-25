@@ -12,6 +12,7 @@ from uuid import uuid4
 import psutil
 from loguru import logger
 
+from tachikoma.detached_processes import cgroup_manager
 from tachikoma.detached_processes.model import ProcessRecord
 from tachikoma.detached_processes.repository import ProcessRepository
 
@@ -39,6 +40,9 @@ async def spawn_process(
     env_overrides: dict[str, str] | None,
     log_dir: Path,
     repository: ProcessRepository,
+    *,
+    memory_limit_bytes: int | None = None,
+    cgroup_parent_path: str | None = None,
 ) -> ProcessRecord:
     """Spawn a detached shell command and persist the record.
 
@@ -46,6 +50,9 @@ async def spawn_process(
     spawns via asyncio.create_subprocess_exec with start_new_session=True,
     and persists the record. On DB failure after successful spawn, kills
     the process group as cleanup.
+
+    If memory_limit_bytes and cgroup_parent_path are both provided,
+    creates a per-process cgroup with the specified memory limit.
     """
     if not name.strip():
         raise ValueError("name must not be empty or whitespace")
@@ -92,6 +99,22 @@ async def spawn_process(
             os.killpg(os.getpgid(pid), signal.SIGKILL)
         raise OSError(f"Failed to capture process identity for pid {pid}: {exc}") from exc
 
+    # If cgroup is configured, create per-process cgroup and assign PID
+    cgroup_path: str | None = None
+    if cgroup_parent_path is not None and memory_limit_bytes is not None:
+        cgroup_path = cgroup_manager.create_process_cgroup(
+            cgroup_parent_path, record_id, memory_limit_bytes
+        )
+        if cgroup_path is not None and not cgroup_manager.assign_pid(
+            cgroup_path, pid
+        ):
+            _log.warning(
+                "Failed to assign pid={pid} to cgroup, proceeding without limit",
+                pid=pid,
+            )
+            cgroup_manager.cleanup_cgroup(cgroup_path)
+            cgroup_path = None
+
     record = ProcessRecord(
         id=record_id,
         name=name,
@@ -102,12 +125,16 @@ async def spawn_process(
         log_path=str(log_path),
         status="running",
         started_at=datetime.now(UTC),
+        memory_limit=memory_limit_bytes if cgroup_path else None,
+        cgroup_path=cgroup_path,
     )
 
     try:
         return await repository.create(record)
     except Exception:
         _log.exception("DB write failed after spawn, killing pid={pid}", pid=pid)
+        if cgroup_path is not None:
+            cgroup_manager.cleanup_cgroup(cgroup_path)
         with contextlib.suppress(ProcessLookupError, PermissionError, OSError):
             os.killpg(os.getpgid(pid), signal.SIGKILL)
         raise

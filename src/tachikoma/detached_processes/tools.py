@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 from zoneinfo import ZoneInfo
 
+import psutil
 from claude_agent_sdk import McpSdkServerConfig, create_sdk_mcp_server, tool
 from loguru import logger
 from pydantic import BaseModel, ValidationError
@@ -60,6 +61,7 @@ class StartProcessArgs(BaseModel):
     command: str
     cwd: str | None = None
     env: dict[str, str] | None = None
+    memory_limit_mb: int | None = None
 
 
 class ListProcessesArgs(BaseModel):
@@ -97,6 +99,10 @@ def create_detached_process_tools_server(
     bus: "EventBus",
     log_dir: Path,
     timezone: ZoneInfo,
+    *,
+    cgroup_available: bool = False,
+    cgroup_parent_path: str | None = None,
+    default_memory_limit_mb: int | None = None,
 ) -> McpSdkServerConfig:
     """Create an MCP server exposing detached process management tools.
 
@@ -105,6 +111,9 @@ def create_detached_process_tools_server(
         bus: The EventBus for notification dispatch.
         log_dir: Path to the log directory for process output files.
         timezone: The configured timezone for datetime display.
+        cgroup_available: Whether cgroup v2 is available on this system.
+        cgroup_parent_path: Parent cgroup directory for creating child cgroups.
+        default_memory_limit_mb: Default memory limit from config (None = no default).
 
     Returns:
         McpSdkServerConfig for registration with ClaudeAgentOptions.mcp_servers.
@@ -119,6 +128,7 @@ def create_detached_process_tools_server(
         "- command (str, required): Shell command to run (supports pipes, &&, etc.)\n"
         "- cwd (str, optional): Working directory (defaults to Tachikoma's cwd)\n"
         "- env (dict, optional): Environment variable overrides merged onto OS env\n"
+        "- memory_limit_mb (int, optional): Memory limit in MB (overrides config default)\n"
         "\n"
         "The spawned process survives Tachikoma restarts. "
         "Returns the record ID, PID, and log path.",
@@ -131,6 +141,29 @@ def create_detached_process_tools_server(
             return _error(f"Invalid arguments: {exc}")
 
         try:
+            # Resolve effective memory limit
+            effective_limit_mb: int | None = parsed.memory_limit_mb or default_memory_limit_mb
+
+            # Validate memory_limit_mb if provided by the caller
+            if parsed.memory_limit_mb is not None:
+                if parsed.memory_limit_mb <= 0:
+                    return _error(
+                        f"Invalid memory_limit_mb: {parsed.memory_limit_mb}. Minimum value is 1."
+                    )
+                total_ram_mb = psutil.virtual_memory().total // (1024 * 1024)
+                if parsed.memory_limit_mb > total_ram_mb:
+                    return _error(
+                        f"memory_limit_mb ({parsed.memory_limit_mb}) exceeds "
+                        f"system RAM ({total_ram_mb} MB)."
+                    )
+
+            # Convert to bytes; skip cgroup if not available
+            memory_limit_bytes: int | None = None
+            effective_cgroup_parent: str | None = None
+            if effective_limit_mb is not None and cgroup_available:
+                memory_limit_bytes = effective_limit_mb * 1024 * 1024
+                effective_cgroup_parent = cgroup_parent_path
+
             cwd = Path(parsed.cwd) if parsed.cwd else None
             record = await spawn_process(
                 name=parsed.name,
@@ -139,6 +172,8 @@ def create_detached_process_tools_server(
                 env_overrides=parsed.env,
                 log_dir=log_dir,
                 repository=repository,
+                memory_limit_bytes=memory_limit_bytes,
+                cgroup_parent_path=effective_cgroup_parent,
             )
 
             text = (
