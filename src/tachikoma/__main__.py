@@ -455,6 +455,9 @@ async def run(
         bus,
         detached_log_dir,
         ZoneInfo(settings.tasks.timezone),
+        cgroup_available=bootstrap.extras.get("cgroup_available", False),
+        cgroup_parent_path=bootstrap.extras.get("cgroup_parent_path"),
+        default_memory_limit_mb=settings.detached_processes.default_memory_limit_mb,
     )
     git_tools = create_git_tools_server(settings.workspace.path, agent_defaults)
     update_tools = create_update_tools_server(bus)
