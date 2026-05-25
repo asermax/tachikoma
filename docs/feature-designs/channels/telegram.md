@@ -89,7 +89,7 @@ The key components:
 | Layer/Component | Responsibility | Key Decisions |
 |-----------------|----------------|---------------|
 | `src/tachikoma/__main__.py` | Cyclopts `App` entry point: `run()` subcommand with `--channel` flag (also the default for bare invocation); creates `SettingsManager`, applies CLI overrides, runs bootstrap, dispatches to channel. Registers `media_hook` in bootstrap sequence (after `tasks`, before `telegram`) | Replaces bare `asyncio.run(main())` with cyclopts; `cli()` wrapper as `[project.scripts]` entry point; integrates with SettingsManager + Bootstrap |
-| `src/tachikoma/telegram/__init__.py` | `TelegramChannel` class + `ResponseRenderer` class + `telegram_hook` function. Subscribes to `BufferedDelivery` events via `bus.on()` in `run()` (deferred until the coordinator is set). Shared `_process_through_coordinator()` method handles both user messages and buffered deliveries. `_handle_buffered_delivery()` spawns a detached `asyncio.Task` for the delivery work and returns immediately so the EventBus is freed (see DES-009). The `_deliver()` task acquires the delivery lock, wraps `event.prompt` in a `TextMessage` envelope, routes it through the coordinator, fires per-item `on_delivered` callbacks, and calls `resolve_shutdown()` in a `finally` block for shutdown digests. `_handle_media` catch-all handler delegates to `media.py` functions for descriptor resolution, download, and description building. Channel-specific formatter maps (`TELEGRAM_TOOL_DISPLAY`, `TELEGRAM_TOOL_SUMMARY`) with `code_wrap()` utility for inline code wrapping of dynamic tool arguments (file paths, patterns, commands — but not Bash descriptions, which are plain text). `_send_shutdown_status()` manages a dedicated shutdown progress message (send on first call, edit on subsequent) using the same pattern as `ResponseRenderer.handle_status()`. In `run()`, sets `coordinator.shutdown_status_callback` to `_send_shutdown_status` so the coordinator emits bookend messages ("Shutting down..." / "Shutdown complete") and the pipeline emits per-processor status during shutdown post-processing. `_detect_command()` inspects `bot_command` entities for `/new` and `/queue` command detection; `_handle_message()` routes commands to deferred queue (when busy) or immediate processing (when idle); `_drain_deferred_queue()` processes deferred messages sequentially after each delivery cycle. Registers commands via `bot.set_my_commands()` in `run()`. **Inline button taps**: registers an aiogram `@router.callback_query(F.data.startswith("btn"))` handler `_handle_callback_query` alongside the existing message and media handlers. The handler runs `answer()` first (so the spinner always clears), checks `callback.from_user.id` against the configured authorized user, schedules `_remove_keyboard()` as a detached task on `_delivery_tasks` when `single_use=True`, unpacks the callback data via `_unpack()` from `buttons.py`, constructs a `ButtonTapMessage(value=…)` envelope, and routes via the same `_delivery_lock.locked()` busy/idle branching as `_handle_message`/`_handle_media`. `_remove_keyboard()` calls `bot.edit_message_reply_markup(reply_markup=None)` and swallows `TelegramBadRequest("message is not modified")` as a no-op (consistent with `_flush`/`_send_chunks`). All producer sites in this module construct `TextMessage` envelopes at the coordinator boundary (text path, media path, command paths, buffered-delivery path) | High cohesion between channel control flow and response rendering; only `BufferedDelivery` is observed — session tasks and notifications are enqueued into the priority buffer by their producers (see [delivery/priority-buffer](../delivery/priority-buffer.md)); shutdown progress follows existing status callback pattern from pre-processing; command detection uses Telegram-native entities (not string matching); tap acknowledgement runs before the auth check (otherwise unauthorized users would stare at a stuck spinner); keyboard removal is detached so a slow/failing edit cannot delay envelope routing |
+| `src/tachikoma/telegram/__init__.py` | `TelegramChannel` class + `ResponseRenderer` class + `telegram_hook` function. Subscribes to `BufferedDelivery` events via `bus.on()` in `run()` (deferred until the coordinator is set). Shared `_process_through_coordinator()` method handles both user messages and buffered deliveries. `_handle_buffered_delivery()` spawns a detached `asyncio.Task` for the delivery work and returns immediately so the EventBus is freed (see DES-009). The `_deliver()` task acquires the delivery lock, wraps `event.prompt` in a `TextMessage` envelope, routes it through the coordinator, fires per-item `on_delivered` callbacks, and calls `resolve_shutdown()` in a `finally` block for shutdown digests. `_handle_media` catch-all handler delegates to `media.py` functions for descriptor resolution, download, and description building. Channel-specific formatter maps (`TELEGRAM_TOOL_DISPLAY`, `TELEGRAM_TOOL_SUMMARY`) with `code_wrap()` utility for inline code wrapping of dynamic tool arguments (file paths, patterns, commands — but not Bash descriptions, which are plain text). `_send_shutdown_status()` manages a dedicated shutdown progress message (send on first call, edit on subsequent) using the same pattern as `ResponseRenderer.handle_status()`. In `run()`, sets `coordinator.shutdown_status_callback` to `_send_shutdown_status` so the coordinator emits bookend messages ("Shutting down..." / "Shutdown complete") and the pipeline emits per-processor status during shutdown post-processing. `_detect_command()` inspects `bot_command` entities for `/new` and `/queue` command detection; `_handle_message()` routes commands to deferred queue (when busy) or immediate processing (when idle); `_drain_deferred_queue()` processes deferred messages sequentially after each delivery cycle. Registers commands via `bot.set_my_commands()` in `run()`. **Inline button taps**: registers an aiogram `@router.callback_query(F.data.startswith("btn"))` handler `_handle_callback_query` alongside the existing message and media handlers. The handler runs `answer()` first (so the spinner always clears), checks `callback.from_user.id` against the configured authorized user, schedules `_remove_keyboard()` as a detached task on `_delivery_tasks` when `single_use=True`, unpacks the callback data via `_unpack()` from `buttons.py`, constructs a `ButtonTapMessage(value=…)` envelope, and routes via the same `_delivery_lock.locked()` busy/idle branching as `_handle_message`/`_handle_media`. `_remove_keyboard()` calls `bot.edit_message_reply_markup(reply_markup=None)` and swallows `TelegramBadRequest("message is not modified")` as a no-op (consistent with `_flush`/`_send_chunks`). **Inbound reactions**: when `settings.inbound_reactions` is True, registers an aiogram `@router.message_reaction(F.chat.id == authorized_chat_id, F.user.is_not(None))` handler `_handle_reaction` alongside the existing observers. The handler extracts emoji strings from the old and new reaction lists via the module-level `_emoji_set(reactions: Sequence[ReactionType]) -> frozenset[str]` helper (drops `ReactionTypeCustomEmoji` and `ReactionTypePaid`), computes the set diff, drops the update when both `added` and `removed` are empty (no-op or only uninterpretable kinds), constructs a `ReactionMessage(added, removed)` envelope, and routes via the same `_delivery_lock.locked()` busy/idle branching as the other handlers — reactions never use `enqueue_deferred()`. `TelegramChannel.run()` passes `allowed_updates=self._dispatcher.resolve_used_update_types()` to `start_polling`, so registered handlers (including the reaction handler) drive the polling subscription with no hardcoded update-type list. All producer sites in this module construct envelopes at the coordinator boundary (text/media/command/buffered-delivery paths construct `TextMessage`; the callback handler constructs `ButtonTapMessage`; the reaction handler constructs `ReactionMessage`) | High cohesion between channel control flow and response rendering; only `BufferedDelivery` is observed — session tasks and notifications are enqueued into the priority buffer by their producers (see [delivery/priority-buffer](../delivery/priority-buffer.md)); shutdown progress follows existing status callback pattern from pre-processing; command detection uses Telegram-native entities (not string matching); tap acknowledgement runs before the auth check (otherwise unauthorized users would stare at a stuck spinner); keyboard removal is detached so a slow/failing edit cannot delay envelope routing; reaction-type filtering happens in-handler (not via aiogram `F.new_reaction[0].type` filters) because aiogram's index filter fails on mixed-kind updates and the no-op drop requires post-filter set comparison; `allowed_updates=resolve_used_update_types()` couples polling to the registered handler set in one direction so registration is the single source of truth |
 | `src/tachikoma/media.py` | Media descriptor table (`MEDIA_DESCRIPTORS`), `resolve_media()`, `download_media()`, `build_description()`, `generate_media_filename()`, `MediaTooLargeError`, `media_hook` bootstrap function. Constants: `MEDIA_TEMP_DIR`, `TELEGRAM_MAX_FILE_SIZE`, `MEDIA_CLEANUP_DAYS` | High cohesion between all media-related logic; bootstrap hook follows DES-003; descriptor table driven by ordered sequence for priority resolution |
 | `src/tachikoma/coordinator.py` | Existing + `enqueue()` method, `_message_buffer` queue, `has_pending_messages` property, `_message_source()` async generator passed to `client.connect()`, `shutdown_status_callback` attribute set by channels before polling starts to receive progress updates during shutdown post-processing. Deferred queue: `_deferred_queue`, `enqueue_deferred()`, `has_deferred`, `promote_next_deferred()` for messages that should wait until the current turn completes. `force_new` routing in `send_message()` skips boundary detection and triggers fresh session transition | Message buffer replaces steer/pending-steers pattern; shutdown callback follows same StatusCallback pattern as pre-processing; deferred queue is coordinator-level (generic infrastructure) while drain loop is channel-level (delivery timing) |
 | `src/tachikoma/config.py` | `TelegramSettings` model added to `Settings` | Extends existing config; optional section (`None` when not configured) |
@@ -227,6 +227,42 @@ sequenceDiagram
     end
 ```
 
+#### Inbound reaction flow
+
+```mermaid
+sequenceDiagram
+    actor User
+    participant TG as Telegram API
+    participant Router as aiogram Router
+    participant Chan as TelegramChannel
+    participant Coord as Coordinator
+    participant SDK as ClaudeSDKClient
+
+    User->>TG: add/remove/replace reaction
+    TG->>Router: MessageReactionUpdated
+    Note over Router: filtered by F.chat.id == auth + F.user.is_not(None)
+    Router->>Chan: _handle_reaction(event)
+
+    Chan->>Chan: _emoji_set(event.old_reaction) → old_emojis
+    Chan->>Chan: _emoji_set(event.new_reaction) → new_emojis
+    Chan->>Chan: added = new_emojis − old_emojis<br/>removed = old_emojis − new_emojis
+
+    alt both sets empty (no-op or only uninterpretable kinds)
+        Note over Chan: drop the update — return
+    else has interpretable change
+        Chan->>Chan: ReactionMessage(added, removed)
+
+        alt _delivery_lock.locked() (mid-exchange)
+            Chan->>Coord: enqueue(env)
+            Note over Coord: forwarder routes onto live sdk_inbox<br/>as steering message
+            Coord->>SDK: yield _user_message(env.sdk_input)
+        else idle
+            Chan->>Coord: enqueue(env) + _process_through_coordinator()
+            Note over Coord: send_message() picks env up,<br/>skips cold-start resume + boundary detection<br/>(runs_boundary_detection=False),<br/>skips pre-processing pipelines<br/>(runs_pre_processing=False),<br/>yields _user_message(env.sdk_input) to SDK
+        end
+    end
+```
+
 **Integration Points:**
 - Channel ↔ Coordinator: `send_message()` (async iterator yielding continuous stream from all re-queue iterations), `enqueue()` (sync buffer write), `enqueue_deferred()` (sync deferred queue write), `has_deferred` + `promote_next_deferred()` (drain control)
 - Channel ↔ aiogram: `Router` handler receives `Message`, `Bot` sends/edits messages
@@ -239,6 +275,8 @@ sequenceDiagram
 - Channel ↔ pinning.py: `create_pinning_server()` factory called in `get_mcp_servers()` — captures `Bot`, chat ID, and a locally-defined `get_msg_id()` function that safely resolves `_active_renderer.get_last_message_id()` (returns `None` when no renderer is active). Returns a tuple of `(McpSdkServerConfig, is_pinned_checker)` where the checker tests message IDs against a closure-captured `pinned_ids` set. The channel stores the checker and passes it to each new `ResponseRenderer` so `notify()` can skip copy+delete for pinned messages.
 - Channel ↔ buttons.py: `create_buttons_server(bot, chat_id)` factory called in `get_mcp_servers()` — produces the `telegram-buttons` server (third entry alongside `send-file` and `telegram-pinning`). The channel also imports `_unpack` from `buttons.py` for use in `_handle_callback_query`, making `buttons.py` the single source of truth for the `callback_data` wire format on both the producing and consuming sides.
 - Channel ↔ aiogram callback router: new `@router.callback_query(F.data.startswith("btn"))` handler registered alongside the message and media handlers. Authorization happens in-handler (post-`answer()`) rather than at the router level, so unauthorized taps still clear their originator's spinner before being dropped.
+- Channel ↔ aiogram reaction observer: when `settings.inbound_reactions` is True, an `@router.message_reaction(F.chat.id == authorized_chat_id, F.user.is_not(None))` handler is registered alongside the other observers. Chat-level authorization is applied at the observer (router-wide `router.message.filter(...)` does not propagate to the `message_reaction` observer in aiogram); the `F.user.is_not(None)` clause excludes anonymous-channel reactions before they reach the handler.
+- Channel ↔ `Dispatcher.start_polling`: `allowed_updates=self._dispatcher.resolve_used_update_types()` is passed so aiogram derives the polling subscription set from the registered handlers. Adding or omitting handlers (e.g., via the `inbound_reactions` flag) automatically adjusts the set — no hardcoded `["message", "callback_query", "message_reaction", ...]` literal to maintain.
 
 ## Modeling
 
@@ -255,6 +293,10 @@ Settings (root, frozen)
     ├── bot_token: str
     ├── authorized_chat_id: int
     ├── push_notifications: bool = True
+    ├── inbound_reactions: bool = True
+    │   — gates registration of the message_reaction handler;
+    │     when False, aiogram's resolve_used_update_types()
+    │     omits message_reaction from polling
     └── send_file: SendFileSettings = SendFileSettings()
         └── extra_roots: list[Path] = []
             — entries are Path objects
@@ -835,6 +877,78 @@ The `Result` event serves as a turn boundary signal. The channel finalizes the c
 **When**: Agent processes messages.
 **Then**: `Repl.get_mcp_servers()` returns `{}`; the buttons server (which lives only in `TelegramChannel.get_mcp_servers()`) is not registered. The `present_buttons` tool name is unknown to the agent — same behavior as `send_file` and `pin_message` in REPL today.
 
+### Scenario: Single emoji reaction while idle
+
+**Given**: An active session with a prior agent response; delivery lock free; `inbound_reactions=true`.
+**When**: User adds a 👍 reaction to a message in the authorized chat.
+**Then**: Router-level filters pass (chat-id matches, `event.user is not None`). `_handle_reaction` extracts `old_emojis = set()`, `new_emojis = {"👍"}`. `added = {"👍"}`, `removed = set()`. The handler constructs `ReactionMessage(added=frozenset({"👍"}), removed=frozenset())`, acquires the delivery lock, enqueues, and calls `_process_through_coordinator()`. The coordinator skips both the cold-start resume branch and the active-session boundary branch (`runs_boundary_detection=False`), skips pre-processing (`runs_pre_processing=False`), and yields the rendered prose (e.g., *"The user reacted with 👍. Interpret it in the context of the last exchange and respond accordingly."*) to the SDK. The agent responds in the current session.
+
+### Scenario: Reaction while the agent is mid-stream
+
+**Given**: Agent is streaming a response to a prior typed message; the delivery lock is held by the in-flight `_process_through_coordinator()` call.
+**When**: User adds a 🤔 reaction.
+**Then**: `_handle_reaction` constructs the envelope as above. `_delivery_lock.locked()` is True; the handler calls `coordinator.enqueue(env)` directly (bypassing the lock) and returns. The coordinator's forwarder picks the envelope off `_message_buffer`, puts it on the per-turn `sdk_inbox`, and `_message_source` yields the rendered prose to the SDK as a steering message in the active session. Same path text steering messages already use.
+
+### Scenario: Reaction replacement (👍 → 🤔)
+
+**Given**: User previously had 👍 reaction set; active session.
+**When**: User changes the reaction to 🤔 (Telegram delivers one update with `old_reaction=[Emoji("👍")]`, `new_reaction=[Emoji("🤔")]`).
+**Then**: `added = {"🤔"}`, `removed = {"👍"}`. Both sets have cardinality 1, so the single-replacement template applies. The rendered prose describes the change from 👍 to 🤔 and instructs the agent to interpret in the context of the last exchange. One turn.
+
+### Scenario: Multiple changes in one update
+
+**Given**: Active session; user previously had 🤔 reaction set.
+**When**: User changes their reaction to {👍, ❤} in one update (`old=[Emoji("🤔")]`, `new=[Emoji("👍"), Emoji("❤")]`).
+**Then**: `added = {"👍", "❤"}`, `removed = {"🤔"}`. The handler emits a single rendered prose describing all changes (emojis enumerated in sorted order for determinism) and a single turn is enqueued.
+
+### Scenario: No-op reaction update
+
+**Given**: Telegram delivers a `message_reaction` update where the new and old lists are identical (typically from rapid client-side state churn).
+**When**: `_handle_reaction` computes the diff.
+**Then**: `added = set()`, `removed = set()`. The handler logs at debug level and returns without enqueueing anything.
+
+### Scenario: Update with only uninterpretable kinds
+
+**Given**: User reacts with a custom emoji (`ReactionTypeCustomEmoji`) or a paid reaction (`ReactionTypePaid`); the update contains no standard emoji changes.
+**When**: `_emoji_set` filters out the uninterpretable entries.
+**Then**: Both `added` and `removed` are empty after filtering. The handler drops the update.
+
+### Scenario: Mixed standard + uninterpretable reaction
+
+**Given**: Active session; user adds 👍 (standard) and a custom emoji together in one update.
+**When**: `_emoji_set` filters to `{"👍"}` from `new_reaction`.
+**Then**: `added = {"👍"}`, `removed = set()`. The single-added template applies; the custom emoji is silently dropped from the prose. One turn is enqueued.
+
+### Scenario: Reaction with no active session (cold-start)
+
+**Given**: No active session (e.g., previous session closed and no new message has yet opened a fresh one); `_message_buffer` empty.
+**When**: User reacts with 👍.
+**Then**: The handler enqueues the envelope; the idle path acquires the lock and calls `_process_through_coordinator()`. The coordinator sees `runs_boundary_detection=False` and skips both the cold-start resume branch and the active-session boundary branch. `active is None`, so the unconditional fallback creates a fresh session via `_registry.create_session()`. Pre-processing is also skipped (`runs_pre_processing=False`). The SDK receives the rendered prose as the opening turn of a brand-new session; the agent disambiguates from absent context (e.g., asks what was reacted to). The rendered prose does NOT change based on session state.
+
+### Scenario: Reaction from an unauthorized chat
+
+**Given**: The bot is in a group chat alongside the authorized 1:1 chat (hypothetical multi-chat deployment).
+**When**: Someone in the group reacts to a message.
+**Then**: The router-level `F.chat.id == authorized_chat_id` filter fails; the handler is never invoked. No envelope is constructed, no log message beyond aiogram's debug-level dispatch trace.
+
+### Scenario: Anonymous-channel reaction
+
+**Given**: A reaction is performed by an anonymous channel admin (`event.user is None`, `event.actor_chat` set).
+**When**: Telegram delivers the update.
+**Then**: The router-level `F.user.is_not(None)` filter fails; the handler is never invoked. No envelope, no processing.
+
+### Scenario: Reaction handling disabled at startup
+
+**Given**: The operator sets `[telegram] inbound_reactions = false` in config.
+**When**: The Telegram channel starts up.
+**Then**: `__init__` skips the `self._router.message_reaction(...)` registration. `self._dispatcher.resolve_used_update_types()` in `run()` returns a set without `"message_reaction"`. Telegram's getUpdates is called without `message_reaction` in `allowed_updates`. Telegram never delivers reaction updates over the wire. Reactions in the chat have no effect on the agent.
+
+### Scenario: Reaction on a non-agent message
+
+**Given**: The user reacts to one of their own earlier messages, a media file, or any other message that the agent did not author.
+**When**: The handler processes the update.
+**Then**: Identical to the agent-message scenario — the handler does not check the reacted-to message's authorship. The agent receives "the user reacted with X" with no signal about whose message X was on; it disambiguates from conversation context.
+
 ## Notes
 
 - aiogram 3.x docs: https://docs.aiogram.dev/en/dev/
@@ -860,4 +974,6 @@ The `Result` event serves as a turn boundary signal. The channel finalizes the c
 - Tool descriptions in the `@tool()` decorators serve as the agent's primary documentation — no separate system prompt instructions needed, following the same approach as `send_file`
 - The `buttons.py` module follows DES-006 (SDK MCP tool server factory) — same structure as `pinning.py`, separate module because buttons are an unrelated concern. The `buttons` argument uses the DES-006 array-arg JSON-string pattern (the SDK MCP transport rejects array-typed arguments); a module-level `_decode_buttons()` helper parses and validates inside the wrapper. The `callback_data` wire format is `"btn1:<value>"` for single-use buttons and `"btnN:<value>"` for multi-use; `_pack` and `_unpack` in `buttons.py` are the single source of truth and are imported by `TelegramChannel._handle_callback_query`. Encoding the single-use bit into `callback_data` keeps the semantics stateless across process restarts — no per-message DB table needed.
 - `_handle_callback_query` ordering matters: `answer()` is always called first (so unauthorized originators' spinners still clear), then the `from_user.id` auth check, then the detached keyboard-removal task, then envelope construction, then the `_delivery_lock.locked()` busy/idle branch (identical to `_handle_message` / `_handle_media`). Keyboard removal runs as a detached task on `_delivery_tasks` so a slow or failing edit cannot delay routing. Per-button `value` is capped at 58 UTF-8 bytes (64-byte `callback_data` limit minus the 5-byte prefix); the cap is enforced in `_decode_buttons` and documented in the tool description for the agent.
-- All envelope producer sites in this channel (text, media, command, buffered-delivery, callback-query) construct envelopes at the coordinator boundary per [DES-013](../../design/DES-013-typed-envelope-with-property-hooks.md) — `TextMessage` for typed and buffered paths, `ButtonTapMessage` for taps. The base `MessageEnvelope` type is what the coordinator's queues carry.
+- All envelope producer sites in this channel (text, media, command, buffered-delivery, callback-query, reaction) construct envelopes at the coordinator boundary per [DES-013](../../design/DES-013-typed-envelope-with-property-hooks.md) — `TextMessage` for typed and buffered paths, `ButtonTapMessage` for taps, `ReactionMessage` for reactions. The base `MessageEnvelope` type is what the coordinator's queues carry.
+- The reaction handler relies on aiogram 3.x's `MessageReactionUpdated` event, `ReactionType` union (`ReactionTypeEmoji`, `ReactionTypeCustomEmoji`, `ReactionTypePaid`), and `Dispatcher.resolve_used_update_types()`. Reaction-type filtering happens in-handler (via the module-level `_emoji_set(reactions: Sequence[ReactionType]) -> frozenset[str]` helper) rather than via `F.new_reaction[0].type == "emoji"` because aiogram's index-based filter inspects only the first entry and fails on mixed-kind updates; the no-op drop (R9) also requires inspecting the post-filter `added`/`removed` sets, which aiogram filters cannot express.
+- `start_polling(..., allowed_updates=self._dispatcher.resolve_used_update_types())` couples the polling subscription to the registered handler set in a single direction (polling derives from handlers, not the reverse). With this wiring, the `inbound_reactions` disable flag works automatically — when the reaction handler is not registered, the auto-resolved list omits `message_reaction` and Telegram stops delivering reaction updates with no further changes. This is aiogram's documented best practice and removes the need to keep a hardcoded `allowed_updates` list in sync with handler registrations.

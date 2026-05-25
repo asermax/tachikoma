@@ -2,7 +2,7 @@
 
 **Scope**: Python / Architecture
 **Date**: 2026-05-24
-**Last Updated**: 2026-05-24
+**Last Updated**: 2026-05-25
 
 ## Pattern
 
@@ -61,6 +61,10 @@ class MessageEnvelope(ABC):
     def runs_pre_processing(self) -> bool:
         return True
 
+    @property
+    def runs_boundary_detection(self) -> bool:
+        return True
+
 
 @dataclass(frozen=True)
 class TextMessage(MessageEnvelope):
@@ -84,6 +88,25 @@ class ButtonTapMessage(MessageEnvelope):
     @property
     def runs_pre_processing(self) -> bool:
         return False
+
+
+@dataclass(frozen=True)
+class ReactionMessage(MessageEnvelope):
+    added: frozenset[str]
+    removed: frozenset[str]
+
+    @property
+    def sdk_input(self) -> str:
+        # Renders canonical prose describing the emoji-set diff.
+        ...
+
+    @property
+    def runs_pre_processing(self) -> bool:
+        return False
+
+    @property
+    def runs_boundary_detection(self) -> bool:
+        return False
 ```
 
 Consumer code reads only the hooks:
@@ -96,11 +119,15 @@ yield user_message(envelope.sdk_input)
 if envelope.runs_pre_processing:
     await pre_pipeline.run(envelope, ...)
 
+# Boundary-detection gating — same shape, different concern.
+if active is None and envelope.runs_boundary_detection:
+    await attempt_cold_start_resume(...)
+
 # Queue typing at every hop.
 _message_buffer: asyncio.Queue[MessageEnvelope] = asyncio.Queue()
 ```
 
-**Why**: `TextMessage` declares the three fields it actually carries; `ButtonTapMessage` overrides only `sdk_input` and `runs_pre_processing` and inherits the rest. Adding a third subtype (e.g., a media envelope) is one new class — the SDK boundary, the gating site, and the queue typing don't change.
+**Why**: `TextMessage` declares the three fields it actually carries; `ButtonTapMessage` overrides only `sdk_input` and `runs_pre_processing` and inherits the rest; `ReactionMessage` declares its two diff-set fields and overrides three hooks. Adding a fourth subtype (e.g., a media envelope) is one new class — the SDK boundary, the gating sites, and the queue typing don't change. Adding a new hook (as `runs_boundary_detection` was added when reactions needed to bypass the boundary detector) is a single property on the base with a sensible default; existing subtypes inherit the default unchanged.
 
 ### Don't Do This
 

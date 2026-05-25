@@ -15,6 +15,7 @@ A Telegram bot that receives text messages and media messages from a single auth
 - As a user, I want the agent to pin important messages in our Telegram chat so that key responses (summaries, decisions, reference material) stay accessible at the top of the conversation without me having to manually pin them, and I still receive a notification for the pinned message
 - As a user, I want to explicitly route messages to a new conversation or defer them for later processing so that I can manage multiple topics without the current session being disrupted
 - As a user, I want to answer the agent's structured prompts by tapping a button instead of typing so that I can quickly respond to yes/no, multiple-choice, or confirm/cancel prompts without keyboard input on my phone
+- As a user, I want to react to the agent's messages with an emoji and have the agent treat the reaction as a conversational turn so that I can confirm, push back, or signal confusion with a quick tap instead of typing a reply
 
 ## Requirements
 
@@ -37,6 +38,7 @@ A Telegram bot that receives text messages and media messages from a single auth
 | R14 | Message pinning: the agent can pin and unpin messages in the active Telegram chat. Pins trigger a push notification so the user sees the pinned message promptly. Both operations are idempotent. Permission failures and API errors return clear error responses to the agent |
 | R15 | Bot commands: `/new [message]` forces a fresh session (skipping boundary detection), `/queue [message]` defers the message for boundary-detected routing after the current turn. Commands are detected via Telegram native `bot_command` entities. Bare commands (no arguments) are treated as normal messages |
 | R16 | Inline button presentation and tap routing: the agent can present a prompt with a configurable layout of tappable inline buttons via a `present_buttons` MCP tool. User taps arrive as `CallbackQuery` events, are acknowledged to Telegram immediately (independent of agent state), authorized against `from_user.id`, and routed back to the coordinator as `ButtonTapMessage` envelopes carrying the tapped value. By default the inline keyboard is removed from the message after any tap (`single_use=True`); the agent can opt out with `single_use=False`. Unauthorized taps are still acknowledged so the originator's spinner clears, then silently dropped. Stale taps (after restart or past the prompt's topic) are routed normally — the agent disambiguates from conversation context. Keyboard-removal failures never block tap routing. Telegram API failures during button presentation surface a clear error result to the tool call |
+| R17 | Inbound emoji reactions: the bot subscribes to Telegram `message_reaction` updates from the authorized chat and surfaces user reactions as conversational turns. The reaction handler diffs old vs new reaction lists, drops no-op updates and updates whose changes consist only of uninterpretable kinds (custom emoji, paid reactions), and routes the remaining emoji diff to the coordinator as a `ReactionMessage` envelope. The envelope carries only the emoji-set diff (no message-ID anchor); the rendered prose names the emojis and the kind of change (added / removed / replaced) and asks the agent to interpret in the context of the last exchange — no hardcoded emoji→meaning mapping. Reactions bypass session-boundary detection (they are inherently follow-ups). Reactions received mid-stream flow through the same steering path as text messages. Polling subscribes to `message_reaction` updates only when a handler is registered (driven by `inbound_reactions` config; default enabled). |
 
 ## Behaviors
 
@@ -283,6 +285,29 @@ Unauthorized taps are still acknowledged so the originator's spinner clears; no 
 - Given the keyboard-removal edit fails (e.g., message was deleted), when the failure occurs, then it is logged at warning level and the tap value is still routed to the agent
 - Given two taps on the same `single_use=True` prompt arrive in rapid succession, when the second keyboard-removal edit runs after the first has already removed the keyboard, then Telegram's "message is not modified" response is treated as success/no-op
 
+### Inbound Reactions (R17)
+
+The bot subscribes to `message_reaction` updates from the authorized chat. Reactions are diffed against the previous reaction list, filtered to standard emoji (custom and paid reaction types are dropped), and the remaining emoji diff is wrapped in a `ReactionMessage` envelope and routed through the coordinator. The handler runs the same `_delivery_lock.locked()` busy/idle branch the text and media handlers use — idle reactions acquire the lock and process immediately, mid-stream reactions are enqueued for steering.
+
+The envelope carries only `added` and `removed` emoji sets. The renderer produces one of a small set of canonical prose shapes (added-only, removed-only, single replacement, mixed) naming the emojis involved and the kind of change, and never attributes a meaning to any emoji or references the specific message that was reacted to. Reactions bypass session-boundary detection entirely — they are inherently follow-ups to whatever the agent said last.
+
+A `[telegram]` config flag `inbound_reactions` (default `true`) toggles the feature. When `false`, the handler is not registered and aiogram's `resolve_used_update_types()` omits `message_reaction` from polling — Telegram never delivers reaction updates over the wire.
+
+**Acceptance Criteria**:
+
+- Given the bot is running, when the authorized user adds an emoji reaction to any message in the authorized chat, then the bot receives a `message_reaction` update and enqueues a synthetic conversational turn that the agent responds to in the current session
+- Given the bot is starting up with the reaction handler registered, when polling begins, then `message_reaction` is included in `allowed_updates` (computed automatically from the registered handlers); when no reaction handler is registered, then `message_reaction` is omitted and Telegram does not deliver reaction updates
+- Given a `message_reaction` update from a chat other than the configured authorized chat, when received, then the router-level chat-id filter drops it; no envelope is constructed
+- Given an anonymous-channel reaction (`event.user is None`), when received, then the router-level `F.user.is_not(None)` filter drops it; no envelope is constructed
+- Given a `message_reaction` update where the new reaction list equals the old reaction list (no actual change), when received, then no turn is enqueued
+- Given a `message_reaction` update whose only changes are in reaction kinds the system does not interpret (custom emoji, paid reactions), when received, then no turn is enqueued
+- Given a `message_reaction` update mixing one interpretable emoji and one uninterpretable kind (e.g., a standard emoji added alongside a custom emoji added in the same update), when processed, then the rendered prose describes only the interpretable change and one turn is enqueued
+- Given a reaction envelope describing a single emoji added (e.g., `added={👍}, removed={}`), when rendered, then the prose names the emoji and the change kind and instructs the agent to interpret in the context of the last exchange (e.g., *"The user reacted with 👍. Interpret it in the context of the last exchange and respond accordingly."*); the prose never attributes a fixed meaning to the emoji and never references the specific reacted-to message
+- Given a reaction envelope describing a single emoji removed, a single replacement (one emoji added and one removed), or a multi-change update, when rendered, then the prose describes the change kind in a single message naming all emojis involved (sorted for determinism) and produces a single turn
+- Given the agent is mid-response, when a reaction arrives, then it is enqueued via `enqueue()` (same path as text steering) and reaches the agent as a mid-exchange steering input; the deferred queue is not used
+- Given the operator sets `[telegram] inbound_reactions = false` at startup, when the bot starts, then the reaction handler is not registered, Telegram does not deliver `message_reaction` updates, and reactions in the chat have no effect on the agent. The flag applies at startup only; live toggling requires a restart
+- Given a reaction is processed regardless of which message it was applied to (the agent's, the user's own, or any other message in the chat), the rendered prose never claims the reaction was specifically on the agent's message — only that the user reacted with X
+
 ## User Flow
 
 ### Breadboard: Telegram Message Flow
@@ -382,6 +407,81 @@ Unauthorized taps are still acknowledged so the originator's spinner clears; no 
               - API failure
 ```
 
+### Breadboard: Inbound Reaction
+
+```
+  User adds/removes/replaces
+  reaction on a message
+  --------------------------
+  - Telegram delivers
+    message_reaction update
+        |
+        v
+  Router-level filters
+  --------------------
+  - chat.id == authorized?
+  - user is not None?
+        |
+      +-+-----+
+      |       |
+      v       v
+  Passes    Drops silently
+  -------   --------------
+  |         - non-auth chat
+  |         - anon channel
+  v
+  Diff emoji-only entries
+  -----------------------
+  - filter new/old to
+    ReactionTypeEmoji
+  - added = new - old
+  - removed = old - new
+        |
+      +-+--------+
+      |          |
+      v          v
+  Empty diff   Has change
+  ----------   ----------
+  - no-op or   |
+    only       |
+    custom/    |
+    paid       v
+  - drop      Build envelope
+              --------------
+              ReactionMessage(
+                added,
+                removed)
+                    |
+              +-----+-----+
+              |           |
+              v           v
+          Agent busy    Agent idle
+          ----------    ----------
+          - enqueue     - acquire lock
+            (steer)     - enqueue +
+              |           process
+              |             |
+              +------+------+
+                     |
+                     v
+            Coordinator picks up
+            --------------------
+            - skips boundary
+              detection (cold
+              and active)
+            - skips
+              pre-processing
+            - yields rendered
+              prose to SDK
+                     |
+                     v
+              Agent responds
+              --------------
+              - interprets in
+                context of
+                last exchange
+```
+
 ### Breadboard: Inline Button Tap
 
 ```
@@ -468,9 +568,11 @@ Unauthorized taps are still acknowledged so the originator's spinner clears; no 
 
 **Tap path**: The agent calls `present_buttons` to send a fresh Telegram message carrying the prompt and an inline keyboard. When the user taps a button, the bot's `CallbackQuery` handler acknowledges the tap immediately (no waiting on the agent), runs the authorization check against `from_user.id`, schedules keyboard removal as a detached task for `single_use=True` prompts, wraps the chosen value in a `ButtonTapMessage` envelope, and routes it through the coordinator using the same busy/idle branching as typed messages (mid-stream taps steer into the in-flight session; idle taps acquire the lock and start a fresh cycle). The SDK-input shaping step renders the envelope as explicit prose so the agent unambiguously recognizes the turn as a tap and not typed text. Stale taps (after restart or past the original topic) follow the same path — the agent disambiguates from conversation context. Unauthorized taps are acknowledged then dropped. Keyboard-removal failures are logged but never block tap routing.
 
-**Decision points**: Authorization check (authorized → process, unauthorized → drop; for taps the unauthorized branch still acknowledges to clear the spinner before dropping). Message type check (text → process text, supported media → download/describe/process, unsupported → drop, callback_query → tap path). Empty check (empty text → drop). Command detection (recognized command with args → `/new` or `/queue` routing, bare or unrecognized → normal message). Busy/idle check (busy + command → deferred queue, busy + normal → steering, idle + `/new` → immediate fresh session, idle + `/queue` → immediate boundary detection, idle + normal → immediate processing, busy + tap → enqueue for steering, idle + tap → enqueue + process). File size check (within 20 MB → download, too large → error message). Download result (success → describe and enqueue, failure → error message). Message length check (under limit → continue editing, approaching limit → split at paragraph boundary). Error type (recoverable → show error, continue; non-recoverable → show error, log). Push notification check (enabled and message was sent → copy+delete unless pinned, disabled or no message → no-op, copy fails → preserve original, pinned → skip copy+delete entirely, pin action delivered the notification). Pin decision (agent calls pin_message after response → pinned with push notification, message stays at top of chat). `single_use` flag on tap (True → remove keyboard on first tap; False → keep keyboard for further taps).
+**Reaction path**: When the user adds, removes, or replaces an emoji reaction on any message in the authorized chat, Telegram delivers a `message_reaction` update. Router-level filters drop updates from other chats and anonymous-channel reactions; the handler diffs the emoji-typed entries of the old and new reaction lists, drops the update if the resulting diff is empty (no-op or only uninterpretable kinds), and wraps the remaining diff in a `ReactionMessage` envelope. The handler then routes the envelope through the same busy/idle branch text and media use (mid-stream reactions steer into the in-flight session via `enqueue()`; idle reactions acquire the lock and start a processing cycle). The coordinator skips both cold-start resume and active-session boundary detection for reaction envelopes — they are inherently follow-ups — and skips the pre-processing pipelines too. The rendered prose names the emojis and the kind of change but never attributes a meaning or references the specific reacted-to message. The optional `[telegram] inbound_reactions = false` flag (default `true`) disables the handler entirely; with the handler unregistered, `Dispatcher.resolve_used_update_types()` omits `message_reaction` from polling so Telegram never delivers reaction updates.
 
-**Exit points**: Response complete (Result event received), recoverable error (error shown, conversation continues), non-recoverable error (error shown, failure logged), media file too large (error message sent, conversation continues), media download failed (error message sent, conversation continues), unauthorized (silently dropped), unsupported message type or empty text (silently dropped), pin success (message pinned, ID returned), pin error (no message, permission denied, or API failure).
+**Decision points**: Authorization check (authorized → process, unauthorized → drop; for taps the unauthorized branch still acknowledges to clear the spinner before dropping; for reactions the router-level chat-id filter drops the update before the handler runs). Message type check (text → process text, supported media → download/describe/process, unsupported → drop, callback_query → tap path, message_reaction → reaction path). Empty check (empty text → drop). Command detection (recognized command with args → `/new` or `/queue` routing, bare or unrecognized → normal message). Reaction diff check (added and removed both empty after emoji-only filter → drop; otherwise enqueue `ReactionMessage`). Busy/idle check (busy + command → deferred queue, busy + normal → steering, idle + `/new` → immediate fresh session, idle + `/queue` → immediate boundary detection, idle + normal → immediate processing, busy + tap → enqueue for steering, idle + tap → enqueue + process, busy + reaction → enqueue for steering, idle + reaction → enqueue + process). File size check (within 20 MB → download, too large → error message). Download result (success → describe and enqueue, failure → error message). Message length check (under limit → continue editing, approaching limit → split at paragraph boundary). Error type (recoverable → show error, continue; non-recoverable → show error, log). Push notification check (enabled and message was sent → copy+delete unless pinned, disabled or no message → no-op, copy fails → preserve original, pinned → skip copy+delete entirely, pin action delivered the notification). Pin decision (agent calls pin_message after response → pinned with push notification, message stays at top of chat). `single_use` flag on tap (True → remove keyboard on first tap; False → keep keyboard for further taps). `inbound_reactions` flag (True → reaction handler registered and `message_reaction` in polling allowed_updates; False → handler unregistered and updates not delivered).
+
+**Exit points**: Response complete (Result event received), recoverable error (error shown, conversation continues), non-recoverable error (error shown, failure logged), media file too large (error message sent, conversation continues), media download failed (error message sent, conversation continues), unauthorized (silently dropped), unsupported message type or empty text (silently dropped), reaction with empty post-filter diff (silently dropped), reaction with `inbound_reactions=false` (not delivered by Telegram), pin success (message pinned, ID returned), pin error (no message, permission denied, or API failure).
 
 ## Requires
 

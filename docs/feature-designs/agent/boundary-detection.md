@@ -181,6 +181,26 @@ erDiagram
 8. Channel renders response (events were yielded during step 6)
 ```
 
+### `runs_boundary_detection=False` envelope flow (e.g., reactions)
+
+```
+1. Steps 1-2 same as above (await pending per-message task; check active session)
+3. msg.runs_boundary_detection is False → coordinator skips both branches:
+   - Cold-start resume branch (when active is None): NOT executed; the
+     unconditional fallback creates a fresh session directly via
+     registry.create_session().
+   - Active-session boundary branch (when active has a summary): the
+     will_detect_boundary predicate's runs_boundary_detection term is False,
+     so detect_boundary() is NOT called and no session transition happens.
+4. Pre-processing pipelines remain gated on msg.runs_pre_processing — for the
+   ReactionMessage subtype this returns False, so both pipelines are also skipped.
+5. SDK exchange proceeds normally; _message_source yields _user_message(msg.sdk_input).
+6. After Result event, per-message post-processing fires as before — the summary
+   and last_exchange are still refreshed (the response itself carries enough signal).
+```
+
+The strict-skip (both branches skipped uniformly) is intentional. The alternative — running cold-start resume but skipping the active-session branch — would let a cold reaction match an unrelated closed session via emoji-only content, an obviously poor fit, and would also incur an unnecessary LLM call on every cold reaction. By contrast, the strict-skip means `runs_boundary_detection=False` carries a single, consistent rule: no `detect_boundary` invocation at all.
+
 ### Topic shift flow (fresh session — no match)
 
 ```
@@ -498,6 +518,18 @@ erDiagram
 **When**: `LastExchangeProcessor` stores the response successfully, but `SummaryProcessor` encounters an LLM error
 **Then**: `last_exchange` is updated, `summary` retains its previous value. On the next boundary detection call, the current session has a fresh `last_exchange` but potentially stale `summary`. The detector uses both — the fresh last exchange provides strong recency signal even with a stale summary.
 
+### Scenario: Envelope opts out of boundary detection (runs_boundary_detection=False)
+
+**Given**: A message envelope whose `runs_boundary_detection` hook returns False (e.g., `ReactionMessage`) and an active session with a summary.
+**When**: The coordinator processes the envelope.
+**Then**: The active-session boundary-detection branch's `will_detect_boundary` predicate is False (the new hook term short-circuits it); `detect_boundary()` is not called. The current session continues. The agent receives the rendered prose (e.g., the reaction description) as a follow-up turn.
+
+### Scenario: Reaction with no active session (cold-start)
+
+**Given**: A `ReactionMessage` envelope (`runs_boundary_detection=False`) arrives with no active session (e.g., a previous session closed and no new message has yet opened a fresh one).
+**When**: The coordinator processes the envelope.
+**Then**: The cold-start resume branch is skipped because `runs_boundary_detection=False` — no LLM call is issued to match the reaction against recently closed sessions (a single emoji carries no semantic signal worth paying that cost for). The unconditional fallback that follows creates a fresh session via `_registry.create_session()`. The agent receives the rendered prose as the opening turn of a brand-new session and disambiguates from absent context (e.g., asks what was reacted to). The rendered prose does NOT change based on session state.
+
 ### Scenario: Short acknowledgment message
 
 **Given**: An active session with a summary about any topic
@@ -507,6 +539,7 @@ erDiagram
 ## Notes
 
 - The `boundary/` package encapsulates all boundary detection logic (detector, summary processor, last exchange processor, prompts), keeping the coordinator focused on orchestration. The `SummaryProcessor` lives in `boundary/summary.py` rather than alongside `message_post_processing.py` because it is cohesively tied to boundary detection — its output (the rolling summary) exists primarily to feed the boundary detector. The `LastExchangeProcessor` follows the same colocated pattern — its output feeds boundary detection.
+- The `runs_boundary_detection` hook on `MessageEnvelope` (see [DES-013](../../design/DES-013-typed-envelope-with-property-hooks.md)) is the single switch that opts an envelope out of both the cold-start resume branch and the active-session boundary-detection branch. The strict-skip semantics keep the rule consistent across all "no useful classifier signal" envelope kinds without re-encoding the same decision in two places.
 - Both Opus low effort calls (detection and summarization) use standalone `query()` — they never touch the coordinator's per-message `ClaudeSDKClient`. This satisfies R12 (independence from active session).
 - Both `detect_boundary` and `SummaryProcessor` fully consume their `query()` generators (no early `return` or `break` inside `async for`). This follows DES-005 — preventing orphaned SDK resources from busy-looping the event loop.
 - The `MessagePostProcessingPipeline` follows the same patterns as `PostProcessingPipeline` (parallel execution, error isolation via `asyncio.gather(return_exceptions=True)`, serialized execution) but with a different processor interface and no phased execution.

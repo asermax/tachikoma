@@ -38,6 +38,7 @@ Detects whether an incoming message continues the current conversation or starts
 | R19 | Short messages that serve as acknowledgments, confirmations, or brief responses (e.g., "yes", "ok", "go ahead", "sure", "no", "thanks") must be classified as continuations — they lack enough independent topic content to establish a new topic |
 | R20 | `detect_boundary()` accepts an optional async status callback and emits a single progress message (`"Analyzing message..."`) once, before the underlying classification query is issued |
 | R21 | `force_new` bypass: when the message envelope's `force_new` hook is True, boundary detection is skipped entirely and the coordinator unconditionally transitions to a fresh session (see [core-architecture](core-architecture.md) R20) |
+| R22 | `runs_boundary_detection` bypass: when the message envelope's `runs_boundary_detection` hook is False, the coordinator skips BOTH the cold-start resume branch and the active-session boundary-detection branch uniformly. A turn arriving with no active session creates a fresh one directly via `create_session()` (no cold-start match attempt); a turn arriving with an active session continues that session without invoking `detect_boundary()`. This is distinct from R21 — `force_new=True` skips detection and transitions to a new session; `runs_boundary_detection=False` skips detection and continues the current session (or creates one if none exists). Used by envelope subtypes whose content carries no semantic signal for boundary classification — e.g., `ReactionMessage` (see [core-architecture](core-architecture.md) R21) |
 
 ## Behaviors
 
@@ -109,6 +110,8 @@ Boundary detection is a best-effort enhancement that never blocks normal message
 - Given the coordinator has no workspace directory configured, when a message arrives, then boundary detection is skipped
 - Given the boundary detector encounters an error (SDK failure, timeout, malformed response), when the error occurs, then it is logged and the message proceeds as a continuation (fail-open)
 - Given a message with `force_new=True`, when the coordinator processes it, then boundary detection is skipped entirely and a fresh session transition occurs (R21)
+- Given a message with `runs_boundary_detection=False` and an active session, when the coordinator processes it, then both the cold-start resume branch and the active-session boundary-detection branch are skipped; the current session continues without invoking `detect_boundary()` (R22)
+- Given a message with `runs_boundary_detection=False` and no active session, when the coordinator processes it, then cold-start resume is skipped and a fresh session is created directly via `create_session()` — no matching attempt is made against recently closed sessions (R22)
 - Given the LLM returns the string "null" instead of JSON null for the resume_session_id field (a known LLM behavior), when the detector normalizes the output, then the string "null" is treated identically to null and the message proceeds as a continuation
 - Given a topic shift triggers a session transition, when the SDK session ID is cleared, then the next message creates a fresh SDK session with no prior conversation context
 

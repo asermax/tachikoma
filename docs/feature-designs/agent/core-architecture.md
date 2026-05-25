@@ -203,24 +203,32 @@ The coordinator's message-buffer / deferred-queue / per-turn SDK inbox all carry
 
 ```
 MessageEnvelope (abstract)
-├── sdk_input              → str            (required: text yielded to the SDK)
-├── pinned_skills          → tuple[str,...] (default: ())
-├── force_new              → bool           (default: False)
-└── runs_pre_processing    → bool           (default: True)
+├── sdk_input                 → str            (required: text yielded to the SDK)
+├── pinned_skills             → tuple[str,...] (default: ())
+├── force_new                 → bool           (default: False)
+├── runs_pre_processing       → bool           (default: True)
+└── runs_boundary_detection   → bool           (default: True)
 
-TextMessage(MessageEnvelope)                 — typed user input (and any non-tap producer)
+TextMessage(MessageEnvelope)                   — typed user input (and any non-tap producer)
 ├── text: str
 ├── pinned_skills: tuple[str, ...] = ()
 ├── force_new: bool = False
 └── sdk_input → text
 
-ButtonTapMessage(MessageEnvelope)            — Telegram inline-button tap
+ButtonTapMessage(MessageEnvelope)              — Telegram inline-button tap
 ├── value: str
 ├── sdk_input → "The user tapped the option `<value>` out of the options you displayed."
 └── runs_pre_processing → False
+
+ReactionMessage(MessageEnvelope)               — Telegram inbound emoji reaction
+├── added: frozenset[str]
+├── removed: frozenset[str]
+├── sdk_input → canonical reaction prose (added-only / removed-only / replacement / mixed)
+├── runs_pre_processing → False
+└── runs_boundary_detection → False
 ```
 
-The base type is the queue element type for `_message_buffer`, `_deferred_queue`, and the per-turn SDK inbox. SDK-input shaping happens at exactly one site — `_message_source` reads `envelope.sdk_input` for both the initial envelope and every envelope read from the per-turn inbox. The coordinator gates both pre-processing pipelines on `envelope.runs_pre_processing`; boundary detection and cold-start resume read `envelope.sdk_input` unconditionally. Adding a future envelope subtype (e.g., the modality-aware envelope DLT-125 anticipates) is one new class — no consumer site changes.
+The base type is the queue element type for `_message_buffer`, `_deferred_queue`, and the per-turn SDK inbox. SDK-input shaping happens at exactly one site — `_message_source` reads `envelope.sdk_input` for both the initial envelope and every envelope read from the per-turn inbox. The coordinator gates both pre-processing pipelines on `envelope.runs_pre_processing` and gates both the cold-start resume branch and the active-session boundary-detection branch on `envelope.runs_boundary_detection`. When `runs_boundary_detection=False`, the coordinator skips both branches uniformly — a reaction arriving with no active session creates a fresh session immediately via `_registry.create_session()`, with no attempt to match against recently closed sessions. Adding a future envelope subtype (e.g., the modality-aware envelope DLT-125 anticipates) is one new class — no consumer site changes.
 
 ### SDK Message → AgentEvent mapping
 
@@ -251,7 +259,7 @@ Coordinator
 ├── _was_busy: bool                          (tracks prior is_busy state for busy→idle transition detection)
 ├── is_busy → bool (property)                (True while an exchange is in progress, messages pending, or deferred queue non-empty)
 ├── _maybe_emit_idle() → None                (dispatches CoordinatorIdle(now) on bus if state transitioned busy→idle; best-effort, swallows bus errors)
-├── _message_buffer: asyncio.Queue[MessageEnvelope]   (unbounded FIFO queue for buffered envelopes; concrete subtypes today are TextMessage and ButtonTapMessage)
+├── _message_buffer: asyncio.Queue[MessageEnvelope]   (unbounded FIFO queue for buffered envelopes; concrete subtypes today are TextMessage, ButtonTapMessage, and ReactionMessage)
 ├── _deferred_queue: asyncio.Queue[MessageEnvelope]   (unbounded FIFO queue for deferred envelopes)
 ├── _pending_msg_task: asyncio.Task | None  (background per-message post-processing)
 ├── _background_tasks: list[asyncio.Task]   (session post-processing from topic shifts)
@@ -293,10 +301,13 @@ The `enqueue()` method allows channels to buffer user messages at any time (sync
    which yields Status AgentEvents on the stream while the task is running
    and cancels the task if the consumer abandons the generator.
 5. Coordinator checks for active session; creates one via registry if needed — sets is_new_session flag
-6. If no active session: cold-start resume attempt runs as a background task;
-   its internal detect_boundary call emits "Analyzing message..." through
-   on_status, the coordinator forwards it as Status.
-7. If active session has a summary AND cwd is not None:
+6. If no active session AND msg.runs_boundary_detection: cold-start resume
+   attempt runs as a background task; its internal detect_boundary call emits
+   "Analyzing message..." through on_status, the coordinator forwards it as
+   Status. If msg.runs_boundary_detection is False (e.g., ReactionMessage),
+   cold-start resume is skipped and the unconditional fallback that follows
+   creates a fresh session directly.
+7. If active session has a summary AND cwd is not None AND msg.runs_boundary_detection:
    a. Fetch recent closed session candidates via registry.get_recent_closed()
       (fail-open: if query fails, candidates=None)
    b. Build SessionCandidate list from sessions
@@ -304,6 +315,9 @@ The `enqueue()` method allows channels to buffer user messages at any time (sync
       as a background task drained through _drain_status_while_running;
       the detector emits "Analyzing message..." once before its query.
       → returns BoundaryResult(continues, resume_session_id)
+   When msg.runs_boundary_detection is False, the active-session boundary
+   branch is skipped uniformly with the cold-start branch — no detect_boundary
+   call is issued.
 7a. If msg.force_new and active session exists:
     → skip boundary detection, call _handle_transition(active) for fresh session,
       re-fetch active session, set is_new_session = not resumed
@@ -346,9 +360,13 @@ The `enqueue()` method allows channels to buffer user messages at any time (sync
 2. Channel calls send_message() (if idle)
 3. send_message() guard clause: buffer non-empty → enter re-queue loop
 4. Dequeue env_A; run full pipeline:
-   - boundary detection reads env_A.sdk_input
+   - cold-start resume + active-session boundary detection gated on
+     env_A.runs_boundary_detection (skipped for envelopes that opt out —
+     e.g. ReactionMessage); when skipped, an absent active session is created
+     immediately via _registry.create_session() instead of cold-start resume
+   - boundary detection (when run) reads env_A.sdk_input
    - both pre-processing pipelines gated on env_A.runs_pre_processing
-     (skipped for envelopes that opt out — e.g. ButtonTapMessage)
+     (skipped for envelopes that opt out — e.g. ButtonTapMessage, ReactionMessage)
    - SDK client creation
 5. _message_source(env_A, sdk_inbox) yields _user_message(env_A.sdk_input) to client.connect()
 6. Events for env_A stream back, channel renders them
@@ -419,7 +437,7 @@ The `Result` event serves as a turn boundary. Channels can detect it to reset th
 
 ### Message envelope hook surface ([DES-013](../../design/DES-013-typed-envelope-with-property-hooks.md))
 
-**Choice**: `MessageEnvelope` is an abstract base class with property hooks (`sdk_input`, `pinned_skills`, `force_new`, `runs_pre_processing`); subtypes override the hooks. Coordinator and pipelines invoke the hooks; they never `isinstance`-check the envelope or call into per-subtype helpers. SDK-input shaping is a single rendering site reading `envelope.sdk_input` at the `_message_source` boundary.
+**Choice**: `MessageEnvelope` is an abstract base class with property hooks (`sdk_input`, `pinned_skills`, `force_new`, `runs_pre_processing`, `runs_boundary_detection`); subtypes override the hooks. Coordinator and pipelines invoke the hooks; they never `isinstance`-check the envelope or call into per-subtype helpers. SDK-input shaping is a single rendering site reading `envelope.sdk_input` at the `_message_source` boundary; the coordinator gates the pre-processing pipelines on `runs_pre_processing` and gates both the cold-start resume branch and the active-session boundary-detection branch on `runs_boundary_detection`.
 **Why**: Adding a new envelope subtype (future media subtypes per DLT-125, future first-class command envelopes) means writing one new class. Consumers — coordinator, providers, post-processors — don't change. Defaults on the base mean subtypes only override what's actually different. The single rendering site keeps the SDK contract honest and prevents the forwarder from stripping structure before consumers can see it.
 **Alternatives Considered**:
 - **Pydantic discriminated union with a `Literal` tag**: adds Pydantic boilerplate for a value that never crosses a serialization boundary; consumers still need to dispatch on the tag.
