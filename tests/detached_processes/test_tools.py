@@ -601,7 +601,6 @@ async def test_start_process_no_default_no_per_process_no_cgroup(repo):
     assert result.get("is_error") is not True
     _, kwargs = mock_spawn.call_args
     assert kwargs["memory_limit_bytes"] is None
-    assert kwargs["cgroup_parent_path"] is None
 
 
 @pytest.mark.asyncio

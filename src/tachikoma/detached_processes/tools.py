@@ -18,7 +18,7 @@ from claude_agent_sdk import McpSdkServerConfig, create_sdk_mcp_server, tool
 from loguru import logger
 from pydantic import BaseModel, ValidationError
 
-from tachikoma.detached_processes.cgroup_manager import read_memory_current
+from tachikoma.detached_processes.cgroup_manager import BYTES_PER_MB, read_memory_current
 from tachikoma.detached_processes.errors import ProcessRepositoryError
 from tachikoma.detached_processes.log_io import read_tail, read_window
 from tachikoma.detached_processes.reconcile import reconcile_exit
@@ -151,7 +151,7 @@ def create_detached_process_tools_server(
                     return _error(
                         f"Invalid memory_limit_mb: {parsed.memory_limit_mb}. Minimum value is 1."
                     )
-                total_ram_mb = psutil.virtual_memory().total // (1024 * 1024)
+                total_ram_mb = psutil.virtual_memory().total // BYTES_PER_MB
                 if parsed.memory_limit_mb > total_ram_mb:
                     return _error(
                         f"memory_limit_mb ({parsed.memory_limit_mb}) exceeds "
@@ -160,10 +160,8 @@ def create_detached_process_tools_server(
 
             # Convert to bytes; skip cgroup if not available
             memory_limit_bytes: int | None = None
-            effective_cgroup_parent: str | None = None
             if effective_limit_mb is not None and cgroup_available:
-                memory_limit_bytes = effective_limit_mb * 1024 * 1024
-                effective_cgroup_parent = cgroup_parent_path
+                memory_limit_bytes = effective_limit_mb * BYTES_PER_MB
 
             cwd = Path(parsed.cwd) if parsed.cwd else None
             record = await spawn_process(
@@ -174,7 +172,7 @@ def create_detached_process_tools_server(
                 log_dir=log_dir,
                 repository=repository,
                 memory_limit_bytes=memory_limit_bytes,
-                cgroup_parent_path=effective_cgroup_parent,
+                cgroup_parent_path=cgroup_parent_path,
             )
 
             text = (
@@ -303,9 +301,9 @@ def create_detached_process_tools_server(
             if record.status == "running" and record.cgroup_path is not None:
                 usage = read_memory_current(record.cgroup_path)
                 if usage is not None:
-                    lines.append(f"- Memory usage: {usage // (1024 * 1024)}MB")
+                    lines.append(f"- Memory usage: {usage // BYTES_PER_MB}MB")
                 if record.memory_limit is not None:
-                    lines.append(f"- Memory limit: {record.memory_limit // (1024 * 1024)}MB")
+                    lines.append(f"- Memory limit: {record.memory_limit // BYTES_PER_MB}MB")
 
             return _msg("\n".join(lines))
 

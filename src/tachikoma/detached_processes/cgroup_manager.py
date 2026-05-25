@@ -14,6 +14,7 @@ _log = logger.bind(component="cgroup_manager")
 
 CGROUP_MOUNT = Path("/sys/fs/cgroup")
 PROC_SELF_CGROUP = Path("/proc/self/cgroup")
+BYTES_PER_MB = 1024 * 1024
 
 
 def probe_cgroup_support() -> bool:

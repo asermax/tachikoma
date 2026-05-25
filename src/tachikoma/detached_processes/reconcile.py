@@ -13,7 +13,11 @@ from typing import TYPE_CHECKING
 from loguru import logger
 
 from tachikoma.buffer.priority import Priority
-from tachikoma.detached_processes.cgroup_manager import check_oom_kill, cleanup_cgroup
+from tachikoma.detached_processes.cgroup_manager import (
+    BYTES_PER_MB,
+    check_oom_kill,
+    cleanup_cgroup,
+)
 from tachikoma.detached_processes.model import STOP_REASON_AGENT_STOPPED
 from tachikoma.detached_processes.repository import ProcessRepository
 from tachikoma.notifications import dispatch_notification as _dispatch_notification
@@ -76,18 +80,21 @@ async def reconcile_exit(
             severity = "error"
             priority = Priority.URGENT
 
-        if exit_code == 137 and oom_detected is True:
-            limit_str = ""
-            if record.memory_limit:
-                limit_str = f" ({record.memory_limit // (1024 * 1024)}MB limit)"
-            content = (
-                f"Process '{record.name}' (id: {record.id}) was killed "
-                f"(OOM — may have exceeded memory limit{limit_str})."
-            )
-        elif exit_code == 137 and oom_detected is False:
-            content = (
-                f"Process '{record.name}' (id: {record.id}) was killed by signal (SIGKILL)."
-            )
+        if exit_code == 137:
+            if oom_detected is True:
+                limit_str = (
+                    f" ({record.memory_limit // BYTES_PER_MB}MB limit)"
+                    if record.memory_limit
+                    else ""
+                )
+                content = (
+                    f"Process '{record.name}' (id: {record.id}) was killed "
+                    f"(OOM — may have exceeded memory limit{limit_str})."
+                )
+            else:
+                content = (
+                    f"Process '{record.name}' (id: {record.id}) was killed by signal (SIGKILL)."
+                )
         else:
             code_str = str(exit_code) if exit_code is not None else "unknown"
             content = f"Process '{record.name}' (id: {record.id}) exited with code {code_str}."

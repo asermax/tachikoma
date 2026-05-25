@@ -9,7 +9,6 @@ from loguru import logger
 from tachikoma.bootstrap import BootstrapContext
 from tachikoma.database import Database
 from tachikoma.detached_processes.cgroup_manager import (
-    cleanup_cgroup,
     discover_parent_cgroup_path,
     probe_cgroup_support,
 )
@@ -73,9 +72,6 @@ async def detached_processes_hook(ctx: BootstrapContext) -> None:
                 log_dir=log_dir,
                 dispatch_notification=False,
             )
-            # Clean up stale cgroup if reconcile_exit didn't already
-            if record.cgroup_path is not None:
-                cleanup_cgroup(record.cgroup_path)
             _log.info(
                 "Crash recovery: marked process {id} as exited",
                 id=record.id,
