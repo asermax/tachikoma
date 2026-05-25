@@ -362,6 +362,16 @@ class SchedulerSettings(BaseModel):
     )
 
 
+class DetachedProcessesConfig(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="ignore")
+
+    default_memory_limit_mb: int = Field(
+        default=1024,
+        ge=1,
+        description="Default memory limit in MB for detached processes",
+    )
+
+
 class Settings(BaseModel):
     model_config = ConfigDict(frozen=True, extra="ignore")
 
@@ -381,6 +391,10 @@ class Settings(BaseModel):
     memory: MemorySettings = Field(default_factory=MemorySettings)
     scheduler: SchedulerSettings = Field(default_factory=SchedulerSettings)
     buffer: BufferSettings = Field(default_factory=BufferSettings)
+    detached_processes: DetachedProcessesConfig = Field(
+        default_factory=DetachedProcessesConfig,
+        description="Detached process memory limiting configuration",
+    )
     plugins: dict[str, PluginSource] = Field(
         default_factory=dict,
         description="Plugin sources indexed by alias ([plugins.<alias>] sub-tables)",
@@ -690,6 +704,18 @@ def _generate_default_config(config_path: Path = CONFIG_PATH) -> None:
             doc.add(tomlkit.comment(f"{name} = {str(default).lower()}"))
         elif isinstance(default, int):
             doc.add(tomlkit.comment(f"{name} = {default}"))
+
+    doc.add(tomlkit.nl())
+
+    # [detached_processes] section
+    doc.add(tomlkit.comment("[detached_processes]"))
+
+    for name, field_info in DetachedProcessesConfig.model_fields.items():
+        desc = field_info.description or ""
+        default = field_info.default
+
+        doc.add(tomlkit.comment(f"{desc}"))
+        doc.add(tomlkit.comment(f"{name} = {default}"))
 
     doc.add(tomlkit.nl())
 
