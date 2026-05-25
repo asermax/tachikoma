@@ -6,7 +6,11 @@ from pathlib import Path
 
 from tachikoma.post_processing import WORKSPACE_VALIDATION_SECTION, abs_rule
 
-__all__ = ["STORE_PURPOSE_SECTION", "WORKSPACE_VALIDATION_SECTION"]
+__all__ = [
+    "CLASSIFICATION_EXAMPLES_SECTION",
+    "STORE_PURPOSE_SECTION",
+    "WORKSPACE_VALIDATION_SECTION",
+]
 
 STORE_PURPOSE_SECTION = """\
 ## Store Purpose Definitions
@@ -29,6 +33,49 @@ should reference skills and facts rather than inlining their content.
 Authority order: Skills > Memory facts > Context files. When information \
 appears in multiple stores, the more authoritative source is correct. Context \
 files should contain summaries and pointers, not detailed operational content."""
+
+CLASSIFICATION_EXAMPLES_SECTION = """\
+## Classification Examples
+
+Use these examples to route information correctly between facts and preferences.
+
+### IS a preference (subjective choice about HOW the user wants things done):
+- "I prefer concise commit messages over detailed ones" → style preference
+- "Always run tests before pushing" → workflow preference
+- "Use dark theme for code editors" → tooling preference
+- "I like getting a summary first, then details on request" → communication \
+style preference
+- "Prefer smaller, focused PRs over large ones" → workflow preference
+
+### NOT a preference (describes HOW SOMETHING WORKS — belongs in facts or \
+project docs):
+- "The payment gateway has a 2% processing fee" → financial reference data → \
+facts
+- "The reconciliation process runs nightly at 3am" → financial reference data → \
+facts
+- "Environment variable FOO must be set to BAR for the service to start" → \
+technical specification → facts
+- "The SDK has a 200K token context window" → technical specification → facts
+- "The API rate limit is 100 requests per minute" → technical specification → \
+facts
+- "The cleanup procedure involves stopping the service, clearing /tmp, and \
+restarting" → procedural workflow → facts or skill reference files
+- "We configured nginx to proxy /api to port 8080" → system configuration \
+record → facts
+- "The deployment uses blue-green strategy with health checks" → system \
+configuration record → facts
+
+### IS a fact (stable reference information that stays true across conversations):
+- "The CI pipeline runs on GitHub Actions" → infrastructure fact
+- "User X is the team lead for project Y" → organizational fact
+- "The database uses PostgreSQL 16 with async replication" → technical fact
+- "The API rate limit is 100 requests per minute" → technical fact
+
+### NOT a fact (belongs in episodic memory or project docs):
+- "We debugged the payment timeout issue on 2026-05-10" → one-time event → \
+episodic
+- "The full architecture of system X is..." → too long for facts → project docs
+"""
 
 CONTEXT_DEDUP_SECTION = """\
 ## Context File Deduplication

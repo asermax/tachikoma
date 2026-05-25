@@ -93,3 +93,27 @@ class TestPreferencesProcessor:
 
         with pytest.raises(RuntimeError, match="SDK error"):
             await processor.process(session)
+
+    def test_prompt_includes_classification_examples(self) -> None:
+        """AC: Prompt includes shared classification examples section."""
+        assert "Classification Examples" in PREFERENCES_PROMPT
+        assert "IS a preference" in PREFERENCES_PROMPT
+        assert "NOT a preference" in PREFERENCES_PROMPT
+
+    def test_prompt_includes_classification_self_check(self) -> None:
+        """AC: Prompt includes mandatory classification self-check step."""
+        assert "Classification self-check" in PREFERENCES_PROMPT
+        assert "HOW SOMETHING WORKS" in PREFERENCES_PROMPT
+        assert "HOW THE USER WANTS IT DONE" in PREFERENCES_PROMPT
+
+    def test_prompt_includes_concrete_misclassification_examples(self) -> None:
+        """AC: Prompt includes concrete misclassification patterns."""
+        assert "Financial reference data" in PREFERENCES_PROMPT
+        assert "Technical specifications" in PREFERENCES_PROMPT
+        assert "Procedural workflows" in PREFERENCES_PROMPT
+        assert "System configuration records" in PREFERENCES_PROMPT
+
+    def test_prompt_includes_positive_preference_examples(self) -> None:
+        """AC: Prompt includes positive preference examples to prevent over-filtering."""
+        assert "style preference" in PREFERENCES_PROMPT.lower()
+        assert "workflow preference" in PREFERENCES_PROMPT.lower()

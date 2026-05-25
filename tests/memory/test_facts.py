@@ -105,3 +105,9 @@ class TestFactsProcessor:
 
         with pytest.raises(RuntimeError, match="SDK error"):
             await processor.process(session)
+
+    def test_prompt_includes_classification_examples(self) -> None:
+        """AC: Prompt includes shared classification examples section."""
+        assert "Classification Examples" in FACTS_PROMPT
+        assert "IS a fact" in FACTS_PROMPT
+        assert "NOT a fact" in FACTS_PROMPT

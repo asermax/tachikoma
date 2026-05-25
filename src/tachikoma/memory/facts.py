@@ -6,6 +6,7 @@ persist for future reference.
 
 from tachikoma.agent_defaults import AgentDefaults
 from tachikoma.memory.prompts import (
+    CLASSIFICATION_EXAMPLES_SECTION,
     CONTEXT_DEDUP_SECTION,
     EXTRACTION_TOOLS,
     STORE_PURPOSE_SECTION,
@@ -124,6 +125,8 @@ Focus on accurate, stable reference information — not activity logs or documen
 
 FACTS_PROMPT = (
     _BASE_PROMPT
+    + CLASSIFICATION_EXAMPLES_SECTION
+    + "\n\n"
     + STORE_PURPOSE_SECTION
     + "\n\n"
     + CONTEXT_DEDUP_SECTION

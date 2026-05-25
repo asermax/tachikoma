@@ -430,6 +430,28 @@ class TestPromptContent:
         for prompt in prompts:
             assert "Idempotency" in prompt
 
+    def test_preferences_prompt_includes_misclassification_detection(self) -> None:
+        """AC: Preferences maintenance includes misclassification detection."""
+        assert "Misclassification" in PREFERENCES_MAINTENANCE_PROMPT
+        assert "subjective choice" in PREFERENCES_MAINTENANCE_PROMPT.lower()
+
+    def test_preferences_prompt_includes_size_enforcement(self) -> None:
+        """AC: Preferences maintenance enforces 30-line file size limit."""
+        assert "30 lines" in PREFERENCES_MAINTENANCE_PROMPT
+
+    def test_preferences_prompt_includes_cross_store_facts_overlap(self) -> None:
+        """AC: Preferences maintenance checks facts store for overlap."""
+        assert "memories/facts/" in PREFERENCES_MAINTENANCE_PROMPT
+
+    def test_facts_prompt_includes_size_enforcement(self) -> None:
+        """AC: Facts maintenance enforces 40-line file size limit."""
+        assert "40 lines" in FACTS_MAINTENANCE_PROMPT
+
+    def test_facts_prompt_includes_context_file_overlap(self) -> None:
+        """AC: Facts maintenance checks context files for overlap."""
+        assert "context/" in FACTS_MAINTENANCE_PROMPT
+        assert "USER.md" in FACTS_MAINTENANCE_PROMPT or "AGENTS.md" in FACTS_MAINTENANCE_PROMPT
+
 
 class TestGitCommitContextChanges:
     """Tests for git_commit_context_changes()."""

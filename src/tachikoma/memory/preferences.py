@@ -5,6 +5,7 @@ Extracts user preferences from conversations.
 
 from tachikoma.agent_defaults import AgentDefaults
 from tachikoma.memory.prompts import (
+    CLASSIFICATION_EXAMPLES_SECTION,
     CONTEXT_DEDUP_SECTION,
     EXTRACTION_TOOLS,
     STORE_PURPOSE_SECTION,
@@ -45,6 +46,23 @@ lasting preference
    - A procedural workflow step → skill reference files
    - Content already covered in AGENTS.md, SOUL.md, or skill reference \
 files → those files already capture it
+   - **Financial reference data** (payment structures, rates, fee \
+schedules, reconciliation procedures) → facts memory
+   - **Technical specifications** (environment variables, SDK/API \
+limitations, tool capabilities, system requirements) → facts memory
+   - **Procedural workflows** (cleanup steps, diagnostic procedures, \
+deployment sequences) → facts memory or skill reference files
+   - **System configuration records** (what was configured, where, \
+with what values) → facts memory
+
+2b. **Classification self-check**: Before writing any file, ask yourself: \
+"Is this describing HOW SOMETHING WORKS (a fact) or HOW THE USER WANTS IT \
+DONE (a preference)?"
+   - "How it works" → route to facts memory — do NOT create a \
+preferences file
+   - "How the user wants it done" → valid preference, proceed
+   - When uncertain, prefer facts over preferences — objective \
+information does not become a preference just because the user mentioned it
 
 3. **Before creating a new file**, search for existing overlap:
    - Use Grep to search existing files for the key topic or keywords
@@ -132,6 +150,8 @@ preferences. Focus on genuine, stated choices — not facts, specs, or instructi
 
 PREFERENCES_PROMPT = (
     _BASE_PROMPT
+    + CLASSIFICATION_EXAMPLES_SECTION
+    + "\n\n"
     + STORE_PURPOSE_SECTION
     + "\n\n"
     + CONTEXT_DEDUP_SECTION

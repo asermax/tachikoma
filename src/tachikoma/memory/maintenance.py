@@ -408,6 +408,24 @@ files matching `<project>-<bug-description>-<YYYY-MM-DD>.md`, \
 information and discard incidental detail that does not belong in stable \
 reference facts.
 
+### Size Enforcement
+
+Flag any file exceeding 40 lines for consolidation:
+- If a file exceeds 40 lines, it likely contains implementation details \
+or narrative that belongs in project docs or episodic memory rather than \
+stable reference facts
+- Prune implementation details and transient information
+- Consolidate related entries within the file to eliminate restatement
+
+### Context File Overlap
+
+Check whether facts are already covered by context files (`$WORKSPACE/context/`):
+- Read USER.md and AGENTS.md for the same topic
+- If a context file already captures the information, trim the facts \
+file to a brief reference (e.g., "See context/USER.md for details about X")
+- Context files are more authoritative for their respective \
+categories; facts should supplement, not duplicate
+
 ## Deletion
 
 - If a fact file is entirely obsolete (all entries stale, no useful content), \
@@ -521,6 +539,36 @@ files matching `<topic-area>-feedback-<YYYY-MM-DD>.md`, \
 `<topic-area>-style.md`, `<topic-area>-workflow.md`, or `<topic>.md` file.
 - Preserve substantive content during the merge; deduplicate restated \
 preferences and keep only one clear statement per preference.
+
+### Misclassification
+
+Content that belongs in facts memory, not preferences:
+- Read each file and ask: "Does this describe a subjective \
+choice (preference) or reference information (fact)?"
+- If the file describes how something works, technical \
+specifications, financial structures, system configurations, or procedural \
+workflows → it is misclassified
+- For misclassified files: note the content with a comment \
+indicating it should be in facts, then delete the preferences file. The facts \
+extraction processor will pick it up on the next relevant conversation.
+
+### Size Enforcement
+
+Flag any file exceeding 30 lines for consolidation or pruning:
+- If a file exceeds 30 lines, it likely contains reference \
+information that belongs in facts, or multiple preferences that could be \
+expressed more concisely
+- Prune redundant statements within the file
+- If the excess is factual content, treat as misclassification (see above)
+
+### Cross-Store Overlap with Facts
+
+Check `$WORKSPACE/memories/facts/` for files covering the same topic:
+- If a facts file already covers the topic, the preferences \
+file should only contain genuinely subjective aspects (how the user wants \
+things done) — not the factual details already captured in facts
+- If a preferences file contains only factual content that a \
+facts file already covers, delete the preferences file — it serves no purpose
 
 ## Deletion
 
