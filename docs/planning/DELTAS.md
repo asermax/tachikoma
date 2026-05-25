@@ -567,10 +567,3 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 **Complexity**: Easy
 **Description**: Allow plugins to declare scheduled ticks in their manifest that run on a cron schedule alongside built-in maintenance jobs. Plugin-declared ticks specify a tick function and an optional schedule override in the manifest, and are governed by the same maintenance enabled/schedule configuration as built-in ticks. During plugin loading, declared ticks are registered with the central scheduler and run automatically when the schedule fires.
 
-### DLT-176: Inbound Telegram reaction interpretation
-**Status**: ⧗ Implementation
-**Depends on**: None
-**Priority**: 2 (High)
-**Complexity**: Medium
-**Description**: Interpret emoji reactions the user adds to the agent's Telegram messages as conversational input, allowing the user to react to a message instead of typing a reply. When the user reacts to an agent message (thumbs up, thumbs down, thinking face, etc.), the system maps the reaction to a semantic meaning (acknowledgment, disagreement, confusion, etc.) and injects it into the coordinator as a lightweight user message referencing the reacted-to message. The agent then interprets and responds to the reaction contextually — a thumbs up on a suggestion confirms it, a thinking face prompts elaboration, a thumbs down signals disagreement. This creates a fast, low-friction interaction channel for common responses. Implementation involves hooking into aiogram's message reaction updates, mapping common emoji to intents, and feeding the interpreted reaction into the existing message queue as a contextual user turn.
-
