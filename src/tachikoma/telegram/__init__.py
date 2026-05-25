@@ -14,7 +14,7 @@ import sys
 import termios
 import time
 import tty
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Sequence
 from os.path import basename
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -27,6 +27,7 @@ from aiogram.types import (
     CallbackQuery,
     Message,
     MessageReactionUpdated,
+    ReactionType,
     ReactionTypeEmoji,
 )
 from aiogram.utils.chat_action import ChatActionSender
@@ -61,11 +62,6 @@ if TYPE_CHECKING:
     from tachikoma.coordinator import Coordinator
 
 
-def _emoji_set(reactions: list) -> frozenset[str]:
-    """Extract emoji strings from ReactionTypeEmoji entries, ignoring custom/paid."""
-    return frozenset(r.emoji for r in reactions if isinstance(r, ReactionTypeEmoji))
-
-
 _log = logger.bind(component="telegram")
 
 # Telegram hard limit in UTF-16 code units
@@ -85,6 +81,11 @@ def code_wrap(text: str) -> str:
         return f"`{text}`"
 
     return f"`` {text} ``"
+
+
+def _emoji_set(reactions: Sequence[ReactionType]) -> frozenset[str]:
+    """Extract emoji strings from ReactionTypeEmoji entries, ignoring custom/paid."""
+    return frozenset(r.emoji for r in reactions if isinstance(r, ReactionTypeEmoji))
 
 
 # Telegram-specific live tool line formatters (present-progressive, full paths)
@@ -974,10 +975,13 @@ class TelegramChannel(Channel):
         Filters emoji-only entries from old/new reactions, computes the diff,
         and routes through the same lock branching as other handlers.
         """
-        added = _emoji_set(event.new_reaction) - _emoji_set(event.old_reaction)
-        removed = _emoji_set(event.old_reaction) - _emoji_set(event.new_reaction)
+        new_emojis = _emoji_set(event.new_reaction)
+        old_emojis = _emoji_set(event.old_reaction)
+        added = new_emojis - old_emojis
+        removed = old_emojis - new_emojis
 
         if not added and not removed:
+            _log.debug("Reaction update with no interpretable change; dropping")
             return
 
         envelope = ReactionMessage(added=added, removed=removed)
