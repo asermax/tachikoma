@@ -22,6 +22,11 @@ CREATE TABLE IF NOT EXISTS schema_migrations (
 )
 """
 
+_STAMP_SQL = text(
+    "INSERT INTO schema_migrations (revision, name, applied_at)"
+    " VALUES (:rev, :name, datetime('now'))"
+)
+
 
 @dataclass(frozen=True)
 class Migration:
@@ -73,43 +78,19 @@ async def run_pending_migrations(engine: AsyncEngine, *, is_fresh_db: bool = Fal
         applied_set = {row[0] for row in result.fetchall()}
 
     if not applied_set:
-        install_type = "fresh" if is_fresh_db else "existing"
+        migrations_to_stamp = MIGRATIONS if is_fresh_db else [MIGRATIONS[0]]
 
         async with engine.begin() as conn:
-            if install_type == "fresh":
-                # create_all() produced the full schema — stamp everything
-                for m in MIGRATIONS:
-                    await conn.execute(
-                        text(
-                            "INSERT INTO schema_migrations (revision, name, applied_at)"
-                            " VALUES (:rev, :name, datetime('now'))"
-                        ),
-                        {"rev": m.revision, "name": m.name},
-                    )
-            else:
-                # Existing DB — only stamp the frozen baseline so that
-                # schema-changing migrations (e.g. 002 ALTER TABLE) run normally
-                baseline = MIGRATIONS[0]
-                await conn.execute(
-                    text(
-                        "INSERT INTO schema_migrations (revision, name, applied_at)"
-                        " VALUES (:rev, :name, datetime('now'))"
-                    ),
-                    {"rev": baseline.revision, "name": baseline.name},
-                )
+            for m in migrations_to_stamp:
+                await conn.execute(_STAMP_SQL, {"rev": m.revision, "name": m.name})
 
-        stamped_count = len(MIGRATIONS) if install_type == "fresh" else 1
         _log.info(
             "Schema initialized ({type} install). {count} migration(s) stamped.",
-            type=install_type,
-            count=stamped_count,
+            type="fresh" if is_fresh_db else "existing",
+            count=len(migrations_to_stamp),
         )
 
-        applied_set = (
-            {m.revision for m in MIGRATIONS}
-            if install_type == "fresh"
-            else {MIGRATIONS[0].revision}
-        )
+        applied_set = {m.revision for m in migrations_to_stamp}
 
     pending = [m for m in MIGRATIONS if m.revision not in applied_set]
 
@@ -132,13 +113,7 @@ async def run_pending_migrations(engine: AsyncEngine, *, is_fresh_db: bool = Fal
             async with engine.begin() as conn:
                 for statement in statements:
                     await conn.execute(text(statement))
-                await conn.execute(
-                    text(
-                        "INSERT INTO schema_migrations (revision, name, applied_at)"
-                        " VALUES (:rev, :name, datetime('now'))"
-                    ),
-                    {"rev": m.revision, "name": m.name},
-                )
+                await conn.execute(_STAMP_SQL, {"rev": m.revision, "name": m.name})
         except Exception as e:
             raise RuntimeError(f"Migration {m.revision} ({m.name}) failed: {e}") from e
 
