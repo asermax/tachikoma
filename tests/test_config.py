@@ -13,6 +13,7 @@ from pydantic import ValidationError
 from tachikoma.agent_defaults import SYSTEM_DISALLOWED_TOOLS
 from tachikoma.config import (
     BufferSettings,
+    DetachedProcessesConfig,
     LoggingSettings,
     MaintenanceSettings,
     MemorySettings,
@@ -1453,3 +1454,58 @@ class TestSchedulerSettings:
 
         settings = load_settings(config_path)
         assert settings.scheduler.max_concurrent_low == 1
+
+
+class TestDetachedProcessesConfig:
+    """Tests for DetachedProcessesConfig model."""
+
+    def test_default_memory_limit_is_1024(self) -> None:
+        """Default memory limit is 1GB (1024 MB)."""
+        config = DetachedProcessesConfig()
+        assert config.default_memory_limit_mb == 1024
+
+    def test_settings_default_detached_processes(self) -> None:
+        """Settings defaults to DetachedProcessesConfig with 1024 MB."""
+        settings = Settings()
+        assert settings.detached_processes.default_memory_limit_mb == 1024
+
+    def test_rejects_zero(self) -> None:
+        """ge=1 validator rejects memory_limit_mb=0."""
+        with pytest.raises(ValidationError):
+            DetachedProcessesConfig(default_memory_limit_mb=0)
+
+    def test_rejects_negative(self) -> None:
+        """ge=1 validator rejects negative values."""
+        with pytest.raises(ValidationError):
+            DetachedProcessesConfig(default_memory_limit_mb=-1)
+
+    def test_custom_value_accepted(self) -> None:
+        """Custom positive value is accepted."""
+        config = DetachedProcessesConfig(default_memory_limit_mb=2048)
+        assert config.default_memory_limit_mb == 2048
+
+    def test_from_toml(self, tmp_path: Path) -> None:
+        """Config loaded from TOML [detached_processes] section."""
+        config_path = tmp_path / "config.toml"
+        config_path.write_text("[detached_processes]\ndefault_memory_limit_mb = 2048\n")
+
+        settings = load_settings(config_path)
+        assert settings.detached_processes.default_memory_limit_mb == 2048
+
+    def test_missing_section_uses_default(self, tmp_path: Path) -> None:
+        """Missing [detached_processes] uses default 1024 MB."""
+        config_path = tmp_path / "config.toml"
+        config_path.write_text('[workspace]\npath = "~/tachikoma"\n')
+
+        settings = load_settings(config_path)
+        assert settings.detached_processes.default_memory_limit_mb == 1024
+
+    def test_generated_file_contains_section(self, tmp_path: Path) -> None:
+        """Generated default config contains [detached_processes] section."""
+        config_path = tmp_path / "config.toml"
+        _generate_default_config(config_path)
+
+        content = config_path.read_text()
+        assert "detached_processes" in content
+        assert "default_memory_limit_mb" in content
+        assert "1024" in content
