@@ -7,7 +7,7 @@
 
 ## Purpose
 
-This document explains the design rationale for supervising detached OS shell commands: the identity/liveness mechanism, exit-code capture, hybrid exit watcher, signalling strategy, and integration with the shared persistence and notification subsystems. Tachikoma here is a lightweight process supervisor — spawned processes have no Claude/SDK involvement.
+This document explains the design rationale for supervising detached OS shell commands: the identity/liveness mechanism, exit-code capture, hybrid exit watcher, signalling strategy, cgroup-based memory limiting, and integration with the shared persistence and notification subsystems. Tachikoma here is a lightweight process supervisor — spawned processes have no Claude/SDK involvement.
 
 ## Problem Context
 
@@ -57,12 +57,13 @@ All MCP tool paths that touch a record (`list_processes`, `get_process`, `read_p
 | `src/tachikoma/detached_processes/model.py` | `ProcessRecord` frozen dataclass; `ProcessRecordRow` ORM model; `ProcessStatus` constant map | Domain types frozen; ORM internal; `process_create_time` (OS anchor) deliberately named differently from `started_at` (wall-clock persistence timestamp) |
 | `src/tachikoma/detached_processes/repository.py` | `ProcessRepository` — async CRUD over `ProcessRecordRow`: `create`, `get`, `list_running`, `list_exited`, `update`, `delete`, `reconcile_to_exited` (conditional UPDATE), `mark_stop_initiated`, `clear_stop_reason` | Shared `async_sessionmaker` from `Database`; wraps exceptions in `ProcessRepositoryError`; `reconcile_to_exited` returns a boolean so racing reconcilers can detect their loss; `mark_stop_initiated`/`clear_stop_reason` manage the `stop_reason` field for agent-initiated stop tracking |
 | `src/tachikoma/detached_processes/errors.py` | `ProcessRepositoryError` | Mirrors `TaskRepositoryError` shape |
-| `src/tachikoma/detached_processes/spawn.py` | `spawn_process(...)` (wrapper build, subprocess, identity capture, persistence, DB-failure cleanup); `terminate(...)` (process-group signalling with escalation); `is_alive(record)` | Uses `psutil` for identity + liveness; `os.killpg` + `os.getpgid` for group signalling; kept outside the repository so tests can stub spawn behavior |
+| `src/tachikoma/detached_processes/cgroup_manager.py` | All cgroup v2 filesystem operations — probe, discover parent, create per-process cgroup, assign PID, read memory stats, detect OOM, cleanup | Pure stdlib (`os`, `pathlib`); stateless functions; returns `Optional`/`bool` on failure to signal unavailability; never raises |
+| `src/tachikoma/detached_processes/spawn.py` | `spawn_process(...)` (wrapper build, subprocess, identity capture, cgroup creation, persistence, DB-failure cleanup); `terminate(...)` (process-group signalling with escalation); `is_alive(record)` | Uses `psutil` for identity + liveness; `os.killpg` + `os.getpgid` for group signalling; cgroup creation after fork with graceful fallback on failure; kept outside the repository so tests can stub spawn behavior |
 | `src/tachikoma/detached_processes/log_io.py` | `read_tail(path, n)` / `read_window(path, offset, count)` for serving logs | Reverse-seek chunked reader for tail (no full-file load); sequential line scan for paged reads |
-| `src/tachikoma/detached_processes/reconcile.py` | `reconcile_exit(record, *, repository, bus, log_dir, dispatch_notification=True)` — shared reconciler | Conditional UPDATE for race resolution; `status=="running"` guard for idempotency; single 100ms retry on missing sidecar; suppresses notification when `stop_reason=="agent_stopped"` (agent-initiated stop); `bus: EventBus \| None` with precondition that `bus is not None or not dispatch_notification` so the bootstrap path can pass `None` |
+| `src/tachikoma/detached_processes/reconcile.py` | `reconcile_exit(record, *, repository, bus, log_dir, dispatch_notification=True)` — shared reconciler | Conditional UPDATE for race resolution; `status=="running"` guard for idempotency; single 100ms retry on missing sidecar; suppresses notification when `stop_reason=="agent_stopped"` (agent-initiated stop); OOM detection via cgroup `memory.events` on exit; cgroup cleanup on all exit paths; `bus: EventBus \| None` with precondition that `bus is not None or not dispatch_notification` so the bootstrap path can pass `None` |
 | `src/tachikoma/detached_processes/watcher.py` | `event_driven_watcher(repository, bus, log_dir)` over `watchfiles.awatch`; `polling_watcher(repository, bus, log_dir, interval)` every `DETACHED_PROCESS_POLL_INTERVAL=5s` | Plain async functions started as `asyncio.Task`s in `scheduler_tasks`; mirror existing scheduler-task shape; per-record error isolation |
-| `src/tachikoma/detached_processes/tools.py` | `create_detached_process_tools_server(repository, bus, log_dir, timezone)` factory — six `@tool`-decorated closures over extracted handlers | Pydantic arg model per tool; factory closures capture dependencies; every handler operating on a record runs `is_alive` + `reconcile_exit` before its main action (lazy reconciliation) |
-| `src/tachikoma/detached_processes/hooks.py` | `detached_processes_hook(ctx)` — DES-003 bootstrap hook | Creates log dir; instantiates repo from `ctx.extras["database"]`; runs crash recovery via `list_running()` + `reconcile_exit(..., bus=None, dispatch_notification=False)` for dead records; stores repo and log_dir in `ctx.extras` |
+| `src/tachikoma/detached_processes/tools.py` | `create_detached_process_tools_server(repository, bus, log_dir, timezone, *, cgroup_available, cgroup_parent_path, default_memory_limit_mb)` factory — six `@tool`-decorated closures over extracted handlers | Pydantic arg model per tool; factory closures capture dependencies including cgroup availability; `start_process` accepts optional `memory_limit_mb` with validation (>= 1, <= system RAM); `get_process` includes memory usage for running processes with active cgroups; opt-in cgroup via factory params; every handler operating on a record runs `is_alive` + `reconcile_exit` before its main action (lazy reconciliation) |
+| `src/tachikoma/detached_processes/hooks.py` | `detached_processes_hook(ctx)` — DES-003 bootstrap hook | Creates log dir; instantiates repo from `ctx.extras["database"]`; probes cgroup v2 availability and discovers parent cgroup path; runs crash recovery via `list_running()` + `reconcile_exit(..., bus=None, dispatch_notification=False)` for dead records (reconcile_exit handles cgroup cleanup for records with `cgroup_path`); stores repo, log_dir, cgroup availability, and parent path in `ctx.extras` |
 | `src/tachikoma/__main__.py` | Register the hook; build the tool server; merge into `all_mcp_servers`; start both watcher tasks in `scheduler_tasks` | Identical pattern to how `task-tools` and task scheduler tasks are wired |
 | `src/tachikoma/context/loading.py` (`SYSTEM_PREAMBLE_TEMPLATE`) | Add a "Detached Processes" section listing the six tools with one-line descriptions | Appended after the Tasks section, static content |
 | `pyproject.toml` | Add `psutil>=6.0` to `[project].dependencies` | `watchfiles` already present |
@@ -72,13 +73,15 @@ All MCP tool paths that touch a record (`list_processes`, `get_process`, `read_p
 **Tool server contract (DES-006 shape):**
 
 ```
-start_process(name, command, cwd?, env?) -> {id, pid, log_path}
+start_process(name, command, cwd?, env?, memory_limit_mb?) -> {id, pid, log_path}
 list_processes(archived?) -> [{id, name, command, pid, cwd, started_at, status, ...}]
-get_process(id) -> {...full record fields...}
+get_process(id) -> {...full record fields, memory_usage_mb?, memory_limit_mb?...}
 read_process_output(id, offset?, count?) -> [log lines] | "no output yet"
 stop_process(id, signal?, timeout?) -> status message
 rename_process(id, name) -> status message
 ```
+
+`memory_limit_mb` must be >= 1 and <= system RAM when provided by the caller. `memory_usage_mb` and `memory_limit_mb` appear in `get_process` response as text lines (e.g. "- Memory usage: 123MB") only for running processes with active cgroups. When no cgroup is assigned, these fields are omitted.
 
 All tool errors return `{"is_error": True, "content": [{"type": "text", "text": <msg>}]}`. `ProcessRepositoryError` is caught specifically to surface root cause via `__cause__`; other errors use a generic fallback.
 
@@ -145,7 +148,9 @@ ProcessRecord (frozen dataclass)
 ├── started_at: datetime            (wall-clock UTC, set at spawn)
 ├── exited_at: datetime | None      (UTC; set on reconciliation)
 ├── exit_code: int | None           (None when wrapper died before sidecar)
-└── stop_reason: str | None         ("agent_stopped" when stop_process initiated; None for natural exits)
+├── stop_reason: str | None         ("agent_stopped" when stop_process initiated; None for natural exits)
+├── memory_limit: int | None        (bytes; None = no cgroup / fallback mode)
+└── cgroup_path: str | None         (absolute path to per-process cgroup dir)
 ```
 
 ### Entity
@@ -165,6 +170,8 @@ erDiagram
         datetime exited_at
         int exit_code
         string stop_reason
+        int memory_limit
+        string cgroup_path
     }
 ```
 
@@ -186,8 +193,9 @@ There is deliberately no intermediate `stopping` state — `stop_process` either
 ### Spawn flow
 
 ```
-1. Agent calls start_process({name, command, cwd?, env?})
+1. Agent calls start_process({name, command, cwd?, env?, memory_limit_mb?})
 2. Handler validates: name/command non-empty; cwd exists when provided; log dir writable
+   If memory_limit_mb provided: validate >= 1 and <= system RAM
 3. Handler assigns id = uuid4()
 4. exit_path = log_dir / f"{id}.exit"; log_path = log_dir / f"{id}.log"
 5. wrapper = f"{command}; echo $? > {quoted exit_path}"
@@ -197,9 +205,13 @@ There is deliberately no intermediate `stopping` state — `stop_process` either
        start_new_session=True,
        env={**os.environ, **(env or {})},
        cwd=cwd_or_tachikoma_cwd)
+7a. [CGROUP] If cgroup_available AND effective_limit is not None:
+       a. cgroup_path = create_process_cgroup(parent_path, record_id, limit_bytes)
+       b. If cgroup_path: assign_pid(cgroup_path, proc.pid)
+       c. If either fails: log warning; cgroup_path = None (fallback)
 8. process_create_time = psutil.Process(proc.pid).create_time()   # synchronously after spawn
-9. Persist ProcessRecord(status="running", ...)
-    On DB failure: os.killpg(os.getpgid(proc.pid), SIGKILL); re-raise
+9. Persist ProcessRecord(status="running", memory_limit=..., cgroup_path=...)
+    On DB failure: cleanup cgroup (if created) + os.killpg(os.getpgid(proc.pid), SIGKILL); re-raise
 10. Return {id, pid, log_path}
 ```
 
@@ -239,14 +251,18 @@ for each record in scope:
 detached_processes_hook:
   - mkdir -p {workspace}/.tachikoma/detached-processes/
   - repository = ProcessRepository(database.session_factory)
+  - [CGROUP] Probe cgroup v2 availability → discover parent cgroup path
   - for record in await repository.list_running():
       if not is_alive(record):
           await reconcile_exit(record, bus=None, dispatch_notification=False)
+          # reconcile_exit handles cgroup cleanup for records with cgroup_path
   - ctx.extras["process_repository"] = repository
   - ctx.extras["detached_process_log_dir"] = log_dir
+  - ctx.extras["cgroup_available"] = bool
+  - ctx.extras["cgroup_parent_path"] = str | None
 ```
 
-Notifications are suppressed during startup — a user rebooting Tachikoma shouldn't receive a barrage of Urgent notifications for workers that died days ago.
+Notifications are suppressed during startup — a user rebooting Tachikoma shouldn't receive a barrage of Urgent notifications for workers that died days ago. Stale cgroups for dead records are cleaned up by `reconcile_exit` (which calls `cleanup_cgroup` for records with `cgroup_path`).
 
 ### Stop flow
 
@@ -264,6 +280,47 @@ Notifications are suppressed during startup — a user rebooting Tachikoma shoul
 ```
 
 The `stop_reason` flag is set before the signal (step 4) so that any watcher reconciliation that fires after the process dies sees the flag and suppresses the notification. This eliminates the previously-accepted edge case where the watcher racing ahead of `stop_process` would produce a spurious notification. The flag is cleared on PermissionError (step 5) so that a future natural exit is not incorrectly suppressed.
+
+### Cgroup availability probe (bootstrap)
+
+```
+1. detached_processes_hook runs
+2. probe_cgroup_support() → check /sys/fs/cgroup/ mounted, memory controller accessible
+3. If available: discover_parent_cgroup_path() → read /proc/self/cgroup
+   → parse v2 path → verify directory exists with writable cgroup.procs
+4. Store: ctx.extras["cgroup_available"] = bool
+   ctx.extras["cgroup_parent_path"] = str | None
+```
+
+Availability is probed once at bootstrap and cached for the session lifetime. If unavailable, all cgroup operations are skipped entirely — no per-spawn probing.
+
+### Exit reconciliation with OOM detection
+
+```
+1. reconcile_exit(record) called (by watcher, lazy reconciliation, stop_process, or crash recovery)
+2. Existing: conditional UPDATE, read exit sidecar
+3. [CGROUP] If record.cgroup_path is not None:
+   a. oom_detected = check_oom_kill(record.cgroup_path) → read memory.events
+   b. cleanup_cgroup(record.cgroup_path)
+4. Notification content:
+   - exit_code == 137 AND oom_detected == True: "was killed (OOM — may have exceeded memory limit of NMB)"
+   - exit_code == 137 AND oom_detected == False: "was killed by signal (SIGKILL)"
+   - Otherwise: existing notification text
+```
+
+OOM detection is best-effort — if `memory.events` is unreadable (cgroup already removed), `oom_detected` is None and the notification uses the standard exit text without OOM context.
+
+### Memory usage query (get_process)
+
+```
+1. get_process called on a record
+2. Existing: lazy reconciliation, build response
+3. [CGROUP] If record.status == "running" and record.cgroup_path is not None:
+   a. memory_usage_bytes = read_memory_current(record.cgroup_path)
+   b. If read succeeds: append "- Memory usage: NMB" to response text
+   c. If record.memory_limit is not None: append "- Memory limit: NMB"
+4. If no cgroup_path: omit memory fields from response
+```
 
 ## Key Decisions
 
@@ -339,12 +396,63 @@ The `stop_reason` flag is set before the signal (step 4) so that any watcher rec
 
 ### Subsystem lives under `src/tachikoma/detached_processes/` mirroring `tasks/`
 
-**Choice**: New package with dedicated modules for `model`, `repository`, `errors`, `spawn`, `log_io`, `reconcile`, `watcher`, `tools`, `hooks`.
+**Choice**: New package with dedicated modules for `model`, `repository`, `errors`, `spawn`, `log_io`, `reconcile`, `watcher`, `tools`, `hooks`, `cgroup_manager`.
 **Why**: The `tasks/` subsystem is the closest analog (persistent records, MCP tools, scheduler tasks, crash recovery). Mirroring its layout keeps the codebase consistent.
 
 **Consequences**:
 - Pro: Zero structural surprise
 - Pro: Each concern testable in isolation
+
+### Stdlib-only cgroup v2 operations
+
+**Choice**: Use Python stdlib (`os`, `pathlib.Path`) for all cgroup v2 filesystem operations. No third-party cgroup library.
+**Why**: cgroups v2 is purely filesystem-based — `mkdir`, `echo value > file`, `cat file`. A library adds a dependency for trivial operations that are 1-3 line stdlib calls.
+
+**Consequences**:
+- Pro: Zero new dependencies
+- Pro: Full control over error handling and fallback behavior
+- Con: Must handle filesystem permissions and edge cases manually (mitigated by graceful fallback)
+
+### Auto-detect cgroup parent path
+
+**Choice**: Discover the parent cgroup path by reading `/proc/self/cgroup`, checking the v2 path, verifying the memory controller is available. If detection fails (no cgroup v2, no memory controller, permission denied), proceed without limits.
+**Why**: Systems vary widely — bare-metal Linux may have cgroups at `/sys/fs/cgroup/` directly, while systemd-managed systems delegate subtrees under `/sys/fs/cgroup/user.slice/...`. Hardcoding either path would fail on the other. Auto-detection handles both, and fallback ensures the feature never breaks spawn.
+
+**Consequences**:
+- Pro: Works on both systemd and non-systemd Linux
+- Pro: No setup required from the user
+- Pro: Graceful degradation on unsupported systems
+- Con: Slightly more complex discovery logic (one function, ~20 lines)
+
+### Opt-in via config section — no cgroup when unconfigured
+
+**Choice**: The config default for `default_memory_limit_mb` is `None`. No cgroup is created unless the `[detached_processes]` config section is present or `memory_limit_mb` is passed to `start_process`.
+**Why**: Preserves current behavior by default. Users opt in by adding the config section or passing per-process limits.
+
+**Consequences**:
+- Pro: Zero behavior change without explicit opt-in
+- Pro: Simpler for users who don't need memory limiting
+- Con: Users must add config to get protection
+
+### Cleanup via reconcile_exit, not separate hook
+
+**Choice**: `cleanup_cgroup()` is called from within `reconcile_exit()`, which is already the shared code path for all exit scenarios (watcher, lazy reconciliation, `stop_process`, crash recovery).
+**Why**: Cleanup must happen in all exit paths, and `reconcile_exit` is already the single function used by all of them. Adding cleanup there means no separate bookkeeping is needed.
+
+**Consequences**:
+- Pro: Explicit cleanup call site — easy to trace and test
+- Pro: Single cleanup function covers all exit paths
+- Pro: Cleanup failure never blocks reconciliation (logged, not raised)
+
+### OOM detection via memory.events oom_kill counter
+
+**Choice**: After detecting exit code 137 (128+SIGKILL), read `memory.events` from the process's cgroup and check if `oom_kill` count is > 0.
+**Why**: Exit code 137 alone is ambiguous — it means "killed by SIGKILL" but doesn't distinguish OOM from external `kill -9`. The `memory.events` `oom_kill` counter is the authoritative kernel signal that the cgroup's memory limit was exceeded.
+
+**Consequences**:
+- Pro: Accurate OOM attribution — user knows the process hit its memory limit
+- Pro: Clean distinction from manual SIGKILL
+- Con: The counter is cumulative for the cgroup's lifetime — since we create one cgroup per process and clean up after exit, this is not a concern
 
 ## System Behavior
 
@@ -402,9 +510,79 @@ The `stop_reason` flag is set before the signal (step 4) so that any watcher rec
 **When**: `repository.get(id)` returns None.
 **Then**: The watcher logs a warning and continues processing subsequent events. Same isolation applies to per-record `reconcile_exit` errors.
 
+### Scenario: Normal spawn with default limit from config
+
+**Given**: Config has `[detached_processes] default_memory_limit_mb = 2048`; cgroups v2 is available.
+**When**: `start_process({name: "worker", command: "npm run build"})` is called.
+**Then**: A cgroup `tachikoma-{id}` is created under the discovered parent path, `memory.max` set to 2147483648 (2GB), the process PID is written to `cgroup.procs`. The record stores `memory_limit=2147483648` and the cgroup path.
+
+### Scenario: Spawn with per-process override
+
+**Given**: Default config limit is 1024 MB; agent passes `memory_limit_mb=512`.
+**When**: `start_process({name: "small-worker", command: "...", memory_limit_mb: 512})` is called.
+**Then**: The cgroup's `memory.max` is set to 536870912 (512MB), overriding the default.
+
+### Scenario: Spawn without any limit configured
+
+**Given**: No `[detached_processes]` section in config; no `memory_limit_mb` passed.
+**When**: `start_process` is called.
+**Then**: No cgroup is created. The record stores `memory_limit=None`, `cgroup_path=None`. Process runs with no memory constraint — identical to pre-cgroup behavior.
+
+### Scenario: cgroups v2 unavailable
+
+**Given**: `/sys/fs/cgroup/` is not mounted or memory controller is not available.
+**When**: `start_process` is called with a memory limit.
+**Then**: Bootstrap probe set `cgroup_available=False`. Spawn skips cgroup creation entirely. A one-time warning was logged at bootstrap. The record stores `memory_limit=None`, `cgroup_path=None`. Process runs without limits.
+
+### Scenario: OOM kill detected
+
+**Given**: A process with `memory_limit=536870912` (512MB) attempts to allocate beyond the limit.
+**When**: The kernel OOM-kills the process.
+**Then**: Process exits with code 137. The exit watcher detects the exit. `reconcile_exit` reads `memory.events` → `oom_kill 1` → oom_detected=True. Notification text includes OOM context with the memory limit. Cgroup is cleaned up.
+
+### Scenario: External SIGKILL (not OOM)
+
+**Given**: A process with a cgroup is killed by external `kill -9`.
+**When**: The process exits with code 137.
+**Then**: `reconcile_exit` reads `memory.events` → `oom_kill 0` → oom_detected=False. Notification reports "was killed by signal (SIGKILL)". No OOM context. Cgroup is cleaned up.
+
+### Scenario: Process exit with cgroup cleanup
+
+**Given**: A process exits normally (exit code 0) with an active cgroup.
+**When**: `reconcile_exit` runs.
+**Then**: OOM check returns False. `cleanup_cgroup` removes the cgroup directory. Notification dispatches with Normal priority.
+
+### Scenario: Cgroup cleanup failure
+
+**Given**: A process exits; its cgroup has child processes.
+**When**: `cleanup_cgroup` calls `os.rmdir(cgroup_path)`.
+**Then**: `rmdir` fails (directory not empty). The error is logged. Reconciliation completes normally.
+
+### Scenario: Crash recovery cleans up stale cgroups
+
+**Given**: Tachikoma crashes; processes with cgroups exited while Tachikoma was offline.
+**When**: Tachikoma restarts; bootstrap crash recovery runs.
+**Then**: For each dead `running` record with a `cgroup_path`, `reconcile_exit` calls `cleanup_cgroup`. Stale cgroup directories are removed.
+
+### Scenario: Memory usage query
+
+**Given**: A running process with an active cgroup.
+**When**: `get_process` is called.
+**Then**: `read_memory_current(cgroup_path)` returns current memory usage. Response includes memory usage and limit in MB as text lines.
+
+### Scenario: Memory usage query — process without cgroup
+
+**Given**: A running process spawned without a cgroup (fallback mode).
+**When**: `get_process` is called.
+**Then**: `cgroup_path` is None. Memory usage fields are omitted from the response.
+
 ## Notes
 
 - One new runtime dependency: `psutil>=6.0`. `watchfiles` is already present
+- No new dependencies for cgroup operations — uses only Python stdlib (`os`, `pathlib`)
+- Linux-only feature (macOS does not support cgroups); graceful fallback handles this automatically
+- The `cgroup_manager` module is stateless — all state lives in the record (`cgroup_path`) and bootstrap extras (`cgroup_available`, `cgroup_parent_path`)
+- `memory_limit` is stored as bytes in the model/DB; config and tool parameter use MB. Conversion happens at the boundary (tool handler converts MB → bytes before passing to `spawn_process`)
 - Both watcher tasks match the existing scheduler-task shape so the `__main__.py` startup/shutdown logic remains uniform (shutdown cancellation is inherited)
 - `reconcile_exit`'s `dispatch_notification=False` path is used by the bootstrap crash-recovery hook and by `stop_process`. All other call sites default to dispatching
 - Agent-initiated stop tracking: `stop_process` sets `stop_reason="agent_stopped"` on the record before signalling; the reconciler suppresses notifications for records with this flag. The flag is cleared on PermissionError to avoid suppressing future natural exits. This replaces the previously-accepted edge case where watcher-initiated notifications for `stop_process` exits were tolerated

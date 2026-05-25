@@ -6,7 +6,7 @@ Supervision of OS-level shell commands that outlive Tachikoma — the agent spaw
 
 | Capability | Description |
 |------------|-------------|
-| [process-supervision](process-supervision.md) | Spawn, inspect, read logs from, and terminate detached shell commands; proactive exit detection with buffered notifications |
+| [process-supervision](process-supervision.md) | Spawn, inspect, read logs from, and terminate detached shell commands; proactive exit detection with buffered notifications; cgroup-based memory limiting |
 
 ## Related Decisions
 

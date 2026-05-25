@@ -6,7 +6,7 @@ Implementation approaches for supervision of detached OS shell commands.
 
 | Capability | Description |
 |------------|-------------|
-| [process-supervision](process-supervision.md) | Repository, spawn/terminate helpers, hybrid exit watcher, MCP tools, bootstrap hook, preamble |
+| [process-supervision](process-supervision.md) | Repository, spawn/terminate helpers, hybrid exit watcher, MCP tools, bootstrap hook, cgroup memory limiting, preamble |
 
 ## Related Decisions
 

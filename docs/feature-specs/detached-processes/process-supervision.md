@@ -18,9 +18,9 @@ MCP tools let the agent spawn, inspect, read logs from, and terminate detached s
 |----|-------------|
 | R0 | Provide MCP tools so the agent can spawn, inspect, read logs from, and terminate detached shell commands |
 | R1 | Hard detach — spawned processes run in a new session/process group with stdio redirected to a log file, so they survive Tachikoma's exit, restart, or crash |
-| R2 | Persist process records in the shared SQLite database (id, name, command, cwd, pid, OS-reported start time, log_path, status, timestamps, exit code when known) |
-| R3 | `start_process` tool: spawn a command detached; accept `name` (required), `command` (required, shell string), optional `cwd`, optional `env` overrides; return the record ID and PID |
-| R4 | `list_processes` / `get_process` tools: enumerate recorded processes with liveness status; support an `archived` filter on `list_processes` to show exited records |
+| R2 | Persist process records in the shared SQLite database (id, name, command, cwd, pid, OS-reported start time, log_path, status, timestamps, exit code when known, memory_limit when configured, cgroup_path when assigned) |
+| R3 | `start_process` tool: spawn a command detached; accept `name` (required), `command` (required, shell string), optional `cwd`, optional `env` overrides, optional `memory_limit_mb` (per-process memory limit in MB, overrides config default); return the record ID and PID |
+| R4 | `list_processes` / `get_process` tools: enumerate recorded processes with liveness status; `get_process` shows current memory usage (in MB) for running processes with active cgroups; support an `archived` filter on `list_processes` to show exited records |
 | R5 | `read_process_output` tool: read from the captured log, tail-by-default (last N lines) with optional line-offset paging so the agent can page through older output |
 | R6 | `stop_process` tool: terminate a process; accept an optional signal (default SIGTERM) and an optional timeout, escalating to SIGKILL if still alive after the timeout |
 | R7 | `rename_process` tool: update the stored display name of a recorded process without altering its identity |
@@ -34,10 +34,16 @@ MCP tools let the agent spawn, inspect, read logs from, and terminate detached s
 | R15 | Proactive exit detection — a subsystem-owned watcher observes `running` records in the background and, when a process exits, updates the record (status, `exited_at`, exit code when known) and dispatches a `Notification` event on the shared event bus so the priority buffer delivers it through the active channel at a natural idle window; the watcher assigns Urgent priority on abnormal exit (non-zero or unknown exit code) and Normal priority on clean exit (exit code 0); exit notifications are suppressed for agent-initiated stops (per R17). The watcher is the sole producer of exit notifications for this subsystem — `stop_process` does not dispatch a notification of its own |
 | R16 | Process names are non-unique display labels (no collision handling on `start_process` or `rename_process`) |
 | R17 | Agent-initiated stop tracking — a nullable `stop_reason` field on process records marks whether a stop was agent-initiated; when `stop_process` is invoked, `stop_reason` is set to `"agent_stopped"` before the signal is sent so that exit notifications are suppressed for intentionally stopped processes; the field is cleared if signal delivery fails with a permission error; this ensures only unexpected exits produce user-facing notifications |
+| R18 | Constrain memory of spawned detached processes via Linux cgroups v2 when a memory limit is configured, preventing runaway processes from consuming all available RAM |
+| R19 | Per-process memory limit override accepted via `memory_limit_mb` parameter on the `start_process` MCP tool, overriding the config default |
+| R20 | Default memory limit configurable in TOML settings under `[detached_processes]` section; opt-in — when the section is absent, no default limit is applied |
+| R21 | When a process is OOM-killed by its cgroup, the exit notification includes OOM context distinguishing it from a normal SIGKILL |
+| R22 | cgroup cleanup on process exit — remove the per-process cgroup directory when a process exits (normal exit, OOM kill, or agent-stopped) |
+| R23 | Graceful fallback when cgroups v2 is unavailable: log a warning and spawn without memory limits rather than failing; cgroup failures during individual spawns also degrade gracefully |
 
 ## Behaviors
 
-### Spawning (R0, R1, R3, R9, R10, R11)
+### Spawning (R0, R1, R3, R9, R10, R11, R18, R19, R23)
 
 Spawning detaches the command from Tachikoma's process group, redirects stdio to a per-process log file, and persists the record before returning to the agent.
 
@@ -55,6 +61,9 @@ Spawning detaches the command from Tachikoma's process group, redirects stdio to
 - Given `start_process` is called and the database write fails after the child process has already been spawned, then the spawned child is terminated (best-effort SIGKILL) so that no orphan process without a corresponding record is left running
 - Given the log directory cannot be created or is not writable at spawn time, then the tool returns a clear error and no process is spawned or record persisted
 - Given `start_process` is called with a `name` equal to the name of an existing record, then the new record is created normally — names are non-unique display labels (R16)
+- Given `start_process` is called with a `memory_limit_mb` argument and cgroups v2 is available and an effective memory limit is resolved (from config default or per-process argument), then a per-process cgroup is created with `memory.max` set to the effective limit and the process PID is written to `cgroup.procs` (R18, R19)
+- Given `start_process` is called and cgroup creation fails after the process has been spawned, then the spawn logs a warning and proceeds without a memory limit — the process runs normally with `memory_limit=None` and `cgroup_path=None` on the record (R23)
+- Given `start_process` is called and the database write fails after a cgroup was created, then the cgroup is cleaned up alongside the existing SIGKILL cleanup of the child process (R22)
 
 ### Listing and Inspection (R0, R4, R12, R13)
 
@@ -99,7 +108,7 @@ Termination signals the whole process group (not just the wrapper shell) and esc
 - Given `stop_process` successfully sends a signal to the process, then the record's `stop_reason` is set to `"agent_stopped"` before the signal is delivered
 - Given `stop_process` fails to deliver the signal due to a permission error, then the `stop_reason` field is cleared (set to None) so that a future natural exit is not incorrectly suppressed
 
-### Proactive Exit Detection and Notification (R15)
+### Proactive Exit Detection and Notification (R15, R21, R22)
 
 A subsystem-owned watcher detects exits in the background and dispatches a `Notification` through the priority buffer. The watcher combines an event-driven mechanism (for fast common-case detection) with a periodic liveness check (to catch cases where no exit-code signal was written).
 
@@ -117,6 +126,10 @@ A subsystem-owned watcher detects exits in the background and dispatches a `Noti
 - Given Tachikoma is shutting down, then the watcher stops cleanly along with the other scheduler tasks
 - Given the watcher transitions a record with `stop_reason='agent_stopped'` from `running` to `exited`, then no `Notification` event is dispatched — exit notifications are suppressed for agent-initiated stops (R17)
 - Given the watcher transitions a record with no `stop_reason` (or `stop_reason` is None) from `running` to `exited`, then a `Notification` event is dispatched as normal — only agent-initiated stops are suppressed
+- Given a process with `cgroup_path` set (cgroup was created at spawn) exits with exit code 137 and the cgroup's `memory.events` shows `oom_kill` count > 0, then the notification includes OOM context: "Process 'name' (id: id) was killed (OOM — may have exceeded memory limit of NMB)." (R21)
+- Given a process with `cgroup_path` set exits with exit code 137 but the cgroup's `memory.events` shows `oom_kill` count of 0, then the notification reports: "Process 'name' (id: id) was killed by signal (SIGKILL)." — no OOM context (R21)
+- Given a process without a cgroup (`cgroup_path` is None) exits with exit code 137, then the notification uses the standard text without OOM context
+- Given a process with `cgroup_path` set exits via any path (watcher, lazy reconciliation, stop_process, or crash recovery), then the cgroup directory is cleaned up after OOM detection (R22)
 
 ### Renaming (R0, R7)
 
@@ -125,18 +138,42 @@ A subsystem-owned watcher detects exits in the background and dispatches a `Noti
 - Given `rename_process` is called with an empty or whitespace-only name, then the tool returns a clear error
 - Given `rename_process` is called with an unknown record ID, then a clear "not found" error is returned
 
-### Persistence and Recovery (R2, R8)
+### Cgroup Memory Limiting (R18, R19, R20, R21, R22, R23)
+
+Memory limiting wraps spawned processes in Linux cgroups v2 with configurable memory hard limits. The feature is opt-in — no limits are applied unless the `[detached_processes]` config section is present or `memory_limit_mb` is passed per-process. Falls back gracefully when cgroups v2 is unavailable.
+
+**Acceptance Criteria**:
+- Given cgroups v2 is available and a `[detached_processes]` config section exists with a default limit, and `start_process` is called with no `memory_limit_mb` override, then the process is placed in a per-process cgroup with `memory.max` set to the configured default (R18, R20)
+- Given cgroups v2 is available and `start_process` is called with an explicit `memory_limit_mb` argument, then the spawned process's cgroup uses that value as `memory.max` instead of the default (R19)
+- Given `start_process` is called with `memory_limit_mb=0` or a negative value, then the tool returns a validation error (minimum value is 1) and no process is spawned
+- Given `start_process` is called with a `memory_limit_mb` value exceeding system RAM, then the tool returns a validation error indicating the limit exceeds available system memory and no process is spawned
+- Given no `[detached_processes]` section exists in the config and no `memory_limit_mb` is passed, then no cgroup is created and the process runs with no memory constraint — identical to pre-cgroup behavior (R20)
+- Given a spawned process attempts to allocate memory beyond its cgroup's `memory.max`, then the kernel OOM-kills the process (R18)
+- Given multiple processes are spawned concurrently, then each process is placed in its own separate cgroup directory (one cgroup per process)
+- Given a process is OOM-killed, then the exit notification includes OOM context: "was killed (OOM — may have exceeded memory limit of NMB)" (R21)
+- Given a process exits with code 137 but the cgroup shows no OOM (`oom_kill` count is 0), then the notification reports "was killed by signal (SIGKILL)" without OOM context (R21)
+- Given cgroups v2 is not available on the system, then a one-time warning is logged at bootstrap and processes are spawned without memory limits (R23)
+- Given cgroups v2 is available but creating a specific cgroup fails (e.g. permission denied), then the individual spawn logs a warning and proceeds without a memory limit for that process (R23)
+- Given a process exits (whether OOM-killed, normally, or agent-stopped) with an active cgroup, then its cgroup directory is cleaned up (removed from the filesystem) (R22)
+- Given cleanup fails (e.g. cgroup not empty due to child processes), then the error is logged and does not prevent exit reconciliation
+- Given Tachikoma restarts after an unclean shutdown where cgroups were not cleaned up, then stale cgroup directories for dead `running` records are cleaned during crash recovery (via `reconcile_exit` which handles cgroup cleanup) (R22)
+- Given the agent calls `get_process` on a running process with an active cgroup, then the response includes current memory usage in MB
+- Given the agent calls `get_process` on a process without a cgroup (fallback mode or no config), then memory usage and limit fields are omitted from the response
+
+### Persistence and Recovery (R2, R8, R22)
 
 **Acceptance Criteria**:
 - Given the system starts for the first time, then the bootstrap hook creates the detached-process table in the shared database
 - Given Tachikoma restarts, then every previously persisted record is still available via `list_processes` / `get_process` with its stored identity intact
 - Given Tachikoma restarts, when the bootstrap hook runs, then every record currently marked `running` is checked via PID + start-time, and any whose process is no longer alive is marked `exited` without dispatching a user-facing notification
 - Given Tachikoma restarts and a record's PID is still alive with the recorded start time, then the record remains `running` and subsequent tool calls continue to operate on it as normal
+- Given the bootstrap hook runs, then cgroup v2 availability is probed once and the result stored for the session; stale cgroups for dead records are cleaned during crash recovery (via `reconcile_exit` which handles cgroup cleanup)
 
 ### Preamble Awareness (R14)
 
 **Acceptance Criteria**:
 - Given the base system prompt preamble is rendered, then it includes a Detached Processes section that names each of the tools (`start_process`, `list_processes`, `get_process`, `read_process_output`, `stop_process`, `rename_process`) with a one-line description of each and guidance on when the agent should use them
+- Given the preamble describes `start_process`, then it mentions the optional `memory_limit_mb` parameter for per-process memory limiting
 
 ## Requires
 

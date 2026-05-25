@@ -567,10 +567,3 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 **Complexity**: Easy
 **Description**: Allow plugins to declare scheduled ticks in their manifest that run on a cron schedule alongside built-in maintenance jobs. Plugin-declared ticks specify a tick function and an optional schedule override in the manifest, and are governed by the same maintenance enabled/schedule configuration as built-in ticks. During plugin loading, declared ticks are registered with the central scheduler and run automatically when the schedule fires.
 
-### DLT-176: Limit detached process memory using cgroups
-**Status**: ✓ Implementation
-**Depends on**: None
-**Priority**: 2 (High)
-**Complexity**: Medium
-**Description**: Constrain memory usage of detached processes using Linux cgroups to prevent a single runaway process from consuming all available RAM and triggering OOM kills that affect the entire VPS. A default memory limit (e.g. 1.2GB) applies to all spawned detached processes, with per-process overrides configurable through the MCP tools when starting a process. When a process exceeds its limit, the cgroup terminates it and the exit is detected by the existing hybrid supervision system, surfaced through the process status and notifications. Configuration lives in the settings model alongside existing detached process options, and the implementation targets cgroups v2 (with v1 as a fallback evaluated during speccing). This does not apply to the main Tachikoma process or background tasks (which run in-process via the SDK) — only to externally spawned detached shell commands.
-
