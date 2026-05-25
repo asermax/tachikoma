@@ -2,6 +2,19 @@
 
 <!-- version list -->
 
+## v1.91.0 (2026-05-25)
+
+### Bug Fixes
+
+- **memory**: Remove trailing backslash from facts example prompt
+  ([`e0acead`](https://github.com/asermax/tachikoma/commit/e0aceadbdf2806d8836139ef2e02083ee76f4e42))
+
+### Features
+
+- **memory**: Add classification examples and misclassification guards
+  ([`80c5b61`](https://github.com/asermax/tachikoma/commit/80c5b61a2a9070409cca8bb52136ceba2342f857))
+
+
 ## v1.90.0 (2026-05-25)
 
 ### Bug Fixes
