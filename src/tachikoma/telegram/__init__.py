@@ -661,10 +661,12 @@ class TelegramChannel(Channel):
         )
 
         try:
-            await self._bot.set_my_commands([
-                BotCommand(command="new", description="Start a new conversation"),
-                BotCommand(command="queue", description="Defer message for later processing"),
-            ])
+            await self._bot.set_my_commands(
+                [
+                    BotCommand(command="new", description="Start a new conversation"),
+                    BotCommand(command="queue", description="Defer message for later processing"),
+                ]
+            )
         except TelegramAPIError:
             _log.warning("Failed to register bot commands (non-critical)")
 

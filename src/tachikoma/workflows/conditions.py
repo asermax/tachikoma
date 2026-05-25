@@ -32,7 +32,7 @@ _TOOLS = ["Read", "Glob", "Grep"]
 
 _RETRY_PROMPT = (
     "Your previous response could not be parsed as JSON. "
-    'Please respond with ONLY a JSON object: '
+    "Please respond with ONLY a JSON object: "
     '{"passes": true/false, "reason": "brief explanation"}'
 )
 
@@ -120,11 +120,17 @@ def _parse_evaluation_response(raw: str) -> ConditionResult:
 
 
 async def _call_subagent(
-    session: Session, prompt: str, agent_defaults: AgentDefaults,
+    session: Session,
+    prompt: str,
+    agent_defaults: AgentDefaults,
 ) -> str | None:
     return await fork_and_capture(
-        session, prompt, agent_defaults,
-        tools=_TOOLS, allow=_ALLOW_RULES, model=agent_defaults.processor_model,
+        session,
+        prompt,
+        agent_defaults,
+        tools=_TOOLS,
+        allow=_ALLOW_RULES,
+        model=agent_defaults.processor_model,
     )
 
 

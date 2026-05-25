@@ -137,7 +137,7 @@ class TestDecodeButtons:
             _decode_buttons(raw)
 
     def test_non_dict_button_raises(self) -> None:
-        raw = '[[123]]'
+        raw = "[[123]]"
         with pytest.raises(ValueError, match="must be an object"):
             _decode_buttons(raw)
 
@@ -261,9 +261,7 @@ class TestHandlePresentButtons:
     async def test_telegram_api_error_returns_error(self) -> None:
         bot = MagicMock()
         bot.send_message = AsyncMock(
-            side_effect=TelegramAPIError(
-                method="sendMessage", message="Too many requests"
-            ),
+            side_effect=TelegramAPIError(method="sendMessage", message="Too many requests"),
         )
 
         result = await handle_present_buttons(

@@ -126,14 +126,11 @@ async def scheduler(jobs: list[Job], max_concurrent_low: int = 1) -> None:
     """
     in_flight: dict[str, asyncio.Task[None]] = {}
     low_semaphore: asyncio.Semaphore | None = (
-        asyncio.Semaphore(max_concurrent_low)
-        if any(j.priority == "low" for j in jobs)
-        else None
+        asyncio.Semaphore(max_concurrent_low) if any(j.priority == "low" for j in jobs) else None
     )
 
     _log.info(
-        "Scheduler started with {count} jobs "
-        "({low} low-priority, max_concurrent_low={limit})",
+        "Scheduler started with {count} jobs ({low} low-priority, max_concurrent_low={limit})",
         count=len(jobs),
         low=sum(1 for j in jobs if j.priority == "low"),
         limit=max_concurrent_low,

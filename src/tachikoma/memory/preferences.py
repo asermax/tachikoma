@@ -131,8 +131,14 @@ preferences. Focus on genuine, stated choices — not facts, specs, or instructi
 """
 
 PREFERENCES_PROMPT = (
-    _BASE_PROMPT + STORE_PURPOSE_SECTION + "\n\n" + CONTEXT_DEDUP_SECTION + "\n\n"
-    + WORKSPACE_VALIDATION_SECTION + "\n\n" + permissions_section("preferences")
+    _BASE_PROMPT
+    + STORE_PURPOSE_SECTION
+    + "\n\n"
+    + CONTEXT_DEDUP_SECTION
+    + "\n\n"
+    + WORKSPACE_VALIDATION_SECTION
+    + "\n\n"
+    + permissions_section("preferences")
 )
 
 

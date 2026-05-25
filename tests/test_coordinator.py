@@ -4707,9 +4707,7 @@ class TestCoordinatorPreProcessingGating:
         registry.get_active_session.side_effect = [None, active, active]
         registry.load_context_entries = AsyncMock(return_value=[])
 
-        async with Coordinator(
-            registry=registry, msg_pre_pipeline=msg_pre_pipeline
-        ) as coord:
+        async with Coordinator(registry=registry, msg_pre_pipeline=msg_pre_pipeline) as coord:
             await self._send_envelope(coord, ButtonTapMessage("yes"))
 
         msg_pre_pipeline.run.assert_not_awaited()

@@ -208,10 +208,7 @@ class TestCallbackQueryRapidDoubleTap:
         await channel._handle_callback_query(cb2)
 
         assert channel._coordinator.enqueue.call_count == 2
-        values = [
-            call[0][0].value
-            for call in channel._coordinator.enqueue.call_args_list
-        ]
+        values = [call[0][0].value for call in channel._coordinator.enqueue.call_args_list]
         assert values == ["yes", "no"]
 
 

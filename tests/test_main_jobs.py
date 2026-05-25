@@ -74,9 +74,7 @@ class TestMainPriorityRegistration:
         ]
 
     def test_maintenance_and_updates_disabled(self) -> None:
-        jobs = _build_jobs(
-            _make_settings(maintenance_enabled=False, updates_enabled=False)
-        )
+        jobs = _build_jobs(_make_settings(maintenance_enabled=False, updates_enabled=False))
         low_names = [j.name for j in jobs if j.priority == "low"]
         assert sorted(low_names) == [
             "one_shot_cleanup",

@@ -166,9 +166,7 @@ def build_scheduler_jobs(
         Job(
             name="session_task_scheduler",
             trigger=IntervalTrigger(settings.tasks.check_interval),
-            run=lambda: session_task_scheduler_tick(
-                task_repository, settings.tasks, buffer
-            ),
+            run=lambda: session_task_scheduler_tick(task_repository, settings.tasks, buffer),
         ),
         Job(
             name="background_task_runner",
@@ -220,33 +218,25 @@ def build_scheduler_jobs(
                 Job(
                     name="context_maintenance",
                     trigger=CronTrigger(maintenance_schedule, tz),
-                    run=lambda: context_maintenance_tick(
-                        agent_defaults, skill_registry
-                    ),
+                    run=lambda: context_maintenance_tick(agent_defaults, skill_registry),
                     priority="low",
                 ),
                 Job(
                     name="preferences_maintenance",
                     trigger=CronTrigger(maintenance_schedule, tz),
-                    run=lambda: preferences_maintenance_tick(
-                        agent_defaults, skill_registry
-                    ),
+                    run=lambda: preferences_maintenance_tick(agent_defaults, skill_registry),
                     priority="low",
                 ),
                 Job(
                     name="episodic_maintenance",
                     trigger=CronTrigger(maintenance_schedule, tz),
-                    run=lambda: episodic_maintenance_tick(
-                        agent_defaults, maintenance_settings
-                    ),
+                    run=lambda: episodic_maintenance_tick(agent_defaults, maintenance_settings),
                     priority="low",
                 ),
                 Job(
                     name="facts_maintenance",
                     trigger=CronTrigger(maintenance_schedule, tz),
-                    run=lambda: facts_maintenance_tick(
-                        agent_defaults, skill_registry
-                    ),
+                    run=lambda: facts_maintenance_tick(agent_defaults, skill_registry),
                     priority="low",
                 ),
             ]

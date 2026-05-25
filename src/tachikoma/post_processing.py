@@ -254,10 +254,13 @@ def build_context_summary(entries: list[SessionContextEntry]) -> str | None:
             name = e.metadata.get("skill_name")
             if not name:
                 continue
-            skills_by_name.setdefault(name, {
-                "description": e.metadata.get("skill_description"),
-                "path": e.metadata.get("skill_path"),
-            })
+            skills_by_name.setdefault(
+                name,
+                {
+                    "description": e.metadata.get("skill_description"),
+                    "path": e.metadata.get("skill_path"),
+                },
+            )
 
         if skills_by_name:
             has_content = True

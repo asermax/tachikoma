@@ -58,18 +58,12 @@ def _decode_buttons(raw: str) -> list[list[Button]]:
         parsed_row: list[Button] = []
         for btn_idx, raw_btn in enumerate(raw_row):
             if not isinstance(raw_btn, dict):
-                raise ValueError(
-                    f"button at row {row_idx} index {btn_idx} must be an object"
-                )
+                raise ValueError(f"button at row {row_idx} index {btn_idx} must be an object")
             btn = Button.model_validate(raw_btn)
             if not btn.label.strip():
-                raise ValueError(
-                    f"button at row {row_idx} index {btn_idx} has an empty label"
-                )
+                raise ValueError(f"button at row {row_idx} index {btn_idx} has an empty label")
             if not btn.value:
-                raise ValueError(
-                    f"button at row {row_idx} index {btn_idx} has an empty value"
-                )
+                raise ValueError(f"button at row {row_idx} index {btn_idx} has an empty value")
             val_bytes = len(btn.value.encode("utf-8"))
             if val_bytes > _MAX_VALUE_BYTES:
                 raise ValueError(
@@ -81,9 +75,7 @@ def _decode_buttons(raw: str) -> list[list[Button]]:
         rows.append(parsed_row)
 
     if total > _MAX_BUTTON_COUNT:
-        raise ValueError(
-            f"Total button count ({total}) exceeds cap ({_MAX_BUTTON_COUNT})"
-        )
+        raise ValueError(f"Total button count ({total}) exceeds cap ({_MAX_BUTTON_COUNT})")
 
     return rows
 
@@ -168,11 +160,7 @@ async def handle_present_buttons(
     except TelegramAPIError as e:
         return {"is_error": True, "content": [{"type": "text", "text": str(e)}]}
 
-    return {
-        "content": [
-            {"type": "text", "text": f"Buttons sent (message_id: {sent.message_id})"}
-        ]
-    }
+    return {"content": [{"type": "text", "text": f"Buttons sent (message_id: {sent.message_id})"}]}
 
 
 def create_buttons_server(bot: Bot, chat_id: int) -> McpSdkServerConfig:

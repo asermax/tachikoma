@@ -168,9 +168,7 @@ class TestHandleMessageRouting:
         msg = _make_message("/queue something", [_make_entity("/queue")])
         await ch._handle_message(msg)
 
-        ch._coordinator.enqueue.assert_called_once_with(
-            TextMessage(text="something")
-        )
+        ch._coordinator.enqueue.assert_called_once_with(TextMessage(text="something"))
         ch._coordinator.enqueue_deferred.assert_not_called()
 
     async def test_busy_new_command_deferred(self) -> None:
@@ -195,9 +193,7 @@ class TestHandleMessageRouting:
         msg = _make_message("/queue remind me", [_make_entity("/queue")])
         await ch._handle_message(msg)
 
-        ch._coordinator.enqueue_deferred.assert_called_once_with(
-            TextMessage(text="remind me")
-        )
+        ch._coordinator.enqueue_deferred.assert_called_once_with(TextMessage(text="remind me"))
         ch._coordinator.enqueue.assert_not_called()
         ch._delivery_lock.release()
 

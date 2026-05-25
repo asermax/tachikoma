@@ -185,9 +185,7 @@ class TestPriorityDispatch:
         assert job.priority == "high"
 
     @pytest.mark.asyncio
-    async def test_low_priority_jobs_share_semaphore(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    async def test_low_priority_jobs_share_semaphore(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """AC2: With max_concurrent_low=1, only one low-priority job runs at a time."""
         monkeypatch.setattr(scheduler_mod, "TICK_SECONDS", 0.01)
 
@@ -218,9 +216,7 @@ class TestPriorityDispatch:
         assert max_running == 1
 
     @pytest.mark.asyncio
-    async def test_high_priority_bypasses_semaphore(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    async def test_high_priority_bypasses_semaphore(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """AC3: High-priority job dispatches while a low-priority job holds the semaphore."""
         monkeypatch.setattr(scheduler_mod, "TICK_SECONDS", 0.01)
 
