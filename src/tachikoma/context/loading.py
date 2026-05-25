@@ -443,8 +443,8 @@ host machine and check on it later without SSH access.
 ## Tools
 
 - **start_process** — Start a detached shell command. Parameters: `name` (display label), \
-`command` (shell string — supports pipes, &&, etc.), optional `cwd` and `env` overrides. \
-Returns the process ID, PID, and log path.
+`command` (shell string — supports pipes, &&, etc.), optional `cwd` and `env` overrides, \
+optional `memory_limit_mb` (memory limit in MB). Returns the process ID, PID, and log path.
 - **list_processes** — List running processes by default. Pass `archived=true` to see exited \
 ones. Each entry shows ID, name, PID, command, and status.
 - **get_process** — Get full details for a process by ID: command, PID, log path, status, \
