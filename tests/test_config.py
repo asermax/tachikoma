@@ -715,6 +715,33 @@ class TestTelegramSettings:
 
         assert settings.telegram is None
 
+    def test_inbound_reactions_defaults_to_true(self) -> None:
+        """inbound_reactions defaults to True when omitted."""
+        settings = Settings.model_validate(
+            {
+                "telegram": {
+                    "bot_token": "token",
+                    "authorized_chat_id": 123,
+                },
+            }
+        )
+
+        assert settings.telegram.inbound_reactions is True
+
+    def test_inbound_reactions_explicit_false(self) -> None:
+        """inbound_reactions can be set to false."""
+        settings = Settings.model_validate(
+            {
+                "telegram": {
+                    "bot_token": "token",
+                    "authorized_chat_id": 123,
+                    "inbound_reactions": False,
+                },
+            }
+        )
+
+        assert settings.telegram.inbound_reactions is False
+
 
 class TestTelegramDefaultConfig:
     """Tests for telegram section in default config generation."""
@@ -738,6 +765,15 @@ class TestTelegramDefaultConfig:
         content = config_path.read_text()
 
         assert "channel" in content.lower()
+
+    def test_generated_file_contains_inbound_reactions(self, tmp_path: Path) -> None:
+        """Config generation round-trip: inbound_reactions appears as commented default."""
+        config_path = tmp_path / "config.toml"
+        _generate_default_config(config_path)
+
+        content = config_path.read_text()
+
+        assert "# inbound_reactions = true" in content
 
 
 class TestSettingsManagerTelegram:
