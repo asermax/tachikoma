@@ -74,7 +74,7 @@ configuration record → facts
 ### NOT a fact (belongs in episodic memory or project docs):
 - "We debugged the payment timeout issue on 2026-05-10" → one-time event → \
 episodic
-- "The full architecture of system X is..." → too long for facts → project docs
+- "The full architecture of system X is..." → too long for facts → project docs\
 """
 
 CONTEXT_DEDUP_SECTION = """\
