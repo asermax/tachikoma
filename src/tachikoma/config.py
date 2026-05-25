@@ -365,10 +365,10 @@ class SchedulerSettings(BaseModel):
 class DetachedProcessesConfig(BaseModel):
     model_config = ConfigDict(frozen=True, extra="ignore")
 
-    default_memory_limit_mb: int = Field(
-        default=1024,
+    default_memory_limit_mb: int | None = Field(
+        default=None,
         ge=1,
-        description="Default memory limit in MB for detached processes",
+        description="Default memory limit in MB for detached processes (None = no limit)",
     )
 
 
@@ -712,10 +712,10 @@ def _generate_default_config(config_path: Path = CONFIG_PATH) -> None:
 
     for name, field_info in DetachedProcessesConfig.model_fields.items():
         desc = field_info.description or ""
-        default = field_info.default
+        suggested = 1024
 
         doc.add(tomlkit.comment(f"{desc}"))
-        doc.add(tomlkit.comment(f"{name} = {default}"))
+        doc.add(tomlkit.comment(f"{name} = {suggested}"))
 
     doc.add(tomlkit.nl())
 
