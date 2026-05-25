@@ -402,3 +402,82 @@ async def test_stop_already_dead_does_not_set_stop_reason(repo, tmp_path):
     updated = await repo.get("sp-dead")
     assert updated is not None
     assert updated.stop_reason is None
+
+
+# ---------------------------------------------------------------------------
+# Memory usage display tests (get_process)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_get_process_shows_memory_usage(repo):
+    """Running process with cgroup shows memory usage and limit."""
+    mock_bus = AsyncMock()
+    log_dir = Path("/tmp/test-logs")
+    tools = _build_tools_map(repo, mock_bus, log_dir)
+
+    await repo.create(
+        _make_record(
+            record_id="mu1",
+            status="running",
+            cgroup_path="/sys/fs/cgroup/test-mu1",
+            memory_limit=512 * 1024 * 1024,  # 512MB
+        )
+    )
+
+    with (
+        patch("tachikoma.detached_processes.tools.is_alive", return_value=True),
+        patch(
+            "tachikoma.detached_processes.tools.read_memory_current",
+            return_value=256 * 1024 * 1024,
+        ),
+    ):
+        result = await tools["get_process"]({"process_id": "mu1"})
+
+    text = result["content"][0]["text"]
+    assert "Memory usage: 256MB" in text
+    assert "Memory limit: 512MB" in text
+
+
+@pytest.mark.asyncio
+async def test_get_process_no_cgroup_no_memory_fields(repo):
+    """Process without cgroup omits memory usage fields."""
+    mock_bus = AsyncMock()
+    log_dir = Path("/tmp/test-logs")
+    tools = _build_tools_map(repo, mock_bus, log_dir)
+
+    await repo.create(_make_record(record_id="mu2", status="running"))
+
+    with patch("tachikoma.detached_processes.tools.is_alive", return_value=True):
+        result = await tools["get_process"]({"process_id": "mu2"})
+
+    text = result["content"][0]["text"]
+    assert "Memory usage" not in text
+    assert "Memory limit" not in text
+
+
+@pytest.mark.asyncio
+async def test_get_process_memory_read_fails_shows_limit_only(repo):
+    """Memory read fails but limit is still shown."""
+    mock_bus = AsyncMock()
+    log_dir = Path("/tmp/test-logs")
+    tools = _build_tools_map(repo, mock_bus, log_dir)
+
+    await repo.create(
+        _make_record(
+            record_id="mu3",
+            status="running",
+            cgroup_path="/sys/fs/cgroup/test-mu3",
+            memory_limit=1024 * 1024 * 1024,  # 1GB
+        )
+    )
+
+    with (
+        patch("tachikoma.detached_processes.tools.is_alive", return_value=True),
+        patch("tachikoma.detached_processes.tools.read_memory_current", return_value=None),
+    ):
+        result = await tools["get_process"]({"process_id": "mu3"})
+
+    text = result["content"][0]["text"]
+    assert "Memory usage" not in text
+    assert "Memory limit: 1024MB" in text

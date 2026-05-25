@@ -261,3 +261,235 @@ async def test_agent_stopped_already_exited_is_noop(repo, tmp_path, mock_bus):
     )
 
     mock_bus.dispatch.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# OOM detection and cgroup cleanup tests
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_oom_detected_notification(repo, tmp_path, mock_bus):
+    """OOM kill detected: notification includes OOM context with memory limit."""
+    log_dir = tmp_path / "logs"
+    log_dir.mkdir()
+
+    cgroup_path = str(tmp_path / "cgroup-test")
+    await repo.create(
+        _make_record(
+            record_id="rec-oom",
+            status="running",
+            cgroup_path=cgroup_path,
+            memory_limit=512 * 1024 * 1024,  # 512MB
+        )
+    )
+    (log_dir / "rec-oom.exit").write_text("137\n")
+
+    with (
+        patch("tachikoma.detached_processes.reconcile.check_oom_kill", return_value=True),
+        patch("tachikoma.detached_processes.reconcile.cleanup_cgroup"),
+    ):
+        await reconcile_exit(
+            "rec-oom",
+            repository=repo,
+            bus=mock_bus,
+            log_dir=log_dir,
+            dispatch_notification=True,
+        )
+
+    event = mock_bus.dispatch.call_args[0][0]
+    assert "OOM" in event.prompt
+    assert "512MB limit" in event.prompt
+    assert event.severity == "error"
+    assert event.priority == Priority.URGENT
+
+
+@pytest.mark.asyncio
+async def test_normal_sigkill_notification(repo, tmp_path, mock_bus):
+    """Exit 137 without OOM: notification says 'killed by signal'."""
+    log_dir = tmp_path / "logs"
+    log_dir.mkdir()
+
+    cgroup_path = str(tmp_path / "cgroup-sigkill")
+    await repo.create(
+        _make_record(
+            record_id="rec-sigkill",
+            status="running",
+            cgroup_path=cgroup_path,
+            memory_limit=512 * 1024 * 1024,
+        )
+    )
+    (log_dir / "rec-sigkill.exit").write_text("137\n")
+
+    with (
+        patch("tachikoma.detached_processes.reconcile.check_oom_kill", return_value=False),
+        patch("tachikoma.detached_processes.reconcile.cleanup_cgroup"),
+    ):
+        await reconcile_exit(
+            "rec-sigkill",
+            repository=repo,
+            bus=mock_bus,
+            log_dir=log_dir,
+            dispatch_notification=True,
+        )
+
+    event = mock_bus.dispatch.call_args[0][0]
+    assert "SIGKILL" in event.prompt
+    assert "OOM" not in event.prompt
+
+
+@pytest.mark.asyncio
+async def test_normal_exit_no_oom_context(repo, tmp_path, mock_bus):
+    """Exit code 0: standard notification, no OOM mention."""
+    log_dir = tmp_path / "logs"
+    log_dir.mkdir()
+
+    cgroup_path = str(tmp_path / "cgroup-ok")
+    await repo.create(
+        _make_record(
+            record_id="rec-normal",
+            status="running",
+            cgroup_path=cgroup_path,
+            memory_limit=256 * 1024 * 1024,
+        )
+    )
+    (log_dir / "rec-normal.exit").write_text("0\n")
+
+    with (
+        patch("tachikoma.detached_processes.reconcile.check_oom_kill", return_value=False),
+        patch("tachikoma.detached_processes.reconcile.cleanup_cgroup"),
+    ):
+        await reconcile_exit(
+            "rec-normal",
+            repository=repo,
+            bus=mock_bus,
+            log_dir=log_dir,
+            dispatch_notification=True,
+        )
+
+    event = mock_bus.dispatch.call_args[0][0]
+    assert "exited with code 0" in event.prompt
+    assert "OOM" not in event.prompt
+    assert "SIGKILL" not in event.prompt
+
+
+@pytest.mark.asyncio
+async def test_cgroup_cleanup_called_on_exit(repo, tmp_path, mock_bus):
+    """cleanup_cgroup is called when record has a cgroup_path."""
+    log_dir = tmp_path / "logs"
+    log_dir.mkdir()
+
+    cgroup_path = str(tmp_path / "cgroup-cleanup")
+    await repo.create(
+        _make_record(
+            record_id="rec-clean",
+            status="running",
+            cgroup_path=cgroup_path,
+        )
+    )
+    (log_dir / "rec-clean.exit").write_text("0\n")
+
+    with (
+        patch("tachikoma.detached_processes.reconcile.check_oom_kill", return_value=False),
+        patch("tachikoma.detached_processes.reconcile.cleanup_cgroup") as mock_cleanup,
+    ):
+        await reconcile_exit(
+            "rec-clean",
+            repository=repo,
+            bus=mock_bus,
+            log_dir=log_dir,
+            dispatch_notification=True,
+        )
+
+    mock_cleanup.assert_called_once_with(cgroup_path)
+
+
+@pytest.mark.asyncio
+async def test_no_cgroup_reconcile_normal(repo, tmp_path, mock_bus):
+    """Reconcile works normally when cgroup_path is None."""
+    log_dir = tmp_path / "logs"
+    log_dir.mkdir()
+
+    await repo.create(_make_record(record_id="rec-no-cgroup", status="running"))
+    (log_dir / "rec-no-cgroup.exit").write_text("0\n")
+
+    await reconcile_exit(
+        "rec-no-cgroup",
+        repository=repo,
+        bus=mock_bus,
+        log_dir=log_dir,
+        dispatch_notification=True,
+    )
+
+    updated = await repo.get("rec-no-cgroup")
+    assert updated is not None
+    assert updated.status == "exited"
+    assert updated.exit_code == 0
+
+    event = mock_bus.dispatch.call_args[0][0]
+    assert "exited with code 0" in event.prompt
+
+
+@pytest.mark.asyncio
+async def test_oom_detected_without_memory_limit(repo, tmp_path, mock_bus):
+    """OOM detected but no memory_limit stored: no limit string in notification."""
+    log_dir = tmp_path / "logs"
+    log_dir.mkdir()
+
+    cgroup_path = str(tmp_path / "cgroup-nolimit")
+    await repo.create(
+        _make_record(
+            record_id="rec-oom-nolimit",
+            status="running",
+            cgroup_path=cgroup_path,
+            memory_limit=None,
+        )
+    )
+    (log_dir / "rec-oom-nolimit.exit").write_text("137\n")
+
+    with (
+        patch("tachikoma.detached_processes.reconcile.check_oom_kill", return_value=True),
+        patch("tachikoma.detached_processes.reconcile.cleanup_cgroup"),
+    ):
+        await reconcile_exit(
+            "rec-oom-nolimit",
+            repository=repo,
+            bus=mock_bus,
+            log_dir=log_dir,
+            dispatch_notification=True,
+        )
+
+    event = mock_bus.dispatch.call_args[0][0]
+    assert "OOM" in event.prompt
+    assert "MB limit" not in event.prompt
+
+
+@pytest.mark.asyncio
+async def test_cleanup_cgroup_called_even_without_notification(repo, tmp_path):
+    """Cgroup cleanup happens even when dispatch_notification=False."""
+    log_dir = tmp_path / "logs"
+    log_dir.mkdir()
+
+    cgroup_path = str(tmp_path / "cgroup-silent")
+    await repo.create(
+        _make_record(
+            record_id="rec-silent-cg",
+            status="running",
+            cgroup_path=cgroup_path,
+        )
+    )
+    (log_dir / "rec-silent-cg.exit").write_text("0\n")
+
+    with (
+        patch("tachikoma.detached_processes.reconcile.check_oom_kill", return_value=False),
+        patch("tachikoma.detached_processes.reconcile.cleanup_cgroup") as mock_cleanup,
+    ):
+        await reconcile_exit(
+            "rec-silent-cg",
+            repository=repo,
+            bus=None,
+            log_dir=log_dir,
+            dispatch_notification=False,
+        )
+
+    mock_cleanup.assert_called_once_with(cgroup_path)

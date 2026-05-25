@@ -18,6 +18,7 @@ from claude_agent_sdk import McpSdkServerConfig, create_sdk_mcp_server, tool
 from loguru import logger
 from pydantic import BaseModel, ValidationError
 
+from tachikoma.detached_processes.cgroup_manager import read_memory_current
 from tachikoma.detached_processes.errors import ProcessRepositoryError
 from tachikoma.detached_processes.log_io import read_tail, read_window
 from tachikoma.detached_processes.reconcile import reconcile_exit
@@ -298,6 +299,13 @@ def create_detached_process_tools_server(
                 exited = record.exited_at.astimezone(timezone).strftime("%Y-%m-%d %H:%M %Z")
                 lines.append(f"- Exited: {exited}")
                 lines.append(f"- Exit code: {record.exit_code}")
+
+            if record.status == "running" and record.cgroup_path is not None:
+                usage = read_memory_current(record.cgroup_path)
+                if usage is not None:
+                    lines.append(f"- Memory usage: {usage // (1024 * 1024)}MB")
+                if record.memory_limit is not None:
+                    lines.append(f"- Memory limit: {record.memory_limit // (1024 * 1024)}MB")
 
             return _msg("\n".join(lines))
 

@@ -28,6 +28,8 @@ def _make_record(
     exited_at: datetime | None = None,
     exit_code: int | None = None,
     stop_reason: str | None = None,
+    memory_limit: int | None = None,
+    cgroup_path: str | None = None,
 ) -> ProcessRecord:
     """Create a ProcessRecord with sensible defaults."""
     return ProcessRecord(
@@ -43,6 +45,8 @@ def _make_record(
         exited_at=exited_at,
         exit_code=exit_code,
         stop_reason=stop_reason,
+        memory_limit=memory_limit,
+        cgroup_path=cgroup_path,
     )
 
 
