@@ -5,6 +5,7 @@ import contextlib
 import os
 import signal
 from pathlib import Path
+from unittest.mock import patch
 
 import psutil
 import pytest
@@ -291,3 +292,157 @@ async def test_terminate_already_dead(tmp_path, repo):
     """Terminating an already-dead record is a no-op."""
     record = _make_record(pid=999999999, process_create_time=0.0)
     await terminate(record)  # Should not raise
+
+
+# ---------------------------------------------------------------------------
+# spawn_process with cgroup tests
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_spawn_with_cgroup_creates_and_assigns(tmp_path, repo):
+    """Cgroup is created and PID assigned when both params provided."""
+    log_dir = tmp_path / "logs"
+    log_dir.mkdir()
+
+    with (
+        patch("tachikoma.detached_processes.spawn.cgroup_manager") as mock_cg,
+    ):
+        mock_cg.create_process_cgroup.return_value = "/sys/fs/cgroup/tachikoma-test"
+        mock_cg.assign_pid.return_value = True
+
+        record = await spawn_process(
+            name="cg-test",
+            command="sleep 5",
+            cwd=None,
+            env_overrides=None,
+            log_dir=log_dir,
+            repository=repo,
+            memory_limit_bytes=512 * 1024 * 1024,
+            cgroup_parent_path="/sys/fs/cgroup",
+        )
+
+    try:
+        assert record.cgroup_path == "/sys/fs/cgroup/tachikoma-test"
+        assert record.memory_limit == 512 * 1024 * 1024
+        mock_cg.create_process_cgroup.assert_called_once()
+        mock_cg.assign_pid.assert_called_once_with(
+            "/sys/fs/cgroup/tachikoma-test", record.pid
+        )
+    finally:
+        with contextlib.suppress(ProcessLookupError, PermissionError):
+            os.killpg(os.getpgid(record.pid), signal.SIGKILL)
+
+
+@pytest.mark.asyncio
+async def test_spawn_cgroup_creation_fails_proceeds_without(tmp_path, repo):
+    """Spawn succeeds without cgroup when creation fails."""
+    log_dir = tmp_path / "logs"
+    log_dir.mkdir()
+
+    with patch("tachikoma.detached_processes.spawn.cgroup_manager") as mock_cg:
+        mock_cg.create_process_cgroup.return_value = None
+
+        record = await spawn_process(
+            name="cg-fail",
+            command="sleep 5",
+            cwd=None,
+            env_overrides=None,
+            log_dir=log_dir,
+            repository=repo,
+            memory_limit_bytes=1024,
+            cgroup_parent_path="/sys/fs/cgroup",
+        )
+
+    try:
+        assert record.cgroup_path is None
+        assert record.memory_limit is None
+        mock_cg.assign_pid.assert_not_called()
+    finally:
+        with contextlib.suppress(ProcessLookupError, PermissionError):
+            os.killpg(os.getpgid(record.pid), signal.SIGKILL)
+
+
+@pytest.mark.asyncio
+async def test_spawn_assign_pid_fails_cleans_up(tmp_path, repo):
+    """Cgroup is cleaned up when assign_pid fails."""
+    log_dir = tmp_path / "logs"
+    log_dir.mkdir()
+
+    with patch("tachikoma.detached_processes.spawn.cgroup_manager") as mock_cg:
+        mock_cg.create_process_cgroup.return_value = "/sys/fs/cgroup/tachikoma-test"
+        mock_cg.assign_pid.return_value = False
+
+        record = await spawn_process(
+            name="cg-assign-fail",
+            command="sleep 5",
+            cwd=None,
+            env_overrides=None,
+            log_dir=log_dir,
+            repository=repo,
+            memory_limit_bytes=1024,
+            cgroup_parent_path="/sys/fs/cgroup",
+        )
+
+    try:
+        assert record.cgroup_path is None
+        assert record.memory_limit is None
+        mock_cg.cleanup_cgroup.assert_called_once_with("/sys/fs/cgroup/tachikoma-test")
+    finally:
+        with contextlib.suppress(ProcessLookupError, PermissionError):
+            os.killpg(os.getpgid(record.pid), signal.SIGKILL)
+
+
+@pytest.mark.asyncio
+async def test_spawn_no_cgroup_params_no_creation(tmp_path, repo):
+    """No cgroup is created when memory_limit_bytes is None."""
+    log_dir = tmp_path / "logs"
+    log_dir.mkdir()
+
+    with patch("tachikoma.detached_processes.spawn.cgroup_manager") as mock_cg:
+        record = await spawn_process(
+            name="no-cg",
+            command="sleep 5",
+            cwd=None,
+            env_overrides=None,
+            log_dir=log_dir,
+            repository=repo,
+            memory_limit_bytes=None,
+            cgroup_parent_path="/sys/fs/cgroup",
+        )
+
+    try:
+        assert record.cgroup_path is None
+        assert record.memory_limit is None
+        mock_cg.create_process_cgroup.assert_not_called()
+    finally:
+        with contextlib.suppress(ProcessLookupError, PermissionError):
+            os.killpg(os.getpgid(record.pid), signal.SIGKILL)
+
+
+@pytest.mark.asyncio
+async def test_spawn_db_failure_cleans_up_cgroup(tmp_path, repo):
+    """Cgroup is cleaned up when DB write fails after spawn."""
+    log_dir = tmp_path / "logs"
+    log_dir.mkdir()
+
+    with (
+        patch("tachikoma.detached_processes.spawn.cgroup_manager") as mock_cg,
+        patch.object(repo, "create", side_effect=RuntimeError("db error")),
+    ):
+        mock_cg.create_process_cgroup.return_value = "/sys/fs/cgroup/tachikoma-test"
+        mock_cg.assign_pid.return_value = True
+
+        with pytest.raises(RuntimeError, match="db error"):
+            await spawn_process(
+                name="cg-db-fail",
+                command="sleep 5",
+                cwd=None,
+                env_overrides=None,
+                log_dir=log_dir,
+                repository=repo,
+                memory_limit_bytes=1024,
+                cgroup_parent_path="/sys/fs/cgroup",
+            )
+
+    mock_cg.cleanup_cgroup.assert_called_once_with("/sys/fs/cgroup/tachikoma-test")
