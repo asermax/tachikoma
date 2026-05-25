@@ -124,10 +124,19 @@ class TestReactionMessage:
         msg = ReactionMessage(added=frozenset({"👍"}), removed=frozenset())
         assert msg.runs_boundary_detection is False
 
-    def test_permissive_construction_both_empty(self):
-        msg = ReactionMessage(added=frozenset(), removed=frozenset())
-        assert msg.added == frozenset()
-        assert msg.removed == frozenset()
+    def test_empty_both_rejected(self):
+        with pytest.raises(ValueError, match="at least one"):
+            ReactionMessage(added=frozenset(), removed=frozenset())
+
+    def test_overlapping_added_removed_rejected(self):
+        with pytest.raises(ValueError, match="disjoint"):
+            ReactionMessage(added=frozenset({"👍"}), removed=frozenset({"👍"}))
+
+    def test_coerces_sets_to_frozensets(self):
+        msg = ReactionMessage(added={"👍"}, removed=set())
+        assert isinstance(msg.added, frozenset)
+        assert isinstance(msg.removed, frozenset)
+        assert msg.added == frozenset({"👍"})
 
     # --- Rendered prose: six diff shapes ---
 

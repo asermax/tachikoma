@@ -68,6 +68,16 @@ class ReactionMessage(MessageEnvelope):
     added: frozenset[str]
     removed: frozenset[str]
 
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "added", frozenset(self.added))
+        object.__setattr__(self, "removed", frozenset(self.removed))
+        if not self.added and not self.removed:
+            msg = "ReactionMessage requires at least one added or removed emoji"
+            raise ValueError(msg)
+        if self.added & self.removed:
+            msg = f"added and removed must be disjoint, overlap: {self.added & self.removed}"
+            raise ValueError(msg)
+
     @property
     def sdk_input(self) -> str:
         suffix = "Interpret it in the context of the last exchange and respond accordingly."
