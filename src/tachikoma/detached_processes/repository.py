@@ -47,6 +47,8 @@ class ProcessRepository:
                 exited_at=record.exited_at,
                 exit_code=record.exit_code,
                 stop_reason=record.stop_reason,
+                memory_limit=record.memory_limit,
+                cgroup_path=record.cgroup_path,
             )
 
             async with self._session_factory() as db:

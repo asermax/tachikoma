@@ -38,6 +38,8 @@ class ProcessRecord:
     exited_at: datetime | None = None
     exit_code: int | None = None
     stop_reason: str | None = None
+    memory_limit: int | None = None  # bytes; None = no cgroup
+    cgroup_path: str | None = None  # absolute path to per-process cgroup dir
 
 
 class ProcessRecordRow(Base):
@@ -61,6 +63,8 @@ class ProcessRecordRow(Base):
     exited_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     exit_code: Mapped[int | None] = mapped_column(Integer, nullable=True)
     stop_reason: Mapped[str | None] = mapped_column(String, nullable=True)
+    memory_limit: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    cgroup_path: Mapped[str | None] = mapped_column(String, nullable=True)
 
     __table_args__ = (Index("ix_detached_processes_status", "status"),)
 
@@ -78,4 +82,6 @@ class ProcessRecordRow(Base):
             exited_at=ensure_utc(self.exited_at),
             exit_code=self.exit_code,
             stop_reason=self.stop_reason,
+            memory_limit=self.memory_limit,
+            cgroup_path=self.cgroup_path,
         )

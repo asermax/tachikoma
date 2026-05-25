@@ -40,6 +40,11 @@ class Migration:
 
 MIGRATIONS: list[Migration] = [
     Migration("001", "initial_schema", "migrations/001_initial.sql"),
+    Migration(
+        "002",
+        "add_cgroup_fields_to_detached_processes",
+        "migrations/002_add_cgroup_fields_to_detached_processes.sql",
+    ),
 ]
 
 
@@ -71,20 +76,22 @@ async def run_pending_migrations(engine: AsyncEngine) -> None:
         install_type = "existing" if has_sessions else "fresh"
 
         async with engine.begin() as conn:
-            await conn.execute(
-                text(
-                    "INSERT INTO schema_migrations (revision, name, applied_at)"
-                    " VALUES (:rev, :name, datetime('now'))"
-                ),
-                {"rev": "001", "name": "initial_schema"},
-            )
+            for m in MIGRATIONS:
+                await conn.execute(
+                    text(
+                        "INSERT INTO schema_migrations (revision, name, applied_at)"
+                        " VALUES (:rev, :name, datetime('now'))"
+                    ),
+                    {"rev": m.revision, "name": m.name},
+                )
 
         _log.info(
-            "Schema initialized ({type} install). Migration 001 stamped.",
+            "Schema initialized ({type} install). {count} migration(s) stamped.",
             type=install_type,
+            count=len(MIGRATIONS),
         )
 
-        applied_set = {"001"}
+        applied_set = {m.revision for m in MIGRATIONS}
 
     pending = [m for m in MIGRATIONS if m.revision not in applied_set]
 
