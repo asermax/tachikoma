@@ -17,7 +17,7 @@ from .conftest import _make_record
 TZ = ZoneInfo("UTC")
 
 
-def _build_tools_map(repo, mock_bus, log_dir):
+def _build_tools_map(repo, mock_bus, log_dir, **cgroup_kwargs):
     """Build tools server and return {name: handler_fn} dict by capturing
     the handlers registered with @tool during the factory call."""
     captured: dict = {}
@@ -33,7 +33,7 @@ def _build_tools_map(repo, mock_bus, log_dir):
             return self
 
     with patch("tachikoma.detached_processes.tools.tool", FakeTool):
-        create_detached_process_tools_server(repo, mock_bus, log_dir, TZ)
+        create_detached_process_tools_server(repo, mock_bus, log_dir, TZ, **cgroup_kwargs)
 
     return captured
 
@@ -481,3 +481,153 @@ async def test_get_process_memory_read_fails_shows_limit_only(repo):
     text = result["content"][0]["text"]
     assert "Memory usage" not in text
     assert "Memory limit: 1024MB" in text
+
+
+# ---------------------------------------------------------------------------
+# memory_limit_mb validation tests (start_process)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_start_process_rejects_zero_memory_limit(repo):
+    """memory_limit_mb=0 returns validation error."""
+    mock_bus = AsyncMock()
+    log_dir = Path("/tmp/test-logs")
+    tools = _build_tools_map(
+        repo,
+        mock_bus,
+        log_dir,
+        cgroup_available=True,
+        cgroup_parent_path="/sys/fs/cgroup",
+        default_memory_limit_mb=1024,
+    )
+
+    result = await tools["start_process"](
+        {"name": "test", "command": "echo hi", "memory_limit_mb": 0}
+    )
+
+    assert result["is_error"] is True
+    assert "Minimum value is 1" in result["content"][0]["text"]
+
+
+@pytest.mark.asyncio
+async def test_start_process_rejects_negative_memory_limit(repo):
+    """Negative memory_limit_mb returns validation error."""
+    mock_bus = AsyncMock()
+    log_dir = Path("/tmp/test-logs")
+    tools = _build_tools_map(
+        repo,
+        mock_bus,
+        log_dir,
+        cgroup_available=True,
+        cgroup_parent_path="/sys/fs/cgroup",
+        default_memory_limit_mb=1024,
+    )
+
+    result = await tools["start_process"](
+        {"name": "test", "command": "echo hi", "memory_limit_mb": -5}
+    )
+
+    assert result["is_error"] is True
+    assert "Minimum value is 1" in result["content"][0]["text"]
+
+
+@pytest.mark.asyncio
+async def test_start_process_rejects_memory_limit_exceeding_ram(repo, mocker):
+    """memory_limit_mb exceeding system RAM returns validation error."""
+    mock_bus = AsyncMock()
+    log_dir = Path("/tmp/test-logs")
+    tools = _build_tools_map(
+        repo,
+        mock_bus,
+        log_dir,
+        cgroup_available=True,
+        cgroup_parent_path="/sys/fs/cgroup",
+        default_memory_limit_mb=1024,
+    )
+
+    mock_ram = mocker.patch("tachikoma.detached_processes.tools.psutil")
+    mock_ram.virtual_memory().total = 1024 * 1024 * 1024  # 1GB
+
+    result = await tools["start_process"](
+        {"name": "test", "command": "echo hi", "memory_limit_mb": 2048}
+    )
+
+    assert result["is_error"] is True
+    assert "exceeds system RAM" in result["content"][0]["text"]
+
+
+@pytest.mark.asyncio
+async def test_start_process_no_cgroup_uses_default_limit(repo):
+    """When cgroup_available=False, no cgroup params are passed to spawn."""
+    mock_bus = AsyncMock()
+    log_dir = Path("/tmp/test-logs")
+    tools = _build_tools_map(
+        repo,
+        mock_bus,
+        log_dir,
+        cgroup_available=False,
+        default_memory_limit_mb=1024,
+    )
+
+    with patch("tachikoma.detached_processes.tools.spawn_process") as mock_spawn:
+        mock_spawn.return_value = _make_record(record_id="sp-nocg")
+        result = await tools["start_process"]({"name": "test", "command": "echo hi"})
+
+    assert result.get("is_error") is not True
+    _, kwargs = mock_spawn.call_args
+    assert kwargs["memory_limit_bytes"] is None
+    assert kwargs["cgroup_parent_path"] is None
+
+
+@pytest.mark.asyncio
+async def test_start_process_cgroup_available_passes_limit(repo):
+    """When cgroup_available=True, effective limit is converted to bytes."""
+    mock_bus = AsyncMock()
+    log_dir = Path("/tmp/test-logs")
+    tools = _build_tools_map(
+        repo,
+        mock_bus,
+        log_dir,
+        cgroup_available=True,
+        cgroup_parent_path="/sys/fs/cgroup",
+        default_memory_limit_mb=512,
+    )
+
+    with patch("tachikoma.detached_processes.tools.spawn_process") as mock_spawn:
+        mock_spawn.return_value = _make_record(record_id="sp-cg")
+        result = await tools["start_process"]({"name": "test", "command": "echo hi"})
+
+    assert result.get("is_error") is not True
+    _, kwargs = mock_spawn.call_args
+    assert kwargs["memory_limit_bytes"] == 512 * 1024 * 1024
+    assert kwargs["cgroup_parent_path"] == "/sys/fs/cgroup"
+
+
+@pytest.mark.asyncio
+async def test_start_process_per_process_override(repo, mocker):
+    """Per-process memory_limit_mb overrides config default."""
+    mock_bus = AsyncMock()
+    log_dir = Path("/tmp/test-logs")
+    tools = _build_tools_map(
+        repo,
+        mock_bus,
+        log_dir,
+        cgroup_available=True,
+        cgroup_parent_path="/sys/fs/cgroup",
+        default_memory_limit_mb=1024,
+    )
+
+    # Set system RAM high enough so 2048 is accepted
+    mock_ram = mocker.patch("tachikoma.detached_processes.tools.psutil")
+    mock_ram.virtual_memory().total = 8192 * 1024 * 1024  # 8GB
+
+    with patch("tachikoma.detached_processes.tools.spawn_process") as mock_spawn:
+        mock_spawn.return_value = _make_record(record_id="sp-override")
+        result = await tools["start_process"](
+            {"name": "test", "command": "echo hi", "memory_limit_mb": 2048}
+        )
+
+    assert result.get("is_error") is not True
+    _, kwargs = mock_spawn.call_args
+    assert kwargs["memory_limit_bytes"] == 2048 * 1024 * 1024
