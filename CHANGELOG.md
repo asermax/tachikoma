@@ -2,6 +2,123 @@
 
 <!-- version list -->
 
+## v1.90.0 (2026-05-25)
+
+### Bug Fixes
+
+- **database**: Distinguish fresh vs existing installs in migration stamping
+  ([`b8a0f7e`](https://github.com/asermax/tachikoma/commit/b8a0f7ee0da8831987aaa3863604d6fe8b8aa482))
+
+### Code Style
+
+- Reformat long lines in database and cgroup_manager
+  ([`869eaa3`](https://github.com/asermax/tachikoma/commit/869eaa385b6a09a65e9ebc9bb63d2d7d456e7f0b))
+
+### Documentation
+
+- Add DLT-176 delta for cgroup memory limits on detached processes
+  ([`cb35379`](https://github.com/asermax/tachikoma/commit/cb35379a48c2f4d438f22791b81fe42b5992fece))
+
+- Advance DLT-176 batch 2 status to done
+  ([`9f4efaf`](https://github.com/asermax/tachikoma/commit/9f4efaf29afa64e2dcc7f028e6ee35dfd46f38f1))
+
+- Advance DLT-176 batch 3 and 4 status to done
+  ([`18c9bcb`](https://github.com/asermax/tachikoma/commit/18c9bcb6080600e614eb3d9530b98a23606f32f2))
+
+- Advance DLT-176 batch 5 status to done
+  ([`f824391`](https://github.com/asermax/tachikoma/commit/f8243917887b9942a7379dc90ff9061263ebd30c))
+
+- Advance DLT-176 batch 6 status to done
+  ([`71d2980`](https://github.com/asermax/tachikoma/commit/71d29809a5aca4b7fb3588ed5e7397df4b6bb867))
+
+- Advance DLT-176 batch 7 status to done
+  ([`36f7786`](https://github.com/asermax/tachikoma/commit/36f778656febc5957ed1e70ecac38f53bcacc8ed))
+
+- Advance DLT-176 status to design complete
+  ([`a740587`](https://github.com/asermax/tachikoma/commit/a74058715b6ba2e34c8f2a4cb3be260e5cb8a324))
+
+- Advance DLT-176 status to design phase
+  ([`022aa45`](https://github.com/asermax/tachikoma/commit/022aa454dca0543e208f7cfc4e77a79cb6e4a181))
+
+- Advance DLT-176 status to plan phase
+  ([`e079d47`](https://github.com/asermax/tachikoma/commit/e079d47e6526d7d1dc6fbc0d60b029af915f9c8e))
+
+- Advance DLT-176 status to spec phase
+  ([`5ef3fd4`](https://github.com/asermax/tachikoma/commit/5ef3fd4f89f3693b90a3f6b7c7f0ee5def26beeb))
+
+- Advance DLT-176 to implementation phase with batch 1 complete
+  ([`991f600`](https://github.com/asermax/tachikoma/commit/991f60067ed32b490bddc96baa6922cb68af8fa9))
+
+- **context**: Document memory_limit_mb parameter in tool preamble
+  ([`e4eff0c`](https://github.com/asermax/tachikoma/commit/e4eff0ceea77ccb3789c58c1e56f47308e10aadf))
+
+- **deltas**: Mark DLT-176 as implementation complete
+  ([`a30f5bf`](https://github.com/asermax/tachikoma/commit/a30f5bffd0448532442f33941febb26a044cddb7))
+
+- **design**: Add DLT-176 design for cgroup memory limits on detached processes
+  ([`55d6fb0`](https://github.com/asermax/tachikoma/commit/55d6fb0aaeb0a9d6c28b4132576debc07a1a990f))
+
+- **detached-processes**: Reconcile DLT-176 into feature documentation
+  ([`fc07562`](https://github.com/asermax/tachikoma/commit/fc075623c75fca48b5ea52bdb9bccfcb7f8d66cd))
+
+- **detached-processes**: Update spec and design for opt-in memory limiting
+  ([`788542d`](https://github.com/asermax/tachikoma/commit/788542dfc569c6800671abe60c3f8d52c7b4258d))
+
+- **plan**: Add DLT-176 implementation plan for cgroup memory limits
+  ([`0740dcb`](https://github.com/asermax/tachikoma/commit/0740dcbfe431d0f54b62b1b5bcf7ed307d78a9a6))
+
+- **spec**: Add DLT-176 spec for cgroup memory limits on detached processes
+  ([`04767c7`](https://github.com/asermax/tachikoma/commit/04767c7584c0c3d4e6bab715a69d0f8d24f96868))
+
+- **spec**: Refine DLT-176 acceptance criteria with precise exit codes and edge cases
+  ([`cad921e`](https://github.com/asermax/tachikoma/commit/cad921e0bdbc294fd41f00b916d63290530487da))
+
+### Features
+
+- **config**: Add detached processes memory limit configuration
+  ([`b9bdbbf`](https://github.com/asermax/tachikoma/commit/b9bdbbf5d1a8c8b7fea0eecbad1902c0e53b197c))
+
+- **detached-processes**: Add cgroup fields to data model
+  ([`39f6a99`](https://github.com/asermax/tachikoma/commit/39f6a993c5c857ab513b8f658253bd448302d768))
+
+- **detached-processes**: Add cgroup v2 memory limit lifecycle operations
+  ([`581a7dc`](https://github.com/asermax/tachikoma/commit/581a7dc60813efd811cac5c31deadd6556d5afe4))
+
+- **detached-processes**: Add OOM detection and memory usage display
+  ([`eeeb06a`](https://github.com/asermax/tachikoma/commit/eeeb06ac42165d156f4d487507f9edf4648be68e))
+
+- **detached-processes**: Wire cgroup memory limiting into spawn and tool interface
+  ([`def4cb1`](https://github.com/asermax/tachikoma/commit/def4cb165f0c85952abd8ed41f6f860c171dae70))
+
+- **detached-processes**: Wire cgroup support into bootstrap hook
+  ([`b0af4e6`](https://github.com/asermax/tachikoma/commit/b0af4e6248debe802797cf6ba78ea75233770ca5))
+
+### Refactoring
+
+- **config**: Make default_memory_limit_mb opt-in with None default
+  ([`cdfbbf1`](https://github.com/asermax/tachikoma/commit/cdfbbf12acbfea951312cf19d034a7c4e35eee3f))
+
+- **detached-processes**: Extract BYTES_PER_MB and simplify cgroup handling
+  ([`c185947`](https://github.com/asermax/tachikoma/commit/c185947aa5448f269cc700d7e3d5fbf4bcf43027))
+
+- **migrations**: Extract stamp SQL constant and simplify init logic
+  ([`218c148`](https://github.com/asermax/tachikoma/commit/218c148886950c91a4643df3357f1884854f1a30))
+
+### Testing
+
+- Update tests for opt-in memory limit behavior
+  ([`8e1d9c9`](https://github.com/asermax/tachikoma/commit/8e1d9c9575a09fb58797a58bb14548362093f49c))
+
+- **config**: Add detached processes config model tests
+  ([`d39a321`](https://github.com/asermax/tachikoma/commit/d39a321e0823883a9bed149385b153e9d44d7086))
+
+- **detached-processes**: Add cgroup integration tests for spawn
+  ([`fcb6ca2`](https://github.com/asermax/tachikoma/commit/fcb6ca237579336a3f79b19e99ebd81f17d4841e))
+
+- **detached-processes**: Add memory limit validation tests for tools
+  ([`7c67c0c`](https://github.com/asermax/tachikoma/commit/7c67c0c840dda6f082cb0b8f8fd79a89cf60543b))
+
+
 ## v1.89.0 (2026-05-25)
 
 ### Bug Fixes
