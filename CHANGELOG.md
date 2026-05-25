@@ -2,6 +2,96 @@
 
 <!-- version list -->
 
+## v1.89.0 (2026-05-25)
+
+### Bug Fixes
+
+- **coordinator**: Skip post-processing for envelopes that opt out of pre-processing
+  ([`1359160`](https://github.com/asermax/tachikoma/commit/135916046e13c896dfa0d1f5c403bc6021fc133b))
+
+### Code Style
+
+- Apply ruff formatting across codebase
+  ([`15c3f1b`](https://github.com/asermax/tachikoma/commit/15c3f1bf92568fc81facd228c333d783545a3ab0))
+
+### Documentation
+
+- Mark DLT-176 batch 2 as done
+  ([`631874c`](https://github.com/asermax/tachikoma/commit/631874c8f872ae1a5f9e87f9d22c4362f02f0811))
+
+- Mark DLT-176 batch 3 as done
+  ([`e8a26b7`](https://github.com/asermax/tachikoma/commit/e8a26b765b901f3337cc481417d2836d4fb60508))
+
+- Remove completed DLT-176 delta working documents
+  ([`7697331`](https://github.com/asermax/tachikoma/commit/7697331ea5442011086b1e0afafb4f1ba425b377))
+
+- Update DLT-176 to implementation phase
+  ([`c69ac76`](https://github.com/asermax/tachikoma/commit/c69ac7612816439bde441030f6e0075eb1fda555))
+
+- **deltas**: Mark DLT-176 as in design
+  ([`7430702`](https://github.com/asermax/tachikoma/commit/7430702a990fe01e7a1c92c964d152caa5d3e55a))
+
+- **deltas**: Mark DLT-176 as in plan
+  ([`1a64362`](https://github.com/asermax/tachikoma/commit/1a64362859b642576c72adc3c88d8aba393c9b78))
+
+- **deltas**: Mark DLT-176 as in spec
+  ([`4f7627a`](https://github.com/asermax/tachikoma/commit/4f7627a75cdacf414437a829000a5ededf3f28e5))
+
+- **DLT-176**: Document reaction handling across specs and designs
+  ([`1c4822b`](https://github.com/asermax/tachikoma/commit/1c4822b78c4f50deb1a892900a58eb8e23d75983))
+
+- **DLT-176**: Update _emoji_set signature in design
+  ([`9ddafed`](https://github.com/asermax/tachikoma/commit/9ddafed752161a10dc0bbdfa60ef9b4f126053a4))
+
+- **telegram**: Add DLT-176 design draft and mark spec complete
+  ([`e34024d`](https://github.com/asermax/tachikoma/commit/e34024df99e2ecf177ca3d7e5b2ea6b79b553cfe))
+
+- **telegram**: Add DLT-176 implementation plan
+  ([`3b6d19d`](https://github.com/asermax/tachikoma/commit/3b6d19d3081d21d69d6f1d158ed5a0b50e03cc25))
+
+- **telegram**: Add DLT-176 spec for inbound reaction interpretation
+  ([`2317e92`](https://github.com/asermax/tachikoma/commit/2317e9278908078e2796ae8864ac166443fa22c9))
+
+- **telegram**: Approve DLT-176 design
+  ([`35a5230`](https://github.com/asermax/tachikoma/commit/35a52304fd16fc169fcceed7fd5b26fe306e7102))
+
+- **telegram**: Expand DLT-176 design with shape and components
+  ([`e4fcf35`](https://github.com/asermax/tachikoma/commit/e4fcf3579faba40bc5c1f0062e645f7ee336039b))
+
+- **telegram**: Refine DLT-176 spec for reaction envelope protocol
+  ([`7f93f88`](https://github.com/asermax/tachikoma/commit/7f93f8823958ae589e59537937b4f3943584be34))
+
+- **testing**: Note MagicMock looped-attribute drain-loop pitfall
+  ([`526e581`](https://github.com/asermax/tachikoma/commit/526e58190143c26d0710f99b729d86d9c4843e0b))
+
+### Features
+
+- **message**: Add ReactionMessage envelope and boundary detection property
+  ([`584ba1f`](https://github.com/asermax/tachikoma/commit/584ba1f6fd3f2e5b22e0ae54435dd593e54cf32c))
+
+- **telegram**: Handle inbound emoji reactions as conversational turns
+  ([`ec48c49`](https://github.com/asermax/tachikoma/commit/ec48c496ad2b9a2c9909e4c0f5058ce0503da2b3))
+
+### Refactoring
+
+- **message**: Add ReactionMessage validation and set coercion
+  ([`0637108`](https://github.com/asermax/tachikoma/commit/0637108b02485f13ae739daf553b686f7c1b427f))
+
+- **telegram**: Type _emoji_set with Sequence[ReactionType]
+  ([`d414342`](https://github.com/asermax/tachikoma/commit/d414342f5e4e44d19caaa98bbaa5c0f972b4d611))
+
+### Testing
+
+- **coordinator**: Add reaction cold-session and boundary-resumption assertions
+  ([`be408f6`](https://github.com/asermax/tachikoma/commit/be408f6e9b90a3e767d683cfb86e70e79f77ec3f))
+
+- **reactions**: Add tests for reaction handler and boundary gating
+  ([`7ae75b3`](https://github.com/asermax/tachikoma/commit/7ae75b35fb9693cef7f162a5b0a82812c76ee11e))
+
+- **reactions**: Expand reaction tests with multi-change, registration, allowed_updates
+  ([`0829c96`](https://github.com/asermax/tachikoma/commit/0829c963c1f1b7fc39801aef3f784778447cc87d))
+
+
 ## v1.88.0 (2026-05-24)
 
 ### Documentation
