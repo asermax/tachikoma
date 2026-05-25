@@ -4813,6 +4813,41 @@ class TestCoordinatorBoundaryDetectionGating:
 
         mock_cold_start.assert_not_awaited()
 
+    async def test_reaction_cold_session_creates_fresh_session(
+        self,
+        mock_sdk,
+        mocker,
+    ) -> None:
+        """Cold reaction creates a fresh session and SDK receives rendered prose (R6)."""
+        client, _ = mock_sdk
+        client.receive_response.return_value = _mock_messages(
+            make_assistant([TextBlock(text="Noted")]),
+            make_result(),
+        )
+
+        registry = _make_mock_registry(active_session=None)
+
+        mock_cold_start = mocker.patch(
+            "tachikoma.coordinator.Coordinator._attempt_cold_start_resume",
+        )
+        mock_boundary = mocker.patch(
+            "tachikoma.coordinator.detect_boundary",
+        )
+
+        async with Coordinator(registry=registry) as coord:
+            await self._send_envelope(
+                coord, ReactionMessage(added=frozenset({"👍"}), removed=frozenset())
+            )
+
+        mock_cold_start.assert_not_awaited()
+        mock_boundary.assert_not_awaited()
+        registry.create_session.assert_awaited()
+
+        # Verify SDK received the rendered prose as the first user message
+        message_source = client.connect.call_args.args[0]
+        first_msg = await message_source.__anext__()
+        assert "The user reacted with 👍" in first_msg["message"]["content"]
+
     async def test_boundary_detection_skipped_for_reaction(
         self,
         mock_sdk,
@@ -4882,3 +4917,5 @@ class TestCoordinatorBoundaryDetectionGating:
             await self._send_envelope(coord, TextMessage("hello"))
 
         mock_boundary.assert_awaited_once()
+        call_msg_text = mock_boundary.await_args.args[0]
+        assert "hello" in call_msg_text
