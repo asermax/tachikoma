@@ -77,7 +77,12 @@ class ReactionMessage(MessageEnvelope):
         if self.removed and not self.added:
             emojis = self._join(sorted_removed)
             plural = "reactions" if len(sorted_removed) >= 2 else "reaction"
-            return f"The user removed their {emojis} {plural}. {suffix}"
+            pronoun = "these" if len(sorted_removed) >= 2 else "it"
+            return (
+                f"The user removed their {emojis} {plural}. "
+                f"Interpret {pronoun} in the context of the last exchange "
+                "and respond accordingly."
+            )
 
         if self.added and not self.removed:
             emojis = self._join(sorted_added)

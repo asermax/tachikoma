@@ -470,7 +470,7 @@ class Coordinator:
                 try:
                     active = await self._registry.get_active_session()
 
-                    if active is None:
+                    if active is None and msg.runs_boundary_detection:
                         cold_start_task = asyncio.create_task(
                             self._attempt_cold_start_resume(msg.sdk_input, on_status=on_status)
                         )
@@ -503,6 +503,7 @@ class Coordinator:
                 and active.summary is not None
                 and self._cwd is not None
                 and not cold_start_resumed
+                and msg.runs_boundary_detection
             )
             if will_detect_boundary:
                 assert active is not None and active.summary is not None

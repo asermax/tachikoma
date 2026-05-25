@@ -22,7 +22,13 @@ from typing import TYPE_CHECKING, Any
 from aiogram import Bot, Dispatcher, F, Router
 from aiogram.dispatcher.dispatcher import BackoffConfig
 from aiogram.exceptions import TelegramAPIError, TelegramBadRequest, TelegramRetryAfter
-from aiogram.types import BotCommand, CallbackQuery, Message
+from aiogram.types import (
+    BotCommand,
+    CallbackQuery,
+    Message,
+    MessageReactionUpdated,
+    ReactionTypeEmoji,
+)
 from aiogram.utils.chat_action import ChatActionSender
 from bubus import EventBus
 from claude_agent_sdk.types import McpSdkServerConfig
@@ -44,7 +50,7 @@ from tachikoma.media import (
     generate_media_filename,
     resolve_media,
 )
-from tachikoma.message import ButtonTapMessage, TextMessage
+from tachikoma.message import ButtonTapMessage, ReactionMessage, TextMessage
 from tachikoma.telegram.buttons import _unpack, create_buttons_server
 from tachikoma.telegram.pinning import create_pinning_server
 from tachikoma.telegram.tools import create_send_file_server
@@ -53,6 +59,12 @@ from tachikoma.updates.events import RestartRequested
 if TYPE_CHECKING:
     from tachikoma.buffer.buffer import Buffer
     from tachikoma.coordinator import Coordinator
+
+
+def _emoji_set(reactions: list) -> frozenset[str]:
+    """Extract emoji strings from ReactionTypeEmoji entries, ignoring custom/paid."""
+    return frozenset(r.emoji for r in reactions if isinstance(r, ReactionTypeEmoji))
+
 
 _log = logger.bind(component="telegram")
 
@@ -584,6 +596,13 @@ class TelegramChannel(Channel):
         # Register callback query handler for inline button taps
         self._router.callback_query(F.data.startswith("btn"))(self._handle_callback_query)
 
+        # Register message_reaction handler for emoji reactions (gated by config)
+        if self._settings.inbound_reactions:
+            self._router.message_reaction(
+                F.chat.id == self._settings.authorized_chat_id,
+                F.user.is_not(None),
+            )(self._handle_reaction)
+
         # Include router in dispatcher
         self._dispatcher.include_router(self._router)
 
@@ -715,6 +734,7 @@ class TelegramChannel(Channel):
                 self._bot,
                 handle_signals=False,
                 close_bot_session=False,
+                allowed_updates=self._dispatcher.resolve_used_update_types(),
                 backoff_config=BackoffConfig(
                     min_delay=1,
                     max_delay=60,
@@ -945,6 +965,30 @@ class TelegramChannel(Channel):
 
         async with self._delivery_lock:
             self._coordinator.enqueue(tap)
+            await self._process_through_coordinator()
+            await self._drain_deferred_queue()
+
+    async def _handle_reaction(self, event: MessageReactionUpdated) -> None:
+        """Handle a message_reaction update from the authorized user.
+
+        Filters emoji-only entries from old/new reactions, computes the diff,
+        and routes through the same lock branching as other handlers.
+        """
+        added = _emoji_set(event.new_reaction) - _emoji_set(event.old_reaction)
+        removed = _emoji_set(event.old_reaction) - _emoji_set(event.new_reaction)
+
+        if not added and not removed:
+            return
+
+        envelope = ReactionMessage(added=added, removed=removed)
+
+        if self._delivery_lock.locked():
+            _log.debug("Mid-stream steering reaction")
+            self._coordinator.enqueue(envelope)
+            return
+
+        async with self._delivery_lock:
+            self._coordinator.enqueue(envelope)
             await self._process_through_coordinator()
             await self._drain_deferred_queue()
 

@@ -204,6 +204,10 @@ class TelegramSettings(BaseModel):
         default=True,
         description="Enable post-response push notifications via copy+delete",
     )
+    inbound_reactions: bool = Field(
+        default=True,
+        description="Enable interpreting emoji reactions as conversational turns",
+    )
     send_file: SendFileSettings = Field(
         default_factory=SendFileSettings,
         description="send_file tool configuration",
