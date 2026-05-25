@@ -27,7 +27,7 @@ from tachikoma.boundary import BoundaryResult
 from tachikoma.buffer.events import CoordinatorIdle
 from tachikoma.coordinator import Coordinator, _derive_transcript_path, _message_source
 from tachikoma.events import Error, Result, Status, TextChunk, ToolActivity
-from tachikoma.message import ButtonTapMessage, MessageEnvelope, TextMessage
+from tachikoma.message import ButtonTapMessage, MessageEnvelope, ReactionMessage, TextMessage
 from tachikoma.pre_processing import ContextResult
 from tachikoma.sessions.errors import SessionRepositoryError
 from tachikoma.sessions.model import Session, SessionContextEntry
@@ -4778,3 +4778,107 @@ class TestCoordinatorPreProcessingGating:
         call_msg_text = mock_boundary.await_args.args[0]
         assert "`yes`" in call_msg_text
         assert "tapped" in call_msg_text
+
+
+class TestCoordinatorBoundaryDetectionGating:
+    """Boundary detection is gated on msg.runs_boundary_detection."""
+
+    async def _send_envelope(self, coord, envelope):
+        """Enqueue an envelope and collect all events from send_message()."""
+        coord.enqueue(envelope)
+        return [e async for e in coord.send_message()]
+
+    async def test_cold_start_resume_skipped_for_reaction(
+        self,
+        mock_sdk,
+        mocker,
+    ) -> None:
+        """ReactionMessage skips cold-start resume (no summary to resume from)."""
+        client, _ = mock_sdk
+        client.receive_response.return_value = _mock_messages(
+            make_assistant([TextBlock(text="Noted")]),
+            make_result(),
+        )
+
+        registry = _make_mock_registry(active_session=None)
+
+        mock_cold_start = mocker.patch(
+            "tachikoma.coordinator.Coordinator._attempt_cold_start_resume",
+        )
+
+        async with Coordinator(registry=registry) as coord:
+            await self._send_envelope(
+                coord, ReactionMessage(added=frozenset({"👍"}), removed=frozenset())
+            )
+
+        mock_cold_start.assert_not_awaited()
+
+    async def test_boundary_detection_skipped_for_reaction(
+        self,
+        mock_sdk,
+        mocker,
+    ) -> None:
+        """ReactionMessage skips boundary detection even with an active summarized session."""
+        client, _ = mock_sdk
+        client.receive_response.return_value = _mock_messages(
+            make_assistant([TextBlock(text="ok")]),
+            make_result(),
+        )
+
+        active = Session(
+            id="existing",
+            started_at=datetime.now(UTC),
+            summary="Previous conversation about X",
+        )
+        registry = _make_mock_registry()
+        registry.get_active_session.side_effect = [active, active, active]
+        registry.load_context_entries = AsyncMock(return_value=[])
+
+        mock_boundary = mocker.patch(
+            "tachikoma.coordinator.detect_boundary",
+            return_value=BoundaryResult(continues=True),
+        )
+
+        async with Coordinator(
+            registry=registry,
+            agent_defaults=AgentDefaults(cwd=Path("/tmp")),
+        ) as coord:
+            await self._send_envelope(
+                coord, ReactionMessage(added=frozenset({"👍"}), removed=frozenset())
+            )
+
+        mock_boundary.assert_not_awaited()
+
+    async def test_boundary_detection_still_runs_for_text_message(
+        self,
+        mock_sdk,
+        mocker,
+    ) -> None:
+        """Regression: TextMessage still triggers boundary detection."""
+        client, _ = mock_sdk
+        client.receive_response.return_value = _mock_messages(
+            make_assistant([TextBlock(text="hi")]),
+            make_result(),
+        )
+
+        active = Session(
+            id="existing",
+            started_at=datetime.now(UTC),
+            summary="Previous conversation about X",
+        )
+        registry = _make_mock_registry()
+        registry.get_active_session.side_effect = [active, active, active]
+        registry.load_context_entries = AsyncMock(return_value=[])
+
+        mock_boundary = mocker.patch(
+            "tachikoma.coordinator.detect_boundary",
+            return_value=BoundaryResult(continues=True),
+        )
+
+        async with Coordinator(
+            registry=registry,
+            agent_defaults=AgentDefaults(cwd=Path("/tmp")),
+        ) as coord:
+            await self._send_envelope(coord, TextMessage("hello"))
+
+        mock_boundary.assert_awaited_once()

@@ -160,7 +160,7 @@ class TestReactionMessage:
         msg = ReactionMessage(added=frozenset(), removed=frozenset({"👍", "❤"}))
         assert msg.sdk_input == (
             "The user removed their ❤ and 👍 reactions. "
-            "Interpret it in the context of the last exchange and respond accordingly."
+            "Interpret these in the context of the last exchange and respond accordingly."
         )
 
     def test_replacement(self):
