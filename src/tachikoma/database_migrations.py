@@ -48,13 +48,19 @@ MIGRATIONS: list[Migration] = [
 ]
 
 
-async def run_pending_migrations(engine: AsyncEngine) -> None:
+async def run_pending_migrations(engine: AsyncEngine, *, is_fresh_db: bool = False) -> None:
     """Run any pending tracked migrations against the database.
 
-    Creates the ``schema_migrations`` table if absent, stamps the initial
-    migration (``001``) for both fresh and existing installs without executing
-    its SQL, then diffs applied revisions against the registry and executes
-    pending migrations in order — each in its own transaction.
+    Creates the ``schema_migrations`` table if absent, stamps migrations
+    without executing SQL for initial installs (all for fresh, baseline only
+    for existing), then diffs applied revisions against the registry and
+    executes pending migrations in order — each in its own transaction.
+
+    Args:
+        engine: AsyncEngine for the database.
+        is_fresh_db: True if the database had no tables before ``create_all()``
+            ran. Must be determined *before* ``create_all()`` since it creates
+            all ORM tables and makes the database appear non-empty.
 
     Raises:
         RuntimeError: If a migration fails, identifying revision and name.
@@ -67,31 +73,43 @@ async def run_pending_migrations(engine: AsyncEngine) -> None:
         applied_set = {row[0] for row in result.fetchall()}
 
     if not applied_set:
-        async with engine.connect() as conn:
-            result = await conn.execute(
-                text("SELECT name FROM sqlite_master WHERE type='table' AND name='sessions'")
-            )
-            has_sessions = result.fetchone() is not None
-
-        install_type = "existing" if has_sessions else "fresh"
+        install_type = "fresh" if is_fresh_db else "existing"
 
         async with engine.begin() as conn:
-            for m in MIGRATIONS:
+            if install_type == "fresh":
+                # create_all() produced the full schema — stamp everything
+                for m in MIGRATIONS:
+                    await conn.execute(
+                        text(
+                            "INSERT INTO schema_migrations (revision, name, applied_at)"
+                            " VALUES (:rev, :name, datetime('now'))"
+                        ),
+                        {"rev": m.revision, "name": m.name},
+                    )
+            else:
+                # Existing DB — only stamp the frozen baseline so that
+                # schema-changing migrations (e.g. 002 ALTER TABLE) run normally
+                baseline = MIGRATIONS[0]
                 await conn.execute(
                     text(
                         "INSERT INTO schema_migrations (revision, name, applied_at)"
                         " VALUES (:rev, :name, datetime('now'))"
                     ),
-                    {"rev": m.revision, "name": m.name},
+                    {"rev": baseline.revision, "name": baseline.name},
                 )
 
+        stamped_count = len(MIGRATIONS) if install_type == "fresh" else 1
         _log.info(
             "Schema initialized ({type} install). {count} migration(s) stamped.",
             type=install_type,
-            count=len(MIGRATIONS),
+            count=stamped_count,
         )
 
-        applied_set = {m.revision for m in MIGRATIONS}
+        applied_set = (
+            {m.revision for m in MIGRATIONS}
+            if install_type == "fresh"
+            else {MIGRATIONS[0].revision}
+        )
 
     pending = [m for m in MIGRATIONS if m.revision not in applied_set]
 

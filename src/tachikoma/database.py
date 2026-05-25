@@ -8,6 +8,7 @@ receive the shared session_factory.
 from pathlib import Path
 
 from loguru import logger
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase
 
@@ -15,6 +16,19 @@ from tachikoma.bootstrap import BootstrapContext
 from tachikoma.database_migrations import run_pending_migrations
 
 _log = logger.bind(component="database")
+
+
+async def _is_fresh_database(engine: AsyncEngine) -> bool:
+    """Return True if the database has no tables (fresh install).
+
+    Must be called BEFORE ``create_all()`` — after it runs, all ORM tables
+    exist and the database always appears non-empty.
+    """
+    async with engine.connect() as conn:
+        result = await conn.execute(
+            text("SELECT COUNT(*) FROM sqlite_master WHERE type='table'")
+        )
+    return result.scalar() == 0
 
 
 class Base(DeclarativeBase):
@@ -92,11 +106,13 @@ class Database:
         import tachikoma.tasks.model  # noqa: F401, PLC0415
         import tachikoma.workflows.model  # noqa: F401, PLC0415
 
+        is_fresh_db = await _is_fresh_database(self._engine)
+
         async with self._engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
 
         # Delegate to tracked migration runner
-        await run_pending_migrations(self._engine)
+        await run_pending_migrations(self._engine, is_fresh_db=is_fresh_db)
 
         _log.debug("Schema migrations completed: db_path={path}", path=self._db_path)
 

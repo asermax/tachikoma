@@ -211,11 +211,12 @@ class TestDatabaseInitialization:
 
         assert len(loop_state_cols) == 1
 
-    async def test_existing_install_stamps_initial_migration(self, tmp_path: Path) -> None:
-        """R2: existing install stamps migration 001 without executing SQL."""
+    async def test_existing_install_stamps_baseline_and_runs_pending(self, tmp_path: Path) -> None:
+        """R2: existing install stamps baseline only, then pending migrations execute."""
         db_path = tmp_path / "tachikoma.db"
 
-        # Simulate a pre-existing database with a sessions table
+        # Simulate a pre-existing database with sessions and detached_processes
+        # (without the new cgroup columns that migration 002 adds)
         async with aiosqlite.connect(db_path) as db:
             await db.execute(
                 "CREATE TABLE sessions ("
@@ -224,6 +225,22 @@ class TestDatabaseInitialization:
                 "transcript_path TEXT, "
                 "started_at DATETIME NOT NULL, "
                 "ended_at DATETIME"
+                ")"
+            )
+            await db.execute(
+                "CREATE TABLE detached_processes ("
+                "id TEXT PRIMARY KEY, "
+                "name TEXT NOT NULL, "
+                "command TEXT NOT NULL, "
+                "cwd TEXT NOT NULL, "
+                "pid INTEGER NOT NULL, "
+                "process_create_time REAL NOT NULL, "
+                "log_path TEXT NOT NULL, "
+                "status TEXT NOT NULL, "
+                "started_at DATETIME NOT NULL, "
+                "exited_at DATETIME, "
+                "exit_code INTEGER, "
+                "stop_reason TEXT"
                 ")"
             )
             await db.commit()
@@ -236,9 +253,11 @@ class TestDatabaseInitialization:
             cursor = await db.execute("SELECT revision, name FROM schema_migrations")
             rows = await cursor.fetchall()
 
-        assert len(rows) == 1
-        assert rows[0][0] == "001"
-        assert rows[0][1] == "initial_schema"
+        # Baseline stamped + migration 002 applied
+        assert len(rows) == 2
+        revisions = {row[0] for row in rows}
+        assert "001" in revisions
+        assert "002" in revisions
 
 
 class TestDatabaseClose:
@@ -308,8 +327,8 @@ class TestFreshInstall:
             )
             assert await cursor.fetchone() is not None
 
-    async def test_stamps_initial_migration(self, tmp_path: Path) -> None:
-        """R3: schema_migrations contains one row with revision='001'."""
+    async def test_stamps_all_migrations_for_fresh_install(self, tmp_path: Path) -> None:
+        """R3: fresh install stamps all migrations (create_all produced full schema)."""
         db_path = tmp_path / "tachikoma.db"
         database = Database(db_path)
         await database.initialize()
@@ -319,9 +338,10 @@ class TestFreshInstall:
             cursor = await db.execute("SELECT revision, name FROM schema_migrations")
             rows = await cursor.fetchall()
 
-        assert len(rows) == 1
-        assert rows[0][0] == "001"
-        assert rows[0][1] == "initial_schema"
+        assert len(rows) == len(MIGRATIONS)
+        applied = {row[0] for row in rows}
+        expected = {m.revision for m in MIGRATIONS}
+        assert applied == expected
 
     async def test_creates_all_orm_tables(self, tmp_path: Path) -> None:
         """R3: all ORM-defined tables exist with current columns after initialize."""
@@ -367,11 +387,12 @@ class TestFreshInstall:
 class TestExistingInstall:
     """R2: existing up-to-date installation — stamp without re-executing."""
 
-    async def test_stamps_initial_without_execution(self, tmp_path: Path) -> None:
-        """R2: existing db with sessions table stamps 001 without running SQL."""
+    async def test_stamps_baseline_and_applies_pending(self, tmp_path: Path) -> None:
+        """R2: existing db stamps baseline, then pending migrations execute."""
         db_path = tmp_path / "tachikoma.db"
 
-        # Simulate a pre-existing database with a sessions table
+        # Simulate a pre-existing database with sessions and detached_processes
+        # (without the new cgroup columns that migration 002 adds)
         async with aiosqlite.connect(db_path) as db:
             await db.execute(
                 "CREATE TABLE sessions ("
@@ -380,6 +401,22 @@ class TestExistingInstall:
                 "transcript_path TEXT, "
                 "started_at DATETIME NOT NULL, "
                 "ended_at DATETIME"
+                ")"
+            )
+            await db.execute(
+                "CREATE TABLE detached_processes ("
+                "id TEXT PRIMARY KEY, "
+                "name TEXT NOT NULL, "
+                "command TEXT NOT NULL, "
+                "cwd TEXT NOT NULL, "
+                "pid INTEGER NOT NULL, "
+                "process_create_time REAL NOT NULL, "
+                "log_path TEXT NOT NULL, "
+                "status TEXT NOT NULL, "
+                "started_at DATETIME NOT NULL, "
+                "exited_at DATETIME, "
+                "exit_code INTEGER, "
+                "stop_reason TEXT"
                 ")"
             )
             await db.commit()
@@ -392,9 +429,53 @@ class TestExistingInstall:
             cursor = await db.execute("SELECT revision, name FROM schema_migrations")
             rows = await cursor.fetchall()
 
-        assert len(rows) == 1
-        assert rows[0][0] == "001"
-        assert rows[0][1] == "initial_schema"
+        assert len(rows) == 2
+        revisions = {row[0] for row in rows}
+        assert "001" in revisions
+        assert "002" in revisions
+
+    async def test_existing_install_migration_adds_cgroup_columns(self, tmp_path: Path) -> None:
+        """R2: existing install without cgroup columns gets them via migration 002."""
+        db_path = tmp_path / "tachikoma.db"
+
+        async with aiosqlite.connect(db_path) as db:
+            await db.execute(
+                "CREATE TABLE sessions ("
+                "id TEXT PRIMARY KEY, "
+                "sdk_session_id TEXT, "
+                "transcript_path TEXT, "
+                "started_at DATETIME NOT NULL, "
+                "ended_at DATETIME"
+                ")"
+            )
+            await db.execute(
+                "CREATE TABLE detached_processes ("
+                "id TEXT PRIMARY KEY, "
+                "name TEXT NOT NULL, "
+                "command TEXT NOT NULL, "
+                "cwd TEXT NOT NULL, "
+                "pid INTEGER NOT NULL, "
+                "process_create_time REAL NOT NULL, "
+                "log_path TEXT NOT NULL, "
+                "status TEXT NOT NULL, "
+                "started_at DATETIME NOT NULL, "
+                "exited_at DATETIME, "
+                "exit_code INTEGER, "
+                "stop_reason TEXT"
+                ")"
+            )
+            await db.commit()
+
+        database = Database(db_path)
+        await database.initialize()
+        await database.close()
+
+        async with aiosqlite.connect(db_path) as db:
+            cursor = await db.execute("PRAGMA table_info('detached_processes')")
+            columns = {row[1] for row in await cursor.fetchall()}
+
+        assert "memory_limit" in columns
+        assert "cgroup_path" in columns
 
     async def test_no_schema_modifications_on_restart(self, tmp_path: Path) -> None:
         """R2: re-running initialize on an already-stamped db is a no-op."""
