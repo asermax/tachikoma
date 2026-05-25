@@ -25,9 +25,7 @@ async def _is_fresh_database(engine: AsyncEngine) -> bool:
     exist and the database always appears non-empty.
     """
     async with engine.connect() as conn:
-        result = await conn.execute(
-            text("SELECT COUNT(*) FROM sqlite_master WHERE type='table'")
-        )
+        result = await conn.execute(text("SELECT COUNT(*) FROM sqlite_master WHERE type='table'"))
     return result.scalar() == 0
 
 

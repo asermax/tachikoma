@@ -82,9 +82,7 @@ def discover_parent_cgroup_path() -> str | None:
         return None
 
 
-def create_process_cgroup(
-    parent_path: str, record_id: str, memory_limit_bytes: int
-) -> str | None:
+def create_process_cgroup(parent_path: str, record_id: str, memory_limit_bytes: int) -> str | None:
     """Create a per-process cgroup with a memory hard limit.
 
     Creates {parent_path}/tachikoma-{record_id}, writes memory.max,
@@ -95,17 +93,13 @@ def create_process_cgroup(
     try:
         cgroup_path.mkdir()
     except OSError:
-        _log.exception(
-            "Failed to create cgroup directory: {path}", path=str(cgroup_path)
-        )
+        _log.exception("Failed to create cgroup directory: {path}", path=str(cgroup_path))
         return None
 
     try:
         (cgroup_path / "memory.max").write_text(str(memory_limit_bytes))
     except OSError:
-        _log.exception(
-            "Failed to set memory.max on cgroup: {path}", path=str(cgroup_path)
-        )
+        _log.exception("Failed to set memory.max on cgroup: {path}", path=str(cgroup_path))
         # Best-effort cleanup of the empty directory we just created.
         with contextlib.suppress(OSError):
             cgroup_path.rmdir()
@@ -141,9 +135,7 @@ def read_memory_current(cgroup_path: str) -> int | None:
         content = (Path(cgroup_path) / "memory.current").read_text().strip()
         return int(content)
     except (OSError, ValueError):
-        _log.exception(
-            "Failed to read memory.current from cgroup: {path}", path=cgroup_path
-        )
+        _log.exception("Failed to read memory.current from cgroup: {path}", path=cgroup_path)
         return None
 
 
@@ -156,9 +148,7 @@ def check_oom_kill(cgroup_path: str) -> bool | None:
     try:
         content = (Path(cgroup_path) / "memory.events").read_text().strip()
     except OSError:
-        _log.exception(
-            "Failed to read memory.events from cgroup: {path}", path=cgroup_path
-        )
+        _log.exception("Failed to read memory.events from cgroup: {path}", path=cgroup_path)
         return None
 
     for line in content.splitlines():
@@ -187,6 +177,4 @@ def cleanup_cgroup(cgroup_path: str) -> None:
     try:
         os.rmdir(cgroup_path)
     except OSError:
-        _log.warning(
-            "Failed to clean up cgroup directory: {path}", path=cgroup_path
-        )
+        _log.warning("Failed to clean up cgroup directory: {path}", path=cgroup_path)
