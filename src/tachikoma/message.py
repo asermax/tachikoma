@@ -28,6 +28,10 @@ class MessageEnvelope(ABC):
     def runs_pre_processing(self) -> bool:
         return True
 
+    @property
+    def runs_boundary_detection(self) -> bool:
+        return True
+
 
 @dataclass(frozen=True)
 class TextMessage(MessageEnvelope):
@@ -50,11 +54,67 @@ class ButtonTapMessage(MessageEnvelope):
 
     @property
     def sdk_input(self) -> str:
-        return (
-            f"The user tapped the option `{self.value}` "
-            "out of the options you displayed."
-        )
+        return f"The user tapped the option `{self.value}` out of the options you displayed."
 
     @property
     def runs_pre_processing(self) -> bool:
+        return False
+
+
+@dataclass(frozen=True)
+class ReactionMessage(MessageEnvelope):
+    """Envelope for a Telegram emoji reaction change."""
+
+    added: frozenset[str]
+    removed: frozenset[str]
+
+    @property
+    def sdk_input(self) -> str:
+        suffix = "Interpret it in the context of the last exchange and respond accordingly."
+        sorted_added = sorted(self.added)
+        sorted_removed = sorted(self.removed)
+
+        if self.removed and not self.added:
+            emojis = self._join(sorted_removed)
+            plural = "reactions" if len(sorted_removed) >= 2 else "reaction"
+            return f"The user removed their {emojis} {plural}. {suffix}"
+
+        if self.added and not self.removed:
+            emojis = self._join(sorted_added)
+            pronoun = "these" if len(sorted_added) >= 2 else "it"
+            return (
+                f"The user reacted with {emojis}. "
+                f"Interpret {pronoun} in the context of the last exchange "
+                "and respond accordingly."
+            )
+
+        if len(self.added) == 1 and len(self.removed) == 1:
+            old = sorted_removed[0]
+            new = sorted_added[0]
+            return f"The user changed their reaction from {old} to {new}. {suffix}"
+
+        added_str = self._join(sorted_added)
+        plural = "reactions" if len(sorted_removed) >= 2 else "reaction"
+        removed_str = self._join(sorted_removed)
+        return (
+            f"The user reacted with {added_str} "
+            f"and removed their {removed_str} {plural}. "
+            "Interpret these in the context of the last exchange "
+            "and respond accordingly."
+        )
+
+    @staticmethod
+    def _join(items: list[str]) -> str:
+        if len(items) == 1:
+            return items[0]
+        if len(items) == 2:
+            return f"{items[0]} and {items[1]}"
+        return ", ".join(items[:-1]) + f" and {items[-1]}"
+
+    @property
+    def runs_pre_processing(self) -> bool:
+        return False
+
+    @property
+    def runs_boundary_detection(self) -> bool:
         return False
