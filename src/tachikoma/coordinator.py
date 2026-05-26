@@ -494,25 +494,19 @@ class Coordinator:
                 if active is not None:
                     if active.id != msg.target_session_id:
                         await self._close_and_fire_postprocessing(active)
-                        reopened = await self._registry.reopen_session(
-                            msg.target_session_id
-                        )
+                        reopened = await self._registry.reopen_session(msg.target_session_id)
                         if reopened is not None:
                             self._set_sdk_session_id(reopened.sdk_session_id)
                             active = reopened
                             is_new_session = False
                         else:
-                            _log.warning(
-                                "target_session_id reopen failed, creating fresh session"
-                            )
+                            _log.warning("target_session_id reopen failed, creating fresh session")
                             self._clear_session_state()
                             active = await self._registry.create_session()
                             is_new_session = True
                     # else: target is current session, no-op
                 else:
-                    reopened = await self._registry.reopen_session(
-                        msg.target_session_id
-                    )
+                    reopened = await self._registry.reopen_session(msg.target_session_id)
                     if reopened is not None:
                         self._set_sdk_session_id(reopened.sdk_session_id)
                         active = reopened
