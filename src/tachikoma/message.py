@@ -32,6 +32,10 @@ class MessageEnvelope(ABC):
     def runs_boundary_detection(self) -> bool:
         return True
 
+    @property
+    def target_session_id(self) -> str | None:
+        return None
+
 
 @dataclass(frozen=True)
 class TextMessage(MessageEnvelope):
@@ -40,6 +44,8 @@ class TextMessage(MessageEnvelope):
     text: str
     pinned_skills: tuple[str, ...] = ()
     force_new: bool = False
+    target_session_id: str | None = None
+    external_id: str | None = None
 
     @property
     def sdk_input(self) -> str:
@@ -51,6 +57,7 @@ class ButtonTapMessage(MessageEnvelope):
     """Envelope for a Telegram inline-button tap."""
 
     value: str
+    target_session_id: str | None = None
 
     @property
     def sdk_input(self) -> str:
@@ -67,6 +74,8 @@ class ReactionMessage(MessageEnvelope):
 
     added: frozenset[str]
     removed: frozenset[str]
+    target_session_id: str | None = None
+    external_id: str | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "added", frozenset(self.added))
