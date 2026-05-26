@@ -525,16 +525,9 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 **Complexity**: Medium
 **Description**: When running long-lived detached processes, users need early warning if a process becomes stuck (e.g., retry loops, repeated errors, or hung-state indicators) rather than discovering failure hours later. This delta adds a sentinel mechanism that watches process log files for configurable text patterns and dispatches a notification when a match is detected. Users define patterns per process or as global defaults via the MCP tools interface. When a pattern fires, a notification is dispatched through the process monitoring system so the agent can investigate. The sentinel includes rate limiting to prevent notification floods from rapidly-repeating matches. This complements process exit detection by catching processes that are alive but not making progress.
 
-### DLT-169: Track external message IDs per session
-**Status**: ✓ Implementation
-**Depends on**: None
-**Priority**: 2 (High)
-**Complexity**: Medium
-**Description**: Add a generic mechanism to track platform-specific message IDs (external IDs) attached to conversation sessions. Store both incoming (user) and outgoing (agent) final message IDs in a new `session_external_ids` database table, keyed by session_id with a string external_id column to remain channel-agnostic. On the Telegram channel: capture `message.message_id` for incoming messages and `ResponseRenderer._current_message_id` (plus split message IDs) for outgoing messages, recording them after the session is determined and after response finalization respectively. Add an `external_id: str | None` field to `TextMessage` and `ReactionMessage` envelopes to carry the ID through the pipeline. Use this mapping to make reaction-based session switching resilient: when a user reacts to a message from a previous session, look up the session via the external_id, transition the current session, and route the reaction to the correct session. Cleanup old mappings periodically (e.g., records for sessions closed >30 days).
-
 ### DLT-168: Telegram message reactions
 **Status**: ✗ Defined
-**Depends on**: DLT-169
+**Depends on**: None
 **Priority**: 3 (Medium)
 **Complexity**: Easy
 **Description**: Add a react_to_message MCP tool that lets the agent apply emoji reactions to user messages via the Telegram setMessageReaction API. This enables lightweight acknowledgment (thumbs up, checkmark, etc.) without sending a full text response. The tool accepts a message ID and an emoji, applies the reaction through the aiogram Bot client, and follows the existing MCP tool pattern (factory with closure-captured bot/chat_id, extracted handler, Pydantic args). Works in private chats without special permissions; groups require the bot to be an admin with appropriate rights. The agent discovers target message IDs using the recent message listing tool.
