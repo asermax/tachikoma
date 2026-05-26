@@ -9,10 +9,13 @@ from datetime import datetime, timedelta
 
 from loguru import logger
 from sqlalchemy import select, update
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from tachikoma.sessions.errors import SessionRepositoryError
 from tachikoma.sessions.model import (
+    ChannelMessage,
+    ChannelMessageRecord,
     Session,
     SessionContextEntry,
     SessionContextEntryRecord,
@@ -390,4 +393,72 @@ class SessionRepository:
         except Exception as exc:
             raise SessionRepositoryError(
                 f"Failed to find context entries by skill name for session {session_id}"
+            ) from exc
+
+    # ------------------------------------------------------------------
+    # Channel messages
+    # ------------------------------------------------------------------
+
+    async def save_channel_message(self, message: ChannelMessage) -> ChannelMessage:
+        """Persist a channel message mapping. Duplicate (channel, external_id) is a no-op.
+
+        Uses on_conflict_do_nothing on the unique index so the first recording wins.
+
+        Args:
+            message: The ChannelMessage to persist.
+
+        Returns:
+            The persisted ChannelMessage (with id set), or the existing one on conflict.
+
+        Raises:
+            SessionRepositoryError: If the save operation fails.
+        """
+        try:
+            async with self._session_factory() as db:
+                stmt = sqlite_insert(ChannelMessageRecord).values(
+                    session_id=message.session_id,
+                    channel=message.channel,
+                    direction=message.direction,
+                    external_id=message.external_id,
+                )
+                stmt = stmt.on_conflict_do_nothing(
+                    index_elements=["channel", "external_id"]
+                )
+                await db.execute(stmt)
+                await db.commit()
+
+            return message
+
+        except Exception as exc:
+            raise SessionRepositoryError(
+                f"Failed to save channel message for session {message.session_id}"
+            ) from exc
+
+    async def lookup_session(self, channel: str, external_id: str) -> str | None:
+        """Look up the session_id for a (channel, external_id) pair.
+
+        Args:
+            channel: The channel identifier (e.g., "telegram").
+            external_id: The platform-specific message ID.
+
+        Returns:
+            The session_id if found, or None.
+
+        Raises:
+            SessionRepositoryError: If the query fails.
+        """
+        try:
+            async with self._session_factory() as db:
+                stmt = select(ChannelMessageRecord.session_id).where(
+                    ChannelMessageRecord.channel == channel,
+                    ChannelMessageRecord.external_id == external_id,
+                )
+                result = await db.execute(stmt)
+                row = result.scalar_one_or_none()
+
+            return row
+
+        except Exception as exc:
+            raise SessionRepositoryError(
+                f"Failed to lookup session for {channel}/{external_id}"
             ) from exc

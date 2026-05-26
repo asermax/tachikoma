@@ -12,7 +12,7 @@ from pathlib import Path
 
 from loguru import logger
 
-from tachikoma.sessions.model import Session, SessionContextEntry, SessionResumption
+from tachikoma.sessions.model import ChannelMessage, Session, SessionContextEntry, SessionResumption
 from tachikoma.sessions.repository import SessionRepository
 
 _log = logger.bind(component="sessions")
@@ -443,6 +443,97 @@ class SessionRegistry:
                 err=str(exc),
             )
             return []
+
+    # ------------------------------------------------------------------
+    # Channel messages
+    # ------------------------------------------------------------------
+
+    async def record_channel_message(
+        self, session_id: str, channel: str, direction: str, external_id: str
+    ) -> None:
+        """Record a channel-specific message ID mapping to a session.
+
+        Best-effort: failures are logged but not raised.
+        Returns early with a warning if no active session.
+
+        Args:
+            session_id: The session to associate the message with.
+            channel: The channel identifier (e.g., "telegram").
+            direction: "incoming" or "outgoing".
+            external_id: The platform-specific message ID.
+        """
+        if self._active_session is None:
+            _log.warning(
+                "Cannot record channel message: no active session "
+                "channel={ch} external_id={eid}",
+                ch=channel,
+                eid=external_id,
+            )
+            return
+
+        try:
+            message = ChannelMessage(
+                id=0,
+                session_id=session_id,
+                channel=channel,
+                direction=direction,
+                external_id=external_id,
+            )
+            await self._repository.save_channel_message(message)
+
+            _log.debug(
+                "Channel message recorded: session_id={sid} channel={ch} "
+                "direction={dir} external_id={eid}",
+                sid=session_id,
+                ch=channel,
+                dir=direction,
+                eid=external_id,
+            )
+        except Exception as exc:
+            _log.warning(
+                "Failed to record channel message (best-effort): "
+                "session_id={sid} channel={ch} external_id={eid} err={err}",
+                sid=session_id,
+                ch=channel,
+                eid=external_id,
+                err=str(exc),
+            )
+
+    async def find_session_by_external_id(
+        self, channel: str, external_id: str
+    ) -> str | None:
+        """Look up the session_id for a (channel, external_id) pair.
+
+        Best-effort: failures are logged and None is returned.
+        Returns early with a warning if no active session.
+
+        Args:
+            channel: The channel identifier (e.g., "telegram").
+            external_id: The platform-specific message ID.
+
+        Returns:
+            The session_id if found, or None.
+        """
+        if self._active_session is None:
+            _log.warning(
+                "Cannot find session by external ID: no active session "
+                "channel={ch} external_id={eid}",
+                ch=channel,
+                eid=external_id,
+            )
+            return None
+
+        try:
+            return await self._repository.lookup_session(channel, external_id)
+        except Exception as exc:
+            _log.warning(
+                "Failed to find session by external ID (best-effort): "
+                "channel={ch} external_id={eid} err={err}",
+                ch=channel,
+                eid=external_id,
+                err=str(exc),
+            )
+            return None
 
     async def recover_interrupted(self) -> None:
         """Close any sessions left open from a previous ungraceful shutdown.

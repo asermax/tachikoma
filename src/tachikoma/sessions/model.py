@@ -83,6 +83,21 @@ class SessionContextEntry:
     metadata: dict | None = None
 
 
+@dataclass(frozen=True)
+class ChannelMessage:
+    """Domain representation of a channel-specific message ID mapping.
+
+    Maps platform-specific message IDs (e.g., Telegram message_id) to internal
+    conversation sessions, enabling reaction-based session routing.
+    """
+
+    id: int
+    session_id: str
+    channel: str
+    direction: str
+    external_id: str
+
+
 # ---------------------------------------------------------------------------
 # SQLAlchemy ORM — internal to the persistence layer
 # ---------------------------------------------------------------------------
@@ -188,4 +203,35 @@ class SessionContextEntryRecord(Base):
             owner=self.owner,
             content=self.content,
             metadata=meta,
+        )
+
+
+class ChannelMessageRecord(Base):
+    """SQLAlchemy ORM model for the channel_messages table.
+
+    Internal to the persistence layer; callers never see this type.
+    Use to_domain() to convert to the ChannelMessage dataclass.
+    """
+
+    __tablename__ = "channel_messages"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    session_id: Mapped[str] = mapped_column(ForeignKey("sessions.id", ondelete="CASCADE"))
+    channel: Mapped[str] = mapped_column()
+    direction: Mapped[str] = mapped_column()
+    external_id: Mapped[str] = mapped_column()
+
+    __table_args__ = (
+        Index("uq_channel_messages_channel_external_id", "channel", "external_id", unique=True),
+        Index("ix_channel_messages_session_id", "session_id"),
+    )
+
+    def to_domain(self) -> ChannelMessage:
+        """Convert ORM record to domain dataclass."""
+        return ChannelMessage(
+            id=self.id,
+            session_id=self.session_id,
+            channel=self.channel,
+            direction=self.direction,
+            external_id=self.external_id,
         )
