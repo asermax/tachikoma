@@ -421,9 +421,7 @@ class SessionRepository:
                     direction=message.direction,
                     external_id=message.external_id,
                 )
-                stmt = stmt.on_conflict_do_nothing(
-                    index_elements=["channel", "external_id"]
-                )
+                stmt = stmt.on_conflict_do_nothing(index_elements=["channel", "external_id"])
                 await db.execute(stmt)
                 await db.commit()
 

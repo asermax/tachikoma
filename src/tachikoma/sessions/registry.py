@@ -464,8 +464,7 @@ class SessionRegistry:
         """
         if self._active_session is None:
             _log.warning(
-                "Cannot record channel message: no active session "
-                "channel={ch} external_id={eid}",
+                "Cannot record channel message: no active session channel={ch} external_id={eid}",
                 ch=channel,
                 eid=external_id,
             )
@@ -499,9 +498,7 @@ class SessionRegistry:
                 err=str(exc),
             )
 
-    async def find_session_by_external_id(
-        self, channel: str, external_id: str
-    ) -> str | None:
+    async def find_session_by_external_id(self, channel: str, external_id: str) -> str | None:
         """Look up the session_id for a (channel, external_id) pair.
 
         Best-effort: failures are logged and None is returned.

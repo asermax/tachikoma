@@ -326,9 +326,7 @@ async def test_spawn_with_cgroup_creates_and_assigns(tmp_path, repo):
         assert record.cgroup_path == "/sys/fs/cgroup/tachikoma-test"
         assert record.memory_limit == 512 * 1024 * 1024
         mock_cg.create_process_cgroup.assert_called_once()
-        mock_cg.assign_pid.assert_called_once_with(
-            "/sys/fs/cgroup/tachikoma-test", record.pid
-        )
+        mock_cg.assign_pid.assert_called_once_with("/sys/fs/cgroup/tachikoma-test", record.pid)
     finally:
         with contextlib.suppress(ProcessLookupError, PermissionError):
             os.killpg(os.getpgid(record.pid), signal.SIGKILL)

@@ -105,9 +105,7 @@ async def spawn_process(
         cgroup_path = cgroup_manager.create_process_cgroup(
             cgroup_parent_path, record_id, memory_limit_bytes
         )
-        if cgroup_path is not None and not cgroup_manager.assign_pid(
-            cgroup_path, pid
-        ):
+        if cgroup_path is not None and not cgroup_manager.assign_pid(cgroup_path, pid):
             _log.warning(
                 "Failed to assign pid={pid} to cgroup, proceeding without limit",
                 pid=pid,
