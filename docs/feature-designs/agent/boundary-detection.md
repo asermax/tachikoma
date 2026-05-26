@@ -154,7 +154,11 @@ erDiagram
    - If task pending: await it, log any errors
    - If no task: proceed immediately
 3. Coordinator checks for active session; creates one if needed (existing behavior)
-3a. If msg.force_new and active session exists:
+3a. If msg.target_session_id is set:
+    → call _route_to_target_session(msg.target_session_id)
+    → close current session, reopen target, fall back to fresh session on failure
+    → skip boundary detection and force_new checks entirely
+3b. If msg.force_new and active session exists:
     → skip boundary detection, call _handle_transition(active) for fresh session,
       re-fetch active session, set is_new_session = not resumed
 4. If active session exists AND session has a summary AND cwd is not None:

@@ -72,12 +72,12 @@ The session domain also includes **SessionContextEntry** — a persisted record 
 
 | Layer/Component | Responsibility | Key Decisions |
 |-----------------|----------------|---------------|
-| `src/tachikoma/sessions/model.py` | SQLAlchemy ORM models (`SessionRecord`, `SessionResumptionRecord`, `SessionContextEntryRecord`) + frozen dataclasses (`Session`, `SessionResumption`, `SessionContextEntry`) + `DeclarativeBase` | Separate ORM models from domain dataclasses; callers never see SQLAlchemy types |
-| `src/tachikoma/sessions/repository.py` | `SessionRepository`: CRUD operations, time-range queries, `get_recent_closed()` for resumption candidates, `create_resumption()`/`get_resumptions_for_session()` for resumption tracking, `save_context_entries()`/`load_context_entries()` for context entry persistence | Receives shared `async_sessionmaker` from `Database`; all SQL is behind async methods; `save_context_entries` takes list of `(owner, content)` tuples, bulk saves via `session.add_all()`; `load_context_entries` ordered by PK ascending |
-| `src/tachikoma/sessions/registry.py` | `SessionRegistry`: business logic facade, creation lock, crash recovery, status derivation, `close_session()` returns `bool` (True if actually transitioned from open to closed — enables callers to distinguish real closes from no-ops), `update_summary()` for persisting rolling summaries, `reopen_session()` for session resumption (uses `dataclasses.replace()` to construct reopened session — avoids redundant DB fetch), `get_recent_closed()` for candidate queries, `record_resumption()` for best-effort tracking, `save_context_entries()` (best-effort — logs on failure per R9/R17, does not raise), `load_context_entries()` (raises on failure — caller handles graceful degradation) | Receives repository via constructor; owns the `asyncio.Lock` |
+| `src/tachikoma/sessions/model.py` | SQLAlchemy ORM models (`SessionRecord`, `SessionResumptionRecord`, `SessionContextEntryRecord`, `ChannelMessageRecord`) + frozen dataclasses (`Session`, `SessionResumption`, `SessionContextEntry`, `ChannelMessage`) + `DeclarativeBase` | Separate ORM models from domain dataclasses; callers never see SQLAlchemy types; `ChannelMessage` uses `MessageDirection` type (`Literal["incoming", "outgoing"]`) |
+| `src/tachikoma/sessions/repository.py` | `SessionRepository`: CRUD operations, time-range queries, `get_recent_closed()` for resumption candidates, `create_resumption()`/`get_resumptions_for_session()` for resumption tracking, `save_context_entries()`/`load_context_entries()` for context entry persistence, `save_channel_message()`/`lookup_session()` for channel message ID tracking | Receives shared `async_sessionmaker` from `Database`; all SQL is behind async methods; `save_context_entries` takes list of `(owner, content)` tuples, bulk saves via `session.add_all()`; `load_context_entries` ordered by PK ascending; `save_channel_message` uses `on_conflict_do_nothing()` on the unique `(channel, external_id)` index for idempotent recording; `lookup_session` queries by `(channel, external_id)` returning `session_id` or `None` |
+| `src/tachikoma/sessions/registry.py` | `SessionRegistry`: business logic facade, creation lock, crash recovery, status derivation, `close_session()` returns `bool` (True if actually transitioned from open to closed — enables callers to distinguish real closes from no-ops), `update_summary()` for persisting rolling summaries, `reopen_session()` for session resumption (uses `dataclasses.replace()` to construct reopened session — avoids redundant DB fetch), `get_recent_closed()` for candidate queries, `record_resumption()` for best-effort tracking, `save_context_entries()` (best-effort — logs on failure per R9/R17, does not raise), `load_context_entries()` (raises on failure — caller handles graceful degradation), `record_channel_message()` (best-effort facade over `save_channel_message()`, returns early with warning when no active session), `find_session_by_external_id()` (best-effort facade over `lookup_session()`, returns early with warning when no active session) | Receives repository via constructor; owns the `asyncio.Lock` |
 | `src/tachikoma/sessions/errors.py` | `SessionRepositoryError`: wraps SQLAlchemy exceptions for clean error contract | Callers catch one domain exception, not SQLAlchemy internals |
 | `src/tachikoma/sessions/hooks.py` | `session_recovery_hook`: retrieves shared `Database` from extras, creates repository + registry, runs recovery, stores on context extras | Registered as bootstrap hook; runs after `database_hook` |
-| `src/tachikoma/sessions/__init__.py` | Re-exports public API: `Session`, `SessionContextEntry`, `SessionResumption`, `SessionRegistry`, `SessionRepository`, `SessionRepositoryError` | Clean public API for the sessions package |
+| `src/tachikoma/sessions/__init__.py` | Re-exports public API: `Session`, `SessionContextEntry`, `SessionResumption`, `ChannelMessage`, `SessionRegistry`, `SessionRepository`, `SessionRepositoryError` | Clean public API for the sessions package |
 
 ### Cross-Layer Contracts
 
@@ -115,6 +115,7 @@ sequenceDiagram
 
 **Integration Points:**
 - Coordinator → SessionRegistry: `get_active_session()` + `create_session()` on first message, `update_metadata()` on Result events, `close_session()` on shutdown and topic shift, `get_recent_closed()` for resumption candidates, `reopen_session()` for session resumption, `record_resumption()` for best-effort tracking, `get_by_time_range()` for bridging context assembly, `save_context_entries(session_id, entries)` for persisting context (always takes a list of (owner, content) tuples), `load_context_entries(session_id)` for loading entries for system prompt assembly
+- Telegram Channel → SessionRegistry: `record_channel_message(session_id, channel, direction, external_id)` for persisting incoming/outgoing message IDs after session determination and response finalization, `find_session_by_external_id(channel, external_id)` for reaction-based session lookup
 - PostProcessingPipeline → SessionRegistry: `mark_processed()` after pipeline completion (sets `processed_at`)
 - SummaryProcessor → SessionRegistry: `update_summary()` after each per-message pipeline run (see [boundary detection design](boundary-detection.md))
 - LastExchangeProcessor → SessionRegistry: `update_last_exchange()` after each per-message pipeline run (see [boundary detection design](boundary-detection.md))
@@ -234,6 +235,32 @@ SessionContextEntry (frozen dataclass)
 ```
 
 `SessionStatus` is a `Literal["open", "closed", "interrupted"]` type.
+
+`MessageDirection` is a `Literal["incoming", "outgoing"]` type.
+
+```
+ChannelMessage (frozen dataclass)
+├── session_id: str                   (FK → sessions.id)
+├── channel: str                      (canonical: "telegram", "repl")
+├── direction: MessageDirection       ("incoming" | "outgoing")
+└── external_id: str                  (platform-specific message ID)
+```
+
+### Channel message ORM model
+
+```
+ChannelMessageRecord (DeclarativeBase)
+├── __tablename__ = "channel_messages"
+├── session_id: Mapped[str]           (ForeignKey("sessions.id", ondelete="CASCADE"))
+├── channel: Mapped[str]
+├── direction: Mapped[str]
+├── external_id: Mapped[str]
+└── __table_args__:
+    ├── UniqueConstraint("channel", "external_id")  (deduplication + fast lookup)
+    └── Index("ix_channel_messages_session_id")     (session-scoped queries)
+```
+
+The `channel_messages` table is created via migration `003_create_channel_messages.sql`. `on_conflict_do_nothing()` on the unique index makes duplicate recording a no-op (first write wins). Cascade delete removes channel message rows when their parent session is deleted.
 
 ### SQLAlchemy ORM model
 
@@ -459,6 +486,62 @@ Processor:
    (coordinator handles graceful degradation by falling back to base preamble only)
 ```
 
+### Channel message recording (incoming)
+
+```
+1. Telegram channel receives message from user
+2. Channel constructs TextMessage(external_id=str(message.message_id))
+3. Channel enqueues and processes through coordinator
+4. After coordinator determines the session (create/resume/continue):
+   a. Channel reads active session from registry
+   b. Channel calls registry.record_channel_message(session_id, "telegram", "incoming", external_id)
+5. Registry creates ChannelMessage and calls repository.save_channel_message()
+6. Repository uses sqlite_insert().on_conflict_do_nothing() — duplicate is no-op
+7. On failure: registry logs warning, conversation continues (best-effort)
+```
+
+### Channel message recording (outgoing)
+
+```
+1. Before processing, Telegram channel captures current session_id into local variable
+2. ResponseRenderer finalizes response
+3. After Result event, channel reads finalized message IDs from renderer
+4. Channel spawns async task to record each ID:
+   for each id in message_ids:
+       registry.record_channel_message(captured_session_id, "telegram", "outgoing", str(id))
+5. Each split message ID is recorded as its own row
+6. Recording is async — does not block response delivery
+7. On failure: error is logged, conversation continues (best-effort)
+```
+
+### Session lookup by external ID
+
+```
+1. Telegram reaction handler receives MessageReactionUpdated event
+2. Handler calls registry.find_session_by_external_id("telegram", str(event.message_id))
+3. Registry delegates to repository.lookup_session(channel, external_id)
+4. Repository queries ChannelMessageRecord by (channel, external_id), returns session_id or None
+5. If result maps to a different session than current:
+   a. Handler sets target_session_id on envelope
+   b. Handler defers message via enqueue_deferred()
+6. If result is None or maps to current session: normal routing
+```
+
+### Session switching via target_session_id
+
+```
+1. Coordinator receives message with target_session_id set
+2. Coordinator calls _route_to_target_session(target_session_id):
+   a. If active session exists and differs from target:
+      - Close current session via _close_and_fire_postprocessing()
+      - Reopen target via registry.reopen_session(target_session_id)
+      - If reopen succeeds: set SDK session ID, continue with reopened session
+      - If reopen fails: log warning, create fresh session as fallback
+   b. If active session is the target: no-op
+   c. If no active session: try to reopen target directly; fallback to fresh session
+3. Boundary detection is skipped entirely
+```
+
 ### Query by time range
 
 ```
@@ -641,6 +724,41 @@ Processor:
 **When**: The coordinator catches the error
 **Then**: The error is logged and the conversation continues uninterrupted.
 **Rationale**: Session tracking is important but not critical to message processing. Graceful degradation is preferred.
+
+### Scenario: Incoming message records external ID
+
+**Given**: An incoming Telegram message with `message_id` 12345
+**When**: The coordinator determines the session (creates, resumes, or continues)
+**Then**: The channel calls `record_channel_message(session_id, "telegram", "incoming", "12345")` via the registry facade. A `channel_messages` row is persisted. If the `(channel, external_id)` pair already exists, the insert is a no-op.
+**Rationale**: Recording after session determination ensures the correct session_id is associated with the external ID.
+
+### Scenario: Outgoing response records message IDs asynchronously
+
+**Given**: The ResponseRenderer finalizes a response with message IDs [111, 112] (split message)
+**When**: The Result event is processed
+**Then**: The channel spawns an async task that records each ID as a separate `channel_messages` row with `direction="outgoing"`. Recording does not block response delivery.
+**Rationale**: Async recording avoids adding latency to response delivery. A brief window exists where outgoing IDs are not yet recorded — reactions arriving in this window route normally (graceful degradation).
+
+### Scenario: Reaction triggers session switch via external ID
+
+**Given**: A reaction on a message whose external ID maps to a closed session that is not the current active session
+**When**: The reaction handler looks up the external ID and finds a different session
+**Then**: The handler sets `target_session_id` on the `ReactionMessage` envelope and defers it. When the deferred queue drains, the coordinator closes the current session, reopens the target, and processes the reaction there.
+**Rationale**: Deferring ensures session switching happens between turns, never mid-response (per DES-009).
+
+### Scenario: External ID not found (graceful degradation)
+
+**Given**: A reaction on a message whose external ID is not in the `channel_messages` table (pre-feature message, orphaned ID)
+**When**: `find_session_by_external_id` returns `None`
+**Then**: No `target_session_id` is set on the envelope. The reaction routes normally to the current session.
+**Rationale**: Pre-feature messages and edge cases must not break the reaction flow. Graceful degradation ensures the system works without mappings.
+
+### Scenario: Target session fails resumption validation
+
+**Given**: A deferred message's `target_session_id` points to a session that fails resumption validation (missing transcript, too old, already open)
+**When**: The coordinator attempts to reopen the target session
+**Then**: `reopen_session()` returns `None`. The coordinator logs a warning and creates a fresh session as fallback.
+**Rationale**: Session resumption safety checks take precedence over routing intent. A fresh session is the safe default.
 
 ## Notes
 

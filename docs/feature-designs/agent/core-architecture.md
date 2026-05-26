@@ -207,28 +207,36 @@ MessageEnvelope (abstract)
 ├── pinned_skills             → tuple[str,...] (default: ())
 ├── force_new                 → bool           (default: False)
 ├── runs_pre_processing       → bool           (default: True)
-└── runs_boundary_detection   → bool           (default: True)
+├── runs_boundary_detection   → bool           (default: True)
+└── target_session_id         → str | None     (default: None — routing instruction for session switching)
 
 TextMessage(MessageEnvelope)                   — typed user input (and any non-tap producer)
 ├── text: str
 ├── pinned_skills: tuple[str, ...] = ()
 ├── force_new: bool = False
+├── target_session_id: str | None = None
+├── external_id: str | None = None            — platform-specific message ID
 └── sdk_input → text
 
 ButtonTapMessage(MessageEnvelope)              — Telegram inline-button tap
 ├── value: str
+├── target_session_id: str | None = None
 ├── sdk_input → "The user tapped the option `<value>` out of the options you displayed."
 └── runs_pre_processing → False
 
 ReactionMessage(MessageEnvelope)               — Telegram inbound emoji reaction
 ├── added: frozenset[str]
 ├── removed: frozenset[str]
+├── target_session_id: str | None = None
+├── external_id: str | None = None            — platform-specific message ID of reacted-to message
 ├── sdk_input → canonical reaction prose (added-only / removed-only / replacement / mixed)
 ├── runs_pre_processing → False
 └── runs_boundary_detection → False
 ```
 
-The base type is the queue element type for `_message_buffer`, `_deferred_queue`, and the per-turn SDK inbox. SDK-input shaping happens at exactly one site — `_message_source` reads `envelope.sdk_input` for both the initial envelope and every envelope read from the per-turn inbox. The coordinator gates both pre-processing pipelines on `envelope.runs_pre_processing` and gates both the cold-start resume branch and the active-session boundary-detection branch on `envelope.runs_boundary_detection`. When `runs_boundary_detection=False`, the coordinator skips both branches uniformly — a reaction arriving with no active session creates a fresh session immediately via `_registry.create_session()`, with no attempt to match against recently closed sessions. Adding a future envelope subtype (e.g., the modality-aware envelope DLT-125 anticipates) is one new class — no consumer site changes.
+The base type is the queue element type for `_message_buffer`, `_deferred_queue`, and the per-turn SDK inbox. SDK-input shaping happens at exactly one site — `_message_source` reads `envelope.sdk_input` for both the initial envelope and every envelope read from the per-turn inbox. The coordinator gates both pre-processing pipelines on `envelope.runs_pre_processing` and gates both the cold-start resume branch and the active-session boundary-detection branch on `envelope.runs_boundary_detection`. When `target_session_id` is set, the coordinator short-circuits boundary detection entirely — closing the current session and reopening the named target session (via `_route_to_target_session()`), skipping both cold-start resume and active-session boundary detection. When `runs_boundary_detection=False`, the coordinator skips both branches uniformly — a reaction arriving with no active session creates a fresh session immediately via `_registry.create_session()`, with no attempt to match against recently closed sessions. Adding a future envelope subtype (e.g., the modality-aware envelope DLT-125 anticipates) is one new class — no consumer site changes.
+
+`target_session_id` is both a property hook on the base class (returns `None`) and a dataclass field on each concrete subtype. The property hook provides uniform consumer access (no `isinstance` checks needed); the dataclass field stores the actual value. This dual pattern extends DES-013 — routing fields are data (not behavioral variation) but benefit from a uniform interface on the base. `external_id` is a data field only (no base property hook) — only `TextMessage` and `ReactionMessage` carry it; `ButtonTapMessage` does not carry an external ID.
 
 ### SDK Message → AgentEvent mapping
 
@@ -281,6 +289,12 @@ Coordinator
 │       each iteration creates fresh ClaudeSDKClient, runs full pipeline,
 │       awaits previous iteration's pending post-processing task, breaks when buffer empty;
 │       force_new routing: if msg.force_new and active session exists, skips boundary detection
+│       target_session_id routing: if msg.target_session_id is set, calls _route_to_target_session()
+│           → closes current session, reopens target, falls back to fresh session on failure
+├── _route_to_target_session(target_session_id) → None
+│   └── handles session switching: closes current via _close_and_fire_postprocessing(),
+│       reopens target via registry.reopen_session(), sets SDK session ID;
+│       falls back to _clear_session_state() + create_session() on reopen failure
 └── _message_source(initial, buffer) → AsyncGenerator[str]
     └── long-lived async generator: yields enriched initial message, then reads from buffer; passed to client.connect() as a concurrent SDK-managed task
 ```
