@@ -2,6 +2,123 @@
 
 <!-- version list -->
 
+## v1.92.0 (2026-05-26)
+
+### Bug Fixes
+
+- **sessions**: Make channel_messages migration idempotent and fix lookup guard
+  ([`3db8fca`](https://github.com/asermax/tachikoma/commit/3db8fcad51e9a5633272f190b93592889a8a8588))
+
+### Code Style
+
+- Apply ruff formatting across sessions and detached processes
+  ([`87d8a7b`](https://github.com/asermax/tachikoma/commit/87d8a7beda090c4dcd1b60e4763aaeaa6d6cc79c))
+
+- **coordinator**: Apply ruff formatting
+  ([`5e092ce`](https://github.com/asermax/tachikoma/commit/5e092ce2d422534917025b6e58c944d107951432))
+
+### Documentation
+
+- **deltas**: Add implementation plan for DLT-169
+  ([`04efbcd`](https://github.com/asermax/tachikoma/commit/04efbcdd704b2bc9c8f1232a41533e80b3f2bec3))
+
+- **deltas**: Expand DLT-169 design with implementation details and scenarios
+  ([`ea0b8cc`](https://github.com/asermax/tachikoma/commit/ea0b8ccd4ee087e49763877a5c5a4d5d99e009c7))
+
+- **deltas**: Mark DLT-169 as implemented
+  ([`30c9919`](https://github.com/asermax/tachikoma/commit/30c9919f75d2bdb4b15ffe38c56f9f580a863c2b))
+
+- **deltas**: Mark DLT-169 batch 2 as done
+  ([`b66f415`](https://github.com/asermax/tachikoma/commit/b66f415483a799ab163b0bfc76f9a17802065aa5))
+
+- **deltas**: Mark DLT-169 batch 3 as done
+  ([`6331458`](https://github.com/asermax/tachikoma/commit/633145861aa2eb003a9685fb687fe3c307198333))
+
+- **deltas**: Mark DLT-169 batch 4 as done
+  ([`e68629f`](https://github.com/asermax/tachikoma/commit/e68629f091333adc55f7c5be697122827f0f905f))
+
+- **deltas**: Mark DLT-169 batch 5 as done
+  ([`a153935`](https://github.com/asermax/tachikoma/commit/a15393570caba7726966df9dfe694ab655e36ba5))
+
+- **deltas**: Refactor DLT-169 design to use generic target_session_id and deferred reactions
+  ([`f0f3f29`](https://github.com/asermax/tachikoma/commit/f0f3f2915480f124cc640b9f5beb628da76fe9ab))
+
+- **deltas**: Remove completed DLT-169 and unblock DLT-168
+  ([`b39e1b1`](https://github.com/asermax/tachikoma/commit/b39e1b1450657dc7b18d6a61b12918f629272972))
+
+- **deltas**: Rename session_external_ids to channel_messages in DLT-169
+  ([`a0f14cd`](https://github.com/asermax/tachikoma/commit/a0f14cdd1f4f88008e882bd738abb2b8a4d74411))
+
+- **deltas**: Simplify DLT-169 spec acceptance criteria
+  ([`98030a0`](https://github.com/asermax/tachikoma/commit/98030a0ae44864d302f773e48a53939439b81437))
+
+- **deltas**: Update DLT-169 priority and scope
+  ([`eff9ab5`](https://github.com/asermax/tachikoma/commit/eff9ab5606b755a1080faf396a3d5e4e6d14e2fe))
+
+- **deltas**: Update DLT-169 status to design complete
+  ([`1298585`](https://github.com/asermax/tachikoma/commit/1298585ddbcd84e8aa35a0d8ed178adfd01444ad))
+
+- **deltas**: Update DLT-169 status to designed
+  ([`e885ee0`](https://github.com/asermax/tachikoma/commit/e885ee0664022f33ae68f13befeba79c7292b05c))
+
+- **deltas**: Update DLT-169 status to in-progress design
+  ([`25a23d1`](https://github.com/asermax/tachikoma/commit/25a23d1017eaa1570636e3014153d6a9f4829db6))
+
+- **deltas**: Update DLT-169 status to plan
+  ([`4796ea5`](https://github.com/asermax/tachikoma/commit/4796ea5853324ff8c142d911c3da85c66b88eb16))
+
+- **deltas**: Update DLT-169 status to spec
+  ([`eb04be9`](https://github.com/asermax/tachikoma/commit/eb04be9ac7ef7fa5ef3dba21a4de69c19fea18de))
+
+- **design**: Add DES-014 generic routing fields pattern
+  ([`0857185`](https://github.com/asermax/tachikoma/commit/085718599e888256efdcf786f454a05cec350891))
+
+- **designs**: Add design for external message ID tracking per session
+  ([`fc3f3c6`](https://github.com/asermax/tachikoma/commit/fc3f3c645b5eb50138bc6a8dbbaa1e1529e74305))
+
+- **designs**: Reconcile DLT-169 into feature designs
+  ([`8e72ead`](https://github.com/asermax/tachikoma/commit/8e72eadf6ca6acbdd6cf7b0f92e86ad88a4b8b3b))
+
+- **specs**: Add spec for external message ID tracking per session
+  ([`7648e67`](https://github.com/asermax/tachikoma/commit/7648e6701083ccab66e3fa8bd34a2e836cee9289))
+
+- **specs**: Reconcile DLT-169 into feature specifications
+  ([`56b67a9`](https://github.com/asermax/tachikoma/commit/56b67a94c2eb3469a07730531d6bc86576721e08))
+
+- **specs**: Refine DLT-169 spec with edge cases and constraints
+  ([`233a301`](https://github.com/asermax/tachikoma/commit/233a301c69c182986178d3550b803a310ad26391))
+
+### Features
+
+- **messages**: Add target_session_id and external_id to envelope types
+  ([`db687d6`](https://github.com/asermax/tachikoma/commit/db687d6ec322f382fae0449409f5f2a4de44598f))
+
+- **sessions**: Add channel message ID tracking data layer
+  ([`ec5ad6d`](https://github.com/asermax/tachikoma/commit/ec5ad6dac5d52a3a32a0806f4be16b0c232ccb08))
+
+- **sessions**: Add target_session_id routing in coordinator
+  ([`23749bf`](https://github.com/asermax/tachikoma/commit/23749bfcd24ad65bd5bbef0d6355a9deda934009))
+
+- **telegram**: Add reaction session routing for idle-path reactions
+  ([`98cc51c`](https://github.com/asermax/tachikoma/commit/98cc51cb28bf99bc9e4e6ec9b251f3084c6dfb7f))
+
+- **telegram**: Capture incoming and outgoing message IDs
+  ([`3cf2233`](https://github.com/asermax/tachikoma/commit/3cf2233a3c0edba0c9ecd1a25b2cd8cb1073dc6e))
+
+### Refactoring
+
+- **sessions**: Extract _route_to_target_session from coordinator
+  ([`afc0689`](https://github.com/asermax/tachikoma/commit/afc0689eea6a8c8e51c065aaa1e158f69976743f))
+
+- **sessions**: Tighten ChannelMessage typing and drop id field
+  ([`efe2c7d`](https://github.com/asermax/tachikoma/commit/efe2c7d6fcaab5e3b7ab55f0b31e9841987fc092))
+
+### Testing
+
+- **sessions**: Add channel message tests for registry and repository
+  ([`3531b36`](https://github.com/asermax/tachikoma/commit/3531b3606bad07e14826b9149eedc1a99ea94c90))
+
+
 ## v1.91.0 (2026-05-25)
 
 ### Bug Fixes
