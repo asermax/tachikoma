@@ -2125,6 +2125,238 @@ class TestSessionTransition:
         registry.create_session.assert_awaited()
 
 
+class TestTargetSessionIdRouting:
+    """target_session_id short-circuit in coordinator.send_message()."""
+
+    async def _send_envelope(self, coord, envelope):
+        coord.enqueue(envelope)
+        return [e async for e in coord.send_message()]
+
+    async def test_target_differs_closes_and_reopens(self, mock_sdk) -> None:
+        """AC: target_session_id pointing to different session closes current and reopens target."""
+        client, _ = mock_sdk
+        client.receive_response.return_value = _mock_messages(
+            make_assistant([TextBlock(text="ok")]),
+            make_result(),
+        )
+
+        active = Session(
+            id="s1",
+            started_at=datetime.now(UTC),
+            sdk_session_id="sdk-s1",
+        )
+        target = Session(
+            id="s2",
+            started_at=datetime.now(UTC),
+            sdk_session_id="sdk-s2",
+        )
+        registry = _make_mock_registry(active_session=active)
+        registry.get_active_session.side_effect = [active, None]
+        registry.reopen_session.return_value = target
+
+        reaction = ReactionMessage(
+            added=frozenset({"👍"}),
+            removed=frozenset(),
+            target_session_id="s2",
+            external_id="42",
+        )
+
+        async with Coordinator(registry=registry) as coord:
+            events = await self._send_envelope(coord, reaction)
+
+        registry.close_session.assert_awaited_once_with("s1")
+        registry.reopen_session.assert_awaited_once_with("s2")
+        result_events = [e for e in events if isinstance(e, Result)]
+        assert len(result_events) == 1
+
+    async def test_target_is_current_noop(self, mock_sdk) -> None:
+        """AC: target_session_id matching current session is a no-op."""
+        client, _ = mock_sdk
+        client.receive_response.return_value = _mock_messages(
+            make_assistant([TextBlock(text="ok")]),
+            make_result(),
+        )
+
+        active = Session(
+            id="s1",
+            started_at=datetime.now(UTC),
+            sdk_session_id="sdk-s1",
+        )
+        registry = _make_mock_registry(active_session=active)
+        registry.get_active_session.side_effect = [active, None]
+
+        reaction = ReactionMessage(
+            added=frozenset({"👍"}),
+            removed=frozenset(),
+            target_session_id="s1",
+            external_id="42",
+        )
+
+        async with Coordinator(registry=registry) as coord:
+            events = await self._send_envelope(coord, reaction)
+
+        # No routing-specific close or reopen
+        registry.close_session.assert_not_awaited()
+        registry.reopen_session.assert_not_awaited()
+        result_events = [e for e in events if isinstance(e, Result)]
+        assert len(result_events) == 1
+
+    async def test_target_invalid_falls_back_to_fresh(self, mock_sdk) -> None:
+        """AC: target_session_id pointing to invalid session falls back to fresh session."""
+        client, _ = mock_sdk
+        client.receive_response.return_value = _mock_messages(
+            make_assistant([TextBlock(text="ok")]),
+            make_result(),
+        )
+
+        active = Session(
+            id="s1",
+            started_at=datetime.now(UTC),
+            sdk_session_id="sdk-s1",
+        )
+        registry = _make_mock_registry(active_session=active)
+        registry.get_active_session.side_effect = [active, None]
+        registry.reopen_session.return_value = None  # Reopen fails
+
+        reaction = ReactionMessage(
+            added=frozenset({"👍"}),
+            removed=frozenset(),
+            target_session_id="nonexistent",
+            external_id="42",
+        )
+
+        async with Coordinator(registry=registry) as coord:
+            events = await self._send_envelope(coord, reaction)
+
+        # Routing-specific close of current session
+        assert "s1" in [c.args[0] for c in registry.close_session.await_args_list]
+        registry.reopen_session.assert_awaited_once_with("nonexistent")
+        registry.create_session.assert_awaited()
+        result_events = [e for e in events if isinstance(e, Result)]
+        assert len(result_events) == 1
+
+    async def test_target_no_active_session_reopens(self, mock_sdk) -> None:
+        """AC: target_session_id with no active session reopens target after temp session."""
+        client, _ = mock_sdk
+        client.receive_response.return_value = _mock_messages(
+            make_assistant([TextBlock(text="ok")]),
+            make_result(),
+        )
+
+        target = Session(
+            id="s2",
+            started_at=datetime.now(UTC),
+            sdk_session_id="sdk-s2",
+        )
+        registry = _make_mock_registry(active_session=None)
+        registry.get_active_session.side_effect = [None, None]
+        registry.reopen_session.return_value = target
+
+        reaction = ReactionMessage(
+            added=frozenset({"👍"}),
+            removed=frozenset(),
+            target_session_id="s2",
+            external_id="42",
+        )
+
+        async with Coordinator(registry=registry) as coord:
+            events = await self._send_envelope(coord, reaction)
+
+        # Session creation creates temp session, then routing closes it and reopens target
+        registry.reopen_session.assert_awaited_once_with("s2")
+        result_events = [e for e in events if isinstance(e, Result)]
+        assert len(result_events) == 1
+
+    async def test_target_no_active_session_reopen_fails(self, mock_sdk) -> None:
+        """AC: target_session_id with no active session and failed reopen creates fresh."""
+        client, _ = mock_sdk
+        client.receive_response.return_value = _mock_messages(
+            make_assistant([TextBlock(text="ok")]),
+            make_result(),
+        )
+
+        registry = _make_mock_registry(active_session=None)
+        registry.get_active_session.side_effect = [None, None]
+        registry.reopen_session.return_value = None  # Reopen fails
+
+        reaction = ReactionMessage(
+            added=frozenset({"👍"}),
+            removed=frozenset(),
+            target_session_id="missing",
+            external_id="42",
+        )
+
+        async with Coordinator(registry=registry) as coord:
+            events = await self._send_envelope(coord, reaction)
+
+        registry.reopen_session.assert_awaited_once_with("missing")
+        # create_session called: once for initial, once as fallback after failed reopen
+        assert registry.create_session.await_count >= 1
+        result_events = [e for e in events if isinstance(e, Result)]
+        assert len(result_events) == 1
+
+    async def test_target_skips_boundary_detection(self, mock_sdk, mocker) -> None:
+        """AC: target_session_id set skips boundary detection entirely."""
+        client, _ = mock_sdk
+        client.receive_response.return_value = _mock_messages(
+            make_assistant([TextBlock(text="ok")]),
+            make_result(),
+        )
+
+        active = Session(
+            id="s1",
+            started_at=datetime.now(UTC),
+            summary="Previous topic",
+            sdk_session_id="sdk-s1",
+        )
+        target = Session(
+            id="s2",
+            started_at=datetime.now(UTC),
+            sdk_session_id="sdk-s2",
+        )
+        registry = _make_mock_registry(active_session=active)
+        registry.get_active_session.side_effect = [active, None]
+        registry.reopen_session.return_value = target
+
+        mock_boundary = mocker.patch("tachikoma.coordinator.detect_boundary")
+
+        reaction = ReactionMessage(
+            added=frozenset({"👍"}),
+            removed=frozenset(),
+            target_session_id="s2",
+            external_id="42",
+        )
+
+        async with Coordinator(
+            registry=registry,
+            agent_defaults=AgentDefaults(cwd=Path("/workspace")),
+        ) as coord:
+            await self._send_envelope(coord, reaction)
+
+        mock_boundary.assert_not_awaited()
+
+    async def test_target_without_registry_is_noop(self, mock_sdk) -> None:
+        """AC: target_session_id without registry is ignored gracefully."""
+        client, _ = mock_sdk
+        client.receive_response.return_value = _mock_messages(
+            make_assistant([TextBlock(text="ok")]),
+            make_result(),
+        )
+
+        reaction = ReactionMessage(
+            added=frozenset({"👍"}),
+            removed=frozenset(),
+            target_session_id="s2",
+            external_id="42",
+        )
+
+        async with Coordinator() as coord:
+            events = await self._send_envelope(coord, reaction)
+
+        result_events = [e for e in events if isinstance(e, Result)]
+        assert len(result_events) == 1
+
+
 class TestBuildOptions:
     """Tests for _build_options and resume/session continuity."""
 

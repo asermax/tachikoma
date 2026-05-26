@@ -489,6 +489,38 @@ class Coordinator:
                     # Session tracking failures are logged but never crash the conversation
                     _log.exception("Failed to create session: err={err}", err=str(exc))
 
+            # target_session_id routing: close current + reopen target
+            if msg.target_session_id is not None and self._registry is not None:
+                if active is not None:
+                    if active.id != msg.target_session_id:
+                        await self._close_and_fire_postprocessing(active)
+                        reopened = await self._registry.reopen_session(
+                            msg.target_session_id
+                        )
+                        if reopened is not None:
+                            self._set_sdk_session_id(reopened.sdk_session_id)
+                            active = reopened
+                            is_new_session = False
+                        else:
+                            _log.warning(
+                                "target_session_id reopen failed, creating fresh session"
+                            )
+                            self._clear_session_state()
+                            active = await self._registry.create_session()
+                            is_new_session = True
+                    # else: target is current session, no-op
+                else:
+                    reopened = await self._registry.reopen_session(
+                        msg.target_session_id
+                    )
+                    if reopened is not None:
+                        self._set_sdk_session_id(reopened.sdk_session_id)
+                        active = reopened
+                        is_new_session = False
+                    else:
+                        active = await self._registry.create_session()
+                        is_new_session = True
+
             # force_new routing: skip boundary detection and force fresh session
             if msg.force_new and active is not None:
                 _log.info("force_new: skipping boundary detection, transitioning session")
