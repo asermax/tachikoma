@@ -9,11 +9,16 @@ from tachikoma.message import TextMessage
 from tachikoma.telegram import TelegramChannel
 
 
-def _make_message(text: str, entities: list[MessageEntity] | None = None) -> MagicMock:
+def _make_message(
+    text: str,
+    entities: list[MessageEntity] | None = None,
+    message_id: int = 42,
+) -> MagicMock:
     """Build a mock aiogram Message with the given text and entities."""
     msg = MagicMock()
     msg.text = text
     msg.entities = entities
+    msg.message_id = message_id
     return msg
 
 
@@ -128,7 +133,9 @@ class TestHandleMessageRouting:
 
         await ch._handle_message(msg)
 
-        ch._coordinator.enqueue.assert_called_once_with(TextMessage(text="hello"))
+        ch._coordinator.enqueue.assert_called_once_with(
+            TextMessage(text="hello", external_id="42")
+        )
         ch._coordinator.enqueue_deferred.assert_not_called()
 
     async def test_busy_normal_message_enqueues_steering(self) -> None:
@@ -140,7 +147,9 @@ class TestHandleMessageRouting:
 
         await ch._handle_message(msg)
 
-        ch._coordinator.enqueue.assert_called_once_with(TextMessage(text="hello"))
+        ch._coordinator.enqueue.assert_called_once_with(
+            TextMessage(text="hello", external_id="42")
+        )
         ch._coordinator.enqueue_deferred.assert_not_called()
         ch._delivery_lock.release()
 
@@ -155,7 +164,7 @@ class TestHandleMessageRouting:
         await ch._handle_message(msg)
 
         ch._coordinator.enqueue.assert_called_once_with(
-            TextMessage(text="fresh start", force_new=True)
+            TextMessage(text="fresh start", force_new=True, external_id="42")
         )
         ch._coordinator.enqueue_deferred.assert_not_called()
 
@@ -168,7 +177,9 @@ class TestHandleMessageRouting:
         msg = _make_message("/queue something", [_make_entity("/queue")])
         await ch._handle_message(msg)
 
-        ch._coordinator.enqueue.assert_called_once_with(TextMessage(text="something"))
+        ch._coordinator.enqueue.assert_called_once_with(
+            TextMessage(text="something", external_id="42")
+        )
         ch._coordinator.enqueue_deferred.assert_not_called()
 
     async def test_busy_new_command_deferred(self) -> None:
@@ -180,7 +191,7 @@ class TestHandleMessageRouting:
         await ch._handle_message(msg)
 
         ch._coordinator.enqueue_deferred.assert_called_once_with(
-            TextMessage(text="fresh start", force_new=True)
+            TextMessage(text="fresh start", force_new=True, external_id="42")
         )
         ch._coordinator.enqueue.assert_not_called()
         ch._delivery_lock.release()
@@ -193,7 +204,9 @@ class TestHandleMessageRouting:
         msg = _make_message("/queue remind me", [_make_entity("/queue")])
         await ch._handle_message(msg)
 
-        ch._coordinator.enqueue_deferred.assert_called_once_with(TextMessage(text="remind me"))
+        ch._coordinator.enqueue_deferred.assert_called_once_with(
+            TextMessage(text="remind me", external_id="42")
+        )
         ch._coordinator.enqueue.assert_not_called()
         ch._delivery_lock.release()
 
@@ -206,7 +219,9 @@ class TestHandleMessageRouting:
         msg = _make_message("/new", [_make_entity("/new")])
         await ch._handle_message(msg)
 
-        ch._coordinator.enqueue.assert_called_once_with(TextMessage(text="/new"))
+        ch._coordinator.enqueue.assert_called_once_with(
+            TextMessage(text="/new", external_id="42")
+        )
 
     async def test_bare_new_when_busy_treated_as_normal(self) -> None:
         """/new (bare) when busy is steered as a normal message."""
@@ -216,7 +231,9 @@ class TestHandleMessageRouting:
         msg = _make_message("/new", [_make_entity("/new")])
         await ch._handle_message(msg)
 
-        ch._coordinator.enqueue.assert_called_once_with(TextMessage(text="/new"))
+        ch._coordinator.enqueue.assert_called_once_with(
+            TextMessage(text="/new", external_id="42")
+        )
         ch._coordinator.enqueue_deferred.assert_not_called()
         ch._delivery_lock.release()
 

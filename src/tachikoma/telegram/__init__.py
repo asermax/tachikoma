@@ -190,6 +190,22 @@ class ResponseRenderer:
         """Return the Telegram message ID of the last sent response, or None."""
         return self._current_message_id
 
+    def get_finalized_message_ids(self) -> list[int]:
+        """Return all message IDs from the finalized response.
+
+        Returns the main message ID plus any split message IDs.
+        Returns an empty list if no content was sent.
+        """
+        if self._current_message_id is None:
+            return []
+
+        ids: list[int] = []
+        if self._split_message_ids:
+            ids.extend(self._split_message_ids)
+        else:
+            ids.append(self._current_message_id)
+        return ids
+
     async def handle_status(self, message: str) -> None:
         """Handle a Status event by sending a transient status message.
 
@@ -836,9 +852,16 @@ class TelegramChannel(Channel):
 
         cmd_name, cmd_args = self._detect_command(message)
         incoming = (
-            TextMessage(text=cmd_args, force_new=(cmd_name == "new"))
+            TextMessage(
+                text=cmd_args,
+                force_new=(cmd_name == "new"),
+                external_id=str(message.message_id),
+            )
             if cmd_name is not None
-            else TextMessage(text=message.text.strip())
+            else TextMessage(
+                text=message.text.strip(),
+                external_id=str(message.message_id),
+            )
         )
 
         if self._delivery_lock.locked():
@@ -853,7 +876,34 @@ class TelegramChannel(Channel):
         async with self._delivery_lock:
             self._coordinator.enqueue(incoming)
             await self._process_through_coordinator()
+            await self._record_incoming_external_id(incoming.external_id)
             await self._drain_deferred_queue()
+
+    async def _record_incoming_external_id(self, external_id: str | None) -> None:
+        """Record an incoming message's external ID to the active session.
+
+        Best-effort: errors are logged, not raised. Skips when external_id
+        is None or the session registry is unavailable.
+        """
+        if external_id is None:
+            return
+
+        registry = self._coordinator._registry
+        if registry is None:
+            return
+
+        try:
+            active = await registry.get_active_session()
+            if active is not None:
+                await registry.record_channel_message(
+                    active.id, "telegram", "incoming", external_id
+                )
+        except Exception:
+            _log.warning(
+                "Failed to record incoming external ID (best-effort): eid={eid}",
+                eid=external_id,
+                exc_info=True,
+            )
 
     async def _drain_deferred_queue(self) -> None:
         """Process all deferred messages sequentially.
@@ -913,12 +963,17 @@ class TelegramChannel(Channel):
         # the full rationale.
         if self._delivery_lock.locked():
             _log.debug("Mid-stream steering media message")
-            self._coordinator.enqueue(TextMessage(text=description))
+            self._coordinator.enqueue(
+                TextMessage(text=description, external_id=str(message.message_id))
+            )
             return
 
         async with self._delivery_lock:
-            self._coordinator.enqueue(TextMessage(text=description))
+            self._coordinator.enqueue(
+                TextMessage(text=description, external_id=str(message.message_id))
+            )
             await self._process_through_coordinator()
+            await self._record_incoming_external_id(str(message.message_id))
 
     async def _handle_callback_query(self, callback: CallbackQuery) -> None:
         """Handle an inline button tap (CallbackQuery).
@@ -1123,6 +1178,28 @@ class TelegramChannel(Channel):
 
         return on_complete
 
+    async def _record_outgoing_ids(self, session_id: str, message_ids: list[int]) -> None:
+        """Record outgoing message IDs to the session's external ID table.
+
+        Best-effort: each ID is recorded independently so one failure
+        doesn't block the rest.
+        """
+        registry = self._coordinator._registry
+        if registry is None:
+            return
+
+        for mid in message_ids:
+            try:
+                await registry.record_channel_message(session_id, "telegram", "outgoing", str(mid))
+            except Exception:
+                _log.warning(
+                    "Failed to record outgoing external ID (best-effort): "
+                    "session_id={sid} eid={eid}",
+                    sid=session_id,
+                    eid=mid,
+                    exc_info=True,
+                )
+
     async def _process_through_coordinator(
         self,
         on_complete: Callable[[], Awaitable[None]] | None = None,
@@ -1140,6 +1217,16 @@ class TelegramChannel(Channel):
             is_pinned=self._is_pinned,
         )
 
+        # Capture session_id before processing for outgoing ID recording
+        session_id: str | None = None
+        registry = self._coordinator._registry
+        if registry is not None:
+            try:
+                active_session = await registry.get_active_session()
+                session_id = active_session.id if active_session else None
+            except Exception:
+                _log.debug("Failed to capture session_id for outgoing ID recording")
+
         try:
             async with ChatActionSender(bot=self._bot, chat_id=chat_id, action="typing"):
                 # Coordinator's re-queue loop handles leftover messages internally
@@ -1153,9 +1240,19 @@ class TelegramChannel(Channel):
                     elif isinstance(event, Error):
                         await self._active_renderer.handle_error(event)
                     elif isinstance(event, Result):
+                        # Capture outgoing IDs before reset
+                        outgoing_ids = self._active_renderer.get_finalized_message_ids()
                         await self._active_renderer.finalize()
                         await self._active_renderer.notify()
                         self._active_renderer.reset()
+
+                        # Record outgoing IDs asynchronously
+                        if session_id is not None and outgoing_ids:
+                            task = asyncio.create_task(
+                                self._record_outgoing_ids(session_id, outgoing_ids)
+                            )
+                            self._delivery_tasks.add(task)
+                            task.add_done_callback(self._delivery_tasks.discard)
 
             if on_complete is not None:
                 await on_complete()

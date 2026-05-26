@@ -1669,7 +1669,7 @@ class TestDeliveryLock:
         channel = self._make_channel()
         channel._process_through_coordinator = AsyncMock()
 
-        msg = MagicMock(text="hey")
+        msg = MagicMock(text="hey", message_id=99)
 
         await channel._delivery_lock.acquire()
         try:
@@ -1679,7 +1679,9 @@ class TestDeliveryLock:
         finally:
             channel._delivery_lock.release()
 
-        channel._coordinator.enqueue.assert_called_once_with(TextMessage(text="hey"))
+        channel._coordinator.enqueue.assert_called_once_with(
+            TextMessage(text="hey", external_id="99")
+        )
         channel._process_through_coordinator.assert_not_called()
 
     async def test_handle_media_steers_when_lock_held(self) -> None:
