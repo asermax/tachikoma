@@ -491,29 +491,9 @@ class Coordinator:
 
             # target_session_id routing: close current + reopen target
             if msg.target_session_id is not None and self._registry is not None:
-                if active is not None:
-                    if active.id != msg.target_session_id:
-                        await self._close_and_fire_postprocessing(active)
-                        reopened = await self._registry.reopen_session(msg.target_session_id)
-                        if reopened is not None:
-                            self._set_sdk_session_id(reopened.sdk_session_id)
-                            active = reopened
-                            is_new_session = False
-                        else:
-                            _log.warning("target_session_id reopen failed, creating fresh session")
-                            self._clear_session_state()
-                            active = await self._registry.create_session()
-                            is_new_session = True
-                    # else: target is current session, no-op
-                else:
-                    reopened = await self._registry.reopen_session(msg.target_session_id)
-                    if reopened is not None:
-                        self._set_sdk_session_id(reopened.sdk_session_id)
-                        active = reopened
-                        is_new_session = False
-                    else:
-                        active = await self._registry.create_session()
-                        is_new_session = True
+                active, is_new_session = await self._route_to_target_session(
+                    msg.target_session_id, active, is_new_session
+                )
 
             # force_new routing: skip boundary detection and force fresh session
             if msg.force_new and active is not None:
@@ -966,6 +946,31 @@ class Coordinator:
         """Reset coordinator state after a session close."""
         self._set_sdk_session_id(None)
         self._mcp_servers = {}
+
+    async def _route_to_target_session(
+        self, target_id: str, active: Session | None, is_new_session: bool
+    ) -> tuple[Session | None, bool]:
+        """Handle target_session_id routing: close current, reopen target.
+
+        When the target session is the current one, this is a no-op.
+        When reopen fails, falls back to a fresh session.
+
+        Returns the (possibly updated) active session and is_new_session flag.
+        """
+        if active is not None and active.id == target_id:
+            return active, is_new_session
+
+        if active is not None:
+            await self._close_and_fire_postprocessing(active)
+
+        reopened = await self._registry.reopen_session(target_id)  # type: ignore[union-attr]
+        if reopened is not None:
+            self._set_sdk_session_id(reopened.sdk_session_id)
+            return reopened, False
+
+        _log.warning("target_session_id reopen failed, creating fresh session")
+        self._clear_session_state()
+        return await self._registry.create_session(), True  # type: ignore[union-attr]
 
     async def _handle_transition(
         self, previous_session: Session, *, resume_session_id: str | None = None
