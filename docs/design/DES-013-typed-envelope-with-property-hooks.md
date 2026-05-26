@@ -176,6 +176,37 @@ def render_sdk_input(env: MessageEnvelope) -> str:
 - **Two kinds with one trivial difference and no expected growth**: a single dataclass with a discriminator may be lighter. Promote to this pattern when a third kind appears or when the discriminator branch shows up in 3+ consumers.
 - **Values that cross a serialization boundary**: if envelopes are persisted to disk or sent over the wire, the abstract-base form alone is not enough — a discriminator is required for deserialization. Use Pydantic with a discriminated union (or equivalent) and keep the hook-based interface on top.
 
+## Routing Fields
+
+When a routing or control instruction needs to be available on all message types, use a **dual declaration**: add a property hook on the base class returning a default (`None`), and add a dataclass field with the same name on each concrete subtype. The property hook provides uniform consumer access without `isinstance` checks; the dataclass field stores the actual value.
+
+This differs from behavioral hooks (`runs_pre_processing`, `runs_boundary_detection`) which are property-only on the base — routing fields are data that flows through the system, not control-flow predicates. It also differs from subtype-specific data (`external_id` on `TextMessage`/`ReactionMessage` only) which doesn't need a base-class property because only some subtypes carry it.
+
+```python
+class MessageEnvelope(ABC):
+    # Routing field — property hook on base + dataclass field on subtypes.
+    @property
+    def target_session_id(self) -> str | None:
+        return None
+
+@dataclass(frozen=True)
+class TextMessage(MessageEnvelope):
+    target_session_id: str | None = None  # stores the value
+
+@dataclass(frozen=True)
+class ButtonTapMessage(MessageEnvelope):
+    target_session_id: str | None = None  # stores the value
+```
+
+Consumer code reads the property uniformly:
+
+```python
+if envelope.target_session_id is not None:
+    await route_to_session(envelope.target_session_id)
+```
+
+See [DES-014](DES-014-generic-routing-fields-on-typed-envelopes.md) for the full pattern.
+
 ## Related
 
 - [DES-001](DES-001-testing-conventions.md): Test the hook contract on the base, parameterized across concrete subtypes.
