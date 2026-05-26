@@ -8,9 +8,10 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
+from sqlalchemy import text
 
 from tachikoma.database import Database
-from tachikoma.sessions.model import Session
+from tachikoma.sessions.model import ChannelMessage, Session
 from tachikoma.sessions.repository import SessionRepository
 
 
@@ -433,3 +434,86 @@ User prefers:
         assert len(entries) == 2
         assert entries[0].metadata == {"skill_name": "test"}
         assert entries[1].metadata is None
+
+
+class TestRepositoryChannelMessages:
+    """Integration tests for channel message persistence (R1)."""
+
+    async def test_save_and_lookup(self, repo: SessionRepository) -> None:
+        """AC: save_channel_message persists mapping; lookup_session retrieves it."""
+        session = _make_session("ch-test-1")
+        await repo.create(session)
+
+        msg = ChannelMessage(
+            id=0,
+            session_id="ch-test-1",
+            channel="telegram",
+            direction="incoming",
+            external_id="42",
+        )
+        await repo.save_channel_message(msg)
+
+        result = await repo.lookup_session("telegram", "42")
+        assert result == "ch-test-1"
+
+    async def test_lookup_returns_none_for_unknown(self, repo: SessionRepository) -> None:
+        """AC: lookup_session returns None when (channel, external_id) not found."""
+        result = await repo.lookup_session("telegram", "nonexistent")
+        assert result is None
+
+    async def test_duplicate_is_noop(self, repo: SessionRepository) -> None:
+        """AC: saving duplicate (channel, external_id) is a no-op (first wins)."""
+        session = _make_session("ch-test-2")
+        await repo.create(session)
+
+        msg1 = ChannelMessage(
+            id=0,
+            session_id="ch-test-2",
+            channel="telegram",
+            direction="incoming",
+            external_id="99",
+        )
+        await repo.save_channel_message(msg1)
+
+        # Same (channel, external_id) but different direction — should be ignored
+        msg2 = ChannelMessage(
+            id=0,
+            session_id="ch-test-2",
+            channel="telegram",
+            direction="outgoing",
+            external_id="99",
+        )
+        await repo.save_channel_message(msg2)
+
+        result = await repo.lookup_session("telegram", "99")
+        assert result == "ch-test-2"
+
+    async def test_cascade_delete_on_session_removal(self, repo: SessionRepository) -> None:
+        """AC: channel_messages rows removed when session deleted (CASCADE FK).
+
+        SQLite requires PRAGMA foreign_keys=ON for cascade deletes.
+        This test enables the pragma to verify the FK constraint works.
+        """
+        session = _make_session("ch-cascade")
+        await repo.create(session)
+
+        msg = ChannelMessage(
+            id=0,
+            session_id="ch-cascade",
+            channel="telegram",
+            direction="incoming",
+            external_id="55",
+        )
+        await repo.save_channel_message(msg)
+
+        # Verify mapping exists
+        assert await repo.lookup_session("telegram", "55") == "ch-cascade"
+
+        # Delete session with FK enforcement enabled
+        async with repo._session_factory() as db:
+            await db.execute(text("PRAGMA foreign_keys = ON"))
+            await db.execute(text("DELETE FROM sessions WHERE id = 'ch-cascade'"))
+            await db.commit()
+
+        result = await repo.lookup_session("telegram", "55")
+        assert result is None

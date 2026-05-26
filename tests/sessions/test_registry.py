@@ -711,3 +711,88 @@ class TestCandidateFiltering:
 
         assert len(results) == 1
         assert results[0].id == "s1"
+
+
+class TestRegistryChannelMessages:
+    """Tests for channel message facade methods (R1, R6)."""
+
+    async def test_record_channel_message_delegates_to_repo(
+        self, registry: SessionRegistry, mock_repo
+    ) -> None:
+        """AC: record_channel_message creates ChannelMessage and calls repo."""
+        session = _make_session("s1")
+        mock_repo.create.return_value = session
+        mock_repo.save_channel_message = AsyncMock()
+        await registry.create_session()
+
+        await registry.record_channel_message("s1", "telegram", "incoming", "42")
+
+        mock_repo.save_channel_message.assert_awaited_once()
+        msg = mock_repo.save_channel_message.call_args[0][0]
+        assert msg.session_id == "s1"
+        assert msg.channel == "telegram"
+        assert msg.direction == "incoming"
+        assert msg.external_id == "42"
+
+    async def test_record_channel_message_returns_early_no_active_session(
+        self, registry: SessionRegistry, mock_repo
+    ) -> None:
+        """AC: record_channel_message returns early when no active session."""
+        mock_repo.save_channel_message = AsyncMock()
+
+        await registry.record_channel_message("s1", "telegram", "incoming", "42")
+
+        mock_repo.save_channel_message.assert_not_awaited()
+
+    async def test_record_channel_message_logs_on_failure(
+        self, registry: SessionRegistry, mock_repo
+    ) -> None:
+        """AC: record_channel_message logs errors but does not raise."""
+        session = _make_session("s1")
+        mock_repo.create.return_value = session
+        mock_repo.save_channel_message = AsyncMock(side_effect=Exception("DB error"))
+        await registry.create_session()
+
+        await registry.record_channel_message("s1", "telegram", "incoming", "42")
+
+    async def test_find_session_delegates_to_repo(
+        self, registry: SessionRegistry, mock_repo
+    ) -> None:
+        """AC: find_session_by_external_id delegates to repo.lookup_session."""
+        mock_repo.lookup_session = AsyncMock(return_value="s1")
+
+        result = await registry.find_session_by_external_id("telegram", "42")
+
+        assert result == "s1"
+        mock_repo.lookup_session.assert_awaited_once_with("telegram", "42")
+
+    async def test_find_session_works_without_active_session(
+        self, registry: SessionRegistry, mock_repo
+    ) -> None:
+        """AC: find_session_by_external_id works without an active session."""
+        mock_repo.lookup_session = AsyncMock(return_value="s1")
+
+        result = await registry.find_session_by_external_id("telegram", "42")
+
+        assert result == "s1"
+        mock_repo.lookup_session.assert_awaited_once_with("telegram", "42")
+
+    async def test_find_session_returns_none_on_failure(
+        self, registry: SessionRegistry, mock_repo
+    ) -> None:
+        """AC: find_session_by_external_id logs errors and returns None."""
+        mock_repo.lookup_session = AsyncMock(side_effect=Exception("DB error"))
+
+        result = await registry.find_session_by_external_id("telegram", "42")
+
+        assert result is None
+
+    async def test_find_session_returns_none_when_not_found(
+        self, registry: SessionRegistry, mock_repo
+    ) -> None:
+        """AC: find_session_by_external_id returns None for unknown IDs."""
+        mock_repo.lookup_session = AsyncMock(return_value=None)
+
+        result = await registry.find_session_by_external_id("telegram", "999")
+
+        assert result is None
