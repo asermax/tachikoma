@@ -16,6 +16,7 @@ from tachikoma.database import Base
 from tachikoma.db_utils import ensure_utc
 
 SessionStatus = Literal["open", "closed", "interrupted"]
+MessageDirection = Literal["incoming", "outgoing"]
 
 
 @dataclass(frozen=True)
@@ -91,10 +92,9 @@ class ChannelMessage:
     conversation sessions, enabling reaction-based session routing.
     """
 
-    id: int
     session_id: str
     channel: str
-    direction: str
+    direction: MessageDirection
     external_id: str
 
 
@@ -218,7 +218,7 @@ class ChannelMessageRecord(Base):
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
     session_id: Mapped[str] = mapped_column(ForeignKey("sessions.id", ondelete="CASCADE"))
     channel: Mapped[str] = mapped_column()
-    direction: Mapped[str] = mapped_column()
+    direction: Mapped[MessageDirection] = mapped_column()
     external_id: Mapped[str] = mapped_column()
 
     __table_args__ = (
@@ -229,7 +229,6 @@ class ChannelMessageRecord(Base):
     def to_domain(self) -> ChannelMessage:
         """Convert ORM record to domain dataclass."""
         return ChannelMessage(
-            id=self.id,
             session_id=self.session_id,
             channel=self.channel,
             direction=self.direction,

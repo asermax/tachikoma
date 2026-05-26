@@ -399,16 +399,13 @@ class SessionRepository:
     # Channel messages
     # ------------------------------------------------------------------
 
-    async def save_channel_message(self, message: ChannelMessage) -> ChannelMessage:
+    async def save_channel_message(self, message: ChannelMessage) -> None:
         """Persist a channel message mapping. Duplicate (channel, external_id) is a no-op.
 
         Uses on_conflict_do_nothing on the unique index so the first recording wins.
 
         Args:
             message: The ChannelMessage to persist.
-
-        Returns:
-            The persisted ChannelMessage (with id set), or the existing one on conflict.
 
         Raises:
             SessionRepositoryError: If the save operation fails.
@@ -424,8 +421,6 @@ class SessionRepository:
                 stmt = stmt.on_conflict_do_nothing(index_elements=["channel", "external_id"])
                 await db.execute(stmt)
                 await db.commit()
-
-            return message
 
         except Exception as exc:
             raise SessionRepositoryError(

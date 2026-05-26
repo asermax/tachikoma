@@ -445,7 +445,6 @@ class TestRepositoryChannelMessages:
         await repo.create(session)
 
         msg = ChannelMessage(
-            id=0,
             session_id="ch-test-1",
             channel="telegram",
             direction="incoming",
@@ -467,7 +466,6 @@ class TestRepositoryChannelMessages:
         await repo.create(session)
 
         msg1 = ChannelMessage(
-            id=0,
             session_id="ch-test-2",
             channel="telegram",
             direction="incoming",
@@ -477,7 +475,6 @@ class TestRepositoryChannelMessages:
 
         # Same (channel, external_id) but different direction — should be ignored
         msg2 = ChannelMessage(
-            id=0,
             session_id="ch-test-2",
             channel="telegram",
             direction="outgoing",
@@ -498,7 +495,6 @@ class TestRepositoryChannelMessages:
         await repo.create(session)
 
         msg = ChannelMessage(
-            id=0,
             session_id="ch-cascade",
             channel="telegram",
             direction="incoming",

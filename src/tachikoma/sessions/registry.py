@@ -12,7 +12,13 @@ from pathlib import Path
 
 from loguru import logger
 
-from tachikoma.sessions.model import ChannelMessage, Session, SessionContextEntry, SessionResumption
+from tachikoma.sessions.model import (
+    ChannelMessage,
+    MessageDirection,
+    Session,
+    SessionContextEntry,
+    SessionResumption,
+)
 from tachikoma.sessions.repository import SessionRepository
 
 _log = logger.bind(component="sessions")
@@ -449,7 +455,7 @@ class SessionRegistry:
     # ------------------------------------------------------------------
 
     async def record_channel_message(
-        self, session_id: str, channel: str, direction: str, external_id: str
+        self, session_id: str, channel: str, direction: MessageDirection, external_id: str
     ) -> None:
         """Record a channel-specific message ID mapping to a session.
 
@@ -459,7 +465,7 @@ class SessionRegistry:
         Args:
             session_id: The session to associate the message with.
             channel: The channel identifier (e.g., "telegram").
-            direction: "incoming" or "outgoing".
+            direction: "incoming" or "outgoing" (MessageDirection).
             external_id: The platform-specific message ID.
         """
         if self._active_session is None:
@@ -472,7 +478,6 @@ class SessionRegistry:
 
         try:
             message = ChannelMessage(
-                id=0,
                 session_id=session_id,
                 channel=channel,
                 direction=direction,
