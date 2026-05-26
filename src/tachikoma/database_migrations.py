@@ -50,6 +50,11 @@ MIGRATIONS: list[Migration] = [
         "add_cgroup_fields_to_detached_processes",
         "migrations/002_add_cgroup_fields_to_detached_processes.sql",
     ),
+    Migration(
+        "003",
+        "create_channel_messages",
+        "migrations/003_create_channel_messages.sql",
+    ),
 ]
 
 

@@ -502,7 +502,8 @@ class SessionRegistry:
         """Look up the session_id for a (channel, external_id) pair.
 
         Best-effort: failures are logged and None is returned.
-        Returns early with a warning if no active session.
+        Unlike record_channel_message, this does not require an active session
+        since it is a pure lookup that does not depend on session state.
 
         Args:
             channel: The channel identifier (e.g., "telegram").
@@ -511,15 +512,6 @@ class SessionRegistry:
         Returns:
             The session_id if found, or None.
         """
-        if self._active_session is None:
-            _log.warning(
-                "Cannot find session by external ID: no active session "
-                "channel={ch} external_id={eid}",
-                ch=channel,
-                eid=external_id,
-            )
-            return None
-
         try:
             return await self._repository.lookup_session(channel, external_id)
         except Exception as exc:
