@@ -40,6 +40,9 @@ A persistent registry of conversation sessions that tracks when conversations st
 | R21 | When the SDK returns a UTF-8 encoding error (e.g. surrogates in its internal transcript), mark the session as errored — this excludes it from resumable candidates and makes the error recoverable |
 | R22 | Context entries support an optional metadata field (JSON dict) for structured data that varies by entry type — existing entries without metadata continue to work normally |
 | R23 | Each session tracks the last assistant response (`last_exchange`), updated by the per-message pipeline after each exchange; nullable — null until first exchange processed; filters to text after the last tool call when tools are used; falls back to full response when no text follows the last tool call |
+| R24 | Store channel-specific message IDs per session in a `channel_messages` database table with columns: `session_id` (FK to sessions, ON DELETE CASCADE), `channel` (string identifying the source channel — canonical values: "telegram", "repl"), `direction` ("incoming" or "outgoing"), `external_id` (string, the platform-specific ID); unique index on `(channel, external_id)` makes duplicate recording a no-op (insert-or-ignore) |
+| R25 | Registry exposes `record_channel_message(session_id, channel, direction, external_id)` (best-effort, logs on failure, returns early when no active session exists) and `find_session_by_external_id(channel, external_id) -> str | None` (best-effort, returns session_id or None) |
+| R26 | Before boundary detection, when a message envelope carries `target_session_id`, close the current session (triggering async post-processing) and reopen the target session; if reopen fails (validation failure, already open), fall back to fresh session creation |
 
 ## Behaviors
 
@@ -194,6 +197,32 @@ When the SDK encounters a UTF-8 encoding error in its internal conversation tran
 - Given the SDK returns an encoding error (e.g. "surrogates not allowed"), when the coordinator detects it, then the session's `error` flag is set to True and the in-memory SDK session ID is cleared
 - Given a session with `error=True`, when `get_recent_closed()` queries candidates, then it is excluded from resumable candidates
 - Given a session with `error=True`, when its status is queried, then it reports "interrupted" regardless of other fields
+
+### Channel Message Storage (R24, R25)
+
+Channel-specific message IDs are stored in a `channel_messages` table mapping platform message IDs to internal sessions. Both incoming (user) and outgoing (agent) message IDs are recorded.
+
+**Acceptance Criteria**:
+- Given a `channel_messages` table, when created, then it has columns: `id` (integer PK, auto-increment), `session_id` (text FK to `sessions.id`, ON DELETE CASCADE), `channel` (text), `direction` (text, "incoming" or "outgoing"), `external_id` (text)
+- Given a `channel_messages` table, when created, then it has a unique index on `(channel, external_id)` for fast lookup and deduplication
+- Given a `channel_messages` table, when created, then it has an index on `session_id` for session-scoped queries
+- Given a session is deleted from the `sessions` table, when the delete commits, then all associated `channel_messages` rows are automatically deleted (cascade)
+- Given a duplicate `(channel, external_id)` pair is recorded, when `record_channel_message` is called, then the insert is a no-op (insert-or-ignore via unique constraint)
+- Given `record_channel_message` is called, when no active session exists, then the method returns early with a warning log
+- Given `find_session_by_external_id` is called with an existing mapping, when the lookup succeeds, then the corresponding `session_id` is returned
+- Given `find_session_by_external_id` is called with an unknown mapping, when the lookup returns no result, then `None` is returned
+- Given `find_session_by_external_id` is called when no active session exists, then the method returns early with a warning log
+- Given a recording or lookup fails due to a database error, when the error occurs, then it is logged and the operation completes gracefully (best-effort, consistent with R9)
+
+### Session Switching via External ID (R26)
+
+When a message envelope carries `target_session_id`, the coordinator short-circuits boundary detection and routes to the named target session directly.
+
+**Acceptance Criteria**:
+- Given a message with `target_session_id` pointing to a session other than the current active session, when the coordinator processes it, then the current session is closed (with async post-processing) and the target session is reopened before the message is processed
+- Given a message with `target_session_id` pointing to the current active session, when the coordinator processes it, then no session switching occurs and the message is processed normally
+- Given a message with `target_session_id` pointing to a session that fails resumption validation (missing transcript, too old, already open), when the reopen fails, then a fresh session is created as fallback with a warning log
+- Given a message with `target_session_id` but no active session exists, when the coordinator processes it, then it attempts to reopen the target session directly; if reopen fails, a fresh session is created
 
 ### Graceful Degradation (R9)
 
