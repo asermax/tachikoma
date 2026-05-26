@@ -59,6 +59,7 @@ def _make_reaction_event(
     *,
     chat_id: int = 123,
     user_id: int = 123,
+    message_id: int = 42,
     old_reaction: list | None = None,
     new_reaction: list | None = None,
 ) -> MagicMock:
@@ -73,6 +74,7 @@ def _make_reaction_event(
     user.id = user_id
     event.user = user
 
+    event.message_id = message_id
     event.old_reaction = old_reaction or []
     event.new_reaction = new_reaction or []
 
@@ -328,3 +330,185 @@ class TestReactionAllowedUpdates:
 
         kwargs = mock_poll.call_args.kwargs
         assert "message_reaction" not in kwargs["allowed_updates"]
+
+
+def _make_channel_with_registry(
+    *,
+    authorized_chat_id: int = 123,
+    active_session_id: str = "session-current",
+    lookup_result: str | None = None,
+) -> tuple[TelegramChannel, MagicMock]:
+    """Build a TelegramChannel with a mocked registry on the coordinator."""
+    coordinator = MagicMock()
+    coordinator.has_deferred = False
+
+    registry = AsyncMock()
+    registry.get_active_session.return_value = MagicMock(id=active_session_id)
+    registry.find_session_by_external_id.return_value = lookup_result
+    coordinator._registry = registry
+
+    settings = MagicMock()
+    settings.bot_token = "123456:ABCdef"
+    settings.authorized_chat_id = authorized_chat_id
+    settings.push_notifications = False
+    settings.inbound_reactions = True
+
+    with patch("tachikoma.telegram.Bot"):
+        channel = TelegramChannel(settings, workspace_path=Path("/tmp/test-workspace"))
+        channel._TelegramChannel__coordinator = coordinator
+
+    channel._bot = MagicMock()
+    channel._process_through_coordinator = AsyncMock()
+    channel._drain_deferred_queue = AsyncMock()
+    return channel, registry
+
+
+class TestReactionSessionRouting:
+    """R4/R6: Reaction handler looks up external ID and routes accordingly."""
+
+    async def test_different_session_defers_with_target(self) -> None:
+        """R4: Reaction on message from different session defers with target_session_id."""
+        channel, registry = _make_channel_with_registry(
+            lookup_result="session-past",
+        )
+
+        event = _make_reaction_event(
+            message_id=99,
+            new_reaction=[_make_emoji("👍")],
+        )
+        await channel._handle_reaction(event)
+
+        # Should call enqueue_deferred, not enqueue
+        channel._coordinator.enqueue_deferred.assert_called_once()
+        channel._coordinator.enqueue.assert_not_called()
+
+        envelope = channel._coordinator.enqueue_deferred.call_args[0][0]
+        assert isinstance(envelope, ReactionMessage)
+        assert envelope.target_session_id == "session-past"
+        assert envelope.external_id == "99"
+        assert envelope.added == frozenset({"👍"})
+
+        # Verify lookup was called with correct args
+        registry.find_session_by_external_id.assert_called_once_with("telegram", "99")
+
+    async def test_same_session_routes_normally(self) -> None:
+        """R4: Reaction on message from current session routes normally."""
+        channel, registry = _make_channel_with_registry(
+            active_session_id="session-current",
+            lookup_result="session-current",
+        )
+
+        event = _make_reaction_event(
+            message_id=50,
+            new_reaction=[_make_emoji("👍")],
+        )
+        await channel._handle_reaction(event)
+
+        channel._coordinator.enqueue.assert_called_once()
+        channel._coordinator.enqueue_deferred.assert_not_called()
+
+        envelope = channel._coordinator.enqueue.call_args[0][0]
+        assert isinstance(envelope, ReactionMessage)
+        assert envelope.target_session_id is None
+
+    async def test_unknown_external_id_routes_normally(self) -> None:
+        """R6: Unknown external ID routes to current session."""
+        channel, registry = _make_channel_with_registry(
+            lookup_result=None,
+        )
+
+        event = _make_reaction_event(
+            message_id=999,
+            new_reaction=[_make_emoji("👍")],
+        )
+        await channel._handle_reaction(event)
+
+        channel._coordinator.enqueue.assert_called_once()
+        channel._coordinator.enqueue_deferred.assert_not_called()
+
+        envelope = channel._coordinator.enqueue.call_args[0][0]
+        assert envelope.target_session_id is None
+
+    async def test_no_registry_routes_normally(self) -> None:
+        """R6: No registry available — graceful degradation."""
+        channel = _make_channel()
+        channel._coordinator._registry = None
+        channel._process_through_coordinator = AsyncMock()
+        channel._drain_deferred_queue = AsyncMock()
+
+        event = _make_reaction_event(
+            message_id=42,
+            new_reaction=[_make_emoji("👍")],
+        )
+        await channel._handle_reaction(event)
+
+        channel._coordinator.enqueue.assert_called_once()
+        envelope = channel._coordinator.enqueue.call_args[0][0]
+        assert envelope.target_session_id is None
+        assert envelope.external_id == "42"
+
+    async def test_lookup_failure_routes_normally(self) -> None:
+        """R6: Registry lookup raises — graceful degradation."""
+        channel, registry = _make_channel_with_registry()
+        registry.find_session_by_external_id.side_effect = RuntimeError("db error")
+
+        event = _make_reaction_event(
+            message_id=42,
+            new_reaction=[_make_emoji("👍")],
+        )
+        await channel._handle_reaction(event)
+
+        channel._coordinator.enqueue.assert_called_once()
+        envelope = channel._coordinator.enqueue.call_args[0][0]
+        assert envelope.target_session_id is None
+
+    async def test_busy_reaction_steers_without_session_switch(self) -> None:
+        """R4 AC: Mid-stream reaction steers into current session, no session switch."""
+        channel, registry = _make_channel_with_registry(
+            lookup_result="session-past",
+        )
+
+        await channel._delivery_lock.acquire()
+        try:
+            event = _make_reaction_event(
+                message_id=99,
+                new_reaction=[_make_emoji("👍")],
+            )
+            await asyncio.wait_for(channel._handle_reaction(event), timeout=0.05)
+        finally:
+            channel._delivery_lock.release()
+
+        channel._coordinator.enqueue.assert_called_once()
+        channel._coordinator.enqueue_deferred.assert_not_called()
+
+        envelope = channel._coordinator.enqueue.call_args[0][0]
+        assert envelope.target_session_id is None
+        assert envelope.external_id == "99"
+
+    async def test_external_id_set_on_envelope(self) -> None:
+        """R2/R3: external_id is set to str(event.message_id)."""
+        channel, _ = _make_channel_with_registry(lookup_result=None)
+
+        event = _make_reaction_event(
+            message_id=123,
+            new_reaction=[_make_emoji("👍")],
+        )
+        await channel._handle_reaction(event)
+
+        envelope = channel._coordinator.enqueue.call_args[0][0]
+        assert envelope.external_id == "123"
+
+    async def test_no_active_session_routes_normally(self) -> None:
+        """R6: Lookup returns a target but no active session — no switch."""
+        channel, registry = _make_channel_with_registry()
+        registry.get_active_session.return_value = None
+
+        event = _make_reaction_event(
+            message_id=42,
+            new_reaction=[_make_emoji("👍")],
+        )
+        await channel._handle_reaction(event)
+
+        channel._coordinator.enqueue.assert_called_once()
+        envelope = channel._coordinator.enqueue.call_args[0][0]
+        assert envelope.target_session_id is None

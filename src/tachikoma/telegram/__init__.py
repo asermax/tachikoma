@@ -15,6 +15,7 @@ import termios
 import time
 import tty
 from collections.abc import Awaitable, Callable, Sequence
+from dataclasses import replace
 from os.path import basename
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -1029,6 +1030,10 @@ class TelegramChannel(Channel):
 
         Filters emoji-only entries from old/new reactions, computes the diff,
         and routes through the same lock branching as other handlers.
+
+        When the reacted-to message maps to a different session and the
+        channel is idle, the reaction is deferred with target_session_id set
+        for session-switching routing (DES-009, R4).
         """
         new_emojis = _emoji_set(event.new_reaction)
         old_emojis = _emoji_set(event.old_reaction)
@@ -1039,15 +1044,44 @@ class TelegramChannel(Channel):
             _log.debug("Reaction update with no interpretable change; dropping")
             return
 
-        envelope = ReactionMessage(added=added, removed=removed)
+        envelope = ReactionMessage(
+            added=added, removed=removed, external_id=str(event.message_id)
+        )
 
+        # Mid-stream: steer into current session (DES-009, R4 AC)
         if self._delivery_lock.locked():
             _log.debug("Mid-stream steering reaction")
             self._coordinator.enqueue(envelope)
             return
 
+        # Idle path: check if reaction maps to a different session
+        target_session_id = None
+        registry = self._coordinator._registry
+        if registry is not None:
+            try:
+                target_id = await registry.find_session_by_external_id(
+                    "telegram", str(event.message_id)
+                )
+                active = await registry.get_active_session()
+                if target_id is not None and active is not None and target_id != active.id:
+                    target_session_id = target_id
+                    _log.debug(
+                        "Reaction maps to different session: target={target}",
+                        target=target_id,
+                    )
+            except Exception:
+                _log.exception("Session lookup for reaction failed (best-effort)")
+
         async with self._delivery_lock:
-            self._coordinator.enqueue(envelope)
+            if target_session_id is not None:
+                envelope = replace(envelope, target_session_id=target_session_id)
+                _log.debug(
+                    "Deferring reaction for session switch: target={target}",
+                    target=target_session_id,
+                )
+                self._coordinator.enqueue_deferred(envelope)
+            else:
+                self._coordinator.enqueue(envelope)
             await self._process_through_coordinator()
             await self._drain_deferred_queue()
 
