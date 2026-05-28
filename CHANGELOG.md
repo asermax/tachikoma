@@ -2,6 +2,90 @@
 
 <!-- version list -->
 
+## v1.93.0 (2026-05-28)
+
+### Bug Fixes
+
+- **tests**: Add shared _make_mock_coordinator to prevent infinite loops
+  ([`0c3d285`](https://github.com/asermax/tachikoma/commit/0c3d2857d84813f88639a1e723fb8e93c4e9a99b))
+
+### Code Style
+
+- **tests**: Fix import ordering in telegram test files
+  ([`2856f7c`](https://github.com/asermax/tachikoma/commit/2856f7cf7d71073252ad6f6e60a2f160e521ad6b))
+
+### Documentation
+
+- Reconcile DLT-086 reply-to session routing into feature docs
+  ([`c62aa4c`](https://github.com/asermax/tachikoma/commit/c62aa4cd2eaabce373b65042665b3899b82246e9))
+
+- **deltas**: Complete design phase for DLT-086
+  ([`48be89e`](https://github.com/asermax/tachikoma/commit/48be89e2b5825ee9bd8499edae82935ce339f62a))
+
+- **deltas**: Mark batch 2 complete for DLT-086
+  ([`5fb8c5e`](https://github.com/asermax/tachikoma/commit/5fb8c5e5364390276cc8f6bb38e8dc5df2ebb9f3))
+
+- **deltas**: Mark batch 3 complete for DLT-086
+  ([`0d1bed3`](https://github.com/asermax/tachikoma/commit/0d1bed326eb1d3e9434c5b1ef619af8bc5631cc0))
+
+- **deltas**: Mark DLT-086 implementation complete
+  ([`6b27cfa`](https://github.com/asermax/tachikoma/commit/6b27cfadf1d8b3bd05b7b9edeed9a88489521599))
+
+- **deltas**: Start design phase for DLT-086
+  ([`32255ce`](https://github.com/asermax/tachikoma/commit/32255ce38b966b0a0dd800b72d04d7398a750978))
+
+- **deltas**: Start implementation phase for DLT-086
+  ([`50e9387`](https://github.com/asermax/tachikoma/commit/50e9387e35212c3eebd014f4388e8736e699e423))
+
+- **deltas**: Start plan phase for DLT-086
+  ([`10b86b6`](https://github.com/asermax/tachikoma/commit/10b86b69adaf7e5d5e202993e5e8aabfd98213d9))
+
+- **deltas**: Start spec phase for DLT-086
+  ([`4061a2e`](https://github.com/asermax/tachikoma/commit/4061a2ed0ce92bfa6a1430599db4c978952a7cc8))
+
+- **designs**: Add DLT-086 design rationale
+  ([`ba4f1a5`](https://github.com/asermax/tachikoma/commit/ba4f1a59350846c835e92e1526d07bce7229a41d))
+
+- **designs**: Expand DLT-086 design with data flows, scenarios, and validation detail
+  ([`df70ff2`](https://github.com/asermax/tachikoma/commit/df70ff2649e39f7beca36566a593ad1bda2892e1))
+
+- **plans**: Add implementation plan for DLT-086
+  ([`7c02bec`](https://github.com/asermax/tachikoma/commit/7c02bec53437a01a54ccba87f2f7d567f84c9302))
+
+- **specs**: Add delta spec for manual session switching via Telegram reply
+  ([`9279b01`](https://github.com/asermax/tachikoma/commit/9279b01bfab516417da3ec44b3305ceb18090510))
+
+- **specs**: Finalize DLT-086 spec with reply-to precedence rule
+  ([`a67ff8a`](https://github.com/asermax/tachikoma/commit/a67ff8a601b67e326ee4b16e26a80c47785dc2f3))
+
+- **specs**: Refine DLT-086 failed-resume path and media coverage
+  ([`e1c2df5`](https://github.com/asermax/tachikoma/commit/e1c2df50a4b6743caca794dc9028f1d2299c4253))
+
+### Features
+
+- **sessions**: Add can_reopen_session validation method
+  ([`d5740f9`](https://github.com/asermax/tachikoma/commit/d5740f954e0d8356bfdfb17de2c419ebd13c96aa))
+
+- **sessions**: Pre-validate target session before closing current
+  ([`190db5b`](https://github.com/asermax/tachikoma/commit/190db5bfa264416d0cb6ff6bd98af29d89648b3c))
+
+### Refactoring
+
+- **sessions**: Extract shared reopen validation helper
+  ([`c805d4b`](https://github.com/asermax/tachikoma/commit/c805d4b36a113329b17cbf03c8de1049d869d25f))
+
+- **telegram**: Reuse _resolve_reply_target for reaction routing
+  ([`6522d1f`](https://github.com/asermax/tachikoma/commit/6522d1f51ab8903624ba3f63692e4d37f7cb71fa))
+
+- **tests**: Extract shared mock helpers to conftest
+  ([`04757a1`](https://github.com/asermax/tachikoma/commit/04757a1d3a8bf4bd844afc7345bbba87eb1c2b9a))
+
+### Testing
+
+- **coordinator**: Remove stale session routing tests
+  ([`512d4a7`](https://github.com/asermax/tachikoma/commit/512d4a7fd9ff3ed615f651bf35d5bc08dad08959))
+
+
 ## v1.92.0 (2026-05-26)
 
 ### Bug Fixes
