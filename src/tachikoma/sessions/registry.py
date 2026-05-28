@@ -191,6 +191,43 @@ class SessionRegistry:
         """Return the currently active session, or None if no session is open."""
         return self._active_session
 
+    async def _validate_reopen_preconditions(self, session_id: str) -> Session | None:
+        """Check all reopen preconditions, returning the session if valid."""
+        session = await self._repository.get_by_id(session_id)
+        if session is None:
+            _log.warning("Cannot reopen session: not found session_id={id}", id=session_id)
+            return None
+
+        if session.transcript_path is None:
+            _log.warning("Cannot reopen session: no transcript_path session_id={id}", id=session_id)
+            return None
+
+        if not Path(session.transcript_path).exists():
+            _log.warning(
+                "Cannot reopen session: transcript not exists locally session_id={id} path={path}",
+                id=session_id,
+                path=session.transcript_path,
+            )
+            return None
+
+        if datetime.now(UTC) - session.started_at > self._max_session_age:
+            _log.warning(
+                "Cannot reopen session: too old session_id={id} started_at={ts}",
+                id=session_id,
+                ts=session.started_at.isoformat(),
+            )
+            return None
+
+        if session.ended_at is None:
+            _log.warning("Cannot reopen session: already open session_id={id}", id=session_id)
+            return None
+
+        if self._active_session is not None and self._active_session.id == session_id:
+            _log.warning("Cannot reopen session: already active session_id={id}", id=session_id)
+            return None
+
+        return session
+
     async def reopen_session(self, session_id: str) -> Session | None:
         """Reopen a closed session for resumption.
 
@@ -203,54 +240,8 @@ class SessionRegistry:
         Returns:
             The reopened Session, or None if validation failed.
         """
-        # Fetch the session
-        session = await self._repository.get_by_id(session_id)
+        session = await self._validate_reopen_preconditions(session_id)
         if session is None:
-            _log.warning(
-                "Cannot reopen session: not found session_id={id}",
-                id=session_id,
-            )
-            return None
-
-        # Validate transcript path exists
-        if session.transcript_path is None:
-            _log.warning(
-                "Cannot reopen session: no transcript_path session_id={id}",
-                id=session_id,
-            )
-            return None
-
-        if not Path(session.transcript_path).exists():
-            _log.warning(
-                "Cannot reopen session: transcript not exists locally session_id={id} path={path}",
-                id=session_id,
-                path=session.transcript_path,
-            )
-            return None
-
-        # Validate session age
-        if datetime.now(UTC) - session.started_at > self._max_session_age:
-            _log.warning(
-                "Cannot reopen session: too old session_id={id} started_at={ts}",
-                id=session_id,
-                ts=session.started_at.isoformat(),
-            )
-            return None
-
-        # Validate it's closed
-        if session.ended_at is None:
-            _log.warning(
-                "Cannot reopen session: already open session_id={id}",
-                id=session_id,
-            )
-            return None
-
-        # Validate it's not already active (edge case)
-        if self._active_session is not None and self._active_session.id == session_id:
-            _log.warning(
-                "Cannot reopen session: already active session_id={id}",
-                id=session_id,
-            )
             return None
 
         now = datetime.now(UTC)
@@ -277,37 +268,11 @@ class SessionRegistry:
     async def can_reopen_session(self, session_id: str) -> bool:
         """Check whether a session can be reopened, without side effects.
 
-        Validates the same preconditions as ``reopen_session`` (exists,
-        transcript_path set, transcript file exists locally, within
-        max_session_age, closed, not already active) but performs no
-        state changes.
-
-        Args:
-            session_id: The ID of the session to validate.
-
-        Returns:
-            True if the session passes all preconditions, False otherwise.
+        Validates the same preconditions as ``reopen_session`` but performs
+        no state changes. Returns True if the session passes all checks.
         """
         try:
-            session = await self._repository.get_by_id(session_id)
-            if session is None:
-                return False
-
-            if session.transcript_path is None:
-                return False
-
-            if not Path(session.transcript_path).exists():
-                return False
-
-            if datetime.now(UTC) - session.started_at > self._max_session_age:
-                return False
-
-            if session.ended_at is None:
-                return False
-
-            return not (
-                self._active_session is not None and self._active_session.id == session_id
-            )
+            return await self._validate_reopen_preconditions(session_id) is not None
         except Exception as exc:
             _log.warning(
                 "can_reopen_session error: session_id={id} err={err}",
