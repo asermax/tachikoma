@@ -859,15 +859,17 @@ class TelegramChannel(Channel):
         """Look up whether a replied-to message maps to a different session.
 
         Returns target_session_id if the reply maps to a different session,
-        None otherwise. Mirrors reaction handler session lookup pattern.
+        None otherwise. Used by message, media, and reaction handlers.
         """
         registry = self._coordinator._registry
         if registry is None:
             return None
         try:
             target_id = await registry.find_session_by_external_id("telegram", reply_to_id)
+            if target_id is None:
+                return None
             active = await registry.get_active_session()
-            if target_id is not None and active is not None and target_id != active.id:
+            if active is not None and target_id != active.id:
                 return target_id
         except Exception:
             _log.exception("Session lookup for reply-to failed (best-effort)")
@@ -881,13 +883,11 @@ class TelegramChannel(Channel):
 
         cmd_name, cmd_args = self._detect_command(message)
 
-        # Reply-to detection: extract and resolve target session
         reply_target = self._extract_reply_target(message)
         target_session_id: str | None = None
         if reply_target is not None:
             target_session_id = await self._resolve_reply_target(reply_target)
 
-        # Build envelope — reply-to overrides force_new (S5)
         if cmd_name is not None:
             incoming = TextMessage(
                 text=cmd_args,
@@ -1008,7 +1008,6 @@ class TelegramChannel(Channel):
             message.caption,
         )
 
-        # Reply-to detection
         reply_target = self._extract_reply_target(message)
         target_session_id: str | None = None
         if reply_target is not None:
@@ -1126,22 +1125,12 @@ class TelegramChannel(Channel):
             return
 
         # Idle path: check if reaction maps to a different session
-        target_session_id = None
-        registry = self._coordinator._registry
-        if registry is not None:
-            try:
-                target_id = await registry.find_session_by_external_id(
-                    "telegram", str(event.message_id)
-                )
-                active = await registry.get_active_session()
-                if target_id is not None and active is not None and target_id != active.id:
-                    target_session_id = target_id
-                    _log.debug(
-                        "Reaction maps to different session: target={target}",
-                        target=target_id,
-                    )
-            except Exception:
-                _log.exception("Session lookup for reaction failed (best-effort)")
+        target_session_id = await self._resolve_reply_target(str(event.message_id))
+        if target_session_id is not None:
+            _log.debug(
+                "Reaction maps to different session: target={target}",
+                target=target_session_id,
+            )
 
         async with self._delivery_lock:
             if target_session_id is not None:
