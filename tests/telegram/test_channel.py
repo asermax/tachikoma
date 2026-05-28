@@ -10,6 +10,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from aiogram.exceptions import TelegramAPIError, TelegramBadRequest, TelegramRetryAfter
+from conftest import _make_mock_coordinator
 
 from tachikoma.buffer.events import BufferedDelivery
 from tachikoma.events import Error, Result, ToolActivity
@@ -21,8 +22,6 @@ from tachikoma.telegram import (
     TelegramChannel,
     code_wrap,
 )
-
-from conftest import _make_mock_coordinator
 
 
 class MockMessage:

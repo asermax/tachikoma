@@ -4,11 +4,10 @@ from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
 from aiogram.types import MessageEntity
+from conftest import _make_mock_coordinator
 
 from tachikoma.message import TextMessage
 from tachikoma.telegram import TelegramChannel
-
-from conftest import _make_mock_coordinator
 
 
 def _make_message(

@@ -9,11 +9,10 @@ from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from aiogram.exceptions import TelegramAPIError, TelegramBadRequest
+from conftest import _make_mock_coordinator
 
 from tachikoma.message import ButtonTapMessage
 from tachikoma.telegram import TelegramChannel
-
-from conftest import _make_mock_coordinator
 
 
 def _make_channel(authorized_chat_id: int = 123) -> TelegramChannel:

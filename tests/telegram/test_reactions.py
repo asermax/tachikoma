@@ -10,11 +10,10 @@ from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from aiogram.types import ReactionTypeCustomEmoji, ReactionTypeEmoji, ReactionTypePaid
+from conftest import _make_mock_coordinator
 
 from tachikoma.message import ReactionMessage
 from tachikoma.telegram import TelegramChannel, _emoji_set
-
-from conftest import _make_mock_coordinator
 
 
 def _make_channel(
