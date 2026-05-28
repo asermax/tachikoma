@@ -2229,9 +2229,10 @@ class TestTargetSessionIdRouting:
         async with Coordinator(registry=registry) as coord:
             events = await self._send_envelope(coord, reaction)
 
-        # No routing-specific close or reopen
+        # No routing-specific close, reopen, or fresh session
         registry.close_session.assert_not_awaited()
         registry.reopen_session.assert_not_awaited()
+        registry.create_session.assert_not_awaited()
         # Status event yielded
         status_events = [e for e in events if isinstance(e, Status)]
         assert len(status_events) == 1
@@ -2362,77 +2363,6 @@ class TestTargetSessionIdRouting:
         async with Coordinator() as coord:
             events = await self._send_envelope(coord, reaction)
 
-        result_events = [e for e in events if isinstance(e, Result)]
-        assert len(result_events) == 1
-
-    async def test_target_stale_session_no_close(self, mock_sdk) -> None:
-        """AC: can_reopen_session returns False does NOT close current session."""
-        client, _ = mock_sdk
-        client.receive_response.return_value = _mock_messages(
-            make_assistant([TextBlock(text="ok")]),
-            make_result(),
-        )
-
-        active = Session(
-            id="s1",
-            started_at=datetime.now(UTC),
-            sdk_session_id="sdk-s1",
-        )
-        registry = _make_mock_registry(active_session=active)
-        registry.get_active_session.side_effect = [active, None]
-        registry.can_reopen_session.return_value = False
-
-        reaction = ReactionMessage(
-            added=frozenset({"👍"}),
-            removed=frozenset(),
-            target_session_id="stale-session",
-            external_id="42",
-        )
-
-        async with Coordinator(registry=registry) as coord:
-            events = await self._send_envelope(coord, reaction)
-
-        # No routing-specific close, reopen, or fresh session
-        registry.close_session.assert_not_awaited()
-        registry.reopen_session.assert_not_awaited()
-        registry.create_session.assert_not_awaited()
-        # Message processed in preserved current session
-        result_events = [e for e in events if isinstance(e, Result)]
-        assert len(result_events) == 1
-
-    async def test_reaction_to_stale_session_yields_status(self, mock_sdk) -> None:
-        """AC: ReactionMessage targeting stale session yields Status instead of silent fallback."""
-        client, _ = mock_sdk
-        client.receive_response.return_value = _mock_messages(
-            make_assistant([TextBlock(text="ok")]),
-            make_result(),
-        )
-
-        active = Session(
-            id="s1",
-            started_at=datetime.now(UTC),
-            sdk_session_id="sdk-s1",
-        )
-        registry = _make_mock_registry(active_session=active)
-        registry.get_active_session.side_effect = [active, None]
-        registry.can_reopen_session.return_value = False
-
-        reaction = ReactionMessage(
-            added=frozenset({"👍"}),
-            removed=frozenset(),
-            target_session_id="old-session",
-            external_id="42",
-        )
-
-        async with Coordinator(registry=registry) as coord:
-            events = await self._send_envelope(coord, reaction)
-
-        # Status event yielded for stale target
-        status_events = [e for e in events if isinstance(e, Status)]
-        assert len(status_events) == 1
-        assert "Could not resume" in status_events[0].message
-        # Current session preserved
-        registry.close_session.assert_not_awaited()
         result_events = [e for e in events if isinstance(e, Result)]
         assert len(result_events) == 1
 
