@@ -491,9 +491,16 @@ class Coordinator:
 
             # target_session_id routing: close current + reopen target
             if msg.target_session_id is not None and self._registry is not None:
-                active, is_new_session = await self._route_to_target_session(
+                active, is_new_session, routed = await self._route_to_target_session(
                     msg.target_session_id, active, is_new_session
                 )
+                if not routed:
+                    yield Status(
+                        message=(
+                            "Could not resume that conversation"
+                            " — its context is no longer available."
+                        )
+                    )
 
             # force_new routing: skip boundary detection and force fresh session
             if msg.force_new and active is not None:
@@ -949,16 +956,23 @@ class Coordinator:
 
     async def _route_to_target_session(
         self, target_id: str, active: Session | None, is_new_session: bool
-    ) -> tuple[Session | None, bool]:
-        """Handle target_session_id routing: close current, reopen target.
+    ) -> tuple[Session | None, bool, bool]:
+        """Handle target_session_id routing: validate target, close current, reopen target.
 
         When the target session is the current one, this is a no-op.
-        When reopen fails, falls back to a fresh session.
+        Pre-validates the target before closing the current session.
+        When pre-validation fails, returns False and preserves current session.
+        When reopen fails (race condition after validation passed), falls back to fresh session.
 
-        Returns the (possibly updated) active session and is_new_session flag.
+        Returns (active, is_new_session, routed_successfully).
         """
         if active is not None and active.id == target_id:
-            return active, is_new_session
+            return active, is_new_session, True
+
+        # Pre-validate target before closing current session
+        if not await self._registry.can_reopen_session(target_id):  # type: ignore[union-attr]
+            _log.warning("target_session_id validation failed, preserving current session")
+            return active, is_new_session, False
 
         if active is not None:
             await self._close_and_fire_postprocessing(active)
@@ -966,11 +980,11 @@ class Coordinator:
         reopened = await self._registry.reopen_session(target_id)  # type: ignore[union-attr]
         if reopened is not None:
             self._set_sdk_session_id(reopened.sdk_session_id)
-            return reopened, False
+            return reopened, False, True
 
         _log.warning("target_session_id reopen failed, creating fresh session")
         self._clear_session_state()
-        return await self._registry.create_session(), True  # type: ignore[union-attr]
+        return await self._registry.create_session(), True, True  # type: ignore[union-attr]
 
     async def _handle_transition(
         self, previous_session: Session, *, resume_session_id: str | None = None

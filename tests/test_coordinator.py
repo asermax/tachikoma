@@ -394,6 +394,7 @@ def _make_mock_registry(active_session=None):
     registry.update_metadata = AsyncMock()
     registry.get_recent_closed = AsyncMock(return_value=[])
     registry.reopen_session = AsyncMock(return_value=None)
+    registry.can_reopen_session = AsyncMock(return_value=True)
     registry.save_context_entries = AsyncMock(return_value=[])
     registry.load_context_entries = AsyncMock(return_value=[])
     registry.mark_processed = AsyncMock()
@@ -2201,8 +2202,8 @@ class TestTargetSessionIdRouting:
         result_events = [e for e in events if isinstance(e, Result)]
         assert len(result_events) == 1
 
-    async def test_target_invalid_falls_back_to_fresh(self, mock_sdk) -> None:
-        """AC: target_session_id pointing to invalid session falls back to fresh session."""
+    async def test_target_stale_session_yields_status_preserves_current(self, mock_sdk) -> None:
+        """AC: stale target_session_id yields Status and preserves current session."""
         client, _ = mock_sdk
         client.receive_response.return_value = _mock_messages(
             make_assistant([TextBlock(text="ok")]),
@@ -2216,22 +2217,26 @@ class TestTargetSessionIdRouting:
         )
         registry = _make_mock_registry(active_session=active)
         registry.get_active_session.side_effect = [active, None]
-        registry.reopen_session.return_value = None  # Reopen fails
+        registry.can_reopen_session.return_value = False  # Validation fails
 
         reaction = ReactionMessage(
             added=frozenset({"👍"}),
             removed=frozenset(),
-            target_session_id="nonexistent",
+            target_session_id="stale-session",
             external_id="42",
         )
 
         async with Coordinator(registry=registry) as coord:
             events = await self._send_envelope(coord, reaction)
 
-        # Routing-specific close of current session
-        assert "s1" in [c.args[0] for c in registry.close_session.await_args_list]
-        registry.reopen_session.assert_awaited_once_with("nonexistent")
-        registry.create_session.assert_awaited()
+        # No routing-specific close or reopen
+        registry.close_session.assert_not_awaited()
+        registry.reopen_session.assert_not_awaited()
+        # Status event yielded
+        status_events = [e for e in events if isinstance(e, Status)]
+        assert len(status_events) == 1
+        assert "Could not resume" in status_events[0].message
+        # Message still processed in current session
         result_events = [e for e in events if isinstance(e, Result)]
         assert len(result_events) == 1
 
@@ -2268,7 +2273,7 @@ class TestTargetSessionIdRouting:
         assert len(result_events) == 1
 
     async def test_target_no_active_session_reopen_fails(self, mock_sdk) -> None:
-        """AC: target_session_id with no active session and failed reopen creates fresh."""
+        """AC: target_session_id with no active session and failed validation yields Status."""
         client, _ = mock_sdk
         client.receive_response.return_value = _mock_messages(
             make_assistant([TextBlock(text="ok")]),
@@ -2277,7 +2282,7 @@ class TestTargetSessionIdRouting:
 
         registry = _make_mock_registry(active_session=None)
         registry.get_active_session.side_effect = [None, None]
-        registry.reopen_session.return_value = None  # Reopen fails
+        registry.can_reopen_session.return_value = False  # Validation fails
 
         reaction = ReactionMessage(
             added=frozenset({"👍"}),
@@ -2289,9 +2294,13 @@ class TestTargetSessionIdRouting:
         async with Coordinator(registry=registry) as coord:
             events = await self._send_envelope(coord, reaction)
 
-        registry.reopen_session.assert_awaited_once_with("missing")
-        # create_session called: once for initial, once as fallback after failed reopen
-        assert registry.create_session.await_count >= 1
+        # No reopen attempted
+        registry.reopen_session.assert_not_awaited()
+        # Status event yielded
+        status_events = [e for e in events if isinstance(e, Status)]
+        assert len(status_events) == 1
+        assert "Could not resume" in status_events[0].message
+        # Message still processed in fresh session
         result_events = [e for e in events if isinstance(e, Result)]
         assert len(result_events) == 1
 
@@ -2353,6 +2362,77 @@ class TestTargetSessionIdRouting:
         async with Coordinator() as coord:
             events = await self._send_envelope(coord, reaction)
 
+        result_events = [e for e in events if isinstance(e, Result)]
+        assert len(result_events) == 1
+
+    async def test_target_stale_session_no_close(self, mock_sdk) -> None:
+        """AC: can_reopen_session returns False does NOT close current session."""
+        client, _ = mock_sdk
+        client.receive_response.return_value = _mock_messages(
+            make_assistant([TextBlock(text="ok")]),
+            make_result(),
+        )
+
+        active = Session(
+            id="s1",
+            started_at=datetime.now(UTC),
+            sdk_session_id="sdk-s1",
+        )
+        registry = _make_mock_registry(active_session=active)
+        registry.get_active_session.side_effect = [active, None]
+        registry.can_reopen_session.return_value = False
+
+        reaction = ReactionMessage(
+            added=frozenset({"👍"}),
+            removed=frozenset(),
+            target_session_id="stale-session",
+            external_id="42",
+        )
+
+        async with Coordinator(registry=registry) as coord:
+            events = await self._send_envelope(coord, reaction)
+
+        # No routing-specific close, reopen, or fresh session
+        registry.close_session.assert_not_awaited()
+        registry.reopen_session.assert_not_awaited()
+        registry.create_session.assert_not_awaited()
+        # Message processed in preserved current session
+        result_events = [e for e in events if isinstance(e, Result)]
+        assert len(result_events) == 1
+
+    async def test_reaction_to_stale_session_yields_status(self, mock_sdk) -> None:
+        """AC: ReactionMessage targeting stale session yields Status instead of silent fallback."""
+        client, _ = mock_sdk
+        client.receive_response.return_value = _mock_messages(
+            make_assistant([TextBlock(text="ok")]),
+            make_result(),
+        )
+
+        active = Session(
+            id="s1",
+            started_at=datetime.now(UTC),
+            sdk_session_id="sdk-s1",
+        )
+        registry = _make_mock_registry(active_session=active)
+        registry.get_active_session.side_effect = [active, None]
+        registry.can_reopen_session.return_value = False
+
+        reaction = ReactionMessage(
+            added=frozenset({"👍"}),
+            removed=frozenset(),
+            target_session_id="old-session",
+            external_id="42",
+        )
+
+        async with Coordinator(registry=registry) as coord:
+            events = await self._send_envelope(coord, reaction)
+
+        # Status event yielded for stale target
+        status_events = [e for e in events if isinstance(e, Status)]
+        assert len(status_events) == 1
+        assert "Could not resume" in status_events[0].message
+        # Current session preserved
+        registry.close_session.assert_not_awaited()
         result_events = [e for e in events if isinstance(e, Result)]
         assert len(result_events) == 1
 
