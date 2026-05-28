@@ -845,6 +845,34 @@ class TelegramChannel(Channel):
 
         return None, text
 
+    def _extract_reply_target(self, message: Message) -> str | None:
+        """Extract the replied-to message ID if present.
+
+        Returns str(message.reply_to_message.message_id) when the
+        message is a reply, None otherwise.
+        """
+        if message.reply_to_message is not None:
+            return str(message.reply_to_message.message_id)
+        return None
+
+    async def _resolve_reply_target(self, reply_to_id: str) -> str | None:
+        """Look up whether a replied-to message maps to a different session.
+
+        Returns target_session_id if the reply maps to a different session,
+        None otherwise. Mirrors reaction handler session lookup pattern.
+        """
+        registry = self._coordinator._registry
+        if registry is None:
+            return None
+        try:
+            target_id = await registry.find_session_by_external_id("telegram", reply_to_id)
+            active = await registry.get_active_session()
+            if target_id is not None and active is not None and target_id != active.id:
+                return target_id
+        except Exception:
+            _log.exception("Session lookup for reply-to failed (best-effort)")
+        return None
+
     async def _handle_message(self, message: Message) -> None:
         """Handle an incoming message from the authorized user."""
         if not message.text or not message.text.strip():
@@ -852,21 +880,36 @@ class TelegramChannel(Channel):
             return
 
         cmd_name, cmd_args = self._detect_command(message)
-        incoming = (
-            TextMessage(
+
+        # Reply-to detection: extract and resolve target session
+        reply_target = self._extract_reply_target(message)
+        target_session_id: str | None = None
+        if reply_target is not None:
+            target_session_id = await self._resolve_reply_target(reply_target)
+
+        # Build envelope — reply-to overrides force_new (S5)
+        if cmd_name is not None:
+            incoming = TextMessage(
                 text=cmd_args,
-                force_new=(cmd_name == "new"),
+                force_new=False if target_session_id else (cmd_name == "new"),
                 external_id=str(message.message_id),
+                target_session_id=target_session_id,
             )
-            if cmd_name is not None
-            else TextMessage(
+        else:
+            incoming = TextMessage(
                 text=message.text.strip(),
                 external_id=str(message.message_id),
+                target_session_id=target_session_id,
             )
-        )
 
         if self._delivery_lock.locked():
-            if cmd_name is not None:
+            if target_session_id is not None:
+                _log.debug(
+                    "Deferring reply-to targeting different session: target={target}",
+                    target=target_session_id,
+                )
+                self._coordinator.enqueue_deferred(incoming)
+            elif cmd_name is not None:
                 _log.debug("Deferring command: /{cmd}", cmd=cmd_name)
                 self._coordinator.enqueue_deferred(incoming)
             else:
@@ -875,7 +918,14 @@ class TelegramChannel(Channel):
             return
 
         async with self._delivery_lock:
-            self._coordinator.enqueue(incoming)
+            if target_session_id is not None:
+                _log.debug(
+                    "Deferring reply-to for session switch: target={target}",
+                    target=target_session_id,
+                )
+                self._coordinator.enqueue_deferred(incoming)
+            else:
+                self._coordinator.enqueue(incoming)
             await self._process_through_coordinator()
             await self._record_incoming_external_id(incoming.external_id)
             await self._drain_deferred_queue()
@@ -958,23 +1008,46 @@ class TelegramChannel(Channel):
             message.caption,
         )
 
+        # Reply-to detection
+        reply_target = self._extract_reply_target(message)
+        target_session_id: str | None = None
+        if reply_target is not None:
+            target_session_id = await self._resolve_reply_target(reply_target)
+
+        envelope = TextMessage(
+            text=description,
+            external_id=str(message.message_id),
+            target_session_id=target_session_id,
+        )
+
         # Mid-exchange (any phase): enqueue-only so the coordinator's forwarder
         # routes this onto the live sdk_inbox as a steering message rather than
         # blocking on the lock and becoming a new turn. See _handle_message for
         # the full rationale.
         if self._delivery_lock.locked():
-            _log.debug("Mid-stream steering media message")
-            self._coordinator.enqueue(
-                TextMessage(text=description, external_id=str(message.message_id))
-            )
+            if target_session_id is not None:
+                _log.debug(
+                    "Deferring media reply-to targeting different session: target={target}",
+                    target=target_session_id,
+                )
+                self._coordinator.enqueue_deferred(envelope)
+            else:
+                _log.debug("Mid-stream steering media message")
+                self._coordinator.enqueue(envelope)
             return
 
         async with self._delivery_lock:
-            self._coordinator.enqueue(
-                TextMessage(text=description, external_id=str(message.message_id))
-            )
+            if target_session_id is not None:
+                _log.debug(
+                    "Deferring media reply-to for session switch: target={target}",
+                    target=target_session_id,
+                )
+                self._coordinator.enqueue_deferred(envelope)
+            else:
+                self._coordinator.enqueue(envelope)
             await self._process_through_coordinator()
-            await self._record_incoming_external_id(str(message.message_id))
+            await self._record_incoming_external_id(envelope.external_id)
+            await self._drain_deferred_queue()
 
     async def _handle_callback_query(self, callback: CallbackQuery) -> None:
         """Handle an inline button tap (CallbackQuery).
@@ -1044,9 +1117,7 @@ class TelegramChannel(Channel):
             _log.debug("Reaction update with no interpretable change; dropping")
             return
 
-        envelope = ReactionMessage(
-            added=added, removed=removed, external_id=str(event.message_id)
-        )
+        envelope = ReactionMessage(added=added, removed=removed, external_id=str(event.message_id))
 
         # Mid-stream: steer into current session (DES-009, R4 AC)
         if self._delivery_lock.locked():

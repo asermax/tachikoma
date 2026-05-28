@@ -8,6 +8,8 @@ from aiogram.types import MessageEntity
 from tachikoma.message import TextMessage
 from tachikoma.telegram import TelegramChannel
 
+from conftest import _make_mock_coordinator
+
 
 def _make_message(
     text: str,
@@ -37,10 +39,9 @@ def _make_telegram_channel() -> TelegramChannel:
     channel = TelegramChannel(settings, workspace_path=Path("/tmp/test"))
     channel._bot = MagicMock()
     channel._bot.set_my_commands = AsyncMock()
-    coordinator = MagicMock()
+    coordinator = _make_mock_coordinator()
     coordinator.enqueue = MagicMock()
     coordinator.enqueue_deferred = MagicMock()
-    coordinator.has_deferred = False
     coordinator.promote_next_deferred = MagicMock()
     channel._TelegramChannel__coordinator = coordinator
     return channel

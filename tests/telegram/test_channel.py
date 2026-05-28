@@ -22,6 +22,8 @@ from tachikoma.telegram import (
     code_wrap,
 )
 
+from conftest import _make_mock_coordinator
+
 
 class MockMessage:
     """Mock aiogram Message with message_id."""
@@ -904,8 +906,7 @@ class TestTelegramChannelStdinShutdown:
         loop.remove_reader = MagicMock()
 
         with patch("asyncio.get_running_loop", return_value=loop):
-            coordinator = MagicMock()
-            coordinator.has_deferred = False
+            coordinator = _make_mock_coordinator()
             await channel.run(coordinator)
 
         # Simulate 'q' keypress via the captured callback
@@ -946,8 +947,7 @@ class TestTelegramChannelStdinShutdown:
         loop.remove_reader = MagicMock()
 
         with patch("asyncio.get_running_loop", return_value=loop):
-            coordinator = MagicMock()
-            coordinator.has_deferred = False
+            coordinator = _make_mock_coordinator()
             await channel.run(coordinator)
 
         assert captured_callback is not None
@@ -987,8 +987,7 @@ class TestTelegramChannelStdinShutdown:
         loop.remove_reader = MagicMock()
 
         with patch("asyncio.get_running_loop", return_value=loop):
-            coordinator = MagicMock()
-            coordinator.has_deferred = False
+            coordinator = _make_mock_coordinator()
             await channel.run(coordinator)
 
         assert captured_callback is not None
@@ -1018,8 +1017,7 @@ class TestTelegramChannelStdinShutdown:
         loop.remove_reader = MagicMock()
 
         with patch("asyncio.get_running_loop", return_value=loop):
-            coordinator = MagicMock()
-            coordinator.has_deferred = False
+            coordinator = _make_mock_coordinator()
             await channel.run(coordinator)
 
         loop.add_reader.assert_not_called()
@@ -1051,8 +1049,7 @@ class TestTelegramChannelStdinShutdown:
         loop.add_reader = MagicMock()
 
         with patch("asyncio.get_running_loop", return_value=loop):
-            coordinator = MagicMock()
-            coordinator.has_deferred = False
+            coordinator = _make_mock_coordinator()
             await channel.run(coordinator)
 
         # Terminal settings restored
@@ -1091,8 +1088,7 @@ class TestTelegramChannelStdinShutdown:
         loop.remove_reader = MagicMock()
 
         with patch("asyncio.get_running_loop", return_value=loop):
-            coordinator = MagicMock()
-            coordinator.has_deferred = False
+            coordinator = _make_mock_coordinator()
             await channel.run(coordinator)
 
         assert captured_callback is not None
@@ -1159,7 +1155,7 @@ class TestProcessThroughCoordinatorDrain:
         bot.send_message = AsyncMock(return_value=MockMessage(message_id=1))
         bot.edit_message_text = AsyncMock()
 
-        coordinator = MagicMock()
+        coordinator = _make_mock_coordinator()
         coordinator.has_pending_messages = True
 
         send_call_count = 0
@@ -1191,7 +1187,7 @@ class TestProcessThroughCoordinatorDrain:
         bot.send_message = AsyncMock(return_value=MockMessage(message_id=1))
         bot.edit_message_text = AsyncMock()
 
-        coordinator = MagicMock()
+        coordinator = _make_mock_coordinator()
         coordinator.has_pending_messages = True
 
         async def _multi_exchange_send_message():
@@ -1432,7 +1428,7 @@ class TestResponseRendererSanitization:
         """Top-level exception handler sanitizes surrogates in error message."""
         bot = MagicMock()
         bot.send_message = AsyncMock(return_value=MockMessage())
-        coordinator = MagicMock()
+        coordinator = _make_mock_coordinator()
         coordinator.has_pending_messages = True
 
         settings = MagicMock()
@@ -1466,7 +1462,7 @@ class TestHandleMedia:
 
     def _make_channel(self) -> TelegramChannel:
         """Build a TelegramChannel with mocked dependencies."""
-        coordinator = MagicMock()
+        coordinator = _make_mock_coordinator()
         settings = MagicMock()
         settings.bot_token = "123456:ABCdef"
         settings.authorized_chat_id = 123
@@ -1613,8 +1609,7 @@ class TestDeliveryLock:
     """R2 / KD-5: entry points serialize via _delivery_lock."""
 
     def _make_channel(self) -> TelegramChannel:
-        coordinator = MagicMock()
-        coordinator.has_deferred = False
+        coordinator = _make_mock_coordinator()
         settings = MagicMock()
         settings.bot_token = "123456:ABCdef"
         settings.authorized_chat_id = 123
@@ -1780,8 +1775,7 @@ class TestTelegramChannelBufferFlush:
         loop.remove_signal_handler = MagicMock()
 
         with patch("asyncio.get_running_loop", return_value=loop):
-            coordinator = MagicMock()
-            coordinator.has_deferred = False
+            coordinator = _make_mock_coordinator()
             await channel.run(coordinator)
 
         buffer.flush_on_shutdown.assert_awaited_once()
@@ -1819,8 +1813,7 @@ class TestTelegramChannelBufferFlush:
         loop.remove_signal_handler = MagicMock()
 
         with patch("asyncio.get_running_loop", return_value=loop):
-            coordinator = MagicMock()
-            coordinator.has_deferred = False
+            coordinator = _make_mock_coordinator()
             await channel.run(coordinator)
 
     async def test_second_signal_during_flush_force_exits(self) -> None:
@@ -1837,7 +1830,7 @@ class TestTelegramChannelBufferFlush:
 
         buffer.flush_on_shutdown = _slow_flush
 
-        coordinator = MagicMock()
+        coordinator = _make_mock_coordinator()
         coordinator.interrupt = AsyncMock()
 
         channel = TelegramChannel(
@@ -1879,3 +1872,395 @@ class TestTelegramChannelBufferFlush:
         finally:
             loop.add_signal_handler = original_add  # type: ignore[method-assign]
             loop.remove_signal_handler = original_remove  # type: ignore[method-assign]
+
+
+# ---------------------------------------------------------------------------
+# Reply-to routing tests (DLT-086, Batch 3)
+# ---------------------------------------------------------------------------
+
+
+def _make_reply_channel(
+    *,
+    authorized_chat_id: int = 123,
+    active_session_id: str = "session-current",
+    lookup_result: str | None = None,
+) -> tuple[TelegramChannel, MagicMock]:
+    """Build a TelegramChannel with mocked registry for reply-to tests."""
+    coordinator = _make_mock_coordinator()
+
+    registry = AsyncMock()
+    registry.get_active_session.return_value = MagicMock(id=active_session_id)
+    registry.find_session_by_external_id.return_value = lookup_result
+    coordinator._registry = registry
+
+    settings = MagicMock()
+    settings.bot_token = "123456:ABCdef"
+    settings.authorized_chat_id = authorized_chat_id
+    settings.push_notifications = False
+
+    with patch("tachikoma.telegram.Bot"):
+        channel = TelegramChannel(settings, workspace_path=Path("/tmp/test-workspace"))
+        channel._TelegramChannel__coordinator = coordinator
+
+    channel._bot = MagicMock()
+    channel._process_through_coordinator = AsyncMock()
+    channel._drain_deferred_queue = AsyncMock()
+    return channel, registry
+
+
+def _make_message(
+    *,
+    text: str = "hello",
+    message_id: int = 100,
+    reply_to_message_id: int | None = None,
+) -> MagicMock:
+    """Build a mock aiogram Message."""
+    msg = MagicMock()
+    msg.text = text
+    msg.message_id = message_id
+    msg.entities = None
+
+    if reply_to_message_id is not None:
+        reply = MagicMock()
+        reply.message_id = reply_to_message_id
+        msg.reply_to_message = reply
+    else:
+        msg.reply_to_message = None
+
+    return msg
+
+
+class TestExtractReplyTarget:
+    """R1: _extract_reply_target extracts reply_to_message.message_id."""
+
+    def test_returns_str_id_when_reply_to_set(self) -> None:
+        channel, _ = _make_reply_channel()
+        msg = _make_message(reply_to_message_id=42)
+        assert channel._extract_reply_target(msg) == "42"
+
+    def test_returns_none_when_no_reply(self) -> None:
+        channel, _ = _make_reply_channel()
+        msg = _make_message()
+        assert channel._extract_reply_target(msg) is None
+
+
+class TestResolveReplyTarget:
+    """R3: _resolve_reply_target looks up session and compares to active."""
+
+    async def test_returns_target_when_different_session(self) -> None:
+        channel, registry = _make_reply_channel(
+            active_session_id="session-current",
+            lookup_result="session-past",
+        )
+        result = await channel._resolve_reply_target("42")
+        assert result == "session-past"
+        registry.find_session_by_external_id.assert_called_once_with("telegram", "42")
+
+    async def test_returns_none_when_same_session(self) -> None:
+        channel, registry = _make_reply_channel(
+            active_session_id="session-current",
+            lookup_result="session-current",
+        )
+        result = await channel._resolve_reply_target("42")
+        assert result is None
+
+    async def test_returns_none_when_lookup_returns_none(self) -> None:
+        channel, registry = _make_reply_channel(lookup_result=None)
+        result = await channel._resolve_reply_target("42")
+        assert result is None
+
+    async def test_returns_none_on_registry_error(self) -> None:
+        channel, registry = _make_reply_channel()
+        registry.find_session_by_external_id.side_effect = RuntimeError("db error")
+        result = await channel._resolve_reply_target("42")
+        assert result is None
+
+    async def test_returns_none_when_no_registry(self) -> None:
+        channel, _ = _make_reply_channel()
+        channel._coordinator._registry = None
+        result = await channel._resolve_reply_target("42")
+        assert result is None
+
+    async def test_returns_none_when_no_active_session(self) -> None:
+        channel, registry = _make_reply_channel()
+        registry.get_active_session.return_value = None
+        result = await channel._resolve_reply_target("42")
+        assert result is None
+
+
+class TestReplyToRouting:
+    """R4-R9: Reply-to routing in _handle_message and _handle_media."""
+
+    async def test_reply_different_session_sets_target_session_id(self) -> None:
+        """R4: Reply to different session sets target_session_id on envelope."""
+        channel, registry = _make_reply_channel(
+            lookup_result="session-past",
+        )
+        msg = _make_message(reply_to_message_id=42)
+
+        await channel._handle_message(msg)
+
+        channel._coordinator.enqueue_deferred.assert_called_once()
+        channel._coordinator.enqueue.assert_not_called()
+
+        envelope = channel._coordinator.enqueue_deferred.call_args[0][0]
+        assert isinstance(envelope, TextMessage)
+        assert envelope.target_session_id == "session-past"
+        assert envelope.external_id == "100"
+
+        registry.find_session_by_external_id.assert_called_once_with("telegram", "42")
+
+    async def test_reply_same_session_routes_normally(self) -> None:
+        """R5: Reply to current session routes normally, no target_session_id."""
+        channel, registry = _make_reply_channel(
+            active_session_id="session-current",
+            lookup_result="session-current",
+        )
+        msg = _make_message(reply_to_message_id=42)
+
+        await channel._handle_message(msg)
+
+        channel._coordinator.enqueue.assert_called_once()
+        channel._coordinator.enqueue_deferred.assert_not_called()
+
+        envelope = channel._coordinator.enqueue.call_args[0][0]
+        assert envelope.target_session_id is None
+
+    async def test_reply_unknown_message_routes_normally(self) -> None:
+        """R6: Reply to unknown message routes through boundary detection."""
+        channel, registry = _make_reply_channel(lookup_result=None)
+        msg = _make_message(reply_to_message_id=999)
+
+        await channel._handle_message(msg)
+
+        channel._coordinator.enqueue.assert_called_once()
+        channel._coordinator.enqueue_deferred.assert_not_called()
+
+        envelope = channel._coordinator.enqueue.call_args[0][0]
+        assert envelope.target_session_id is None
+
+    async def test_busy_reply_different_session_deferred(self) -> None:
+        """R8: Busy + different session → enqueue_deferred with target_session_id."""
+        channel, registry = _make_reply_channel(
+            lookup_result="session-past",
+        )
+        msg = _make_message(reply_to_message_id=42)
+
+        await channel._delivery_lock.acquire()
+        try:
+            await asyncio.wait_for(channel._handle_message(msg), timeout=0.05)
+        finally:
+            channel._delivery_lock.release()
+
+        channel._coordinator.enqueue_deferred.assert_called_once()
+        channel._coordinator.enqueue.assert_not_called()
+
+        envelope = channel._coordinator.enqueue_deferred.call_args[0][0]
+        assert envelope.target_session_id == "session-past"
+
+    async def test_busy_reply_same_session_steers(self) -> None:
+        """R9: Busy + same session → enqueue (steering)."""
+        channel, registry = _make_reply_channel(
+            active_session_id="session-current",
+            lookup_result="session-current",
+        )
+        msg = _make_message(reply_to_message_id=42)
+
+        await channel._delivery_lock.acquire()
+        try:
+            await asyncio.wait_for(channel._handle_message(msg), timeout=0.05)
+        finally:
+            channel._delivery_lock.release()
+
+        channel._coordinator.enqueue.assert_called_once()
+        channel._coordinator.enqueue_deferred.assert_not_called()
+
+        envelope = channel._coordinator.enqueue.call_args[0][0]
+        assert envelope.target_session_id is None
+
+    async def test_busy_reply_unknown_session_steers(self) -> None:
+        """R9: Busy + unknown session → enqueue (steering)."""
+        channel, registry = _make_reply_channel(lookup_result=None)
+        msg = _make_message(reply_to_message_id=999)
+
+        await channel._delivery_lock.acquire()
+        try:
+            await asyncio.wait_for(channel._handle_message(msg), timeout=0.05)
+        finally:
+            channel._delivery_lock.release()
+
+        channel._coordinator.enqueue.assert_called_once()
+        channel._coordinator.enqueue_deferred.assert_not_called()
+
+        envelope = channel._coordinator.enqueue.call_args[0][0]
+        assert envelope.target_session_id is None
+
+    async def test_no_reply_no_target_session_id(self) -> None:
+        """Non-reply messages have no target_session_id (unchanged behavior)."""
+        channel, _ = _make_reply_channel()
+        msg = _make_message()
+
+        await channel._handle_message(msg)
+
+        channel._coordinator.enqueue.assert_called_once()
+        envelope = channel._coordinator.enqueue.call_args[0][0]
+        assert envelope.target_session_id is None
+
+
+class TestReplyToCommandPrecedence:
+    """S5: Reply-to overrides /new and /queue commands."""
+
+    async def test_reply_with_new_command_overrides_force_new(self) -> None:
+        """Reply-to + /new → target_session_id set, force_new=False."""
+        channel, registry = _make_reply_channel(
+            lookup_result="session-past",
+        )
+        msg = _make_message(text="/new some text", reply_to_message_id=42)
+        # Set up bot_command entity for /new detection
+        entity = MagicMock()
+        entity.type = "bot_command"
+        entity.offset = 0
+        entity.length = 4
+        msg.entities = [entity]
+
+        await channel._handle_message(msg)
+
+        channel._coordinator.enqueue_deferred.assert_called_once()
+        envelope = channel._coordinator.enqueue_deferred.call_args[0][0]
+        assert envelope.target_session_id == "session-past"
+        assert envelope.force_new is False
+
+    async def test_reply_with_queue_command_overrides(self) -> None:
+        """Reply-to + /queue → target_session_id set, message deferred."""
+        channel, registry = _make_reply_channel(
+            lookup_result="session-past",
+        )
+        msg = _make_message(text="/queue some text", reply_to_message_id=42)
+        entity = MagicMock()
+        entity.type = "bot_command"
+        entity.offset = 0
+        entity.length = 6
+        msg.entities = [entity]
+
+        await channel._handle_message(msg)
+
+        channel._coordinator.enqueue_deferred.assert_called_once()
+        envelope = channel._coordinator.enqueue_deferred.call_args[0][0]
+        assert envelope.target_session_id == "session-past"
+
+    async def test_new_command_without_reply_has_force_new(self) -> None:
+        """/new without reply → force_new=True, no target_session_id (existing behavior)."""
+        channel, _ = _make_reply_channel()
+        msg = _make_message(text="/new some text")
+        entity = MagicMock()
+        entity.type = "bot_command"
+        entity.offset = 0
+        entity.length = 4
+        msg.entities = [entity]
+
+        await channel._handle_message(msg)
+
+        channel._coordinator.enqueue.assert_called_once()
+        envelope = channel._coordinator.enqueue.call_args[0][0]
+        assert envelope.force_new is True
+        assert envelope.target_session_id is None
+
+
+class TestReplyToMedia:
+    """R2: Reply-to detection on media messages."""
+
+    def _make_media_message(
+        self,
+        *,
+        message_id: int = 100,
+        reply_to_message_id: int | None = None,
+    ) -> MagicMock:
+        """Create a mock media message with optional reply_to_message."""
+        photo = MagicMock()
+        photo.file_id = "photo_123"
+        photo.width = 800
+        photo.height = 600
+        photo.file_size = 100_000
+        photo.file_name = None
+
+        msg = MagicMock()
+        msg.photo = [photo]
+        msg.voice = None
+        msg.audio = None
+        msg.document = None
+        msg.sticker = None
+        msg.video = None
+        msg.video_note = None
+        msg.animation = None
+        msg.caption = "A photo"
+        msg.message_id = message_id
+
+        if reply_to_message_id is not None:
+            reply = MagicMock()
+            reply.message_id = reply_to_message_id
+            msg.reply_to_message = reply
+        else:
+            msg.reply_to_message = None
+
+        return msg
+
+    async def test_media_reply_sets_target_session_id(self) -> None:
+        """R2: Media reply to different session sets target_session_id."""
+        channel, registry = _make_reply_channel(
+            lookup_result="session-past",
+        )
+        msg = self._make_media_message(reply_to_message_id=42)
+        channel._bot.download = AsyncMock(return_value=None)
+
+        await channel._handle_media(msg)
+
+        channel._coordinator.enqueue_deferred.assert_called_once()
+        channel._coordinator.enqueue.assert_not_called()
+
+        envelope = channel._coordinator.enqueue_deferred.call_args[0][0]
+        assert isinstance(envelope, TextMessage)
+        assert envelope.target_session_id == "session-past"
+
+    async def test_media_busy_reply_deferred(self) -> None:
+        """R8: Busy media + different session → enqueue_deferred."""
+        channel, registry = _make_reply_channel(
+            lookup_result="session-past",
+        )
+        msg = self._make_media_message(reply_to_message_id=42)
+        channel._bot.download = AsyncMock(return_value=None)
+
+        await channel._delivery_lock.acquire()
+        try:
+            await asyncio.wait_for(channel._handle_media(msg), timeout=0.5)
+        finally:
+            channel._delivery_lock.release()
+
+        channel._coordinator.enqueue_deferred.assert_called_once()
+        channel._coordinator.enqueue.assert_not_called()
+
+        envelope = channel._coordinator.enqueue_deferred.call_args[0][0]
+        assert envelope.target_session_id == "session-past"
+
+    async def test_media_no_reply_no_target(self) -> None:
+        """Media without reply has no target_session_id (existing behavior)."""
+        channel, _ = _make_reply_channel()
+        msg = self._make_media_message()
+        channel._bot.download = AsyncMock(return_value=None)
+
+        await channel._handle_media(msg)
+
+        channel._coordinator.enqueue.assert_called_once()
+        envelope = channel._coordinator.enqueue.call_args[0][0]
+        assert envelope.target_session_id is None
+
+    async def test_media_reply_unknown_routes_normally(self) -> None:
+        """R6: Media reply to unknown message routes normally."""
+        channel, registry = _make_reply_channel(lookup_result=None)
+        msg = self._make_media_message(reply_to_message_id=999)
+        channel._bot.download = AsyncMock(return_value=None)
+
+        await channel._handle_media(msg)
+
+        channel._coordinator.enqueue.assert_called_once()
+        envelope = channel._coordinator.enqueue.call_args[0][0]
+        assert envelope.target_session_id is None

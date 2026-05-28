@@ -166,16 +166,26 @@ def test_handles_cli_not_found(mocker: MockerFixture) -> None:
 
 #### 7.3 Looped attribute access on MagicMock
 
-Code that loops on an attribute of a `MagicMock` will spin forever, because attribute access on a `MagicMock` returns another `MagicMock` (which is truthy). When mocking objects that are read inside `while` conditions or `for` loops, set the looped attribute to a concrete falsy value:
+Code that loops on an attribute of a `MagicMock` will spin forever, because attribute access on a `MagicMock` returns another `MagicMock` (which is truthy). When mocking objects that are read inside `while` conditions or `for` loops, set the looped attribute to a concrete falsy value.
+
+**Shared helper**: Use `_make_mock_coordinator()` from `tests/conftest.py` (or the `mock_coordinator` fixture) for all coordinator mocks. It pre-sets `has_deferred = False` to prevent `_drain_deferred_queue()` from spinning forever:
 
 ```python
-coordinator = MagicMock()
-coordinator.has_deferred = False  # otherwise _drain_deferred_queue() spins forever
+from conftest import _make_mock_coordinator
+
+coordinator = _make_mock_coordinator()
+# has_deferred is already False — safe for _drain_deferred_queue
+```
+
+Or as a fixture:
+
+```python
+async def test_something(self, mock_coordinator) -> None:
+    # mock_coordinator.has_deferred is already False
+    ...
 ```
 
 Watch especially for shutdown / `finally` paths: a test can mock the happy path correctly and still hang because a `finally` block iterates an unset mock attribute. The symptom is an OOM kill (Python piles up loop-iteration state) — easy to misread as a memory leak. On a 1.9 GB VPS this surfaces in minutes; on a developer laptop it usually completes too fast to notice.
-
-Reproducing in a constrained environment (`ssh tachi`) is the reliable way to catch this pattern before merge.
 
 ### 8. Test Data Helpers
 

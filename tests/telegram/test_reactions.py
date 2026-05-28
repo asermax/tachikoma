@@ -14,14 +14,15 @@ from aiogram.types import ReactionTypeCustomEmoji, ReactionTypeEmoji, ReactionTy
 from tachikoma.message import ReactionMessage
 from tachikoma.telegram import TelegramChannel, _emoji_set
 
+from conftest import _make_mock_coordinator
+
 
 def _make_channel(
     authorized_chat_id: int = 123,
     inbound_reactions: bool = True,
 ) -> TelegramChannel:
     """Build a TelegramChannel with mocked dependencies."""
-    coordinator = MagicMock()
-    coordinator.has_deferred = False
+    coordinator = _make_mock_coordinator()
     settings = MagicMock()
     settings.bot_token = "123456:ABCdef"
     settings.authorized_chat_id = authorized_chat_id
@@ -298,9 +299,7 @@ class TestReactionAllowedUpdates:
         """When inbound_reactions=True, start_polling gets message_reaction in allowed_updates."""
         channel = _make_channel(inbound_reactions=True)
         channel._bot.set_my_commands = AsyncMock()
-        coordinator = MagicMock()
-        # Without this, run()'s finally-block drain spins on a truthy MagicMock attr.
-        coordinator.has_deferred = False
+        coordinator = _make_mock_coordinator()
 
         with patch.object(
             channel._dispatcher, "start_polling", new_callable=AsyncMock
@@ -317,9 +316,7 @@ class TestReactionAllowedUpdates:
         """When inbound_reactions=False, start_polling does NOT get message_reaction."""
         channel = _make_channel(inbound_reactions=False)
         channel._bot.set_my_commands = AsyncMock()
-        coordinator = MagicMock()
-        # Without this, run()'s finally-block drain spins on a truthy MagicMock attr.
-        coordinator.has_deferred = False
+        coordinator = _make_mock_coordinator()
 
         with patch.object(
             channel._dispatcher, "start_polling", new_callable=AsyncMock
@@ -339,8 +336,7 @@ def _make_channel_with_registry(
     lookup_result: str | None = None,
 ) -> tuple[TelegramChannel, MagicMock]:
     """Build a TelegramChannel with a mocked registry on the coordinator."""
-    coordinator = MagicMock()
-    coordinator.has_deferred = False
+    coordinator = _make_mock_coordinator()
 
     registry = AsyncMock()
     registry.get_active_session.return_value = MagicMock(id=active_session_id)

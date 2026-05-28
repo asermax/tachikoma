@@ -13,11 +13,12 @@ from aiogram.exceptions import TelegramAPIError, TelegramBadRequest
 from tachikoma.message import ButtonTapMessage
 from tachikoma.telegram import TelegramChannel
 
+from conftest import _make_mock_coordinator
+
 
 def _make_channel(authorized_chat_id: int = 123) -> TelegramChannel:
     """Build a TelegramChannel with mocked dependencies."""
-    coordinator = MagicMock()
-    coordinator.has_deferred = False
+    coordinator = _make_mock_coordinator()
     settings = MagicMock()
     settings.bot_token = "123456:ABCdef"
     settings.authorized_chat_id = authorized_chat_id
