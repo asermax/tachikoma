@@ -4,23 +4,14 @@ from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
 from aiogram.types import MessageEntity
-from conftest import _make_mock_coordinator
+from conftest import _make_mock_coordinator, _make_mock_message
 
 from tachikoma.message import TextMessage
 from tachikoma.telegram import TelegramChannel
 
 
-def _make_message(
-    text: str,
-    entities: list[MessageEntity] | None = None,
-    message_id: int = 42,
-) -> MagicMock:
-    """Build a mock aiogram Message with the given text and entities."""
-    msg = MagicMock()
-    msg.text = text
-    msg.entities = entities
-    msg.message_id = message_id
-    return msg
+def _make_message(text, entities=None, message_id=42):
+    return _make_mock_message(text=text, entities=entities, message_id=message_id)
 
 
 def _make_entity(cmd: str, offset: int = 0) -> MessageEntity:
@@ -133,9 +124,7 @@ class TestHandleMessageRouting:
 
         await ch._handle_message(msg)
 
-        ch._coordinator.enqueue.assert_called_once_with(
-            TextMessage(text="hello", external_id="42")
-        )
+        ch._coordinator.enqueue.assert_called_once_with(TextMessage(text="hello", external_id="42"))
         ch._coordinator.enqueue_deferred.assert_not_called()
 
     async def test_busy_normal_message_enqueues_steering(self) -> None:
@@ -147,9 +136,7 @@ class TestHandleMessageRouting:
 
         await ch._handle_message(msg)
 
-        ch._coordinator.enqueue.assert_called_once_with(
-            TextMessage(text="hello", external_id="42")
-        )
+        ch._coordinator.enqueue.assert_called_once_with(TextMessage(text="hello", external_id="42"))
         ch._coordinator.enqueue_deferred.assert_not_called()
         ch._delivery_lock.release()
 
@@ -219,9 +206,7 @@ class TestHandleMessageRouting:
         msg = _make_message("/new", [_make_entity("/new")])
         await ch._handle_message(msg)
 
-        ch._coordinator.enqueue.assert_called_once_with(
-            TextMessage(text="/new", external_id="42")
-        )
+        ch._coordinator.enqueue.assert_called_once_with(TextMessage(text="/new", external_id="42"))
 
     async def test_bare_new_when_busy_treated_as_normal(self) -> None:
         """/new (bare) when busy is steered as a normal message."""
@@ -231,9 +216,7 @@ class TestHandleMessageRouting:
         msg = _make_message("/new", [_make_entity("/new")])
         await ch._handle_message(msg)
 
-        ch._coordinator.enqueue.assert_called_once_with(
-            TextMessage(text="/new", external_id="42")
-        )
+        ch._coordinator.enqueue.assert_called_once_with(TextMessage(text="/new", external_id="42"))
         ch._coordinator.enqueue_deferred.assert_not_called()
         ch._delivery_lock.release()
 

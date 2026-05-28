@@ -10,7 +10,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from aiogram.exceptions import TelegramAPIError, TelegramBadRequest, TelegramRetryAfter
-from conftest import _make_mock_coordinator
+from conftest import _make_channel_with_registry, _make_mock_coordinator, _make_mock_message
 
 from tachikoma.buffer.events import BufferedDelivery
 from tachikoma.events import Error, Result, ToolActivity
@@ -1885,48 +1885,11 @@ def _make_reply_channel(
     lookup_result: str | None = None,
 ) -> tuple[TelegramChannel, MagicMock]:
     """Build a TelegramChannel with mocked registry for reply-to tests."""
-    coordinator = _make_mock_coordinator()
-
-    registry = AsyncMock()
-    registry.get_active_session.return_value = MagicMock(id=active_session_id)
-    registry.find_session_by_external_id.return_value = lookup_result
-    coordinator._registry = registry
-
-    settings = MagicMock()
-    settings.bot_token = "123456:ABCdef"
-    settings.authorized_chat_id = authorized_chat_id
-    settings.push_notifications = False
-
-    with patch("tachikoma.telegram.Bot"):
-        channel = TelegramChannel(settings, workspace_path=Path("/tmp/test-workspace"))
-        channel._TelegramChannel__coordinator = coordinator
-
-    channel._bot = MagicMock()
-    channel._process_through_coordinator = AsyncMock()
-    channel._drain_deferred_queue = AsyncMock()
-    return channel, registry
-
-
-def _make_message(
-    *,
-    text: str = "hello",
-    message_id: int = 100,
-    reply_to_message_id: int | None = None,
-) -> MagicMock:
-    """Build a mock aiogram Message."""
-    msg = MagicMock()
-    msg.text = text
-    msg.message_id = message_id
-    msg.entities = None
-
-    if reply_to_message_id is not None:
-        reply = MagicMock()
-        reply.message_id = reply_to_message_id
-        msg.reply_to_message = reply
-    else:
-        msg.reply_to_message = None
-
-    return msg
+    return _make_channel_with_registry(
+        authorized_chat_id=authorized_chat_id,
+        active_session_id=active_session_id,
+        lookup_result=lookup_result,
+    )
 
 
 class TestExtractReplyTarget:
@@ -1934,12 +1897,12 @@ class TestExtractReplyTarget:
 
     def test_returns_str_id_when_reply_to_set(self) -> None:
         channel, _ = _make_reply_channel()
-        msg = _make_message(reply_to_message_id=42)
+        msg = _make_mock_message(reply_to_message_id=42)
         assert channel._extract_reply_target(msg) == "42"
 
     def test_returns_none_when_no_reply(self) -> None:
         channel, _ = _make_reply_channel()
-        msg = _make_message()
+        msg = _make_mock_message()
         assert channel._extract_reply_target(msg) is None
 
 
@@ -1995,7 +1958,7 @@ class TestReplyToRouting:
         channel, registry = _make_reply_channel(
             lookup_result="session-past",
         )
-        msg = _make_message(reply_to_message_id=42)
+        msg = _make_mock_message(reply_to_message_id=42)
 
         await channel._handle_message(msg)
 
@@ -2015,7 +1978,7 @@ class TestReplyToRouting:
             active_session_id="session-current",
             lookup_result="session-current",
         )
-        msg = _make_message(reply_to_message_id=42)
+        msg = _make_mock_message(reply_to_message_id=42)
 
         await channel._handle_message(msg)
 
@@ -2028,7 +1991,7 @@ class TestReplyToRouting:
     async def test_reply_unknown_message_routes_normally(self) -> None:
         """R6: Reply to unknown message routes through boundary detection."""
         channel, registry = _make_reply_channel(lookup_result=None)
-        msg = _make_message(reply_to_message_id=999)
+        msg = _make_mock_message(reply_to_message_id=999)
 
         await channel._handle_message(msg)
 
@@ -2043,7 +2006,7 @@ class TestReplyToRouting:
         channel, registry = _make_reply_channel(
             lookup_result="session-past",
         )
-        msg = _make_message(reply_to_message_id=42)
+        msg = _make_mock_message(reply_to_message_id=42)
 
         await channel._delivery_lock.acquire()
         try:
@@ -2063,7 +2026,7 @@ class TestReplyToRouting:
             active_session_id="session-current",
             lookup_result="session-current",
         )
-        msg = _make_message(reply_to_message_id=42)
+        msg = _make_mock_message(reply_to_message_id=42)
 
         await channel._delivery_lock.acquire()
         try:
@@ -2080,7 +2043,7 @@ class TestReplyToRouting:
     async def test_busy_reply_unknown_session_steers(self) -> None:
         """R9: Busy + unknown session → enqueue (steering)."""
         channel, registry = _make_reply_channel(lookup_result=None)
-        msg = _make_message(reply_to_message_id=999)
+        msg = _make_mock_message(reply_to_message_id=999)
 
         await channel._delivery_lock.acquire()
         try:
@@ -2097,7 +2060,7 @@ class TestReplyToRouting:
     async def test_no_reply_no_target_session_id(self) -> None:
         """Non-reply messages have no target_session_id (unchanged behavior)."""
         channel, _ = _make_reply_channel()
-        msg = _make_message()
+        msg = _make_mock_message()
 
         await channel._handle_message(msg)
 
@@ -2114,7 +2077,7 @@ class TestReplyToCommandPrecedence:
         channel, registry = _make_reply_channel(
             lookup_result="session-past",
         )
-        msg = _make_message(text="/new some text", reply_to_message_id=42)
+        msg = _make_mock_message(text="/new some text", reply_to_message_id=42)
         # Set up bot_command entity for /new detection
         entity = MagicMock()
         entity.type = "bot_command"
@@ -2134,7 +2097,7 @@ class TestReplyToCommandPrecedence:
         channel, registry = _make_reply_channel(
             lookup_result="session-past",
         )
-        msg = _make_message(text="/queue some text", reply_to_message_id=42)
+        msg = _make_mock_message(text="/queue some text", reply_to_message_id=42)
         entity = MagicMock()
         entity.type = "bot_command"
         entity.offset = 0
@@ -2150,7 +2113,7 @@ class TestReplyToCommandPrecedence:
     async def test_new_command_without_reply_has_force_new(self) -> None:
         """/new without reply → force_new=True, no target_session_id (existing behavior)."""
         channel, _ = _make_reply_channel()
-        msg = _make_message(text="/new some text")
+        msg = _make_mock_message(text="/new some text")
         entity = MagicMock()
         entity.type = "bot_command"
         entity.offset = 0

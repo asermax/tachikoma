@@ -10,7 +10,7 @@ from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from aiogram.types import ReactionTypeCustomEmoji, ReactionTypeEmoji, ReactionTypePaid
-from conftest import _make_mock_coordinator
+from conftest import _make_channel_with_registry, _make_mock_coordinator
 
 from tachikoma.message import ReactionMessage
 from tachikoma.telegram import TelegramChannel, _emoji_set
@@ -328,34 +328,19 @@ class TestReactionAllowedUpdates:
         assert "message_reaction" not in kwargs["allowed_updates"]
 
 
-def _make_channel_with_registry(
+def _make_reaction_channel(
     *,
     authorized_chat_id: int = 123,
     active_session_id: str = "session-current",
     lookup_result: str | None = None,
 ) -> tuple[TelegramChannel, MagicMock]:
     """Build a TelegramChannel with a mocked registry on the coordinator."""
-    coordinator = _make_mock_coordinator()
-
-    registry = AsyncMock()
-    registry.get_active_session.return_value = MagicMock(id=active_session_id)
-    registry.find_session_by_external_id.return_value = lookup_result
-    coordinator._registry = registry
-
-    settings = MagicMock()
-    settings.bot_token = "123456:ABCdef"
-    settings.authorized_chat_id = authorized_chat_id
-    settings.push_notifications = False
-    settings.inbound_reactions = True
-
-    with patch("tachikoma.telegram.Bot"):
-        channel = TelegramChannel(settings, workspace_path=Path("/tmp/test-workspace"))
-        channel._TelegramChannel__coordinator = coordinator
-
-    channel._bot = MagicMock()
-    channel._process_through_coordinator = AsyncMock()
-    channel._drain_deferred_queue = AsyncMock()
-    return channel, registry
+    return _make_channel_with_registry(
+        authorized_chat_id=authorized_chat_id,
+        active_session_id=active_session_id,
+        lookup_result=lookup_result,
+        inbound_reactions=True,
+    )
 
 
 class TestReactionSessionRouting:
@@ -363,7 +348,7 @@ class TestReactionSessionRouting:
 
     async def test_different_session_defers_with_target(self) -> None:
         """R4: Reaction on message from different session defers with target_session_id."""
-        channel, registry = _make_channel_with_registry(
+        channel, registry = _make_reaction_channel(
             lookup_result="session-past",
         )
 
@@ -388,7 +373,7 @@ class TestReactionSessionRouting:
 
     async def test_same_session_routes_normally(self) -> None:
         """R4: Reaction on message from current session routes normally."""
-        channel, registry = _make_channel_with_registry(
+        channel, registry = _make_reaction_channel(
             active_session_id="session-current",
             lookup_result="session-current",
         )
@@ -408,7 +393,7 @@ class TestReactionSessionRouting:
 
     async def test_unknown_external_id_routes_normally(self) -> None:
         """R6: Unknown external ID routes to current session."""
-        channel, registry = _make_channel_with_registry(
+        channel, registry = _make_reaction_channel(
             lookup_result=None,
         )
 
@@ -444,7 +429,7 @@ class TestReactionSessionRouting:
 
     async def test_lookup_failure_routes_normally(self) -> None:
         """R6: Registry lookup raises — graceful degradation."""
-        channel, registry = _make_channel_with_registry()
+        channel, registry = _make_reaction_channel()
         registry.find_session_by_external_id.side_effect = RuntimeError("db error")
 
         event = _make_reaction_event(
@@ -459,7 +444,7 @@ class TestReactionSessionRouting:
 
     async def test_busy_reaction_steers_without_session_switch(self) -> None:
         """R4 AC: Mid-stream reaction steers into current session, no session switch."""
-        channel, registry = _make_channel_with_registry(
+        channel, registry = _make_reaction_channel(
             lookup_result="session-past",
         )
 
@@ -482,7 +467,7 @@ class TestReactionSessionRouting:
 
     async def test_external_id_set_on_envelope(self) -> None:
         """R2/R3: external_id is set to str(event.message_id)."""
-        channel, _ = _make_channel_with_registry(lookup_result=None)
+        channel, _ = _make_reaction_channel(lookup_result=None)
 
         event = _make_reaction_event(
             message_id=123,
@@ -495,7 +480,7 @@ class TestReactionSessionRouting:
 
     async def test_no_active_session_routes_normally(self) -> None:
         """R6: Lookup returns a target but no active session — no switch."""
-        channel, registry = _make_channel_with_registry()
+        channel, registry = _make_reaction_channel()
         registry.get_active_session.return_value = None
 
         event = _make_reaction_event(
