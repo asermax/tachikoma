@@ -527,6 +527,141 @@ class TestSessionRegistryReopenSession:
         assert result is None
 
 
+class TestSessionRegistryCanReopenSession:
+    """Tests for can_reopen_session() read-only validation checks."""
+
+    async def test_returns_false_when_session_not_found(
+        self, registry: SessionRegistry, mock_repo
+    ) -> None:
+        """AC: returns False when session doesn't exist in DB."""
+        mock_repo.get_by_id = AsyncMock(return_value=None)
+
+        result = await registry.can_reopen_session("nonexistent")
+
+        assert result is False
+
+    async def test_returns_false_when_no_transcript_path(
+        self, registry: SessionRegistry, mock_repo
+    ) -> None:
+        """AC: returns False when transcript_path is None."""
+        session = _make_session("s1", ended_at=_utcnow(), sdk_session_id="sdk-1")
+        mock_repo.get_by_id = AsyncMock(return_value=session)
+
+        result = await registry.can_reopen_session("s1")
+
+        assert result is False
+
+    async def test_returns_false_when_transcript_file_missing(
+        self, registry: SessionRegistry, mock_repo, tmp_path: Path
+    ) -> None:
+        """AC: returns False when transcript file doesn't exist on disk."""
+        session = _make_session(
+            "s1",
+            ended_at=_utcnow(),
+            sdk_session_id="sdk-1",
+            transcript_path=str(tmp_path / "nonexistent.jsonl"),
+        )
+        mock_repo.get_by_id = AsyncMock(return_value=session)
+
+        result = await registry.can_reopen_session("s1")
+
+        assert result is False
+
+    async def test_returns_false_when_session_too_old(self, mock_repo, tmp_path: Path) -> None:
+        """AC: returns False when session started_at exceeds max_session_age."""
+        transcript = tmp_path / "old.jsonl"
+        transcript.touch()
+
+        session = _make_session(
+            "s1",
+            started_at=_utcnow() - timedelta(days=2),
+            ended_at=_utcnow(),
+            sdk_session_id="sdk-1",
+            transcript_path=str(transcript),
+        )
+        mock_repo.get_by_id = AsyncMock(return_value=session)
+
+        registry = SessionRegistry(mock_repo, max_session_age=timedelta(days=1))
+
+        result = await registry.can_reopen_session("s1")
+
+        assert result is False
+
+    async def test_returns_false_when_session_still_open(
+        self, mock_repo, tmp_path: Path
+    ) -> None:
+        """AC: returns False when session has no ended_at (still open)."""
+        transcript = tmp_path / "open.jsonl"
+        transcript.touch()
+
+        session = _make_session(
+            "s1",
+            sdk_session_id="sdk-1",
+            transcript_path=str(transcript),
+        )
+        mock_repo.get_by_id = AsyncMock(return_value=session)
+
+        registry = SessionRegistry(mock_repo, max_session_age=timedelta(days=1))
+
+        result = await registry.can_reopen_session("s1")
+
+        assert result is False
+
+    async def test_returns_false_when_session_is_active(
+        self, mock_repo, tmp_path: Path
+    ) -> None:
+        """AC: returns False when session is already the active session."""
+        transcript = tmp_path / "active.jsonl"
+        transcript.touch()
+
+        session = _make_session(
+            "s1",
+            ended_at=_utcnow(),
+            sdk_session_id="sdk-1",
+            transcript_path=str(transcript),
+        )
+        mock_repo.get_by_id = AsyncMock(return_value=session)
+
+        registry = SessionRegistry(mock_repo, max_session_age=timedelta(days=1))
+        registry._active_session = session
+
+        result = await registry.can_reopen_session("s1")
+
+        assert result is False
+
+    async def test_returns_true_for_valid_closed_session(
+        self, mock_repo, tmp_path: Path
+    ) -> None:
+        """AC: returns True when all preconditions pass."""
+        transcript = tmp_path / "valid.jsonl"
+        transcript.touch()
+
+        session = _make_session(
+            "s1",
+            started_at=_utcnow() - timedelta(hours=1),
+            ended_at=_utcnow(),
+            sdk_session_id="sdk-1",
+            transcript_path=str(transcript),
+        )
+        mock_repo.get_by_id = AsyncMock(return_value=session)
+
+        registry = SessionRegistry(mock_repo, max_session_age=timedelta(days=1))
+
+        result = await registry.can_reopen_session("s1")
+
+        assert result is True
+
+    async def test_returns_false_on_repository_error(
+        self, registry: SessionRegistry, mock_repo
+    ) -> None:
+        """AC: returns False (best-effort) when repository raises an exception."""
+        mock_repo.get_by_id = AsyncMock(side_effect=Exception("DB error"))
+
+        result = await registry.can_reopen_session("s1")
+
+        assert result is False
+
+
 class TestMarkErrored:
     """Tests for mark_errored() behavior."""
 

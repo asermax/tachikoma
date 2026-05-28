@@ -274,6 +274,48 @@ class SessionRegistry:
 
         return reopened
 
+    async def can_reopen_session(self, session_id: str) -> bool:
+        """Check whether a session can be reopened, without side effects.
+
+        Validates the same preconditions as ``reopen_session`` (exists,
+        transcript_path set, transcript file exists locally, within
+        max_session_age, closed, not already active) but performs no
+        state changes.
+
+        Args:
+            session_id: The ID of the session to validate.
+
+        Returns:
+            True if the session passes all preconditions, False otherwise.
+        """
+        try:
+            session = await self._repository.get_by_id(session_id)
+            if session is None:
+                return False
+
+            if session.transcript_path is None:
+                return False
+
+            if not Path(session.transcript_path).exists():
+                return False
+
+            if datetime.now(UTC) - session.started_at > self._max_session_age:
+                return False
+
+            if session.ended_at is None:
+                return False
+
+            return not (
+                self._active_session is not None and self._active_session.id == session_id
+            )
+        except Exception as exc:
+            _log.warning(
+                "can_reopen_session error: session_id={id} err={err}",
+                id=session_id,
+                err=str(exc),
+            )
+            return False
+
     async def get_recent_closed(self, before: datetime, window: timedelta) -> list[Session]:
         """Return recently closed sessions that are valid for resumption.
 
