@@ -219,10 +219,19 @@ Channel-specific message IDs are stored in a `channel_messages` table mapping pl
 When a message envelope carries `target_session_id`, the coordinator short-circuits boundary detection and routes to the named target session directly.
 
 **Acceptance Criteria**:
-- Given a message with `target_session_id` pointing to a session other than the current active session, when the coordinator processes it, then the current session is closed (with async post-processing) and the target session is reopened before the message is processed
+- Given a message with `target_session_id` pointing to a session other than the current active session, when the coordinator processes it, then the target session is pre-validated via `can_reopen_session`; if valid, the current session is closed (with async post-processing) and the target session is reopened before the message is processed
 - Given a message with `target_session_id` pointing to the current active session, when the coordinator processes it, then no session switching occurs and the message is processed normally
-- Given a message with `target_session_id` pointing to a session that fails resumption validation (missing transcript, too old, already open), when the reopen fails, then a fresh session is created as fallback with a warning log
+- Given a message with `target_session_id` pointing to a session that fails pre-validation (transcript file missing, session too old, already open, or already active), when `can_reopen_session` returns False, then a `Status` event is yielded with message "Could not resume that conversation — its context is no longer available.", the current session is preserved (no close occurs), and the message falls through to normal routing
 - Given a message with `target_session_id` but no active session exists, when the coordinator processes it, then it attempts to reopen the target session directly; if reopen fails, a fresh session is created
+
+### Pre-validation for Target Session Routing (R26, extended)
+
+Before closing the current session to route to a target, the coordinator validates the target session can be reopened. On validation failure, the current session is preserved and a Status event informs the user.
+
+**Acceptance Criteria**:
+- Given a message with `target_session_id` pointing to a session that fails pre-validation, when the coordinator's `_route_to_target_session` runs, then `can_reopen_session` returns False, the current session is NOT closed, and a `Status` event is yielded with message "Could not resume that conversation — its context is no longer available."
+- Given a message with `target_session_id` pointing to a valid session, when the coordinator validates and closes the current session, then the target session is reopened and the message is processed in the resumed session
+- Given a reaction or reply-to that targets a stale session, when the coordinator validates the target, then the same pre-validation applies — the user receives a Status error instead of the previous behavior of silently falling back to a fresh session
 
 ### Graceful Degradation (R9)
 

@@ -16,6 +16,7 @@ A Telegram bot that receives text messages and media messages from a single auth
 - As a user, I want to explicitly route messages to a new conversation or defer them for later processing so that I can manage multiple topics without the current session being disrupted
 - As a user, I want to answer the agent's structured prompts by tapping a button instead of typing so that I can quickly respond to yes/no, multiple-choice, or confirm/cancel prompts without keyboard input on my phone
 - As a user, I want to react to the agent's messages with an emoji and have the agent treat the reaction as a conversational turn so that I can confirm, push back, or signal confusion with a quick tap instead of typing a reply
+- As a user, I want to switch to a specific previous conversation by replying to any message from that conversation so that I can resume exactly the context I want without relying on automatic boundary detection
 
 ## Requirements
 
@@ -39,6 +40,7 @@ A Telegram bot that receives text messages and media messages from a single auth
 | R15 | Bot commands: `/new [message]` forces a fresh session (skipping boundary detection), `/queue [message]` defers the message for boundary-detected routing after the current turn. Commands are detected via Telegram native `bot_command` entities. Bare commands (no arguments) are treated as normal messages |
 | R16 | Inline button presentation and tap routing: the agent can present a prompt with a configurable layout of tappable inline buttons via a `present_buttons` MCP tool. User taps arrive as `CallbackQuery` events, are acknowledged to Telegram immediately (independent of agent state), authorized against `from_user.id`, and routed back to the coordinator as `ButtonTapMessage` envelopes carrying the tapped value. By default the inline keyboard is removed from the message after any tap (`single_use=True`); the agent can opt out with `single_use=False`. Unauthorized taps are still acknowledged so the originator's spinner clears, then silently dropped. Stale taps (after restart or past the prompt's topic) are routed normally — the agent disambiguates from conversation context. Keyboard-removal failures never block tap routing. Telegram API failures during button presentation surface a clear error result to the tool call |
 | R17 | Inbound emoji reactions: the bot subscribes to Telegram `message_reaction` updates from the authorized chat and surfaces user reactions as conversational turns. The reaction handler diffs old vs new reaction lists, drops no-op updates and updates whose changes consist only of uninterpretable kinds (custom emoji, paid reactions), and routes the remaining emoji diff to the coordinator as a `ReactionMessage` envelope. The envelope carries only the emoji-set diff (no message-ID anchor); the rendered prose names the emojis and the kind of change (added / removed / replaced) and asks the agent to interpret in the context of the last exchange — no hardcoded emoji→meaning mapping. Reactions bypass session-boundary detection (they are inherently follow-ups). Reactions received mid-stream flow through the same steering path as text messages. Polling subscribes to `message_reaction` updates only when a handler is registered (driven by `inbound_reactions` config; default enabled). |
+| R18 | Reply-to session routing: when a user replies to a Telegram message that belonged to a previous session, the new message is routed to that session instead of following automatic boundary detection. Works for all message types (photos, voice, audio, documents, stickers, video, video notes, animations). When the user replies to a message and also includes a bot command (`/new`, `/queue`), the reply-to gesture identifies the target session and the command's routing flag (`force_new`) is suppressed so the message routes to the target session. When the target session cannot be resumed (transcript missing, too old), a Status event informs the user and the message falls through to normal routing without closing the current session. |
 
 ## Behaviors
 
@@ -319,6 +321,37 @@ A `[telegram]` config flag `inbound_reactions` (default `true`) toggles the feat
 - Given a reaction arrives on a message whose external ID is not found in the mapping table (pre-feature messages, orphaned IDs), when the lookup returns None, then no `target_session_id` is set and the reaction routes normally to the current session
 - Given a reaction arrives while the agent is mid-response, when the delivery lock is held, then the reaction is enqueued as a steering message regardless of whether the external ID maps to a different session — session switching does not occur mid-response
 - Given a reaction handler constructs a `ReactionMessage`, when the envelope is created, then `external_id` is set to `str(event.message_id)` (the ID of the reacted-to message)
+- Given a reaction targets a session that fails pre-validation (transcript file missing, too old), when the coordinator processes it, then a Status event is yielded and the current session is preserved — the reaction falls through to normal routing (this is a behavior change from the previous fallback-to-fresh-session approach)
+
+### Reply-to Session Routing (R18)
+
+When a user replies to any Telegram message that belonged to a previous conversation, the new message routes to that conversation's session. The system detects `reply_to_message` on incoming messages, looks up the associated session via `find_session_by_external_id`, and sets `target_session_id` on the message envelope when the reply maps to a different session. The coordinator validates the target session before closing the current one — on validation failure, a Status error event is sent and the current session is preserved. When the user replies to a message and also includes a bot command, the reply-to gesture identifies the target session and the command's routing flag is suppressed.
+
+**Acceptance Criteria**:
+
+Reply detection and session lookup:
+- Given a user sends a text message that is a reply to another Telegram message, when the handler processes it, then `message.reply_to_message.message_id` is extracted and used for session lookup
+- Given a user sends a media message (photos, voice, audio, documents, stickers, video, video notes, or animations) that is a reply to another Telegram message, when the handler processes it, then `message.reply_to_message.message_id` is extracted and used for session lookup
+- Given a reply targets a message whose external ID is recorded in `channel_messages`, when the lookup runs, then `find_session_by_external_id("telegram", str(reply_to_message_id))` returns the associated session ID
+- Given a reply targets a message whose external ID is not in `channel_messages` (pre-feature messages, messages from other platforms), when the lookup runs, then no `target_session_id` is set and normal routing applies
+
+Session routing:
+- Given a reply targets a message that maps to a session different from the current active session, when the message is processed, then `target_session_id` is set on the envelope and the coordinator closes the current session and reopens the target session
+- Given a reply targets a message that maps to the current active session, when the message is processed, then no `target_session_id` is set and the message routes normally (no session switch)
+- Given a reply targets a message whose external ID is not found (lookup returns None), when the message is processed, then no `target_session_id` is set and the message routes through normal boundary detection
+
+Failed session resume:
+- Given a reply targets a session that fails pre-validation (transcript file missing, session too old), when the coordinator processes the message, then a Status event with message "Could not resume that conversation — its context is no longer available." is sent to the user and the message falls through to normal routing without closing the current session
+
+Busy-channel behavior:
+- Given the agent is busy and a reply targets a different session, when the message arrives, then it is deferred via `enqueue_deferred()` with `target_session_id` set on the envelope
+- Given the agent is busy and a reply targets the same session as the active session, when the message arrives, then it is steered into the active session via `enqueue()` (no deferral, no session switch)
+- Given the agent is busy and a reply targets an unknown session (lookup returns None), when the message arrives, then it is steered into the active session via `enqueue()` (no deferral)
+- Given the agent is idle and a reply targets a different session, when the message arrives, then it is deferred via `enqueue_deferred()` with `target_session_id` set on the envelope — the deferred queue drain then handles the session switch (per DES-009)
+
+Command precedence:
+- Given a reply-to message that also contains the `/new` command, when the message is processed, then the reply-to gesture identifies the target session and `/new`'s `force_new` flag is suppressed (set to False), so the message routes to the target session rather than forcing a fresh one
+- Given a reply-to message that also contains the `/queue` command, when the message is processed, then the reply-to gesture identifies the target session and the message is routed to the target session
 
 ## User Flow
 
@@ -494,6 +527,80 @@ A `[telegram]` config flag `inbound_reactions` (default `true`) toggles the feat
                 last exchange
 ```
 
+### Breadboard: Reply-to Session Switch
+
+```
+  User replies to a past message
+  ------------------------------
+  - Telegram "reply to" gesture
+  - message.reply_to_message set
+            |
+            v
+  Extract reply_to_message_id
+  ---------------------------
+  - _extract_reply_target(message)
+            |
+      +-----+-----+
+      |           |
+      v           v
+  Has reply    No reply
+  ----------   --------
+  |            (normal processing)
+  v
+  Session lookup
+  --------------
+  _resolve_reply_target(reply_to_id)
+  → find_session_by_external_id
+  → compare to active session
+        |
+  +-----+-----+-----+
+  |           |      |
+  v           v      v
+Different    Same    Not found
+session      session (unknown)
+--------     -------  ----------
+|           |        |
+|           |        v
+|           |    Normal routing
+|           |    (boundary det.)
+|           v
+|    Normal routing
+|    (no switch)
+|
++-----+-----+
+|           |
+v           v
+Agent busy  Agent idle
+----------  ----------
+Defer with  Defer with
+target_     target_session_id
+session_id  via
+via         enqueue_deferred()
+enqueue_    (per DES-009)
+deferred()  |
+|           v
+v        Deferred queue drains
+Deferred  → coordinator pre-validates
+queue     via can_reopen_session
+drains        |
+→ session +-----+-----+
+switch   |           |
+occurs   v           v
+      Valid        Invalid
+      ----         ------
+      Close        Status event
+      current,     "Could not resume
+      reopen       that conversation
+      target       — its context is
+      session      no longer
+      |            available."
+      v            Fall through to
+      Message      normal routing
+      processed    (no switch)
+      in target
+      session
+```
+
 ### Breadboard: Inline Button Tap
 
 ```
@@ -580,11 +687,13 @@ A `[telegram]` config flag `inbound_reactions` (default `true`) toggles the feat
 
 **Tap path**: The agent calls `present_buttons` to send a fresh Telegram message carrying the prompt and an inline keyboard. When the user taps a button, the bot's `CallbackQuery` handler acknowledges the tap immediately (no waiting on the agent), runs the authorization check against `from_user.id`, schedules keyboard removal as a detached task for `single_use=True` prompts, wraps the chosen value in a `ButtonTapMessage` envelope, and routes it through the coordinator using the same busy/idle branching as typed messages (mid-stream taps steer into the in-flight session; idle taps acquire the lock and start a fresh cycle). The SDK-input shaping step renders the envelope as explicit prose so the agent unambiguously recognizes the turn as a tap and not typed text. Stale taps (after restart or past the original topic) follow the same path — the agent disambiguates from conversation context. Unauthorized taps are acknowledged then dropped. Keyboard-removal failures are logged but never block tap routing.
 
-**Reaction path**: When the user adds, removes, or replaces an emoji reaction on any message in the authorized chat, Telegram delivers a `message_reaction` update. Router-level filters drop updates from other chats and anonymous-channel reactions; the handler diffs the emoji-typed entries of the old and new reaction lists, drops the update if the resulting diff is empty (no-op or only uninterpretable kinds), and wraps the remaining diff in a `ReactionMessage` envelope carrying `external_id=str(event.message_id)`. The handler then looks up the target session via `find_session_by_external_id("telegram", external_id)`. If the external ID maps to a session other than the current active session, the handler sets `target_session_id` on the envelope and defers it via `enqueue_deferred()` — when the deferred queue drains, the coordinator closes the current session, reopens the target, and processes the reaction there. If the lookup returns None or the same session, the reaction routes normally through the same busy/idle branch text and media use (mid-stream reactions steer into the in-flight session via `enqueue()`; idle reactions acquire the lock and start a processing cycle). The coordinator skips both cold-start resume and active-session boundary detection for reaction envelopes — they are inherently follow-ups — and skips the pre-processing pipelines too. The rendered prose names the emojis and the kind of change but never attributes a meaning or references the specific reacted-to message. The optional `[telegram] inbound_reactions = false` flag (default `true`) disables the handler entirely; with the handler unregistered, `Dispatcher.resolve_used_update_types()` omits `message_reaction` from polling so Telegram never delivers reaction updates.
+**Reaction path**: When the user adds, removes, or replaces an emoji reaction on any message in the authorized chat, Telegram delivers a `message_reaction` update. Router-level filters drop updates from other chats and anonymous-channel reactions; the handler diffs the emoji-typed entries of the old and new reaction lists, drops the update if the resulting diff is empty (no-op or only uninterpretable kinds), and wraps the remaining diff in a `ReactionMessage` envelope carrying `external_id=str(event.message_id)`. The handler then looks up the target session via the shared `_resolve_reply_target` helper (reused by reply-to handlers for consistency). If the external ID maps to a session other than the current active session, the handler sets `target_session_id` on the envelope and defers it via `enqueue_deferred()` — when the deferred queue drains, the coordinator pre-validates the target via `can_reopen_session`, then closes the current session, reopens the target, and processes the reaction there. If pre-validation fails, a Status event is yielded and the reaction falls through to normal routing. If the lookup returns None or the same session, the reaction routes normally through the same busy/idle branch text and media use (mid-stream reactions steer into the in-flight session via `enqueue()`; idle reactions acquire the lock and start a processing cycle). The coordinator skips both cold-start resume and active-session boundary detection for reaction envelopes — they are inherently follow-ups — and skips the pre-processing pipelines too. The rendered prose names the emojis and the kind of change but never attributes a meaning or references the specific reacted-to message. The optional `[telegram] inbound_reactions = false` flag (default `true`) disables the handler entirely; with the handler unregistered, `Dispatcher.resolve_used_update_types()` omits `message_reaction` from polling so Telegram never delivers reaction updates.
 
-**Decision points**: Authorization check (authorized → process, unauthorized → drop; for taps the unauthorized branch still acknowledges to clear the spinner before dropping; for reactions the router-level chat-id filter drops the update before the handler runs). Message type check (text → process text, supported media → download/describe/process, unsupported → drop, callback_query → tap path, message_reaction → reaction path). Empty check (empty text → drop). Command detection (recognized command with args → `/new` or `/queue` routing, bare or unrecognized → normal message). Reaction diff check (added and removed both empty after emoji-only filter → drop; otherwise enqueue `ReactionMessage`). Busy/idle check (busy + command → deferred queue, busy + normal → steering, idle + `/new` → immediate fresh session, idle + `/queue` → immediate boundary detection, idle + normal → immediate processing, busy + tap → enqueue for steering, idle + tap → enqueue + process, busy + reaction → enqueue for steering regardless of external ID mapping, idle + reaction + different session → defer with target_session_id, idle + reaction + same/unknown session → enqueue + process). File size check (within 20 MB → download, too large → error message). Download result (success → describe and enqueue, failure → error message). Message length check (under limit → continue editing, approaching limit → split at paragraph boundary). Error type (recoverable → show error, continue; non-recoverable → show error, log). Push notification check (enabled and message was sent → copy+delete unless pinned, disabled or no message → no-op, copy fails → preserve original, pinned → skip copy+delete entirely, pin action delivered the notification). Pin decision (agent calls pin_message after response → pinned with push notification, message stays at top of chat). `single_use` flag on tap (True → remove keyboard on first tap; False → keep keyboard for further taps). `inbound_reactions` flag (True → reaction handler registered and `message_reaction` in polling allowed_updates; False → handler unregistered and updates not delivered).
+**Reply-to path**: When the user replies to any Telegram message from a previous conversation, `_extract_reply_target` extracts `message.reply_to_message.message_id`. The handler calls `_resolve_reply_target` which looks up the session via `find_session_by_external_id("telegram", reply_to_id)` and compares it to the active session. If the reply maps to a different session, `target_session_id` is set on the envelope. Regardless of busy/idle state, envelopes with `target_session_id` are deferred via `enqueue_deferred()` — this ensures the coordinator runs pre-validation before closing the current session (per DES-009). The deferred queue drain then handles the session switch: the coordinator pre-validates the target via `can_reopen_session`, closes the current session, reopens the target, and processes the message there. If validation fails, a Status event informs the user ("Could not resume that conversation — its context is no longer available.") and the message falls through to normal routing. When busy and the reply targets the same session or an unknown message, normal steering applies. When the user replies to a message and also includes a bot command (`/new` or `/queue`), the reply-to gesture identifies the target session and the command's routing flag (`force_new`) is suppressed — the reply-to gesture is a more deliberate intent signal than a text prefix.
 
-**Exit points**: Response complete (Result event received), recoverable error (error shown, conversation continues), non-recoverable error (error shown, failure logged), media file too large (error message sent, conversation continues), media download failed (error message sent, conversation continues), unauthorized (silently dropped), unsupported message type or empty text (silently dropped), reaction with empty post-filter diff (silently dropped), reaction with `inbound_reactions=false` (not delivered by Telegram), pin success (message pinned, ID returned), pin error (no message, permission denied, or API failure).
+**Decision points**: Authorization check (authorized → process, unauthorized → drop; for taps the unauthorized branch still acknowledges to clear the spinner before dropping; for reactions the router-level chat-id filter drops the update before the handler runs). Message type check (text → process text, supported media → download/describe/process, unsupported → drop, callback_query → tap path, message_reaction → reaction path). Empty check (empty text → drop). Command detection (recognized command with args → `/new` or `/queue` routing, bare or unrecognized → normal message). Reply-to check (has reply_to_message → extract ID for lookup via `_extract_reply_target`, no reply → normal processing). Reply-to session lookup via `_resolve_reply_target` (different session → set target_session_id, same session → normal, not found → normal). Reply-to vs command precedence (reply-to present + command → reply-to identifies target session, command's force_new suppressed — reply-to gesture is more deliberate). Target session pre-validation by coordinator (valid → close current + reopen target, invalid → Status event + preserve current, message falls through to normal routing). Reaction diff check (added and removed both empty after emoji-only filter → drop; otherwise enqueue `ReactionMessage`). Busy/idle check (busy + command → deferred queue, busy + normal → steering, idle + `/new` → immediate fresh session, idle + `/queue` → immediate boundary detection, idle + normal → immediate processing, busy + tap → enqueue for steering, idle + tap → enqueue + process, busy + reaction → enqueue for steering regardless of external ID mapping, idle + reaction + different session → defer with target_session_id, idle + reaction + same/unknown session → enqueue + process, busy + reply-to + different session → defer with target_session_id, idle + reply-to + different session → defer with target_session_id, busy/idle + reply-to + same/unknown → normal routing). File size check (within 20 MB → download, too large → error message). Download result (success → describe and enqueue, failure → error message). Message length check (under limit → continue editing, approaching limit → split at paragraph boundary). Error type (recoverable → show error, continue; non-recoverable → show error, log). Push notification check (enabled and message was sent → copy+delete unless pinned, disabled or no message → no-op, copy fails → preserve original, pinned → skip copy+delete entirely, pin action delivered the notification). Pin decision (agent calls pin_message after response → pinned with push notification, message stays at top of chat). `single_use` flag on tap (True → remove keyboard on first tap; False → keep keyboard for further taps). `inbound_reactions` flag (True → reaction handler registered and `message_reaction` in polling allowed_updates; False → handler unregistered and updates not delivered).
+
+**Exit points**: Response complete (Result event received), recoverable error (error shown, conversation continues), non-recoverable error (error shown, failure logged), media file too large (error message sent, conversation continues), media download failed (error message sent, conversation continues), unauthorized (silently dropped), unsupported message type or empty text (silently dropped), reaction with empty post-filter diff (silently dropped), reaction with `inbound_reactions=false` (not delivered by Telegram), reply-to session switch complete (message delivered in resumed session), reply-to target session validation failed (Status event sent, current session preserved, message falls through to normal routing), pin success (message pinned, ID returned), pin error (no message, permission denied, or API failure).
 
 ## Requires
 

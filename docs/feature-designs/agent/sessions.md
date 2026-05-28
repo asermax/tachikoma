@@ -74,7 +74,7 @@ The session domain also includes **SessionContextEntry** — a persisted record 
 |-----------------|----------------|---------------|
 | `src/tachikoma/sessions/model.py` | SQLAlchemy ORM models (`SessionRecord`, `SessionResumptionRecord`, `SessionContextEntryRecord`, `ChannelMessageRecord`) + frozen dataclasses (`Session`, `SessionResumption`, `SessionContextEntry`, `ChannelMessage`) + `DeclarativeBase` | Separate ORM models from domain dataclasses; callers never see SQLAlchemy types; `ChannelMessage` uses `MessageDirection` type (`Literal["incoming", "outgoing"]`) |
 | `src/tachikoma/sessions/repository.py` | `SessionRepository`: CRUD operations, time-range queries, `get_recent_closed()` for resumption candidates, `create_resumption()`/`get_resumptions_for_session()` for resumption tracking, `save_context_entries()`/`load_context_entries()` for context entry persistence, `save_channel_message()`/`lookup_session()` for channel message ID tracking | Receives shared `async_sessionmaker` from `Database`; all SQL is behind async methods; `save_context_entries` takes list of `(owner, content)` tuples, bulk saves via `session.add_all()`; `load_context_entries` ordered by PK ascending; `save_channel_message` uses `on_conflict_do_nothing()` on the unique `(channel, external_id)` index for idempotent recording; `lookup_session` queries by `(channel, external_id)` returning `session_id` or `None` |
-| `src/tachikoma/sessions/registry.py` | `SessionRegistry`: business logic facade, creation lock, crash recovery, status derivation, `close_session()` returns `bool` (True if actually transitioned from open to closed — enables callers to distinguish real closes from no-ops), `update_summary()` for persisting rolling summaries, `reopen_session()` for session resumption (uses `dataclasses.replace()` to construct reopened session — avoids redundant DB fetch), `get_recent_closed()` for candidate queries, `record_resumption()` for best-effort tracking, `save_context_entries()` (best-effort — logs on failure per R9/R17, does not raise), `load_context_entries()` (raises on failure — caller handles graceful degradation), `record_channel_message()` (best-effort facade over `save_channel_message()`, returns early with warning when no active session), `find_session_by_external_id()` (best-effort facade over `lookup_session()`, returns early with warning when no active session) | Receives repository via constructor; owns the `asyncio.Lock` |
+| `src/tachikoma/sessions/registry.py` | `SessionRegistry`: business logic facade, creation lock, crash recovery, status derivation, `close_session()` returns `bool` (True if actually transitioned from open to closed — enables callers to distinguish real closes from no-ops), `update_summary()` for persisting rolling summaries, `_validate_reopen_preconditions(session_id) -> Session | None` (shared validation helper extracted from `reopen_session` — checks: session exists, transcript_path not None, transcript file exists locally, within max_session_age, is closed, is not already active; ensures identical validation between `can_reopen_session` and `reopen_session`), `reopen_session()` for session resumption (delegates to `_validate_reopen_preconditions` for validation, then performs state changes; uses `dataclasses.replace()` to construct reopened session — avoids redundant DB fetch), `can_reopen_session(session_id) -> bool` (validation-only method wrapping `_validate_reopen_preconditions` — returns True/False without side effects; used by coordinator to pre-validate target before closing current session), `get_recent_closed()` for candidate queries, `record_resumption()` for best-effort tracking, `save_context_entries()` (best-effort — logs on failure per R9/R17, does not raise), `load_context_entries()` (raises on failure — caller handles graceful degradation), `record_channel_message()` (best-effort facade over `save_channel_message()`, returns early with warning when no active session), `find_session_by_external_id()` (best-effort facade over `lookup_session()`, returns early with warning when no active session) | Receives repository via constructor; owns the `asyncio.Lock` |
 | `src/tachikoma/sessions/errors.py` | `SessionRepositoryError`: wraps SQLAlchemy exceptions for clean error contract | Callers catch one domain exception, not SQLAlchemy internals |
 | `src/tachikoma/sessions/hooks.py` | `session_recovery_hook`: retrieves shared `Database` from extras, creates repository + registry, runs recovery, stores on context extras | Registered as bootstrap hook; runs after `database_hook` |
 | `src/tachikoma/sessions/__init__.py` | Re-exports public API: `Session`, `SessionContextEntry`, `SessionResumption`, `ChannelMessage`, `SessionRegistry`, `SessionRepository`, `SessionRepositoryError` | Clean public API for the sessions package |
@@ -114,8 +114,8 @@ sequenceDiagram
 ```
 
 **Integration Points:**
-- Coordinator → SessionRegistry: `get_active_session()` + `create_session()` on first message, `update_metadata()` on Result events, `close_session()` on shutdown and topic shift, `get_recent_closed()` for resumption candidates, `reopen_session()` for session resumption, `record_resumption()` for best-effort tracking, `get_by_time_range()` for bridging context assembly, `save_context_entries(session_id, entries)` for persisting context (always takes a list of (owner, content) tuples), `load_context_entries(session_id)` for loading entries for system prompt assembly
-- Telegram Channel → SessionRegistry: `record_channel_message(session_id, channel, direction, external_id)` for persisting incoming/outgoing message IDs after session determination and response finalization, `find_session_by_external_id(channel, external_id)` for reaction-based session lookup
+- Coordinator → SessionRegistry: `get_active_session()` + `create_session()` on first message, `update_metadata()` on Result events, `close_session()` on shutdown and topic shift, `get_recent_closed()` for resumption candidates, `reopen_session()` for session resumption, `can_reopen_session()` for pre-validation before closing current session (returns True/False without side effects), `record_resumption()` for best-effort tracking, `get_by_time_range()` for bridging context assembly, `save_context_entries(session_id, entries)` for persisting context (always takes a list of (owner, content) tuples), `load_context_entries(session_id)` for loading entries for system prompt assembly
+- Telegram Channel → SessionRegistry: `record_channel_message(session_id, channel, direction, external_id)` for persisting incoming/outgoing message IDs after session determination and response finalization, `find_session_by_external_id(channel, external_id)` for reaction-based and reply-to session lookup
 - PostProcessingPipeline → SessionRegistry: `mark_processed()` after pipeline completion (sets `processed_at`)
 - SummaryProcessor → SessionRegistry: `update_summary()` after each per-message pipeline run (see [boundary detection design](boundary-detection.md))
 - LastExchangeProcessor → SessionRegistry: `update_last_exchange()` after each per-message pipeline run (see [boundary detection design](boundary-detection.md))
@@ -414,7 +414,8 @@ Processor:
 
 ```
 1. Coordinator calls registry.reopen_session(session_id)
-2. Registry fetches session via repository.get_by_id()
+2. Registry calls _validate_reopen_preconditions(session_id)
+   (shared helper also used by can_reopen_session, ensuring identical checks)
 3. Registry validates: exists
 4. Registry validates: transcript_path is not None
 5. Registry validates: Path(transcript_path).exists() (transcript on local machine)
@@ -531,15 +532,16 @@ Processor:
 
 ```
 1. Coordinator receives message with target_session_id set
-2. Coordinator calls _route_to_target_session(target_session_id):
-   a. If active session exists and differs from target:
-      - Close current session via _close_and_fire_postprocessing()
-      - Reopen target via registry.reopen_session(target_session_id)
-      - If reopen succeeds: set SDK session ID, continue with reopened session
-      - If reopen fails: log warning, create fresh session as fallback
-   b. If active session is the target: no-op
-   c. If no active session: try to reopen target directly; fallback to fresh session
-3. Boundary detection is skipped entirely
+2. Coordinator calls _route_to_target_session(target_session_id, active, is_new_session):
+   a. If target == active: return (active, is_new_session, True) — no-op
+   b. Pre-validate via registry.can_reopen_session(target_id):
+      - If False: return (active, is_new_session, False) — no state changes, coordinator yields Status event
+   c. Close current session via _close_and_fire_postprocessing()
+   d. Reopen target via registry.reopen_session(target_id)
+      - If reopen succeeds: set SDK session ID, return (reopened, False, True)
+      - If reopen fails (race condition): log warning, create fresh session, return (fresh, True, True)
+3. If routed_successfully is False: coordinator yields Status event, message falls through to normal routing
+4. Boundary detection is skipped entirely
 ```
 
 ### Query by time range
@@ -753,12 +755,12 @@ Processor:
 **Then**: No `target_session_id` is set on the envelope. The reaction routes normally to the current session.
 **Rationale**: Pre-feature messages and edge cases must not break the reaction flow. Graceful degradation ensures the system works without mappings.
 
-### Scenario: Target session fails resumption validation
+### Scenario: Target session fails pre-validation
 
-**Given**: A deferred message's `target_session_id` points to a session that fails resumption validation (missing transcript, too old, already open)
-**When**: The coordinator attempts to reopen the target session
-**Then**: `reopen_session()` returns `None`. The coordinator logs a warning and creates a fresh session as fallback.
-**Rationale**: Session resumption safety checks take precedence over routing intent. A fresh session is the safe default.
+**Given**: A deferred message's `target_session_id` points to a session that fails pre-validation (missing transcript, too old, already open, or already active)
+**When**: The coordinator's `_route_to_target_session` calls `can_reopen_session`
+**Then**: `can_reopen_session` returns `False`. The method returns `(active, is_new_session, routed_successfully=False)` without closing the current session. The coordinator yields a `Status` event with message "Could not resume that conversation — its context is no longer available." The message falls through to normal routing in the current session.
+**Rationale**: Pre-validation prevents unnecessary session churn — the current session stays intact instead of being closed and replaced with a fresh session. This is a behavior change from the previous fallback-to-fresh-session approach, applicable to all `target_session_id` producers (reactions and reply-to).
 
 ## Notes
 

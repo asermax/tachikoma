@@ -290,11 +290,18 @@ Coordinator
 │       awaits previous iteration's pending post-processing task, breaks when buffer empty;
 │       force_new routing: if msg.force_new and active session exists, skips boundary detection
 │       target_session_id routing: if msg.target_session_id is set, calls _route_to_target_session()
-│           → closes current session, reopens target, falls back to fresh session on failure
-├── _route_to_target_session(target_session_id) → None
-│   └── handles session switching: closes current via _close_and_fire_postprocessing(),
-│       reopens target via registry.reopen_session(), sets SDK session ID;
-│       falls back to _clear_session_state() + create_session() on reopen failure
+│           → returns (active, is_new_session, routed_successfully)
+│           → if routed_successfully is False: yields Status event, preserves current session, falls through to normal routing
+│           → if routed_successfully is True: message processed in target session
+├── _route_to_target_session(target_session_id, active, is_new_session) → tuple[Session | None, bool, bool]
+│   └── handles session switching with pre-validation:
+│       if target == active → no-op, return (active, is_new_session, True)
+│       pre-validates via registry.can_reopen_session(target_id):
+│         if invalid → return (active, is_new_session, False), preserve current session
+│       closes current via _close_and_fire_postprocessing(),
+│       reopens target via registry.reopen_session(target_id), sets SDK session ID;
+│       falls back to _clear_session_state() + create_session() on reopen failure (race condition)
+│       returns (session, is_new_session, routed_successfully)
 └── _message_source(initial, buffer) → AsyncGenerator[str]
     └── long-lived async generator: yields enriched initial message, then reads from buffer; passed to client.connect() as a concurrent SDK-managed task
 ```
@@ -642,6 +649,12 @@ The `Result` event serves as a turn boundary. Channels can detect it to reset th
 **Given**: No valid authentication is available
 **When**: The coordinator attempts to connect the SDK client
 **Then**: The SDK raises an exception. The entry point catches it, prints the error to stderr, and exits.
+
+### Scenario: Target session pre-validation failure
+
+**Given**: A message with `target_session_id` pointing to a stale session (missing transcript, too old)
+**When**: The coordinator's `_route_to_target_session` validates the target
+**Then**: `can_reopen_session` returns `False`. The method returns `(active, is_new_session, routed_successfully=False)` without closing the current session. The coordinator checks `if not routed:` and yields a `Status` event with message "Could not resume that conversation — its context is no longer available." The message proceeds through normal boundary detection in the current session.
 
 ## Notes
 
