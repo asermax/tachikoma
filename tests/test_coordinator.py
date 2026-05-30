@@ -2166,7 +2166,7 @@ class TestTargetSessionIdRouting:
             events = await self._send_envelope(coord, reaction)
 
         registry.close_session.assert_awaited_once_with("s1")
-        registry.reopen_session.assert_awaited_once_with("s2")
+        registry.reopen_session.assert_awaited_once_with("s2", skip_age_check=True)
         result_events = [e for e in events if isinstance(e, Result)]
         assert len(result_events) == 1
 
@@ -2203,7 +2203,7 @@ class TestTargetSessionIdRouting:
         assert len(result_events) == 1
 
     async def test_target_stale_session_yields_status_preserves_current(self, mock_sdk) -> None:
-        """AC: stale target_session_id yields Status and preserves current session."""
+        """AC: stale target_session_id yields Status and hard-stops (no processing)."""
         client, _ = mock_sdk
         client.receive_response.return_value = _mock_messages(
             make_assistant([TextBlock(text="ok")]),
@@ -2237,9 +2237,9 @@ class TestTargetSessionIdRouting:
         status_events = [e for e in events if isinstance(e, Status)]
         assert len(status_events) == 1
         assert "Could not resume" in status_events[0].message
-        # Message still processed in current session
+        # Hard-stop: message consumed but not processed (no Result)
         result_events = [e for e in events if isinstance(e, Result)]
-        assert len(result_events) == 1
+        assert len(result_events) == 0
 
     async def test_target_no_active_session_reopens(self, mock_sdk) -> None:
         """AC: target_session_id with no active session reopens target after temp session."""
@@ -2269,12 +2269,12 @@ class TestTargetSessionIdRouting:
             events = await self._send_envelope(coord, reaction)
 
         # Session creation creates temp session, then routing closes it and reopens target
-        registry.reopen_session.assert_awaited_once_with("s2")
+        registry.reopen_session.assert_awaited_once_with("s2", skip_age_check=True)
         result_events = [e for e in events if isinstance(e, Result)]
         assert len(result_events) == 1
 
     async def test_target_no_active_session_reopen_fails(self, mock_sdk) -> None:
-        """AC: target_session_id with no active session and failed validation yields Status."""
+        """AC: failed validation yields Status, hard-stop (no processing)."""
         client, _ = mock_sdk
         client.receive_response.return_value = _mock_messages(
             make_assistant([TextBlock(text="ok")]),
@@ -2301,9 +2301,9 @@ class TestTargetSessionIdRouting:
         status_events = [e for e in events if isinstance(e, Status)]
         assert len(status_events) == 1
         assert "Could not resume" in status_events[0].message
-        # Message still processed in fresh session
+        # Hard-stop: message consumed but not processed (no Result)
         result_events = [e for e in events if isinstance(e, Result)]
-        assert len(result_events) == 1
+        assert len(result_events) == 0
 
     async def test_target_skips_boundary_detection(self, mock_sdk, mocker) -> None:
         """AC: target_session_id set skips boundary detection entirely."""

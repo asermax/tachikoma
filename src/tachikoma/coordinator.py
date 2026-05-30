@@ -264,6 +264,8 @@ class Coordinator:
         self._pending_msg_task: asyncio.Task[None] | None = None
         # Background session post-processing tasks from topic shifts
         self._background_tasks: list[asyncio.Task[None]] = []
+        # Session IDs with in-flight post-processing (guards against reopening)
+        self._postprocessing_sessions: set[str] = set()
 
         # CoordinatorIdle emission state
         self._bus: EventBus | None = bus
@@ -501,6 +503,12 @@ class Coordinator:
                             " — its context is no longer available."
                         )
                     )
+                    # Hard-stop: message consumed but not processed.
+                    # User's explicit reply-to intent detected but unfulfillable.
+                    self._last_message_time = datetime.now(UTC)
+                    if self._message_buffer.empty():
+                        break
+                    continue
 
             # force_new routing: skip boundary detection and force fresh session
             if msg.force_new and active is not None:
@@ -939,7 +947,13 @@ class Coordinator:
                 _log.exception("Failed to close session: err={err}", err=str(exc))
 
         if actually_closed and session.sdk_session_id is not None and self._pipeline is not None:
+            self._postprocessing_sessions.add(session.id)
             task = asyncio.create_task(self._pipeline.run(session))
+
+            def _on_pp_done(t: asyncio.Task[None], sid: str = session.id) -> None:
+                self._postprocessing_sessions.discard(sid)
+
+            task.add_done_callback(_on_pp_done)
             self._background_tasks.append(task)
             self._background_tasks = [t for t in self._background_tasks if not t.done()]
 
@@ -963,21 +977,29 @@ class Coordinator:
         Pre-validates the target before closing the current session.
         When pre-validation fails, returns False and preserves current session.
         When reopen fails (race condition after validation passed), falls back to fresh session.
+        Bypasses the session age check — explicit reply-to overrides the age safeguard.
 
         Returns (active, is_new_session, routed_successfully).
         """
         if active is not None and active.id == target_id:
             return active, is_new_session, True
 
-        # Pre-validate target before closing current session
-        if not await self._registry.can_reopen_session(target_id):  # type: ignore[union-attr]
+        # Reject if target has in-flight post-processing
+        if target_id in self._postprocessing_sessions:
+            _log.warning(
+                "target_session_id has in-flight post-processing, preserving current session"
+            )
+            return active, is_new_session, False
+
+        # Pre-validate target before closing current session (bypass age check)
+        if not await self._registry.can_reopen_session(target_id, skip_age_check=True):  # type: ignore[union-attr]
             _log.warning("target_session_id validation failed, preserving current session")
             return active, is_new_session, False
 
         if active is not None:
             await self._close_and_fire_postprocessing(active)
 
-        reopened = await self._registry.reopen_session(target_id)  # type: ignore[union-attr]
+        reopened = await self._registry.reopen_session(target_id, skip_age_check=True)  # type: ignore[union-attr]
         if reopened is not None:
             self._set_sdk_session_id(reopened.sdk_session_id)
             return reopened, False, True

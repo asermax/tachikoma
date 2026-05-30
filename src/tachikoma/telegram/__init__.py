@@ -896,10 +896,19 @@ class TelegramChannel(Channel):
         try:
             target_id = await registry.find_session_by_external_id("telegram", reply_to_id)
             if target_id is None:
+                _log.debug(
+                    "Reply-to target not found in DB: external_id={eid}",
+                    eid=reply_to_id,
+                )
                 return None
             active = await registry.get_active_session()
             if active is not None and target_id != active.id:
                 return target_id
+            _log.debug(
+                "Reply-to targets current session (no-op): external_id={eid} session_id={sid}",
+                eid=reply_to_id,
+                sid=target_id,
+            )
         except Exception:
             _log.exception("Session lookup for reply-to failed (best-effort)")
         return None

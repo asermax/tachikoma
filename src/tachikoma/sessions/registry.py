@@ -191,7 +191,9 @@ class SessionRegistry:
         """Return the currently active session, or None if no session is open."""
         return self._active_session
 
-    async def _validate_reopen_preconditions(self, session_id: str) -> Session | None:
+    async def _validate_reopen_preconditions(
+        self, session_id: str, *, skip_age_check: bool = False
+    ) -> Session | None:
         """Check all reopen preconditions, returning the session if valid."""
         session = await self._repository.get_by_id(session_id)
         if session is None:
@@ -210,7 +212,7 @@ class SessionRegistry:
             )
             return None
 
-        if datetime.now(UTC) - session.started_at > self._max_session_age:
+        if not skip_age_check and datetime.now(UTC) - session.started_at > self._max_session_age:
             _log.warning(
                 "Cannot reopen session: too old session_id={id} started_at={ts}",
                 id=session_id,
@@ -228,7 +230,9 @@ class SessionRegistry:
 
         return session
 
-    async def reopen_session(self, session_id: str) -> Session | None:
+    async def reopen_session(
+        self, session_id: str, *, skip_age_check: bool = False
+    ) -> Session | None:
         """Reopen a closed session for resumption.
 
         Validates transcript availability, session age, and state before allowing
@@ -236,11 +240,16 @@ class SessionRegistry:
 
         Args:
             session_id: The ID of the closed session to reopen.
+            skip_age_check: When True, bypass the max_session_age check.
+                Use for explicit user-initiated routing (reply-to) where the
+                user's intent is a stronger signal than the age safeguard.
 
         Returns:
             The reopened Session, or None if validation failed.
         """
-        session = await self._validate_reopen_preconditions(session_id)
+        session = await self._validate_reopen_preconditions(
+            session_id, skip_age_check=skip_age_check
+        )
         if session is None:
             return None
 
@@ -265,14 +274,18 @@ class SessionRegistry:
 
         return reopened
 
-    async def can_reopen_session(self, session_id: str) -> bool:
+    async def can_reopen_session(
+        self, session_id: str, *, skip_age_check: bool = False
+    ) -> bool:
         """Check whether a session can be reopened, without side effects.
 
         Validates the same preconditions as ``reopen_session`` but performs
         no state changes. Returns True if the session passes all checks.
         """
         try:
-            return await self._validate_reopen_preconditions(session_id) is not None
+            return await self._validate_reopen_preconditions(
+                session_id, skip_age_check=skip_age_check
+            ) is not None
         except Exception as exc:
             _log.warning(
                 "can_reopen_session error: session_id={id} err={err}",
