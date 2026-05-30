@@ -2,6 +2,30 @@
 
 <!-- version list -->
 
+## v1.94.0 (2026-05-30)
+
+### Documentation
+
+- **telegram**: Add reply-to message context specification and design
+  ([`31c7d3e`](https://github.com/asermax/tachikoma/commit/31c7d3e15bde7c62340a04a1416a5b9655bff985))
+
+- **telegram**: Update spec and design for message_prefix refactor
+  ([`1e8a484`](https://github.com/asermax/tachikoma/commit/1e8a484d9b1457d85053205d05f54d04305a430f))
+
+### Features
+
+- **telegram**: Include replied-to message text as context in agent input
+  ([`6c69a09`](https://github.com/asermax/tachikoma/commit/6c69a09a33c79448e275ea693c5dfec090934ace))
+
+### Refactoring
+
+- **telegram**: Extract stripped variable in reply text handling
+  ([`8a2e0f4`](https://github.com/asermax/tachikoma/commit/8a2e0f43cb58dfc26b2091d1af1e9352e12bf245))
+
+- **telegram**: Generalize replied_to_text into message_prefix on TextMessage
+  ([`fa9f06b`](https://github.com/asermax/tachikoma/commit/fa9f06bb2a3f39de5869785ae3cf9a48710b8183))
+
+
 ## v1.93.0 (2026-05-28)
 
 ### Bug Fixes
