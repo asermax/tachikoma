@@ -2,6 +2,24 @@
 
 <!-- version list -->
 
+## v1.95.0 (2026-05-30)
+
+### Documentation
+
+- **git**: Update spec and design for auto-commit in push tool
+  ([`4601dde`](https://github.com/asermax/tachikoma/commit/4601dde4b59ae1a9c3b4caedea27972b29f72fe5))
+
+### Features
+
+- **git**: Add auto-commit to push MCP tool for mid-session pushes
+  ([`268768e`](https://github.com/asermax/tachikoma/commit/268768e6ffaf2ef209ddcf1183f9a32e55580aff))
+
+### Refactoring
+
+- **agent**: Add with_cwd helper to AgentDefaults
+  ([`9840281`](https://github.com/asermax/tachikoma/commit/9840281dcf6825fcb4041e256a97420a71a35bef))
+
+
 ## v1.94.0 (2026-05-30)
 
 ### Documentation
