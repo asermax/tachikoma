@@ -161,6 +161,8 @@ git/tools.py
 ├── handle_push(type_, target, workspace_path, agent_defaults) → dict
 ├── handle_sync(type_, target, workspace_path, agent_defaults) → dict
 ├── resolve_target(type_, target, workspace_path) → Path | None
+├── _AUTO_COMMIT_PROMPT: str
+├── _auto_commit_if_dirty(resolved, agent_defaults) → bool
 └── DESTRUCTIVE_GIT_DENY_PATTERNS: list[re.Pattern]
 ```
 
@@ -288,14 +290,27 @@ git/tools.py
 
 ### MCP tools for agent-tier push/sync
 
-**Choice**: Expose `push` and `sync` MCP tools via a factory in `git/tools.py`, following DES-006. Both tools accept `type: "workspace" | "project"` and `target: str | None` to target the workspace root or a named project submodule. Target resolution uses a filesystem check (`.git` marker exists).
-**Why**: The main coordinator and task executor agents need a structured way to push and sync without hand-assembling fetch/rebase/push from bash. The existing `smart_push`/`smart_pull` already encapsulate divergence handling and conflict resolution. Wrapping them in MCP tools gives agents a safe, well-defined surface.
+**Choice**: Expose `push` and `sync` MCP tools via a factory in `git/tools.py`, following DES-006. Both tools accept `type: "workspace" | "project"` and `target: str | None` to target the workspace root or a named project submodule. Target resolution uses a filesystem check (`.git` marker exists). The `push` tool auto-commits uncommitted changes before proceeding with `smart_push` — it detects dirty state, spawns a fast agent (processor-tier model) with a commit prompt to create cohesive commits, then calls `smart_push`. The `sync` tool does not auto-commit (it delegates to `smart_pull` which skips dirty repos).
+**Why**: The main coordinator and task executor agents need a structured way to push and sync without hand-assembling fetch/rebase/push from bash. The existing `smart_push`/`smart_pull` already encapsulate divergence handling and conflict resolution. Wrapping them in MCP tools gives agents a safe, well-defined surface. Auto-commit in `push` makes mid-session pushes work as expected — without it, the tool returns `NOTHING_TO_PUSH` when changes are uncommitted, which is confusing.
 
 **Consequences**:
 - Pro: Agents can push/sync on demand (mid-session) rather than waiting for session-end auto-push
 - Pro: Same divergence/conflict handling as the auto-commit path
+- Pro: Mid-session pushes work even with uncommitted changes (auto-commit via fast agent)
 - Pro: Clear error when targeting unknown/missing projects
 - Con: One more MCP server to register and thread through
+- Con: Auto-commit adds latency for mid-session pushes when the working tree is dirty (agent spawn cost)
+
+### Auto-commit via fast agent in push tool
+
+**Choice**: The `push` tool's `handle_push` handler checks for uncommitted changes before calling `smart_push`. When dirty, it spawns a processor-tier agent (Haiku) via `query_and_consume` with the same `GIT_TOOLS`/`GIT_ALLOW`/`GIT_BASH_HOOK` setup used by `GitProcessor` and `ProjectsProcessor`. The agent receives a generic commit prompt that groups changes into cohesive commits with descriptive messages. A scoped `AgentDefaults` with `cwd=resolved_target` ensures the agent operates on the correct repository (workspace or project submodule), following the `ProjectsProcessor._commit_and_push` pattern.
+**Why**: A bare `git add -A && git commit` would produce a single monolithic commit with a generic message. The agent-based approach produces grouped commits with descriptive messages, matching the quality of session-end commits at minimal cost (Haiku model on a mechanical task). Auto-commit belongs in `handle_push`, not `smart_push`, because `smart_push` is shared with `GitProcessor` which already handles committing via its own agent.
+
+**Consequences**:
+- Pro: Mid-session pushes produce the same commit quality as session-end commits
+- Pro: No changes to `smart_push` or `handle_sync` — existing behavior preserved
+- Pro: Scoped defaults handle both workspace and project targets correctly
+- Con: Minimal latency added when working tree is dirty (Haiku agent spawn)
 
 ### Destructive-git deny hook for non-git-processor surfaces
 

@@ -35,6 +35,7 @@ Automatic git version tracking for all workspace file changes. Every modificatio
 | R16 | The deny hook splits compound commands (`&&`, `||`, `|`, `;`) and checks each sub-command independently |
 | R17 | Read-only git commands (`status`, `log`, `diff`, `show`, `fetch`, `branch`, `remote -v`) and `git clone` pass through the deny hook unimpeded |
 | R18 | After the commit agent completes and changes are pushed, the processor verifies the working tree is clean; if uncommitted changes remain, it retries once with a focused cleanup prompt before logging a warning |
+| R19 | The `push` MCP tool auto-commits uncommitted changes by spawning a fast agent (processor-tier model) before proceeding with `smart_push`; the `sync` tool does not auto-commit |
 
 ## Behaviors
 
@@ -84,15 +85,19 @@ A bootstrap hook initializes the workspace as a git repo on first run, creates `
 - Given an existing `.git` directory where `.gitignore` is missing the log entry, when the hook runs, then the missing entry is appended without committing (the commit agent picks it up)
 - Given git init fails, when the hook runs, then a clear exception propagates with the failure reason
 
-### Push/Sync MCP Tools (R14)
+### Push/Sync MCP Tools (R14, R19)
 
-Two MCP tools — `push` and `sync` — expose the existing `smart_push` / `smart_pull` logic to the main coordinator agent and the task executor agent. Both tools target either the workspace or a registered project submodule.
+Two MCP tools — `push` and `sync` — expose the existing `smart_push` / `smart_pull` logic to the main coordinator agent and the task executor agent. Both tools target either the workspace or a registered project submodule. The `push` tool auto-commits uncommitted changes before proceeding with the push flow.
 
 **Acceptance Criteria**:
 - Given the main agent has the `push` tool, when it calls `push(type="workspace")`, then `smart_push` is invoked against the workspace root with `origin`/`HEAD` and the tool response contains the resulting `PUSH_RESULT` value
 - Given the main agent has the `push` tool, when it calls `push(type="project", target="my-app")` for a registered project, then `smart_push` runs against `<workspace>/projects/my-app` with `origin`/`HEAD` and the result enum is surfaced to the agent
 - Given the main agent calls `push` or `sync` with `type="project"` and a `target` that is missing or does not resolve to a git repository under `projects/<target>`, when the tool runs, then it returns an `is_error` response naming the unknown target without invoking any git subprocess
 - Given the main agent calls `sync(type=..., target=...)`, when the tool runs, then `smart_pull` runs first. If it returns `DIRTY_SKIPPED` or `SYNC_FAILED`, `smart_push` is not attempted and the pull result is surfaced. Otherwise, `smart_push` runs and both results are surfaced together
+- Given the main agent calls `push` with uncommitted changes in the target repository, when the tool runs, then a fast agent (processor-tier model) is spawned to inspect and commit all changes with cohesive, descriptive commit messages before proceeding with `smart_push`; the tool response includes "auto-committed" to indicate this step occurred
+- Given the main agent calls `push` with no uncommitted changes, when the tool runs, then no commit agent is spawned and `smart_push` proceeds directly
+- Given the commit agent fails during the auto-commit step, when `push` is called, then an error response is returned without attempting `smart_push`
+- Given the main agent calls `sync` with uncommitted changes, when the tool runs, then no auto-commit is performed; `smart_pull` returns `DIRTY_SKIPPED` as before
 
 ### Destructive Git Deny Hook (R15, R16, R17)
 
