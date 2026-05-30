@@ -876,9 +876,12 @@ class TelegramChannel(Channel):
         if message.reply_to_message is None:
             return None
         text = message.reply_to_message.text or message.reply_to_message.caption
-        if not text or not text.strip():
+        if not text:
             return None
-        truncated = _truncate_reply_text(text.strip())
+        stripped = text.strip()
+        if not stripped:
+            return None
+        truncated = _truncate_reply_text(stripped)
         return f"Replied to:\n> {truncated}"
 
     async def _resolve_reply_target(self, reply_to_id: str) -> str | None:
