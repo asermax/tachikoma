@@ -365,17 +365,17 @@ class TestBuildReplyContext:
     """Tests for TelegramChannel._build_reply_context()."""
 
     def test_short_reply_text(self) -> None:
-        """Short replied-to text is returned in full."""
+        """Short replied-to text is returned as a formatted prefix."""
         ch = _make_telegram_channel()
         msg = _make_mock_message(
             text="my reply",
             reply_to_message_id=99,
             reply_to_text="original message",
         )
-        assert ch._build_reply_context(msg) == "original message"
+        assert ch._build_reply_context(msg) == "Replied to:\n> original message"
 
     def test_long_reply_text_truncated(self) -> None:
-        """Long replied-to text is truncated."""
+        """Long replied-to text is truncated in the prefix."""
         ch = _make_telegram_channel()
         original = "a" * 100 + "MIDDLE" + "b" * 100
         msg = _make_mock_message(
@@ -384,7 +384,7 @@ class TestBuildReplyContext:
             reply_to_text=original,
         )
         result = ch._build_reply_context(msg)
-        assert result == "a" * 100 + "[...]" + "b" * 100
+        assert result == "Replied to:\n> " + "a" * 100 + "[...]" + "b" * 100
 
     def test_caption_used_when_no_text(self) -> None:
         """Caption is used as fallback when text is None."""
@@ -395,10 +395,10 @@ class TestBuildReplyContext:
             reply_to_text=None,
             reply_to_caption="photo caption",
         )
-        assert ch._build_reply_context(msg) == "photo caption"
+        assert ch._build_reply_context(msg) == "Replied to:\n> photo caption"
 
     def test_long_caption_truncated(self) -> None:
-        """Long caption is truncated."""
+        """Long caption is truncated in the prefix."""
         ch = _make_telegram_channel()
         caption = "a" * 100 + "MIDDLE" + "b" * 100
         msg = _make_mock_message(
@@ -408,7 +408,7 @@ class TestBuildReplyContext:
             reply_to_caption=caption,
         )
         result = ch._build_reply_context(msg)
-        assert result == "a" * 100 + "[...]" + "b" * 100
+        assert result == "Replied to:\n> " + "a" * 100 + "[...]" + "b" * 100
 
     def test_no_text_no_caption_returns_none(self) -> None:
         """Sticker (no text/caption) returns None."""
@@ -445,14 +445,14 @@ class TestBuildReplyContext:
             reply_to_message_id=99,
             reply_to_text="  hello world  ",
         )
-        assert ch._build_reply_context(msg) == "hello world"
+        assert ch._build_reply_context(msg) == "Replied to:\n> hello world"
 
 
 class TestReplyContextIntegration:
-    """Integration tests verifying replied_to_text on TextMessage envelopes."""
+    """Integration tests verifying message_prefix on TextMessage envelopes."""
 
-    async def test_reply_sets_replied_to_text(self) -> None:
-        """Replying to a message sets replied_to_text on the envelope."""
+    async def test_reply_sets_message_prefix(self) -> None:
+        """Replying to a message sets message_prefix on the envelope."""
         ch = _make_telegram_channel()
         ch._process_through_coordinator = AsyncMock()
         ch._drain_deferred_queue = AsyncMock()
@@ -467,10 +467,10 @@ class TestReplyContextIntegration:
         call_args = ch._coordinator.enqueue.call_args[0][0]
         assert isinstance(call_args, TextMessage)
         assert call_args.text == "my reply"
-        assert call_args.replied_to_text == "original message"
+        assert call_args.message_prefix == "Replied to:\n> original message"
 
-    async def test_non_reply_no_replied_to_text(self) -> None:
-        """Non-reply message has no replied_to_text."""
+    async def test_non_reply_no_message_prefix(self) -> None:
+        """Non-reply message has no message_prefix."""
         ch = _make_telegram_channel()
         ch._process_through_coordinator = AsyncMock()
         ch._drain_deferred_queue = AsyncMock()
@@ -480,10 +480,10 @@ class TestReplyContextIntegration:
 
         call_args = ch._coordinator.enqueue.call_args[0][0]
         assert isinstance(call_args, TextMessage)
-        assert call_args.replied_to_text is None
+        assert call_args.message_prefix is None
 
-    async def test_reply_to_sticker_no_replied_to_text(self) -> None:
-        """Reply to a sticker (no text) has no replied_to_text."""
+    async def test_reply_to_sticker_no_message_prefix(self) -> None:
+        """Reply to a sticker (no text) has no message_prefix."""
         ch = _make_telegram_channel()
         ch._process_through_coordinator = AsyncMock()
         ch._drain_deferred_queue = AsyncMock()
@@ -498,18 +498,18 @@ class TestReplyContextIntegration:
 
         call_args = ch._coordinator.enqueue.call_args[0][0]
         assert isinstance(call_args, TextMessage)
-        assert call_args.replied_to_text is None
+        assert call_args.message_prefix is None
 
 
 class TestTextMessageSdkInput:
-    """Tests for TextMessage.sdk_input with replied_to_text."""
+    """Tests for TextMessage.sdk_input with message_prefix."""
 
-    def test_with_reply_context(self) -> None:
-        """sdk_input includes reply context when replied_to_text is set."""
-        msg = TextMessage(text="my reply", replied_to_text="original message")
-        assert msg.sdk_input == "Replied to:\n> original message\n\nmy reply"
+    def test_with_message_prefix(self) -> None:
+        """sdk_input includes prefix when message_prefix is set."""
+        msg = TextMessage(text="my reply", message_prefix="Replied to:\n> original")
+        assert msg.sdk_input == "Replied to:\n> original\n\nmy reply"
 
-    def test_without_reply_context(self) -> None:
-        """sdk_input returns plain text when replied_to_text is None."""
+    def test_without_message_prefix(self) -> None:
+        """sdk_input returns plain text when message_prefix is None."""
         msg = TextMessage(text="hello")
         assert msg.sdk_input == "hello"

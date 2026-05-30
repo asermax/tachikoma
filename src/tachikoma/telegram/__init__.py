@@ -867,10 +867,10 @@ class TelegramChannel(Channel):
         return None
 
     def _build_reply_context(self, message: Message) -> str | None:
-        """Extract and truncate replied-to message text for agent context.
+        """Build a message prefix from the replied-to message text.
 
-        Returns the truncated text from ``reply_to_message.text`` or
-        ``reply_to_message.caption``, or None when no text is available
+        Returns a formatted prefix string from ``reply_to_message.text``
+        or ``reply_to_message.caption``, or None when no text is available
         (stickers, voice, media without caption, non-reply messages).
         """
         if message.reply_to_message is None:
@@ -878,7 +878,8 @@ class TelegramChannel(Channel):
         text = message.reply_to_message.text or message.reply_to_message.caption
         if not text or not text.strip():
             return None
-        return _truncate_reply_text(text.strip())
+        truncated = _truncate_reply_text(text.strip())
+        return f"Replied to:\n> {truncated}"
 
     async def _resolve_reply_target(self, reply_to_id: str) -> str | None:
         """Look up whether a replied-to message maps to a different session.
@@ -913,7 +914,7 @@ class TelegramChannel(Channel):
         if reply_target is not None:
             target_session_id = await self._resolve_reply_target(reply_target)
 
-        replied_to_text = self._build_reply_context(message)
+        message_prefix = self._build_reply_context(message)
 
         if cmd_name is not None:
             incoming = TextMessage(
@@ -921,14 +922,14 @@ class TelegramChannel(Channel):
                 force_new=False if target_session_id else (cmd_name == "new"),
                 external_id=str(message.message_id),
                 target_session_id=target_session_id,
-                replied_to_text=replied_to_text,
+                message_prefix=message_prefix,
             )
         else:
             incoming = TextMessage(
                 text=message.text.strip(),
                 external_id=str(message.message_id),
                 target_session_id=target_session_id,
-                replied_to_text=replied_to_text,
+                message_prefix=message_prefix,
             )
 
         if self._delivery_lock.locked():
@@ -1042,13 +1043,13 @@ class TelegramChannel(Channel):
         if reply_target is not None:
             target_session_id = await self._resolve_reply_target(reply_target)
 
-        replied_to_text = self._build_reply_context(message)
+        message_prefix = self._build_reply_context(message)
 
         envelope = TextMessage(
             text=description,
             external_id=str(message.message_id),
             target_session_id=target_session_id,
-            replied_to_text=replied_to_text,
+            message_prefix=message_prefix,
         )
 
         # Mid-exchange (any phase): enqueue-only so the coordinator's forwarder
