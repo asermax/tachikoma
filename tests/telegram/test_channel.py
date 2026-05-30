@@ -1639,8 +1639,8 @@ class TestDeliveryLock:
 
         channel._process_through_coordinator = AsyncMock(side_effect=_fake_process)
 
-        msg1 = MagicMock(text="one")
-        msg2 = MagicMock(text="two")
+        msg1 = MagicMock(text="one", reply_to_message=None, entities=None)
+        msg2 = MagicMock(text="two", reply_to_message=None, entities=None)
 
         await asyncio.gather(
             channel._handle_message(msg1),
@@ -1663,7 +1663,7 @@ class TestDeliveryLock:
         channel = self._make_channel()
         channel._process_through_coordinator = AsyncMock()
 
-        msg = MagicMock(text="hey", message_id=99)
+        msg = MagicMock(text="hey", message_id=99, reply_to_message=None, entities=None)
 
         await channel._delivery_lock.acquire()
         try:
@@ -2160,6 +2160,8 @@ class TestReplyToMedia:
         if reply_to_message_id is not None:
             reply = MagicMock()
             reply.message_id = reply_to_message_id
+            reply.text = None
+            reply.caption = None
             msg.reply_to_message = reply
         else:
             msg.reply_to_message = None

@@ -7,7 +7,7 @@ from aiogram.types import MessageEntity
 from conftest import _make_mock_coordinator, _make_mock_message
 
 from tachikoma.message import TextMessage
-from tachikoma.telegram import TelegramChannel
+from tachikoma.telegram import TelegramChannel, _truncate_reply_text
 
 
 def _make_message(text, entities=None, message_id=42):
@@ -331,3 +331,185 @@ class TestDrainDeferredQueue:
         await ch._drain_deferred_queue()
 
         assert ch._coordinator.promote_next_deferred.call_count == 2
+
+
+class TestTruncateReplyText:
+    """Tests for _truncate_reply_text()."""
+
+    def test_short_text_unchanged(self) -> None:
+        """Text <= 200 chars is returned as-is."""
+        text = "short message"
+        assert _truncate_reply_text(text) == text
+
+    def test_exactly_200_chars_unchanged(self) -> None:
+        """Text exactly 200 chars is returned as-is."""
+        text = "a" * 200
+        assert _truncate_reply_text(text) == text
+
+    def test_long_text_truncated(self) -> None:
+        """Text > 200 chars is truncated with head + [...] + tail."""
+        text = "a" * 100 + "MIDDLE" + "b" * 100
+        result = _truncate_reply_text(text)
+        assert result == "a" * 100 + "[...]" + "b" * 100
+
+    def test_exactly_201_chars_truncated(self) -> None:
+        """Text of exactly 201 chars is truncated."""
+        text = "x" * 201
+        result = _truncate_reply_text(text)
+        assert "[...]" in result
+        assert result.startswith("x" * 100)
+        assert result.endswith("x" * 100)
+
+
+class TestBuildReplyContext:
+    """Tests for TelegramChannel._build_reply_context()."""
+
+    def test_short_reply_text(self) -> None:
+        """Short replied-to text is returned in full."""
+        ch = _make_telegram_channel()
+        msg = _make_mock_message(
+            text="my reply",
+            reply_to_message_id=99,
+            reply_to_text="original message",
+        )
+        assert ch._build_reply_context(msg) == "original message"
+
+    def test_long_reply_text_truncated(self) -> None:
+        """Long replied-to text is truncated."""
+        ch = _make_telegram_channel()
+        original = "a" * 100 + "MIDDLE" + "b" * 100
+        msg = _make_mock_message(
+            text="my reply",
+            reply_to_message_id=99,
+            reply_to_text=original,
+        )
+        result = ch._build_reply_context(msg)
+        assert result == "a" * 100 + "[...]" + "b" * 100
+
+    def test_caption_used_when_no_text(self) -> None:
+        """Caption is used as fallback when text is None."""
+        ch = _make_telegram_channel()
+        msg = _make_mock_message(
+            text="my reply",
+            reply_to_message_id=99,
+            reply_to_text=None,
+            reply_to_caption="photo caption",
+        )
+        assert ch._build_reply_context(msg) == "photo caption"
+
+    def test_long_caption_truncated(self) -> None:
+        """Long caption is truncated."""
+        ch = _make_telegram_channel()
+        caption = "a" * 100 + "MIDDLE" + "b" * 100
+        msg = _make_mock_message(
+            text="my reply",
+            reply_to_message_id=99,
+            reply_to_text=None,
+            reply_to_caption=caption,
+        )
+        result = ch._build_reply_context(msg)
+        assert result == "a" * 100 + "[...]" + "b" * 100
+
+    def test_no_text_no_caption_returns_none(self) -> None:
+        """Sticker (no text/caption) returns None."""
+        ch = _make_telegram_channel()
+        msg = _make_mock_message(
+            text="my reply",
+            reply_to_message_id=99,
+            reply_to_text=None,
+            reply_to_caption=None,
+        )
+        assert ch._build_reply_context(msg) is None
+
+    def test_whitespace_only_text_returns_none(self) -> None:
+        """Whitespace-only replied-to text returns None."""
+        ch = _make_telegram_channel()
+        msg = _make_mock_message(
+            text="my reply",
+            reply_to_message_id=99,
+            reply_to_text="   ",
+        )
+        assert ch._build_reply_context(msg) is None
+
+    def test_non_reply_returns_none(self) -> None:
+        """Non-reply message returns None."""
+        ch = _make_telegram_channel()
+        msg = _make_mock_message(text="hello")
+        assert ch._build_reply_context(msg) is None
+
+    def test_text_stripped(self) -> None:
+        """Replied-to text is stripped of leading/trailing whitespace."""
+        ch = _make_telegram_channel()
+        msg = _make_mock_message(
+            text="my reply",
+            reply_to_message_id=99,
+            reply_to_text="  hello world  ",
+        )
+        assert ch._build_reply_context(msg) == "hello world"
+
+
+class TestReplyContextIntegration:
+    """Integration tests verifying replied_to_text on TextMessage envelopes."""
+
+    async def test_reply_sets_replied_to_text(self) -> None:
+        """Replying to a message sets replied_to_text on the envelope."""
+        ch = _make_telegram_channel()
+        ch._process_through_coordinator = AsyncMock()
+        ch._drain_deferred_queue = AsyncMock()
+
+        msg = _make_mock_message(
+            text="my reply",
+            reply_to_message_id=99,
+            reply_to_text="original message",
+        )
+        await ch._handle_message(msg)
+
+        call_args = ch._coordinator.enqueue.call_args[0][0]
+        assert isinstance(call_args, TextMessage)
+        assert call_args.text == "my reply"
+        assert call_args.replied_to_text == "original message"
+
+    async def test_non_reply_no_replied_to_text(self) -> None:
+        """Non-reply message has no replied_to_text."""
+        ch = _make_telegram_channel()
+        ch._process_through_coordinator = AsyncMock()
+        ch._drain_deferred_queue = AsyncMock()
+
+        msg = _make_mock_message(text="hello")
+        await ch._handle_message(msg)
+
+        call_args = ch._coordinator.enqueue.call_args[0][0]
+        assert isinstance(call_args, TextMessage)
+        assert call_args.replied_to_text is None
+
+    async def test_reply_to_sticker_no_replied_to_text(self) -> None:
+        """Reply to a sticker (no text) has no replied_to_text."""
+        ch = _make_telegram_channel()
+        ch._process_through_coordinator = AsyncMock()
+        ch._drain_deferred_queue = AsyncMock()
+
+        msg = _make_mock_message(
+            text="funny sticker",
+            reply_to_message_id=99,
+            reply_to_text=None,
+            reply_to_caption=None,
+        )
+        await ch._handle_message(msg)
+
+        call_args = ch._coordinator.enqueue.call_args[0][0]
+        assert isinstance(call_args, TextMessage)
+        assert call_args.replied_to_text is None
+
+
+class TestTextMessageSdkInput:
+    """Tests for TextMessage.sdk_input with replied_to_text."""
+
+    def test_with_reply_context(self) -> None:
+        """sdk_input includes reply context when replied_to_text is set."""
+        msg = TextMessage(text="my reply", replied_to_text="original message")
+        assert msg.sdk_input == "Replied to:\n> original message\n\nmy reply"
+
+    def test_without_reply_context(self) -> None:
+        """sdk_input returns plain text when replied_to_text is None."""
+        msg = TextMessage(text="hello")
+        assert msg.sdk_input == "hello"

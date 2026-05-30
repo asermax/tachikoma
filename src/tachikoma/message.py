@@ -46,9 +46,12 @@ class TextMessage(MessageEnvelope):
     force_new: bool = False
     target_session_id: str | None = None
     external_id: str | None = None
+    replied_to_text: str | None = None
 
     @property
     def sdk_input(self) -> str:
+        if self.replied_to_text is not None:
+            return f"Replied to:\n> {self.replied_to_text}\n\n{self.text}"
         return self.text
 
 

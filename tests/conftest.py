@@ -36,6 +36,8 @@ def _make_mock_message(
     message_id: int = 100,
     entities: list | None = None,
     reply_to_message_id: int | None = None,
+    reply_to_text: str | None = None,
+    reply_to_caption: str | None = None,
 ) -> MagicMock:
     """Build a mock aiogram Message."""
     msg = MagicMock()
@@ -46,6 +48,8 @@ def _make_mock_message(
     if reply_to_message_id is not None:
         reply = MagicMock()
         reply.message_id = reply_to_message_id
+        reply.text = reply_to_text
+        reply.caption = reply_to_caption
         msg.reply_to_message = reply
     else:
         msg.reply_to_message = None
