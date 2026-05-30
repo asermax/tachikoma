@@ -4,7 +4,7 @@ Groups cwd, cli_path, and env into a single frozen object so that adding
 a new common option means changing one dataclass instead of 10+ signatures.
 """
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 HARDCODED_ENV = {"CLAUDE_CODE_DISABLE_AUTO_MEMORY": "1"}
@@ -58,6 +58,10 @@ class AgentDefaults:
     processor_model: str = "haiku"
     classifier_model: str = "haiku"
     disallowed_tools: frozenset[str] = SYSTEM_DISALLOWED_TOOLS
+
+    def with_cwd(self, cwd: Path) -> "AgentDefaults":
+        """Return a copy with a different ``cwd``, preserving all other fields."""
+        return replace(self, cwd=cwd)
 
 
 def agent_defaults_from_settings(settings) -> AgentDefaults:

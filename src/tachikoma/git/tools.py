@@ -173,33 +173,14 @@ async def _auto_commit_if_dirty(
     resolved: Path,
     agent_defaults: AgentDefaults,
 ) -> bool:
-    """Commit uncommitted changes via a fast agent if any exist.
+    """Spawn a commit agent when the working tree is dirty.
 
-    Follows the same pattern as ProjectsProcessor._commit_and_push:
-    creates scoped AgentDefaults with the target cwd, then calls
-    query_and_consume with the commit prompt and gate hooks.
-
-    Args:
-        resolved: The git repository path.
-        agent_defaults: Common SDK options (cwd, cli_path, env, models).
-
-    Returns:
-        True if changes were committed, False if the repo was clean.
-
-    Raises:
-        Propagates: SDK errors from the commit agent.
+    Returns True if an agent ran, False if clean.  Raises on agent failure.
     """
     if not await has_uncommitted_changes(resolved):
         return False
 
-    scoped_defaults = AgentDefaults(
-        cwd=resolved,
-        cli_path=agent_defaults.cli_path,
-        env=agent_defaults.env,
-        searcher_model=agent_defaults.searcher_model,
-        processor_model=agent_defaults.processor_model,
-        classifier_model=agent_defaults.classifier_model,
-    )
+    scoped_defaults = agent_defaults.with_cwd(resolved)
 
     await query_and_consume(
         _AUTO_COMMIT_PROMPT,

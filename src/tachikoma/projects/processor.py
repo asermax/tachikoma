@@ -166,14 +166,7 @@ class ProjectsProcessor(PostProcessor):
         submodule_path = self._cwd / path
 
         _log.debug("Spawning commit agent: path={path}", path=path)
-        submodule_defaults = AgentDefaults(
-            cwd=submodule_path,
-            cli_path=self._agent_defaults.cli_path,
-            env=self._agent_defaults.env,
-            searcher_model=self._agent_defaults.searcher_model,
-            processor_model=self._agent_defaults.processor_model,
-            classifier_model=self._agent_defaults.classifier_model,
-        )
+        submodule_defaults = self._agent_defaults.with_cwd(submodule_path)
         await query_and_consume(
             SUBMODULE_COMMIT_PROMPT,
             submodule_defaults,
