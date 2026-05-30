@@ -503,8 +503,7 @@ class Coordinator:
                             " — its context is no longer available."
                         )
                     )
-                    # Hard-stop: message consumed but not processed.
-                    # User's explicit reply-to intent detected but unfulfillable.
+                    # Consumed without processing — reply-to intent can't be fulfilled
                     self._last_message_time = datetime.now(UTC)
                     if self._message_buffer.empty():
                         break
@@ -984,14 +983,12 @@ class Coordinator:
         if active is not None and active.id == target_id:
             return active, is_new_session, True
 
-        # Reject if target has in-flight post-processing
         if target_id in self._postprocessing_sessions:
             _log.warning(
                 "target_session_id has in-flight post-processing, preserving current session"
             )
             return active, is_new_session, False
 
-        # Pre-validate target before closing current session (bypass age check)
         if not await self._registry.can_reopen_session(target_id, skip_age_check=True):  # type: ignore[union-attr]
             _log.warning("target_session_id validation failed, preserving current session")
             return active, is_new_session, False

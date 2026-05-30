@@ -255,7 +255,6 @@ class SessionRegistry:
 
         now = datetime.now(UTC)
 
-        # Update the session: clear ended_at, set last_resumed_at
         await self._repository.update(
             session_id,
             ended_at=None,
