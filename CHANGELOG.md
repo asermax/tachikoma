@@ -2,6 +2,19 @@
 
 <!-- version list -->
 
+## v1.95.1 (2026-05-30)
+
+### Bug Fixes
+
+- **sessions**: Guard reply-to routing against post-processing races and stale sessions
+  ([`77d8970`](https://github.com/asermax/tachikoma/commit/77d897002e6db18df4e0109514b781a09ce309a8))
+
+### Code Style
+
+- **sessions**: Clean up inline comments in session routing code
+  ([`02faee9`](https://github.com/asermax/tachikoma/commit/02faee9722036f2fc1cd61b2352784111324e191))
+
+
 ## v1.95.0 (2026-05-30)
 
 ### Documentation
