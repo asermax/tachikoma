@@ -6,10 +6,12 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from tachikoma.agent_defaults import AgentDefaults
+from tachikoma.git.processor import GIT_ALLOW, GIT_TOOLS
 from tachikoma.git.sync import PUSH_RESULT, SYNC_RESULT
 from tachikoma.git.tools import (
     DESTRUCTIVE_GIT_DENY_PATTERNS,
     PushArgs,
+    _auto_commit_if_dirty,
     create_git_tools_server,
     handle_push,
     handle_scrub,
@@ -129,8 +131,14 @@ class TestHandlePush:
         new_callable=AsyncMock,
         return_value=PUSH_RESULT["PUSHED"],
     )
+    @patch(
+        "tachikoma.git.tools._auto_commit_if_dirty",
+        new_callable=AsyncMock,
+        return_value=False,
+    )
     async def test_workspace_push(
         self,
+        mock_auto_commit: AsyncMock,
         mock_push: AsyncMock,
         workspace: Path,
         agent_defaults: AgentDefaults,
@@ -147,8 +155,14 @@ class TestHandlePush:
         new_callable=AsyncMock,
         return_value=PUSH_RESULT["PUSHED"],
     )
+    @patch(
+        "tachikoma.git.tools._auto_commit_if_dirty",
+        new_callable=AsyncMock,
+        return_value=False,
+    )
     async def test_project_push(
         self,
+        mock_auto_commit: AsyncMock,
         mock_push: AsyncMock,
         workspace: Path,
         agent_defaults: AgentDefaults,
@@ -190,8 +204,14 @@ class TestHandlePush:
         new_callable=AsyncMock,
         return_value=PUSH_RESULT["PUSH_FAILED"],
     )
+    @patch(
+        "tachikoma.git.tools._auto_commit_if_dirty",
+        new_callable=AsyncMock,
+        return_value=False,
+    )
     async def test_push_failure_flagged_as_error(
         self,
+        mock_auto_commit: AsyncMock,
         mock_push: AsyncMock,
         workspace: Path,
         agent_defaults: AgentDefaults,
@@ -202,8 +222,14 @@ class TestHandlePush:
         assert PUSH_RESULT["PUSH_FAILED"] in result["content"][0]["text"]
 
     @patch("tachikoma.git.tools.smart_push", new_callable=AsyncMock)
+    @patch(
+        "tachikoma.git.tools._auto_commit_if_dirty",
+        new_callable=AsyncMock,
+        return_value=False,
+    )
     async def test_push_without_scrub_paths_unchanged(
         self,
+        mock_auto_commit: AsyncMock,
         mock_push: AsyncMock,
         workspace: Path,
         agent_defaults: AgentDefaults,
@@ -237,6 +263,183 @@ class TestHandlePush:
             ["path/to/file"],
         )
         assert result == mock_scrub.return_value
+
+    @patch(
+        "tachikoma.git.tools.smart_push",
+        new_callable=AsyncMock,
+        return_value=PUSH_RESULT["PUSHED"],
+    )
+    @patch(
+        "tachikoma.git.tools._auto_commit_if_dirty",
+        new_callable=AsyncMock,
+        return_value=True,
+    )
+    async def test_auto_commit_when_dirty(
+        self,
+        mock_auto_commit: AsyncMock,
+        mock_push: AsyncMock,
+        workspace: Path,
+        agent_defaults: AgentDefaults,
+    ) -> None:
+        result = await handle_push("workspace", None, workspace, agent_defaults)
+
+        assert "is_error" not in result or result["is_error"] is False
+        text = result["content"][0]["text"]
+        assert "auto-committed" in text
+        assert PUSH_RESULT["PUSHED"] in text
+        mock_auto_commit.assert_awaited_once_with(workspace, agent_defaults)
+        mock_push.assert_awaited_once()
+
+    @patch(
+        "tachikoma.git.tools.smart_push",
+        new_callable=AsyncMock,
+        return_value=PUSH_RESULT["PUSHED"],
+    )
+    @patch(
+        "tachikoma.git.tools._auto_commit_if_dirty",
+        new_callable=AsyncMock,
+        return_value=False,
+    )
+    async def test_no_auto_commit_when_clean(
+        self,
+        mock_auto_commit: AsyncMock,
+        mock_push: AsyncMock,
+        workspace: Path,
+        agent_defaults: AgentDefaults,
+    ) -> None:
+        result = await handle_push("workspace", None, workspace, agent_defaults)
+
+        assert "is_error" not in result or result["is_error"] is False
+        text = result["content"][0]["text"]
+        assert "auto-committed" not in text
+        assert PUSH_RESULT["PUSHED"] in text
+        mock_auto_commit.assert_awaited_once_with(workspace, agent_defaults)
+
+    @patch("tachikoma.git.tools._auto_commit_if_dirty", new_callable=AsyncMock)
+    async def test_auto_commit_failure_returns_error(
+        self,
+        mock_auto_commit: AsyncMock,
+        workspace: Path,
+        agent_defaults: AgentDefaults,
+    ) -> None:
+        mock_auto_commit.side_effect = RuntimeError("commit agent failed")
+
+        with patch("tachikoma.git.tools.smart_push", new_callable=AsyncMock) as mock_push:
+            result = await handle_push("workspace", None, workspace, agent_defaults)
+
+        assert result["is_error"] is True
+        assert "auto-commit failed" in result["content"][0]["text"]
+        mock_push.assert_not_awaited()
+
+    @patch(
+        "tachikoma.git.tools.smart_push",
+        new_callable=AsyncMock,
+        return_value=PUSH_RESULT["PUSHED"],
+    )
+    @patch(
+        "tachikoma.git.tools._auto_commit_if_dirty",
+        new_callable=AsyncMock,
+        return_value=True,
+    )
+    async def test_auto_commit_for_project_target(
+        self,
+        mock_auto_commit: AsyncMock,
+        mock_push: AsyncMock,
+        workspace: Path,
+        agent_defaults: AgentDefaults,
+    ) -> None:
+        project = _register_project(workspace, "my-app")
+
+        result = await handle_push("project", "my-app", workspace, agent_defaults)
+
+        assert "is_error" not in result or result["is_error"] is False
+        assert "auto-committed" in result["content"][0]["text"]
+        mock_auto_commit.assert_awaited_once_with(project, agent_defaults)
+
+
+class TestAutoCommitIfDirty:
+    """Tests for the _auto_commit_if_dirty helper."""
+
+    async def test_returns_false_when_clean(
+        self,
+        workspace: Path,
+        agent_defaults: AgentDefaults,
+    ) -> None:
+        with (
+            patch(
+                "tachikoma.git.tools.has_uncommitted_changes",
+                new_callable=AsyncMock,
+                return_value=False,
+            ),
+            patch("tachikoma.git.tools.query_and_consume", new_callable=AsyncMock) as mock_query,
+        ):
+            result = await _auto_commit_if_dirty(workspace, agent_defaults)
+
+        assert result is False
+        mock_query.assert_not_awaited()
+
+    async def test_spawns_agent_when_dirty(
+        self,
+        workspace: Path,
+        agent_defaults: AgentDefaults,
+    ) -> None:
+        with (
+            patch(
+                "tachikoma.git.tools.has_uncommitted_changes",
+                new_callable=AsyncMock,
+                return_value=True,
+            ),
+            patch("tachikoma.git.tools.query_and_consume", new_callable=AsyncMock) as mock_query,
+        ):
+            result = await _auto_commit_if_dirty(workspace, agent_defaults)
+
+        assert result is True
+        mock_query.assert_awaited_once()
+        call_kwargs = mock_query.call_args
+        assert call_kwargs[1]["tools"] == GIT_TOOLS
+        assert call_kwargs[1]["allow"] == GIT_ALLOW
+        assert call_kwargs[1]["model"] == agent_defaults.processor_model
+
+    async def test_creates_scoped_defaults_with_target_cwd(
+        self,
+        workspace: Path,
+        agent_defaults: AgentDefaults,
+    ) -> None:
+        project = _register_project(workspace, "my-app")
+
+        with (
+            patch(
+                "tachikoma.git.tools.has_uncommitted_changes",
+                new_callable=AsyncMock,
+                return_value=True,
+            ),
+            patch("tachikoma.git.tools.query_and_consume", new_callable=AsyncMock) as mock_query,
+        ):
+            result = await _auto_commit_if_dirty(project, agent_defaults)
+
+        assert result is True
+        scoped_defaults = mock_query.call_args[0][1]
+        assert scoped_defaults.cwd == project
+
+    async def test_propagates_agent_errors(
+        self,
+        workspace: Path,
+        agent_defaults: AgentDefaults,
+    ) -> None:
+        with (
+            patch(
+                "tachikoma.git.tools.has_uncommitted_changes",
+                new_callable=AsyncMock,
+                return_value=True,
+            ),
+            patch(
+                "tachikoma.git.tools.query_and_consume",
+                new_callable=AsyncMock,
+                side_effect=RuntimeError("API error"),
+            ),
+            pytest.raises(RuntimeError, match="API error"),
+        ):
+            await _auto_commit_if_dirty(workspace, agent_defaults)
 
 
 def _make_mock_process(

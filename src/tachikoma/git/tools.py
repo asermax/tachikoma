@@ -22,6 +22,7 @@ from loguru import logger
 from pydantic import BaseModel
 
 from tachikoma.agent_defaults import AgentDefaults
+from tachikoma.git.processor import GIT_ALLOW, GIT_BASH_HOOK, GIT_TOOLS
 from tachikoma.git.sync import (
     PUSH_RESULT,
     SYNC_RESULT,
@@ -32,6 +33,7 @@ from tachikoma.git.sync import (
     smart_push,
 )
 from tachikoma.mcp_utils import decode_json_string_array
+from tachikoma.post_processing import query_and_consume
 
 _log = logger.bind(component="git.tools")
 
@@ -121,6 +123,94 @@ _SYNC_FAILURES = frozenset(
 
 def _error(msg: str) -> dict:
     return {"is_error": True, "content": [{"type": "text", "text": msg}]}
+
+
+# --- Auto-commit helper ---
+
+
+_AUTO_COMMIT_PROMPT = """You are a git commit agent. Your task is to inspect the repository
+and create cohesive, well-organized commits for ALL changes.
+
+## Instructions
+
+1. Run `git status` to see all uncommitted changes (both modified and untracked files).
+
+2. Run `git diff` to understand what changed in modified files.
+
+3. Group the changes into cohesive sets by subdirectory/purpose:
+   - Each group should represent one logical change
+   - Related changes go in the same commit
+
+4. For each group, create a commit:
+   - Use `git add <files>` to stage the files in that group
+   - Use `git commit -m "<descriptive message>"` with a message that describes
+     what changed and why
+
+5. After committing all groups, run `git status` again to verify the working tree
+   is clean. If any files remain uncommitted, you MUST stage and commit them too.
+
+## Constraints
+
+- For git, use only: `git status`, `git diff`, `git add`, `git commit`
+- Do NOT use: `git push`, `git branch`, `git checkout`, `git reset`, `git rebase`,
+  `git merge`, `git stash`, or any destructive/history-rewriting commands
+- Read-only inspection commands (`ls`, `find`, `file`, `echo`, `date`, `cat`,
+  `head`, `tail`, `wc`, `stat`) are allowed for understanding repository state
+- Navigation commands (`cd`, `pwd`) are allowed
+- Never ask for confirmation — just make the commits
+- If there are no changes, do nothing
+- After you finish, `git status` must show a clean working tree
+
+## Permissions
+
+You can read and modify files anywhere in the repository. For Bash, `git` \
+commands and read-only inspection commands (`ls`, `find`, `file`, `echo`, \
+`date`, `cat`, `grep`, `head`, `tail`, `wc`, `stat`) are allowed — other commands \
+will be denied. Navigation commands (`cd`, `pwd`) are also allowed."""
+
+
+async def _auto_commit_if_dirty(
+    resolved: Path,
+    agent_defaults: AgentDefaults,
+) -> bool:
+    """Commit uncommitted changes via a fast agent if any exist.
+
+    Follows the same pattern as ProjectsProcessor._commit_and_push:
+    creates scoped AgentDefaults with the target cwd, then calls
+    query_and_consume with the commit prompt and gate hooks.
+
+    Args:
+        resolved: The git repository path.
+        agent_defaults: Common SDK options (cwd, cli_path, env, models).
+
+    Returns:
+        True if changes were committed, False if the repo was clean.
+
+    Raises:
+        Propagates: SDK errors from the commit agent.
+    """
+    if not await has_uncommitted_changes(resolved):
+        return False
+
+    scoped_defaults = AgentDefaults(
+        cwd=resolved,
+        cli_path=agent_defaults.cli_path,
+        env=agent_defaults.env,
+        searcher_model=agent_defaults.searcher_model,
+        processor_model=agent_defaults.processor_model,
+        classifier_model=agent_defaults.classifier_model,
+    )
+
+    await query_and_consume(
+        _AUTO_COMMIT_PROMPT,
+        scoped_defaults,
+        tools=GIT_TOOLS,
+        allow=GIT_ALLOW,
+        pre_tool_use_hooks=[GIT_BASH_HOOK],
+        model=scoped_defaults.processor_model,
+    )
+
+    return True
 
 
 # --- Scrub helper ---
@@ -331,13 +421,25 @@ async def handle_push(
             "is_error": True,
         }
 
+    try:
+        did_commit = await _auto_commit_if_dirty(resolved, agent_defaults)
+    except Exception as e:
+        _log.warning(
+            "Auto-commit failed: target={desc} err={err}",
+            desc=description,
+            err=str(e),
+        )
+        return _error(f"Error: auto-commit failed for {description}: {e}")
+
     result = await smart_push(resolved, "origin", "HEAD", agent_defaults)
 
     is_error = result in _PUSH_FAILURES
+    prefix = "auto-committed, " if did_commit else ""
 
     _log.info(
-        "push tool completed: target={desc} result={result}",
+        "push tool completed: target={desc} auto_commit={did_commit} result={result}",
         desc=description,
+        did_commit=did_commit,
         result=result,
     )
 
@@ -345,7 +447,7 @@ async def handle_push(
         "content": [
             {
                 "type": "text",
-                "text": f"push {description}: {result}",
+                "text": f"push {description}: {prefix}{result}",
             }
         ],
         "is_error": is_error,
