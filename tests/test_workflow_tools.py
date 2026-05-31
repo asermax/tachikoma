@@ -2,7 +2,7 @@
 
 from datetime import UTC, datetime
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
@@ -12,7 +12,6 @@ from tachikoma.database import Base
 from tachikoma.mcp_utils import decode_json_string_array
 from tachikoma.session_context import SessionContext
 from tachikoma.skills.registry import Skill, SkillRegistry
-from tachikoma.workflows.conditions import ConditionResult
 from tachikoma.workflows.definition import StepDefinition, WorkflowDefinition
 from tachikoma.workflows.model import WorkflowState
 from tachikoma.workflows.repository import WorkflowStateRepository
@@ -22,8 +21,8 @@ from tachikoma.workflows.tools import (
     ListActiveWorkflowsArgs,
     StartWorkflowArgs,
     UpdateWorkflowStateArgs,
-    _evaluate_and_advance,
     _find_next_pending_step,
+    _find_next_step_and_condition,
     _render_breadcrumb,
     _render_required_skills,
     _step_to_snapshot,
@@ -1301,35 +1300,31 @@ def _make_session_context(session_id: str | None = "test-sdk-session"):
     return ctx
 
 
-class TestEvaluateAndAdvance:
-    @pytest.mark.asyncio
-    async def test_no_condition_starts_immediately(self):
-        """Steps without condition start immediately."""
+class TestFindNextStepAndCondition:
+    def test_no_pending_steps(self):
+        """Returns (None, None) when no pending steps."""
+        snapshot = [
+            {"id": "01-plan", "title": "Plan", "required": True, "condition": None},
+        ]
+        step_states = {"01-plan": "completed"}
+
+        step_id, condition = _find_next_step_and_condition(step_states, snapshot)
+        assert step_id is None
+        assert condition is None
+
+    def test_step_without_condition(self):
+        """Returns (step_id, None) for steps without condition."""
         snapshot = [
             {"id": "01-plan", "title": "Plan", "required": True, "condition": None},
         ]
         step_states = {"01-plan": "pending"}
 
-        with patch(
-            "tachikoma.workflows.tools.evaluate_condition",
-            new_callable=AsyncMock,
-        ) as mock_eval:
-            result_step, skipped = await _evaluate_and_advance(
-                step_states=step_states,
-                definition_snapshot=snapshot,
-                scratchpad_path="/tmp/scratch.md",
-                workspace_path=Path("/tmp"),
-                agent_defaults=_make_defaults(),
-                session_context=_make_session_context(),
-            )
+        step_id, condition = _find_next_step_and_condition(step_states, snapshot)
+        assert step_id == "01-plan"
+        assert condition is None
 
-        assert result_step == "01-plan"
-        assert skipped == []
-        mock_eval.assert_not_called()
-
-    @pytest.mark.asyncio
-    async def test_condition_passes_starts_step(self):
-        """Steps with passing condition start."""
+    def test_step_with_condition(self):
+        """Returns (step_id, condition_text) for steps with condition."""
         snapshot = [
             {
                 "id": "01-plan",
@@ -1340,143 +1335,64 @@ class TestEvaluateAndAdvance:
         ]
         step_states = {"01-plan": "pending"}
 
-        with patch(
-            "tachikoma.workflows.tools.evaluate_condition",
-            new_callable=AsyncMock,
-            return_value=ConditionResult(passes=True, is_error=False, reason="file exists"),
-        ) as mock_eval:
-            result_step, skipped = await _evaluate_and_advance(
-                step_states=step_states,
-                definition_snapshot=snapshot,
-                scratchpad_path="/tmp/scratch.md",
-                workspace_path=Path("/tmp"),
-                agent_defaults=_make_defaults(),
-                session_context=_make_session_context(),
-            )
+        step_id, condition = _find_next_step_and_condition(step_states, snapshot)
+        assert step_id == "01-plan"
+        assert condition == "Check if file exists"
 
-        assert result_step == "01-plan"
-        assert skipped == []
-        mock_eval.assert_called_once()
-
-    @pytest.mark.asyncio
-    async def test_condition_fails_skips_step(self):
-        """Steps with failing condition are skipped."""
+    def test_returns_first_pending_in_definition_order(self):
+        """Returns the first pending step in definition order."""
         snapshot = [
-            {
-                "id": "01-plan",
-                "title": "Plan",
-                "required": True,
-                "condition": "Check if file exists",
-            },
+            {"id": "01-plan", "title": "Plan", "required": True, "condition": None},
             {"id": "02-execute", "title": "Execute", "required": True, "condition": None},
+        ]
+        step_states = {"01-plan": "completed", "02-execute": "pending"}
+
+        step_id, condition = _find_next_step_and_condition(step_states, snapshot)
+        assert step_id == "02-execute"
+
+    def test_multiple_pending_returns_first(self):
+        """Returns the first pending step even when multiple are pending."""
+        snapshot = [
+            {"id": "01-plan", "title": "Plan", "required": True, "condition": "Check A"},
+            {"id": "02-execute", "title": "Execute", "required": True, "condition": "Check B"},
         ]
         step_states = {"01-plan": "pending", "02-execute": "pending"}
 
-        with patch(
-            "tachikoma.workflows.tools.evaluate_condition",
-            new_callable=AsyncMock,
-            return_value=ConditionResult(passes=False, is_error=False, reason="no file"),
-        ):
-            result_step, skipped = await _evaluate_and_advance(
-                step_states=step_states,
-                definition_snapshot=snapshot,
-                scratchpad_path="/tmp/scratch.md",
-                workspace_path=Path("/tmp"),
-                agent_defaults=_make_defaults(),
-                session_context=_make_session_context(),
-            )
+        step_id, condition = _find_next_step_and_condition(step_states, snapshot)
+        assert step_id == "01-plan"
+        assert condition == "Check A"
 
-        assert result_step == "02-execute"
-        assert len(skipped) == 1
-        assert skipped[0][0] == "01-plan"
-        assert skipped[0][1].passes is False
-        assert step_states["01-plan"] == "skipped"
-
-    @pytest.mark.asyncio
-    async def test_consecutive_false_conditions_all_skipped(self):
-        """Multiple consecutive failing conditions are all skipped."""
+    def test_condition_none_in_snapshot(self):
+        """Handles condition field being None explicitly."""
         snapshot = [
-            {
-                "id": "01-plan",
-                "title": "Plan",
-                "required": True,
-                "condition": "Check A",
-            },
-            {
-                "id": "02-deploy",
-                "title": "Deploy",
-                "required": True,
-                "condition": "Check B",
-            },
-            {"id": "03-review", "title": "Review", "required": True, "condition": None},
+            {"id": "01-plan", "title": "Plan", "required": True, "condition": None},
         ]
-        step_states = {
-            "01-plan": "pending",
-            "02-deploy": "pending",
-            "03-review": "pending",
-        }
+        step_states = {"01-plan": "pending"}
 
-        with patch(
-            "tachikoma.workflows.tools.evaluate_condition",
-            new_callable=AsyncMock,
-            return_value=ConditionResult(passes=False, is_error=False, reason="not met"),
-        ):
-            result_step, skipped = await _evaluate_and_advance(
-                step_states=step_states,
-                definition_snapshot=snapshot,
-                scratchpad_path="/tmp/scratch.md",
-                workspace_path=Path("/tmp"),
-                agent_defaults=_make_defaults(),
-                session_context=_make_session_context(),
-            )
+        step_id, condition = _find_next_step_and_condition(step_states, snapshot)
+        assert step_id == "01-plan"
+        assert condition is None
 
-        assert result_step == "03-review"
-        assert len(skipped) == 2
-        assert [s[0] for s in skipped] == ["01-plan", "02-deploy"]
-
-    @pytest.mark.asyncio
-    async def test_all_false_conditions_returns_none(self):
-        """All steps with false conditions returns None (auto-finalize)."""
+    def test_condition_missing_from_snapshot(self):
+        """Handles condition field missing from snapshot."""
         snapshot = [
-            {
-                "id": "01-plan",
-                "title": "Plan",
-                "required": True,
-                "condition": "Check A",
-            },
-            {
-                "id": "02-deploy",
-                "title": "Deploy",
-                "required": True,
-                "condition": "Check B",
-            },
+            {"id": "01-plan", "title": "Plan", "required": True},
         ]
-        step_states = {"01-plan": "pending", "02-deploy": "pending"}
+        step_states = {"01-plan": "pending"}
 
-        with patch(
-            "tachikoma.workflows.tools.evaluate_condition",
-            new_callable=AsyncMock,
-            return_value=ConditionResult(passes=False, is_error=False, reason="not met"),
-        ):
-            result_step, skipped = await _evaluate_and_advance(
-                step_states=step_states,
-                definition_snapshot=snapshot,
-                scratchpad_path="/tmp/scratch.md",
-                workspace_path=Path("/tmp"),
-                agent_defaults=_make_defaults(),
-                session_context=_make_session_context(),
-            )
-
-        assert result_step is None
-        assert len(skipped) == 2
+        step_id, condition = _find_next_step_and_condition(step_states, snapshot)
+        assert step_id == "01-plan"
+        assert condition is None
 
 
 class TestConditionHandlerIntegration:
     """Tests for handle_update_workflow_state with condition support."""
 
     @pytest.mark.asyncio
-    async def test_explicit_start_with_passing_condition(self, repository, mock_registry):
-        """Explicit start with passing condition proceeds normally."""
+    async def test_explicit_start_on_condition_step_starts_directly(
+        self, repository, mock_registry
+    ):
+        """Explicit start on a condition step trusts the agent and starts it."""
         snapshot = [
             {
                 "id": "01-plan",
@@ -1493,21 +1409,16 @@ class TestConditionHandlerIntegration:
         )
         await repository.create(state)
 
-        with patch(
-            "tachikoma.workflows.tools.evaluate_condition",
-            new_callable=AsyncMock,
-            return_value=ConditionResult(passes=True, is_error=False, reason="file exists"),
-        ):
-            result = await handle_update_workflow_state(
-                state.id,
-                "01-plan",
-                "start",
-                repository,
-                mock_registry,
-                agent_defaults=_make_defaults(),
-                session_context=_make_session_context(),
-                workspace_path=Path("/tmp"),
-            )
+        result = await handle_update_workflow_state(
+            state.id,
+            "01-plan",
+            "start",
+            repository,
+            mock_registry,
+            agent_defaults=_make_defaults(),
+            session_context=_make_session_context(),
+            workspace_path=Path("/tmp"),
+        )
 
         assert result.get("is_error") is None
         assert "started" in result["content"][0]["text"].lower()
@@ -1515,59 +1426,8 @@ class TestConditionHandlerIntegration:
         assert updated.step_states["01-plan"] == "started"
 
     @pytest.mark.asyncio
-    async def test_explicit_start_with_failing_condition_skips(self, repository, mock_registry):
-        """Explicit start with failing condition auto-skips."""
-        snapshot = [
-            {
-                "id": "01-plan",
-                "title": "Plan",
-                "required": True,
-                "path": "/fake/01-plan",
-                "required_skills": [],
-                "condition": "Check if file exists",
-            },
-            {
-                "id": "02-execute",
-                "title": "Execute",
-                "required": True,
-                "path": "/fake/02-execute",
-                "required_skills": [],
-                "condition": None,
-            },
-        ]
-        state = _make_state(
-            step_states={"01-plan": "pending", "02-execute": "pending"},
-            definition_snapshot=snapshot,
-        )
-        await repository.create(state)
-
-        with patch(
-            "tachikoma.workflows.tools.evaluate_condition",
-            new_callable=AsyncMock,
-            return_value=ConditionResult(passes=False, is_error=False, reason="no file"),
-        ):
-            result = await handle_update_workflow_state(
-                state.id,
-                "01-plan",
-                "start",
-                repository,
-                mock_registry,
-                agent_defaults=_make_defaults(),
-                session_context=_make_session_context(),
-                workspace_path=Path("/tmp"),
-            )
-
-        assert result.get("is_error") is None
-        updated = await repository.get(state.id)
-        assert updated.step_states["01-plan"] == "skipped"
-        assert updated.step_states["02-execute"] == "started"
-        assert updated.current_step == "02-execute"
-
-    @pytest.mark.asyncio
-    async def test_required_step_with_false_condition_still_skipped(
-        self, repository, mock_registry
-    ):
-        """A required step with a false condition is still auto-skipped."""
+    async def test_skip_on_required_with_condition_allowed(self, repository, mock_registry):
+        """Skip on a required step with a condition is allowed."""
         snapshot = [
             {
                 "id": "01-plan",
@@ -1584,31 +1444,25 @@ class TestConditionHandlerIntegration:
         )
         await repository.create(state)
 
-        with patch(
-            "tachikoma.workflows.tools.evaluate_condition",
-            new_callable=AsyncMock,
-            return_value=ConditionResult(passes=False, is_error=False, reason="no file"),
-        ):
-            result = await handle_update_workflow_state(
-                state.id,
-                "01-plan",
-                "start",
-                repository,
-                mock_registry,
-                agent_defaults=_make_defaults(),
-                session_context=_make_session_context(),
-                workspace_path=Path("/tmp"),
-            )
+        result = await handle_update_workflow_state(
+            state.id,
+            "01-plan",
+            "skip",
+            repository,
+            mock_registry,
+            agent_defaults=_make_defaults(),
+            session_context=_make_session_context(),
+            workspace_path=Path("/tmp"),
+        )
 
-        # Auto-finalized because all steps are done
+        # Auto-finalized because all steps are done (skipped counts)
         assert result.get("is_error") is None
         assert "finalized" in result["content"][0]["text"].lower()
-        # Verify step was skipped despite being required
         assert await repository.get(state.id) is None
 
     @pytest.mark.asyncio
-    async def test_complete_advances_with_condition_check(self, repository, mock_registry):
-        """Completing a step evaluates conditions on the next step."""
+    async def test_complete_halts_at_condition_step(self, repository, mock_registry):
+        """Completing a step halts auto-advance at the next condition step."""
         snapshot = [
             {
                 "id": "01-plan",
@@ -1626,123 +1480,43 @@ class TestConditionHandlerIntegration:
                 "required_skills": [],
                 "condition": "Check if plan was written",
             },
-            {
-                "id": "03-review",
-                "title": "Review",
-                "required": True,
-                "path": "/fake/03-review",
-                "required_skills": [],
-                "condition": None,
-            },
         ]
         state = _make_state(
             step_states={
                 "01-plan": "started",
                 "02-deploy": "pending",
-                "03-review": "pending",
             },
             definition_snapshot=snapshot,
-        )
-        await repository.create(state)
-
-        with patch(
-            "tachikoma.workflows.tools.evaluate_condition",
-            new_callable=AsyncMock,
-            return_value=ConditionResult(passes=False, is_error=False, reason="no plan"),
-        ):
-            result = await handle_update_workflow_state(
-                state.id,
-                "01-plan",
-                "complete",
-                repository,
-                mock_registry,
-                agent_defaults=_make_defaults(),
-                session_context=_make_session_context(),
-                workspace_path=Path("/tmp"),
-            )
-
-        assert result.get("is_error") is None
-        text = result["content"][0]["text"]
-        assert "03-review" in text
-        assert "started" in text.lower()
-
-        updated = await repository.get(state.id)
-        assert updated.step_states["01-plan"] == "completed"
-        assert updated.step_states["02-deploy"] == "skipped"
-        assert updated.step_states["03-review"] == "started"
-
-    @pytest.mark.asyncio
-    async def test_all_steps_false_auto_finalizes(self, repository, mock_registry):
-        """All steps with unmet conditions auto-finalizes the workflow."""
-        snapshot = [
-            {
-                "id": "01-plan",
-                "title": "Plan",
-                "required": True,
-                "path": "/fake/01-plan",
-                "required_skills": [],
-                "condition": "Check A",
-            },
-            {
-                "id": "02-execute",
-                "title": "Execute",
-                "required": True,
-                "path": "/fake/02-execute",
-                "required_skills": [],
-                "condition": "Check B",
-            },
-        ]
-        state = _make_state(
-            step_states={"01-plan": "pending", "02-execute": "pending"},
-            definition_snapshot=snapshot,
-        )
-        await repository.create(state)
-
-        with patch(
-            "tachikoma.workflows.tools.evaluate_condition",
-            new_callable=AsyncMock,
-            return_value=ConditionResult(passes=False, is_error=False, reason="not met"),
-        ):
-            result = await handle_update_workflow_state(
-                state.id,
-                "01-plan",
-                "start",
-                repository,
-                mock_registry,
-                agent_defaults=_make_defaults(),
-                session_context=_make_session_context(),
-                workspace_path=Path("/tmp"),
-            )
-
-        assert result.get("is_error") is None
-        assert "finalized" in result["content"][0]["text"].lower()
-        assert "Condition-Skipped Steps" in result["content"][0]["text"]
-        assert await repository.get(state.id) is None
-
-    @pytest.mark.asyncio
-    async def test_no_condition_support_backward_compatible(self, repository, mock_registry):
-        """Without condition support params, behaves as before."""
-        state = _make_state(
-            step_states={"01-plan": "pending", "02-execute": "pending"},
         )
         await repository.create(state)
 
         result = await handle_update_workflow_state(
             state.id,
             "01-plan",
-            "start",
+            "complete",
             repository,
             mock_registry,
+            agent_defaults=_make_defaults(),
+            session_context=_make_session_context(),
+            workspace_path=Path("/tmp"),
         )
 
         assert result.get("is_error") is None
-        assert "started" in result["content"][0]["text"].lower()
+        text = result["content"][0]["text"]
+        # Should show the condition halt, not auto-skip
+        assert "condition" in text.lower()
+        assert "Check if plan was written" in text
+        assert "action=\"start\"" in text
+        assert "action=\"skip\"" in text
+
+        # Step should remain pending (not started or skipped)
         updated = await repository.get(state.id)
-        assert updated.step_states["01-plan"] == "started"
+        assert updated.step_states["01-plan"] == "completed"
+        assert updated.step_states["02-deploy"] == "pending"
 
     @pytest.mark.asyncio
-    async def test_condition_error_skips_step(self, repository, mock_registry):
-        """Condition evaluation error causes step to be skipped (fail closed)."""
+    async def test_no_condition_support_backward_compatible(self, repository, mock_registry):
+        """Without condition support params, condition steps start immediately."""
         snapshot = [
             {
                 "id": "01-plan",
@@ -1762,30 +1536,24 @@ class TestConditionHandlerIntegration:
             },
         ]
         state = _make_state(
-            step_states={"01-plan": "pending", "02-execute": "pending"},
+            step_states={"01-plan": "started", "02-execute": "pending"},
             definition_snapshot=snapshot,
         )
         await repository.create(state)
 
-        with patch(
-            "tachikoma.workflows.tools.evaluate_condition",
-            new_callable=AsyncMock,
-            return_value=ConditionResult(passes=False, is_error=True, reason="SDK timeout"),
-        ):
-            result = await handle_update_workflow_state(
-                state.id,
-                "01-plan",
-                "start",
-                repository,
-                mock_registry,
-                agent_defaults=_make_defaults(),
-                session_context=_make_session_context(),
-                workspace_path=Path("/tmp"),
-            )
+        # Without condition support, completing step auto-starts next (condition ignored)
+        result = await handle_update_workflow_state(
+            state.id,
+            "01-plan",
+            "complete",
+            repository,
+            mock_registry,
+        )
 
         assert result.get("is_error") is None
+        assert "started" in result["content"][0]["text"].lower()
         updated = await repository.get(state.id)
-        assert updated.step_states["01-plan"] == "skipped"
+        assert updated.step_states["01-plan"] == "completed"
         assert updated.step_states["02-execute"] == "started"
 
     @pytest.mark.asyncio
