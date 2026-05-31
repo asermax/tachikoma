@@ -2,6 +2,19 @@
 
 <!-- version list -->
 
+## v1.95.2 (2026-05-31)
+
+### Bug Fixes
+
+- **telegram**: Improve reply-to routing feedback and outgoing ID tracking
+  ([`eab1831`](https://github.com/asermax/tachikoma/commit/eab18315523e11cb075864919c98ccee90eb43a9))
+
+### Refactoring
+
+- **telegram**: Extract reply-not-found feedback into dedicated method
+  ([`21b832b`](https://github.com/asermax/tachikoma/commit/21b832b504f4d87f3dca15718ca8e4323e89b172))
+
+
 ## v1.95.1 (2026-05-30)
 
 ### Bug Fixes
