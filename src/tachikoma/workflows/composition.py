@@ -273,4 +273,6 @@ class CascadeOutcome:
     active_step_id: str | None  # None when top-level finalized
     condition_skips: list[tuple[str, str, str]]  # (workflow_name, step_id, reason)
     finalized_top_level: bool
-    halted_at_loop_step: str | None = None  # step_id of loop step that halted auto-advance
+    halted_at_loop_step: str | None = None
+    halted_at_condition_step: str | None = None
+    condition_prompt: str | None = None
