@@ -1925,8 +1925,9 @@ class TestResolveReplyTarget:
             active_session_id="session-current",
             lookup_result="session-past",
         )
-        result = await channel._resolve_reply_target("42")
-        assert result == "session-past"
+        target_id, not_found = await channel._resolve_reply_target("42")
+        assert target_id == "session-past"
+        assert not not_found
         registry.find_session_by_external_id.assert_called_once_with("telegram", "42")
 
     async def test_returns_none_when_same_session(self) -> None:
@@ -1934,31 +1935,36 @@ class TestResolveReplyTarget:
             active_session_id="session-current",
             lookup_result="session-current",
         )
-        result = await channel._resolve_reply_target("42")
-        assert result is None
+        target_id, not_found = await channel._resolve_reply_target("42")
+        assert target_id is None
+        assert not not_found
 
-    async def test_returns_none_when_lookup_returns_none(self) -> None:
+    async def test_returns_not_found_when_lookup_returns_none(self) -> None:
         channel, registry = _make_reply_channel(lookup_result=None)
-        result = await channel._resolve_reply_target("42")
-        assert result is None
+        target_id, not_found = await channel._resolve_reply_target("42")
+        assert target_id is None
+        assert not_found
 
     async def test_returns_none_on_registry_error(self) -> None:
         channel, registry = _make_reply_channel()
         registry.find_session_by_external_id.side_effect = RuntimeError("db error")
-        result = await channel._resolve_reply_target("42")
-        assert result is None
+        target_id, not_found = await channel._resolve_reply_target("42")
+        assert target_id is None
+        assert not not_found
 
     async def test_returns_none_when_no_registry(self) -> None:
         channel, _ = _make_reply_channel()
         channel._coordinator._registry = None
-        result = await channel._resolve_reply_target("42")
-        assert result is None
+        target_id, not_found = await channel._resolve_reply_target("42")
+        assert target_id is None
+        assert not not_found
 
     async def test_returns_none_when_no_active_session(self) -> None:
-        channel, registry = _make_reply_channel()
+        channel, registry = _make_reply_channel(lookup_result="some-session")
         registry.get_active_session.return_value = None
-        result = await channel._resolve_reply_target("42")
-        assert result is None
+        target_id, not_found = await channel._resolve_reply_target("42")
+        assert target_id is None
+        assert not not_found
 
 
 class TestReplyToRouting:

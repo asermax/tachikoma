@@ -886,15 +886,16 @@ class TelegramChannel(Channel):
         truncated = _truncate_reply_text(stripped)
         return f"Replied to:\n> {truncated}"
 
-    async def _resolve_reply_target(self, reply_to_id: str) -> str | None:
+    async def _resolve_reply_target(self, reply_to_id: str) -> tuple[str | None, bool]:
         """Look up whether a replied-to message maps to a different session.
 
-        Returns target_session_id if the reply maps to a different session,
-        None otherwise. Used by message, media, and reaction handlers.
+        Returns (target_session_id, reply_not_found). target_session_id is set
+        when the reply maps to a different session. reply_not_found is True when
+        the external ID was not found in the database.
         """
         registry = self._coordinator._registry
         if registry is None:
-            return None
+            return None, False
         try:
             target_id = await registry.find_session_by_external_id("telegram", reply_to_id)
             if target_id is None:
@@ -902,10 +903,10 @@ class TelegramChannel(Channel):
                     "Reply-to target not found in DB: external_id={eid}",
                     eid=reply_to_id,
                 )
-                return None
+                return None, True
             active = await registry.get_active_session()
             if active is not None and target_id != active.id:
-                return target_id
+                return target_id, False
             _log.debug(
                 "Reply-to targets current session (no-op): external_id={eid} session_id={sid}",
                 eid=reply_to_id,
@@ -913,7 +914,26 @@ class TelegramChannel(Channel):
             )
         except Exception:
             _log.exception("Session lookup for reply-to failed (best-effort)")
-        return None
+        return None, False
+
+    async def _notify_failed_reply(self, reply_target: str | None, reply_not_found: bool) -> bool:
+        """Send feedback when a reply-to target was not found in the database.
+
+        Returns True if the message should be dropped (user was notified).
+        """
+        if not reply_not_found:
+            return False
+        _log.debug(
+            "Reply-to target not found in DB, notifying user: external_id={eid}",
+            eid=reply_target,
+        )
+        with contextlib.suppress(TelegramAPIError):
+            await self._bot.send_message(
+                self._settings.authorized_chat_id,
+                "I couldn't find the conversation that message belongs to. "
+                "It may be too old or from a different session.",
+            )
+        return True
 
     async def _handle_message(self, message: Message) -> None:
         """Handle an incoming message from the authorized user."""
@@ -925,8 +945,9 @@ class TelegramChannel(Channel):
 
         reply_target = self._extract_reply_target(message)
         target_session_id: str | None = None
+        reply_not_found = False
         if reply_target is not None:
-            target_session_id = await self._resolve_reply_target(reply_target)
+            target_session_id, reply_not_found = await self._resolve_reply_target(reply_target)
 
         message_prefix = self._build_reply_context(message)
 
@@ -962,28 +983,8 @@ class TelegramChannel(Channel):
             return
 
         async with self._delivery_lock:
-            # Idle path: check for failed reply-to (message not in DB) before processing
-            if reply_target is not None and target_session_id is None:
-                registry = self._coordinator._registry
-                if registry is not None:
-                    try:
-                        found = await registry.find_session_by_external_id(
-                            "telegram", reply_target
-                        )
-                    except Exception:
-                        found = None  # best-effort
-                    if found is None:
-                        _log.debug(
-                            "Reply-to target not found in DB, notifying user: external_id={eid}",
-                            eid=reply_target,
-                        )
-                        with contextlib.suppress(TelegramAPIError):
-                            await self._bot.send_message(
-                                self._settings.authorized_chat_id,
-                                "I couldn't find the conversation that message belongs to. "
-                                "It may be too old or from a different session.",
-                            )
-                        return
+            if await self._notify_failed_reply(reply_target, reply_not_found):
+                return
 
             if target_session_id is not None:
                 _log.debug(
@@ -1077,8 +1078,9 @@ class TelegramChannel(Channel):
 
         reply_target = self._extract_reply_target(message)
         target_session_id: str | None = None
+        reply_not_found = False
         if reply_target is not None:
-            target_session_id = await self._resolve_reply_target(reply_target)
+            target_session_id, reply_not_found = await self._resolve_reply_target(reply_target)
 
         message_prefix = self._build_reply_context(message)
 
@@ -1106,28 +1108,8 @@ class TelegramChannel(Channel):
             return
 
         async with self._delivery_lock:
-            # Idle path: check for failed reply-to (message not in DB) before processing
-            if reply_target is not None and target_session_id is None:
-                registry = self._coordinator._registry
-                if registry is not None:
-                    try:
-                        found = await registry.find_session_by_external_id(
-                            "telegram", reply_target
-                        )
-                    except Exception:
-                        found = None  # best-effort
-                    if found is None:
-                        _log.debug(
-                            "Reply-to target not found in DB, notifying user: external_id={eid}",
-                            eid=reply_target,
-                        )
-                        with contextlib.suppress(TelegramAPIError):
-                            await self._bot.send_message(
-                                self._settings.authorized_chat_id,
-                                "I couldn't find the conversation that message belongs to. "
-                                "It may be too old or from a different session.",
-                            )
-                        return
+            if await self._notify_failed_reply(reply_target, reply_not_found):
+                return
 
             if target_session_id is not None:
                 _log.debug(
@@ -1218,7 +1200,7 @@ class TelegramChannel(Channel):
             return
 
         # Idle path: check if reaction maps to a different session
-        target_session_id = await self._resolve_reply_target(str(event.message_id))
+        target_session_id, _ = await self._resolve_reply_target(str(event.message_id))
         if target_session_id is not None:
             _log.debug(
                 "Reaction maps to different session: target={target}",
@@ -1431,7 +1413,7 @@ class TelegramChannel(Channel):
                         outgoing_ids = self._active_renderer.get_finalized_message_ids()
                         await self._active_renderer.finalize()
                         new_copy_id = await self._active_renderer.notify()
-                        original_id = self._active_renderer._current_message_id
+                        original_id = self._active_renderer.get_last_message_id()
                         self._active_renderer.reset()
 
                         # Replace deleted original with the visible copy ID
