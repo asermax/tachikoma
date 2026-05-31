@@ -7,7 +7,7 @@
 
 MCP tool servers (workflow-tools, task-tools, git-tools) run as separate server instances registered with the Claude Agent SDK. Tool handlers execute inside these servers with no access to coordinator state — most importantly, they cannot access the current SDK session ID.
 
-The workflow engine needs to fork the current session (via `fork_and_capture`) for condition evaluation: a read-only sub-agent that inherits conversation context and can inspect the workspace. Session forking requires the SDK session ID, but MCP tool handlers have no way to obtain it.
+The workflow engine originally needed to fork the current session (via `fork_and_capture`) for condition evaluation — a read-only sub-agent that inherits conversation context and can inspect the workspace. This has since been replaced with agent-driven condition evaluation (the cascade halts at condition steps and the main agent evaluates them directly), but SessionContext remains valuable for other MCP tool consumers. Session forking requires the SDK session ID, but MCP tool handlers have no way to obtain it.
 
 The coordinator stores `self._sdk_session_id` and updates it from Result events after each message exchange. This value is also persisted to the database via the session registry. However, neither the coordinator's instance state nor the database session record is accessible from MCP tool handlers — they receive only the arguments Claude passes them.
 
@@ -64,7 +64,7 @@ sdk_session_id = session_context.get()
 
 ### First-exchange semantics
 
-During the first message exchange, the SDK session ID is not yet available — it arrives in the Result event after the exchange completes. Consumers must handle `None` gracefully. For the workflow condition evaluator, a missing session ID means the condition is assumed to pass (the step runs normally), since first steps rarely have conditions and the ID will be available by the time step 02 needs evaluation.
+During the first message exchange, the SDK session ID is not yet available — it arrives in the Result event after the exchange completes. Consumers must handle `None` gracefully. The workflow condition evaluator used to need this for subagent forking (now replaced with agent-driven evaluation), but future consumers may still need `None`-safe access patterns.
 
 ## Consequences
 
@@ -103,6 +103,6 @@ During the first message exchange, the SDK session ID is not yet available — i
 
 ## Notes
 
-- First consumer: workflow condition evaluator (`src/tachikoma/workflows/conditions.py`)
+- First consumer: workflow condition evaluator (`src/tachikoma/workflows/conditions.py`, now removed — replaced with agent-driven condition evaluation)
 - `SessionContext` lives in `src/tachikoma/session_context.py` — a standalone module with no subsystem dependencies
 - The coordinator clears the context in `_clear_session_state()`, `_handle_encoding_error()`, and wherever `_sdk_session_id` is reset to `None`
