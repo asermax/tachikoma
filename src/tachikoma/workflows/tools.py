@@ -256,17 +256,13 @@ def _find_next_pending_step(
 def _find_next_step_and_condition(
     step_states: dict[str, StepState],
     definition_snapshot: list[dict],
-) -> tuple[str | None, str | None]:
-    """Find the next pending step and return its condition prompt if any."""
-    next_step_id = _find_next_pending_step(step_states, definition_snapshot)
+) -> tuple[str | None, dict | None]:
+    """Find the next pending step and return its snapshot dict."""
+    for step_def in definition_snapshot:
+        if step_states.get(step_def["id"]) == STEP_PENDING:
+            return step_def["id"], step_def
 
-    if next_step_id is None:
-        return None, None
-
-    step_info = _get_step_from_snapshot(definition_snapshot, next_step_id)
-    condition = step_info.get("condition")
-
-    return next_step_id, condition
+    return None, None
 
 
 def _get_step_from_snapshot(
@@ -693,37 +689,32 @@ async def _run_cascade(
         ss = mutable_ss[current.id]
         snapshot = current.definition_snapshot
 
-        next_step: str | None = None
-        condition_prompt: str | None = None
-
-        if has_condition_support:
-            next_step, condition_prompt = _find_next_step_and_condition(ss, snapshot)
-        else:
-            next_step = _find_next_pending_step(ss, snapshot)
+        next_step, next_info = _find_next_step_and_condition(ss, snapshot)
 
         # Condition halt: stop auto-advance and surface condition to agent
-        if next_step is not None and condition_prompt and has_condition_support:
-            batch.ordered.append(
-                UpdateState(
-                    layer_id=current.id,
-                    step_states=dict(ss),
-                    current_step=current_steps.get(current.id),
+        if next_step is not None and has_condition_support:
+            condition = next_info.get("condition") if next_info else None
+            if condition:
+                batch.ordered.append(
+                    UpdateState(
+                        layer_id=current.id,
+                        step_states=dict(ss),
+                        current_step=current_steps.get(current.id),
+                    )
                 )
-            )
-            return (
-                batch,
-                CascadeOutcome(
-                    deepest_layer_id=current.id,
-                    active_step_id=next_step,
-                    condition_skips=condition_skips,
-                    finalized_top_level=False,
-                    halted_at_condition_step=next_step,
-                    condition_prompt=condition_prompt,
-                ),
-                _build_breadcrumb_parts(layers, chain_order, current_steps),
-                current.definition_snapshot,
-                scratchpad_path,
-            )
+                return (
+                    batch,
+                    CascadeOutcome(
+                        deepest_layer_id=current.id,
+                        active_step_id=next_step,
+                        condition_skips=condition_skips,
+                        finalized_top_level=False,
+                        halted_at_condition_step=next_step,
+                    ),
+                    _build_breadcrumb_parts(layers, chain_order, current_steps),
+                    current.definition_snapshot,
+                    scratchpad_path,
+                )
 
         if next_step is None:
             if current.parent_workflow_id is not None:
@@ -847,7 +838,7 @@ async def _run_cascade(
                     scratchpad_path,
                 )
 
-        next_info = _get_step_from_snapshot(snapshot, next_step)
+        assert next_info is not None
         next_loop = next_info.get("loop")
 
         if next_loop:
@@ -1175,11 +1166,12 @@ async def handle_update_workflow_state(
         halted_id = outcome.halted_at_condition_step
         halted_info = _get_step_from_snapshot(deepest_snapshot, halted_id)
         halted_title = halted_info.get("title", halted_id)
+        condition = halted_info.get("condition")
         text = (
             f"Step `{step}` {action}d.\n\n"
             f"The next step **{halted_title}** (`{halted_id}`) has a condition "
             f"to evaluate:\n\n"
-            f"**Condition**: {outcome.condition_prompt}\n\n"
+            f"**Condition**: {condition}\n\n"
             f"Evaluate this condition based on the current context.\n"
             f'- If the condition passes: call `update_workflow_state('
             f'workflow_id="{workflow_id}", step="{halted_id}", action="start")`\n'

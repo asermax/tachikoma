@@ -275,4 +275,3 @@ class CascadeOutcome:
     finalized_top_level: bool
     halted_at_loop_step: str | None = None
     halted_at_condition_step: str | None = None
-    condition_prompt: str | None = None

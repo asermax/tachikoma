@@ -1308,23 +1308,24 @@ class TestFindNextStepAndCondition:
         ]
         step_states = {"01-plan": "completed"}
 
-        step_id, condition = _find_next_step_and_condition(step_states, snapshot)
+        step_id, step_info = _find_next_step_and_condition(step_states, snapshot)
         assert step_id is None
-        assert condition is None
+        assert step_info is None
 
     def test_step_without_condition(self):
-        """Returns (step_id, None) for steps without condition."""
+        """Returns (step_id, step_info) for steps without condition."""
         snapshot = [
             {"id": "01-plan", "title": "Plan", "required": True, "condition": None},
         ]
         step_states = {"01-plan": "pending"}
 
-        step_id, condition = _find_next_step_and_condition(step_states, snapshot)
+        step_id, step_info = _find_next_step_and_condition(step_states, snapshot)
         assert step_id == "01-plan"
-        assert condition is None
+        assert step_info is not None
+        assert step_info.get("condition") is None
 
     def test_step_with_condition(self):
-        """Returns (step_id, condition_text) for steps with condition."""
+        """Returns (step_id, step_info) for steps with condition."""
         snapshot = [
             {
                 "id": "01-plan",
@@ -1335,9 +1336,10 @@ class TestFindNextStepAndCondition:
         ]
         step_states = {"01-plan": "pending"}
 
-        step_id, condition = _find_next_step_and_condition(step_states, snapshot)
+        step_id, step_info = _find_next_step_and_condition(step_states, snapshot)
         assert step_id == "01-plan"
-        assert condition == "Check if file exists"
+        assert step_info is not None
+        assert step_info["condition"] == "Check if file exists"
 
     def test_returns_first_pending_in_definition_order(self):
         """Returns the first pending step in definition order."""
@@ -1347,7 +1349,7 @@ class TestFindNextStepAndCondition:
         ]
         step_states = {"01-plan": "completed", "02-execute": "pending"}
 
-        step_id, condition = _find_next_step_and_condition(step_states, snapshot)
+        step_id, step_info = _find_next_step_and_condition(step_states, snapshot)
         assert step_id == "02-execute"
 
     def test_multiple_pending_returns_first(self):
@@ -1358,9 +1360,9 @@ class TestFindNextStepAndCondition:
         ]
         step_states = {"01-plan": "pending", "02-execute": "pending"}
 
-        step_id, condition = _find_next_step_and_condition(step_states, snapshot)
+        step_id, step_info = _find_next_step_and_condition(step_states, snapshot)
         assert step_id == "01-plan"
-        assert condition == "Check A"
+        assert step_info["condition"] == "Check A"
 
     def test_condition_none_in_snapshot(self):
         """Handles condition field being None explicitly."""
@@ -1369,9 +1371,9 @@ class TestFindNextStepAndCondition:
         ]
         step_states = {"01-plan": "pending"}
 
-        step_id, condition = _find_next_step_and_condition(step_states, snapshot)
+        step_id, step_info = _find_next_step_and_condition(step_states, snapshot)
         assert step_id == "01-plan"
-        assert condition is None
+        assert step_info.get("condition") is None
 
     def test_condition_missing_from_snapshot(self):
         """Handles condition field missing from snapshot."""
@@ -1380,9 +1382,9 @@ class TestFindNextStepAndCondition:
         ]
         step_states = {"01-plan": "pending"}
 
-        step_id, condition = _find_next_step_and_condition(step_states, snapshot)
+        step_id, step_info = _find_next_step_and_condition(step_states, snapshot)
         assert step_id == "01-plan"
-        assert condition is None
+        assert step_info.get("condition") is None
 
 
 class TestConditionHandlerIntegration:
