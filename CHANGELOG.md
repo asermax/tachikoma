@@ -2,6 +2,32 @@
 
 <!-- version list -->
 
+## v1.95.3 (2026-05-31)
+
+### Bug Fixes
+
+- Release v1.95.3 with agent-driven condition evaluation
+  ([`76396d2`](https://github.com/asermax/tachikoma/commit/76396d251bda931e4d9541d42d5caed873c48e92))
+
+### Documentation
+
+- **workflows**: Update documentation for agent-driven condition evaluation
+  ([`fe603b1`](https://github.com/asermax/tachikoma/commit/fe603b14753a198431cd3675664aa2b8fe32b0f8))
+
+### Refactoring
+
+- **workflows**: Remove condition_prompt from CascadeOutcome
+  ([`9b05bef`](https://github.com/asermax/tachikoma/commit/9b05bef9c85fb4c1a03731e3a8d771ebe84c805b))
+
+- **workflows**: Replace subagent condition evaluator with agent-driven evaluation
+  ([`f0e39ee`](https://github.com/asermax/tachikoma/commit/f0e39ee48f30c2d4237a59df33620ef5b077d4bf))
+
+### Testing
+
+- **workflows**: Update tests for agent-driven condition evaluation
+  ([`c74814a`](https://github.com/asermax/tachikoma/commit/c74814a9474f056225b4696e5c8cff78d9d06694))
+
+
 ## v1.95.2 (2026-05-31)
 
 ### Bug Fixes

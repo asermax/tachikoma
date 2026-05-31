@@ -1768,7 +1768,7 @@ wheels = [
 
 [[package]]
 name = "tachikoma-agent"
-version = "1.95.2"
+version = "1.95.3"
 source = { editable = "." }
 dependencies = [
     { name = "aiogram" },
