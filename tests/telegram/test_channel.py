@@ -13,7 +13,7 @@ from aiogram.exceptions import TelegramAPIError, TelegramBadRequest, TelegramRet
 from conftest import _make_channel_with_registry, _make_mock_coordinator, _make_mock_message
 
 from tachikoma.buffer.events import BufferedDelivery
-from tachikoma.events import Error, Result, ToolActivity
+from tachikoma.events import Error, Result, TextChunk, ToolActivity
 from tachikoma.message import TextMessage
 from tachikoma.telegram import (
     TELEGRAM_TOOL_DISPLAY,
@@ -726,36 +726,41 @@ class TestResponseRendererNotify:
     """Tests for the notify() copy+delete push notification trigger."""
 
     async def test_notify_noop_when_disabled(self) -> None:
-        """notify() is no-op when push_notifications=False."""
+        """notify() returns None when push_notifications=False."""
         bot = MagicMock()
         bot.copy_message = AsyncMock()
         renderer = ResponseRenderer(bot, chat_id=123, push_notifications=False)
         renderer._current_message_id = 1
 
-        await renderer.notify()
+        result = await renderer.notify()
 
+        assert result is None
         bot.copy_message.assert_not_called()
 
     async def test_notify_noop_when_no_message(self) -> None:
-        """notify() is no-op when no message was sent."""
+        """notify() returns None when no message was sent."""
         bot = MagicMock()
         bot.copy_message = AsyncMock()
         renderer = ResponseRenderer(bot, chat_id=123, push_notifications=True)
 
-        await renderer.notify()
+        result = await renderer.notify()
 
+        assert result is None
         bot.copy_message.assert_not_called()
 
     async def test_notify_copies_and_deletes(self) -> None:
-        """notify() copies message then deletes original."""
+        """notify() copies message then deletes original, returns new ID."""
         bot = MagicMock()
-        bot.copy_message = AsyncMock()
+        copied = MagicMock()
+        copied.message_id = 43
+        bot.copy_message = AsyncMock(return_value=copied)
         bot.delete_message = AsyncMock()
         renderer = ResponseRenderer(bot, chat_id=123, push_notifications=True)
         renderer._current_message_id = 42
 
-        await renderer.notify()
+        result = await renderer.notify()
 
+        assert result == 43
         bot.copy_message.assert_called_once_with(
             chat_id=123,
             from_chat_id=123,
@@ -767,7 +772,7 @@ class TestResponseRendererNotify:
         )
 
     async def test_notify_skips_delete_on_copy_failure(self) -> None:
-        """notify() skips delete if copy fails (preserves original)."""
+        """notify() returns None if copy fails (preserves original)."""
         bot = MagicMock()
         bot.copy_message = AsyncMock(
             side_effect=TelegramAPIError(method="copy_message", message="Failed")
@@ -776,30 +781,33 @@ class TestResponseRendererNotify:
         renderer = ResponseRenderer(bot, chat_id=123, push_notifications=True)
         renderer._current_message_id = 42
 
-        await renderer.notify()
+        result = await renderer.notify()
 
+        assert result is None
         bot.copy_message.assert_called_once()
         bot.delete_message.assert_not_called()
 
     async def test_notify_accepts_duplicate_on_delete_failure(self) -> None:
-        """notify() retries delete 3 times and accepts duplicate on final failure."""
+        """notify() returns copy ID when copy succeeds but delete fails all retries."""
         bot = MagicMock()
-        bot.copy_message = AsyncMock()
+        copied = MagicMock()
+        copied.message_id = 43
+        bot.copy_message = AsyncMock(return_value=copied)
         bot.delete_message = AsyncMock(
             side_effect=TelegramAPIError(method="delete_message", message="Failed")
         )
         renderer = ResponseRenderer(bot, chat_id=123, push_notifications=True)
         renderer._current_message_id = 42
 
-        # Should not raise
-        await renderer.notify()
+        result = await renderer.notify()
 
+        assert result == 43
         bot.copy_message.assert_called_once()
         # Delete is retried 3 times
         assert bot.delete_message.call_count == 3
 
     async def test_notify_skips_copy_delete_for_pinned_message(self) -> None:
-        """notify() skips entire copy+delete when message is pinned."""
+        """notify() returns None when message is pinned."""
         bot = MagicMock()
         bot.copy_message = AsyncMock()
         bot.delete_message = AsyncMock()
@@ -813,8 +821,9 @@ class TestResponseRendererNotify:
         )
         renderer._current_message_id = 42
 
-        await renderer.notify()
+        result = await renderer.notify()
 
+        assert result is None
         bot.copy_message.assert_not_called()
         bot.delete_message.assert_not_called()
 
@@ -1472,6 +1481,7 @@ class TestHandleMedia:
             channel._TelegramChannel__coordinator = coordinator
 
         channel._bot = MagicMock()
+        channel._bot.send_message = AsyncMock()
         return channel
 
     def _make_media_message(self, **fields: MagicMock) -> MagicMock:
@@ -1486,6 +1496,7 @@ class TestHandleMedia:
         msg.video_note = None
         msg.animation = None
         msg.caption = None
+        msg.reply_to_message = None
         for field, value in fields.items():
             setattr(msg, field, value)
         return msg
@@ -1988,18 +1999,18 @@ class TestReplyToRouting:
         envelope = channel._coordinator.enqueue.call_args[0][0]
         assert envelope.target_session_id is None
 
-    async def test_reply_unknown_message_routes_normally(self) -> None:
-        """R6: Reply to unknown message routes through boundary detection."""
+    async def test_reply_unknown_message_sends_feedback_and_drops(self) -> None:
+        """R6: Reply to unknown message sends feedback and drops the message."""
         channel, registry = _make_reply_channel(lookup_result=None)
         msg = _make_mock_message(reply_to_message_id=999)
 
         await channel._handle_message(msg)
 
-        channel._coordinator.enqueue.assert_called_once()
+        channel._coordinator.enqueue.assert_not_called()
         channel._coordinator.enqueue_deferred.assert_not_called()
-
-        envelope = channel._coordinator.enqueue.call_args[0][0]
-        assert envelope.target_session_id is None
+        channel._bot.send_message.assert_called_once()
+        sent_text = channel._bot.send_message.call_args[0][1]
+        assert "couldn't find" in sent_text
 
     async def test_busy_reply_different_session_deferred(self) -> None:
         """R8: Busy + different session → enqueue_deferred with target_session_id."""
@@ -2217,14 +2228,139 @@ class TestReplyToMedia:
         envelope = channel._coordinator.enqueue.call_args[0][0]
         assert envelope.target_session_id is None
 
-    async def test_media_reply_unknown_routes_normally(self) -> None:
-        """R6: Media reply to unknown message routes normally."""
+    async def test_media_reply_unknown_sends_feedback_and_drops(self) -> None:
+        """R6: Media reply to unknown message sends feedback and drops the message."""
         channel, registry = _make_reply_channel(lookup_result=None)
         msg = self._make_media_message(reply_to_message_id=999)
         channel._bot.download = AsyncMock(return_value=None)
 
         await channel._handle_media(msg)
 
+        channel._coordinator.enqueue.assert_not_called()
+        channel._coordinator.enqueue_deferred.assert_not_called()
+        channel._bot.send_message.assert_called_once()
+        sent_text = channel._bot.send_message.call_args[0][1]
+        assert "couldn't find" in sent_text
+
+
+class TestOutgoingIdReplacement:
+    """Tests for outgoing message ID replacement after notify() copy+delete."""
+
+    async def test_single_message_replaces_with_copy_id(self) -> None:
+        """After notify() copies message N→N+1, outgoing_ids records N+1."""
+        bot = MagicMock()
+        bot.send_message = AsyncMock(return_value=MockMessage(message_id=42))
+        bot.edit_message_text = AsyncMock()
+        copied = MagicMock()
+        copied.message_id = 43
+        bot.copy_message = AsyncMock(return_value=copied)
+        bot.delete_message = AsyncMock()
+
+        coordinator = _make_mock_coordinator()
+        registry = AsyncMock()
+        session_mock = MagicMock()
+        session_mock.id = "session-1"
+        registry.get_active_session.return_value = session_mock
+        registry.record_channel_message = AsyncMock()
+        coordinator._registry = registry
+
+        async def _fake_send_message():
+            yield TextChunk(text="hello")
+            yield Result(session_id="sdk-1", total_cost_usd=0.0)
+
+        coordinator.send_message = _fake_send_message
+
+        settings = MagicMock()
+        settings.authorized_chat_id = 123
+        settings.push_notifications = True
+
+        with patch("tachikoma.telegram.Bot"):
+            channel = TelegramChannel(settings, workspace_path=Path("/tmp/test-workspace"))
+            channel._TelegramChannel__coordinator = coordinator
+        channel._bot = bot
+
+        await channel._process_through_coordinator()
+
+        # Wait for async recording task
+        await asyncio.sleep(0.1)
+
+        # Verify record_channel_message was called with the copy ID (43), not original (42)
+        recorded_ids = [
+            call[0][3]
+            for call in registry.record_channel_message.call_args_list
+            if call[0][2] == "outgoing"
+        ]
+        assert "43" in recorded_ids
+        assert "42" not in recorded_ids
+
+    async def test_no_replacement_when_push_disabled(self) -> None:
+        """When push notifications are disabled, original ID is recorded."""
+        bot = MagicMock()
+        bot.send_message = AsyncMock(return_value=MockMessage(message_id=42))
+        bot.edit_message_text = AsyncMock()
+
+        coordinator = _make_mock_coordinator()
+        registry = AsyncMock()
+        session_mock = MagicMock()
+        session_mock.id = "session-1"
+        registry.get_active_session.return_value = session_mock
+        registry.record_channel_message = AsyncMock()
+        coordinator._registry = registry
+
+        async def _fake_send_message():
+            yield TextChunk(text="hello")
+            yield Result(session_id="sdk-1", total_cost_usd=0.0)
+
+        coordinator.send_message = _fake_send_message
+
+        settings = MagicMock()
+        settings.authorized_chat_id = 123
+        settings.push_notifications = False
+
+        with patch("tachikoma.telegram.Bot"):
+            channel = TelegramChannel(settings, workspace_path=Path("/tmp/test-workspace"))
+            channel._TelegramChannel__coordinator = coordinator
+        channel._bot = bot
+
+        await channel._process_through_coordinator()
+
+        await asyncio.sleep(0.1)
+
+        recorded_ids = [
+            call[0][3]
+            for call in registry.record_channel_message.call_args_list
+            if call[0][2] == "outgoing"
+        ]
+        assert "42" in recorded_ids
+
+
+class TestReplyToUnknownFeedback:
+    """Tests for reply-to failure feedback in _handle_message and _handle_media."""
+
+    async def test_busy_reply_unknown_still_steers(self) -> None:
+        """Busy + unknown reply-to → still steers (feedback only when idle)."""
+        channel, registry = _make_reply_channel(lookup_result=None)
+        msg = _make_mock_message(reply_to_message_id=999)
+
+        await channel._delivery_lock.acquire()
+        try:
+            await asyncio.wait_for(channel._handle_message(msg), timeout=0.05)
+        finally:
+            channel._delivery_lock.release()
+
+        # Steering path: enqueue (no feedback notification)
+        channel._coordinator.enqueue.assert_called_once()
+        channel._bot.send_message.assert_not_called()
+
+    async def test_reply_unknown_no_registry_routes_normally(self) -> None:
+        """No registry → unknown reply-to falls through to normal routing."""
+        channel, _ = _make_reply_channel(lookup_result=None)
+        channel._coordinator._registry = None
+        msg = _make_mock_message(reply_to_message_id=999)
+
+        await channel._handle_message(msg)
+
         channel._coordinator.enqueue.assert_called_once()
         envelope = channel._coordinator.enqueue.call_args[0][0]
         assert envelope.target_session_id is None
+        channel._bot.send_message.assert_not_called()

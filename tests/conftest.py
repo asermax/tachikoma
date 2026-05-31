@@ -18,9 +18,15 @@ def _make_mock_coordinator() -> MagicMock:
     Must be used whenever a coordinator mock is injected into a TelegramChannel.
     ``has_deferred`` defaults to a truthy MagicMock, causing ``_drain_deferred_queue``'s
     while-loop to never terminate.
+
+    ``_registry`` defaults to ``None`` so that registry-aware code paths
+    (session routing, outgoing ID recording) skip gracefully.  Tests that
+    need a real registry should use ``_make_channel_with_registry`` or set
+    ``coordinator._registry`` to an ``AsyncMock`` explicitly.
     """
     coordinator = MagicMock()
     coordinator.has_deferred = False
+    coordinator._registry = None
     return coordinator
 
 
@@ -86,6 +92,7 @@ def _make_channel_with_registry(
         channel._TelegramChannel__coordinator = coordinator
 
     channel._bot = MagicMock()
+    channel._bot.send_message = AsyncMock()
     channel._process_through_coordinator = AsyncMock()
     channel._drain_deferred_queue = AsyncMock()
     return channel, registry

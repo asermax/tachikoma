@@ -339,7 +339,9 @@ Reply detection and session lookup:
 Session routing:
 - Given a reply targets a message that maps to a session different from the current active session, when the message is processed, then `target_session_id` is set on the envelope and the coordinator closes the current session and reopens the target session
 - Given a reply targets a message that maps to the current active session, when the message is processed, then no `target_session_id` is set and the message routes normally (no session switch)
-- Given a reply targets a message whose external ID is not found (lookup returns None), when the message is processed, then no `target_session_id` is set and the message routes through normal boundary detection
+- Given a reply targets a message whose external ID is not found (lookup returns None), when the message is processed while idle, then a notification is sent to the user ("I couldn't find the conversation that message belongs to. It may be too old or from a different session.") and the message is dropped without enqueueing
+- Given a reply targets a message whose external ID is not found (lookup returns None), when the message is processed while busy, then no `target_session_id` is set and the message is steered into the active session (feedback only applies when idle)
+- Given the registry is unavailable (sessions subsystem disabled), when a reply-to lookup would occur, then the reply-to check is skipped entirely and normal routing applies
 
 Failed session resume:
 - Given a reply targets a session that fails pre-validation (transcript file missing, session too old), when the coordinator processes the message, then a Status event with message "Could not resume that conversation — its context is no longer available." is sent to the user and the message falls through to normal routing without closing the current session
@@ -456,6 +458,11 @@ Applicability:
   - copy last message
     (triggers push)
   - delete original
+  - replace original ID
+    with copy ID in
+    outgoing_ids (so
+    reply-to routing
+    finds the visible msg)
   - (skip if disabled,
     no message sent,
     copy fails, OR

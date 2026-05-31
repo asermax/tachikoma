@@ -323,14 +323,15 @@ class ResponseRenderer:
         self._tool_line = None
         await self._flush(force=True)
 
-    async def notify(self) -> None:
+    async def notify(self) -> int | None:
         """Copy+delete the last message to trigger a push notification.
 
+        Returns the new message ID from copy_message, or None if no copy happened.
         No-op when push notifications are disabled or no message was sent.
         Safe ordering: copy first, skip delete on failure.
         """
         if not self._push_notifications or self._current_message_id is None:
-            return
+            return None
 
         # Pinned messages are left untouched — the pin action itself
         # delivered the push notification via disable_notification=False.
@@ -339,11 +340,11 @@ class ResponseRenderer:
                 "Skipping push notification copy+delete for pinned message: id={id}",
                 id=self._current_message_id,
             )
-            return
+            return None
 
         # Try copy_message — on failure, preserve original
         try:
-            await self._bot.copy_message(
+            copied = await self._bot.copy_message(
                 chat_id=self._chat_id,
                 from_chat_id=self._chat_id,
                 message_id=self._current_message_id,
@@ -353,7 +354,7 @@ class ResponseRenderer:
                 "Failed to copy message for push notification: message_id={id}",
                 id=self._current_message_id,
             )
-            return  # Skip delete — original is preserved
+            return None  # Skip delete — original is preserved
 
         # Try delete_message with retries — on final failure, accept duplicate
         for attempt in range(3):
@@ -362,7 +363,7 @@ class ResponseRenderer:
                     chat_id=self._chat_id,
                     message_id=self._current_message_id,
                 )
-                return  # Success
+                return copied.message_id
             except TelegramAPIError:
                 if attempt < 2:
                     await asyncio.sleep(0.5)
@@ -371,6 +372,7 @@ class ResponseRenderer:
                         "Failed to delete original after copy (duplicate visible): message_id={id}",
                         id=self._current_message_id,
                     )
+        return copied.message_id
 
     async def _flush(self, force: bool = False) -> None:
         """Send/edit the message with current buffer and tool line.
@@ -960,6 +962,29 @@ class TelegramChannel(Channel):
             return
 
         async with self._delivery_lock:
+            # Idle path: check for failed reply-to (message not in DB) before processing
+            if reply_target is not None and target_session_id is None:
+                registry = self._coordinator._registry
+                if registry is not None:
+                    try:
+                        found = await registry.find_session_by_external_id(
+                            "telegram", reply_target
+                        )
+                    except Exception:
+                        found = None  # best-effort
+                    if found is None:
+                        _log.debug(
+                            "Reply-to target not found in DB, notifying user: external_id={eid}",
+                            eid=reply_target,
+                        )
+                        with contextlib.suppress(TelegramAPIError):
+                            await self._bot.send_message(
+                                self._settings.authorized_chat_id,
+                                "I couldn't find the conversation that message belongs to. "
+                                "It may be too old or from a different session.",
+                            )
+                        return
+
             if target_session_id is not None:
                 _log.debug(
                     "Deferring reply-to for session switch: target={target}",
@@ -1081,6 +1106,29 @@ class TelegramChannel(Channel):
             return
 
         async with self._delivery_lock:
+            # Idle path: check for failed reply-to (message not in DB) before processing
+            if reply_target is not None and target_session_id is None:
+                registry = self._coordinator._registry
+                if registry is not None:
+                    try:
+                        found = await registry.find_session_by_external_id(
+                            "telegram", reply_target
+                        )
+                    except Exception:
+                        found = None  # best-effort
+                    if found is None:
+                        _log.debug(
+                            "Reply-to target not found in DB, notifying user: external_id={eid}",
+                            eid=reply_target,
+                        )
+                        with contextlib.suppress(TelegramAPIError):
+                            await self._bot.send_message(
+                                self._settings.authorized_chat_id,
+                                "I couldn't find the conversation that message belongs to. "
+                                "It may be too old or from a different session.",
+                            )
+                        return
+
             if target_session_id is not None:
                 _log.debug(
                     "Deferring media reply-to for session switch: target={target}",
@@ -1382,8 +1430,16 @@ class TelegramChannel(Channel):
                         # Capture outgoing IDs before reset
                         outgoing_ids = self._active_renderer.get_finalized_message_ids()
                         await self._active_renderer.finalize()
-                        await self._active_renderer.notify()
+                        new_copy_id = await self._active_renderer.notify()
+                        original_id = self._active_renderer._current_message_id
                         self._active_renderer.reset()
+
+                        # Replace deleted original with the visible copy ID
+                        if new_copy_id is not None and original_id is not None:
+                            outgoing_ids = [
+                                new_copy_id if oid == original_id else oid
+                                for oid in outgoing_ids
+                            ]
 
                         # Record outgoing IDs asynchronously
                         if session_id is not None and outgoing_ids:
