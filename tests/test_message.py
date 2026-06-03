@@ -223,3 +223,32 @@ class TestReactionMessage:
     def test_prose_never_maps_emoji_to_meaning(self, added, removed):
         msg = ReactionMessage(added=added, removed=removed)
         assert _FORBIDDEN_SEMANTIC_REFS.search(msg.sdk_input) is None
+
+    # --- message_prefix: prepends context before prose ---
+
+    def test_sdk_input_with_message_prefix(self):
+        msg = ReactionMessage(
+            added=frozenset({"👍"}),
+            removed=frozenset(),
+            message_prefix="Reacted to:\n> Some response text",
+        )
+        assert msg.sdk_input == (
+            "Reacted to:\n> Some response text\n\n"
+            "The user reacted with 👍. "
+            "Interpret it in the context of the last exchange and respond accordingly."
+        )
+
+    def test_sdk_input_without_message_prefix(self):
+        msg = ReactionMessage(
+            added=frozenset({"👍"}),
+            removed=frozenset(),
+            message_prefix=None,
+        )
+        assert msg.sdk_input == (
+            "The user reacted with 👍. "
+            "Interpret it in the context of the last exchange and respond accordingly."
+        )
+
+    def test_message_prefix_default_none(self):
+        msg = ReactionMessage(added=frozenset({"👍"}), removed=frozenset())
+        assert msg.message_prefix is None

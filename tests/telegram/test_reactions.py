@@ -333,14 +333,21 @@ def _make_reaction_channel(
     authorized_chat_id: int = 123,
     active_session_id: str = "session-current",
     lookup_result: str | None = None,
+    last_exchange: str | None = None,
 ) -> tuple[TelegramChannel, MagicMock]:
     """Build a TelegramChannel with a mocked registry on the coordinator."""
-    return _make_channel_with_registry(
+    channel, registry = _make_channel_with_registry(
         authorized_chat_id=authorized_chat_id,
         active_session_id=active_session_id,
         lookup_result=lookup_result,
         inbound_reactions=True,
     )
+    # Set _active_session explicitly so _build_reaction_context can read
+    # last_exchange without triggering AsyncMock auto-creation.
+    registry._active_session = MagicMock(
+        id=active_session_id, last_exchange=last_exchange,
+    )
+    return channel, registry
 
 
 class TestReactionSessionRouting:
@@ -391,8 +398,8 @@ class TestReactionSessionRouting:
         assert isinstance(envelope, ReactionMessage)
         assert envelope.target_session_id is None
 
-    async def test_unknown_external_id_routes_normally(self) -> None:
-        """R6: Unknown external ID routes to current session."""
+    async def test_unknown_external_id_notifies_user(self) -> None:
+        """R1: Unknown external ID → notification sent, reaction dropped."""
         channel, registry = _make_reaction_channel(
             lookup_result=None,
         )
@@ -403,11 +410,10 @@ class TestReactionSessionRouting:
         )
         await channel._handle_reaction(event)
 
-        channel._coordinator.enqueue.assert_called_once()
+        # Notification sent, reaction dropped
+        channel._bot.send_message.assert_called_once()
+        channel._coordinator.enqueue.assert_not_called()
         channel._coordinator.enqueue_deferred.assert_not_called()
-
-        envelope = channel._coordinator.enqueue.call_args[0][0]
-        assert envelope.target_session_id is None
 
     async def test_no_registry_routes_normally(self) -> None:
         """R6: No registry available — graceful degradation."""
@@ -467,7 +473,7 @@ class TestReactionSessionRouting:
 
     async def test_external_id_set_on_envelope(self) -> None:
         """R2/R3: external_id is set to str(event.message_id)."""
-        channel, _ = _make_reaction_channel(lookup_result=None)
+        channel, _ = _make_reaction_channel(lookup_result="session-current")
 
         event = _make_reaction_event(
             message_id=123,
@@ -480,7 +486,7 @@ class TestReactionSessionRouting:
 
     async def test_no_active_session_routes_normally(self) -> None:
         """R6: Lookup returns a target but no active session — no switch."""
-        channel, registry = _make_reaction_channel()
+        channel, registry = _make_reaction_channel(lookup_result="session-current")
         registry.get_active_session.return_value = None
 
         event = _make_reaction_event(
@@ -492,3 +498,162 @@ class TestReactionSessionRouting:
         channel._coordinator.enqueue.assert_called_once()
         envelope = channel._coordinator.enqueue.call_args[0][0]
         assert envelope.target_session_id is None
+
+
+class TestReactionNotificationOnNotFound:
+    """R1: User is notified when reaction target session not found (idle path)."""
+
+    async def test_not_found_sends_notification(self) -> None:
+        """AC1: Idle + not-found → notification sent, reaction dropped."""
+        channel, registry = _make_reaction_channel(lookup_result=None)
+
+        event = _make_reaction_event(
+            message_id=42,
+            new_reaction=[_make_emoji("👍")],
+        )
+        await channel._handle_reaction(event)
+
+        # Notification sent
+        channel._bot.send_message.assert_called_once()
+        call_text = channel._bot.send_message.call_args[0][1]
+        assert "couldn't find the conversation" in call_text
+
+        # Reaction dropped (not enqueued)
+        channel._coordinator.enqueue.assert_not_called()
+        channel._coordinator.enqueue_deferred.assert_not_called()
+
+    async def test_not_found_no_notification_when_busy(self) -> None:
+        """AC2: Busy + not-found → no notification, reaction steered."""
+        channel, registry = _make_reaction_channel(lookup_result=None)
+
+        await channel._delivery_lock.acquire()
+        try:
+            event = _make_reaction_event(
+                message_id=42,
+                new_reaction=[_make_emoji("👍")],
+            )
+            await asyncio.wait_for(channel._handle_reaction(event), timeout=0.05)
+        finally:
+            channel._delivery_lock.release()
+
+        # No notification
+        channel._bot.send_message.assert_not_called()
+
+        # Reaction steered into active session
+        channel._coordinator.enqueue.assert_called_once()
+
+    async def test_found_no_notification(self) -> None:
+        """No notification when session IS found."""
+        channel, _ = _make_reaction_channel(lookup_result="session-current")
+
+        event = _make_reaction_event(
+            message_id=42,
+            new_reaction=[_make_emoji("👍")],
+        )
+        await channel._handle_reaction(event)
+
+        channel._bot.send_message.assert_not_called()
+        channel._coordinator.enqueue.assert_called_once()
+
+
+class TestReactionContextPrefix:
+    """R2: Context prefix from last_exchange for current-session reactions."""
+
+    async def test_prefix_set_from_last_exchange(self) -> None:
+        """AC3: Active session with last_exchange → prefix set on envelope."""
+        channel, _ = _make_reaction_channel(
+            lookup_result="session-current",
+            last_exchange="Here is my response to your question.",
+        )
+
+        event = _make_reaction_event(
+            message_id=42,
+            new_reaction=[_make_emoji("👍")],
+        )
+        await channel._handle_reaction(event)
+
+        envelope = channel._coordinator.enqueue.call_args[0][0]
+        assert envelope.message_prefix == "Reacted to:\n> Here is my response to your question."
+
+    async def test_prefix_truncates_long_last_exchange(self) -> None:
+        """AC3: Long last_exchange is truncated via _truncate_reply_text."""
+        long_text = "x" * 300
+        channel, _ = _make_reaction_channel(
+            lookup_result="session-current",
+            last_exchange=long_text,
+        )
+
+        event = _make_reaction_event(
+            message_id=42,
+            new_reaction=[_make_emoji("👍")],
+        )
+        await channel._handle_reaction(event)
+
+        envelope = channel._coordinator.enqueue.call_args[0][0]
+        assert envelope.message_prefix is not None
+        assert envelope.message_prefix.startswith("Reacted to:\n> ")
+        # 300 chars → truncated to first 100 + [...] + last 100
+        prefix_text = envelope.message_prefix.split("> ", 1)[1]
+        assert "[...]" in prefix_text
+
+    async def test_no_prefix_when_no_active_session(self) -> None:
+        """AC4: No active session → message_prefix is None."""
+        channel, registry = _make_reaction_channel(lookup_result="session-current")
+        registry._active_session = None
+
+        event = _make_reaction_event(
+            message_id=42,
+            new_reaction=[_make_emoji("👍")],
+        )
+        await channel._handle_reaction(event)
+
+        envelope = channel._coordinator.enqueue.call_args[0][0]
+        assert envelope.message_prefix is None
+
+    async def test_no_prefix_when_no_last_exchange(self) -> None:
+        """AC4: Active session but no last_exchange → message_prefix is None."""
+        channel, _ = _make_reaction_channel(lookup_result="session-current", last_exchange=None)
+
+        event = _make_reaction_event(
+            message_id=42,
+            new_reaction=[_make_emoji("👍")],
+        )
+        await channel._handle_reaction(event)
+
+        envelope = channel._coordinator.enqueue.call_args[0][0]
+        assert envelope.message_prefix is None
+
+    async def test_no_prefix_for_cross_session_reaction(self) -> None:
+        """AC6: Reaction deferred for session switch → no prefix."""
+        channel, _ = _make_reaction_channel(
+            lookup_result="session-past",
+            last_exchange="This should not appear.",
+        )
+
+        event = _make_reaction_event(
+            message_id=99,
+            new_reaction=[_make_emoji("👍")],
+        )
+        await channel._handle_reaction(event)
+
+        envelope = channel._coordinator.enqueue_deferred.call_args[0][0]
+        assert envelope.message_prefix is None
+
+    async def test_no_prefix_when_busy(self) -> None:
+        """Mid-stream reaction → no prefix (agent has full context)."""
+        channel, _ = _make_reaction_channel(
+            last_exchange="This should not appear.",
+        )
+
+        await channel._delivery_lock.acquire()
+        try:
+            event = _make_reaction_event(
+                message_id=42,
+                new_reaction=[_make_emoji("👍")],
+            )
+            await asyncio.wait_for(channel._handle_reaction(event), timeout=0.05)
+        finally:
+            channel._delivery_lock.release()
+
+        envelope = channel._coordinator.enqueue.call_args[0][0]
+        assert envelope.message_prefix is None
