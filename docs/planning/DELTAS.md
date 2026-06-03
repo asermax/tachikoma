@@ -553,3 +553,10 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 **Complexity**: Easy
 **Description**: Allow plugins to declare scheduled ticks in their manifest that run on a cron schedule alongside built-in maintenance jobs. Plugin-declared ticks specify a tick function and an optional schedule override in the manifest, and are governed by the same maintenance enabled/schedule configuration as built-in ticks. During plugin loading, declared ticks are registered with the central scheduler and run automatically when the schedule fires.
 
+### DLT-176: Workflow tasks as background execution
+**Status**: ✗ Defined
+**Depends on**: None
+**Priority**: 2 (High)
+**Complexity**: Hard
+**Description**: Refactor workflow execution so workflows always run as a subtype of background tasks, removing step-by-step driving from the main interactive session. The main agent retains only the `start_workflow` tool — once a workflow starts, it runs autonomously as a background task with workflow-specific tools (`complete_step`, `skip_step`, `abort_workflow`, `request_input`). Each workflow step fires as a separate background task with full step context injected into its initial prompt (instructions, required skills, previous step outputs, workflow metadata), eliminating the need for the agent to read files or call tools to understand what to do. The existing workflow definition format, state persistence, composition/looping semantics, and recovery tools (`get_workflow_state`, `list_active_workflows`) remain unchanged. Workflow background tasks inherit all background task settings with a separate `workflow_wait_timeout` configuration defaulting to 7 days to accommodate steps that wait for user input. Removes `update_workflow_state` and `end_workflow` from the main session MCP tools, replacing them with the workflow task's own completion and error handling.
+
