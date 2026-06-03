@@ -1,9 +1,9 @@
 """Workflow failure processor for abort cascade on step task failure.
 
 Runs as a PostProcessor in the background task executor's adapted pipeline.
-Self-selects when the TaskInstance has a workflow_id and status == "failed",
-then aborts the entire workflow cascade, cleans up the scratchpad, and
-dispatches a failure notification.
+Registered only on failure paths (via ``is_failure=True``), so it always acts
+when present. Aborts the entire workflow cascade, cleans up the scratchpad,
+and dispatches a failure notification.
 """
 
 from __future__ import annotations
@@ -29,8 +29,10 @@ _log = logger.bind(component="workflow_failure_processor")
 class WorkflowFailureProcessor(PostProcessor):
     """Detects failed workflow step tasks and aborts the workflow cascade.
 
-    Self-selects: only acts when ``instance.workflow_id`` is set AND
-    ``instance.status == "failed"``. All other cases are no-ops.
+    Registered only on failure paths — always acts when ``instance.workflow_id``
+    is set. The executor's ``_run_postprocessing`` determines relevance via
+    ``is_failure``, so this processor does not re-check status (which would be
+    stale anyway since TaskInstance is a frozen dataclass).
 
     Errors within the processor are logged and swallowed — matching
     post-processing error isolation semantics (failure to clean up workflow
@@ -51,7 +53,7 @@ class WorkflowFailureProcessor(PostProcessor):
         self._bus = bus
 
     async def process(self, session: Session, *, extra: dict | None = None) -> None:
-        if self._instance.workflow_id is None or self._instance.status != "failed":
+        if self._instance.workflow_id is None:
             return
 
         workflow_id = self._instance.workflow_id

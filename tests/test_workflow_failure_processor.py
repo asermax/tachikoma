@@ -52,43 +52,10 @@ def _make_session() -> Session:
 
 
 class TestSelfSelection:
-    """WorkflowFailureProcessor only acts on failed workflow instances."""
+    """WorkflowFailureProcessor only acts on instances with a workflow_id."""
 
     async def test_no_op_when_no_workflow_id(self) -> None:
         instance = _make_instance(workflow_id=None, status="failed")
-        repo = AsyncMock()
-        bus = EventBus()
-
-        processor = WorkflowFailureProcessor(instance, repo, bus)
-        await processor.process(_make_session())
-
-        repo.get.assert_not_awaited()
-        repo.abort_cascade.assert_not_awaited()
-
-    async def test_no_op_when_status_completed(self) -> None:
-        instance = _make_instance(workflow_id="wf-123", status="completed")
-        repo = AsyncMock()
-        bus = EventBus()
-
-        processor = WorkflowFailureProcessor(instance, repo, bus)
-        await processor.process(_make_session())
-
-        repo.get.assert_not_awaited()
-        repo.abort_cascade.assert_not_awaited()
-
-    async def test_no_op_when_status_running(self) -> None:
-        instance = _make_instance(workflow_id="wf-123", status="running")
-        repo = AsyncMock()
-        bus = EventBus()
-
-        processor = WorkflowFailureProcessor(instance, repo, bus)
-        await processor.process(_make_session())
-
-        repo.get.assert_not_awaited()
-        repo.abort_cascade.assert_not_awaited()
-
-    async def test_no_op_when_status_pending(self) -> None:
-        instance = _make_instance(workflow_id="wf-123", status="pending")
         repo = AsyncMock()
         bus = EventBus()
 

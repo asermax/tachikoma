@@ -574,7 +574,7 @@ class BackgroundTaskExecutor:
                 instance.id,
                 priority=Priority.URGENT,
             )
-            await self._run_postprocessing(instance.sdk_session_id, instance)
+            await self._run_postprocessing(instance.sdk_session_id, instance, is_failure=True)
 
     async def _run_evaluator_loop(
         self,
@@ -667,7 +667,7 @@ class BackgroundTaskExecutor:
                     instance.id,
                     priority=Priority.URGENT,
                 )
-                await self._run_postprocessing(sdk_session_id, instance)
+                await self._run_postprocessing(sdk_session_id, instance, is_failure=True)
                 return
 
             # Continue: inject the evaluator's factual rationale
@@ -690,7 +690,7 @@ class BackgroundTaskExecutor:
             instance.id,
             priority=Priority.URGENT,
         )
-        await self._run_postprocessing(sdk_session_id, instance)
+        await self._run_postprocessing(sdk_session_id, instance, is_failure=True)
 
     async def _register_workflow_step_tools(
         self,
@@ -862,6 +862,8 @@ class BackgroundTaskExecutor:
         self,
         sdk_session_id: str | None,
         instance: TaskInstance | None = None,
+        *,
+        is_failure: bool = False,
     ) -> None:
         """Run adapted post-processing pipeline (episodic + git only).
 
@@ -870,9 +872,13 @@ class BackgroundTaskExecutor:
             instance: Optional TaskInstance — when provided and has a workflow_id,
                 the WorkflowFailureProcessor is registered to handle abort cascade
                 on failed workflow step tasks.
+            is_failure: When True and instance has a workflow_id, registers
+                the WorkflowFailureProcessor for abort cascade. Must be False
+                on success paths to avoid aborting healthy workflows.
         """
         needs_failure_processor = (
-            instance is not None
+            is_failure
+            and instance is not None
             and instance.workflow_id is not None
             and self._workflow_repository is not None
         )
