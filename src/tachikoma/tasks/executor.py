@@ -85,6 +85,12 @@ async def _resolve_source(
     instance: TaskInstance,
 ) -> str:
     """Resolve the notification source for an instance."""
+    # TODO(Batch 8): workflow step instances should resolve to
+    # "Workflow: skill/name" by reading the workflow chain, but that
+    # requires threading WorkflowStateRepository through the sweep
+    # functions and scheduler job builder. For now workflow step
+    # instances use the generic "Background task: ..." format in sweep
+    # notifications (the live executor path is already correct).
     definition = (
         await repository.get_definition(instance.definition_id) if instance.definition_id else None
     )
@@ -479,7 +485,7 @@ class BackgroundTaskExecutor:
 
             # Workflow step tasks: register step-specific tools and system prompt
             if is_workflow_step and self._workflow_repository is not None:
-                self._register_workflow_step_tools(
+                await self._register_workflow_step_tools(
                     preprocessing_result, instance, notif_state, notification_source
                 )
 
@@ -683,7 +689,7 @@ class BackgroundTaskExecutor:
             priority=Priority.URGENT,
         )
 
-    def _register_workflow_step_tools(
+    async def _register_workflow_step_tools(
         self,
         preprocessing_result: _PreprocessingResult,
         instance: TaskInstance,
@@ -693,6 +699,13 @@ class BackgroundTaskExecutor:
         """Register workflow step MCP tools for a workflow step task."""
         assert self._workflow_repository is not None  # guarded by caller
         assert instance.workflow_id is not None  # guarded by is_workflow_step
+
+        # Build workflow-specific notification source (R6: "Workflow: skill/name")
+        chain = await self._workflow_repository.get_active_chain(instance.workflow_id)
+        if chain:
+            top = chain[0]
+            notification_source = f"Workflow: {top.skill_name}/{top.workflow_name}"
+
         step_server = create_workflow_step_tools_server(
             repository=self._workflow_repository,
             task_repository=self._repository,
