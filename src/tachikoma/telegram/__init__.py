@@ -886,6 +886,31 @@ class TelegramChannel(Channel):
         truncated = _truncate_reply_text(stripped)
         return f"Replied to:\n> {truncated}"
 
+    def _build_reaction_context(self) -> str | None:
+        """Build a context prefix from the active session's last exchange.
+
+        Returns a formatted prefix string quoting the agent's last response,
+        or None when no active session or no last exchange is available.
+        """
+        registry = self._coordinator._registry
+        if registry is None:
+            return None
+        try:
+            active = registry._active_session
+            if active is None:
+                return None
+            last_exchange = active.last_exchange
+            if not last_exchange:
+                return None
+            stripped = last_exchange.strip()
+            if not stripped:
+                return None
+            truncated = _truncate_reply_text(stripped)
+            return f"Reacted to:\n> {truncated}"
+        except Exception:
+            _log.debug("Failed to build reaction context (best-effort)", exc_info=True)
+            return None
+
     async def _resolve_reply_target(self, reply_to_id: str) -> tuple[str | None, bool]:
         """Look up whether a replied-to message maps to a different session.
 
@@ -1181,6 +1206,10 @@ class TelegramChannel(Channel):
         When the reacted-to message maps to a different session and the
         channel is idle, the reaction is deferred with target_session_id set
         for session-switching routing (DES-009, R4).
+
+        When the target session is not found, the user is notified and the
+        reaction is dropped. When the reaction stays in the current session,
+        context from the agent's last response is included as a prefix.
         """
         new_emojis = _emoji_set(event.new_reaction)
         old_emojis = _emoji_set(event.old_reaction)
@@ -1200,14 +1229,27 @@ class TelegramChannel(Channel):
             return
 
         # Idle path: check if reaction maps to a different session
-        target_session_id, _ = await self._resolve_reply_target(str(event.message_id))
+        target_session_id, reply_not_found = await self._resolve_reply_target(str(event.message_id))
         if target_session_id is not None:
             _log.debug(
                 "Reaction maps to different session: target={target}",
                 target=target_session_id,
             )
 
+        # Build context prefix from the agent's last response when staying
+        # in the current session (cross-session reactions get their context
+        # from the coordinator's session resume logic)
+        message_prefix: str | None = None
+        if target_session_id is None and not reply_not_found:
+            message_prefix = self._build_reaction_context()
+
+        if message_prefix is not None:
+            envelope = replace(envelope, message_prefix=message_prefix)
+
         async with self._delivery_lock:
+            if await self._notify_failed_reply(str(event.message_id), reply_not_found):
+                return
+
             if target_session_id is not None:
                 envelope = replace(envelope, target_session_id=target_session_id)
                 _log.debug(

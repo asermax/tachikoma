@@ -79,6 +79,7 @@ class ReactionMessage(MessageEnvelope):
     removed: frozenset[str]
     target_session_id: str | None = None
     external_id: str | None = None
+    message_prefix: str | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "added", frozenset(self.added))
@@ -92,6 +93,12 @@ class ReactionMessage(MessageEnvelope):
 
     @property
     def sdk_input(self) -> str:
+        prose = self._render_prose()
+        if self.message_prefix is not None:
+            return f"{self.message_prefix}\n\n{prose}"
+        return prose
+
+    def _render_prose(self) -> str:
         suffix = "Interpret it in the context of the last exchange and respond accordingly."
         sorted_added = sorted(self.added)
         sorted_removed = sorted(self.removed)
