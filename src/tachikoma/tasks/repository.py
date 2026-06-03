@@ -221,6 +221,7 @@ class TaskRepository:
                 user_response=instance.user_response,
                 updated_at=instance.updated_at,
                 created_at=instance.created_at or datetime.now(UTC),
+                workflow_id=instance.workflow_id,
             )
 
             async with self._session_factory() as db:

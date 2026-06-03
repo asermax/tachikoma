@@ -237,6 +237,10 @@ class TaskSettings(BaseModel):
         default=7200,
         description="Seconds a task may wait for user input before failing",
     )
+    workflow_wait_timeout: int = Field(
+        default=604800,
+        description="Seconds a workflow step task may wait for user input (default 7 days)",
+    )
     running_timeout: int = Field(
         default=1800,
         ge=60,
