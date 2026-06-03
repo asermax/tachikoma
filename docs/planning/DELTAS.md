@@ -554,7 +554,7 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 **Description**: Allow plugins to declare scheduled ticks in their manifest that run on a cron schedule alongside built-in maintenance jobs. Plugin-declared ticks specify a tick function and an optional schedule override in the manifest, and are governed by the same maintenance enabled/schedule configuration as built-in ticks. During plugin loading, declared ticks are registered with the central scheduler and run automatically when the schedule fires.
 
 ### DLT-176: Workflow tasks as background execution
-**Status**: ✓ Design
+**Status**: ⧗ Plan
 **Depends on**: None
 **Priority**: 2 (High)
 **Complexity**: Hard
