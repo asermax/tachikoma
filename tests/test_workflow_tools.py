@@ -12,6 +12,12 @@ from tachikoma.database import Base
 from tachikoma.mcp_utils import decode_json_string_array
 from tachikoma.session_context import SessionContext
 from tachikoma.skills.registry import Skill, SkillRegistry
+from tachikoma.workflows.cascade import (
+    _find_next_pending_step,
+    _find_next_step_and_condition,
+    _step_to_snapshot,
+    validate_transition,
+)
 from tachikoma.workflows.definition import StepDefinition, WorkflowDefinition
 from tachikoma.workflows.model import WorkflowState
 from tachikoma.workflows.repository import WorkflowStateRepository
@@ -21,17 +27,13 @@ from tachikoma.workflows.tools import (
     ListActiveWorkflowsArgs,
     StartWorkflowArgs,
     UpdateWorkflowStateArgs,
-    _find_next_pending_step,
-    _find_next_step_and_condition,
     _render_breadcrumb,
     _render_required_skills,
-    _step_to_snapshot,
     handle_end_workflow,
     handle_get_workflow_state,
     handle_list_active_workflows,
     handle_start_workflow,
     handle_update_workflow_state,
-    validate_transition,
 )
 
 # ---------------------------------------------------------------------------
