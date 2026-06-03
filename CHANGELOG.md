@@ -2,6 +2,129 @@
 
 <!-- version list -->
 
+## v1.96.0 (2026-06-03)
+
+### Bug Fixes
+
+- **tasks**: Reorder workflow step tools and run post-processing on cancellation
+  ([`ed9f6d8`](https://github.com/asermax/tachikoma/commit/ed9f6d80a94f5ec2830317afe5c70780996e87ac))
+
+- **tasks**: Resolve workflow step notification source from active chain
+  ([`70c64ed`](https://github.com/asermax/tachikoma/commit/70c64ed68b1e87af8e19b79dd465169033ccab25))
+
+- **workflows**: Allow skipping started steps in cascade validation
+  ([`9cac7aa`](https://github.com/asermax/tachikoma/commit/9cac7aa8668edf79c714061f65327fa3f6ebf9a2))
+
+- **workflows**: Deduplicate step outcome counts across mutations
+  ([`96f808e`](https://github.com/asermax/tachikoma/commit/96f808e70dffc8ed0701fa8dda105058d67da49a))
+
+- **workflows**: Handle first-step enqueue failure in start_workflow
+  ([`dee23be`](https://github.com/asermax/tachikoma/commit/dee23bee178facb476d4b75691cc3a6ea0d4a5fa))
+
+### Code Style
+
+- Apply ruff formatting across workflows and sessions
+  ([`a1bb6c5`](https://github.com/asermax/tachikoma/commit/a1bb6c52a1d2840ddd3fc6a40110eec1395a96e9))
+
+### Documentation
+
+- Advance DLT-176 to implementation phase
+  ([`e7a4ab6`](https://github.com/asermax/tachikoma/commit/e7a4ab6885b0b2e5a7ddf4445236d2dd843fb4ba))
+
+- Mark DLT-176 batch 2 as done
+  ([`3a1486a`](https://github.com/asermax/tachikoma/commit/3a1486a18421191445c02f5357d48f3ce0507656))
+
+- Mark DLT-176 batch 3 as done
+  ([`8c644b5`](https://github.com/asermax/tachikoma/commit/8c644b55dc82ef11819c2ffba7f02733697e704e))
+
+- Mark DLT-176 batch 4 as done
+  ([`514676a`](https://github.com/asermax/tachikoma/commit/514676af65e371ed91fe7f14edd7c7e62259159a))
+
+- Mark DLT-176 batch 5 as done
+  ([`01cbf8f`](https://github.com/asermax/tachikoma/commit/01cbf8f9f203a94c30338eadd7fa867d62407f89))
+
+- Mark DLT-176 batch 6 as done
+  ([`bf314cc`](https://github.com/asermax/tachikoma/commit/bf314cc0dbbc7e959c50b074a82f84ac7b538390))
+
+- Mark DLT-176 batch 8 and implementation as done
+  ([`b6d88e3`](https://github.com/asermax/tachikoma/commit/b6d88e3ec90f3f22b06f864861ae1c37f9a618b3))
+
+- Reconcile DLT-176 delta into feature documentation
+  ([`d69aba5`](https://github.com/asermax/tachikoma/commit/d69aba519626b8d1b21872002ef397c4c070c53e))
+
+- **designs**: Add DLT-176 design document
+  ([`93cb760`](https://github.com/asermax/tachikoma/commit/93cb760408bd05b0a3db4d4b3f440affd3f34b70))
+
+- **designs**: Expand DLT-176 design with full component detail and scenarios
+  ([`bdb5662`](https://github.com/asermax/tachikoma/commit/bdb566253ed7766da93fb21925e1812178e0e766))
+
+- **plans**: Add DLT-176 implementation plan
+  ([`c4ecc8e`](https://github.com/asermax/tachikoma/commit/c4ecc8e12f47ba432fe250ae8178b64a8afb0cd8))
+
+- **specs**: Add DLT-176 workflow tasks as background execution spec
+  ([`586db9e`](https://github.com/asermax/tachikoma/commit/586db9e8f6c7bd9c03f73e6fea40b01064fdc8c9))
+
+- **specs**: Mark DLT-176 spec as complete
+  ([`b86a9f1`](https://github.com/asermax/tachikoma/commit/b86a9f1b301ef9d6ddc54be27e543ffa3789d4c3))
+
+- **specs**: Refine DLT-176 spec with failure propagation and precise tool semantics
+  ([`b2290dc`](https://github.com/asermax/tachikoma/commit/b2290dccaba67076aa9b4884d93a582fcead9595))
+
+- **workflows**: Advance DLT-176 status to design complete
+  ([`c556eb1`](https://github.com/asermax/tachikoma/commit/c556eb1443fa5ccfb5b93831466f40dfa6d2ede9))
+
+- **workflows**: Advance DLT-176 status to design phase
+  ([`4f9cd8c`](https://github.com/asermax/tachikoma/commit/4f9cd8ce114cdcfc9647e0078215dfa9633872e1))
+
+- **workflows**: Advance DLT-176 status to plan complete
+  ([`894bb7b`](https://github.com/asermax/tachikoma/commit/894bb7bb98c0e76e247ecad784a58a0a04ac7186))
+
+- **workflows**: Advance DLT-176 status to plan phase
+  ([`1a89d83`](https://github.com/asermax/tachikoma/commit/1a89d83cf9c810308164910b91ace83ca6557a57))
+
+- **workflows**: Advance DLT-176 status to spec phase
+  ([`50c8918`](https://github.com/asermax/tachikoma/commit/50c89188d5ea1b7d092e19894585c79eee3ff668))
+
+- **workflows**: Define DLT-176 for workflow tasks as background execution
+  ([`609502c`](https://github.com/asermax/tachikoma/commit/609502cb787c5aa5ae54802412f3a7d9b115773f))
+
+- **workflows**: Update authoring guide for autonomous execution model
+  ([`9370b5c`](https://github.com/asermax/tachikoma/commit/9370b5c10e9d5c0e48c1bf754ac5c906980770aa))
+
+### Features
+
+- **tasks**: Add workflow_id and pending_handoff for workflow-task linking
+  ([`a7abb67`](https://github.com/asermax/tachikoma/commit/a7abb67757de5c31f54159dc39d8a4af4566bb7e))
+
+- **tasks**: Wire workflow step execution into task executor
+  ([`31d9c0e`](https://github.com/asermax/tachikoma/commit/31d9c0edf1905abcf9c81eb2534345b5d8131f4e))
+
+- **workflows**: Add MCP tools for workflow step execution
+  ([`c0d3787`](https://github.com/asermax/tachikoma/commit/c0d3787fda866dd99dabdc6212529540e34439c9))
+
+- **workflows**: Add step context and prompt construction for workflow tasks
+  ([`e9ff758`](https://github.com/asermax/tachikoma/commit/e9ff75800a28e783bd3e717d6627e091a08db7c6))
+
+- **workflows**: Add workflow failure processor for abort cascade
+  ([`6bb65a1`](https://github.com/asermax/tachikoma/commit/6bb65a11fe5515a10af7861979125315f507d31a))
+
+### Refactoring
+
+- **workflows**: Extract cascade logic into dedicated module
+  ([`9d9297d`](https://github.com/asermax/tachikoma/commit/9d9297d302b041968eb4f32ceccb6023fd2d448b))
+
+- **workflows**: Move failure selection from processor to executor call site
+  ([`c9c2d77`](https://github.com/asermax/tachikoma/commit/c9c2d77007c85616b35a26e496f2307c8a7a5e43))
+
+### Testing
+
+- Add tests for workflow failure processor
+  ([`6c1cf82`](https://github.com/asermax/tachikoma/commit/6c1cf8288671b05ec854f2bb7f6f59e79741ea64))
+
+- Update tests for workflow step execution
+  ([`2536807`](https://github.com/asermax/tachikoma/commit/2536807ce887b4b84690017ebf49237c63033de7))
+
+
 ## v1.95.3 (2026-05-31)
 
 ### Bug Fixes
