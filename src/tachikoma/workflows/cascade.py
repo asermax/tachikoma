@@ -316,8 +316,8 @@ def validate_transition(
         has_condition = step_def.get("condition") is not None
         if is_required and not has_condition:
             return f"Step '{step_id}' is required and cannot be skipped."
-        if current_state != STEP_PENDING:
-            return f"Step '{step_id}' is {current_state}. Can only skip a pending step."
+        if current_state not in (STEP_PENDING, STEP_STARTED):
+            return f"Step '{step_id}' is {current_state}. Can only skip a pending or started step."
 
     return None
 

@@ -353,11 +353,12 @@ class TestTransitionValidation:
         assert error is not None
         assert "required and cannot be skipped" in error
 
-    def test_skip_started_step_invalid(self):
+    def test_skip_started_step_valid(self):
+        # Started steps can be skipped in the step-tools context (the step
+        # agent decides to skip the step it's executing).
         states = {"01-plan": "pending", "02-execute": "pending", "03-review": "started"}
         error = validate_transition(states, "03-review", "skip", self.SNAPSHOT)
-        assert error is not None
-        assert "Can only skip a pending step" in error
+        assert error is None
 
     def test_completed_step_rejects_all_actions(self):
         states = {"01-plan": "completed", "02-execute": "pending", "03-review": "pending"}
