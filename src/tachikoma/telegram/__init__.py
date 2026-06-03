@@ -886,7 +886,7 @@ class TelegramChannel(Channel):
         truncated = _truncate_reply_text(stripped)
         return f"Replied to:\n> {truncated}"
 
-    def _build_reaction_context(self) -> str | None:
+    async def _build_reaction_context(self) -> str | None:
         """Build a context prefix from the active session's last exchange.
 
         Returns a formatted prefix string quoting the agent's last response,
@@ -896,7 +896,7 @@ class TelegramChannel(Channel):
         if registry is None:
             return None
         try:
-            active = registry._active_session
+            active = await registry.get_active_session()
             if active is None:
                 return None
             last_exchange = active.last_exchange
@@ -1241,7 +1241,7 @@ class TelegramChannel(Channel):
         # from the coordinator's session resume logic)
         message_prefix: str | None = None
         if target_session_id is None and not reply_not_found:
-            message_prefix = self._build_reaction_context()
+            message_prefix = await self._build_reaction_context()
 
         if message_prefix is not None:
             envelope = replace(envelope, message_prefix=message_prefix)

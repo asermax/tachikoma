@@ -13,6 +13,7 @@ from aiogram.types import ReactionTypeCustomEmoji, ReactionTypeEmoji, ReactionTy
 from conftest import _make_channel_with_registry, _make_mock_coordinator
 
 from tachikoma.message import ReactionMessage
+from tachikoma.sessions.model import Session
 from tachikoma.telegram import TelegramChannel, _emoji_set
 
 
@@ -342,11 +343,12 @@ def _make_reaction_channel(
         lookup_result=lookup_result,
         inbound_reactions=True,
     )
-    # Set _active_session explicitly so _build_reaction_context can read
-    # last_exchange without triggering AsyncMock auto-creation.
-    registry._active_session = MagicMock(
-        id=active_session_id, last_exchange=last_exchange,
+    # Configure get_active_session to return a mock session with the
+    # desired last_exchange, matching the production async API.
+    active_mock = MagicMock(
+        spec=Session, id=active_session_id, last_exchange=last_exchange,
     )
+    registry.get_active_session.return_value = active_mock
     return channel, registry
 
 
@@ -599,7 +601,7 @@ class TestReactionContextPrefix:
     async def test_no_prefix_when_no_active_session(self) -> None:
         """AC4: No active session → message_prefix is None."""
         channel, registry = _make_reaction_channel(lookup_result="session-current")
-        registry._active_session = None
+        registry.get_active_session.return_value = None
 
         event = _make_reaction_event(
             message_id=42,
