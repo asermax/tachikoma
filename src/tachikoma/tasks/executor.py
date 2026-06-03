@@ -574,6 +574,7 @@ class BackgroundTaskExecutor:
                 instance.id,
                 priority=Priority.URGENT,
             )
+            await self._run_postprocessing(instance.sdk_session_id, instance)
 
     async def _run_evaluator_loop(
         self,
@@ -653,7 +654,7 @@ class BackgroundTaskExecutor:
 
             if status == "complete":
                 await self._complete_instance(instance.id, rationale)
-                await self._run_postprocessing(sdk_session_id)
+                await self._run_postprocessing(sdk_session_id, instance)
                 return
 
             if status == "stuck":
@@ -666,6 +667,7 @@ class BackgroundTaskExecutor:
                     instance.id,
                     priority=Priority.URGENT,
                 )
+                await self._run_postprocessing(sdk_session_id, instance)
                 return
 
             # Continue: inject the evaluator's factual rationale
@@ -688,6 +690,7 @@ class BackgroundTaskExecutor:
             instance.id,
             priority=Priority.URGENT,
         )
+        await self._run_postprocessing(sdk_session_id, instance)
 
     async def _register_workflow_step_tools(
         self,
@@ -855,14 +858,59 @@ class BackgroundTaskExecutor:
             )
             return {"status": "continue", "rationale": "Could not parse evaluator response"}
 
-    async def _run_postprocessing(self, sdk_session_id: str | None) -> None:
+    async def _run_postprocessing(
+        self,
+        sdk_session_id: str | None,
+        instance: TaskInstance | None = None,
+    ) -> None:
         """Run adapted post-processing pipeline (episodic + git only).
 
         Args:
             sdk_session_id: The SDK session ID from the background task execution
+            instance: Optional TaskInstance — when provided and has a workflow_id,
+                the WorkflowFailureProcessor is registered to handle abort cascade
+                on failed workflow step tasks.
         """
+        needs_failure_processor = (
+            instance is not None
+            and instance.workflow_id is not None
+            and self._workflow_repository is not None
+        )
+
+        # When there's no SDK session but a failure processor is needed,
+        # run a minimal pipeline with just the failure processor.
         if sdk_session_id is None:
-            _log.warning("No SDK session ID, skipping post-processing")
+            if not needs_failure_processor:
+                _log.warning("No SDK session ID, skipping post-processing")
+                return
+            try:
+                session = Session(
+                    id="background-task",
+                    sdk_session_id="no-session",
+                    started_at=(now := datetime.now(UTC)),
+                    ended_at=now,
+                    summary=None,
+                    transcript_path=None,
+                )
+                from tachikoma.workflows.failure_processor import (  # noqa: PLC0415
+                    WorkflowFailureProcessor,
+                )
+
+                pipeline = PostProcessingPipeline(self._session_registry)
+                pipeline.register(
+                    WorkflowFailureProcessor(
+                        instance=instance,  # type: ignore[arg-type]
+                        repository=self._workflow_repository,  # type: ignore[arg-type]
+                        bus=self._bus,
+                    ),
+                    phase="main",
+                )
+                await pipeline.run(session)
+            except Exception as exc:
+                _log.exception(
+                    "Post-processing failed for background task: {err}",
+                    err=str(exc),
+                )
             return
 
         try:
@@ -881,6 +929,22 @@ class BackgroundTaskExecutor:
                 EpisodicProcessor(self._agent_defaults),
                 phase="main",
             )
+
+            # Workflow failure processor — abort cascade on failed workflow tasks
+            if needs_failure_processor:
+                from tachikoma.workflows.failure_processor import (  # noqa: PLC0415
+                    WorkflowFailureProcessor,
+                )
+
+                pipeline.register(
+                    WorkflowFailureProcessor(
+                        instance=instance,  # type: ignore[arg-type]
+                        repository=self._workflow_repository,  # type: ignore[arg-type]
+                        bus=self._bus,
+                    ),
+                    phase="main",
+                )
+
             pipeline.register(
                 ProjectsProcessor(self._agent_defaults),
                 phase=PRE_FINALIZE_PHASE,
