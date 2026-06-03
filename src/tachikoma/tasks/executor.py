@@ -476,18 +476,20 @@ class BackgroundTaskExecutor:
 
             notif_state = NotificationCycleState()
 
+            # Workflow step tasks: compute workflow-specific notification source
+            # and register step tools BEFORE creating the notification server,
+            # so the notification server uses the correct source label.
+            if is_workflow_step and self._workflow_repository is not None:
+                notification_source = await self._register_workflow_step_tools(
+                    preprocessing_result, instance, notif_state, notification_source
+                )
+
             preprocessing_result.mcp_servers["notifications"] = create_notification_server(
                 self._bus,
                 notification_source,
                 instance.id,
                 cycle_state=notif_state,
             )
-
-            # Workflow step tasks: register step-specific tools and system prompt
-            if is_workflow_step and self._workflow_repository is not None:
-                await self._register_workflow_step_tools(
-                    preprocessing_result, instance, notif_state, notification_source
-                )
 
             # Merge any always-on extra servers (e.g. git-tools) without
             # letting them shadow per-invocation servers. Workflow step tasks
@@ -548,6 +550,7 @@ class BackgroundTaskExecutor:
         except asyncio.CancelledError:
             _log.info("Background task {inst_id} cancelled", inst_id=instance.id)
             await self._fail_instance(instance.id, "Task cancelled")
+            await self._run_postprocessing(instance.sdk_session_id, instance, is_failure=True)
             raise
 
         except Exception as exc:
@@ -698,8 +701,12 @@ class BackgroundTaskExecutor:
         instance: TaskInstance,
         notif_state: NotificationCycleState,
         notification_source: str,
-    ) -> None:
-        """Register workflow step MCP tools for a workflow step task."""
+    ) -> str:
+        """Register workflow step MCP tools for a workflow step task.
+
+        Returns the workflow-specific notification source so the caller can
+        use it for the notification server and evaluator loop.
+        """
         assert self._workflow_repository is not None  # guarded by caller
         assert instance.workflow_id is not None  # guarded by is_workflow_step
 
@@ -720,6 +727,7 @@ class BackgroundTaskExecutor:
             notification_source=notification_source,
         )
         preprocessing_result.mcp_servers["workflow-step-tools"] = step_server
+        return notification_source
 
     async def _run_preprocessing(
         self,
