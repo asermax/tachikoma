@@ -73,9 +73,7 @@ class WorkflowFailureProcessor(PostProcessor):
             state = None
 
         if state is not None:
-            notification_source = (
-                f"Workflow: {state.skill_name}/{state.workflow_name}"
-            )
+            notification_source = f"Workflow: {state.skill_name}/{state.workflow_name}"
         else:
             notification_source = f"Workflow: {workflow_id}"
 

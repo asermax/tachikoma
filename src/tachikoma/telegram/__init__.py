@@ -1419,8 +1419,7 @@ class TelegramChannel(Channel):
                         # Replace deleted original with the visible copy ID
                         if new_copy_id is not None and original_id is not None:
                             outgoing_ids = [
-                                new_copy_id if oid == original_id else oid
-                                for oid in outgoing_ids
+                                new_copy_id if oid == original_id else oid for oid in outgoing_ids
                             ]
 
                         # Record outgoing IDs asynchronously

@@ -87,9 +87,12 @@ class TestAbortCascade:
         bus = EventBus()
         processor = WorkflowFailureProcessor(instance, repo, bus)
 
-        with patch("tachikoma.workflows.failure_processor.delete_scratchpad"), patch(
-            "tachikoma.workflows.failure_processor.dispatch_notification",
-            new_callable=AsyncMock,
+        with (
+            patch("tachikoma.workflows.failure_processor.delete_scratchpad"),
+            patch(
+                "tachikoma.workflows.failure_processor.dispatch_notification",
+                new_callable=AsyncMock,
+            ),
         ):
             await processor.process(_make_session())
 
@@ -108,11 +111,12 @@ class TestAbortCascade:
         bus = EventBus()
         processor = WorkflowFailureProcessor(instance, repo, bus)
 
-        with patch(
-            "tachikoma.workflows.failure_processor.delete_scratchpad"
-        ) as mock_delete, patch(
-            "tachikoma.workflows.failure_processor.dispatch_notification",
-            new_callable=AsyncMock,
+        with (
+            patch("tachikoma.workflows.failure_processor.delete_scratchpad") as mock_delete,
+            patch(
+                "tachikoma.workflows.failure_processor.dispatch_notification",
+                new_callable=AsyncMock,
+            ),
         ):
             await processor.process(_make_session())
 
@@ -136,12 +140,13 @@ class TestAbortCascade:
         bus = EventBus()
         processor = WorkflowFailureProcessor(instance, repo, bus)
 
-        with patch(
-            "tachikoma.workflows.failure_processor.delete_scratchpad"
-        ), patch(
-            "tachikoma.workflows.failure_processor.dispatch_notification",
-            new_callable=AsyncMock,
-        ) as mock_notif:
+        with (
+            patch("tachikoma.workflows.failure_processor.delete_scratchpad"),
+            patch(
+                "tachikoma.workflows.failure_processor.dispatch_notification",
+                new_callable=AsyncMock,
+            ) as mock_notif,
+        ):
             await processor.process(_make_session())
 
         mock_notif.assert_awaited_once()
@@ -160,12 +165,13 @@ class TestAbortCascade:
         bus = EventBus()
         processor = WorkflowFailureProcessor(instance, repo, bus)
 
-        with patch(
-            "tachikoma.workflows.failure_processor.delete_scratchpad"
-        ), patch(
-            "tachikoma.workflows.failure_processor.dispatch_notification",
-            new_callable=AsyncMock,
-        ) as mock_notif:
+        with (
+            patch("tachikoma.workflows.failure_processor.delete_scratchpad"),
+            patch(
+                "tachikoma.workflows.failure_processor.dispatch_notification",
+                new_callable=AsyncMock,
+            ) as mock_notif,
+        ):
             await processor.process(_make_session())
 
         mock_notif.assert_awaited_once()
@@ -188,11 +194,12 @@ class TestErrorIsolation:
         bus = EventBus()
         processor = WorkflowFailureProcessor(instance, repo, bus)
 
-        with patch(
-            "tachikoma.workflows.failure_processor.delete_scratchpad"
-        ), patch(
-            "tachikoma.workflows.failure_processor.dispatch_notification",
-            new_callable=AsyncMock,
+        with (
+            patch("tachikoma.workflows.failure_processor.delete_scratchpad"),
+            patch(
+                "tachikoma.workflows.failure_processor.dispatch_notification",
+                new_callable=AsyncMock,
+            ),
         ):
             # Should not raise
             await processor.process(_make_session())
@@ -210,12 +217,15 @@ class TestErrorIsolation:
         bus = EventBus()
         processor = WorkflowFailureProcessor(instance, repo, bus)
 
-        with patch(
-            "tachikoma.workflows.failure_processor.delete_scratchpad",
-            side_effect=OSError("Permission denied"),
-        ), patch(
-            "tachikoma.workflows.failure_processor.dispatch_notification",
-            new_callable=AsyncMock,
+        with (
+            patch(
+                "tachikoma.workflows.failure_processor.delete_scratchpad",
+                side_effect=OSError("Permission denied"),
+            ),
+            patch(
+                "tachikoma.workflows.failure_processor.dispatch_notification",
+                new_callable=AsyncMock,
+            ),
         ):
             await processor.process(_make_session())
 
@@ -232,10 +242,13 @@ class TestErrorIsolation:
         bus = EventBus()
         processor = WorkflowFailureProcessor(instance, repo, bus)
 
-        with patch("tachikoma.workflows.failure_processor.delete_scratchpad"), patch(
-            "tachikoma.workflows.failure_processor.dispatch_notification",
-            new_callable=AsyncMock,
-            side_effect=RuntimeError("Bus error"),
+        with (
+            patch("tachikoma.workflows.failure_processor.delete_scratchpad"),
+            patch(
+                "tachikoma.workflows.failure_processor.dispatch_notification",
+                new_callable=AsyncMock,
+                side_effect=RuntimeError("Bus error"),
+            ),
         ):
             await processor.process(_make_session())
 
@@ -248,11 +261,12 @@ class TestErrorIsolation:
         bus = EventBus()
         processor = WorkflowFailureProcessor(instance, repo, bus)
 
-        with patch(
-            "tachikoma.workflows.failure_processor.delete_scratchpad"
-        ), patch(
-            "tachikoma.workflows.failure_processor.dispatch_notification",
-            new_callable=AsyncMock,
+        with (
+            patch("tachikoma.workflows.failure_processor.delete_scratchpad"),
+            patch(
+                "tachikoma.workflows.failure_processor.dispatch_notification",
+                new_callable=AsyncMock,
+            ),
         ):
             await processor.process(_make_session())
 

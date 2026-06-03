@@ -195,9 +195,7 @@ async def handle_complete_step(
         }
 
     if cascade.next_step_id is not None:
-        enqueue_error = await _enqueue_next_step(
-            cascade.next_step_id, workflow_id, task_repository
-        )
+        enqueue_error = await _enqueue_next_step(cascade.next_step_id, workflow_id, task_repository)
         if enqueue_error is not None:
             return enqueue_error
 
@@ -248,9 +246,7 @@ async def handle_skip_step(
             is_required = not step_info["skippable"]
         has_condition = step_info.get("condition") is not None
         if is_required and not has_condition:
-            return _error_response(
-                f"Step '{current_step}' is required and cannot be skipped."
-            )
+            return _error_response(f"Step '{current_step}' is required and cannot be skipped.")
 
     result = await run_cascade(
         workflow_id,
@@ -289,9 +285,7 @@ async def handle_skip_step(
         }
 
     if cascade.next_step_id is not None:
-        enqueue_error = await _enqueue_next_step(
-            cascade.next_step_id, workflow_id, task_repository
-        )
+        enqueue_error = await _enqueue_next_step(cascade.next_step_id, workflow_id, task_repository)
         if enqueue_error is not None:
             return enqueue_error
 
@@ -333,8 +327,7 @@ async def handle_abort_workflow(
             {
                 "type": "text",
                 "text": (
-                    f"Workflow **{state.workflow_name}** aborted."
-                    f"{count_text} State cleaned up."
+                    f"Workflow **{state.workflow_name}** aborted.{count_text} State cleaned up."
                 ),
             }
         ]

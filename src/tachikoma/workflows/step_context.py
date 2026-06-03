@@ -126,9 +126,7 @@ def _resolve_current_step(state: WorkflowState) -> dict | None:
                     return step_def
 
     # Fall back to the next pending step
-    step_id, step_info = _find_next_step_and_condition(
-        state.step_states, state.definition_snapshot
-    )
+    step_id, step_info = _find_next_step_and_condition(state.step_states, state.definition_snapshot)
     if step_id is not None:
         return step_info
 
@@ -136,9 +134,7 @@ def _resolve_current_step(state: WorkflowState) -> dict | None:
     return None
 
 
-def _compute_step_position(
-    definition_snapshot: list[dict], step_id: str
-) -> tuple[int, int]:
+def _compute_step_position(definition_snapshot: list[dict], step_id: str) -> tuple[int, int]:
     """Compute 1-indexed position and total steps for a step within its layer."""
     total = len(definition_snapshot)
     for i, step_def in enumerate(definition_snapshot, 1):

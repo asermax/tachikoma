@@ -252,9 +252,7 @@ class TestHandleCompleteStep:
         assert updated is not None
         assert updated.pending_handoff is None
 
-    async def test_handoff_too_long(
-        self, workflow_repository, task_repository, mock_registry
-    ):
+    async def test_handoff_too_long(self, workflow_repository, task_repository, mock_registry):
         state = _make_state()
         await workflow_repository.create(state)
 
@@ -344,9 +342,7 @@ class TestHandleCompleteStep:
 
 
 class TestHandleSkipStep:
-    async def test_skips_optional_step(
-        self, workflow_repository, task_repository, mock_registry
-    ):
+    async def test_skips_optional_step(self, workflow_repository, task_repository, mock_registry):
         # 03-review is optional (required=False)
         state = _make_state(
             step_states={
@@ -369,9 +365,7 @@ class TestHandleSkipStep:
         text = result["content"][0]["text"]
         assert "skipped" in text.lower()
 
-    async def test_rejects_required_step(
-        self, workflow_repository, task_repository, mock_registry
-    ):
+    async def test_rejects_required_step(self, workflow_repository, task_repository, mock_registry):
         # 02-execute is required
         state = _make_state(
             step_states={
@@ -404,9 +398,7 @@ class TestHandleSkipStep:
         assert result.get("is_error")
         assert "not found" in result["content"][0]["text"]
 
-    async def test_no_active_step(
-        self, workflow_repository, task_repository, mock_registry
-    ):
+    async def test_no_active_step(self, workflow_repository, task_repository, mock_registry):
         # No current_step set — handler should error
         state = _make_state(
             step_states={

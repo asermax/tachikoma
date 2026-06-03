@@ -1511,8 +1511,8 @@ class TestConditionHandlerIntegration:
         # Should show the condition halt, not auto-skip
         assert "condition" in text.lower()
         assert "Check if plan was written" in text
-        assert "action=\"start\"" in text
-        assert "action=\"skip\"" in text
+        assert 'action="start"' in text
+        assert 'action="skip"' in text
 
         # Step should remain pending (not started or skipped)
         updated = await repository.get(state.id)
