@@ -7,7 +7,7 @@
 
 ## Purpose
 
-This document explains the design rationale for background task execution: the executor's SDK session management, evaluator loop, adapted pipeline, and notification delivery.
+This document explains the design rationale for background task execution: the executor's SDK session management, evaluator loop, adapted pipeline, notification delivery, and workflow task subtype integration.
 
 ## Problem Context
 
@@ -54,7 +54,7 @@ Two components work together: the `BackgroundTaskRunner` (async loop picking up 
 
 | Layer/Component | Responsibility | Key Decisions |
 |-----------------|----------------|---------------|
-| `src/tachikoma/tasks/executor.py` | `background_task_runner()` — async loop picking up pending background instances; `BackgroundTaskExecutor` — manages single task's SDK session lifecycle with evaluator loop; injects current date/time in configured timezone into system prompt; registers notification MCP server per-execution (passing `NotificationCycleState`); checks `NotificationCycleState.await_response_requested` after each `receive_response()` to detect `await_response` without calling the evaluator; calls `dispatch_notification()` for automatic failure notifications; creates `StderrAccumulator` per execution and passes to `ClaudeAgentOptions(stderr=...)` — on failure, the accumulated stderr is included in the error log entry | Coordinator-like SDK client management; `asyncio.Semaphore` for concurrency; datetime injection via `get_timezone(settings)` + `datetime.now(tz)` prepended to `BACKGROUND_TASK_SYSTEM_PROMPT`; full `PreProcessingPipeline` (memory, projects, skills); separate `PostProcessingPipeline` with `EpisodicProcessor` (main phase) + `ProjectsProcessor` (pre_finalize phase) + `GitProcessor` (finalize phase); notification MCP server via DES-006 factory with `NotificationCycleState` for `await_response` detection; evaluator loop with three statuses only (`stuck`, `complete`, `continue`); shares the main agent's destructive-git deny hook, git-tools MCP server (see [workspace-version-tracking design](../../agent/workspace-version-tracking.md)), task-tools MCP server (same server the coordinator uses, injected via `extra_mcp_servers` so background agents can schedule follow-up work), and workflow-tools MCP server (see [workflow state machine spec](../../feature-specs/workflows/workflow-state-machine.md), injected via `extra_mcp_servers` so background agents can start, advance, and complete workflows during autonomous execution); pinned skills from the task definition are passed to the per-message pipeline via `TextMessage(text=prompt, pinned_skills=pinned_skills)` ([DES-013](../../design/DES-013-typed-envelope-with-property-hooks.md)) |
+| `src/tachikoma/tasks/executor.py` | `background_task_runner()` — async loop picking up pending background instances; `BackgroundTaskExecutor` — manages single task's SDK session lifecycle with evaluator loop; injects current date/time in configured timezone into system prompt; registers notification MCP server per-execution (passing `NotificationCycleState`); checks `NotificationCycleState.await_response_requested` after each `receive_response()` to detect `await_response` without calling the evaluator; calls `dispatch_notification()` for automatic failure notifications; creates `StderrAccumulator` per execution and passes to `ClaudeAgentOptions(stderr=...)` — on failure, the accumulated stderr is included in the error log entry; **workflow subtype discrimination**: when `instance.workflow_id` is set, registers workflow step MCP tools (`complete_step`/`skip_step`/`abort_workflow`/`request_input` via `create_workflow_step_tools_server()`), includes `WorkflowStepContextProvider` in pre-processing, includes `WorkflowFailureProcessor` in post-processing, uses `WORKFLOW_STEP_SYSTEM_PROMPT` instead of `BACKGROUND_TASK_SYSTEM_PROMPT`, and excludes workflow-tools from `extra_mcp_servers`; dual expired waiter sweep with separate `workflow_wait_timeout` for workflow instances | Coordinator-like SDK client management; `asyncio.Semaphore` for concurrency; datetime injection via `get_timezone(settings)` + `datetime.now(tz)` prepended to `BACKGROUND_TASK_SYSTEM_PROMPT`; full `PreProcessingPipeline` (memory, projects, skills); separate `PostProcessingPipeline` with `EpisodicProcessor` (main phase) + `ProjectsProcessor` (pre_finalize phase) + `GitProcessor` (finalize phase); notification MCP server via DES-006 factory with `NotificationCycleState` for `await_response` detection; evaluator loop with three statuses only (`stuck`, `complete`, `continue`); shares the main agent's destructive-git deny hook, git-tools MCP server (see [workspace-version-tracking design](../../agent/workspace-version-tracking.md)), task-tools MCP server (same server the coordinator uses, injected via `extra_mcp_servers` so background agents can schedule follow-up work), and workflow-tools MCP server (see [workflow state machine spec](../../feature-specs/workflows/workflow-state-machine.md), injected via `extra_mcp_servers` so background agents can start and monitor workflows during autonomous execution); pinned skills from the task definition are passed to the per-message pipeline via `TextMessage(text=prompt, pinned_skills=pinned_skills)` ([DES-013](../../design/DES-013-typed-envelope-with-property-hooks.md)) |
 | `src/tachikoma/notifications.py` | `Notification(BaseEvent[None])` — generic event type carrying the wrapped prompt, severity, and a `priority: Priority` field; `NotificationCycleState` — mutable shared state object tracking whether `await_response` was requested during an evaluator loop iteration (created per-execution, reset per-iteration); `build_notification_prompt()` — template builder with source, timestamp, content; `dispatch_notification()` — shared dispatch (accepts `priority`, defaults to Normal for agent-driven, Urgent for failures); `create_notification_server()` — MCP tool factory (DES-006) producing `send_notification` tool with an optional `priority` argument (default Normal) and an `await_response` argument (default False) | Standalone module outside tasks package for reusability; single dispatch path ensures consistent formatting; per-execution MCP server scopes tool to background sessions only; `NotificationCycleState` is passed to `create_notification_server` and shared between the notification handler (sets flag) and the executor (reads flag); when `await_response=True`, the handler forces priority to Urgent, sets `response_instance_id`, and signals the executor via `cycle_state`; priority flows through the tool → `dispatch_notification()` → `Notification` event → priority buffer |
 
 ### Cross-Layer Contracts
@@ -373,6 +373,40 @@ The notification system uses a standalone `tachikoma.notifications` module (not 
 - Pro: Already-responded instances cannot be overwritten by a second respond_to_task call
 - Pro: The prompt template is the only per-respondability branch — the event field is a simple `str | None` check
 
+### Pipeline-based integration for workflow task subtype
+
+**Choice**: Workflow-specific behavior is implemented as pipeline participants (pre-processing context provider and post-processing processor) that self-select based on `workflow_id`. The executor only adds subtype checks to conditionally include them. When `workflow_id` is set, the executor registers workflow step MCP tools, includes the `WorkflowStepContextProvider` in pre-processing, includes the `WorkflowFailureProcessor` in post-processing, and uses `WORKFLOW_STEP_SYSTEM_PROMPT` instead of `BACKGROUND_TASK_SYSTEM_PROMPT`. The workflow-tools server is excluded from workflow step tasks (they should not start nested workflows).
+**Why**: The user explicitly requested this approach to minimize changes to the generic background task pipeline. The pipeline pattern already supports this — providers and processors self-determine relevance. The executor's total workflow-specific changes are conditional checks on `workflow_id` at the appropriate points.
+**Alternatives Considered**:
+- Executor-side hooks: Add workflow-specific logic directly in the executor after failure detection. Simpler but couples the executor to workflow concerns.
+- Separate executor subclass: Create `WorkflowTaskExecutor(BackgroundTaskExecutor)`. Clean separation but duplicates the entire executor for a few conditional branches.
+
+**Consequences**:
+- Pro: Executor stays generic — workflow is a pluggable extension
+- Pro: Follows the established pipeline/provider/processor pattern (DES-003, DES-004)
+- Pro: Other subtypes can follow the same pattern without executor changes
+- Con: Two new pipeline participants to maintain (mitigated by their self-selecting nature)
+
+### Workflow step system prompt
+
+**Choice**: Workflow step tasks use a tailored system prompt (`WORKFLOW_STEP_SYSTEM_PROMPT` constant in `workflows/step_prompt.py`) that replaces the generic `BACKGROUND_TASK_SYSTEM_PROMPT`. The workflow step prompt explains `complete_step`, `skip_step`, `abort_workflow`, and `request_input` instead of generic task scheduling and notification concepts.
+**Why**: The generic system prompt explains `send_notification` and `run_task_now` — concepts that are confusing in a workflow step context. The workflow step agent needs to know about step-driving tools, not about scheduling follow-up tasks or sending arbitrary notifications. A tailored prompt reduces agent confusion and improves step completion reliability.
+
+**Consequences**:
+- Pro: Step agent gets focused guidance matching its actual tool surface
+- Pro: Can be tuned independently of the generic background task prompt
+- Con: One more system prompt to maintain (mitigated by it being specific and short)
+
+### Dual expired waiter sweep for workflow tasks
+
+**Choice**: The expired waiter sweep calls `list_expired_waiting_instances` twice — once with the regular `wait_timeout` for non-workflow instances (filtered to `workflow_id IS NULL`), once with `workflow_wait_timeout` for workflow instances (filtered to `workflow_id IS NOT NULL`).
+**Why**: Workflow steps waiting for user input represent a fundamentally different interaction pattern (long-lived, user-driven cadence) than regular background tasks. A 2-hour default timeout would kill workflow steps prematurely, while a 7-day timeout on regular tasks would leave them waiting too long. Two clean queries with clear filters are preferable to parameterizing the timeout per-row.
+
+**Consequences**:
+- Pro: Each query is simple and testable in isolation
+- Pro: Adding a third timeout category is another filter + call, not a CASE expansion
+- Con: Two queries instead of one (negligible on local SQLite)
+
 ## System Behavior
 
 ### Scenario: Agent sends notification during execution
@@ -440,6 +474,30 @@ The notification system uses a standalone `tachikoma.notifications` module (not 
 **Given**: Three running background tasks at the concurrency limit and a fourth pending instance
 **When**: One of the running tasks pauses (agent calls `send_notification` with `await_response=true`)
 **Then**: The executor returns and releases its semaphore slot on the way out. The next runner tick acquires the slot for the fourth pending instance while the waiting task stays out of the running pool.
+
+### Scenario: Workflow step task executes with step-specific tools
+
+**Given**: A TaskInstance with `workflow_id` set is picked up by the runner
+**When**: The executor begins execution
+**Then**: The executor uses `WORKFLOW_STEP_SYSTEM_PROMPT` instead of `BACKGROUND_TASK_SYSTEM_PROMPT`, registers the workflow step tools MCP server (`complete_step`, `skip_step`, `abort_workflow`, `request_input`) in addition to the notification server, includes `WorkflowStepContextProvider` in pre-processing to inject the step prompt, and excludes the workflow-tools server. The evaluator loop runs normally.
+
+### Scenario: Workflow step task fails — abort cascade
+
+**Given**: A workflow step task fails (stuck, error, or max iterations)
+**When**: The executor marks the instance as failed
+**Then**: The `WorkflowFailureProcessor` in post-processing detects the failed workflow task, calls `abort_cascade(workflow_id)` which atomically soft-deletes the workflow state and all descendants, and dispatches a failure notification describing which step failed. No further step tasks are enqueued.
+
+### Scenario: Workflow step task requests user input
+
+**Given**: A workflow step task agent calls `request_input(question="...")`
+**When**: The tool handler processes the call
+**Then**: The tool internally calls `send_notification(await_response=true)` which dispatches a respondable urgent notification and sets `cycle_state.await_response_requested`. The executor detects this, transitions the task to `waiting` with the SDK session ID preserved, and returns — identical to the standard `await_response` path but initiated from a workflow-specific tool. The task resumes when the user responds via `respond_to_task`.
+
+### Scenario: Workflow step wait timeout expires
+
+**Given**: A workflow step task in `waiting` state whose `updated_at` is older than `workflow_wait_timeout` (default 7 days)
+**When**: The expired waiter sweep runs
+**Then**: The instance is marked failed (using the workflow-specific timeout), and the `WorkflowFailureProcessor` triggers the abort cascade. Regular background tasks in the same sweep use the standard `wait_timeout`.
 
 ## Notes
 

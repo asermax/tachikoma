@@ -110,6 +110,8 @@ TaskInstance (frozen dataclass)
 ├── result: str | None               (completion/failure summary)
 ├── sdk_session_id: str | None       (SDK session to resume when pausing; set on await_response)
 ├── user_response: str | None        (pending reply from main agent; consumed atomically on resume)
+├── workflow_id: str | None          (soft reference → workflow_states.id; null for regular tasks;
+│                                     non-null = workflow step task; excluded from list_tasks)
 ├── updated_at: datetime | None      (auto-stamped via DES-009; anchors the wait_timeout sweep)
 └── created_at: datetime             (creation timestamp)
 ```
@@ -151,12 +153,13 @@ erDiagram
         string result
         string sdk_session_id
         string user_response
+        string workflow_id
         datetime updated_at
         datetime created_at
     }
 ```
 
-Note: `TaskInstance.definition_id` is nullable — transient instances (notifications from background task results) have no parent definition.
+Note: `TaskInstance.definition_id` is nullable — transient instances (notifications from background task results) have no parent definition. `TaskInstance.workflow_id` is nullable — when set, the instance is a workflow step task (see [background-task-execution](background-task-execution.md)) and excluded from `list_tasks`. The reference is soft (no FK constraint) because workflow state may be soft-deleted.
 
 ### Task status lifecycle
 
