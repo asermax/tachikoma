@@ -1128,7 +1128,7 @@ class TestPinnedSkillsExecution:
 
         captured_skills: dict = {}
 
-        async def mock_run_preprocessing(self, prompt, *, pinned_skills=()):
+        async def mock_run_preprocessing(self, prompt, *, pinned_skills=(), instance=None):
             captured_skills["skills"] = pinned_skills
             return _mock_preproc_result()
 
@@ -1182,7 +1182,7 @@ class TestPinnedSkillsExecution:
 
         captured_skills: dict = {}
 
-        async def mock_run_preprocessing(self, prompt, *, pinned_skills=()):
+        async def mock_run_preprocessing(self, prompt, *, pinned_skills=(), instance=None):
             captured_skills["skills"] = pinned_skills
             return _mock_preproc_result()
 

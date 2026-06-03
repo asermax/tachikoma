@@ -562,8 +562,8 @@ class TestStartWorkflow:
         text = result["content"][0]["text"]
         assert "Workflow started" in text
         assert "test-workflow" in text
-        assert "TodoWrite" in text
-        assert "list_active_workflows" in text
+        assert "background task" in text
+        assert "get_workflow_state" in text
 
         # Verify scratchpad was created
         scratchpads = list((tmp_path / ".tachikoma" / "scratchpads").glob("workflow-*.md"))
