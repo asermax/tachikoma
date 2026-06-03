@@ -346,7 +346,9 @@ def _make_reaction_channel(
     # Configure get_active_session to return a mock session with the
     # desired last_exchange, matching the production async API.
     active_mock = MagicMock(
-        spec=Session, id=active_session_id, last_exchange=last_exchange,
+        spec=Session,
+        id=active_session_id,
+        last_exchange=last_exchange,
     )
     registry.get_active_session.return_value = active_mock
     return channel, registry

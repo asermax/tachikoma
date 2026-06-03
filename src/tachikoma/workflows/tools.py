@@ -312,8 +312,7 @@ async def handle_start_workflow(
 
     if first_step_enqueued:
         enqueue_note = (
-            "The first step has been enqueued as a background task and will "
-            "execute autonomously."
+            "The first step has been enqueued as a background task and will execute autonomously."
         )
     else:
         enqueue_note = (
