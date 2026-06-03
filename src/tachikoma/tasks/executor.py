@@ -56,6 +56,10 @@ from tachikoma.tasks.scheduler import get_timezone
 
 if TYPE_CHECKING:
     from tachikoma.skills.registry import SkillRegistry
+    from tachikoma.workflows.repository import WorkflowStateRepository
+    from tachikoma.workflows.step_context import WorkflowStepContextProvider
+    from tachikoma.workflows.step_prompt import WORKFLOW_STEP_SYSTEM_PROMPT
+    from tachikoma.workflows.step_tools import create_workflow_step_tools_server
 
 
 @dataclass
@@ -127,14 +131,32 @@ async def expired_waiter_sweep(
     settings: TaskSettings,
     bus: EventBus,
 ) -> None:
-    """Fail waiting instances that have exceeded the wait_timeout."""
-    expired = await repository.list_expired_waiting_instances(settings.wait_timeout)
+    """Fail waiting instances that have exceeded the applicable wait_timeout."""
+    # Regular background tasks: standard wait_timeout
+    regular_expired = await repository.list_expired_waiting_instances(
+        settings.wait_timeout, only_workflow_tasks=False
+    )
     await _fail_timed_out_instances(
-        expired,
+        regular_expired,
         repository,
         bus,
         reason=f"Task timed out waiting for user input after {settings.wait_timeout}s",
-        log_message="Expired {count} waiting instances past timeout",
+        log_message="Expired {count} regular waiting instances past timeout",
+    )
+
+    # Workflow step tasks: longer workflow_wait_timeout
+    workflow_expired = await repository.list_expired_waiting_instances(
+        settings.workflow_wait_timeout, only_workflow_tasks=True
+    )
+    await _fail_timed_out_instances(
+        workflow_expired,
+        repository,
+        bus,
+        reason=(
+            f"Workflow step timed out waiting for user input "
+            f"after {settings.workflow_wait_timeout}s"
+        ),
+        log_message="Expired {count} workflow waiting instances past timeout",
     )
 
 
@@ -189,12 +211,12 @@ Newly scheduled tasks produce fresh isolated runs when their schedule fires — 
 
 ## Workflows
 
-You have access to the workflow management tools — `start_workflow`, `update_workflow_state`, `get_workflow_state`, `end_workflow`, and `list_active_workflows` — to execute multi-step workflows during autonomous runs. Use them when:
+You have access to the workflow management tools — `start_workflow`, `get_workflow_state`, and `list_active_workflows` — to start and monitor multi-step workflows during autonomous runs. Use them when:
 - The task requires a structured multi-step process tracked reliably across context boundaries
 - You need to ensure ordered execution of steps without skipping or losing progress
 - You want step-specific instructions and skill content loaded automatically as you advance
 
-Use `list_active_workflows` to check for already-running workflows, and `get_workflow_state` to recover context if you lose track of a workflow's ID.
+Once started, workflows execute autonomously as background tasks. Use `list_active_workflows` to check for already-running workflows, and `get_workflow_state` to monitor progress.
 
 ## Requesting user input
 
@@ -267,6 +289,7 @@ class BackgroundTaskRunner:
         agent_defaults: AgentDefaults,
         skill_registry: "SkillRegistry",
         session_registry: SessionRegistry,
+        workflow_repository: "WorkflowStateRepository | None" = None,
         extra_mcp_servers: dict[str, McpSdkServerConfig] | None = None,
         hooks: list[HookMatcher] | None = None,
     ) -> None:
@@ -276,6 +299,7 @@ class BackgroundTaskRunner:
         self._agent_defaults = agent_defaults
         self._skill_registry = skill_registry
         self._session_registry = session_registry
+        self._workflow_repository = workflow_repository
         self._extra_mcp_servers = extra_mcp_servers
         self._hooks = hooks
 
@@ -345,6 +369,7 @@ class BackgroundTaskRunner:
                 agent_defaults=self._agent_defaults,
                 skill_registry=self._skill_registry,
                 session_registry=self._session_registry,
+                workflow_repository=self._workflow_repository,
                 extra_mcp_servers=self._extra_mcp_servers,
                 hooks=self._hooks,
             )
@@ -367,6 +392,7 @@ class BackgroundTaskExecutor:
         agent_defaults: AgentDefaults,
         skill_registry: "SkillRegistry",
         session_registry: SessionRegistry,
+        workflow_repository: "WorkflowStateRepository | None" = None,
         extra_mcp_servers: dict[str, McpSdkServerConfig] | None = None,
         hooks: list[HookMatcher] | None = None,
     ) -> None:
@@ -377,6 +403,7 @@ class BackgroundTaskExecutor:
         self._cwd = agent_defaults.cwd
         self._skill_registry = skill_registry
         self._session_registry = session_registry
+        self._workflow_repository = workflow_repository
         self._extra_mcp_servers = extra_mcp_servers or {}
         self._hooks = hooks or []
 
@@ -422,6 +449,7 @@ class BackgroundTaskExecutor:
 
         stderr_acc = StderrAccumulator()
         notification_source = f"Background task: {instance.prompt[:100]}"
+        is_workflow_step = instance.workflow_id is not None
 
         try:
             definition: TaskDefinition | None = None
@@ -437,6 +465,7 @@ class BackgroundTaskExecutor:
             preprocessing_result = await self._run_preprocessing(
                 instance.prompt,
                 pinned_skills=definition.skills if definition else (),
+                instance=instance,
             )
 
             notif_state = NotificationCycleState()
@@ -448,9 +477,18 @@ class BackgroundTaskExecutor:
                 cycle_state=notif_state,
             )
 
+            # Workflow step tasks: register step-specific tools and system prompt
+            if is_workflow_step and self._workflow_repository is not None:
+                self._register_workflow_step_tools(
+                    preprocessing_result, instance, notif_state, notification_source
+                )
+
             # Merge any always-on extra servers (e.g. git-tools) without
-            # letting them shadow per-invocation servers
+            # letting them shadow per-invocation servers. Workflow step tasks
+            # exclude workflow-tools to prevent recursive workflow management.
             for name, server in self._extra_mcp_servers.items():
+                if is_workflow_step and name == "workflow-tools":
+                    continue
                 preprocessing_result.mcp_servers.setdefault(name, server)
 
             tz = get_timezone(self._settings)
@@ -458,7 +496,11 @@ class BackgroundTaskExecutor:
             datetime_line = (
                 f"Current date and time: {now.strftime('%A, %B %d, %Y at %H:%M:%S')} {tz.key}\n"
             )
-            system_prompt_text = datetime_line + "\n" + BACKGROUND_TASK_SYSTEM_PROMPT
+
+            if is_workflow_step:
+                system_prompt_text = datetime_line + "\n" + WORKFLOW_STEP_SYSTEM_PROMPT
+            else:
+                system_prompt_text = datetime_line + "\n" + BACKGROUND_TASK_SYSTEM_PROMPT
 
             options = ClaudeAgentOptions(
                 cwd=self._agent_defaults.cwd,
@@ -641,17 +683,45 @@ class BackgroundTaskExecutor:
             priority=Priority.URGENT,
         )
 
+    def _register_workflow_step_tools(
+        self,
+        preprocessing_result: _PreprocessingResult,
+        instance: TaskInstance,
+        notif_state: NotificationCycleState,
+        notification_source: str,
+    ) -> None:
+        """Register workflow step MCP tools for a workflow step task."""
+        assert self._workflow_repository is not None  # guarded by caller
+        assert instance.workflow_id is not None  # guarded by is_workflow_step
+        step_server = create_workflow_step_tools_server(
+            repository=self._workflow_repository,
+            task_repository=self._repository,
+            skill_registry=self._skill_registry,
+            bus=self._bus,
+            workflow_id=instance.workflow_id,
+            instance_id=instance.id,
+            cycle_state=notif_state,
+            notification_source=notification_source,
+        )
+        preprocessing_result.mcp_servers["workflow-step-tools"] = step_server
+
     async def _run_preprocessing(
-        self, prompt: str, *, pinned_skills: tuple[str, ...] = ()
+        self,
+        prompt: str,
+        *,
+        pinned_skills: tuple[str, ...] = (),
+        instance: TaskInstance | None = None,
     ) -> _PreprocessingResult:
         """Run pre-processing pipeline for context injection.
 
         Registers context providers (memory, projects, skills) and
         extracts MCP servers from results alongside the enriched prompt text.
+        For workflow step tasks, also registers WorkflowStepContextProvider.
 
         Args:
             prompt: The original task prompt
             pinned_skills: Skill names to load unconditionally before classification.
+            instance: The TaskInstance being executed (for workflow step detection).
 
         Returns:
             PreprocessingResult with enriched prompt and MCP servers.
@@ -659,6 +729,20 @@ class BackgroundTaskExecutor:
         try:
             pipeline = PreProcessingPipeline()
             pipeline.register(ProjectsContextProvider(workspace_path=self._cwd))
+
+            # Workflow step tasks get a dedicated context provider
+            if (
+                instance is not None
+                and instance.workflow_id is not None
+                and self._workflow_repository is not None
+            ):
+                pipeline.register(
+                    WorkflowStepContextProvider(
+                        instance=instance,
+                        repository=self._workflow_repository,
+                        skill_registry=self._skill_registry,
+                    )
+                )
 
             results = await pipeline.run(prompt)
 

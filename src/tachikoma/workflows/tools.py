@@ -2,17 +2,19 @@
 
 Provides MCP tools for managing workflow lifecycle:
 - start_workflow: Start a new workflow instance
-- update_workflow_state: Transition workflow step states
+- update_workflow_state: Transition workflow step states (kept for handler reuse)
 - get_workflow_state: Query workflow state for recovery
-- end_workflow: Complete or abort a workflow
+- end_workflow: Complete or abort a workflow (kept for handler reuse)
 - list_active_workflows: List all active workflows for recovery
 
 Follows DES-006 (MCP tool server factory pattern).
 """
 
+from __future__ import annotations
+
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 from uuid import uuid4
 
 from claude_agent_sdk import McpSdkServerConfig, create_sdk_mcp_server, tool
@@ -20,7 +22,6 @@ from loguru import logger
 from pydantic import BaseModel, ValidationError
 
 from tachikoma.agent_defaults import AgentDefaults
-from tachikoma.mcp_utils import decode_json_string_array
 from tachikoma.session_context import SessionContext
 from tachikoma.skills.registry import SkillRegistry, render_skill_block
 from tachikoma.workflows.cascade import (
@@ -44,6 +45,9 @@ from tachikoma.workflows.model import (
 )
 from tachikoma.workflows.repository import WorkflowStateRepository
 
+if TYPE_CHECKING:
+    from tachikoma.tasks.repository import TaskRepository
+
 _log = logger.bind(component="workflow_tools")
 
 
@@ -61,10 +65,6 @@ class UpdateWorkflowStateArgs(BaseModel):
     workflow_id: str
     step: str
     action: Literal["start", "complete", "skip"]
-    # Declared as a JSON-encoded string (e.g. '["a.md", "b.md"]') rather
-    # than a list. The SDK MCP transport's client-side schema validator
-    # rejects array-typed arguments, so the tool accepts a JSON string and
-    # the wrapper parses it via decode_json_string_array. See DES-006.
     items: str | None = None
 
 
@@ -218,8 +218,10 @@ async def handle_start_workflow(
     registry: SkillRegistry,
     repository: WorkflowStateRepository,
     workspace_path: Path,
+    task_repository: TaskRepository | None = None,
 ) -> dict:
-    """Handle start_workflow: create a new workflow instance."""
+    """Handle start_workflow: create a new workflow instance and enqueue first step."""
+    from tachikoma.tasks.model import TaskInstance  # noqa: PLC0415
 
     workflow_def = registry.get_workflow(skill_name, workflow_name)
 
@@ -273,6 +275,26 @@ async def handle_start_workflow(
         scratchpad_path.unlink(missing_ok=True)
         return _repo_error_response(exc, "Failed to create workflow state.")
 
+    # Enqueue the first step as a background TaskInstance
+    if task_repository is not None:
+        first_step = workflow_def.steps[0]
+        instance = TaskInstance(
+            id=str(uuid4()),
+            task_type="background",
+            status="pending",
+            prompt=first_step.id,
+            scheduled_for=now,
+            workflow_id=workflow_id,
+            definition_id=None,
+        )
+        try:
+            await task_repository.create_instance(instance)
+        except Exception as exc:
+            _log.warning(
+                "Failed to enqueue first workflow step: {err}",
+                err=str(exc),
+            )
+
     step_lines = []
     for i, step in enumerate(workflow_def.steps, 1):
         skip_marker = " (skippable)" if not step.required else ""
@@ -289,22 +311,11 @@ async def handle_start_workflow(
     guidance = (
         f"Workflow started: **{workflow_name}**\n\n"
         f"## Steps\n\n{steps_text}\n\n"
-        f"## Getting Started\n\n"
-        f'1. Call `update_workflow_state` with `workflow_id="{workflow_id}", '
-        f'step="<step_id>", action="start"` to begin the first step\n'
-        f"2. Use TodoWrite to create tasks for each step above\n"
-        f"3. Read the scratchpad file at `{scratchpad_path}` first, then use Edit "
-        f"to update it with your workflow ID (`{workflow_id}`) and progress notes\n\n"
-        f"## Progressing\n\n"
-        f'- Use `action="start"` to begin the first step (returns its instructions)\n'
-        f'- Use `action="complete"` to finish a started step — this **auto-starts** '
-        f"the next step and returns its instructions (no separate start call needed)\n"
-        f'- Use `action="skip"` to skip a skippable step — also auto-starts the next step\n'
-        f"- When the last step is completed, the workflow is **auto-finalized** "
-        f"(no need to call `end_workflow`)\n\n"
-        f"## Recovery\n\n"
-        f"If you lose context, call `list_active_workflows()` to find your "
-        f"workflow, then `get_workflow_state()` to resume."
+        f"Workflow ID: `{workflow_id}`\n"
+        f"Scratchpad: `{scratchpad_path}`\n\n"
+        f"The first step has been enqueued as a background task and will "
+        f"execute autonomously. Use `get_workflow_state()` or "
+        f"`list_active_workflows()` to monitor progress."
     )
 
     return {"content": [{"type": "text", "text": guidance}]}
@@ -711,6 +722,7 @@ def create_workflow_tools_server(
     workspace_path: Path,
     agent_defaults: AgentDefaults | None = None,
     session_context: SessionContext | None = None,
+    task_repository: TaskRepository | None = None,
 ) -> McpSdkServerConfig:
     """Create an MCP server exposing workflow management tools.
 
@@ -720,6 +732,7 @@ def create_workflow_tools_server(
         workspace_path: The workspace root path for scratchpad files.
         agent_defaults: Shared SDK options for condition evaluation.
         session_context: Shared session ID for condition evaluation forking.
+        task_repository: TaskRepository for enqueuing first step as TaskInstance.
 
     Returns:
         McpSdkServerConfig for registration with ClaudeAgentOptions.mcp_servers.
@@ -733,8 +746,9 @@ def create_workflow_tools_server(
         "- skill_name (str, required): Name of the skill containing the workflow\n"
         "- workflow_name (str, required): Name of the workflow to start\n"
         "\n"
-        "Creates a tracked workflow instance with a unique ID. Returns step list, "
-        "scratchpad path, and guidance for progressing through the workflow.",
+        "Creates a tracked workflow instance with a unique ID and enqueues the "
+        "first step as a background task. Returns step list, scratchpad path, "
+        "and workflow ID for monitoring.",
         StartWorkflowArgs.model_json_schema(),
     )
     async def start_workflow(args: dict) -> dict:
@@ -748,51 +762,7 @@ def create_workflow_tools_server(
             skill_registry,
             repository,
             workspace_path,
-        )
-
-    @tool(
-        "update_workflow_state",
-        "Update a workflow step's state.\n"
-        "\n"
-        "Parameters:\n"
-        "- workflow_id (str, required): The workflow instance ID\n"
-        "- step (str, required): The step identifier (directory name)\n"
-        "- action (str, required): 'start', 'complete', or 'skip'\n"
-        "- items (str, optional): Required when starting a loop step. A\n"
-        "  JSON-encoded string of opaque references (e.g.\n"
-        '  \'["file1.md", "file2.md"]\') that the iteration body interprets.\n'
-        "  Rejected when starting a non-loop step. Pass items='[]' to skip a\n"
-        "  loop step with zero iterations. The parameter is a JSON string\n"
-        "  because the SDK MCP transport cannot reliably pass arrays.\n"
-        "\n"
-        "Validates the transition and returns step instructions. "
-        "Completing or skipping a step auto-starts the next pending step "
-        "and returns its instructions. When all steps are done, the workflow "
-        "is auto-finalized (cleaned up).",
-        UpdateWorkflowStateArgs.model_json_schema(),
-    )
-    async def update_workflow_state(args: dict) -> dict:
-        parsed, err = _validate_args(args, UpdateWorkflowStateArgs)
-        if err:
-            return err
-
-        items_list: list[str] | None = None
-        if parsed.items is not None:
-            try:
-                items_list = decode_json_string_array(parsed.items, "items")
-            except ValueError as exc:
-                return _error_response(str(exc))
-
-        return await handle_update_workflow_state(
-            parsed.workflow_id,
-            parsed.step,
-            parsed.action,
-            repository,
-            skill_registry,
-            agent_defaults=agent_defaults,
-            session_context=session_context,
-            workspace_path=workspace_path,
-            items=items_list,
+            task_repository=task_repository,
         )
 
     @tool(
@@ -817,31 +787,6 @@ def create_workflow_tools_server(
         )
 
     @tool(
-        "end_workflow",
-        "End a workflow instance.\n"
-        "\n"
-        "Parameters:\n"
-        "- workflow_id (str, required): The workflow instance ID\n"
-        "- action (str, required): 'complete' or 'abort'\n"
-        "\n"
-        "Primarily used to abort a workflow in progress. Normal completion "
-        "is handled automatically when the last step is completed. "
-        "Soft-deletes the workflow state and removes the scratchpad file.",
-        EndWorkflowArgs.model_json_schema(),
-    )
-    async def end_workflow(args: dict) -> dict:
-        parsed, err = _validate_args(args, EndWorkflowArgs)
-        if err:
-            return err
-
-        return await handle_end_workflow(
-            parsed.workflow_id,
-            parsed.action,
-            repository,
-            workspace_path,
-        )
-
-    @tool(
         "list_active_workflows",
         "List all active workflow instances.\n"
         "\n"
@@ -857,9 +802,7 @@ def create_workflow_tools_server(
         name="workflow-tools",
         tools=[
             start_workflow,
-            update_workflow_state,
             get_workflow_state,
-            end_workflow,
             list_active_workflows,
         ],
     )
