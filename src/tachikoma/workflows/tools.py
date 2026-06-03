@@ -276,6 +276,7 @@ async def handle_start_workflow(
         return _repo_error_response(exc, "Failed to create workflow state.")
 
     # Enqueue the first step as a background TaskInstance
+    first_step_enqueued = False
     if task_repository is not None:
         first_step = workflow_def.steps[0]
         instance = TaskInstance(
@@ -289,6 +290,7 @@ async def handle_start_workflow(
         )
         try:
             await task_repository.create_instance(instance)
+            first_step_enqueued = True
         except Exception as exc:
             _log.warning(
                 "Failed to enqueue first workflow step: {err}",
@@ -308,13 +310,24 @@ async def handle_start_workflow(
 
     steps_text = "\n".join(step_lines)
 
+    if first_step_enqueued:
+        enqueue_note = (
+            "The first step has been enqueued as a background task and will "
+            "execute autonomously."
+        )
+    else:
+        enqueue_note = (
+            "Warning: the first step could not be enqueued as a background task. "
+            "The workflow is created but no step is running. "
+            "You may need to manually advance it."
+        )
+
     guidance = (
         f"Workflow started: **{workflow_name}**\n\n"
         f"## Steps\n\n{steps_text}\n\n"
         f"Workflow ID: `{workflow_id}`\n"
         f"Scratchpad: `{scratchpad_path}`\n\n"
-        f"The first step has been enqueued as a background task and will "
-        f"execute autonomously. Use `get_workflow_state()` or "
+        f"{enqueue_note} Use `get_workflow_state()` or "
         f"`list_active_workflows()` to monitor progress."
     )
 
