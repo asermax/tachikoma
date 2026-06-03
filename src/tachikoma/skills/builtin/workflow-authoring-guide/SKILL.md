@@ -12,10 +12,11 @@ This guide provides everything you need to create well-structured workflows. Rea
 ## What Workflows Are
 
 Workflows are ordered multi-step processes defined within skills. They provide:
-- **Structured execution**: Steps run in sequence with clear boundaries
-- **State persistence**: Progress is saved between steps, enabling resumption after interruptions
+- **Autonomous execution**: Once started, steps run automatically as background tasks — no manual step-driving needed
+- **Structured sequencing**: Steps run in order with clear boundaries
+- **State persistence**: Progress is saved between steps via hand-offs and a shared scratchpad
 - **Validation checkpoints**: Each step can validate before proceeding
-- **Recovery**: Lost context can be recovered by listing active workflows and resuming
+- **Failure propagation**: If a step fails, the entire workflow is automatically aborted with notification
 
 Workflows are **optional** — skills may have zero, one, or many workflows depending on their purpose.
 
@@ -200,20 +201,139 @@ Use `scripts/` for executable code that the step should run:
 
 ## Workflow Execution Flow
 
-When the agent executes a workflow:
+Workflows run autonomously as background tasks. The main session agent only starts them — step execution happens independently.
 
-1. **Start**: `start_workflow(skill_name, workflow_name)` creates the workflow and returns the step list
-2. **First step**: `update_workflow_state(workflow_id, step, action="start")` begins the first step and returns its instructions
-3. **Execute**: The agent performs the step's actions, producing outputs
-4. **Advance**: `update_workflow_state(workflow_id, step, action="complete")` marks the step done, **auto-starts** the next step, and returns its instructions — no separate `start` call needed
-5. **Finalize**: When the last step is completed, the workflow is **auto-finalized** (state cleaned up automatically)
+### Starting a Workflow
 
-To abort a workflow early, use `end_workflow(workflow_id, action="abort")`.
+1. **Start**: `start_workflow(skill_name, workflow_name)` creates the workflow state, scratchpad file, and enqueues the first step as a pending background task. The tool returns the workflow ID and confirms the workflow is running in the background.
+2. **Automatic execution**: The background task runner picks up the first step. Each step gets a fresh agent session with full context injected (instructions, required skills, scratchpad, hand-off from previous step).
+3. **Autonomous advancement**: When a step completes, the cascade logic automatically enqueues the next step as a new background task. No agent action is needed between steps.
+4. **Finalize**: When the last step completes, the workflow auto-finalizes — workflow state is cleaned up and the scratchpad is removed.
 
-If context is lost during execution:
-- `list_active_workflows()` shows in-flight workflows
-- `get_workflow_state(workflow_id)` recovers current step and state data
-- Resume from the current step
+### Workflow Step Tools
+
+Inside each workflow step, the step agent has access to these tools:
+
+- **`complete_step(handoff="summary")`**: Complete this step and advance to the next. The optional hand-off message (max 4000 chars) is relayed to the next step's agent.
+- **`skip_step()`**: Skip this step (only if not required). Advances to the next step.
+- **`abort_workflow()`**: Abort the entire workflow immediately. Soft-deletes all workflow state and removes the scratchpad.
+- **`request_input(question)`**: Ask the user a question and wait for their response. Execution pauses until the user replies. Use this when you genuinely need human input to proceed.
+
+### Monitoring and Recovery
+
+In the main session, these tools remain available for monitoring:
+
+- `list_active_workflows()` — shows in-flight workflows
+- `get_workflow_state(workflow_id)` — recovers current step and state data
+
+If a step fails (error, stuck, max iterations), the entire workflow is automatically aborted and a failure notification is dispatched.
+
+## Step Communication Patterns
+
+Steps run in separate agent sessions — they don't share memory. Two mechanisms bridge the gap between steps: **hand-off messages** for direct context transfer and the **scratchpad** for accumulated long-term context.
+
+### Hand-Off Communication
+
+When a step completes via `complete_step(handoff="...")`, the hand-off message is relayed directly into the next step's initial prompt. This is the primary mechanism for passing context between consecutive steps.
+
+**What makes a good hand-off:**
+
+- **Concise summary** of what was accomplished (1-3 sentences)
+- **Key decisions made** that affect downstream steps
+- **Pointers to details** — reference scratchpad entries for anything lengthy
+- **What the next step should know** — specific data, file paths, or state the next step needs
+
+**Examples:**
+
+```
+# Good: concise, actionable, references scratchpad
+complete_step(handoff="Analyzed requirements for 3 user stories. Key decision: using event-driven architecture (see scratchpad §Architecture). Requirements doc at docs/requirements/my-feature.md.")
+
+# Good: short but sufficient for the next step
+complete_step(handoff="Database migration created and tested. Migration file: migrations/005_add_user_preferences.sql. All columns nullable for zero-downtime deploy.")
+
+# Bad: too vague
+complete_step(handoff="Done with the analysis step.")
+
+# Bad: too long (should be in scratchpad instead)
+complete_step(handoff="Analyzed requirements. Here are all 47 requirements I found: 1. The system shall... 2. The system shall... [continues for 3000 chars]")
+```
+
+**Rules:**
+- Max 4000 characters — longer messages are rejected with an error
+- Omit or pass empty string for no hand-off (some steps don't need to pass context)
+- Hand-off is transient — it only appears in the next step's prompt, not persisted beyond that
+
+### Scratchpad for Long-Term Context
+
+Every workflow gets a scratchpad file that persists across all steps. Unlike hand-offs (which only reach the next step), the scratchpad accumulates context that any later step can read.
+
+**How to use it:**
+
+- **Read at the start of each step** — check what previous steps have written
+- **Write to it for accumulated context** — detailed findings, decision logs, intermediate results
+- **Reference it in hand-offs** — "see scratchpad §X for details" keeps hand-offs concise
+
+The scratchpad path is provided in each step's prompt. It's a regular file — read and write it using standard file tools.
+
+**Example scratchpad structure:**
+
+```markdown
+# Workflow Scratchpad
+
+## Architecture Decision (Step 1)
+- Chose event-driven over polling
+- Rationale: lower latency, simpler error handling
+
+## Files Created (Step 2)
+- src/events/handlers.py — event processing logic
+- src/events/models.py — event type definitions
+
+## API Contract (Step 3)
+- POST /events/submit — accepts JSON payload
+- Returns 202 Accepted with event ID
+```
+
+### Step Instructions Best Practices
+
+Write instructions that help the step agent use hand-offs and scratchpad effectively:
+
+**Start with context gathering:**
+
+```markdown
+## Your Task
+1. Read the scratchpad at the path provided in your prompt header
+2. Review the hand-off from the previous step (if present)
+3. Proceed with the instructions below
+```
+
+**End with context output:**
+
+```markdown
+## Completion
+When done:
+1. Write key findings to the scratchpad (append, don't overwrite)
+2. Call complete_step with a hand-off summarizing what you did and what the next step needs to know
+```
+
+**Design for hand-off continuity:**
+
+- Each step's instructions should specify what it expects from previous steps (via hand-off or scratchpad references)
+- Document what the step produces for subsequent steps
+- Use consistent section names in the scratchpad so later steps can find what they need
+
+### Asking for User Input
+
+If a step needs user input to proceed, use `request_input(question)`. The step pauses and resumes in the same session when the user responds.
+
+```markdown
+## Your Task
+1. Review the proposed architecture
+2. If the database choice is ambiguous, call request_input("Should I use PostgreSQL or SQLite for this feature?")
+3. Proceed with the chosen option
+```
+
+Use `request_input` sparingly — only when the step genuinely cannot proceed without human input. Most decisions should be made autonomously and documented in the scratchpad.
 
 ## Example Workflow
 
@@ -248,6 +368,10 @@ title: "Gather Requirements"
 ## Output
 Create a requirements document at `docs/requirements/{feature-name}.md`
 
+## Completion
+1. Write a summary of key requirements and constraints to the scratchpad
+2. Call complete_step with a hand-off listing the main requirement categories and any ambiguities found
+
 ## Validation
 - All requirements are testable
 - Assumptions are explicit
@@ -263,14 +387,20 @@ title: "Design Solution"
 # Solution Design
 
 ## Your Task
-1. Review the requirements from the previous step
-2. Propose a solution architecture
-3. Identify components and their interactions
+1. Read the scratchpad for requirements context from the previous step
+2. Review the hand-off from the requirements step
+3. Read the requirements document at `docs/requirements/{feature-name}.md`
+4. Propose a solution architecture
+5. Identify components and their interactions
 
 ## Output
 Create a design document at `docs/designs/{feature-name}.md`
 
 For detailed design patterns, see `references/design-patterns.md`.
+
+## Completion
+1. Append the chosen architecture and key design decisions to the scratchpad
+2. Call complete_step with a hand-off summarizing the architecture approach and listing the main components
 
 ## Validation
 - Design addresses all requirements
@@ -287,12 +417,17 @@ title: "Create Implementation Plan"
 # Implementation Planning
 
 ## Your Task
-1. Break down the design into implementable tasks
-2. Order tasks by dependency
-3. Estimate effort for each task
+1. Read the scratchpad for requirements and design context
+2. Review the hand-off from the design step
+3. Break down the design into implementable tasks
+4. Order tasks by dependency
+5. Estimate effort for each task
 
 ## Output
 Create an implementation plan at `docs/plans/{feature-name}.md`
+
+## Completion
+Call complete_step with a hand-off summarizing the plan's structure and any risky dependencies
 
 ## Validation
 - Tasks are actionable and sized appropriately
@@ -423,15 +558,17 @@ Check for `config/database.toml` to verify.
 
 ### Document Recovery Scenarios
 
-In the SKILL.md, explain how to resume after interruption:
+In the SKILL.md, explain how to monitor workflows after starting them:
 
 ```markdown
-## Recovery
+## Monitoring
 
-If you lose context during this workflow:
-1. Call `list_active_workflows()` to find the workflow
-2. Call `get_workflow_state(workflow_execution_id)` to see where you left off
-3. Resume from the current step — all progress is preserved
+After starting a workflow, you can check on its progress:
+1. Call `list_active_workflows()` to see running workflows
+2. Call `get_workflow_state(workflow_execution_id)` to see current step and state
+3. Steps run autonomously — no manual action needed between steps
+
+If a step fails, the workflow is automatically aborted and you'll receive a notification.
 ```
 
 ## Testing Your Workflow
