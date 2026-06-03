@@ -84,13 +84,22 @@ def _build_notification_source(skill_name: str, workflow_name: str) -> str:
 def _count_step_outcomes(
     cascade: CascadeResult,
 ) -> tuple[int, int]:
-    """Count completed and skipped steps across all mutations."""
-    completed = 0
-    skipped = len(cascade.outcome.condition_skips)
+    """Count completed and skipped steps from the final state of each layer.
+
+    Each UpdateState contains the full step_states (not a delta), so summing
+    across all mutations would over-count. Instead, keep only the last
+    UpdateState per layer and count from those.
+    """
+    last_per_layer: dict[str, dict] = {}
     for mutation in cascade.mutations.ordered:
         if isinstance(mutation, UpdateState):
-            completed += sum(1 for s in mutation.step_states.values() if s == STEP_COMPLETED)
-            skipped += sum(1 for s in mutation.step_states.values() if s == STEP_SKIPPED)
+            last_per_layer[mutation.layer_id] = mutation.step_states
+
+    completed = 0
+    skipped = len(cascade.outcome.condition_skips)
+    for ss in last_per_layer.values():
+        completed += sum(1 for s in ss.values() if s == STEP_COMPLETED)
+        skipped += sum(1 for s in ss.values() if s == STEP_SKIPPED)
     return completed, skipped
 
 
