@@ -56,11 +56,6 @@ from tachikoma.tasks.scheduler import get_timezone
 
 if TYPE_CHECKING:
     from tachikoma.skills.registry import SkillRegistry
-    from tachikoma.workflows.repository import WorkflowStateRepository
-
-from tachikoma.workflows.step_context import WorkflowStepContextProvider
-from tachikoma.workflows.step_prompt import WORKFLOW_STEP_SYSTEM_PROMPT
-from tachikoma.workflows.step_tools import create_workflow_step_tools_server
 
 
 @dataclass
@@ -80,28 +75,12 @@ _log = logger.bind(component="task_executor")
 # Cadence at which BackgroundTaskRunner.tick is driven by the central scheduler
 RUNNER_CHECK_INTERVAL_SECONDS = 30
 
-_WORKFLOW_STEP_RETRY_PROMPT = (
-    "You have not called any workflow tool to conclude this step. "
-    "You must call one of the following tools now:\n\n"
-    '- complete_step(handoff="summary of what you accomplished") — when done\n'
-    "- skip_step() — when this step should not run\n"
-    "- abort_workflow() — when the workflow cannot continue\n"
-    "- request_input(question) — when you need the user's input\n\n"
-    "Call one of these tools immediately. This is your final turn."
-)
-
 
 async def _resolve_source(
     repository: TaskRepository,
     instance: TaskInstance,
 ) -> str:
     """Resolve the notification source for an instance."""
-    # TODO(Batch 8): workflow step instances should resolve to
-    # "Workflow: skill/name" by reading the workflow chain, but that
-    # requires threading WorkflowStateRepository through the sweep
-    # functions and scheduler job builder. For now workflow step
-    # instances use the generic "Background task: ..." format in sweep
-    # notifications (the live executor path is already correct).
     definition = (
         await repository.get_definition(instance.definition_id) if instance.definition_id else None
     )
@@ -148,32 +127,14 @@ async def expired_waiter_sweep(
     settings: TaskSettings,
     bus: EventBus,
 ) -> None:
-    """Fail waiting instances that have exceeded the applicable wait_timeout."""
-    # Regular background tasks: standard wait_timeout
-    regular_expired = await repository.list_expired_waiting_instances(
-        settings.wait_timeout, only_workflow_tasks=False
-    )
+    """Fail waiting instances that have exceeded the wait_timeout."""
+    expired = await repository.list_expired_waiting_instances(settings.wait_timeout)
     await _fail_timed_out_instances(
-        regular_expired,
+        expired,
         repository,
         bus,
         reason=f"Task timed out waiting for user input after {settings.wait_timeout}s",
-        log_message="Expired {count} regular waiting instances past timeout",
-    )
-
-    # Workflow step tasks: longer workflow_wait_timeout
-    workflow_expired = await repository.list_expired_waiting_instances(
-        settings.workflow_wait_timeout, only_workflow_tasks=True
-    )
-    await _fail_timed_out_instances(
-        workflow_expired,
-        repository,
-        bus,
-        reason=(
-            f"Workflow step timed out waiting for user input "
-            f"after {settings.workflow_wait_timeout}s"
-        ),
-        log_message="Expired {count} workflow waiting instances past timeout",
+        log_message="Expired {count} waiting instances past timeout",
     )
 
 
@@ -228,12 +189,12 @@ Newly scheduled tasks produce fresh isolated runs when their schedule fires — 
 
 ## Workflows
 
-You have access to the workflow management tools — `start_workflow`, `get_workflow_state`, and `list_active_workflows` — to start and monitor multi-step workflows during autonomous runs. Use them when:
+You have access to the workflow management tools — `start_workflow`, `update_workflow_state`, `get_workflow_state`, `end_workflow`, and `list_active_workflows` — to execute multi-step workflows during autonomous runs. Use them when:
 - The task requires a structured multi-step process tracked reliably across context boundaries
 - You need to ensure ordered execution of steps without skipping or losing progress
 - You want step-specific instructions and skill content loaded automatically as you advance
 
-Once started, workflows execute autonomously as background tasks. Use `list_active_workflows` to check for already-running workflows, and `get_workflow_state` to monitor progress.
+Use `list_active_workflows` to check for already-running workflows, and `get_workflow_state` to recover context if you lose track of a workflow's ID.
 
 ## Requesting user input
 
@@ -306,7 +267,6 @@ class BackgroundTaskRunner:
         agent_defaults: AgentDefaults,
         skill_registry: "SkillRegistry",
         session_registry: SessionRegistry,
-        workflow_repository: "WorkflowStateRepository | None" = None,
         extra_mcp_servers: dict[str, McpSdkServerConfig] | None = None,
         hooks: list[HookMatcher] | None = None,
     ) -> None:
@@ -316,7 +276,6 @@ class BackgroundTaskRunner:
         self._agent_defaults = agent_defaults
         self._skill_registry = skill_registry
         self._session_registry = session_registry
-        self._workflow_repository = workflow_repository
         self._extra_mcp_servers = extra_mcp_servers
         self._hooks = hooks
 
@@ -386,7 +345,6 @@ class BackgroundTaskRunner:
                 agent_defaults=self._agent_defaults,
                 skill_registry=self._skill_registry,
                 session_registry=self._session_registry,
-                workflow_repository=self._workflow_repository,
                 extra_mcp_servers=self._extra_mcp_servers,
                 hooks=self._hooks,
             )
@@ -409,7 +367,6 @@ class BackgroundTaskExecutor:
         agent_defaults: AgentDefaults,
         skill_registry: "SkillRegistry",
         session_registry: SessionRegistry,
-        workflow_repository: "WorkflowStateRepository | None" = None,
         extra_mcp_servers: dict[str, McpSdkServerConfig] | None = None,
         hooks: list[HookMatcher] | None = None,
     ) -> None:
@@ -420,7 +377,6 @@ class BackgroundTaskExecutor:
         self._cwd = agent_defaults.cwd
         self._skill_registry = skill_registry
         self._session_registry = session_registry
-        self._workflow_repository = workflow_repository
         self._extra_mcp_servers = extra_mcp_servers or {}
         self._hooks = hooks or []
 
@@ -466,7 +422,6 @@ class BackgroundTaskExecutor:
 
         stderr_acc = StderrAccumulator()
         notification_source = f"Background task: {instance.prompt[:100]}"
-        is_workflow_step = instance.workflow_id is not None
 
         try:
             definition: TaskDefinition | None = None
@@ -482,18 +437,9 @@ class BackgroundTaskExecutor:
             preprocessing_result = await self._run_preprocessing(
                 instance.prompt,
                 pinned_skills=definition.skills if definition else (),
-                instance=instance,
             )
 
             notif_state = NotificationCycleState()
-
-            # Workflow step tasks: compute workflow-specific notification source
-            # and register step tools BEFORE creating the notification server,
-            # so the notification server uses the correct source label.
-            if is_workflow_step and self._workflow_repository is not None:
-                notification_source = await self._register_workflow_step_tools(
-                    preprocessing_result, instance, notif_state, notification_source
-                )
 
             preprocessing_result.mcp_servers["notifications"] = create_notification_server(
                 self._bus,
@@ -503,11 +449,8 @@ class BackgroundTaskExecutor:
             )
 
             # Merge any always-on extra servers (e.g. git-tools) without
-            # letting them shadow per-invocation servers. Workflow step tasks
-            # exclude workflow-tools to prevent recursive workflow management.
+            # letting them shadow per-invocation servers
             for name, server in self._extra_mcp_servers.items():
-                if is_workflow_step and name == "workflow-tools":
-                    continue
                 preprocessing_result.mcp_servers.setdefault(name, server)
 
             tz = get_timezone(self._settings)
@@ -515,11 +458,7 @@ class BackgroundTaskExecutor:
             datetime_line = (
                 f"Current date and time: {now.strftime('%A, %B %d, %Y at %H:%M:%S')} {tz.key}\n"
             )
-
-            if is_workflow_step:
-                system_prompt_text = datetime_line + "\n" + WORKFLOW_STEP_SYSTEM_PROMPT
-            else:
-                system_prompt_text = datetime_line + "\n" + BACKGROUND_TASK_SYSTEM_PROMPT
+            system_prompt_text = datetime_line + "\n" + BACKGROUND_TASK_SYSTEM_PROMPT
 
             options = ClaudeAgentOptions(
                 cwd=self._agent_defaults.cwd,
@@ -561,7 +500,6 @@ class BackgroundTaskExecutor:
         except asyncio.CancelledError:
             _log.info("Background task {inst_id} cancelled", inst_id=instance.id)
             await self._fail_instance(instance.id, "Task cancelled")
-            await self._run_postprocessing(instance.sdk_session_id, instance, is_failure=True)
             raise
 
         except Exception as exc:
@@ -588,7 +526,6 @@ class BackgroundTaskExecutor:
                 instance.id,
                 priority=Priority.URGENT,
             )
-            await self._run_postprocessing(instance.sdk_session_id, instance, is_failure=True)
 
     async def _run_evaluator_loop(
         self,
@@ -604,8 +541,6 @@ class BackgroundTaskExecutor:
         response_text = ""
         iteration = 0
         max_iterations = self._settings.max_iterations
-        retry_attempted = False
-        is_workflow_step = instance.workflow_id is not None
 
         while iteration < max_iterations:
             iteration += 1
@@ -670,29 +605,10 @@ class BackgroundTaskExecutor:
 
             if status == "complete":
                 await self._complete_instance(instance.id, rationale)
-                await self._run_postprocessing(sdk_session_id, instance)
+                await self._run_postprocessing(sdk_session_id)
                 return
 
             if status == "stuck":
-                if (
-                    is_workflow_step
-                    and not notif_state.workflow_tool_called
-                    and not retry_attempted
-                ):
-                    retry_attempted = True
-                    _log.info(
-                        "Workflow step {inst_id} stuck without tool call, "
-                        "retrying with instructions",
-                        inst_id=instance.id,
-                    )
-                    if await self._run_workflow_step_retry(
-                        client,
-                        instance,
-                        notification_source,
-                        notif_state,
-                        sdk_session_id,
-                    ):
-                        return
                 await self._fail_instance(instance.id, f"Agent stuck: {rationale}")
                 await dispatch_notification(
                     self._bus,
@@ -702,33 +618,12 @@ class BackgroundTaskExecutor:
                     instance.id,
                     priority=Priority.URGENT,
                 )
-                await self._run_postprocessing(sdk_session_id, instance, is_failure=True)
                 return
 
             # Continue: inject the evaluator's factual rationale
             await client.query(rationale)
 
         # Max iterations reached
-        if (
-            is_workflow_step
-            and not notif_state.workflow_tool_called
-            and not retry_attempted
-        ):
-            retry_attempted = True
-            _log.info(
-                "Workflow step {inst_id} hit max iterations without tool call, "
-                "retrying with instructions",
-                inst_id=instance.id,
-            )
-            if await self._run_workflow_step_retry(
-                client,
-                instance,
-                notification_source,
-                notif_state,
-                sdk_session_id,
-            ):
-                return
-
         _log.warning(
             "Background task {inst_id} reached max iterations",
             inst_id=instance.id,
@@ -745,138 +640,18 @@ class BackgroundTaskExecutor:
             instance.id,
             priority=Priority.URGENT,
         )
-        await self._run_postprocessing(sdk_session_id, instance, is_failure=True)
-
-    async def _run_workflow_step_retry(
-        self,
-        client: ClaudeSDKClient,
-        instance: TaskInstance,
-        notification_source: str,
-        notif_state: NotificationCycleState,
-        sdk_session_id: str | None,
-    ) -> bool:
-        """Run a single bonus turn with retry instructions for a workflow step.
-
-        Returns True if the turn was handled (completion, waiting, or failure
-        already dispatched). Returns False if the caller should proceed with
-        normal failure handling.
-        """
-        await client.query(_WORKFLOW_STEP_RETRY_PROMPT)
-
-        notif_state.reset()
-        response_chunks: list[str] = []
-        async for sdk_message in client.receive_response():
-            if isinstance(sdk_message, ResultMessage) and sdk_message.session_id:
-                sdk_session_id = sdk_message.session_id
-
-            if isinstance(sdk_message, AssistantMessage):
-                for block in sdk_message.content:
-                    if isinstance(block, TextBlock):
-                        response_chunks.append(sanitize_text(block.text))
-
-        if notif_state.await_response_requested:
-            if sdk_session_id is None:
-                await self._fail_instance(
-                    instance.id,
-                    "Cannot pause — no SDK session ID captured yet",
-                )
-                await dispatch_notification(
-                    self._bus,
-                    notification_source,
-                    "Task failed: no session to resume from",
-                    "error",
-                    instance.id,
-                    priority=Priority.URGENT,
-                )
-                return True
-
-            _log.info(
-                "Workflow step retry for {inst_id}: agent called request_input, "
-                "transitioning to waiting",
-                inst_id=instance.id,
-            )
-            await self._repository.update_instance(
-                instance.id,
-                status="waiting",
-                sdk_session_id=sdk_session_id,
-            )
-            return True
-
-        if notif_state.workflow_tool_called:
-            response_text = "".join(response_chunks)
-            eval_result = await self._run_evaluator(
-                instance.prompt,
-                response_text,
-            )
-            rationale = eval_result.get("rationale", "")
-
-            _log.info(
-                "Workflow step retry for {inst_id}: agent completed after retry",
-                inst_id=instance.id,
-            )
-            await self._complete_instance(
-                instance.id, rationale or "Workflow tool called during retry"
-            )
-            await self._run_postprocessing(sdk_session_id, instance)
-            return True
-
-        _log.info(
-            "Workflow step retry for {inst_id}: agent did not call a workflow tool",
-            inst_id=instance.id,
-        )
-        return False
-
-    async def _register_workflow_step_tools(
-        self,
-        preprocessing_result: _PreprocessingResult,
-        instance: TaskInstance,
-        notif_state: NotificationCycleState,
-        notification_source: str,
-    ) -> str:
-        """Register workflow step MCP tools for a workflow step task.
-
-        Returns the workflow-specific notification source so the caller can
-        use it for the notification server and evaluator loop.
-        """
-        assert self._workflow_repository is not None  # guarded by caller
-        assert instance.workflow_id is not None  # guarded by is_workflow_step
-
-        # Build workflow-specific notification source (R6: "Workflow: skill/name")
-        chain = await self._workflow_repository.get_active_chain(instance.workflow_id)
-        if chain:
-            top = chain[0]
-            notification_source = f"Workflow: {top.skill_name}/{top.workflow_name}"
-
-        step_server = create_workflow_step_tools_server(
-            repository=self._workflow_repository,
-            task_repository=self._repository,
-            skill_registry=self._skill_registry,
-            bus=self._bus,
-            workflow_id=instance.workflow_id,
-            instance_id=instance.id,
-            cycle_state=notif_state,
-            notification_source=notification_source,
-        )
-        preprocessing_result.mcp_servers["workflow-step-tools"] = step_server
-        return notification_source
 
     async def _run_preprocessing(
-        self,
-        prompt: str,
-        *,
-        pinned_skills: tuple[str, ...] = (),
-        instance: TaskInstance | None = None,
+        self, prompt: str, *, pinned_skills: tuple[str, ...] = ()
     ) -> _PreprocessingResult:
         """Run pre-processing pipeline for context injection.
 
         Registers context providers (memory, projects, skills) and
         extracts MCP servers from results alongside the enriched prompt text.
-        For workflow step tasks, also registers WorkflowStepContextProvider.
 
         Args:
             prompt: The original task prompt
             pinned_skills: Skill names to load unconditionally before classification.
-            instance: The TaskInstance being executed (for workflow step detection).
 
         Returns:
             PreprocessingResult with enriched prompt and MCP servers.
@@ -884,20 +659,6 @@ class BackgroundTaskExecutor:
         try:
             pipeline = PreProcessingPipeline()
             pipeline.register(ProjectsContextProvider(workspace_path=self._cwd))
-
-            # Workflow step tasks get a dedicated context provider
-            if (
-                instance is not None
-                and instance.workflow_id is not None
-                and self._workflow_repository is not None
-            ):
-                pipeline.register(
-                    WorkflowStepContextProvider(
-                        instance=instance,
-                        repository=self._workflow_repository,
-                        skill_registry=self._skill_registry,
-                    )
-                )
 
             results = await pipeline.run(prompt)
 
@@ -997,65 +758,14 @@ class BackgroundTaskExecutor:
             )
             return {"status": "continue", "rationale": "Could not parse evaluator response"}
 
-    async def _run_postprocessing(
-        self,
-        sdk_session_id: str | None,
-        instance: TaskInstance | None = None,
-        *,
-        is_failure: bool = False,
-    ) -> None:
+    async def _run_postprocessing(self, sdk_session_id: str | None) -> None:
         """Run adapted post-processing pipeline (episodic + git only).
 
         Args:
             sdk_session_id: The SDK session ID from the background task execution
-            instance: Optional TaskInstance — when provided and has a workflow_id,
-                the WorkflowFailureProcessor is registered to handle abort cascade
-                on failed workflow step tasks.
-            is_failure: When True and instance has a workflow_id, registers
-                the WorkflowFailureProcessor for abort cascade. Must be False
-                on success paths to avoid aborting healthy workflows.
         """
-        needs_failure_processor = (
-            is_failure
-            and instance is not None
-            and instance.workflow_id is not None
-            and self._workflow_repository is not None
-        )
-
-        # When there's no SDK session but a failure processor is needed,
-        # run a minimal pipeline with just the failure processor.
         if sdk_session_id is None:
-            if not needs_failure_processor:
-                _log.warning("No SDK session ID, skipping post-processing")
-                return
-            try:
-                session = Session(
-                    id="background-task",
-                    sdk_session_id="no-session",
-                    started_at=(now := datetime.now(UTC)),
-                    ended_at=now,
-                    summary=None,
-                    transcript_path=None,
-                )
-                from tachikoma.workflows.failure_processor import (  # noqa: PLC0415
-                    WorkflowFailureProcessor,
-                )
-
-                pipeline = PostProcessingPipeline(self._session_registry)
-                pipeline.register(
-                    WorkflowFailureProcessor(
-                        instance=instance,  # type: ignore[arg-type]
-                        repository=self._workflow_repository,  # type: ignore[arg-type]
-                        bus=self._bus,
-                    ),
-                    phase="main",
-                )
-                await pipeline.run(session)
-            except Exception as exc:
-                _log.exception(
-                    "Post-processing failed for background task: {err}",
-                    err=str(exc),
-                )
+            _log.warning("No SDK session ID, skipping post-processing")
             return
 
         try:
@@ -1074,22 +784,6 @@ class BackgroundTaskExecutor:
                 EpisodicProcessor(self._agent_defaults),
                 phase="main",
             )
-
-            # Workflow failure processor — abort cascade on failed workflow tasks
-            if needs_failure_processor:
-                from tachikoma.workflows.failure_processor import (  # noqa: PLC0415
-                    WorkflowFailureProcessor,
-                )
-
-                pipeline.register(
-                    WorkflowFailureProcessor(
-                        instance=instance,  # type: ignore[arg-type]
-                        repository=self._workflow_repository,  # type: ignore[arg-type]
-                        bus=self._bus,
-                    ),
-                    phase="main",
-                )
-
             pipeline.register(
                 ProjectsProcessor(self._agent_defaults),
                 phase=PRE_FINALIZE_PHASE,

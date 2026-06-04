@@ -127,7 +127,6 @@ class TaskInstance:
     user_response: str | None = None
     updated_at: datetime | None = None
     created_at: datetime | None = None
-    workflow_id: str | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -206,12 +205,10 @@ class TaskInstanceRecord(Base):
         onupdate=lambda: datetime.now(UTC),
     )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
-    workflow_id: Mapped[str | None] = mapped_column(String, nullable=True)
 
     __table_args__ = (
         Index("ix_task_instances_status", "status"),
         Index("ix_task_instances_task_type", "task_type"),
-        Index("ix_task_instances_workflow_id", "workflow_id"),
     )
 
     def to_domain(self) -> TaskInstance:
@@ -230,5 +227,4 @@ class TaskInstanceRecord(Base):
             user_response=self.user_response,
             updated_at=ensure_utc(self.updated_at),
             created_at=ensure_utc(self.created_at),
-            workflow_id=self.workflow_id,
         )

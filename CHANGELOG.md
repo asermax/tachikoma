@@ -2,58 +2,6 @@
 
 <!-- version list -->
 
-## v1.98.0 (2026-06-04)
-
-### Bug Fixes
-
-- **tasks**: Correct workflow tool called reset and simplify retry completion
-  ([`b81859e`](https://github.com/asermax/tachikoma/commit/b81859e36c883b387b1f5d76eb4c646d81ec6b94))
-
-- **tasks**: Remove unused status variable in evaluation result handling
-  ([`ca12e9e`](https://github.com/asermax/tachikoma/commit/ca12e9e33f2e7775ba5ed5d90a0e5141479d4f6b))
-
-### Features
-
-- **tasks**: Add retry-before-abort for workflow steps stuck without tool call
-  ([`6523458`](https://github.com/asermax/tachikoma/commit/652345829d689a9e738554d0259735f349f3160b))
-
-### Testing
-
-- **tasks**: Add tests for workflow step retry-before-abort behavior
-  ([`b30056f`](https://github.com/asermax/tachikoma/commit/b30056fc7019093a47a665c8e569dc9477b98e39))
-
-
-## v1.97.1 (2026-06-04)
-
-### Bug Fixes
-
-- **tasks**: Move workflow imports outside TYPE_CHECKING to resolve circular dependencies
-  ([`b4a5c1e`](https://github.com/asermax/tachikoma/commit/b4a5c1e7cf47d737bf6093bbd64fb7306b8eb77f))
-
-
-## v1.97.0 (2026-06-04)
-
-### Code Style
-
-- Fix line formatting in tools and reaction tests
-  ([`24d99f7`](https://github.com/asermax/tachikoma/commit/24d99f716128d1ba49e1f40d48dfdeb75fb5e46f))
-
-### Features
-
-- **telegram**: Add reaction context prefix and notify on unknown session
-  ([`52373ed`](https://github.com/asermax/tachikoma/commit/52373ede2b539fd4a5bf4cec4445045a7ffe86db))
-
-### Refactoring
-
-- **telegram**: Use public async API for active session in reaction context
-  ([`739df3b`](https://github.com/asermax/tachikoma/commit/739df3b9c8d5fa39f1152e7237a029b264ebbeab))
-
-### Testing
-
-- **telegram**: Add tests for reaction context prefix and notification behavior
-  ([`61aa116`](https://github.com/asermax/tachikoma/commit/61aa11696f9fc45ef351a12471d8cfd4fd1ff1d3))
-
-
 ## v1.96.0 (2026-06-03)
 
 ### Bug Fixes

@@ -6,7 +6,7 @@
 
 Persistent task definitions with cron-like scheduling, automatic instance generation, and MCP tools for the agent to manage tasks during conversations. Task definitions describe what the agent should do and when; task instances represent individual executions generated from those definitions.
 
-Note: The workflow subsystem provides a separate set of MCP tools (`start_workflow`, `get_workflow_state`, `list_active_workflows` in the main session; `complete_step`, `skip_step`, `abort_workflow`, `request_input` in workflow step background task sessions) registered as dedicated MCP servers for managing multi-step skill processes. Task tools manage cron-scheduled definitions; workflow tools manage ordered step sequences within skills. Workflow step tasks are a subtype of background tasks identified by a `workflow_id` field on the TaskInstance — they are excluded from `list_tasks` and use a separate `workflow_wait_timeout` config (see [background-task-execution](background-task-execution.md)). See [workflows](../workflows/workflow-state-machine.md).
+Note: The workflow subsystem provides a separate set of MCP tools (`start_workflow`, `update_workflow_state`, etc.) registered as the "workflow-tools" server for managing multi-step skill processes. Task tools manage cron-scheduled definitions; workflow tools manage ordered step sequences within skills. See [workflows](../workflows/workflow-state-machine.md).
 
 ## User Stories
 

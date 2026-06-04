@@ -253,13 +253,12 @@ class TestDatabaseInitialization:
             cursor = await db.execute("SELECT revision, name FROM schema_migrations")
             rows = await cursor.fetchall()
 
-        # Baseline stamped + migration 002 + migration 003 + migration 004 applied
-        assert len(rows) == 4
+        # Baseline stamped + migration 002 + migration 003 applied
+        assert len(rows) == 3
         revisions = {row[0] for row in rows}
         assert "001" in revisions
         assert "002" in revisions
         assert "003" in revisions
-        assert "004" in revisions
 
 
 class TestDatabaseClose:
@@ -431,12 +430,11 @@ class TestExistingInstall:
             cursor = await db.execute("SELECT revision, name FROM schema_migrations")
             rows = await cursor.fetchall()
 
-        assert len(rows) == 4
+        assert len(rows) == 3
         revisions = {row[0] for row in rows}
         assert "001" in revisions
         assert "002" in revisions
         assert "003" in revisions
-        assert "004" in revisions
 
     async def test_existing_install_migration_adds_cgroup_columns(self, tmp_path: Path) -> None:
         """R2: existing install without cgroup columns gets them via migration 002."""

@@ -587,7 +587,9 @@ class TestSessionRegistryCanReopenSession:
 
         assert result is False
 
-    async def test_returns_false_when_session_still_open(self, mock_repo, tmp_path: Path) -> None:
+    async def test_returns_false_when_session_still_open(
+        self, mock_repo, tmp_path: Path
+    ) -> None:
         """AC: returns False when session has no ended_at (still open)."""
         transcript = tmp_path / "open.jsonl"
         transcript.touch()
@@ -605,7 +607,9 @@ class TestSessionRegistryCanReopenSession:
 
         assert result is False
 
-    async def test_returns_false_when_session_is_active(self, mock_repo, tmp_path: Path) -> None:
+    async def test_returns_false_when_session_is_active(
+        self, mock_repo, tmp_path: Path
+    ) -> None:
         """AC: returns False when session is already the active session."""
         transcript = tmp_path / "active.jsonl"
         transcript.touch()
@@ -625,7 +629,9 @@ class TestSessionRegistryCanReopenSession:
 
         assert result is False
 
-    async def test_returns_true_for_valid_closed_session(self, mock_repo, tmp_path: Path) -> None:
+    async def test_returns_true_for_valid_closed_session(
+        self, mock_repo, tmp_path: Path
+    ) -> None:
         """AC: returns True when all preconditions pass."""
         transcript = tmp_path / "valid.jsonl"
         transcript.touch()

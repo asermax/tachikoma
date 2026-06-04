@@ -55,11 +55,6 @@ MIGRATIONS: list[Migration] = [
         "create_channel_messages",
         "migrations/003_create_channel_messages.sql",
     ),
-    Migration(
-        "004",
-        "add_workflow_id_and_pending_handoff",
-        "migrations/004_add_workflow_id_and_pending_handoff.sql",
-    ),
 ]
 
 
@@ -122,17 +117,7 @@ async def run_pending_migrations(engine: AsyncEngine, *, is_fresh_db: bool = Fal
         try:
             async with engine.begin() as conn:
                 for statement in statements:
-                    try:
-                        await conn.execute(text(statement))
-                    except Exception as stmt_err:
-                        stmt_msg = str(stmt_err).lower()
-                        if "duplicate column name" in stmt_msg:
-                            _log.debug(
-                                "Skipping statement (column already exists): {stmt}",
-                                stmt=statement.split("\n")[0][:80],
-                            )
-                        else:
-                            raise
+                    await conn.execute(text(statement))
                 await conn.execute(_STAMP_SQL, {"rev": m.revision, "name": m.name})
         except Exception as e:
             raise RuntimeError(f"Migration {m.revision} ({m.name}) failed: {e}") from e

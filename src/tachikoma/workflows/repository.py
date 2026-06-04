@@ -66,7 +66,6 @@ class WorkflowStateRepository:
                 deleted_at=state.deleted_at,
                 created_at=state.created_at or datetime.now(UTC),
                 updated_at=state.updated_at or datetime.now(UTC),
-                pending_handoff=state.pending_handoff,
             )
 
             async with self._session_factory() as db:
@@ -163,34 +162,6 @@ class WorkflowStateRepository:
 
         except Exception as exc:
             raise WorkflowRepositoryError(f"Failed to update workflow state {workflow_id}") from exc
-
-    async def update_pending_handoff(self, workflow_id: str, handoff: str | None) -> None:
-        """Set or clear the pending handoff message on a workflow state.
-
-        The context provider reads this when constructing the next step's prompt,
-        then clears it to prevent re-consumption.
-        """
-        try:
-            async with self._session_factory() as db:
-                result = await db.execute(
-                    select(WorkflowStateRecord).where(
-                        WorkflowStateRecord.id == workflow_id,
-                        WorkflowStateRecord.deleted_at.is_(None),
-                    )
-                )
-                record = result.scalar_one_or_none()
-
-                if record is None:
-                    return
-
-                record.pending_handoff = handoff
-                record.updated_at = datetime.now(UTC)
-                await db.commit()
-
-        except Exception as exc:
-            raise WorkflowRepositoryError(
-                f"Failed to update pending handoff for workflow {workflow_id}"
-            ) from exc
 
     async def soft_delete(self, workflow_id: str) -> bool:
         """Soft delete a workflow state by ID (sets deleted_at).

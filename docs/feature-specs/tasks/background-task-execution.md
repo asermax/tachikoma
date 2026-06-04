@@ -10,7 +10,6 @@ Background tasks execute in isolated parallel sessions without interrupting the 
 
 - As a user, I want Tachikoma to work on complex tasks in the background so that it can process information and complete work without blocking our conversation
 - As a user, I want to be notified when a background task finishes or fails so that I stay informed about the results
-- As a user, I want workflow steps to run as background tasks so that multi-step processes execute autonomously without blocking the main conversation
 
 ## Requirements
 
@@ -25,9 +24,7 @@ Background tasks execute in isolated parallel sessions without interrupting the 
 | R6 | Stuck/looping agent detection — evaluator detects unproductive iterations and marks the task as failed |
 | R7 | Background task agents share the main agent's restricted git surface: a destructive-git deny hook blocks `git push`, `git reset`, `git checkout .`, `git restore .`, `git clean`, and mutating `git remote` subcommands; `push` and `sync` MCP tools are available for on-demand push/sync operations |
 | R8 | Background task agents have access to the task management MCP tools (`create_task`, `list_tasks`, `get_task`, `update_task`, `delete_task`) so they can schedule, inspect, update, and remove task definitions during autonomous execution |
-| R9 | Background task agents have access to the workflow management MCP tools (`start_workflow`, `get_workflow_state`, `list_active_workflows`) so they can start and monitor multi-step workflows during autonomous execution. Workflow step-driving tools (`complete_step`, `skip_step`, `abort_workflow`, `request_input`) are available only inside workflow step task sessions (see R10) |
-| R10 | Workflow step tasks are a subtype of background tasks identified by a `workflow_id` field on the TaskInstance. They use a tailored system prompt (`WORKFLOW_STEP_SYSTEM_PROMPT`), workflow-specific MCP tools (`complete_step`, `skip_step`, `abort_workflow`, `request_input`), a workflow-specific pre-processing context provider (`WorkflowStepContextProvider`), and a workflow-specific post-processing processor (`WorkflowFailureProcessor`). Regular background tasks are unaffected by the workflow subtype |
-| R11 | Workflow step tasks use a separate `workflow_wait_timeout` config (default 7 days) for the expired waiter sweep, distinct from the standard `wait_timeout` used by regular background tasks |
+| R9 | Background task agents have access to the workflow management MCP tools (`start_workflow`, `update_workflow_state`, `get_workflow_state`, `end_workflow`, `list_active_workflows`) so they can start, advance, and complete multi-step workflows during autonomous execution |
 
 ## Behaviors
 
@@ -85,27 +82,12 @@ Background task agents can schedule follow-up work via the same task management 
 
 ### Workflow Tools (R9)
 
-Background task agents can start and monitor multi-step workflows via the same workflow management MCP tools available to the main agent. The system prompt explains when to use them — structured multi-step processes, ordered step execution, and automatic skill content loading. Background task agents do not have `update_workflow_state` or `end_workflow` — workflow steps drive themselves via step-specific tools (see Workflow Task Subtype below).
+Background task agents can start, advance, and complete multi-step workflows via the same workflow management MCP tools available to the main agent. The system prompt explains when to use them — structured multi-step processes, ordered step execution, and automatic skill content loading.
 
 **Acceptance Criteria**:
 - Given a background task instance is being executed, then the workflow-tools MCP server is registered in the SDK client's MCP servers alongside the git-tools and task-tools servers
-- Given the background task system prompt, then it documents the workflow management tools (`start_workflow`, `get_workflow_state`, `list_active_workflows`) and when to use them
+- Given the background task system prompt, then it documents the workflow management tools (`start_workflow`, `update_workflow_state`, `get_workflow_state`, `end_workflow`, `list_active_workflows`) and when to use them
 - Given a background task agent calls `start_workflow` during execution, then the workflow state is created identically to workflows started from the main conversation (same state persistence, same step resolution)
-
-### Workflow Task Subtype (R10, R11)
-
-When a TaskInstance has a `workflow_id` field set, it is a workflow step task — a subtype of background tasks with specialized behavior. The executor discriminates based on `workflow_id` to conditionally include workflow-specific pipeline participants, MCP tools, and system prompt.
-
-**Acceptance Criteria**:
-- Given a TaskInstance with `workflow_id` set, when the executor loads it, then a tailored system prompt (`WORKFLOW_STEP_SYSTEM_PROMPT`) is used instead of the generic `BACKGROUND_TASK_SYSTEM_PROMPT`
-- Given a TaskInstance with `workflow_id` set, when the executor registers MCP servers, then a workflow step tools server (`complete_step`, `skip_step`, `abort_workflow`, `request_input`) is registered in addition to the standard notification server — regular background tasks do not get this server
-- Given a TaskInstance with `workflow_id` set, when the executor registers MCP servers, then the workflow-tools server (containing `start_workflow`, `get_workflow_state`, `list_active_workflows`) is NOT registered — workflow step tasks should not start nested workflows
-- Given a TaskInstance with `workflow_id` set, when pre-processing runs, then a `WorkflowStepContextProvider` is included that reads the workflow state from the database, resolves the step definition, resolves required skills, reads the scratchpad, and constructs the full step prompt
-- Given a TaskInstance with `workflow_id` set, when post-processing runs, then a `WorkflowFailureProcessor` is included that detects failed workflow tasks and runs the abort cascade with a failure notification
-- Given a regular background TaskInstance (no `workflow_id`), when the executor runs, then no workflow-specific tools, context provider, failure processor, or system prompt are applied — the executor behaves identically to pre-workflow-subtype behavior
-- Given a workflow step task enters `waiting` state, when the expired waiter sweep runs, then it uses `workflow_wait_timeout` (default 7 days) instead of the standard `wait_timeout`
-- Given a regular background task in `waiting` state, when the expired waiter sweep runs, then it uses the standard `wait_timeout` — workflow timeout does not affect regular tasks
-- Given a workflow step task that has been waiting longer than `workflow_wait_timeout`, when the expired waiter sweep runs, then the task is marked failed and a non-respondable urgent notification is dispatched
 
 ### Concurrency (R5)
 

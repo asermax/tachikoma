@@ -221,7 +221,6 @@ class TaskRepository:
                 user_response=instance.user_response,
                 updated_at=instance.updated_at,
                 created_at=instance.created_at or datetime.now(UTC),
-                workflow_id=instance.workflow_id,
             )
 
             async with self._session_factory() as db:
@@ -290,38 +289,20 @@ class TaskRepository:
         except Exception as exc:
             raise TaskRepositoryError("Failed to get ready background instances") from exc
 
-    async def list_expired_waiting_instances(
-        self,
-        timeout_seconds: int,
-        *,
-        only_workflow_tasks: bool | None = None,
-    ) -> list[TaskInstance]:
+    async def list_expired_waiting_instances(self, timeout_seconds: int) -> list[TaskInstance]:
         """Return waiting instances whose updated_at is older than timeout_seconds.
 
         NULL updated_at (legacy rows from before the column was tracked) are excluded.
-
-        Args:
-            timeout_seconds: Age threshold in seconds.
-            only_workflow_tasks: When True, filter to workflow_id IS NOT NULL.
-                When False, filter to workflow_id IS NULL. When None (default),
-                no filter (backward compatible).
         """
         try:
             threshold = datetime.now(UTC) - timedelta(seconds=timeout_seconds)
             async with self._session_factory() as db:
-                query = (
+                result = await db.execute(
                     select(TaskInstanceRecord)
                     .where(TaskInstanceRecord.status == "waiting")
                     .where(TaskInstanceRecord.updated_at.is_not(None))
                     .where(TaskInstanceRecord.updated_at < threshold)
                 )
-
-                if only_workflow_tasks is True:
-                    query = query.where(TaskInstanceRecord.workflow_id.is_not(None))
-                elif only_workflow_tasks is False:
-                    query = query.where(TaskInstanceRecord.workflow_id.is_(None))
-
-                result = await db.execute(query)
                 records = result.scalars().all()
 
             return [r.to_domain() for r in records]

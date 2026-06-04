@@ -449,7 +449,6 @@ async def run(
         settings.workspace.path,
         agent_defaults=agent_defaults,
         session_context=session_context,
-        task_repository=task_repository,
     )
     detached_process_tools = create_detached_process_tools_server(
         process_repository,
@@ -544,7 +543,6 @@ async def run(
                 agent_defaults=agent_defaults,
                 skill_registry=skill_registry,
                 session_registry=registry,
-                workflow_repository=workflow_repository,
                 extra_mcp_servers={
                     "git-tools": git_tools,
                     "task-tools": background_task_tools,

@@ -133,18 +133,16 @@ async def dispatch_notification(
 
 @dataclass
 class NotificationCycleState:
-    """Tracks per-iteration and per-execution state shared between tools and the executor.
+    """Tracks whether await_response was requested during an evaluator loop iteration.
 
-    Created per-execution, reset per-iteration. Tools set flags during
-    ``receive_response()``; the executor reads them after.
+    Created per-execution, reset per-iteration. The notification handler sets the
+    flag during receive_response(); the executor reads it after.
     """
 
     await_response_requested: bool = False
-    workflow_tool_called: bool = False
 
     def reset(self) -> None:
         self.await_response_requested = False
-        self.workflow_tool_called = False
 
 
 class SendNotificationArgs(BaseModel):

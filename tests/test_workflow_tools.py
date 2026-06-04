@@ -12,12 +12,6 @@ from tachikoma.database import Base
 from tachikoma.mcp_utils import decode_json_string_array
 from tachikoma.session_context import SessionContext
 from tachikoma.skills.registry import Skill, SkillRegistry
-from tachikoma.workflows.cascade import (
-    _find_next_pending_step,
-    _find_next_step_and_condition,
-    _step_to_snapshot,
-    validate_transition,
-)
 from tachikoma.workflows.definition import StepDefinition, WorkflowDefinition
 from tachikoma.workflows.model import WorkflowState
 from tachikoma.workflows.repository import WorkflowStateRepository
@@ -27,13 +21,17 @@ from tachikoma.workflows.tools import (
     ListActiveWorkflowsArgs,
     StartWorkflowArgs,
     UpdateWorkflowStateArgs,
+    _find_next_pending_step,
+    _find_next_step_and_condition,
     _render_breadcrumb,
     _render_required_skills,
+    _step_to_snapshot,
     handle_end_workflow,
     handle_get_workflow_state,
     handle_list_active_workflows,
     handle_start_workflow,
     handle_update_workflow_state,
+    validate_transition,
 )
 
 # ---------------------------------------------------------------------------
@@ -353,12 +351,11 @@ class TestTransitionValidation:
         assert error is not None
         assert "required and cannot be skipped" in error
 
-    def test_skip_started_step_valid(self):
-        # Started steps can be skipped in the step-tools context (the step
-        # agent decides to skip the step it's executing).
+    def test_skip_started_step_invalid(self):
         states = {"01-plan": "pending", "02-execute": "pending", "03-review": "started"}
         error = validate_transition(states, "03-review", "skip", self.SNAPSHOT)
-        assert error is None
+        assert error is not None
+        assert "Can only skip a pending step" in error
 
     def test_completed_step_rejects_all_actions(self):
         states = {"01-plan": "completed", "02-execute": "pending", "03-review": "pending"}
@@ -562,8 +559,8 @@ class TestStartWorkflow:
         text = result["content"][0]["text"]
         assert "Workflow started" in text
         assert "test-workflow" in text
-        assert "background task" in text
-        assert "get_workflow_state" in text
+        assert "TodoWrite" in text
+        assert "list_active_workflows" in text
 
         # Verify scratchpad was created
         scratchpads = list((tmp_path / ".tachikoma" / "scratchpads").glob("workflow-*.md"))
@@ -1511,8 +1508,8 @@ class TestConditionHandlerIntegration:
         # Should show the condition halt, not auto-skip
         assert "condition" in text.lower()
         assert "Check if plan was written" in text
-        assert 'action="start"' in text
-        assert 'action="skip"' in text
+        assert "action=\"start\"" in text
+        assert "action=\"skip\"" in text
 
         # Step should remain pending (not started or skipped)
         updated = await repository.get(state.id)
