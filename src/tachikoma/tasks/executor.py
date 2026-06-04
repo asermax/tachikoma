@@ -811,14 +811,15 @@ class BackgroundTaskExecutor:
             status = eval_result.get("status", "continue")
             rationale = eval_result.get("rationale", "")
 
-            if status == "complete":
-                _log.info(
-                    "Workflow step retry for {inst_id}: agent completed after retry",
-                    inst_id=instance.id,
-                )
-                await self._complete_instance(instance.id, rationale)
-                await self._run_postprocessing(sdk_session_id, instance)
-                return True
+            _log.info(
+                "Workflow step retry for {inst_id}: agent completed after retry",
+                inst_id=instance.id,
+            )
+            await self._complete_instance(
+                instance.id, rationale or "Workflow tool called during retry"
+            )
+            await self._run_postprocessing(sdk_session_id, instance)
+            return True
 
         _log.info(
             "Workflow step retry for {inst_id}: agent did not call a workflow tool",

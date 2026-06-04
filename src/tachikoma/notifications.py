@@ -135,8 +135,7 @@ async def dispatch_notification(
 class NotificationCycleState:
     """Tracks per-iteration and per-execution state shared between tools and the executor.
 
-    Created per-execution, reset per-iteration (except ``workflow_tool_called``
-    which accumulates across iterations). Tools set flags during
+    Created per-execution, reset per-iteration. Tools set flags during
     ``receive_response()``; the executor reads them after.
     """
 
@@ -145,6 +144,7 @@ class NotificationCycleState:
 
     def reset(self) -> None:
         self.await_response_requested = False
+        self.workflow_tool_called = False
 
 
 class SendNotificationArgs(BaseModel):
