@@ -808,7 +808,6 @@ class BackgroundTaskExecutor:
                 instance.prompt,
                 response_text,
             )
-            status = eval_result.get("status", "continue")
             rationale = eval_result.get("rationale", "")
 
             _log.info(
