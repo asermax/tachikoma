@@ -23,7 +23,7 @@ A workflow construct within skills that maps multi-step processes to directory t
 | ID | Requirement |
 |----|-------------|
 | R0 | Skills can optionally contain a `workflows/` folder with multiple workflow definitions, each as a subdirectory of ordered steps |
-| R1 | MCP tools manage start, query state, and list active — the main session has `start_workflow`, `get_workflow_state`, and `list_active_workflows`. Step-driving tools (`complete_step`, `skip_step`, `abort_workflow`, `request_input`) are available only inside workflow step task sessions |
+| R1 | MCP tools manage start, query state, list active, and recovery — the main session has `start_workflow`, `get_workflow_state`, `list_active_workflows`, `refire_workflow`, and `abort_workflow`. Step-driving tools (`complete_step`, `skip_step`, `abort_workflow`, `request_input`) are available only inside workflow step task sessions |
 | R2 | Workflow state persisted in a database table |
 | R3 | `start_workflow` creates state with unique ID, scratchpad, and enqueues the first step as a pending background task instance. Returns the workflow ID and confirmation that the workflow is running in the background |
 | R4 | Step-driving tools (`complete_step`, `skip_step`) available only inside workflow step task sessions. Each step runs as a separate background task instance with full context injected. `complete_step` and `skip_step` tool handlers execute cascade logic and enqueue the next step — no additional agent action needed |
@@ -70,6 +70,8 @@ A workflow construct within skills that maps multi-step processes to directory t
 | R44 | `request_input` tool available inside workflow step task sessions requests user input by dispatching a respondable urgent notification and transitioning the task to `waiting`; the task resumes in the same SDK session when the user responds |
 | R45 | Step task failures (error, stuck, max iterations) fail the entire workflow — cascade abort propagates through the parent and all transitive descendants, a failure notification is dispatched, and the workflow state is soft-deleted |
 | R46 | When a step task agent completes its work without calling any workflow tool (`complete_step`, `skip_step`, or `abort_workflow`), the evaluator loop reaches max iterations, the step is treated as failed, and the workflow abort cascade triggers |
+| R47 | `refire_workflow` main-session MCP tool re-enqueues the current stuck step as a new background TaskInstance, preserving scratchpad and state. Validates workflow exists, is active, has a current step, and that step is in "started" state. Each call creates an independent retry |
+| R48 | `abort_workflow` main-session MCP tool aborts an active workflow from the main session. Soft-deletes all workflow state and descendants, removes the scratchpad. Only works on top-level (parent) workflows — child IDs are rejected |
 
 ## Behaviors
 
@@ -194,6 +196,29 @@ Workflow step tasks use a separate `workflow_wait_timeout` config (default 7 day
 - Given an active parent with an active composed child, when `list_active_workflows` is called, then only the parent surfaces — the child is not listed separately
 - Given an active parent with an in-flight loop iteration child, when `list_active_workflows` is called, then only the parent surfaces (consistent with composition's top-level-only listing)
 
+### MCP Tools — refire_workflow (R47)
+
+`refire_workflow` re-enqueues the current stuck step as a new background task instance. Use when a workflow step has crashed or timed out without calling `complete_step`, `skip_step`, or `abort_workflow`. The step stays in "started" state; the new agent picks up the existing scratchpad, handoff context, and step instructions through the `WorkflowStepContextProvider`.
+
+**Acceptance Criteria**:
+- Given a stuck workflow (step in "started" state, `current_step` set), when `refire_workflow(workflow_id)` is called, then a new pending TaskInstance is created for the current step with the top-level workflow ID, and the response confirms the step being retried
+- Given a stuck workflow, when `refire_workflow` creates the new TaskInstance, then the step remains in "started" state — no WorkflowState mutation occurs; the new agent picks up the existing scratchpad, pending handoff, and step instructions
+- Given a nonexistent or already-deleted workflow ID, when `refire_workflow` is called, then the tool returns an error indicating the workflow was not found
+- Given a workflow with `current_step=NULL`, when `refire_workflow` is called, then the tool returns an error indicating the workflow may not have started or is already finalized
+- Given a workflow whose current step is not in "started" state (e.g., "pending"), when `refire_workflow` is called, then the tool returns an error indicating the step is not stuck
+- Given a stuck workflow with an active composed child, when `refire_workflow(workflow_id)` is called with the top-level ID, then the deepest active child's current step is retried (consistent with deepest-active routing)
+- Each call to `refire_workflow` creates an independent retry — multiple calls produce multiple pending TaskInstances for the same step
+
+### MCP Tools — abort_workflow (main session) (R48)
+
+`abort_workflow` in the main session aborts an active workflow. Soft-deletes the workflow state and all descendants, removes the scratchpad. Only works on top-level (parent) workflows — child workflow IDs are rejected with a message directing to the top-level parent.
+
+**Acceptance Criteria**:
+- Given an active top-level workflow, when `abort_workflow(workflow_id)` is called from the main session, then the workflow state and all descendants are soft-deleted and the scratchpad is removed
+- Given an active top-level workflow with children, when `abort_workflow(workflow_id)` is called, then the parent and all composed children / loop iterations are soft-deleted atomically
+- Given a nonexistent or already-deleted workflow ID, when `abort_workflow` is called from the main session, then the tool returns an error indicating the workflow was not found
+- Given a child workflow ID, when `abort_workflow` is called from the main session, then the tool returns an error directing to abort via the top-level parent
+
 ### State Persistence (R2)
 
 **Acceptance Criteria**:
@@ -227,7 +252,7 @@ Workflow step tasks use a separate `workflow_wait_timeout` config (default 7 day
 ### System Preamble (R13)
 
 **Acceptance Criteria**:
-- Given the system preamble is assembled, when a Workflows section is included, then it explains the workflow concept, available MCP tools in the main session (`start_workflow`, `get_workflow_state`, `list_active_workflows`), and how workflows run autonomously as background tasks
+- Given the system preamble is assembled, when a Workflows section is included, then it explains the workflow concept, available MCP tools in the main session (`start_workflow`, `get_workflow_state`, `list_active_workflows`, `refire_workflow`, `abort_workflow`), and how workflows run autonomously as background tasks
 - Given the system preamble's Workflows section is read, when the agent encounters a nested run, then the preamble documents single-ID driving (always pass the top-level workflow ID), the breadcrumb format with `>` separator, that `list_active_workflows` is top-level-only, that `get_workflow_state` inlines the active child path, and that condition steps are evaluated inline by the step agent
 - Given the system preamble's Workflows section is rendered, when the Loops sub-section is read, then it documents the `loop` frontmatter field, current-item exposure in tool responses, auto-completion when items are exhausted, mutual exclusion with `composes`, and that loop steps are driven by the cascade engine
 

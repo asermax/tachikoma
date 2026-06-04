@@ -5,6 +5,8 @@ Provides MCP tools for managing workflow lifecycle:
 - update_workflow_state: Transition workflow step states (kept for handler reuse)
 - get_workflow_state: Query workflow state for recovery
 - end_workflow: Complete or abort a workflow (kept for handler reuse)
+- refire_workflow: Re-enqueue a stuck step as a new background task
+- abort_workflow: Abort an active workflow from the main session
 - list_active_workflows: List all active workflows for recovery
 
 Follows DES-006 (MCP tool server factory pattern).
@@ -79,6 +81,14 @@ class EndWorkflowArgs(BaseModel):
 
 class ListActiveWorkflowsArgs(BaseModel):
     pass
+
+
+class RefireWorkflowArgs(BaseModel):
+    workflow_id: str
+
+
+class AbortWorkflowArgs(BaseModel):
+    workflow_id: str
 
 
 # ---------------------------------------------------------------------------
@@ -723,6 +733,74 @@ async def handle_list_active_workflows(
     return {"content": [{"type": "text", "text": "\n".join(lines)}]}
 
 
+async def handle_refire_workflow(
+    workflow_id: str,
+    repository: WorkflowStateRepository,
+    task_repository: TaskRepository,
+) -> dict:
+    """Re-enqueue the current stuck step as a new background TaskInstance."""
+    from tachikoma.tasks.model import TaskInstance  # noqa: PLC0415
+
+    chain = await repository.get_active_chain(workflow_id)
+    if not chain:
+        return _not_found_error(workflow_id)
+
+    deepest = chain[-1]
+    current_step = deepest.current_step
+    if current_step is None:
+        return _error_response(
+            "No current step — workflow may not have started or is already finalized."
+        )
+
+    step_state = deepest.step_states.get(current_step, STEP_PENDING)
+    if step_state != STEP_STARTED:
+        return _error_response(
+            f"Current step '{current_step}' is not in 'started' state "
+            f"(currently '{step_state}'). "
+            "Only steps in 'started' state can be refired."
+        )
+
+    step_info = _get_step_from_snapshot(deepest.definition_snapshot, current_step)
+    step_title = step_info.get("title", current_step) if step_info else current_step
+
+    instance = TaskInstance(
+        id=str(uuid4()),
+        task_type="background",
+        status="pending",
+        prompt=current_step,
+        scheduled_for=datetime.now(UTC),
+        workflow_id=workflow_id,
+        definition_id=None,
+    )
+
+    try:
+        await task_repository.create_instance(instance)
+    except Exception as exc:
+        return _error_response(f"Failed to enqueue step: {exc}")
+
+    return {
+        "content": [
+            {
+                "type": "text",
+                "text": (
+                    f"Step **{step_title}** (`{current_step}`) re-enqueued as a new "
+                    "background task. The step agent will pick up the existing "
+                    "scratchpad and handoff context."
+                ),
+            }
+        ]
+    }
+
+
+async def handle_abort_workflow_main_session(
+    workflow_id: str,
+    repository: WorkflowStateRepository,
+    workspace_path: Path,
+) -> dict:
+    """Abort a workflow from the main session."""
+    return await handle_end_workflow(workflow_id, "abort", repository, workspace_path)
+
+
 # ---------------------------------------------------------------------------
 # MCP tool server factory
 # ---------------------------------------------------------------------------
@@ -810,11 +888,62 @@ def create_workflow_tools_server(
     async def list_active_workflows(args: dict) -> dict:
         return await handle_list_active_workflows(repository)
 
+    @tool(
+        "refire_workflow",
+        "Re-enqueue the current stuck step as a new background task.\n"
+        "\n"
+        "Parameters:\n"
+        "- workflow_id (str, required): The workflow instance ID\n"
+        "\n"
+        "Use when a workflow step has crashed or timed out. Preserves "
+        "scratchpad and handoff state. Each call creates a new retry attempt.",
+        RefireWorkflowArgs.model_json_schema(),
+    )
+    async def refire_workflow(args: dict) -> dict:
+        parsed, err = _validate_args(args, RefireWorkflowArgs)
+        if err:
+            return err
+
+        if task_repository is None:
+            return _error_response(
+                "Task repository not available. Cannot refire workflow step."
+            )
+
+        return await handle_refire_workflow(
+            parsed.workflow_id,
+            repository,
+            task_repository,
+        )
+
+    @tool(
+        "abort_workflow",
+        "Abort an active workflow.\n"
+        "\n"
+        "Parameters:\n"
+        "- workflow_id (str, required): The workflow instance ID\n"
+        "\n"
+        "Soft-deletes all workflow state and removes the scratchpad. "
+        "Only works on top-level (parent) workflows.",
+        AbortWorkflowArgs.model_json_schema(),
+    )
+    async def abort_workflow(args: dict) -> dict:
+        parsed, err = _validate_args(args, AbortWorkflowArgs)
+        if err:
+            return err
+
+        return await handle_abort_workflow_main_session(
+            parsed.workflow_id,
+            repository,
+            workspace_path,
+        )
+
     return create_sdk_mcp_server(
         name="workflow-tools",
         tools=[
             start_workflow,
             get_workflow_state,
             list_active_workflows,
+            refire_workflow,
+            abort_workflow,
         ],
     )

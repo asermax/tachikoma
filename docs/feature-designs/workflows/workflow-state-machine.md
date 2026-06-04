@@ -38,7 +38,7 @@ Skills that define multi-step workflows (morning routines, deployment processes,
 
 ## Design Overview
 
-Workflows are optional subdirectories within skills (`workflows/<name>/`), each containing ordered step directories with instructions, references, and scripts. The main session retains three MCP tools (`start_workflow`, `get_workflow_state`, `list_active_workflows`) for initiation and monitoring. Each workflow step runs as a separate background task instance with a fresh SDK session and full step context injected via a workflow-specific pre-processing context provider. Four workflow-specific MCP tools (`complete_step`, `skip_step`, `abort_workflow`, `request_input`) are available only inside workflow step task sessions via a separate MCP server factory. The cascade logic runs inside the step tool handlers — when a step completes, the handler determines the next step and enqueues it as a new background task instance.
+Workflows are optional subdirectories within skills (`workflows/<name>/`), each containing ordered step directories with instructions, references, and scripts. The main session retains five MCP tools (`start_workflow`, `get_workflow_state`, `list_active_workflows`, `refire_workflow`, `abort_workflow`) for initiation, monitoring, and recovery. Each workflow step runs as a separate background task instance with a fresh SDK session and full step context injected via a workflow-specific pre-processing context provider. Four workflow-specific MCP tools (`complete_step`, `skip_step`, `abort_workflow`, `request_input`) are available only inside workflow step task sessions via a separate MCP server factory. The cascade logic runs inside the step tool handlers — when a step completes, the handler determines the next step and enqueues it as a new background task instance.
 
 Steps communicate via two mechanisms: hand-off messages (captured by `complete_step`, stored on the workflow state, and relayed to the next step's prompt) and the shared scratchpad (for long-term context across all steps). Integration with the background task system is pipeline-based: a workflow step context provider (pre-processing) constructs the step prompt, and a workflow failure processor (post-processing) handles abort cascades. The executor itself only adds subtype discrimination — checking `workflow_id` to conditionally register the workflow step MCP tools and include workflow-specific pipeline processors.
 
@@ -51,6 +51,10 @@ Steps may declare a `condition` (natural-language predicate) that gates activati
 │  │ start_     │ │ get_           │ │ list_active_     │                     │
 │  │ workflow   │ │ workflow_state │ │ workflows        │                     │
 │  └─────┬──────┘ └──────┬─────────┘ └────────┬─────────┘                     │
+│  ┌────────────┐ ┌────────────────┐                                          │
+│  │ refire_    │ │ abort_        │                                          │
+│  │ workflow   │ │ workflow      │                                          │
+│  └─────┬──────┘ └──────┬────────┘                                          │
 │        │               │                     │                               │
 │        ▼               ▼                     ▼                               │
 │  ┌──────────────────────────────────────────────────────┐                    │
@@ -120,7 +124,7 @@ Steps may declare a `condition` (natural-language predicate) that gates activati
 | `src/tachikoma/workflows/composition.py` | Pure helpers and in-memory dataclasses for composition: `resolve_composes`, `detect_cycles`, `validate_references`, `_composition_edges` (yields composes-or-loop value per step — single point that unifies the two edge types), `MutationBatch`, `UpdateState` (with optional `loop_state: dict \| None` field), `CreateChild`, `SoftDelete`, `CascadeOutcome` (with optional `halted_at_loop_step` and `condition_prompt` for condition halts) | No SDK / DB / async dependencies — keeps composition logic testable in isolation; shared between registry validation and cascade engine; `_composition_edges` keeps cycle detection and reference validation single-codepath across both edge types |
 | `src/tachikoma/workflows/model.py` | `StepState` type alias, `WorkflowState` frozen dataclass (with nullable `loop_state: dict \| None` and nullable `pending_handoff: str \| None`), `WorkflowStateRecord` ORM model on `workflow_states` table (with nullable `pending_handoff` column); `to_domain()` method (decodes `loop_state` JSON when present); JSON serialization helpers; `parent_workflow_id`, `parent_step_id`, `loop_state`, and `pending_handoff` columns; composite `Index("ix_workflow_states_parent", "parent_workflow_id", "deleted_at")` | Follows ADR-007 (SQLAlchemy async + aiosqlite); JSON columns for step_states, definition_snapshot, and loop_state; soft delete via `deleted_at`; non-partial composite parent index serves both top-level filter and active-child lookup |
 | `src/tachikoma/workflows/repository.py` | `WorkflowStateRepository` — async CRUD: create, get (non-deleted), get_active (top-level only), update, soft_delete, list_active (top-level only), list_stale (subtree-aware), get_active_chain, get_active_child, abort_cascade, apply_mutation_batch (writes `loop_state` to the parent record when `UpdateState.loop_state is not None`), `update_pending_handoff` (sets/clears the hand-off field on the workflow state) | Application-level duplicate prevention (only enforced for top-level instances per R26); always bumps `updated_at`; cascade methods own one session each via `async with db.begin()` for atomicity (ADR-007); `loop_state` write is conditional on the field being non-None (None means "don't touch the column") |
-| `src/tachikoma/workflows/tools.py` | `create_workflow_tools_server()` — MCP server factory with 3 main-session tools (`start_workflow`, `get_workflow_state`, `list_active_workflows`); `start_workflow` creates the workflow state, scratchpad, and enqueues the first step as a pending `TaskInstance` with `workflow_id` set; cascade response formatting for `get_workflow_state` and `list_active_workflows`; `delete_scratchpad` helper shared with failure processor | Follows DES-006 (MCP tool server factory); handlers testable without SDK; cascade computation extracted to `cascade.py` — tools.py handles only response formatting for the main-session tools |
+| `src/tachikoma/workflows/tools.py` | `create_workflow_tools_server()` — MCP server factory with 5 main-session tools (`start_workflow`, `get_workflow_state`, `list_active_workflows`, `refire_workflow`, `abort_workflow`); `start_workflow` creates the workflow state, scratchpad, and enqueues the first step as a pending `TaskInstance` with `workflow_id` set; `refire_workflow` re-enqueues a stuck step as a new TaskInstance (recovery); `abort_workflow` delegates to `handle_end_workflow(action="abort")` for cascade deletion; cascade response formatting for `get_workflow_state` and `list_active_workflows`; `delete_scratchpad` helper shared with failure processor | Follows DES-006 (MCP tool server factory); handlers testable without SDK; cascade computation extracted to `cascade.py` — tools.py handles only response formatting for the main-session tools |
 | `src/tachikoma/workflows/cascade.py` | Extracted cascade computation from `tools.py` into reusable pure functions: `run_cascade()` returns a `CascadeResult` (next step info + mutations) instead of formatting tool responses; shared helper functions (`_find_next_step_and_condition`, `_try_spawn_child`, `_render_breadcrumb`, etc.); response formatting stays in `tools.py` for main-session tools | Separation of concerns: cascade computation is independent of response format; shared between old response formatting (tools.py) and new step tool handlers (step_tools.py); pure function is independently testable without SDK/MCP/DB dependencies |
 | `src/tachikoma/workflows/step_tools.py` | `create_workflow_step_tools_server()` — MCP server factory producing 4 step-session tools: `complete_step(handoff)`, `skip_step()`, `abort_workflow()`, `request_input(question)`; handlers run cascade logic internally and enqueue next step as `TaskInstance` | Follows DES-006; separate from `tools.py` to keep main-session and step-session tool surfaces distinct; each handler validates input, calls `run_cascade()`, enqueues next step via `TaskRepository`, and returns structured response |
 | `src/tachikoma/workflows/step_prompt.py` | `build_step_prompt()` pure function + `WORKFLOW_STEP_SYSTEM_PROMPT` constant; constructs the full step prompt with instructions, resolved required skills, scratchpad path, workflow metadata, hand-off from previous step, and available workflow tools guidance | Extracted from cascade response formatting; shared between context provider (pre-processing injection) and cascade enqueuer (next step's prompt field); workflow step system prompt replaces the generic `BACKGROUND_TASK_SYSTEM_PROMPT` for workflow tasks |
@@ -152,6 +156,14 @@ get_workflow_state(workflow_id: str)
 
 list_active_workflows()
   → { workflows: [{workflow_id, skill_name, workflow_name, current_step, started_at}] }
+
+refire_workflow(workflow_id: str)
+  → { message: str, step_retried: str, task_instance_id: str }
+  | { error: str }
+
+abort_workflow(workflow_id: str)
+  → { workflow_aborted: true, message: str }
+  | { error: str }
 ```
 
 **MCP Tool Schemas (workflow step tools — background session only):**
@@ -277,6 +289,8 @@ list_stale(threshold)              # subtree-aware: returns top-level
 - Stale cleanup runs as post-processor in `pre_finalize` phase, before GitProcessor in `finalize`
 - System preamble static text added to preamble template
 - `start_workflow` returns confirmation that workflow is running in background
+- `refire_workflow` tool handler calls `repository.get_active_chain(workflow_id)` to walk to deepest active child, validates current step exists and is "started", then creates a new `TaskInstance` with `workflow_id` set — inline enqueue (no shared module)
+- `abort_workflow` main-session tool delegates to `handle_end_workflow(workflow_id, "abort", repository, workspace_path)` — reuses existing cascade abort, scratchpad cleanup, and child rejection logic
 - Workflow MCP tools registered alongside task MCP tools in coordinator's `mcp_servers` dict
 - DB errors surface as MCP tool errors via `{"is_error": true, ...}` (consistent with task tools pattern)
 
@@ -1041,6 +1055,36 @@ Step agent for previous step calls complete_step()
 - Pro: Main-session and step-session tool surfaces evolve independently
 - Pro: Follows the existing pattern (task-tools has two factory calls too)
 
+### Recovery tools in the main-session factory
+
+**Choice**: `refire_workflow` and `abort_workflow` are added to the existing `create_workflow_tools_server()` factory alongside `start_workflow`, `get_workflow_state`, and `list_active_workflows`. Both follow the DES-006 pattern with extracted handler functions and Pydantic args models.
+**Why**: Recovery tools are main-session tools — the user (not the step agent) drives recovery. Placing them in the main-session factory keeps the tool surface partition intact: main-session tools for initiation, monitoring, and recovery; step-session tools for step driving.
+
+**Consequences**:
+- Pro: Clean separation — step agents cannot refire or abort from within their session
+- Pro: Both tools reuse existing infrastructure (repository methods, error helpers) without new abstractions
+- Con: The main-session factory gains two more tools (5 total); mitigated by each being a thin handler
+
+### Reuse handle_end_workflow for main-session abort
+
+**Choice**: `handle_abort_workflow_main_session` delegates entirely to the existing `handle_end_workflow(workflow_id, "abort", repository, workspace_path)` from step_tools.py — no new logic.
+**Why**: `handle_end_workflow` already supports abort with cascade deletion via `repository.abort_cascade`, scratchpad cleanup via `delete_scratchpad`, and child rejection (checks `state.parent_workflow_id is not None`). Duplicating this logic would be a maintenance risk.
+
+**Consequences**:
+- Pro: Zero code duplication — abort behavior is identical regardless of which session triggers it
+- Pro: Child rejection passes through automatically
+- Pro: Bug fixes to abort cascade benefit both call sites
+
+### Inline enqueue for refire (no shared module)
+
+**Choice**: `handle_refire_workflow` inlines the ~10-line TaskInstance creation pattern rather than extracting a shared function from `step_tools.py._enqueue_next_step`.
+**Why**: The enqueue pattern (create TaskInstance with `workflow_id` set) is trivial — a constructor call plus `task_repository.create_instance()`. A shared module for this single operation would be over-engineering for a patch.
+
+**Consequences**:
+- Pro: No new shared module or cross-file dependency
+- Pro: The handler is self-contained and readable
+- Con: The enqueue pattern exists in two places (step_tools.py and tools.py) — mitigated by both being simple and stable
+
 ### Transient TaskInstances for workflow steps (definition_id=None)
 
 **Choice**: Workflow step TaskInstances are created with `definition_id=None` — they are transient, like ad-hoc `run_task_now` instances. Each step is a one-shot execution.
@@ -1181,6 +1225,44 @@ Step agent for previous step calls complete_step()
 **When**: Context compaction occurs and the main agent loses the workflow context
 **Then**: The main agent reads its scratchpad file to recover the workflow ID, calls `get_workflow_state("abc-123")`, receives the full state. The workflow continues autonomously in the background — the main agent can monitor but does not drive steps.
 **Rationale**: State lives in the database, not conversation memory. The scratchpad file survives context compaction because it's on disk. Step execution is decoupled from the main session.
+
+### Scenario: Refire stuck workflow step
+
+**Given**: A workflow step agent completed without calling any workflow tool — the step is stuck in "started" state
+**When**: The user calls `refire_workflow(workflow_id)` from the main session
+**Then**: A new pending `TaskInstance` is created with the same `workflow_id` and `prompt` set to the current step ID. The step remains in "started" state — no WorkflowState mutation occurs. The new agent picks up the existing scratchpad, pending handoff, and step instructions through the `WorkflowStepContextProvider`. The response confirms which step is being retried and the new TaskInstance ID.
+**Rationale**: The step state is already "started" — no state transition is needed. The new agent naturally picks up where the previous one left off via the context provider. Each call is an independent retry; the user is responsible for not calling it excessively.
+
+### Scenario: Refire on composed child's stuck step
+
+**Given**: A top-level parent with an active composed child whose step is stuck in "started" state
+**When**: `refire_workflow(top_level_id)` is called
+**Then**: The handler walks `get_active_chain(top_level_id)` to the deepest active child, validates the child's current step is "started", and creates a new TaskInstance for that step. Deepest-active routing is consistent with the cascade engine's routing rules.
+**Rationale**: Single-ID driving — the user always passes the top-level ID and the system routes to the deepest active layer.
+
+### Scenario: Refire rejects invalid states
+
+**Given**: Various invalid workflow states
+**When**: `refire_workflow` is called
+**Then**:
+- Nonexistent or deleted ID → error "not found"
+- `current_step=NULL` → error "No current step — workflow may not have started or is already finalized"
+- Step not in "started" state → error naming the step and its current state
+**Rationale**: Refire is specifically for stuck "started" steps. Other states indicate a different problem (not started, already completed, etc.).
+
+### Scenario: Abort workflow from main session
+
+**Given**: An active top-level workflow (possibly with children)
+**When**: The user calls `abort_workflow(workflow_id)` from the main session
+**Then**: The handler delegates to `handle_end_workflow(workflow_id, "abort", repository, workspace_path)`. The existing abort cascade logic runs: `repository.abort_cascade(workflow_id)` atomically soft-deletes the parent and all descendants, then the shared scratchpad is removed. The response confirms the abort.
+**Rationale**: Reusing `handle_end_workflow` avoids duplicating cascade abort, scratchpad cleanup, and child rejection logic. The main-session `abort_workflow` is a thin wrapper that always passes `action="abort"`.
+
+### Scenario: Abort rejects child workflow ID
+
+**Given**: An active composed child with its own workflow state ID
+**When**: `abort_workflow(child_id)` is called from the main session
+**Then**: The handler delegates to `handle_end_workflow`, which detects `state.parent_workflow_id is not None` and returns an error directing to abort via the top-level parent.
+**Rationale**: Abort must always cascade from the root. The existing child rejection in `handle_end_workflow` enforces this automatically.
 
 ### Scenario: Full context loss recovery
 
@@ -1326,6 +1408,7 @@ Step agent for previous step calls complete_step()
 - Workflow steps run as background tasks — each step gets a fresh SDK session with full step context injected. The main session only initiates and monitors workflows.
 - The scratchpad concept is prompting-based — the step agent is instructed to maintain notes in a file, not through a dedicated MCP tool
 - `list_active_workflows` is intentionally simple (no filtering, no pagination) — it's a recovery/monitoring tool, not a management tool
+- `refire_workflow` is an escape hatch for stuck steps — each call creates an independent retry; the user is responsible for not calling it excessively. The step stays in "started" state and the new agent picks up existing context naturally
 - Hand-off messages are transient bridges between consecutive steps — they are stored on the workflow state (`pending_handoff`), consumed by the next step's context provider, then cleared
 - Scratchpad file location convention: `.tachikoma/scratchpads/workflow-<workflow_id>.md`
 - Loop progress is durable; iteration children are ephemeral. The parent's `loop_state` column is the recovery anchor — if every iteration child were soft-deleted (e.g., abort cascade) the items list and index would still be readable on the soft-deleted parent row for audit

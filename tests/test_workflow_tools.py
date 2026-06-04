@@ -12,6 +12,7 @@ from tachikoma.database import Base
 from tachikoma.mcp_utils import decode_json_string_array
 from tachikoma.session_context import SessionContext
 from tachikoma.skills.registry import Skill, SkillRegistry
+from tachikoma.tasks.repository import TaskRepository
 from tachikoma.workflows.cascade import (
     _find_next_pending_step,
     _find_next_step_and_condition,
@@ -19,19 +20,23 @@ from tachikoma.workflows.cascade import (
     validate_transition,
 )
 from tachikoma.workflows.definition import StepDefinition, WorkflowDefinition
-from tachikoma.workflows.model import WorkflowState
+from tachikoma.workflows.model import STEP_PENDING, STEP_STARTED, WorkflowState
 from tachikoma.workflows.repository import WorkflowStateRepository
 from tachikoma.workflows.tools import (
+    AbortWorkflowArgs,
     EndWorkflowArgs,
     GetWorkflowStateArgs,
     ListActiveWorkflowsArgs,
+    RefireWorkflowArgs,
     StartWorkflowArgs,
     UpdateWorkflowStateArgs,
     _render_breadcrumb,
     _render_required_skills,
+    handle_abort_workflow_main_session,
     handle_end_workflow,
     handle_get_workflow_state,
     handle_list_active_workflows,
+    handle_refire_workflow,
     handle_start_workflow,
     handle_update_workflow_state,
 )
@@ -57,6 +62,12 @@ async def session_factory():
 def repository(session_factory):
     """Create a WorkflowStateRepository for testing."""
     return WorkflowStateRepository(session_factory)
+
+
+@pytest.fixture
+def task_repository(session_factory):
+    """Create a TaskRepository for testing."""
+    return TaskRepository(session_factory)
 
 
 def _make_step(
@@ -3727,3 +3738,302 @@ class TestNestedLoops:
         assert len(chain) == 2
         assert chain[1].step_states["02-each"] == "pending"
         assert chain[1].loop_state is None
+
+
+# ---------------------------------------------------------------------------
+# refire_workflow and abort_workflow main-session tools
+# ---------------------------------------------------------------------------
+
+
+class TestRefireWorkflowPydantic:
+    def test_valid_args(self):
+        parsed = RefireWorkflowArgs.model_validate({"workflow_id": "abc"})
+        assert parsed.workflow_id == "abc"
+
+    def test_missing_workflow_id(self):
+        with pytest.raises(Exception):
+            RefireWorkflowArgs.model_validate({})
+
+
+class TestAbortWorkflowPydantic:
+    def test_valid_args(self):
+        parsed = AbortWorkflowArgs.model_validate({"workflow_id": "abc"})
+        assert parsed.workflow_id == "abc"
+
+    def test_missing_workflow_id(self):
+        with pytest.raises(Exception):
+            AbortWorkflowArgs.model_validate({})
+
+
+class TestHandleRefireWorkflow:
+    @pytest.mark.asyncio
+    async def test_refire_creates_task_instance(self, repository, task_repository):
+        state = _make_state(
+            step_states={
+                "01-plan": STEP_STARTED,
+                "02-execute": STEP_PENDING,
+                "03-review": STEP_PENDING,
+            },
+            definition_snapshot=[
+                {"id": "01-plan", "title": "Plan", "required": True, "path": "/fake/01-plan"},
+                {
+                    "id": "02-execute",
+                    "title": "Execute",
+                    "required": True,
+                    "path": "/fake/02-execute",
+                },
+                {
+                    "id": "03-review",
+                    "title": "Review",
+                    "required": False,
+                    "path": "/fake/03-review",
+                },
+            ],
+        )
+        # Set current_step so it looks stuck
+        state = WorkflowState(
+            id=state.id,
+            skill_name=state.skill_name,
+            workflow_name=state.workflow_name,
+            current_step="01-plan",
+            step_states=state.step_states,
+            definition_snapshot=state.definition_snapshot,
+            scratchpad_path=state.scratchpad_path,
+            deleted_at=None,
+            created_at=state.created_at,
+            updated_at=state.updated_at,
+        )
+        await repository.create(state)
+
+        result = await handle_refire_workflow(state.id, repository, task_repository)
+
+        assert not result.get("is_error")
+        text = result["content"][0]["text"]
+        assert "re-enqueued" in text.lower()
+        assert "01-plan" in text
+
+        # Verify TaskInstance was created
+        instances = await task_repository.get_pending_instances("background")
+        matching = [i for i in instances if i.workflow_id == state.id]
+        assert len(matching) == 1
+        assert matching[0].prompt == "01-plan"
+
+    @pytest.mark.asyncio
+    async def test_refire_preserves_step_state(self, repository, task_repository):
+        state = _make_state(
+            step_states={"01-plan": STEP_STARTED, "02-execute": STEP_PENDING},
+            definition_snapshot=[
+                {"id": "01-plan", "title": "Plan", "required": True, "path": "/fake/01-plan"},
+                {
+                    "id": "02-execute",
+                    "title": "Execute",
+                    "required": True,
+                    "path": "/fake/02-execute",
+                },
+            ],
+        )
+        state = WorkflowState(
+            id=state.id,
+            skill_name=state.skill_name,
+            workflow_name=state.workflow_name,
+            current_step="01-plan",
+            step_states=state.step_states,
+            definition_snapshot=state.definition_snapshot,
+            scratchpad_path=state.scratchpad_path,
+            deleted_at=None,
+            created_at=state.created_at,
+            updated_at=state.updated_at,
+        )
+        await repository.create(state)
+
+        await handle_refire_workflow(state.id, repository, task_repository)
+
+        # Step state unchanged — still "started"
+        updated = await repository.get(state.id)
+        assert updated.step_states["01-plan"] == STEP_STARTED
+        assert updated.current_step == "01-plan"
+
+    @pytest.mark.asyncio
+    async def test_refire_workflow_not_found(self, repository, task_repository):
+        result = await handle_refire_workflow("nonexistent-id", repository, task_repository)
+
+        assert result.get("is_error")
+        assert "not found" in result["content"][0]["text"]
+
+    @pytest.mark.asyncio
+    async def test_refire_no_current_step(self, repository, task_repository):
+        state = _make_state(
+            step_states={"01-plan": STEP_PENDING, "02-execute": STEP_PENDING},
+        )
+        # current_step is None by default in _make_state
+        await repository.create(state)
+
+        result = await handle_refire_workflow(state.id, repository, task_repository)
+
+        assert result.get("is_error")
+        assert "no current step" in result["content"][0]["text"].lower()
+
+    @pytest.mark.asyncio
+    async def test_refire_step_not_started(self, repository, task_repository):
+        state = _make_state(
+            step_states={"01-plan": STEP_PENDING, "02-execute": STEP_PENDING},
+        )
+        state = WorkflowState(
+            id=state.id,
+            skill_name=state.skill_name,
+            workflow_name=state.workflow_name,
+            current_step="01-plan",
+            step_states=state.step_states,
+            definition_snapshot=state.definition_snapshot,
+            scratchpad_path=state.scratchpad_path,
+            deleted_at=None,
+            created_at=state.created_at,
+            updated_at=state.updated_at,
+        )
+        await repository.create(state)
+
+        result = await handle_refire_workflow(state.id, repository, task_repository)
+
+        assert result.get("is_error")
+        assert "not in 'started' state" in result["content"][0]["text"]
+
+    @pytest.mark.asyncio
+    async def test_refire_with_composed_child(self, repository, task_repository, tmp_path):
+        """Refire works on the deepest layer's current step."""
+        parent = await _seed_parent_at_compose_step(
+            repository, scratchpad_path=str(tmp_path / "scratch.md")
+        )
+        # Mark compose step as started
+        ss = dict(parent.step_states)
+        ss["02-compose"] = STEP_STARTED
+        await repository.update(parent.id, step_states=ss, current_step="02-compose")
+
+        # Create active child with started step
+        child = WorkflowState(
+            id="child-refire-id",
+            skill_name="child-skill",
+            workflow_name="child-wf-name",
+            current_step="01-check",
+            step_states={"01-check": STEP_STARTED, "02-categorize": STEP_PENDING},
+            definition_snapshot=[
+                {"id": "01-check", "title": "Check", "required": True, "path": "/fake/01-check"},
+                {
+                    "id": "02-categorize",
+                    "title": "Categorize",
+                    "required": True,
+                    "path": "/fake/02-categorize",
+                },
+            ],
+            scratchpad_path=parent.scratchpad_path,
+            deleted_at=None,
+            created_at=datetime.now(UTC),
+            updated_at=datetime.now(UTC),
+            parent_workflow_id=parent.id,
+            parent_step_id="02-compose",
+        )
+        await repository.create(child)
+
+        result = await handle_refire_workflow(parent.id, repository, task_repository)
+
+        assert not result.get("is_error")
+        text = result["content"][0]["text"]
+        assert "01-check" in text
+
+        instances = await task_repository.get_pending_instances("background")
+        matching = [i for i in instances if i.workflow_id == parent.id]
+        assert len(matching) == 1
+        assert matching[0].prompt == "01-check"
+
+
+class TestHandleAbortWorkflowMainSession:
+    @pytest.mark.asyncio
+    async def test_abort_success(self, repository, tmp_path):
+        scratchpad = tmp_path / "scratch-abort-main.md"
+        scratchpad.write_text("# test")
+
+        state = _make_state(scratchpad_path=str(scratchpad))
+        state = WorkflowState(
+            id=state.id,
+            skill_name=state.skill_name,
+            workflow_name=state.workflow_name,
+            current_step=state.current_step,
+            step_states=state.step_states,
+            definition_snapshot=state.definition_snapshot,
+            scratchpad_path=str(scratchpad),
+            deleted_at=None,
+            created_at=state.created_at,
+            updated_at=state.updated_at,
+        )
+        await repository.create(state)
+
+        result = await handle_abort_workflow_main_session(state.id, repository, tmp_path)
+
+        assert not result.get("is_error")
+        assert "aborted" in result["content"][0]["text"].lower()
+
+        assert await repository.get(state.id) is None
+        assert not scratchpad.exists()
+
+    @pytest.mark.asyncio
+    async def test_abort_with_children_cascades(self, repository, tmp_path):
+        scratch = tmp_path / "abort-cascade.md"
+        scratch.write_text("# abort")
+
+        parent = await _seed_parent_at_compose_step(repository, scratchpad_path=str(scratch))
+        child = WorkflowState(
+            id="child-abort-main",
+            skill_name="child-skill",
+            workflow_name="child-wf-name",
+            current_step="01-check",
+            step_states={"01-check": STEP_STARTED},
+            definition_snapshot=[
+                {"id": "01-check", "title": "Check", "required": True, "path": "/fake/01-check"},
+            ],
+            scratchpad_path=str(scratch),
+            deleted_at=None,
+            created_at=datetime.now(UTC),
+            updated_at=datetime.now(UTC),
+            parent_workflow_id=parent.id,
+            parent_step_id="02-compose",
+        )
+        await repository.create(child)
+
+        result = await handle_abort_workflow_main_session(parent.id, repository, tmp_path)
+
+        assert not result.get("is_error")
+        assert await repository.get(parent.id) is None
+        assert await repository.get(child.id) is None
+        assert not scratch.exists()
+
+    @pytest.mark.asyncio
+    async def test_abort_not_found(self, repository, tmp_path):
+        result = await handle_abort_workflow_main_session("nonexistent", repository, tmp_path)
+
+        assert result.get("is_error")
+        assert "not found" in result["content"][0]["text"]
+
+    @pytest.mark.asyncio
+    async def test_abort_rejects_child_id(self, repository, tmp_path):
+        parent = await _seed_parent_at_compose_step(repository)
+        child = WorkflowState(
+            id="child-reject",
+            skill_name="child-skill",
+            workflow_name="child-wf-name",
+            current_step="01-check",
+            step_states={"01-check": STEP_STARTED},
+            definition_snapshot=[
+                {"id": "01-check", "title": "Check", "required": True, "path": "/fake/01-check"},
+            ],
+            scratchpad_path=parent.scratchpad_path,
+            deleted_at=None,
+            created_at=datetime.now(UTC),
+            updated_at=datetime.now(UTC),
+            parent_workflow_id=parent.id,
+            parent_step_id="02-compose",
+        )
+        await repository.create(child)
+
+        result = await handle_abort_workflow_main_session(child.id, repository, tmp_path)
+
+        assert result.get("is_error")
+        assert "composed child" in result["content"][0]["text"]
