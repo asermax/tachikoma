@@ -2,6 +2,29 @@
 
 <!-- version list -->
 
+## v1.97.0 (2026-06-04)
+
+### Code Style
+
+- Fix line formatting in tools and reaction tests
+  ([`24d99f7`](https://github.com/asermax/tachikoma/commit/24d99f716128d1ba49e1f40d48dfdeb75fb5e46f))
+
+### Features
+
+- **telegram**: Add reaction context prefix and notify on unknown session
+  ([`52373ed`](https://github.com/asermax/tachikoma/commit/52373ede2b539fd4a5bf4cec4445045a7ffe86db))
+
+### Refactoring
+
+- **telegram**: Use public async API for active session in reaction context
+  ([`739df3b`](https://github.com/asermax/tachikoma/commit/739df3b9c8d5fa39f1152e7237a029b264ebbeab))
+
+### Testing
+
+- **telegram**: Add tests for reaction context prefix and notification behavior
+  ([`61aa116`](https://github.com/asermax/tachikoma/commit/61aa11696f9fc45ef351a12471d8cfd4fd1ff1d3))
+
+
 ## v1.96.0 (2026-06-03)
 
 ### Bug Fixes
