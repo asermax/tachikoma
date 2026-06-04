@@ -57,9 +57,10 @@ from tachikoma.tasks.scheduler import get_timezone
 if TYPE_CHECKING:
     from tachikoma.skills.registry import SkillRegistry
     from tachikoma.workflows.repository import WorkflowStateRepository
-    from tachikoma.workflows.step_context import WorkflowStepContextProvider
-    from tachikoma.workflows.step_prompt import WORKFLOW_STEP_SYSTEM_PROMPT
-    from tachikoma.workflows.step_tools import create_workflow_step_tools_server
+
+from tachikoma.workflows.step_context import WorkflowStepContextProvider
+from tachikoma.workflows.step_prompt import WORKFLOW_STEP_SYSTEM_PROMPT
+from tachikoma.workflows.step_tools import create_workflow_step_tools_server
 
 
 @dataclass
