@@ -2,6 +2,14 @@
 
 <!-- version list -->
 
+## v1.98.1 (2026-06-04)
+
+### Bug Fixes
+
+- Release v1.98.1 with DLT-176 rollback
+  ([`a200f05`](https://github.com/asermax/tachikoma/commit/a200f05de8c2c77e08cdf56cb452853b57804bd7))
+
+
 ## v1.96.0 (2026-06-03)
 
 ### Bug Fixes
