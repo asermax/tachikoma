@@ -18,6 +18,7 @@ from tachikoma.notifications import (
     create_notification_server,
     handle_send_notification,
 )
+from tachikoma.tasks import executor as _executor_mod
 from tachikoma.tasks.executor import (
     BACKGROUND_TASK_SYSTEM_PROMPT,
     BackgroundTaskExecutor,
@@ -1219,6 +1220,566 @@ class TestPinnedSkillsExecution:
                     await executor.execute(instance)
 
         assert captured_skills["skills"] == ()
+
+
+def _patch_workflow_step_prompt():
+    """Patch TYPE_CHECKING-only WORKFLOW_STEP_SYSTEM_PROMPT onto the executor module."""
+    return patch.object(
+        _executor_mod,
+        "WORKFLOW_STEP_SYSTEM_PROMPT",
+        "You are a workflow step agent.",
+        create=True,
+    )
+
+
+class TestWorkflowStepRetry:
+    """Tests for workflow step retry-before-abort in the evaluator loop."""
+
+    @pytest.mark.asyncio
+    async def test_stuck_without_tool_call_triggers_retry(self, repo: TaskRepository) -> None:
+        """AC1: Stuck without tool call → retry → evaluator says complete → succeeds."""
+        instance = _make_instance(
+            "inst-retry-1",
+            task_type="background",
+            status="pending",
+            prompt="Do the step",
+            workflow_id="wf-123",
+        )
+        await repo.create_instance(instance)
+
+        settings = TaskSettings()
+        bus = EventBus()
+        bus.dispatch = AsyncMock()
+
+        executor = BackgroundTaskExecutor(
+            repository=repo,
+            settings=settings,
+            bus=bus,
+            agent_defaults=AgentDefaults(cwd=Path("/tmp")),
+            skill_registry=_mock_skill_registry(),
+            session_registry=_mock_session_registry(),
+        )
+
+        captured_cycle_state: list[NotificationCycleState] = []
+
+        with patch("tachikoma.tasks.executor.ClaudeSDKClient") as mock_client_class:
+            mock_client = AsyncMock()
+            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_client.__aexit__ = AsyncMock(return_value=None)
+            mock_client_class.return_value = mock_client
+
+            mock_client.query = AsyncMock()
+
+            call_count = 0
+
+            async def mock_receive():
+                nonlocal call_count
+                call_count += 1
+                async for msg in _make_sdk_response(text="Working...", session_id="sdk-s1")():
+                    yield msg
+                # Retry turn (second call): simulate complete_step being called
+                if call_count == 2 and captured_cycle_state:
+                    captured_cycle_state[0].workflow_tool_called = True
+
+            mock_client.receive_response = mock_receive
+
+            with (
+                patch(
+                    "tachikoma.sdk_query.stderr_aware_query",
+                    side_effect=[
+                        _make_eval_response('{"status": "stuck", "rationale": "No progress"}'),
+                        _make_eval_response(
+                            '{"status": "complete", "rationale": "Done after retry"}'
+                        ),
+                    ],
+                ),
+                _patch_workflow_step_prompt(),
+                patch(
+                    "tachikoma.tasks.executor.create_notification_server",
+                    side_effect=_make_cycle_state_capturing_server(captured_cycle_state),
+                ),
+                patch.object(
+                    executor,
+                    "_run_preprocessing",
+                    return_value=_mock_preproc_result(),
+                ),
+                patch.object(executor, "_run_postprocessing", return_value=None),
+            ):
+                await executor.execute(instance)
+
+        updated = await repo.get_instance("inst-retry-1")
+        assert updated is not None
+        assert updated.status == "completed"
+
+    @pytest.mark.asyncio
+    async def test_stuck_retry_then_still_fails(self, repo: TaskRepository) -> None:
+        """AC4: Stuck workflow step, retry fires, agent still doesn't call tool → fails."""
+        instance = _make_instance(
+            "inst-retry-2",
+            task_type="background",
+            status="pending",
+            prompt="Do the step",
+            workflow_id="wf-456",
+        )
+        await repo.create_instance(instance)
+
+        settings = TaskSettings()
+        bus = EventBus()
+        bus.dispatch = AsyncMock()
+
+        executor = BackgroundTaskExecutor(
+            repository=repo,
+            settings=settings,
+            bus=bus,
+            agent_defaults=AgentDefaults(cwd=Path("/tmp")),
+            skill_registry=_mock_skill_registry(),
+            session_registry=_mock_session_registry(),
+        )
+
+        with patch("tachikoma.tasks.executor.ClaudeSDKClient") as mock_client_class:
+            mock_client = AsyncMock()
+            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_client.__aexit__ = AsyncMock(return_value=None)
+            mock_client_class.return_value = mock_client
+
+            mock_client.query = AsyncMock()
+            mock_client.receive_response = _make_sdk_response(text="Still working...")
+
+            with patch("tachikoma.sdk_query.stderr_aware_query") as mock_query:
+                mock_query.return_value = _make_eval_response(
+                    '{"status": "stuck", "rationale": "No progress"}',
+                )
+
+                with (
+                    _patch_workflow_step_prompt(),
+                    patch.object(
+                        executor,
+                        "_run_preprocessing",
+                        return_value=_mock_preproc_result(),
+                    ),
+                ):
+                    await executor.execute(instance)
+
+        updated = await repo.get_instance("inst-retry-2")
+        assert updated is not None
+        assert updated.status == "failed"
+
+    @pytest.mark.asyncio
+    async def test_max_iterations_without_tool_call_triggers_retry(
+        self, repo: TaskRepository
+    ) -> None:
+        """AC2: Max iterations reached without tool call → retry fires."""
+        instance = _make_instance(
+            "inst-retry-3",
+            task_type="background",
+            status="pending",
+            prompt="Do the step",
+            workflow_id="wf-789",
+        )
+        await repo.create_instance(instance)
+
+        settings = TaskSettings(max_iterations=2)
+        bus = EventBus()
+        bus.dispatch = AsyncMock()
+
+        executor = BackgroundTaskExecutor(
+            repository=repo,
+            settings=settings,
+            bus=bus,
+            agent_defaults=AgentDefaults(cwd=Path("/tmp")),
+            skill_registry=_mock_skill_registry(),
+            session_registry=_mock_session_registry(),
+        )
+
+        retry_query_calls: list[str] = []
+
+        with patch("tachikoma.tasks.executor.ClaudeSDKClient") as mock_client_class:
+            mock_client = AsyncMock()
+            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_client.__aexit__ = AsyncMock(return_value=None)
+            mock_client_class.return_value = mock_client
+
+            async def capturing_query(msg):
+                retry_query_calls.append(msg)
+
+            mock_client.query = capturing_query
+            mock_client.receive_response = _make_sdk_response(text="Working...")
+
+            with patch("tachikoma.sdk_query.stderr_aware_query") as mock_query:
+                mock_query.return_value = _make_eval_response(
+                    '{"status": "continue", "rationale": "Keep going"}',
+                )
+
+                with (
+                    _patch_workflow_step_prompt(),
+                    patch.object(
+                        executor,
+                        "_run_preprocessing",
+                        return_value=_mock_preproc_result(),
+                    ),
+                ):
+                    await executor.execute(instance)
+
+        assert len(retry_query_calls) >= 1
+        assert any("complete_step" in c for c in retry_query_calls)
+
+        updated = await repo.get_instance("inst-retry-3")
+        assert updated is not None
+        assert updated.status == "failed"
+
+    @pytest.mark.asyncio
+    async def test_retry_not_triggered_when_tool_was_called(
+        self, repo: TaskRepository
+    ) -> None:
+        """AC6: Workflow step stuck but tool was called → no retry, direct failure."""
+        instance = _make_instance(
+            "inst-retry-4",
+            task_type="background",
+            status="pending",
+            prompt="Do the step",
+            workflow_id="wf-tool",
+        )
+        await repo.create_instance(instance)
+
+        settings = TaskSettings()
+        bus = EventBus()
+        bus.dispatch = AsyncMock()
+
+        executor = BackgroundTaskExecutor(
+            repository=repo,
+            settings=settings,
+            bus=bus,
+            agent_defaults=AgentDefaults(cwd=Path("/tmp")),
+            skill_registry=_mock_skill_registry(),
+            session_registry=_mock_session_registry(),
+        )
+
+        captured_cycle_state: list[NotificationCycleState] = []
+
+        with patch("tachikoma.tasks.executor.ClaudeSDKClient") as mock_client_class:
+            mock_client = AsyncMock()
+            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_client.__aexit__ = AsyncMock(return_value=None)
+            mock_client_class.return_value = mock_client
+
+            mock_client.query = AsyncMock()
+
+            async def mock_receive():
+                async for msg in _make_sdk_response(text="Working...", session_id="sdk-s4")():
+                    yield msg
+                if captured_cycle_state:
+                    captured_cycle_state[0].workflow_tool_called = True
+
+            mock_client.receive_response = mock_receive
+
+            with patch("tachikoma.sdk_query.stderr_aware_query") as mock_query:
+                mock_query.return_value = _make_eval_response(
+                    '{"status": "stuck", "rationale": "Agent is looping"}',
+                )
+
+                with (
+                    _patch_workflow_step_prompt(),
+                    patch(
+                        "tachikoma.tasks.executor.create_notification_server",
+                        side_effect=_make_cycle_state_capturing_server(captured_cycle_state),
+                    ),
+                    patch.object(
+                        executor,
+                        "_run_preprocessing",
+                        return_value=_mock_preproc_result(),
+                    ),
+                    patch.object(executor, "_run_postprocessing", return_value=None),
+                ):
+                    await executor.execute(instance)
+
+        updated = await repo.get_instance("inst-retry-4")
+        assert updated is not None
+        assert updated.status == "failed"
+
+        # No retry prompt was injected (only the initial query call)
+        query_calls = [str(c) for c in mock_client.query.call_args_list]
+        assert not any("complete_step" in c for c in query_calls)
+
+    @pytest.mark.asyncio
+    async def test_retry_not_triggered_for_non_workflow_tasks(
+        self, repo: TaskRepository
+    ) -> None:
+        """AC5: Non-workflow background task stuck → no retry, direct failure."""
+        instance = _make_instance(
+            "inst-no-wf",
+            task_type="background",
+            status="pending",
+            prompt="Regular task",
+            workflow_id=None,
+        )
+        await repo.create_instance(instance)
+
+        settings = TaskSettings()
+        bus = EventBus()
+        bus.dispatch = AsyncMock()
+
+        executor = BackgroundTaskExecutor(
+            repository=repo,
+            settings=settings,
+            bus=bus,
+            agent_defaults=AgentDefaults(cwd=Path("/tmp")),
+            skill_registry=_mock_skill_registry(),
+            session_registry=_mock_session_registry(),
+        )
+
+        with patch("tachikoma.tasks.executor.ClaudeSDKClient") as mock_client_class:
+            mock_client = AsyncMock()
+            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_client.__aexit__ = AsyncMock(return_value=None)
+            mock_client_class.return_value = mock_client
+
+            mock_client.query = AsyncMock()
+            mock_client.receive_response = _make_sdk_response(text="Working...")
+
+            with patch("tachikoma.sdk_query.stderr_aware_query") as mock_query:
+                mock_query.return_value = _make_eval_response(
+                    '{"status": "stuck", "rationale": "No progress"}',
+                )
+
+                with (
+                    patch.object(
+                        executor,
+                        "_run_preprocessing",
+                        return_value=_mock_preproc_result(),
+                    ),
+                    patch.object(executor, "_run_postprocessing", return_value=None),
+                ):
+                    await executor.execute(instance)
+
+        updated = await repo.get_instance("inst-no-wf")
+        assert updated is not None
+        assert updated.status == "failed"
+
+        # No retry prompt injected (non-workflow task)
+        query_calls = [str(c) for c in mock_client.query.call_args_list]
+        assert not any("complete_step" in c for c in query_calls)
+
+    @pytest.mark.asyncio
+    async def test_retry_only_happens_once(self, repo: TaskRepository) -> None:
+        """AC7: Stuck, retry fires, stuck again → no second retry, direct failure."""
+        instance = _make_instance(
+            "inst-retry-once",
+            task_type="background",
+            status="pending",
+            prompt="Do the step",
+            workflow_id="wf-once",
+        )
+        await repo.create_instance(instance)
+
+        settings = TaskSettings()
+        bus = EventBus()
+        bus.dispatch = AsyncMock()
+
+        executor = BackgroundTaskExecutor(
+            repository=repo,
+            settings=settings,
+            bus=bus,
+            agent_defaults=AgentDefaults(cwd=Path("/tmp")),
+            skill_registry=_mock_skill_registry(),
+            session_registry=_mock_session_registry(),
+        )
+
+        retry_query_calls: list[str] = []
+
+        with patch("tachikoma.tasks.executor.ClaudeSDKClient") as mock_client_class:
+            mock_client = AsyncMock()
+            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_client.__aexit__ = AsyncMock(return_value=None)
+            mock_client_class.return_value = mock_client
+
+            async def capturing_query(msg):
+                retry_query_calls.append(msg)
+
+            mock_client.query = capturing_query
+            mock_client.receive_response = _make_sdk_response(text="Still working...")
+
+            with (
+                patch(
+                    "tachikoma.sdk_query.stderr_aware_query",
+                    side_effect=[
+                        _make_eval_response('{"status": "stuck", "rationale": "No good"}'),
+                    ],
+                ),
+                _patch_workflow_step_prompt(),
+                patch.object(
+                    executor,
+                    "_run_preprocessing",
+                    return_value=_mock_preproc_result(),
+                ),
+            ):
+                await executor.execute(instance)
+
+        updated = await repo.get_instance("inst-retry-once")
+        assert updated is not None
+        assert updated.status == "failed"
+
+        retry_prompts = [c for c in retry_query_calls if "complete_step" in c]
+        assert len(retry_prompts) == 1
+
+    @pytest.mark.asyncio
+    async def test_bonus_turn_handles_request_input(self, repo: TaskRepository) -> None:
+        """AC9: Retry turn, agent calls request_input → transitions to waiting."""
+        instance = _make_instance(
+            "inst-retry-input",
+            task_type="background",
+            status="pending",
+            prompt="Do the step",
+            workflow_id="wf-input",
+        )
+        await repo.create_instance(instance)
+
+        settings = TaskSettings()
+        bus = EventBus()
+
+        dispatched_events: list = []
+
+        async def capture_dispatch(event):
+            dispatched_events.append(event)
+
+        bus.dispatch = AsyncMock(side_effect=capture_dispatch)
+
+        executor = BackgroundTaskExecutor(
+            repository=repo,
+            settings=settings,
+            bus=bus,
+            agent_defaults=AgentDefaults(cwd=Path("/tmp")),
+            skill_registry=_mock_skill_registry(),
+            session_registry=_mock_session_registry(),
+        )
+
+        captured_cycle_state: list[NotificationCycleState] = []
+
+        with patch("tachikoma.tasks.executor.ClaudeSDKClient") as mock_client_class:
+            mock_client = AsyncMock()
+            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_client.__aexit__ = AsyncMock(return_value=None)
+            mock_client_class.return_value = mock_client
+
+            mock_client.query = AsyncMock()
+
+            call_count = 0
+
+            async def mock_receive():
+                nonlocal call_count
+                call_count += 1
+                if call_count == 1:
+                    async for msg in _make_sdk_response(text="Working...", session_id="sdk-s6")():
+                        yield msg
+                else:
+                    async for msg in _make_sdk_response(text="Need input", session_id="sdk-s6")():
+                        yield msg
+                    if captured_cycle_state:
+                        captured_cycle_state[0].workflow_tool_called = True
+                        captured_cycle_state[0].await_response_requested = True
+
+            mock_client.receive_response = mock_receive
+
+            with patch("tachikoma.sdk_query.stderr_aware_query") as mock_query:
+                mock_query.return_value = _make_eval_response(
+                    '{"status": "stuck", "rationale": "No progress"}',
+                )
+
+                with (
+                    _patch_workflow_step_prompt(),
+                    patch(
+                        "tachikoma.tasks.executor.create_notification_server",
+                        side_effect=_make_cycle_state_capturing_server(captured_cycle_state),
+                    ),
+                    patch.object(
+                        executor,
+                        "_run_preprocessing",
+                        return_value=_mock_preproc_result(),
+                    ),
+                ):
+                    await executor.execute(instance)
+
+        updated = await repo.get_instance("inst-retry-input")
+        assert updated is not None
+        assert updated.status == "waiting"
+
+    @pytest.mark.asyncio
+    async def test_bonus_turn_complete_step_succeeds(self, repo: TaskRepository) -> None:
+        """AC3 variant: Retry turn, complete_step called → evaluator says complete → succeeds."""
+        instance = _make_instance(
+            "inst-retry-complete",
+            task_type="background",
+            status="pending",
+            prompt="Do the step",
+            workflow_id="wf-complete",
+        )
+        await repo.create_instance(instance)
+
+        settings = TaskSettings()
+        bus = EventBus()
+        bus.dispatch = AsyncMock()
+
+        executor = BackgroundTaskExecutor(
+            repository=repo,
+            settings=settings,
+            bus=bus,
+            agent_defaults=AgentDefaults(cwd=Path("/tmp")),
+            skill_registry=_mock_skill_registry(),
+            session_registry=_mock_session_registry(),
+        )
+
+        captured_cycle_state: list[NotificationCycleState] = []
+
+        with patch("tachikoma.tasks.executor.ClaudeSDKClient") as mock_client_class:
+            mock_client = AsyncMock()
+            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_client.__aexit__ = AsyncMock(return_value=None)
+            mock_client_class.return_value = mock_client
+
+            mock_client.query = AsyncMock()
+
+            call_count = 0
+
+            async def mock_receive():
+                nonlocal call_count
+                call_count += 1
+                if call_count == 1:
+                    async for msg in _make_sdk_response(text="Working...", session_id="sdk-s7")():
+                        yield msg
+                else:
+                    async for msg in _make_sdk_response(text="Done!", session_id="sdk-s7")():
+                        yield msg
+                    if captured_cycle_state:
+                        captured_cycle_state[0].workflow_tool_called = True
+
+            mock_client.receive_response = mock_receive
+
+            with (
+                patch(
+                    "tachikoma.sdk_query.stderr_aware_query",
+                    side_effect=[
+                        _make_eval_response('{"status": "stuck", "rationale": "No progress"}'),
+                        _make_eval_response(
+                            '{"status": "complete", "rationale": "Done after retry"}'
+                        ),
+                    ],
+                ),
+                _patch_workflow_step_prompt(),
+                patch(
+                    "tachikoma.tasks.executor.create_notification_server",
+                    side_effect=_make_cycle_state_capturing_server(captured_cycle_state),
+                ),
+                patch.object(
+                    executor,
+                    "_run_preprocessing",
+                    return_value=_mock_preproc_result(),
+                ),
+                patch.object(executor, "_run_postprocessing", return_value=None),
+            ):
+                await executor.execute(instance)
+
+        updated = await repo.get_instance("inst-retry-complete")
+        assert updated is not None
+        assert updated.status == "completed"
 
 
 class TestStuckRunningSweep:
