@@ -80,6 +80,16 @@ _log = logger.bind(component="task_executor")
 # Cadence at which BackgroundTaskRunner.tick is driven by the central scheduler
 RUNNER_CHECK_INTERVAL_SECONDS = 30
 
+_WORKFLOW_STEP_RETRY_PROMPT = (
+    "You have not called any workflow tool to conclude this step. "
+    "You must call one of the following tools now:\n\n"
+    '- complete_step(handoff="summary of what you accomplished") — when done\n'
+    "- skip_step() — when this step should not run\n"
+    "- abort_workflow() — when the workflow cannot continue\n"
+    "- request_input(question) — when you need the user's input\n\n"
+    "Call one of these tools immediately. This is your final turn."
+)
+
 
 async def _resolve_source(
     repository: TaskRepository,
@@ -594,6 +604,8 @@ class BackgroundTaskExecutor:
         response_text = ""
         iteration = 0
         max_iterations = self._settings.max_iterations
+        retry_attempted = False
+        is_workflow_step = instance.workflow_id is not None
 
         while iteration < max_iterations:
             iteration += 1
@@ -662,6 +674,25 @@ class BackgroundTaskExecutor:
                 return
 
             if status == "stuck":
+                if (
+                    is_workflow_step
+                    and not notif_state.workflow_tool_called
+                    and not retry_attempted
+                ):
+                    retry_attempted = True
+                    _log.info(
+                        "Workflow step {inst_id} stuck without tool call, "
+                        "retrying with instructions",
+                        inst_id=instance.id,
+                    )
+                    if await self._run_workflow_step_retry(
+                        client,
+                        instance,
+                        notification_source,
+                        notif_state,
+                        sdk_session_id,
+                    ):
+                        return
                 await self._fail_instance(instance.id, f"Agent stuck: {rationale}")
                 await dispatch_notification(
                     self._bus,
@@ -678,6 +709,26 @@ class BackgroundTaskExecutor:
             await client.query(rationale)
 
         # Max iterations reached
+        if (
+            is_workflow_step
+            and not notif_state.workflow_tool_called
+            and not retry_attempted
+        ):
+            retry_attempted = True
+            _log.info(
+                "Workflow step {inst_id} hit max iterations without tool call, "
+                "retrying with instructions",
+                inst_id=instance.id,
+            )
+            if await self._run_workflow_step_retry(
+                client,
+                instance,
+                notification_source,
+                notif_state,
+                sdk_session_id,
+            ):
+                return
+
         _log.warning(
             "Background task {inst_id} reached max iterations",
             inst_id=instance.id,
@@ -695,6 +746,85 @@ class BackgroundTaskExecutor:
             priority=Priority.URGENT,
         )
         await self._run_postprocessing(sdk_session_id, instance, is_failure=True)
+
+    async def _run_workflow_step_retry(
+        self,
+        client: ClaudeSDKClient,
+        instance: TaskInstance,
+        notification_source: str,
+        notif_state: NotificationCycleState,
+        sdk_session_id: str | None,
+    ) -> bool:
+        """Run a single bonus turn with retry instructions for a workflow step.
+
+        Returns True if the turn was handled (completion, waiting, or failure
+        already dispatched). Returns False if the caller should proceed with
+        normal failure handling.
+        """
+        await client.query(_WORKFLOW_STEP_RETRY_PROMPT)
+
+        notif_state.reset()
+        response_chunks: list[str] = []
+        async for sdk_message in client.receive_response():
+            if isinstance(sdk_message, ResultMessage) and sdk_message.session_id:
+                sdk_session_id = sdk_message.session_id
+
+            if isinstance(sdk_message, AssistantMessage):
+                for block in sdk_message.content:
+                    if isinstance(block, TextBlock):
+                        response_chunks.append(sanitize_text(block.text))
+
+        if notif_state.await_response_requested:
+            if sdk_session_id is None:
+                await self._fail_instance(
+                    instance.id,
+                    "Cannot pause — no SDK session ID captured yet",
+                )
+                await dispatch_notification(
+                    self._bus,
+                    notification_source,
+                    "Task failed: no session to resume from",
+                    "error",
+                    instance.id,
+                    priority=Priority.URGENT,
+                )
+                return True
+
+            _log.info(
+                "Workflow step retry for {inst_id}: agent called request_input, "
+                "transitioning to waiting",
+                inst_id=instance.id,
+            )
+            await self._repository.update_instance(
+                instance.id,
+                status="waiting",
+                sdk_session_id=sdk_session_id,
+            )
+            return True
+
+        if notif_state.workflow_tool_called:
+            response_text = "".join(response_chunks)
+            eval_result = await self._run_evaluator(
+                instance.prompt,
+                response_text,
+            )
+            status = eval_result.get("status", "continue")
+            rationale = eval_result.get("rationale", "")
+
+            if status == "complete":
+                _log.info(
+                    "Workflow step retry for {inst_id}: agent completed after retry",
+                    inst_id=instance.id,
+                )
+                await self._complete_instance(instance.id, rationale)
+                await self._run_postprocessing(sdk_session_id, instance)
+                return True
+
+        _log.info(
+            "Workflow step retry for {inst_id}: agent did not call a workflow tool",
+            inst_id=instance.id,
+        )
+        return False
 
     async def _register_workflow_step_tools(
         self,

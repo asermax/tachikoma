@@ -432,6 +432,8 @@ def create_workflow_step_tools_server(
         CompleteStepArgs.model_json_schema(),
     )
     async def complete_step(args: dict) -> dict:
+        if cycle_state is not None:
+            cycle_state.workflow_tool_called = True
         parsed = CompleteStepArgs.model_validate(args)
         return await handle_complete_step(
             workflow_id,
@@ -450,6 +452,8 @@ def create_workflow_step_tools_server(
         SkipStepArgs.model_json_schema(),
     )
     async def skip_step(args: dict) -> dict:
+        if cycle_state is not None:
+            cycle_state.workflow_tool_called = True
         return await handle_skip_step(
             workflow_id,
             repository,
@@ -466,6 +470,8 @@ def create_workflow_step_tools_server(
         AbortWorkflowArgs.model_json_schema(),
     )
     async def abort_workflow(args: dict) -> dict:
+        if cycle_state is not None:
+            cycle_state.workflow_tool_called = True
         return await handle_abort_workflow(workflow_id, repository)
 
     @tool(
@@ -480,6 +486,8 @@ def create_workflow_step_tools_server(
         RequestInputArgs.model_json_schema(),
     )
     async def request_input(args: dict) -> dict:
+        if cycle_state is not None:
+            cycle_state.workflow_tool_called = True
         parsed = RequestInputArgs.model_validate(args)
         return await handle_request_input(
             parsed.question,
