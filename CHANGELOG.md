@@ -2,6 +2,27 @@
 
 <!-- version list -->
 
+## v1.98.0 (2026-06-04)
+
+### Bug Fixes
+
+- **tasks**: Correct workflow tool called reset and simplify retry completion
+  ([`b81859e`](https://github.com/asermax/tachikoma/commit/b81859e36c883b387b1f5d76eb4c646d81ec6b94))
+
+- **tasks**: Remove unused status variable in evaluation result handling
+  ([`ca12e9e`](https://github.com/asermax/tachikoma/commit/ca12e9e33f2e7775ba5ed5d90a0e5141479d4f6b))
+
+### Features
+
+- **tasks**: Add retry-before-abort for workflow steps stuck without tool call
+  ([`6523458`](https://github.com/asermax/tachikoma/commit/652345829d689a9e738554d0259735f349f3160b))
+
+### Testing
+
+- **tasks**: Add tests for workflow step retry-before-abort behavior
+  ([`b30056f`](https://github.com/asermax/tachikoma/commit/b30056fc7019093a47a665c8e569dc9477b98e39))
+
+
 ## v1.97.1 (2026-06-04)
 
 ### Bug Fixes
