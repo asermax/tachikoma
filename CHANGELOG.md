@@ -2,6 +2,14 @@
 
 <!-- version list -->
 
+## v1.97.1 (2026-06-04)
+
+### Bug Fixes
+
+- **tasks**: Move workflow imports outside TYPE_CHECKING to resolve circular dependencies
+  ([`b4a5c1e`](https://github.com/asermax/tachikoma/commit/b4a5c1e7cf47d737bf6093bbd64fb7306b8eb77f))
+
+
 ## v1.97.0 (2026-06-04)
 
 ### Code Style
