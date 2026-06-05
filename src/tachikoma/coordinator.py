@@ -264,8 +264,6 @@ class Coordinator:
         self._pending_msg_task: asyncio.Task[None] | None = None
         # Background session post-processing tasks from topic shifts
         self._background_tasks: list[asyncio.Task[None]] = []
-        # Session IDs with in-flight post-processing (guards against reopening)
-        self._postprocessing_sessions: set[str] = set()
 
         # CoordinatorIdle emission state
         self._bus: EventBus | None = bus
@@ -946,13 +944,7 @@ class Coordinator:
                 _log.exception("Failed to close session: err={err}", err=str(exc))
 
         if actually_closed and session.sdk_session_id is not None and self._pipeline is not None:
-            self._postprocessing_sessions.add(session.id)
             task = asyncio.create_task(self._pipeline.run(session))
-
-            def _on_pp_done(t: asyncio.Task[None], sid: str = session.id) -> None:
-                self._postprocessing_sessions.discard(sid)
-
-            task.add_done_callback(_on_pp_done)
             self._background_tasks.append(task)
             self._background_tasks = [t for t in self._background_tasks if not t.done()]
 
@@ -982,12 +974,6 @@ class Coordinator:
         """
         if active is not None and active.id == target_id:
             return active, is_new_session, True
-
-        if target_id in self._postprocessing_sessions:
-            _log.warning(
-                "target_session_id has in-flight post-processing, preserving current session"
-            )
-            return active, is_new_session, False
 
         if not await self._registry.can_reopen_session(target_id, skip_age_check=True):  # type: ignore[union-attr]
             _log.warning("target_session_id validation failed, preserving current session")
