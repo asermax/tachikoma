@@ -1023,8 +1023,8 @@ The `Result` event serves as a turn boundary signal. The channel finalizes the c
 
 **Given**: The ResponseRenderer finalizes a response with message IDs [111, 112] (split message)
 **When**: The Result event is processed
-**Then**: The channel captured `session_id` before processing began. After Result, it reads the finalized message IDs from the renderer and spawns an async task recording each as `record_channel_message(session_id, "telegram", "outgoing", str(id))`. Recording does not block response delivery.
-**Rationale**: Async recording avoids adding latency. A brief window exists where outgoing IDs are not yet recorded — reactions arriving in this window route normally (graceful degradation).
+**Then**: After Result, the channel reads the current active session from the registry (via `_get_active_session_id()`) and reads the finalized message IDs from the renderer. It spawns an async task recording each as `record_channel_message(session_id, "telegram", "outgoing", str(id))`. Recording does not block response delivery.
+**Rationale**: Capturing the session ID at Result time (not before processing) ensures outgoing messages are attributed to the correct session even when the coordinator creates a new session during processing. Async recording avoids adding latency. A brief window exists where outgoing IDs are not yet recorded — reactions arriving in this window route normally (graceful degradation).
 
 ### Scenario: Reaction on message from previous session triggers session switch
 
