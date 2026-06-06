@@ -2,6 +2,14 @@
 
 <!-- version list -->
 
+## v1.99.0 (2026-06-06)
+
+### Features
+
+- **telegram**: Skip push notification when buttons are sent during response
+  ([`0aa2d8a`](https://github.com/asermax/tachikoma/commit/0aa2d8a141d8dcfcc43aedad7efa6995e1fa689b))
+
+
 ## v1.98.2 (2026-06-06)
 
 ### Bug Fixes
