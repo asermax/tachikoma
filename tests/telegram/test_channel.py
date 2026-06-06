@@ -2422,3 +2422,133 @@ class TestReplyToUnknownFeedback:
         envelope = channel._coordinator.enqueue.call_args[0][0]
         assert envelope.target_session_id is None
         channel._bot.send_message.assert_not_called()
+
+
+class TestOutgoingSessionAttribution:
+    """Outgoing IDs must be recorded against the session active at Result time."""
+
+    async def test_records_to_new_session_after_transition(self) -> None:
+        """Outgoing IDs attributed to the session active when Result fires,
+        not the session that was active before processing started."""
+        bot = MagicMock()
+        bot.send_message = AsyncMock(return_value=MockMessage(message_id=50))
+        bot.edit_message_text = AsyncMock()
+
+        coordinator = _make_mock_coordinator()
+        registry = AsyncMock()
+
+        new_session = MagicMock(id="session-new")
+        registry.get_active_session = AsyncMock(return_value=new_session)
+        registry.record_channel_message = AsyncMock()
+        coordinator._registry = registry
+
+        async def _fake_send_message():
+            yield TextChunk(text="hello")
+            yield Result(session_id="sdk-new", total_cost_usd=0.0)
+
+        coordinator.send_message = _fake_send_message
+
+        settings = MagicMock()
+        settings.authorized_chat_id = 123
+        settings.push_notifications = False
+
+        with patch("tachikoma.telegram.Bot"):
+            channel = TelegramChannel(settings, workspace_path=Path("/tmp/test-workspace"))
+            channel._TelegramChannel__coordinator = coordinator
+        channel._bot = bot
+
+        await channel._process_through_coordinator()
+
+        # Wait for async recording task
+        await asyncio.sleep(0.1)
+
+        # Outgoing ID should be recorded against the NEW session
+        outgoing_calls = [
+            call for call in registry.record_channel_message.call_args_list
+            if call[0][2] == "outgoing"
+        ]
+        assert len(outgoing_calls) == 1
+        assert outgoing_calls[0][0][0] == "session-new"
+
+    async def test_multi_exchange_tracks_session_per_result(self) -> None:
+        """Multi-exchange: each Result records against the session active at that point."""
+        bot = MagicMock()
+        bot.send_message = AsyncMock(
+            side_effect=[MockMessage(message_id=10), MockMessage(message_id=20)]
+        )
+        bot.edit_message_text = AsyncMock()
+
+        coordinator = _make_mock_coordinator()
+        registry = AsyncMock()
+
+        session_a = MagicMock(id="session-a")
+        session_b = MagicMock(id="session-b")
+        registry.get_active_session = AsyncMock(
+            side_effect=[session_a, session_b]
+        )
+        registry.record_channel_message = AsyncMock()
+        coordinator._registry = registry
+
+        async def _multi_exchange():
+            yield TextChunk(text="first")
+            yield Result(session_id="sdk-a", total_cost_usd=0.0)
+            yield TextChunk(text="second")
+            yield Result(session_id="sdk-b", total_cost_usd=0.0)
+
+        coordinator.send_message = _multi_exchange
+
+        settings = MagicMock()
+        settings.authorized_chat_id = 123
+        settings.push_notifications = False
+
+        with patch("tachikoma.telegram.Bot"):
+            channel = TelegramChannel(settings, workspace_path=Path("/tmp/test-workspace"))
+            channel._TelegramChannel__coordinator = coordinator
+        channel._bot = bot
+
+        await channel._process_through_coordinator()
+        await asyncio.sleep(0.1)
+
+        outgoing_calls = [
+            call for call in registry.record_channel_message.call_args_list
+            if call[0][2] == "outgoing"
+        ]
+        assert len(outgoing_calls) == 2
+        assert outgoing_calls[0][0][0] == "session-a"
+        assert outgoing_calls[1][0][0] == "session-b"
+
+    async def test_no_active_session_skips_recording(self) -> None:
+        """No active session at recording time → outgoing IDs not recorded."""
+        bot = MagicMock()
+        bot.send_message = AsyncMock(return_value=MockMessage(message_id=50))
+        bot.edit_message_text = AsyncMock()
+
+        coordinator = _make_mock_coordinator()
+        registry = AsyncMock()
+        registry.get_active_session = AsyncMock(return_value=None)
+        registry.record_channel_message = AsyncMock()
+        coordinator._registry = registry
+
+        async def _fake_send_message():
+            yield TextChunk(text="hello")
+            yield Result(session_id="sdk-1", total_cost_usd=0.0)
+
+        coordinator.send_message = _fake_send_message
+
+        settings = MagicMock()
+        settings.authorized_chat_id = 123
+        settings.push_notifications = False
+
+        with patch("tachikoma.telegram.Bot"):
+            channel = TelegramChannel(settings, workspace_path=Path("/tmp/test-workspace"))
+            channel._TelegramChannel__coordinator = coordinator
+        channel._bot = bot
+
+        await channel._process_through_coordinator()
+        await asyncio.sleep(0.1)
+
+        outgoing_calls = [
+            call for call in registry.record_channel_message.call_args_list
+            if call[0][2] == "outgoing"
+        ]
+        assert len(outgoing_calls) == 0

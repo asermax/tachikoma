@@ -1427,6 +1427,18 @@ class TelegramChannel(Channel):
                     exc_info=True,
                 )
 
+    async def _get_active_session_id(self) -> str | None:
+        """Return the current active session's ID, or None."""
+        registry = self._coordinator._registry
+        if registry is None:
+            return None
+        try:
+            active = await registry.get_active_session()
+            return active.id if active else None
+        except Exception:
+            _log.debug("Failed to get active session ID", exc_info=True)
+            return None
+
     async def _process_through_coordinator(
         self,
         on_complete: Callable[[], Awaitable[None]] | None = None,
@@ -1445,16 +1457,6 @@ class TelegramChannel(Channel):
             is_pinned=self._is_pinned,
             buttons_sent=lambda: self._buttons_sent,
         )
-
-        # Capture session_id before processing for outgoing ID recording
-        session_id: str | None = None
-        registry = self._coordinator._registry
-        if registry is not None:
-            try:
-                active_session = await registry.get_active_session()
-                session_id = active_session.id if active_session else None
-            except Exception:
-                _log.debug("Failed to capture session_id for outgoing ID recording")
 
         try:
             async with ChatActionSender(bot=self._bot, chat_id=chat_id, action="typing"):
@@ -1482,10 +1484,13 @@ class TelegramChannel(Channel):
                                 new_copy_id if oid == original_id else oid for oid in outgoing_ids
                             ]
 
-                        # Record outgoing IDs asynchronously
-                        if session_id is not None and outgoing_ids:
+                        # Record outgoing IDs against the session active now
+                        # (not before processing — the coordinator may have
+                        # created a new session during this exchange)
+                        active_id = await self._get_active_session_id()
+                        if active_id is not None and outgoing_ids:
                             task = asyncio.create_task(
-                                self._record_outgoing_ids(session_id, outgoing_ids)
+                                self._record_outgoing_ids(active_id, outgoing_ids)
                             )
                             self._delivery_tasks.add(task)
                             task.add_done_callback(self._delivery_tasks.discard)
