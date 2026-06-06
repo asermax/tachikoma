@@ -8,6 +8,7 @@ Array-typed ``buttons`` arg uses the JSON-string pattern per DES-006.
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 
 from aiogram import Bot
 from aiogram.exceptions import TelegramAPIError
@@ -163,12 +164,17 @@ async def handle_present_buttons(
     return {"content": [{"type": "text", "text": f"Buttons sent (message_id: {sent.message_id})"}]}
 
 
-def create_buttons_server(bot: Bot, chat_id: int) -> McpSdkServerConfig:
+def create_buttons_server(
+    bot: Bot,
+    chat_id: int,
+    mark_sent: Callable[[], None] | None = None,
+) -> McpSdkServerConfig:
     """Create MCP tool server for the present_buttons tool.
 
     Args:
         bot: The aiogram Bot instance.
         chat_id: The Telegram chat ID.
+        mark_sent: Optional callback invoked when buttons are successfully sent.
 
     Returns:
         McpSdkServerConfig for registration with the coordinator.
@@ -181,13 +187,16 @@ def create_buttons_server(bot: Bot, chat_id: int) -> McpSdkServerConfig:
     )
     async def present_buttons(args: dict) -> dict:
         parsed = PresentButtonsArgs.model_validate(args)
-        return await handle_present_buttons(
+        result = await handle_present_buttons(
             parsed.prompt,
             parsed.buttons,
             parsed.single_use,
             bot,
             chat_id,
         )
+        if not result.get("is_error") and mark_sent is not None:
+            mark_sent()
+        return result
 
     return create_sdk_mcp_server(
         name="telegram-buttons",

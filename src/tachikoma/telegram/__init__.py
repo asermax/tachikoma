@@ -167,11 +167,13 @@ class ResponseRenderer:
         push_notifications: bool = False,
         *,
         is_pinned: Callable[[int], bool] | None = None,
+        buttons_sent: Callable[[], bool] | None = None,
     ) -> None:
         self._bot = bot
         self._chat_id = chat_id
         self._push_notifications = push_notifications
         self._is_pinned = is_pinned
+        self._buttons_sent = buttons_sent
         self._current_message_id: int | None = None
         self._buffer: str = ""
         self._tool_line: str | None = None
@@ -338,6 +340,15 @@ class ResponseRenderer:
         if self._is_pinned is not None and self._is_pinned(self._current_message_id):
             _log.debug(
                 "Skipping push notification copy+delete for pinned message: id={id}",
+                id=self._current_message_id,
+            )
+            return None
+
+        # When buttons were sent during this response, the buttons message
+        # already delivered a push notification — skip copy+delete.
+        if self._buttons_sent is not None and self._buttons_sent():
+            _log.debug(
+                "Skipping push notification copy+delete for response with buttons: id={id}",
                 id=self._current_message_id,
             )
             return None
@@ -604,6 +615,7 @@ class TelegramChannel(Channel):
         self._buffer: Buffer | None = buffer
         self._restart_requested: bool = False
         self._is_pinned: Callable[[int], bool] | None = None
+        self._buttons_sent: bool = False
         self._shutdown_message_id: int | None = None
 
         # Set up router with authorization filter
@@ -672,9 +684,13 @@ class TelegramChannel(Channel):
         )
         self._is_pinned = is_pinned
 
+        def _mark_buttons_sent() -> None:
+            self._buttons_sent = True
+
         buttons_server = create_buttons_server(
             self._bot,
             self._settings.authorized_chat_id,
+            mark_sent=_mark_buttons_sent,
         )
         return {
             "send-file": server,
@@ -1421,11 +1437,13 @@ class TelegramChannel(Channel):
         messages queue on the lock and become the next call.
         """
         chat_id = self._settings.authorized_chat_id
+        self._buttons_sent = False
         self._active_renderer = ResponseRenderer(
             self._bot,
             chat_id,
             push_notifications=self._settings.push_notifications,
             is_pinned=self._is_pinned,
+            buttons_sent=lambda: self._buttons_sent,
         )
 
         # Capture session_id before processing for outgoing ID recording

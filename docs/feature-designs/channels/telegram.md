@@ -324,6 +324,7 @@ ResponseRenderer
 ├── _split_message_ids: list[int]         (tracked message IDs from split; reused on re-split, excess deleted)
 ├── _message_count: int                   (tracks messages sent in current response)
 ├── _is_pinned: Callable[[int], bool] | None  (checker from pinning module; None when not wired)
+├── _buttons_sent: Callable[[], bool] | None  (checker from buttons module; None when not wired)
 └── + get_last_message_id() -> int | None (returns _current_message_id; None if no message sent or after reset)
 ```
 
@@ -363,7 +364,7 @@ Coordinator (existing)
 7. Typing indicator stops when ChatActionSender context exits
 ```
 
-When `push_notifications` is enabled, all `send_message` calls during streaming pass `disable_notification=True`. After `finalize()`, `notify()` copies the last message (triggering push) and deletes the original. If copy fails, the original is preserved. For split responses, only the last message is copy+deleted.
+When `push_notifications` is enabled, all `send_message` calls during streaming pass `disable_notification=True`. After `finalize()`, `notify()` copies the last message (triggering push) and deletes the original. If copy fails, the original is preserved. For split responses, only the last message is copy+deleted. `notify()` checks two guards before copy+delete: `_is_pinned` (pin action already delivered notification) and `_buttons_sent` (buttons message already delivered notification). Either guard being true skips copy+delete entirely, preserving the original message ID.
 
 ### Throttled edit cycle
 
@@ -711,6 +712,12 @@ The `Result` event serves as a turn boundary signal. The channel finalizes the c
 **Given**: Push notifications enabled, the agent pinned a message via `pin_message` during the response
 **When**: The Result event arrives
 **Then**: `notify()` checks `is_pinned(_current_message_id)` and returns immediately — no copy, no delete. The pin action itself already delivered the push notification via `disable_notification=False`. The pinned message is left untouched.
+
+### Scenario: Push notification skipped when buttons were sent
+
+**Given**: Push notifications enabled, the agent called `present_buttons` during the response and buttons were successfully sent
+**When**: The Result event arrives
+**Then**: `notify()` checks `buttons_sent()` and returns immediately — no copy, no delete. The buttons message already triggered a Telegram push notification via `bot.send_message()`. The original response message retains its Telegram message ID, preserving reply-to and reaction tracking. If `present_buttons` returned an error (validation or API failure), copy+delete proceeds normally since no buttons message was actually delivered.
 
 ### Scenario: Push notification for split response
 

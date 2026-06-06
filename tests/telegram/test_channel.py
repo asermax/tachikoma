@@ -860,6 +860,58 @@ class TestResponseRendererNotify:
         bot.copy_message.assert_called_once()
         bot.delete_message.assert_called_once()
 
+    async def test_notify_skips_copy_delete_when_buttons_sent(self) -> None:
+        """notify() returns None when buttons were sent during response."""
+        bot = MagicMock()
+        bot.copy_message = AsyncMock()
+        bot.delete_message = AsyncMock()
+
+        renderer = ResponseRenderer(
+            bot,
+            chat_id=123,
+            push_notifications=True,
+            buttons_sent=lambda: True,
+        )
+        renderer._current_message_id = 42
+
+        result = await renderer.notify()
+
+        assert result is None
+        bot.copy_message.assert_not_called()
+        bot.delete_message.assert_not_called()
+
+    async def test_notify_copy_deletes_when_buttons_not_sent(self) -> None:
+        """notify() performs full copy+delete when buttons were not sent."""
+        bot = MagicMock()
+        bot.copy_message = AsyncMock()
+        bot.delete_message = AsyncMock()
+
+        renderer = ResponseRenderer(
+            bot,
+            chat_id=123,
+            push_notifications=True,
+            buttons_sent=lambda: False,
+        )
+        renderer._current_message_id = 42
+
+        await renderer.notify()
+
+        bot.copy_message.assert_called_once()
+        bot.delete_message.assert_called_once()
+
+    async def test_notify_no_buttons_sent_checker_same_as_not_sent(self) -> None:
+        """notify() with no buttons_sent checker performs full copy+delete."""
+        bot = MagicMock()
+        bot.copy_message = AsyncMock()
+        bot.delete_message = AsyncMock()
+        renderer = ResponseRenderer(bot, chat_id=123, push_notifications=True)
+        renderer._current_message_id = 42
+
+        await renderer.notify()
+
+        bot.copy_message.assert_called_once()
+        bot.delete_message.assert_called_once()
+
 
 class TestTelegramChannelStdinShutdown:
     """Tests for 'q' keypress graceful shutdown in TelegramChannel.run()."""

@@ -286,3 +286,11 @@ class TestCreateButtonsServer:
 
         assert server["name"] == "telegram-buttons"
         assert server["type"] == "sdk"
+
+    def test_factory_with_mark_sent(self) -> None:
+        bot = MagicMock()
+
+        server = create_buttons_server(bot, 456, mark_sent=lambda: None)
+
+        assert server["name"] == "telegram-buttons"
+        assert server["type"] == "sdk"
