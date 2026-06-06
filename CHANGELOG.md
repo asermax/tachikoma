@@ -2,6 +2,19 @@
 
 <!-- version list -->
 
+## v1.98.2 (2026-06-06)
+
+### Bug Fixes
+
+- Release v1.98.2 with post-processing guard removal
+  ([`82d60e4`](https://github.com/asermax/tachikoma/commit/82d60e4775fed58c88e230cfe4c0516087bee993))
+
+### Refactoring
+
+- **sessions**: Remove post-processing session guard
+  ([`fc3a516`](https://github.com/asermax/tachikoma/commit/fc3a516f89e463daeb016fabf00543f62bbebe74))
+
+
 ## v1.98.1 (2026-06-04)
 
 ### Bug Fixes
