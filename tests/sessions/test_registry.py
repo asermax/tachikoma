@@ -869,15 +869,16 @@ class TestRegistryChannelMessages:
         assert msg.direction == "incoming"
         assert msg.external_id == "42"
 
-    async def test_record_channel_message_returns_early_no_active_session(
+    async def test_record_channel_message_saves_without_active_session(
         self, registry: SessionRegistry, mock_repo
     ) -> None:
-        """AC: record_channel_message returns early when no active session."""
+        """AC: record_channel_message saves even when no active session,
+        because the caller provides an explicit session_id."""
         mock_repo.save_channel_message = AsyncMock()
 
         await registry.record_channel_message("s1", "telegram", "incoming", "42")
 
-        mock_repo.save_channel_message.assert_not_awaited()
+        mock_repo.save_channel_message.assert_awaited_once()
 
     async def test_record_channel_message_logs_on_failure(
         self, registry: SessionRegistry, mock_repo

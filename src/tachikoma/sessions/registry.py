@@ -479,7 +479,6 @@ class SessionRegistry:
         """Record a channel-specific message ID mapping to a session.
 
         Best-effort: failures are logged but not raised.
-        Returns early with a warning if no active session.
 
         Args:
             session_id: The session to associate the message with.
@@ -487,14 +486,6 @@ class SessionRegistry:
             direction: "incoming" or "outgoing" (MessageDirection).
             external_id: The platform-specific message ID.
         """
-        if self._active_session is None:
-            _log.warning(
-                "Cannot record channel message: no active session channel={ch} external_id={eid}",
-                ch=channel,
-                eid=external_id,
-            )
-            return
-
         try:
             message = ChannelMessage(
                 session_id=session_id,
