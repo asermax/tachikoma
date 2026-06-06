@@ -2,6 +2,22 @@
 
 <!-- version list -->
 
+## v1.99.1 (2026-06-06)
+
+### Bug Fixes
+
+- **sessions**: Remove active-session guard from record_channel_message
+  ([`ea3a20c`](https://github.com/asermax/tachikoma/commit/ea3a20cff2bf9fac9d8abf360bd808487a9eb343))
+
+- **telegram**: Attribute outgoing IDs to session active at Result time
+  ([`2cc9df4`](https://github.com/asermax/tachikoma/commit/2cc9df42a88b979802cb9a23b17dd81e195626de))
+
+### Documentation
+
+- **telegram**: Update outgoing session attribution design
+  ([`968e67e`](https://github.com/asermax/tachikoma/commit/968e67e93e06ce9eaf60477e6b539246142dbb1e))
+
+
 ## v1.99.0 (2026-06-06)
 
 ### Features
