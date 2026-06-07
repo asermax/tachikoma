@@ -2,6 +2,29 @@
 
 <!-- version list -->
 
+## v1.100.0 (2026-06-07)
+
+### Bug Fixes
+
+- **telegram**: Propagate record_outgoing_id errors instead of suppressing them
+  ([`f3a2914`](https://github.com/asermax/tachikoma/commit/f3a2914b2265cf331cf95d49055ceee7b01c0ca9))
+
+### Documentation
+
+- **telegram**: Add button tap session routing design and specs
+  ([`57737d8`](https://github.com/asermax/tachikoma/commit/57737d8dcfddd206c223affbd23f0bda8ecb9eba))
+
+### Features
+
+- **telegram**: Route button taps to originating session
+  ([`666973c`](https://github.com/asermax/tachikoma/commit/666973c6971aebfc06206085d733ee7894421b4a))
+
+### Testing
+
+- **telegram**: Add tests for ButtonTapMessage with message_prefix
+  ([`89024cd`](https://github.com/asermax/tachikoma/commit/89024cd2a03ff0b99f9da52a4845e04f03742dc3))
+
+
 ## v1.99.1 (2026-06-06)
 
 ### Bug Fixes
