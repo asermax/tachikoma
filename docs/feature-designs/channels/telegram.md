@@ -214,15 +214,24 @@ sequenceDiagram
         Chan-)+TG: detached Task: edit_message_reply_markup(None) if single-use
         Note over Chan: log + swallow errors; "message is not modified" → no-op
 
-        Chan->>Chan: ButtonTapMessage(value=_unpack(cb.data))
-
         alt _delivery_lock.locked() (mid-exchange)
+            Chan->>Chan: ButtonTapMessage(value=_unpack(cb.data))
             Chan->>Coord: enqueue(tap)
             Note over Coord: forwarder routes onto live sdk_inbox<br/>as steering message
             Coord->>SDK: yield _user_message(tap.sdk_input)
         else idle
-            Chan->>Coord: enqueue(tap) + _process_through_coordinator()
-            Note over Coord: send_message() picks tap up,<br/>skips pre-processing (runs_pre_processing=False),<br/>runs boundary detection on sdk_input,<br/>yields _user_message(tap.sdk_input) to SDK
+            Chan->>Chan: _resolve_reply_target(str(cb.message.message_id))
+            Chan->>Chan: _build_button_context(cb) → prefix or None
+
+            alt target_session_id is set (cross-session)
+                Chan->>Chan: ButtonTapMessage(value, target_session_id, external_id, prefix)
+                Chan->>Coord: enqueue_deferred(tap)
+                Note over Coord: deferred queue drain closes current session,<br/>reopens target session, processes tap
+            else same session or not found
+                Chan->>Chan: ButtonTapMessage(value, external_id, prefix)
+                Chan->>Coord: enqueue(tap) + _process_through_coordinator()
+                Note over Coord: send_message() picks tap up,<br/>skips pre-processing (runs_pre_processing=False),<br/>runs boundary detection on sdk_input,<br/>yields _user_message(tap.sdk_input) to SDK
+            end
         end
     end
 ```
@@ -273,7 +282,7 @@ sequenceDiagram
 - `media_hook` ↔ Bootstrap: follows DES-003 pattern (defined in media module, registered in __main__.py)
 - Channel ↔ Event bus: subscribes to `BufferedDelivery` (unified buffered-item delivery) via `bus.on()` in `run()` (see ADR-009 and [delivery/priority-buffer](../delivery/priority-buffer.md))
 - Channel ↔ pinning.py: `create_pinning_server()` factory called in `get_mcp_servers()` — captures `Bot`, chat ID, and a locally-defined `get_msg_id()` function that safely resolves `_active_renderer.get_last_message_id()` (returns `None` when no renderer is active). Returns a tuple of `(McpSdkServerConfig, is_pinned_checker)` where the checker tests message IDs against a closure-captured `pinned_ids` set. The channel stores the checker and passes it to each new `ResponseRenderer` so `notify()` can skip copy+delete for pinned messages.
-- Channel ↔ buttons.py: `create_buttons_server(bot, chat_id)` factory called in `get_mcp_servers()` — produces the `telegram-buttons` server (third entry alongside `send-file` and `telegram-pinning`). The channel also imports `_unpack` from `buttons.py` for use in `_handle_callback_query`, making `buttons.py` the single source of truth for the `callback_data` wire format on both the producing and consuming sides.
+- Channel ↔ buttons.py: `create_buttons_server(bot, chat_id, mark_sent, record_outgoing_id)` factory called in `get_mcp_servers()` — produces the `telegram-buttons` server (third entry alongside `send-file` and `telegram-pinning`). The channel also imports `_unpack` from `buttons.py` for use in `_handle_callback_query`, making `buttons.py` the single source of truth for the `callback_data` wire format on both the producing and consuming sides. The `record_outgoing_id` callback records the sent message's Telegram ID to `channel_messages` for session routing on subsequent taps (best-effort, logged on failure).
 - Channel ↔ aiogram callback router: new `@router.callback_query(F.data.startswith("btn"))` handler registered alongside the message and media handlers. Authorization happens in-handler (post-`answer()`) rather than at the router level, so unauthorized taps still clear their originator's spinner before being dropped.
 - Channel ↔ aiogram reaction observer: when `settings.inbound_reactions` is True, an `@router.message_reaction(F.chat.id == authorized_chat_id, F.user.is_not(None))` handler is registered alongside the other observers. Chat-level authorization is applied at the observer (router-wide `router.message.filter(...)` does not propagate to the `message_reaction` observer in aiogram); the `F.user.is_not(None)` clause excludes anonymous-channel reactions before they reach the handler.
 - Channel ↔ `Dispatcher.start_polling`: `allowed_updates=self._dispatcher.resolve_used_update_types()` is passed so aiogram derives the polling subscription set from the registered handlers. Adding or omitting handlers (e.g., via the `inbound_reactions` flag) automatically adjusts the set — no hardcoded `["message", "callback_query", "message_reaction", ...]` literal to maintain.
@@ -1050,6 +1059,47 @@ The `Result` event serves as a turn boundary signal. The channel finalizes the c
 **Given**: The agent is streaming a response (delivery lock held); the user reacts to a message from a previous session
 **When**: The reaction handler processes the event
 **Then**: The delivery lock is held, so the handler calls `coordinator.enqueue(env)` directly — even if the external ID maps to a different session, the reaction is steered into the current session. Session switching does not occur mid-response.
+
+### Scenario: Button tap handler reuses _resolve_reply_target
+
+**Given**: The callback query handler needs to look up the session for the button-bearing message
+**When**: `_handle_callback_query` processes the tap while idle
+**Then**: The handler calls `_resolve_reply_target(str(callback.message.message_id))`, reusing the same helper as reactions and reply-to messages. The context prefix is built via `_build_button_context(callback)` using `callback.message.text` directly (more precise than the reaction approach which uses `active.last_exchange`, since the button message itself contains the prompt text).
+**Rationale**: DRY — the session lookup logic is identical for buttons, reactions, and reply-to. Single helper, single test surface.
+
+### Scenario: Button tap on message from previous session triggers session switch
+
+**Given**: The user taps a button on a message whose external ID maps to a closed session (session B) that is not the current active session (session A); the delivery lock is free
+**When**: The callback query handler calls `find_session_by_external_id("telegram", str(callback.message.message_id))` and gets session B's ID
+**Then**: The handler constructs `ButtonTapMessage(value, target_session_id=session_b_id, external_id=str(msg_id), message_prefix=context)` and calls `enqueue_deferred()`. When the deferred queue drains, the coordinator's `_route_to_target_session()` closes session A, reopens session B, and processes the tap there.
+**Rationale**: Same deferral pattern as reactions (DES-009) — session switching between turns, never mid-response.
+
+### Scenario: Button tap on message from current session (no switch)
+
+**Given**: The user taps a button on a message whose external ID maps to the current active session
+**When**: The callback query handler looks up the external ID
+**Then**: The lookup succeeds and returns the current session's ID. No `target_session_id` is set. A context prefix is built from `callback.message.text`. The tap routes normally.
+
+### Scenario: Button tap on message with unknown external ID
+
+**Given**: The user taps a button on a message sent before channel message tracking was enabled (no `channel_messages` row exists)
+**When**: The callback query handler calls `find_session_by_external_id`
+**Then**: The lookup returns `None`. No `target_session_id` is set. The tap routes to the current session with a context prefix (if available). No error or notification is surfaced — button taps are explicit user actions that should work even when tracking data is missing.
+**Rationale**: Unlike reactions (which notify and drop on not-found), button taps always route because the user explicitly chose an option.
+
+### Scenario: Button tap mid-response routes with minimal envelope
+
+**Given**: The agent is streaming a response (delivery lock held); the user taps a button on a message from a previous session
+**When**: The callback query handler processes the tap
+**Then**: The delivery lock is held, so the handler creates a minimal `ButtonTapMessage(value)` without session lookup, context prefix, or external_id, and calls `coordinator.enqueue()` directly. The tap is steered into the current session. Session switching does not occur mid-response.
+**Rationale**: Matches the reaction pattern — mid-stream events skip DB access for minimal latency.
+
+### Scenario: Button outgoing ID recorded via callback
+
+**Given**: The agent calls `present_buttons` and the tool successfully sends a message
+**When**: The tool handler receives the sent message's ID
+**Then**: The `record_outgoing_id` callback (closure over the channel) calls `self._get_active_session_id()` then `registry.record_channel_message(session_id, "telegram", "outgoing", str(message_id))`. Recording is best-effort — failures are logged at debug level and do not crash the tool or prevent the result from returning.
+**Rationale**: Capturing the session ID at tool-call time (not after processing) ensures outgoing button messages are attributed to the correct session. Async recording would risk attributing to the wrong session if the coordinator switches sessions during processing.
 
 ## Notes
 

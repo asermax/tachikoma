@@ -298,6 +298,16 @@ Unauthorized taps are still acknowledged so the originator's spinner clears; no 
 - Given the keyboard-removal edit fails (e.g., message was deleted), when the failure occurs, then it is logged at warning level and the tap value is still routed to the agent
 - Given two taps on the same `single_use=True` prompt arrive in rapid succession, when the second keyboard-removal edit runs after the first has already removed the keyboard, then Telegram's "message is not modified" response is treated as success/no-op
 
+**Button tap session routing (R16, extended)**:
+- Given the agent sends buttons via `present_buttons`, when the message is sent successfully, then the sent message's Telegram ID is recorded to `channel_messages` with direction "outgoing" (best-effort, logged on failure)
+- Given a button tap on a message whose external ID maps to a session other than the current active session, when the handler processes the tap while idle, then `target_session_id` is set on the `ButtonTapMessage` envelope and the message is deferred via `enqueue_deferred()`; when the deferred queue drains, the coordinator closes the current session and reopens the target session before processing the tap
+- Given a button tap on a message whose external ID maps to the current active session, when the handler processes the tap, then no `target_session_id` is set and a context prefix formatted as "Button tap on:\n> {text}" is set (truncated at 200 chars with head/tail preserved)
+- Given a button tap on a message whose external ID is not found in the mapping table (pre-feature messages, orphaned IDs), when the handler processes the tap, then no `target_session_id` is set and the tap routes to the current session without error or notification — button taps are explicit user actions that should work even when tracking data is missing
+- Given a button tap arriving while the agent is mid-response, when the delivery lock is held, then the tap is enqueued via `enqueue()` regardless of whether the external ID maps to a different session — session switching does not occur mid-response; no session lookup or context prefix is built (minimal envelope)
+- Given a `ButtonTapMessage` with `message_prefix`, when `sdk_input` is rendered, then the prefix is prepended to the tap prose using the same "{prefix}\n\n{prose}" format as `TextMessage` and `ReactionMessage`
+- Given a button tap on a recorded message, when the handler constructs the envelope, then `external_id` is set to `str(callback.message.message_id)`
+- Given a button tap where `callback.message.text` is unavailable (InaccessibleMessage, `None` message, empty text), when the handler builds context, then the context prefix is `None` and the tap routes normally (graceful degradation)
+
 ### Inbound Reactions (R17)
 
 The bot subscribes to `message_reaction` updates from the authorized chat. Reactions are diffed against the previous reaction list, filtered to standard emoji (custom and paid reaction types are dropped), and the remaining emoji diff is wrapped in a `ReactionMessage` envelope and routed through the coordinator. The handler runs the same `_delivery_lock.locked()` busy/idle branch the text and media handlers use — idle reactions acquire the lock and process immediately, mid-stream reactions are enqueued for steering.
