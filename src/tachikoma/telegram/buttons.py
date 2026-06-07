@@ -7,8 +7,9 @@ Array-typed ``buttons`` arg uses the JSON-string pattern per DES-006.
 
 from __future__ import annotations
 
+import contextlib
 import json
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 
 from aiogram import Bot
 from aiogram.exceptions import TelegramAPIError
@@ -161,13 +162,17 @@ async def handle_present_buttons(
     except TelegramAPIError as e:
         return {"is_error": True, "content": [{"type": "text", "text": str(e)}]}
 
-    return {"content": [{"type": "text", "text": f"Buttons sent (message_id: {sent.message_id})"}]}
+    return {
+        "message_id": sent.message_id,
+        "content": [{"type": "text", "text": f"Buttons sent (message_id: {sent.message_id})"}],
+    }
 
 
 def create_buttons_server(
     bot: Bot,
     chat_id: int,
     mark_sent: Callable[[], None] | None = None,
+    record_outgoing_id: Callable[[int], Awaitable[None]] | None = None,
 ) -> McpSdkServerConfig:
     """Create MCP tool server for the present_buttons tool.
 
@@ -175,6 +180,7 @@ def create_buttons_server(
         bot: The aiogram Bot instance.
         chat_id: The Telegram chat ID.
         mark_sent: Optional callback invoked when buttons are successfully sent.
+        record_outgoing_id: Optional async callback to record the sent message ID.
 
     Returns:
         McpSdkServerConfig for registration with the coordinator.
@@ -194,8 +200,12 @@ def create_buttons_server(
             bot,
             chat_id,
         )
-        if not result.get("is_error") and mark_sent is not None:
-            mark_sent()
+        if not result.get("is_error"):
+            if mark_sent is not None:
+                mark_sent()
+            if record_outgoing_id is not None and "message_id" in result:
+                with contextlib.suppress(Exception):
+                    await record_outgoing_id(result["message_id"])
         return result
 
     return create_sdk_mcp_server(

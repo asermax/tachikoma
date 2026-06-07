@@ -9,7 +9,7 @@ from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from aiogram.exceptions import TelegramAPIError, TelegramBadRequest
-from conftest import _make_mock_coordinator
+from conftest import _make_channel_with_registry, _make_mock_coordinator
 
 from tachikoma.message import ButtonTapMessage
 from tachikoma.telegram import TelegramChannel
@@ -375,3 +375,130 @@ class TestCallbackQueryStaleTap:
 
         cb.answer.assert_called_once()
         channel._coordinator.enqueue.assert_not_called()
+
+
+class TestCallbackQuerySessionRouting:
+    """Session routing for idle button taps, mirroring reaction routing."""
+
+    async def test_idle_cross_session_sets_target_and_defers(self) -> None:
+        """Idle tap on a message from a different session defers for session switch."""
+        channel, registry = _make_channel_with_registry(
+            active_session_id="s-current", lookup_result="s-other"
+        )
+        channel._bot.send_message = AsyncMock()
+
+        cb = _make_callback()
+        await channel._handle_callback_query(cb)
+
+        registry.find_session_by_external_id.assert_called_once_with("telegram", "42")
+        channel._coordinator.enqueue_deferred.assert_called_once()
+        tap = channel._coordinator.enqueue_deferred.call_args[0][0]
+        assert isinstance(tap, ButtonTapMessage)
+        assert tap.target_session_id == "s-other"
+        assert tap.external_id == "42"
+
+    async def test_idle_same_session_sets_prefix(self) -> None:
+        """Idle tap on a message from the current session gets context prefix."""
+        channel, registry = _make_channel_with_registry(
+            active_session_id="s-current", lookup_result="s-current"
+        )
+
+        cb = _make_callback()
+        await channel._handle_callback_query(cb)
+
+        channel._coordinator.enqueue.assert_called_once()
+        tap = channel._coordinator.enqueue.call_args[0][0]
+        assert isinstance(tap, ButtonTapMessage)
+        assert tap.target_session_id is None
+        assert tap.external_id == "42"
+        assert tap.message_prefix is not None
+        assert "Button tap on:" in tap.message_prefix
+
+    async def test_idle_not_found_routes_without_notification(self) -> None:
+        """Idle tap on an unrecorded message routes to current session without notification."""
+        channel, registry = _make_channel_with_registry(
+            active_session_id="s-current", lookup_result=None
+        )
+
+        cb = _make_callback()
+        await channel._handle_callback_query(cb)
+
+        # Not found = routes to current session (not dropped like reactions)
+        channel._coordinator.enqueue.assert_called_once()
+        tap = channel._coordinator.enqueue.call_args[0][0]
+        assert isinstance(tap, ButtonTapMessage)
+        assert tap.target_session_id is None
+        assert tap.message_prefix is not None  # still gets context prefix
+
+    async def test_busy_tap_skips_lookup(self) -> None:
+        """Mid-stream tap creates minimal envelope without DB lookup."""
+        channel, registry = _make_channel_with_registry(
+            active_session_id="s-current", lookup_result="s-other"
+        )
+
+        await channel._delivery_lock.acquire()
+        try:
+            cb = _make_callback()
+            await asyncio.wait_for(channel._handle_callback_query(cb), timeout=0.05)
+        finally:
+            channel._delivery_lock.release()
+
+        registry.find_session_by_external_id.assert_not_called()
+        channel._coordinator.enqueue.assert_called_once()
+        tap = channel._coordinator.enqueue.call_args[0][0]
+        assert isinstance(tap, ButtonTapMessage)
+        assert tap.value == "approve"
+        assert tap.target_session_id is None
+        assert tap.external_id is None
+        assert tap.message_prefix is None
+
+    async def test_external_id_set_to_message_id(self) -> None:
+        """external_id is str(callback.message.message_id)."""
+        channel, registry = _make_channel_with_registry(
+            active_session_id="s-current", lookup_result="s-current"
+        )
+
+        cb = _make_callback(message_id=77)
+        await channel._handle_callback_query(cb)
+
+        channel._coordinator.enqueue.assert_called_once()
+        tap = channel._coordinator.enqueue.call_args[0][0]
+        assert tap.external_id == "77"
+
+
+class TestBuildButtonContext:
+    """Tests for _build_button_context helper."""
+
+    def test_extracts_text_from_message(self) -> None:
+        channel = _make_channel()
+        cb = _make_callback()
+        cb.message.text = "Choose an option"
+        result = channel._build_button_context(cb)
+        assert result == "Button tap on:\n> Choose an option"
+
+    def test_returns_none_for_inaccessible_message(self) -> None:
+        channel = _make_channel()
+        cb = _make_callback(message_is_inaccessible=True)
+        result = channel._build_button_context(cb)
+        assert result is None
+
+    def test_returns_none_for_none_message(self) -> None:
+        channel = _make_channel()
+        cb = _make_callback(message_chat_id=None)
+        result = channel._build_button_context(cb)
+        assert result is None
+
+    def test_returns_none_for_empty_text(self) -> None:
+        channel = _make_channel()
+        cb = _make_callback()
+        cb.message.text = "   "
+        result = channel._build_button_context(cb)
+        assert result is None
+
+    def test_truncates_long_text(self) -> None:
+        channel = _make_channel()
+        cb = _make_callback()
+        cb.message.text = "A" * 300
+        result = channel._build_button_context(cb)
+        assert result is not None
+        assert len(result) < 300  # truncated

@@ -61,10 +61,15 @@ class ButtonTapMessage(MessageEnvelope):
 
     value: str
     target_session_id: str | None = None
+    external_id: str | None = None
+    message_prefix: str | None = None
 
     @property
     def sdk_input(self) -> str:
-        return f"The user tapped the option `{self.value}` out of the options you displayed."
+        prose = f"The user tapped the option `{self.value}` out of the options you displayed."
+        if self.message_prefix is not None:
+            return f"{self.message_prefix}\n\n{prose}"
+        return prose
 
     @property
     def runs_pre_processing(self) -> bool:

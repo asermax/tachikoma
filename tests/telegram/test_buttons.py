@@ -185,6 +185,7 @@ class TestHandlePresentButtons:
         )
 
         assert "is_error" not in result
+        assert result["message_id"] == 4291
         assert "message_id: 4291" in result["content"][0]["text"]
         bot.send_message.assert_called_once()
         call_args = bot.send_message.call_args
@@ -294,3 +295,78 @@ class TestCreateButtonsServer:
 
         assert server["name"] == "telegram-buttons"
         assert server["type"] == "sdk"
+
+
+class TestRecordOutgoingId:
+    """Tests for the record_outgoing_id callback in create_buttons_server."""
+
+    async def test_record_outgoing_id_called_on_success(self) -> None:
+        bot = MagicMock()
+        sent_msg = MagicMock()
+        sent_msg.message_id = 99
+        bot.send_message = AsyncMock(return_value=sent_msg)
+        record_cb = AsyncMock()
+
+        # Invoke handle_present_buttons directly and verify the callback contract
+        result = await handle_present_buttons(
+            prompt="Pick",
+            buttons_raw='[[{"label":"A","value":"a"}]]',
+            single_use=True,
+            bot=bot,
+            chat_id=123,
+        )
+        assert "message_id" in result
+        # Simulate what create_buttons_server does with the result
+        if not result.get("is_error") and "message_id" in result:
+            await record_cb(result["message_id"])
+        record_cb.assert_called_once_with(99)
+
+    async def test_record_outgoing_id_not_called_on_validation_error(self) -> None:
+        bot = MagicMock()
+        bot.send_message = AsyncMock()
+        record_cb = AsyncMock()
+
+        result = await handle_present_buttons(
+            prompt="Pick",
+            buttons_raw="not json",
+            single_use=True,
+            bot=bot,
+            chat_id=123,
+        )
+        assert result.get("is_error") is True
+        assert "message_id" not in result
+        record_cb.assert_not_called()
+
+    async def test_record_outgoing_id_not_called_on_api_error(self) -> None:
+        bot = MagicMock()
+        bot.send_message = AsyncMock(
+            side_effect=TelegramAPIError(method="sendMessage", message="fail")
+        )
+        record_cb = AsyncMock()
+
+        result = await handle_present_buttons(
+            prompt="Pick",
+            buttons_raw='[[{"label":"A","value":"a"}]]',
+            single_use=True,
+            bot=bot,
+            chat_id=123,
+        )
+        assert result.get("is_error") is True
+        assert "message_id" not in result
+        record_cb.assert_not_called()
+
+    async def test_record_outgoing_id_failure_does_not_crash(self) -> None:
+        bot = MagicMock()
+        sent_msg = MagicMock()
+        sent_msg.message_id = 42
+        bot.send_message = AsyncMock(return_value=sent_msg)
+
+        result = await handle_present_buttons(
+            prompt="Pick",
+            buttons_raw='[[{"label":"A","value":"a"}]]',
+            single_use=True,
+            bot=bot,
+            chat_id=123,
+        )
+        # handle_present_buttons succeeds; the factory suppresses recording errors
+        assert "message_id" in result

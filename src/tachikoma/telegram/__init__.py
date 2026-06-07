@@ -687,10 +687,28 @@ class TelegramChannel(Channel):
         def _mark_buttons_sent() -> None:
             self._buttons_sent = True
 
+        async def _record_button_outgoing(message_id: int) -> None:
+            registry = self._coordinator._registry
+            if registry is None:
+                return
+            active_id = await self._get_active_session_id()
+            if active_id is not None:
+                try:
+                    await registry.record_channel_message(
+                        active_id, "telegram", "outgoing", str(message_id)
+                    )
+                except Exception:
+                    _log.debug(
+                        "Failed to record button outgoing ID (best-effort): eid={eid}",
+                        eid=message_id,
+                        exc_info=True,
+                    )
+
         buttons_server = create_buttons_server(
             self._bot,
             self._settings.authorized_chat_id,
             mark_sent=_mark_buttons_sent,
+            record_outgoing_id=_record_button_outgoing,
         )
         return {
             "send-file": server,
@@ -901,6 +919,24 @@ class TelegramChannel(Channel):
             return None
         truncated = _truncate_reply_text(stripped)
         return f"Replied to:\n> {truncated}"
+
+    def _build_button_context(self, callback: CallbackQuery) -> str | None:
+        """Build a context prefix from the button message's prompt text.
+
+        Returns a formatted prefix string from ``callback.message.text``,
+        or None when no text is available (InaccessibleMessage, no message).
+        """
+        msg = callback.message
+        if msg is None:
+            return None
+        text: str | None = getattr(msg, "text", None)
+        if not text:
+            return None
+        stripped = text.strip()
+        if not stripped:
+            return None
+        truncated = _truncate_reply_text(stripped)
+        return f"Button tap on:\n> {truncated}"
 
     async def _build_reaction_context(self) -> str | None:
         """Build a context prefix from the active session's last exchange.
@@ -1169,6 +1205,10 @@ class TelegramChannel(Channel):
 
         Ordering follows the design's Tap routing sequence:
         answer → auth → detached keyboard removal → unpack → envelope → lock branching.
+
+        Idle path performs session lookup via _resolve_reply_target and builds
+        context prefix from the button message's prompt text. Mid-stream path
+        short-circuits before any DB lookup (steers into current session).
         """
         # 1. Acknowledge first — clears the originator's spinner regardless of agent state.
         try:
@@ -1201,15 +1241,39 @@ class TelegramChannel(Channel):
             task.add_done_callback(self._delivery_tasks.discard)
 
         # 6. Build envelope.
-        tap = ButtonTapMessage(value=value)
-
-        # 7. DES-009 lock branching (mirrors _handle_message / _handle_media).
+        # Mid-stream: create minimal envelope and steer into current session.
         if self._delivery_lock.locked():
-            self._coordinator.enqueue(tap)
+            self._coordinator.enqueue(ButtonTapMessage(value=value))
             return
 
+        # Idle path: session lookup + context prefix + routing.
+        external_id = str(callback.message.message_id) if callback.message else None
+        target_session_id: str | None = None
+
+        if external_id is not None:
+            target_session_id, _not_found = await self._resolve_reply_target(external_id)
+
+        message_prefix: str | None = None
+        if target_session_id is None:
+            message_prefix = self._build_button_context(callback)
+
+        tap = ButtonTapMessage(
+            value=value,
+            external_id=external_id,
+            target_session_id=target_session_id,
+            message_prefix=message_prefix,
+        )
+
+        # 7. DES-009 lock branching (mirrors _handle_reaction).
         async with self._delivery_lock:
-            self._coordinator.enqueue(tap)
+            if target_session_id is not None:
+                _log.debug(
+                    "Deferring button tap for session switch: target={target}",
+                    target=target_session_id,
+                )
+                self._coordinator.enqueue_deferred(tap)
+            else:
+                self._coordinator.enqueue(tap)
             await self._process_through_coordinator()
             await self._drain_deferred_queue()
 
