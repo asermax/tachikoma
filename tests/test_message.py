@@ -47,6 +47,21 @@ class TestButtonTapMessage:
             "The user tapped the option `approve` out of the options you displayed."
         )
 
+    def test_sdk_input_with_message_prefix(self):
+        msg = ButtonTapMessage(
+            "approve", message_prefix="Button tap on:\n> Choose an option"
+        )
+        assert msg.sdk_input == (
+            "Button tap on:\n> Choose an option\n\n"
+            "The user tapped the option `approve` out of the options you displayed."
+        )
+
+    def test_sdk_input_without_message_prefix(self):
+        msg = ButtonTapMessage("approve")
+        assert msg.sdk_input == (
+            "The user tapped the option `approve` out of the options you displayed."
+        )
+
     def test_sdk_input_with_different_value(self):
         assert "`cancel`" in ButtonTapMessage("cancel").sdk_input
 
