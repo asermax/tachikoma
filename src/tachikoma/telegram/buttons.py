@@ -7,7 +7,6 @@ Array-typed ``buttons`` arg uses the JSON-string pattern per DES-006.
 
 from __future__ import annotations
 
-import contextlib
 import json
 from collections.abc import Awaitable, Callable
 
@@ -204,8 +203,7 @@ def create_buttons_server(
             if mark_sent is not None:
                 mark_sent()
             if record_outgoing_id is not None and "message_id" in result:
-                with contextlib.suppress(Exception):
-                    await record_outgoing_id(result["message_id"])
+                await record_outgoing_id(result["message_id"])
         return result
 
     return create_sdk_mcp_server(
