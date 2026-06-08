@@ -336,13 +336,16 @@ async def run(
 
         sys.exit(1)
 
+    # Clear any stale rollback marker — idempotent, safe even if no marker exists.
+    # This ensures a stale marker from a previous session's apply_update cannot
+    # survive past a successful bootstrap and misclassify a later restart.
+    clear_rollback_marker()
     if rollback_marker is not None:
         _log.info(
             "Update confirmed: {prev} -> {target}",
             prev=rollback_marker.previous_version,
             target=rollback_marker.target_version,
         )
-        clear_rollback_marker()
 
     settings = settings_manager.settings
 
