@@ -82,17 +82,9 @@ class TestRollbackMarker:
         is removed so a later manual restart is classified correctly.
         """
         marker_file = tmp_path / "update-pending.json"
-        # Simulate a stale marker left by a previous session's apply_update
-        marker_file.write_text(
-            json.dumps(
-                {
-                    "previous_version": "1.0.0",
-                    "target_version": "1.1.0",
-                    "timestamp": "2026-01-01T00:00:00+00:00",
-                }
-            )
-        )
         monkeypatch.setattr("tachikoma.updates.rollback.MARKER_PATH", marker_file)
+        # Simulate a stale marker left by a previous session's apply_update
+        write_rollback_marker("1.0.0", "1.1.0")
 
         # Unconditional clear — as __main__.py now does after bootstrap succeeds,
         # even when the in-memory rollback_marker variable was None at startup.
