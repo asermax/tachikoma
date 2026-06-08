@@ -455,6 +455,9 @@ use `offset` and `count` for paging.
 after a timeout. Pass `signal` (e.g., "SIGINT") or `timeout=0` for fire-and-forget.
 - **rename_process** — Change the display name of a process record.
 
+The Bash tool's ``run_in_background`` parameter is not available — use \
+``start_process`` for any command that needs to run in the background.
+
 # Updates
 
 You have update management tools:

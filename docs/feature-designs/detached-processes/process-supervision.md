@@ -25,7 +25,7 @@ The agent needs to spawn OS-level shell commands that survive Tachikoma's own ex
 **Interactions:**
 - `ProcessRepository` ↔ `Database`: shares `Base` and the async session factory
 - Bootstrap: `detached_processes_hook` runs after `database_hook`, creates the log directory, instantiates the repo, and reconciles crash-recovery records
-- Coordinator: the detached-process MCP server is merged into `all_mcp_servers` alongside `task-tools` and `workflow-tools`
+- Coordinator: the detached-process MCP server is merged into `all_mcp_servers` alongside `task-tools` and `workflow-tools`; the `RUN_IN_BACKGROUND_DENY_HOOK` PreToolUse hook denies Bash calls with `run_in_background=true`, directing agents to `start_process` instead
 - Event bus (ADR-009): exit watcher calls `dispatch_notification`, producing `Notification` events
 - Priority buffer: subscribes to `Notification`; this subsystem is just another producer, no bespoke delivery path
 

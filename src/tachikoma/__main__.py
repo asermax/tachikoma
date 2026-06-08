@@ -62,6 +62,7 @@ from tachikoma.plugins.state import PluginStateRepository
 from tachikoma.plugins.tools import create_plugin_tools_server
 from tachikoma.plugins.updater import run_daily_git_check
 from tachikoma.post_processing import (
+    RUN_IN_BACKGROUND_DENY_HOOK,
     PostProcessingPipeline,
     make_bash_deny_hook,
 )
@@ -527,7 +528,7 @@ async def run(
             mcp_servers=all_mcp_servers,
             timezone=settings.tasks.timezone,
             bus=bus,
-            hooks=[destructive_git_deny_hook],
+            hooks=[destructive_git_deny_hook, RUN_IN_BACKGROUND_DENY_HOOK],
             session_context=session_context,
         ) as coordinator:
             buffer = await create_and_start_buffer(
@@ -548,7 +549,7 @@ async def run(
                     "task-tools": background_task_tools,
                     "workflow-tools": workflow_tools,
                 },
-                hooks=[destructive_git_deny_hook],
+                hooks=[destructive_git_deny_hook, RUN_IN_BACKGROUND_DENY_HOOK],
             )
 
             tz = get_timezone(settings.tasks)

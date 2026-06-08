@@ -174,6 +174,7 @@ Memory limiting wraps spawned processes in Linux cgroups v2 with configurable me
 **Acceptance Criteria**:
 - Given the base system prompt preamble is rendered, then it includes a Detached Processes section that names each of the tools (`start_process`, `list_processes`, `get_process`, `read_process_output`, `stop_process`, `rename_process`) with a one-line description of each and guidance on when the agent should use them
 - Given the preamble describes `start_process`, then it mentions the optional `memory_limit_mb` parameter for per-process memory limiting
+- Given the preamble describes the Detached Processes tools, then it notes that the Bash tool's `run_in_background` parameter is not available and `start_process` should be used for background execution
 
 ## Requires
 
