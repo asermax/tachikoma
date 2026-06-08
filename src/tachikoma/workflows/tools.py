@@ -1173,9 +1173,9 @@ async def handle_update_workflow_state(
             f"to evaluate:\n\n"
             f"**Condition**: {condition}\n\n"
             f"Evaluate this condition based on the current context.\n"
-            f'- If the condition passes: call `update_workflow_state('
+            f"- If the condition passes: call `update_workflow_state("
             f'workflow_id="{workflow_id}", step="{halted_id}", action="start")`\n'
-            f'- If the condition does not pass: call `update_workflow_state('
+            f"- If the condition does not pass: call `update_workflow_state("
             f'workflow_id="{workflow_id}", step="{halted_id}", action="skip")`'
         )
         return {"content": [{"type": "text", "text": text}]}

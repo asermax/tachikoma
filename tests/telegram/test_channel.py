@@ -2464,7 +2464,8 @@ class TestOutgoingSessionAttribution:
 
         # Outgoing ID should be recorded against the NEW session
         outgoing_calls = [
-            call for call in registry.record_channel_message.call_args_list
+            call
+            for call in registry.record_channel_message.call_args_list
             if call[0][2] == "outgoing"
         ]
         assert len(outgoing_calls) == 1
@@ -2483,9 +2484,7 @@ class TestOutgoingSessionAttribution:
 
         session_a = MagicMock(id="session-a")
         session_b = MagicMock(id="session-b")
-        registry.get_active_session = AsyncMock(
-            side_effect=[session_a, session_b]
-        )
+        registry.get_active_session = AsyncMock(side_effect=[session_a, session_b])
         registry.record_channel_message = AsyncMock()
         coordinator._registry = registry
 
@@ -2510,7 +2509,8 @@ class TestOutgoingSessionAttribution:
         await asyncio.sleep(0.1)
 
         outgoing_calls = [
-            call for call in registry.record_channel_message.call_args_list
+            call
+            for call in registry.record_channel_message.call_args_list
             if call[0][2] == "outgoing"
         ]
         assert len(outgoing_calls) == 2
@@ -2548,7 +2548,8 @@ class TestOutgoingSessionAttribution:
         await asyncio.sleep(0.1)
 
         outgoing_calls = [
-            call for call in registry.record_channel_message.call_args_list
+            call
+            for call in registry.record_channel_message.call_args_list
             if call[0][2] == "outgoing"
         ]
         assert len(outgoing_calls) == 0
