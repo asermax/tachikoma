@@ -648,7 +648,7 @@ def make_bash_gate_hook(allowed_prefixes: list[str]) -> HookMatcher:
         tool_use_id: str | None,
         context: HookContext,
     ) -> HookJSONOutput:
-        command = input.get("tool_input", {}).get("command", "")
+        command = (input.get("tool_input") or {}).get("command", "")
 
         # Split compound commands by shell operators
         parts = _split_compound_commands(command)
@@ -717,7 +717,7 @@ def make_bash_deny_hook(denied_patterns: list[re.Pattern[str]]) -> HookMatcher:
         tool_use_id: str | None,
         context: HookContext,
     ) -> HookJSONOutput:
-        command = input.get("tool_input", {}).get("command", "")
+        command = (input.get("tool_input") or {}).get("command", "")
 
         # Split compound commands by shell operators
         parts = _split_compound_commands(command)
@@ -785,7 +785,7 @@ async def _deny_run_in_background(
     tool_use_id: str | None,
     context: HookContext,
 ) -> HookJSONOutput:
-    if input.get("tool_input", {}).get("run_in_background"):
+    if (input.get("tool_input") or {}).get("run_in_background"):
         _log.warning("Bash run_in_background denied by hook")
         return {
             "hookSpecificOutput": {
