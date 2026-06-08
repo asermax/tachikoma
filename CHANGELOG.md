@@ -2,6 +2,19 @@
 
 <!-- version list -->
 
+## v1.101.1 (2026-06-08)
+
+### Bug Fixes
+
+- **updates**: Clear stale rollback marker unconditionally after bootstrap
+  ([`3192b69`](https://github.com/asermax/tachikoma/commit/3192b69f200a69e54b4859e1f1842b19accaf02a))
+
+### Testing
+
+- **updates**: Use write_rollback_marker helper in rollback marker test
+  ([`57a48b5`](https://github.com/asermax/tachikoma/commit/57a48b557cb7b68f9ee5ceb469f191a7491134c1))
+
+
 ## v1.101.0 (2026-06-08)
 
 ### Bug Fixes
