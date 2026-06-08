@@ -2,6 +2,24 @@
 
 <!-- version list -->
 
+## v1.101.0 (2026-06-08)
+
+### Bug Fixes
+
+- **hooks**: Handle None tool_input in bash hook matchers
+  ([`1b0cd9b`](https://github.com/asermax/tachikoma/commit/1b0cd9b2eda9222f1391505c36e88934bf207157))
+
+### Code Style
+
+- Apply formatter fixes across codebase
+  ([`4744261`](https://github.com/asermax/tachikoma/commit/47442610724de14acb5ae6a6497ffa7f40b02c52))
+
+### Features
+
+- **detached-processes**: Deny Bash run_in_background parameter
+  ([`ecc941a`](https://github.com/asermax/tachikoma/commit/ecc941a58ccb1975aa76ac66a614cc341873dc32))
+
+
 ## v1.100.0 (2026-06-07)
 
 ### Bug Fixes
