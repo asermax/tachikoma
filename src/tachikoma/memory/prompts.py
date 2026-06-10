@@ -8,6 +8,7 @@ from tachikoma.post_processing import WORKSPACE_VALIDATION_SECTION, abs_rule
 
 __all__ = [
     "CLASSIFICATION_EXAMPLES_SECTION",
+    "INDEX_LIGHT_MAINTENANCE_SECTION",
     "INDEX_UPDATE_SECTION",
     "STORE_PURPOSE_SECTION",
     "WORKSPACE_VALIDATION_SECTION",
@@ -148,6 +149,37 @@ meaningfully changed
 [Work Info](./work-info.md): Job details, team structure, and work schedule
 [Tech Stack](./tech-stack.md): Primary languages, frameworks, and tools used
 ```"""
+
+INDEX_LIGHT_MAINTENANCE_SECTION = """\
+## Memory Index Consistency
+
+Verify index consistency between MEMORY.md and actual files in the directory.
+
+### Steps
+
+1. **List all files**: Glob all `.md` files in the directory (excluding \
+`MEMORY.md` itself).
+2. **Read MEMORY.md**: Parse the existing index entries.
+3. **Add missing entries**: For files that exist in the directory but have \
+no entry in MEMORY.md, add a placeholder entry:
+   ```
+   [Topic](./filename.md): Description pending update
+   ```
+4. **Remove stale entries**: For entries in MEMORY.md that reference files \
+that no longer exist, remove those entries.
+5. **Preserve existing descriptions**: Do NOT regenerate or modify existing \
+descriptions — leave them unchanged even if stale. Description regeneration \
+is handled by the weekly heavy rebuild.
+
+### Rules
+
+- Always preserve the `# Memory Index` header.
+- When you create, modify, or delete memory files during this maintenance \
+run, also update MEMORY.md per the standard index update rules (add new \
+entries, update descriptions on meaningful changes, remove entries for \
+deleted files).
+- The consistency check runs in addition to your normal maintenance tasks.\
+"""
 
 
 def permissions_section(memory_type: str, *, include_agent: bool = True) -> str:

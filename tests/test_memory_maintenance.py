@@ -8,6 +8,7 @@ from pytest_mock import MockerFixture
 
 from tachikoma.agent_defaults import AgentDefaults
 from tachikoma.config import MaintenanceSettings
+from tachikoma.memory.index import HEAVY_INDEX_REBUILD_PROMPT
 from tachikoma.memory.maintenance import (
     CONTEXT_MAINTENANCE_PROMPT,
     EPISODIC_MAINTENANCE_PROMPT,
@@ -22,6 +23,7 @@ from tachikoma.memory.maintenance import (
     maintenance_allow_rules,
     preferences_maintenance_tick,
 )
+from tachikoma.memory.prompts import INDEX_LIGHT_MAINTENANCE_SECTION
 from tachikoma.post_processing import MAINTENANCE_BASH_HOOK, abs_rule
 
 
@@ -604,3 +606,365 @@ class TestContextPromptContent:
     def test_includes_conservative_guard(self) -> None:
         assert "Conservative" in CONTEXT_MAINTENANCE_PROMPT
         assert "vague hints" in CONTEXT_MAINTENANCE_PROMPT
+
+
+class TestFactsDayOfWeekDispatch:
+    """Tests for day-of-week dispatch in facts_maintenance_tick."""
+
+    @pytest.mark.parametrize("weekday", [0, 1, 2, 3, 4, 5])
+    async def test_weekday_appends_light_maintenance_section(
+        self,
+        agent_defaults: AgentDefaults,
+        mocker: MockerFixture,
+        weekday: int,
+    ) -> None:
+        """Mon–Sat: INDEX_LIGHT_MAINTENANCE_SECTION appended to prompt."""
+        mocker.patch(
+            "tachikoma.memory.maintenance.datetime",
+            **{"datetime.now.return_value.weekday.return_value": weekday},
+        )
+        mock_qac = mocker.patch(
+            "tachikoma.memory.maintenance.query_and_consume",
+            new_callable=AsyncMock,
+        )
+        mocker.patch(
+            "tachikoma.memory.maintenance.git_commit_memory_changes",
+            new_callable=AsyncMock,
+        )
+
+        await facts_maintenance_tick(agent_defaults)
+
+        prompt = mock_qac.call_args[0][0]
+        assert "Memory Index Consistency" in prompt
+
+    @pytest.mark.parametrize("weekday", [0, 1, 2, 3, 4, 5])
+    async def test_weekday_uses_standard_tools(
+        self,
+        agent_defaults: AgentDefaults,
+        mocker: MockerFixture,
+        weekday: int,
+    ) -> None:
+        """Mon–Sat: standard MAINTENANCE_TOOLS, no Agent."""
+        mocker.patch(
+            "tachikoma.memory.maintenance.datetime",
+            **{"datetime.now.return_value.weekday.return_value": weekday},
+        )
+        mock_qac = mocker.patch(
+            "tachikoma.memory.maintenance.query_and_consume",
+            new_callable=AsyncMock,
+        )
+        mocker.patch(
+            "tachikoma.memory.maintenance.git_commit_memory_changes",
+            new_callable=AsyncMock,
+        )
+
+        await facts_maintenance_tick(agent_defaults)
+
+        tools = mock_qac.call_args[1]["tools"]
+        assert tools == MAINTENANCE_TOOLS
+        assert "Agent" not in tools
+
+    async def test_sunday_appends_heavy_rebuild_prompt(
+        self,
+        agent_defaults: AgentDefaults,
+        mocker: MockerFixture,
+    ) -> None:
+        """Sunday: HEAVY_INDEX_REBUILD_PROMPT appended to prompt."""
+        mocker.patch(
+            "tachikoma.memory.maintenance.datetime",
+            **{"datetime.now.return_value.weekday.return_value": 6},
+        )
+        mock_qac = mocker.patch(
+            "tachikoma.memory.maintenance.query_and_consume",
+            new_callable=AsyncMock,
+        )
+        mocker.patch(
+            "tachikoma.memory.maintenance.git_commit_memory_changes",
+            new_callable=AsyncMock,
+        )
+
+        await facts_maintenance_tick(agent_defaults)
+
+        prompt = mock_qac.call_args[0][0]
+        assert "index rebuild orchestrator" in prompt
+
+    async def test_sunday_includes_agent_in_tools(
+        self,
+        agent_defaults: AgentDefaults,
+        mocker: MockerFixture,
+    ) -> None:
+        """Sunday: Agent tool added alongside MAINTENANCE_TOOLS."""
+        mocker.patch(
+            "tachikoma.memory.maintenance.datetime",
+            **{"datetime.now.return_value.weekday.return_value": 6},
+        )
+        mock_qac = mocker.patch(
+            "tachikoma.memory.maintenance.query_and_consume",
+            new_callable=AsyncMock,
+        )
+        mocker.patch(
+            "tachikoma.memory.maintenance.git_commit_memory_changes",
+            new_callable=AsyncMock,
+        )
+
+        await facts_maintenance_tick(agent_defaults)
+
+        tools = mock_qac.call_args[1]["tools"]
+        assert "Agent" in tools
+        for tool in MAINTENANCE_TOOLS:
+            assert tool in tools
+
+    async def test_sunday_uses_extraction_allow_rules_with_agent(
+        self,
+        agent_defaults: AgentDefaults,
+        mocker: MockerFixture,
+    ) -> None:
+        """Sunday: allow rules include Agent permission."""
+        mocker.patch(
+            "tachikoma.memory.maintenance.datetime",
+            **{"datetime.now.return_value.weekday.return_value": 6},
+        )
+        mock_qac = mocker.patch(
+            "tachikoma.memory.maintenance.query_and_consume",
+            new_callable=AsyncMock,
+        )
+        mocker.patch(
+            "tachikoma.memory.maintenance.git_commit_memory_changes",
+            new_callable=AsyncMock,
+        )
+
+        await facts_maintenance_tick(agent_defaults)
+
+        allow = mock_qac.call_args[1]["allow"]
+        assert "Agent" in allow
+
+    async def test_sunday_replaces_type_placeholder_in_prompt(
+        self,
+        agent_defaults: AgentDefaults,
+        mocker: MockerFixture,
+    ) -> None:
+        """Sunday: <type> placeholder replaced with 'facts' in prompt."""
+        mocker.patch(
+            "tachikoma.memory.maintenance.datetime",
+            **{"datetime.now.return_value.weekday.return_value": 6},
+        )
+        mock_qac = mocker.patch(
+            "tachikoma.memory.maintenance.query_and_consume",
+            new_callable=AsyncMock,
+        )
+        mocker.patch(
+            "tachikoma.memory.maintenance.git_commit_memory_changes",
+            new_callable=AsyncMock,
+        )
+
+        await facts_maintenance_tick(agent_defaults)
+
+        prompt = mock_qac.call_args[0][0]
+        # The <type> placeholder should be replaced; check for facts-specific path
+        assert "memories/facts/" in prompt
+        assert "<type>" not in prompt
+
+
+class TestPreferencesDayOfWeekDispatch:
+    """Tests for day-of-week dispatch in preferences_maintenance_tick."""
+
+    @pytest.mark.parametrize("weekday", [0, 1, 2, 3, 4, 5])
+    async def test_weekday_appends_light_maintenance_section(
+        self,
+        agent_defaults: AgentDefaults,
+        mocker: MockerFixture,
+        weekday: int,
+    ) -> None:
+        """Mon–Sat: INDEX_LIGHT_MAINTENANCE_SECTION appended to prompt."""
+        mocker.patch(
+            "tachikoma.memory.maintenance.datetime",
+            **{"datetime.now.return_value.weekday.return_value": weekday},
+        )
+        mock_qac = mocker.patch(
+            "tachikoma.memory.maintenance.query_and_consume",
+            new_callable=AsyncMock,
+        )
+        mocker.patch(
+            "tachikoma.memory.maintenance.git_commit_memory_changes",
+            new_callable=AsyncMock,
+        )
+
+        await preferences_maintenance_tick(agent_defaults)
+
+        prompt = mock_qac.call_args[0][0]
+        assert "Memory Index Consistency" in prompt
+
+    @pytest.mark.parametrize("weekday", [0, 1, 2, 3, 4, 5])
+    async def test_weekday_uses_standard_tools(
+        self,
+        agent_defaults: AgentDefaults,
+        mocker: MockerFixture,
+        weekday: int,
+    ) -> None:
+        """Mon–Sat: standard MAINTENANCE_TOOLS, no Agent."""
+        mocker.patch(
+            "tachikoma.memory.maintenance.datetime",
+            **{"datetime.now.return_value.weekday.return_value": weekday},
+        )
+        mock_qac = mocker.patch(
+            "tachikoma.memory.maintenance.query_and_consume",
+            new_callable=AsyncMock,
+        )
+        mocker.patch(
+            "tachikoma.memory.maintenance.git_commit_memory_changes",
+            new_callable=AsyncMock,
+        )
+
+        await preferences_maintenance_tick(agent_defaults)
+
+        tools = mock_qac.call_args[1]["tools"]
+        assert tools == MAINTENANCE_TOOLS
+        assert "Agent" not in tools
+
+    async def test_sunday_appends_heavy_rebuild_prompt(
+        self,
+        agent_defaults: AgentDefaults,
+        mocker: MockerFixture,
+    ) -> None:
+        """Sunday: HEAVY_INDEX_REBUILD_PROMPT appended to prompt."""
+        mocker.patch(
+            "tachikoma.memory.maintenance.datetime",
+            **{"datetime.now.return_value.weekday.return_value": 6},
+        )
+        mock_qac = mocker.patch(
+            "tachikoma.memory.maintenance.query_and_consume",
+            new_callable=AsyncMock,
+        )
+        mocker.patch(
+            "tachikoma.memory.maintenance.git_commit_memory_changes",
+            new_callable=AsyncMock,
+        )
+
+        await preferences_maintenance_tick(agent_defaults)
+
+        prompt = mock_qac.call_args[0][0]
+        assert "index rebuild orchestrator" in prompt
+
+    async def test_sunday_includes_agent_in_tools(
+        self,
+        agent_defaults: AgentDefaults,
+        mocker: MockerFixture,
+    ) -> None:
+        """Sunday: Agent tool added alongside MAINTENANCE_TOOLS."""
+        mocker.patch(
+            "tachikoma.memory.maintenance.datetime",
+            **{"datetime.now.return_value.weekday.return_value": 6},
+        )
+        mock_qac = mocker.patch(
+            "tachikoma.memory.maintenance.query_and_consume",
+            new_callable=AsyncMock,
+        )
+        mocker.patch(
+            "tachikoma.memory.maintenance.git_commit_memory_changes",
+            new_callable=AsyncMock,
+        )
+
+        await preferences_maintenance_tick(agent_defaults)
+
+        tools = mock_qac.call_args[1]["tools"]
+        assert "Agent" in tools
+
+    async def test_sunday_replaces_type_placeholder_in_prompt(
+        self,
+        agent_defaults: AgentDefaults,
+        mocker: MockerFixture,
+    ) -> None:
+        """Sunday: <type> placeholder replaced with 'preferences' in prompt."""
+        mocker.patch(
+            "tachikoma.memory.maintenance.datetime",
+            **{"datetime.now.return_value.weekday.return_value": 6},
+        )
+        mock_qac = mocker.patch(
+            "tachikoma.memory.maintenance.query_and_consume",
+            new_callable=AsyncMock,
+        )
+        mocker.patch(
+            "tachikoma.memory.maintenance.git_commit_memory_changes",
+            new_callable=AsyncMock,
+        )
+
+        await preferences_maintenance_tick(agent_defaults)
+
+        prompt = mock_qac.call_args[0][0]
+        assert "memories/preferences/" in prompt
+        assert "<type>" not in prompt
+
+
+class TestEpisodicAndContextUnchanged:
+    """Verify episodic and context ticks have no day-of-week logic."""
+
+    async def test_episodic_tick_no_index_section(
+        self,
+        agent_defaults: AgentDefaults,
+        mocker: MockerFixture,
+    ) -> None:
+        """Episodic tick should NOT include index maintenance sections."""
+        mock_qac = mocker.patch(
+            "tachikoma.memory.maintenance.query_and_consume",
+            new_callable=AsyncMock,
+        )
+        mocker.patch(
+            "tachikoma.memory.maintenance.git_commit_memory_changes",
+            new_callable=AsyncMock,
+        )
+
+        settings = MaintenanceSettings()
+        await episodic_maintenance_tick(agent_defaults, settings)
+
+        prompt = mock_qac.call_args[0][0]
+        assert "Memory Index Consistency" not in prompt
+        assert "index rebuild orchestrator" not in prompt
+
+    async def test_context_tick_no_index_section(
+        self,
+        agent_defaults: AgentDefaults,
+        mocker: MockerFixture,
+    ) -> None:
+        """Context tick should NOT include index maintenance sections."""
+        mock_qac = mocker.patch(
+            "tachikoma.memory.maintenance.query_and_consume",
+            new_callable=AsyncMock,
+        )
+        mocker.patch(
+            "tachikoma.memory.maintenance.git_commit_context_changes",
+            new_callable=AsyncMock,
+        )
+
+        await context_maintenance_tick(agent_defaults)
+
+        prompt = mock_qac.call_args[0][0]
+        assert "Memory Index Consistency" not in prompt
+        assert "index rebuild orchestrator" not in prompt
+
+
+class TestIndexPromptContent:
+    """Tests verifying index-related prompt content for R2/R6/R7 coverage."""
+
+    def test_light_maintenance_section_includes_consistency_verification(self) -> None:
+        assert "Glob" in INDEX_LIGHT_MAINTENANCE_SECTION
+        assert "MEMORY.md" in INDEX_LIGHT_MAINTENANCE_SECTION
+
+    def test_light_maintenance_section_includes_placeholder_format(self) -> None:
+        assert "Description pending update" in INDEX_LIGHT_MAINTENANCE_SECTION
+
+    def test_light_maintenance_section_does_not_regenerate(self) -> None:
+        assert "Do NOT regenerate" in INDEX_LIGHT_MAINTENANCE_SECTION
+
+    def test_light_maintenance_section_removes_stale_entries(self) -> None:
+        assert "no longer exist" in INDEX_LIGHT_MAINTENANCE_SECTION
+
+    def test_light_maintenance_section_includes_r2_coverage(self) -> None:
+        """R2: Light section instructs agent to update MEMORY.md on file ops."""
+        assert "create, modify, or delete" in INDEX_LIGHT_MAINTENANCE_SECTION.lower()
+        assert "MEMORY.md" in INDEX_LIGHT_MAINTENANCE_SECTION
+
+    def test_heavy_rebuild_includes_r2_coverage(self) -> None:
+        """R2: Heavy rebuild prompt instructs agent to write MEMORY.md."""
+        assert "MEMORY.md" in HEAVY_INDEX_REBUILD_PROMPT
+        assert "merge" in HEAVY_INDEX_REBUILD_PROMPT.lower()
+        assert "rename" in HEAVY_INDEX_REBUILD_PROMPT.lower()

@@ -5,6 +5,7 @@ periodically to consolidate episodic entries, prune stale facts,
 deduplicate preferences, and clean up context files.
 """
 
+import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal
 
@@ -15,7 +16,12 @@ from tachikoma.config import MaintenanceSettings
 from tachikoma.context.loading import CONTEXT_DIR_NAME
 from tachikoma.git.processor import GIT_ALLOW, GIT_BASH_HOOK, GIT_TOOLS
 from tachikoma.git.sync import has_uncommitted_changes
-from tachikoma.memory.prompts import STORE_PURPOSE_SECTION
+from tachikoma.memory.index import HEAVY_INDEX_REBUILD_PROMPT
+from tachikoma.memory.prompts import (
+    INDEX_LIGHT_MAINTENANCE_SECTION,
+    STORE_PURPOSE_SECTION,
+    extraction_allow_rules,
+)
 from tachikoma.post_processing import (
     MAINTENANCE_BASH_HOOK,
     abs_rule,
@@ -202,11 +208,35 @@ async def _run_maintenance_tick(
     memory_type: MemoryType,
     prompt: str,
     skill_registry: "SkillRegistry | None" = None,
+    *,
+    extra_tools: list[str] | None = None,
+    extra_sections: str | None = None,
 ) -> None:
-    """Run a maintenance agent and commit any changes."""
+    """Run a maintenance agent and commit any changes.
+
+    Args:
+        extra_tools: Additional tools to append to MAINTENANCE_TOOLS
+            (e.g. ``["Agent"]`` for Sunday heavy rebuild).
+        extra_sections: Additional prompt text to append after the base
+            prompt but before workspace replacement and cross-store sections.
+    """
     scope = agent_defaults.cwd / "memories" / memory_type
-    rules = maintenance_allow_rules(scope)
+    tools = [*MAINTENANCE_TOOLS, *(extra_tools or [])]
+
+    # Build allow rules — include Agent if extra_tools requests it.
+    if extra_tools and "Agent" in extra_tools:
+        rules = extraction_allow_rules(scope, include_agent=True)
+    else:
+        rules = maintenance_allow_rules(scope)
+
     formatted = prompt.replace("$WORKSPACE", str(agent_defaults.cwd))
+
+    # Append any extra prompt sections (e.g. index maintenance).
+    if extra_sections is not None:
+        # Replace placeholders in extra sections too.
+        sections = extra_sections.replace("$WORKSPACE", str(agent_defaults.cwd))
+        sections = sections.replace("<type>", memory_type)
+        formatted = f"{formatted}\n\n{sections}"
 
     catalog = _build_skill_catalog_section(skill_registry)
     if catalog is not None:
@@ -218,7 +248,7 @@ async def _run_maintenance_tick(
     await query_and_consume(
         formatted,
         agent_defaults,
-        tools=MAINTENANCE_TOOLS,
+        tools=tools,
         allow=rules,
         pre_tool_use_hooks=[MAINTENANCE_BASH_HOOK],
         model=agent_defaults.processor_model,
@@ -475,8 +505,28 @@ async def facts_maintenance_tick(
     """Run facts memory cleanup.
 
     Evaluates fact files for staleness, redundancy, and overlap.
+    On weekdays (Mon–Sat), also runs light index consistency checks.
+    On Sunday, runs a full index rebuild with description workers.
     """
-    await _run_maintenance_tick(agent_defaults, "facts", FACTS_MAINTENANCE_PROMPT, skill_registry)
+    is_sunday = datetime.datetime.now().weekday() == 6
+
+    if is_sunday:
+        await _run_maintenance_tick(
+            agent_defaults,
+            "facts",
+            FACTS_MAINTENANCE_PROMPT,
+            skill_registry,
+            extra_tools=["Agent"],
+            extra_sections=HEAVY_INDEX_REBUILD_PROMPT,
+        )
+    else:
+        await _run_maintenance_tick(
+            agent_defaults,
+            "facts",
+            FACTS_MAINTENANCE_PROMPT,
+            skill_registry,
+            extra_sections=INDEX_LIGHT_MAINTENANCE_SECTION,
+        )
 
 
 PREFERENCES_MAINTENANCE_PROMPT = """\
@@ -607,10 +657,28 @@ async def preferences_maintenance_tick(
     """Run preferences memory cleanup.
 
     Evaluates preference files for redundancy and overlap.
+    On weekdays (Mon–Sat), also runs light index consistency checks.
+    On Sunday, runs a full index rebuild with description workers.
     """
-    await _run_maintenance_tick(
-        agent_defaults, "preferences", PREFERENCES_MAINTENANCE_PROMPT, skill_registry
-    )
+    is_sunday = datetime.datetime.now().weekday() == 6
+
+    if is_sunday:
+        await _run_maintenance_tick(
+            agent_defaults,
+            "preferences",
+            PREFERENCES_MAINTENANCE_PROMPT,
+            skill_registry,
+            extra_tools=["Agent"],
+            extra_sections=HEAVY_INDEX_REBUILD_PROMPT,
+        )
+    else:
+        await _run_maintenance_tick(
+            agent_defaults,
+            "preferences",
+            PREFERENCES_MAINTENANCE_PROMPT,
+            skill_registry,
+            extra_sections=INDEX_LIGHT_MAINTENANCE_SECTION,
+        )
 
 
 CONTEXT_MAINTENANCE_PROMPT = """\
