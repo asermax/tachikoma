@@ -41,13 +41,13 @@ Return descriptions as XML elements, one per file:
 
 HEAVY_INDEX_REBUILD_PROMPT = """\
 You are a memory index rebuild orchestrator. Your task is to rebuild the \
-MEMORY.md index file in $WORKSPACE/memories/<type>/ from scratch using \
+MEMORY.md index file in $WORKSPACE/memories/{memory_type}/ from scratch using \
 description workers.
 
 ## Instructions
 
 1. **List all files**: Use Glob to find all `.md` files in \
-`$WORKSPACE/memories/<type>/` (exclude `MEMORY.md` itself).
+`$WORKSPACE/memories/{memory_type}/` (exclude `MEMORY.md` itself).
 
 2. **If the directory is empty** (no `.md` files besides MEMORY.md):
    - Write MEMORY.md with only the header: `# Memory Index`
@@ -110,7 +110,7 @@ Each entry must follow this exact format:
 
 ## Permissions
 
-You can read and write files within `$WORKSPACE/memories/<type>/`. You can \
+You can read and write files within `$WORKSPACE/memories/{memory_type}/`. You can \
 use the Agent tool to spawn description workers. For Bash, read-only \
 inspection commands (`ls`, `find`, `file`, `echo`, `date`, `cat`, `head`, \
 `tail`, `wc`, `stat`) and navigation (`cd`, `pwd`) are allowed — other \
@@ -132,9 +132,10 @@ async def run_index_rebuild(agent_defaults: AgentDefaults, memory_type: str) -> 
             ``"preferences"``).
     """
     scope = agent_defaults.cwd / "memories" / memory_type
-    prompt = HEAVY_INDEX_REBUILD_PROMPT
-    prompt = prompt.replace("$WORKSPACE", str(agent_defaults.cwd))
-    prompt = prompt.replace("<type>", memory_type)
+    prompt = (
+        HEAVY_INDEX_REBUILD_PROMPT.replace("$WORKSPACE", str(agent_defaults.cwd))
+        .format(memory_type=memory_type)
+    )
 
     # Include the description worker prompt in the main prompt so the
     # orchestrator can pass it to sub-agents.

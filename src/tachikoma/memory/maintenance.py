@@ -24,7 +24,6 @@ from tachikoma.memory.prompts import (
 )
 from tachikoma.post_processing import (
     MAINTENANCE_BASH_HOOK,
-    abs_rule,
     query_and_consume,
 )
 
@@ -148,22 +147,6 @@ def _append_cross_store_sections(prompt: str, workspace: Path, current_target: s
     return f"{prompt}\n\n{CONTRADICTION_DETECTION_SECTION}"
 
 
-def maintenance_allow_rules(scope: Path) -> list[str]:
-    """Build scoped allow rules for a maintenance agent.
-
-    Read/Glob/Grep/Bash are unrestricted. Edit/Write are scoped to the
-    given directory.
-    """
-    return [
-        "Read",
-        "Glob",
-        "Grep",
-        "Bash",
-        abs_rule("Edit", scope),
-        abs_rule("Write", scope),
-    ]
-
-
 async def git_commit_memory_changes(
     agent_defaults: AgentDefaults,
     memory_type: MemoryType,
@@ -209,25 +192,19 @@ async def _run_maintenance_tick(
     prompt: str,
     skill_registry: "SkillRegistry | None" = None,
     *,
-    extra_tools: list[str] | None = None,
+    include_agent: bool = False,
     extra_sections: str | None = None,
 ) -> None:
     """Run a maintenance agent and commit any changes.
 
     Args:
-        extra_tools: Additional tools to append to MAINTENANCE_TOOLS
-            (e.g. ``["Agent"]`` for Sunday heavy rebuild).
+        include_agent: Whether to include the Agent tool (needed for
+            Sunday heavy rebuild with description workers).
         extra_sections: Additional prompt text to append after the base
             prompt but before workspace replacement and cross-store sections.
     """
     scope = agent_defaults.cwd / "memories" / memory_type
-    tools = [*MAINTENANCE_TOOLS, *(extra_tools or [])]
-
-    # Build allow rules — include Agent if extra_tools requests it.
-    if extra_tools and "Agent" in extra_tools:
-        rules = extraction_allow_rules(scope, include_agent=True)
-    else:
-        rules = maintenance_allow_rules(scope)
+    tools = [*MAINTENANCE_TOOLS, *(["Agent"] if include_agent else [])]
 
     formatted = prompt.replace("$WORKSPACE", str(agent_defaults.cwd))
 
@@ -235,7 +212,7 @@ async def _run_maintenance_tick(
     if extra_sections is not None:
         # Replace placeholders in extra sections too.
         sections = extra_sections.replace("$WORKSPACE", str(agent_defaults.cwd))
-        sections = sections.replace("<type>", memory_type)
+        sections = sections.format(memory_type=memory_type)
         formatted = f"{formatted}\n\n{sections}"
 
     catalog = _build_skill_catalog_section(skill_registry)
@@ -249,7 +226,7 @@ async def _run_maintenance_tick(
         formatted,
         agent_defaults,
         tools=tools,
-        allow=rules,
+        allow=extraction_allow_rules(scope, include_agent=include_agent),
         pre_tool_use_hooks=[MAINTENANCE_BASH_HOOK],
         model=agent_defaults.processor_model,
     )
@@ -498,6 +475,30 @@ commands will be denied.
 """
 
 
+async def _indexed_maintenance_tick(
+    agent_defaults: AgentDefaults,
+    memory_type: Literal["facts", "preferences"],
+    prompt: str,
+    skill_registry: "SkillRegistry | None" = None,
+) -> None:
+    """Run a maintenance tick with index-aware day-of-week dispatch.
+
+    Weekdays (Mon–Sat): light index consistency checks.
+    Sunday: full index rebuild with description workers (Agent tool).
+    """
+    is_sunday = datetime.datetime.now().weekday() == 6
+    await _run_maintenance_tick(
+        agent_defaults,
+        memory_type,
+        prompt,
+        skill_registry,
+        include_agent=is_sunday,
+        extra_sections=(
+            HEAVY_INDEX_REBUILD_PROMPT if is_sunday else INDEX_LIGHT_MAINTENANCE_SECTION
+        ),
+    )
+
+
 async def facts_maintenance_tick(
     agent_defaults: AgentDefaults,
     skill_registry: "SkillRegistry | None" = None,
@@ -508,25 +509,9 @@ async def facts_maintenance_tick(
     On weekdays (Mon–Sat), also runs light index consistency checks.
     On Sunday, runs a full index rebuild with description workers.
     """
-    is_sunday = datetime.datetime.now().weekday() == 6
-
-    if is_sunday:
-        await _run_maintenance_tick(
-            agent_defaults,
-            "facts",
-            FACTS_MAINTENANCE_PROMPT,
-            skill_registry,
-            extra_tools=["Agent"],
-            extra_sections=HEAVY_INDEX_REBUILD_PROMPT,
-        )
-    else:
-        await _run_maintenance_tick(
-            agent_defaults,
-            "facts",
-            FACTS_MAINTENANCE_PROMPT,
-            skill_registry,
-            extra_sections=INDEX_LIGHT_MAINTENANCE_SECTION,
-        )
+    await _indexed_maintenance_tick(
+        agent_defaults, "facts", FACTS_MAINTENANCE_PROMPT, skill_registry
+    )
 
 
 PREFERENCES_MAINTENANCE_PROMPT = """\
@@ -660,25 +645,9 @@ async def preferences_maintenance_tick(
     On weekdays (Mon–Sat), also runs light index consistency checks.
     On Sunday, runs a full index rebuild with description workers.
     """
-    is_sunday = datetime.datetime.now().weekday() == 6
-
-    if is_sunday:
-        await _run_maintenance_tick(
-            agent_defaults,
-            "preferences",
-            PREFERENCES_MAINTENANCE_PROMPT,
-            skill_registry,
-            extra_tools=["Agent"],
-            extra_sections=HEAVY_INDEX_REBUILD_PROMPT,
-        )
-    else:
-        await _run_maintenance_tick(
-            agent_defaults,
-            "preferences",
-            PREFERENCES_MAINTENANCE_PROMPT,
-            skill_registry,
-            extra_sections=INDEX_LIGHT_MAINTENANCE_SECTION,
-        )
+    await _indexed_maintenance_tick(
+        agent_defaults, "preferences", PREFERENCES_MAINTENANCE_PROMPT, skill_registry
+    )
 
 
 CONTEXT_MAINTENANCE_PROMPT = """\
@@ -823,7 +792,7 @@ async def context_maintenance_tick(
     enforcing size limits. Does not add new content.
     """
     scope = agent_defaults.cwd / CONTEXT_DIR_NAME
-    rules = maintenance_allow_rules(scope)
+    rules = extraction_allow_rules(scope, include_agent=False)
     formatted = CONTEXT_MAINTENANCE_PROMPT.replace("$WORKSPACE", str(agent_defaults.cwd))
 
     catalog = _build_skill_catalog_section(skill_registry)
