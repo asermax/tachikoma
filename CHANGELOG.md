@@ -2,6 +2,80 @@
 
 <!-- version list -->
 
+## v1.102.0 (2026-06-10)
+
+### Documentation
+
+- Add DLT-176 memory file index for efficient discovery
+  ([`b6cc2b6`](https://github.com/asermax/tachikoma/commit/b6cc2b6c4b4718b0cdeb40f1e9e0c5780058a017))
+
+- Reconcile DLT-176 into feature documentation
+  ([`6fc7aa7`](https://github.com/asermax/tachikoma/commit/6fc7aa7d229f9aa44fcf198a566f82ec2e443d4c))
+
+- Update DLT-176 batch 2 status to done
+  ([`51cf0fa`](https://github.com/asermax/tachikoma/commit/51cf0fa8fc6fa78d40fc0af1616fb2fe0fe4af99))
+
+- Update DLT-176 batch 3 status to done
+  ([`d79a7c3`](https://github.com/asermax/tachikoma/commit/d79a7c3d4dcc3f7ca5c71dce9b011375e97a1302))
+
+- Update DLT-176 batch 4 status to done
+  ([`0bd8bdc`](https://github.com/asermax/tachikoma/commit/0bd8bdc052d8632ccea7602588203cf623cbee8f))
+
+- Update DLT-176 progress tracking
+  ([`5a9193b`](https://github.com/asermax/tachikoma/commit/5a9193bf34ce843772dc635c79f14035487c17d4))
+
+- **deltas**: Mark DLT-176 design as complete
+  ([`c0938ca`](https://github.com/asermax/tachikoma/commit/c0938cac44b3efc6ff0ab83e369b75e9bdc661ba))
+
+- **deltas**: Update DLT-176 status to in-progress design
+  ([`57bd307`](https://github.com/asermax/tachikoma/commit/57bd307a704c6df620e19ee5cea22dc9f970d6c7))
+
+- **deltas**: Update DLT-176 status to in-progress plan
+  ([`f8964ae`](https://github.com/asermax/tachikoma/commit/f8964ae46afa990beabc1cce8f449d6f5d7d1b55))
+
+- **deltas**: Update DLT-176 status to in-progress spec
+  ([`bc0e481`](https://github.com/asermax/tachikoma/commit/bc0e481df4f2535a79685792ada494f67bbd84bd))
+
+- **design**: Complete DLT-176 memory file index design
+  ([`94fa95b`](https://github.com/asermax/tachikoma/commit/94fa95b0a9c8d84dc655b2ecb5bab446afab67d7))
+
+- **design**: Complete DLT-176 spec and seed design with shape parts
+  ([`eb8d6a9`](https://github.com/asermax/tachikoma/commit/eb8d6a9a724a046576091bbc9a307b71389fc09b))
+
+- **plans**: Complete DLT-176 memory file index implementation plan
+  ([`07e69dd`](https://github.com/asermax/tachikoma/commit/07e69dd62f66f3c75a287f27edb6b51feb04849f))
+
+- **spec**: Add DLT-176 memory file index specification
+  ([`cea52c9`](https://github.com/asermax/tachikoma/commit/cea52c91dd94424c7fa75d654668d69867d64e8a))
+
+- **spec**: Refine DLT-176 requirement and AC wording
+  ([`bd064ab`](https://github.com/asermax/tachikoma/commit/bd064ab6e9a0fae1eb123c35c764bcc2c2af4550))
+
+### Features
+
+- **memory**: Add index update instructions to extraction prompts
+  ([`7230513`](https://github.com/asermax/tachikoma/commit/72305130398352398a8af7d397095e1c01179409))
+
+- **memory**: Add memory file index with rebuild support
+  ([`f4060fa`](https://github.com/asermax/tachikoma/commit/f4060fa1ee59117c085b1cb78135862c4659a0f7))
+
+- **memory**: Integrate index into bootstrap and maintenance ticks
+  ([`9625f83`](https://github.com/asermax/tachikoma/commit/9625f83aea926c5edc60d214fb5e56879c1cb74e))
+
+- **memory**: Use index-based discovery for facts and preferences search
+  ([`da16584`](https://github.com/asermax/tachikoma/commit/da1658444a44df48edce494b47455c1609baa881))
+
+### Refactoring
+
+- **memory**: Use format strings and extract indexed maintenance helper
+  ([`d7d7134`](https://github.com/asermax/tachikoma/commit/d7d71343ca1b5e6c963af8534cfeaeb59a33f875))
+
+### Testing
+
+- **memory**: Update tests for refactored placeholders and allow rules
+  ([`9933058`](https://github.com/asermax/tachikoma/commit/9933058fcff07e3157a7c05045d6cfa643c20c33))
+
+
 ## v1.101.1 (2026-06-08)
 
 ### Bug Fixes
