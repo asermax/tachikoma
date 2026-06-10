@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import AsyncMock
 
+import pytest
 from pytest_mock import MockerFixture
 
 import tachikoma.memory
@@ -90,6 +91,7 @@ class TestHeavyIndexRebuildPrompt:
     def test_contains_workspace_placeholder(self) -> None:
         """AC: Prompt uses $WORKSPACE placeholder for path injection."""
         assert "$WORKSPACE" in HEAVY_INDEX_REBUILD_PROMPT
+        assert "{memory_type}" in HEAVY_INDEX_REBUILD_PROMPT
 
 
 # ---------------------------------------------------------------------------
@@ -196,7 +198,7 @@ class TestRunIndexRebuild:
         assert str(cwd) in prompt
 
     async def test_replaces_type_in_prompt(self, mocker: MockerFixture) -> None:
-        """AC: <type> is replaced with the memory_type in the prompt."""
+        """AC: {memory_type} is replaced with the memory_type in the prompt."""
         mock_query = mocker.patch(
             "tachikoma.memory.index.query_and_consume",
             new_callable=AsyncMock,
@@ -208,7 +210,7 @@ class TestRunIndexRebuild:
 
         call_kwargs = mock_query.call_args
         prompt = call_kwargs.args[0] if call_kwargs.args else call_kwargs[0][0]
-        assert "<type>" not in prompt
+        assert "{memory_type}" not in prompt
         assert "preferences" in prompt
 
     async def test_includes_description_worker_prompt(
@@ -281,43 +283,34 @@ class TestIndexUpdateSection:
 # ---------------------------------------------------------------------------
 
 
-class TestFactsPromptIndexIntegration:
-    """Verify FACTS_PROMPT includes the index update section."""
+class TestExtractionPromptIndexIntegration:
+    """Verify extraction prompts include the index update section."""
 
-    def test_contains_index_update_section(self) -> None:
-        """AC: FACTS_PROMPT contains the index update instructions."""
-        assert "## Memory Index" in FACTS_PROMPT
-        assert "MEMORY.md" in FACTS_PROMPT
+    @pytest.mark.parametrize(
+        "prompt_name,prompt",
+        [("FACTS_PROMPT", FACTS_PROMPT), ("PREFERENCES_PROMPT", PREFERENCES_PROMPT)],
+    )
+    def test_contains_index_update_section(
+        self, prompt_name: str, prompt: str
+    ) -> None:
+        """AC: Extraction prompt contains the index update instructions."""
+        assert "## Memory Index" in prompt
+        assert "MEMORY.md" in prompt
 
-    def test_index_section_before_permissions(self) -> None:
+    @pytest.mark.parametrize(
+        "prompt_name,prompt",
+        [("FACTS_PROMPT", FACTS_PROMPT), ("PREFERENCES_PROMPT", PREFERENCES_PROMPT)],
+    )
+    def test_index_section_before_permissions(
+        self, prompt_name: str, prompt: str
+    ) -> None:
         """AC: Index section appears before the permissions section."""
-        idx_index = FACTS_PROMPT.find("## Memory Index")
-        idx_perms = FACTS_PROMPT.find("## Permissions")
-        assert idx_index != -1, "## Memory Index section not found in FACTS_PROMPT"
-        assert idx_perms != -1, "## Permissions section not found in FACTS_PROMPT"
+        idx_index = prompt.find("## Memory Index")
+        idx_perms = prompt.find("## Permissions")
+        assert idx_index != -1, f"## Memory Index section not found in {prompt_name}"
+        assert idx_perms != -1, f"## Permissions section not found in {prompt_name}"
         assert idx_index < idx_perms, (
-            "## Memory Index should appear before ## Permissions"
-        )
-
-
-class TestPreferencesPromptIndexIntegration:
-    """Verify PREFERENCES_PROMPT includes the index update section."""
-
-    def test_contains_index_update_section(self) -> None:
-        """AC: PREFERENCES_PROMPT contains the index update instructions."""
-        assert "## Memory Index" in PREFERENCES_PROMPT
-        assert "MEMORY.md" in PREFERENCES_PROMPT
-
-    def test_index_section_before_permissions(self) -> None:
-        """AC: Index section appears before the permissions section."""
-        idx_index = PREFERENCES_PROMPT.find("## Memory Index")
-        idx_perms = PREFERENCES_PROMPT.find("## Permissions")
-        assert idx_index != -1, (
-            "## Memory Index section not found in PREFERENCES_PROMPT"
-        )
-        assert idx_perms != -1, "## Permissions section not found in PREFERENCES_PROMPT"
-        assert idx_index < idx_perms, (
-            "## Memory Index should appear before ## Permissions"
+            f"## Memory Index should appear before ## Permissions in {prompt_name}"
         )
 
 

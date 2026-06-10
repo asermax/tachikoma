@@ -20,10 +20,9 @@ from tachikoma.memory.maintenance import (
     facts_maintenance_tick,
     git_commit_context_changes,
     git_commit_memory_changes,
-    maintenance_allow_rules,
     preferences_maintenance_tick,
 )
-from tachikoma.memory.prompts import INDEX_LIGHT_MAINTENANCE_SECTION
+from tachikoma.memory.prompts import INDEX_LIGHT_MAINTENANCE_SECTION, extraction_allow_rules
 from tachikoma.post_processing import MAINTENANCE_BASH_HOOK, abs_rule
 
 
@@ -38,10 +37,10 @@ def maintenance_settings() -> MaintenanceSettings:
 
 
 class TestMaintenanceAllowRules:
-    """Tests for maintenance_allow_rules()."""
+    """Tests for maintenance allow rules (via extraction_allow_rules without Agent)."""
 
     def test_includes_read_glob_grep_bash_unrestricted(self) -> None:
-        rules = maintenance_allow_rules(Path("/workspace"))
+        rules = extraction_allow_rules(Path("/workspace"), include_agent=False)
 
         assert "Read" in rules
         assert "Glob" in rules
@@ -50,13 +49,13 @@ class TestMaintenanceAllowRules:
 
     def test_edit_scoped_to_target(self) -> None:
         scope = Path("/workspace/memories/episodic")
-        rules = maintenance_allow_rules(scope)
+        rules = extraction_allow_rules(scope, include_agent=False)
 
         assert abs_rule("Edit", scope) in rules
 
     def test_write_scoped_to_target(self) -> None:
         scope = Path("/workspace/memories/facts")
-        rules = maintenance_allow_rules(scope)
+        rules = extraction_allow_rules(scope, include_agent=False)
 
         assert abs_rule("Write", scope) in rules
 
@@ -743,7 +742,7 @@ class TestFactsDayOfWeekDispatch:
         agent_defaults: AgentDefaults,
         mocker: MockerFixture,
     ) -> None:
-        """Sunday: <type> placeholder replaced with 'facts' in prompt."""
+        """Sunday: {memory_type} placeholder replaced with 'facts' in prompt."""
         mocker.patch(
             "tachikoma.memory.maintenance.datetime",
             **{"datetime.now.return_value.weekday.return_value": 6},
@@ -760,13 +759,17 @@ class TestFactsDayOfWeekDispatch:
         await facts_maintenance_tick(agent_defaults)
 
         prompt = mock_qac.call_args[0][0]
-        # The <type> placeholder should be replaced; check for facts-specific path
+        # The {memory_type} placeholder should be replaced; check for facts-specific path
         assert "memories/facts/" in prompt
-        assert "<type>" not in prompt
+        assert "{memory_type}" not in prompt
 
 
 class TestPreferencesDayOfWeekDispatch:
-    """Tests for day-of-week dispatch in preferences_maintenance_tick."""
+    """Tests for day-of-week dispatch in preferences_maintenance_tick.
+
+    These tests mirror TestFactsDayOfWeekDispatch to verify the same
+    dispatch logic works for the preferences tick function.
+    """
 
     @pytest.mark.parametrize("weekday", [0, 1, 2, 3, 4, 5])
     async def test_weekday_appends_light_maintenance_section(
@@ -874,7 +877,7 @@ class TestPreferencesDayOfWeekDispatch:
         agent_defaults: AgentDefaults,
         mocker: MockerFixture,
     ) -> None:
-        """Sunday: <type> placeholder replaced with 'preferences' in prompt."""
+        """Sunday: {memory_type} placeholder replaced with 'preferences' in prompt."""
         mocker.patch(
             "tachikoma.memory.maintenance.datetime",
             **{"datetime.now.return_value.weekday.return_value": 6},
@@ -892,7 +895,7 @@ class TestPreferencesDayOfWeekDispatch:
 
         prompt = mock_qac.call_args[0][0]
         assert "memories/preferences/" in prompt
-        assert "<type>" not in prompt
+        assert "{memory_type}" not in prompt
 
 
 class TestEpisodicAndContextUnchanged:
