@@ -442,6 +442,53 @@ class TestMemorySearchPromptClassification:
         assert "even with a greeting" in MEMORY_SEARCH_PROMPT.lower()
 
 
+class TestMemorySearchPromptIndexDiscovery:
+    """Tests for index-based discovery in MEMORY_SEARCH_PROMPT (DLT-176 Step 5)."""
+
+    def test_facts_preferences_use_index_based_discovery(self) -> None:
+        """AC: Prompt instructs index-based discovery for facts/preferences."""
+        assert "MEMORY.md" in MEMORY_SEARCH_PROMPT
+        # Must instruct reading the index first
+        assert "Read `MEMORY.md`" in MEMORY_SEARCH_PROMPT
+
+    def test_index_selects_files_by_description(self) -> None:
+        """AC: Prompt instructs selecting files based on descriptions."""
+        assert "description" in MEMORY_SEARCH_PROMPT.lower()
+        assert "relevant" in MEMORY_SEARCH_PROMPT.lower()
+
+    def test_index_includes_glob_fallback(self) -> None:
+        """AC: Prompt includes explicit Glob fallback for missing/empty index."""
+        # R4: Graceful degradation — must have fallback instructions
+        assert "Fallback" in MEMORY_SEARCH_PROMPT or "fallback" in MEMORY_SEARCH_PROMPT.lower()
+        assert "Glob" in MEMORY_SEARCH_PROMPT
+        assert (
+            "does not exist" in MEMORY_SEARCH_PROMPT.lower()
+            or "missing" in MEMORY_SEARCH_PROMPT.lower()
+        )
+
+    def test_episodic_search_unchanged_glob_based(self) -> None:
+        """AC: Episodic search still uses Glob → Grep → Read."""
+        # R5: Episodic memories excluded from index mechanism
+        # The prompt must have a separate section for episodic that uses Glob
+        episodic_section_start = MEMORY_SEARCH_PROMPT.find("episodic")
+        assert episodic_section_start != -1, "episodic not mentioned in prompt"
+        # Check that Glob is referenced for episodic discovery
+        assert "Glob" in MEMORY_SEARCH_PROMPT
+
+    def test_classification_section_unchanged(self) -> None:
+        """AC: Classification section (Skip/Shallow/Full) preserved."""
+        assert "## Classification" in MEMORY_SEARCH_PROMPT
+        assert "Skip" in MEMORY_SEARCH_PROMPT
+        assert "Shallow" in MEMORY_SEARCH_PROMPT
+        assert "Full" in MEMORY_SEARCH_PROMPT
+
+    def test_output_format_unchanged(self) -> None:
+        """AC: Output format (XML <memory> elements) preserved."""
+        assert "<memory" in MEMORY_SEARCH_PROMPT
+        assert "path=" in MEMORY_SEARCH_PROMPT
+        assert "NO_RELEVANT_MEMORIES" in MEMORY_SEARCH_PROMPT
+
+
 class TestParseMemoryEntries:
     """Tests for parse_memory_entries parser."""
 

@@ -73,10 +73,19 @@ unnecessarily (across all directories) than to miss relevant context.
    - `$WORKSPACE/memories/facts/` — Factual information (topic-named files)
    - `$WORKSPACE/memories/preferences/` — User preferences (topic-named files)
 
-2. Use this search strategy:
-   - First, use Glob to discover files in each $WORKSPACE/memories/ subdirectory
-   - Then, use Grep to narrow by keywords/topics from the user's message
-   - Finally, use Read to verify relevance of promising candidates
+2. For **facts** and **preferences** directories, use index-based discovery:
+   - **First**, Read `MEMORY.md` in the target directory.
+   - Evaluate each entry's description against the user message to determine relevance.
+   - Select files whose descriptions suggest relevance, then Read only those selected files.
+   - If no descriptions are relevant, return `NO_RELEVANT_MEMORIES` without reading \
+individual files.
+   - **Fallback**: If `MEMORY.md` does not exist, is empty, or contains no parseable entries, \
+fall back to Glob → Grep → Read for that directory.
+
+3. For **episodic** directory, use Glob-based discovery:
+   - Use Glob to discover files in `$WORKSPACE/memories/episodic/`
+   - Use Grep to narrow by keywords/topics from the user's message
+   - Use Read to verify relevance of promising candidates
 
 ## Scope and Efficiency
 
