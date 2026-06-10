@@ -8,6 +8,7 @@ from tachikoma.post_processing import WORKSPACE_VALIDATION_SECTION, abs_rule
 
 __all__ = [
     "CLASSIFICATION_EXAMPLES_SECTION",
+    "INDEX_UPDATE_SECTION",
     "STORE_PURPOSE_SECTION",
     "WORKSPACE_VALIDATION_SECTION",
 ]
@@ -113,6 +114,40 @@ directory path provided) to understand what the skill covers
 skill file, do NOT create a memory file for it — the skill is the source of truth
 3. If a skill partially covers the topic but the conversation adds genuinely new \
 details not in the skill, you MAY create a file — but only for the new information"""
+
+INDEX_UPDATE_SECTION = """\
+## Memory Index
+
+When you create, modify, or delete a memory file, you MUST also update \
+MEMORY.md in the same directory to keep the index in sync.
+
+### Entry Format
+
+Each entry in MEMORY.md follows this format:
+
+```
+[Human-readable Name](./filename.md): One-line description of contents
+```
+
+### Rules
+
+- **CREATE** a new file: add a new entry with an appropriate description
+- **MODIFY** a file: update the description if the topic, focus, or scope \
+meaningfully changed
+- **DELETE** a file: remove the corresponding entry
+- Always preserve the `# Memory Index` header
+- Keep descriptions concise — one line, under 80 characters
+- The name in brackets should be a human-readable topic name (Title Case)
+
+### Example Entries
+
+```
+# Memory Index
+
+[API Design](./api-design.md): API architecture decisions and endpoint patterns
+[Work Info](./work-info.md): Job details, team structure, and work schedule
+[Tech Stack](./tech-stack.md): Primary languages, frameworks, and tools used
+```"""
 
 
 def permissions_section(memory_type: str, *, include_agent: bool = True) -> str:

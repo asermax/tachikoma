@@ -8,6 +8,7 @@ from tachikoma.memory.prompts import (
     CLASSIFICATION_EXAMPLES_SECTION,
     CONTEXT_DEDUP_SECTION,
     EXTRACTION_TOOLS,
+    INDEX_UPDATE_SECTION,
     STORE_PURPOSE_SECTION,
     WORKSPACE_VALIDATION_SECTION,
     extraction_allow_rules,
@@ -157,6 +158,8 @@ PREFERENCES_PROMPT = (
     + CONTEXT_DEDUP_SECTION
     + "\n\n"
     + WORKSPACE_VALIDATION_SECTION
+    + "\n\n"
+    + INDEX_UPDATE_SECTION
     + "\n\n"
     + permissions_section("preferences")
 )
