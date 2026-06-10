@@ -7,7 +7,7 @@
 
 ## Purpose
 
-This document explains the design rationale for the memory context provider: how it searches stored memories using an agent-based approach on every message, how it uses explicit conversation context (session summary + last exchange) for informed relevance decisions, and how it integrates with the per-message pre-processing pipeline.
+This document explains the design rationale for the memory context provider: how it searches stored memories using an agent-based approach on every message, how it uses explicit conversation context (session summary + last exchange) for informed relevance decisions, and how it integrates with the per-message pre-processing pipeline. For facts and preferences directories, the search agent reads `MEMORY.md` first — a human-readable index that maps each filename to a one-line description — evaluating descriptions against the user message and reading only relevant files. If `MEMORY.md` is missing or empty, the agent falls back to Glob-based discovery. Episodic search uses Glob unchanged.
 
 For the pre-processing pipeline infrastructure, see the [pre-processing pipeline design](../agent/pre-processing-pipeline.md).
 
@@ -29,7 +29,7 @@ Conversations are enriched when the agent knows about past interactions, user fa
 
 ## Design Overview
 
-A `MemoryContextProvider` implements the `MessageContextProvider` ABC and uses a `query()` call with an Opus agent to search stored memories. The provider receives the session's summary and last exchange from the pipeline for conversation context, rendered via the shared `render_conversation_context()` helper. On the first message (no summary yet), it operates without conversation context. The provider runs as a standalone DES-007 agent with file search tools.
+A `MemoryContextProvider` implements the `MessageContextProvider` ABC and uses a `query()` call with an Opus agent to search stored memories. The provider receives the session's summary and last exchange from the pipeline for conversation context, rendered via the shared `render_conversation_context()` helper. On the first message (no summary yet), it operates without conversation context. The provider runs as a standalone DES-007 agent with file search tools. For facts and preferences directories, the search prompt instructs the agent to read `MEMORY.md` first — a human-readable markdown index mapping each filename to a one-line description — evaluating descriptions against the user message and reading only relevant files. If `MEMORY.md` is missing, empty, or malformed, the agent falls back to Glob-based discovery. Episodic search is unchanged (Glob → Grep → Read).
 
 The search prompt includes a classification section (following DES-007) that instructs the agent to classify messages into three tiers before searching: Skip (greetings/acknowledgments → return sentinel immediately), Shallow (continuation messages → facts/preferences only), and Full (new topics/past references → all directories). When classification is ambiguous, the agent defaults to Full search.
 
@@ -60,7 +60,7 @@ The agent returns relevant memory file paths in XML `<memory>` elements. For fac
 
 | Layer/Component | Responsibility | Key Decisions |
 |-----------------|----------------|---------------|
-| `src/tachikoma/memory/context_provider.py` | `MemoryContextProvider(MessageContextProvider)` — receives conversation context (session summary + last exchange) from the pipeline, runs as a standalone DES-007 agent with file search tools, parses XML `<memory>` elements from agent response, handles snippets (episodic) vs full-file reads (facts/preferences), creates per-file `ContextResult` entries with metadata. `ParsedMemoryEntry` dataclass and `parse_memory_entries()` function for XML parsing. Constants: `MEMORIES_OWNER`, `MEMORY_PATH_META_KEY`, `_NO_RELEVANT_MEMORIES`. Helper: `extract_memory_paths()`. `MEMORY_SEARCH_PROMPT` constant co-located with provider — includes a `## Classification` section (following DES-007) with Skip/Shallow/Full tiers for fail-fast message classification, uses `$WORKSPACE` placeholders for directory paths, replaced with absolute workspace path at call time. | Agent returns XML elements with optional snippet content; self-closing = full file load, open/close = snippet extraction; uses `memory_path` metadata key per ADR-011; single adaptive prompt with `{conversation_context_section}` placeholder rendered via shared `render_conversation_context()` helper; classification section with fail-open default (ambiguous → Full); `$WORKSPACE` replacement applied before `str.format()` |
+| `src/tachikoma/memory/context_provider.py` | `MemoryContextProvider(MessageContextProvider)` — receives conversation context (session summary + last exchange) from the pipeline, runs as a standalone DES-007 agent with file search tools, parses XML `<memory>` elements from agent response, handles snippets (episodic) vs full-file reads (facts/preferences), creates per-file `ContextResult` entries with metadata. `ParsedMemoryEntry` dataclass and `parse_memory_entries()` function for XML parsing. Constants: `MEMORIES_OWNER`, `MEMORY_PATH_META_KEY`, `_NO_RELEVANT_MEMORIES`. Helper: `extract_memory_paths()`. `MEMORY_SEARCH_PROMPT` constant co-located with provider — includes a `## Classification` section (following DES-007) with Skip/Shallow/Full tiers for fail-fast message classification, and a `## Search Strategy` section with index-first discovery for facts/preferences (read `MEMORY.md`, evaluate descriptions, read selected files; fallback to Glob if index missing/empty) and Glob-based discovery for episodic. Uses `$WORKSPACE` placeholders for directory paths, replaced with absolute workspace path at call time. | Agent returns XML elements with optional snippet content; self-closing = full file load, open/close = snippet extraction; uses `memory_path` metadata key per ADR-011; single adaptive prompt with `{conversation_context_section}` placeholder rendered via shared `render_conversation_context()` helper; classification section with fail-open default (ambiguous → Full); index-based discovery for facts/preferences with Glob fallback; `$WORKSPACE` replacement applied before `str.format()` |
 
 ### Cross-Layer Contracts
 
@@ -130,20 +130,24 @@ extract_memory_paths(entries: list[SessionContextEntry]) → set[str]
    allowed_tools=["Read", "Glob", "Grep"],
    permission_mode="bypassPermissions", cwd=agent_defaults.cwd)
 6. Call query(prompt=prompt, options=options)
-7. Fully consume the query() generator per DES-007 (which requires DES-005):
+7. Agent searches memories per the prompt's Search Strategy section:
+   - For facts/preferences: Read MEMORY.md → evaluate descriptions → read selected files
+     Fallback: Glob → Grep → Read if MEMORY.md missing/empty/malformed
+   - For episodic: Glob → Grep → Read (unchanged)
+8. Fully consume the query() generator per DES-007 (which requires DES-005):
    - On ResultMessage:
      a. If is_error → log warning
      b. If result == "NO_RELEVANT_MEMORIES" → no paths
      c. If result has content → parse XML <memory> elements via parse_memory_entries()
-7. Validate paths: resolve each against workspace root, reject any outside memories/
-8. Filter out paths already in loaded_paths set
-9. For each new entry:
+9. Validate paths: resolve each against workspace root, reject any outside memories/
+10. Filter out paths already in loaded_paths set
+11. For each new entry:
    a. If snippet provided → use snippet with [Source: path] header
    b. If self-closing (no snippet) → read full file via Path.read_text()
    c. Create ContextResult(tag="memories", content=content,
       metadata={"memory_path": path})
-10. Return list of ContextResults, or None if empty
-11. If any exception → catch, log per DES-002, return None
+12. Return list of ContextResults, or None if empty
+13. If any exception → catch, log per DES-002, return None
 ```
 
 ## Key Decisions
@@ -276,6 +280,24 @@ extract_memory_paths(entries: list[SessionContextEntry]) → set[str]
 **Given**: Agent identifies a relevant file
 **When**: Provider attempts to read it but it has been deleted
 **Then**: Provider logs warning, skips that file, continues with remaining files.
+
+### Scenario: Index-based search for facts/preferences
+
+**Given**: A session with facts and preferences directories containing `MEMORY.md` files
+**When**: The memory context provider searches for facts or preferences
+**Then**: Agent reads `MEMORY.md`, evaluates descriptions against the user message, selects relevant files, reads only those. Returns results or `NO_RELEVANT_MEMORIES`.
+
+### Scenario: Index fallback when MEMORY.md is missing
+
+**Given**: A facts directory with `.md` files but no `MEMORY.md`
+**When**: The memory context provider searches for facts
+**Then**: Agent attempts to read `MEMORY.md`, finds it missing, falls back to Glob → Grep → Read. Search proceeds normally. Index is created on next maintenance run or bootstrap.
+
+### Scenario: Index read fails (corrupted or malformed)
+
+**Given**: `MEMORY.md` exists but is corrupted or malformed
+**When**: The search agent reads `MEMORY.md`
+**Then**: Agent falls back to Glob-based discovery for that directory. The corrupted index is overwritten on the next Sunday heavy rebuild.
 
 ## Notes
 

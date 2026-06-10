@@ -553,10 +553,3 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 **Complexity**: Easy
 **Description**: Allow plugins to declare scheduled ticks in their manifest that run on a cron schedule alongside built-in maintenance jobs. Plugin-declared ticks specify a tick function and an optional schedule override in the manifest, and are governed by the same maintenance enabled/schedule configuration as built-in ticks. During plugin loading, declared ticks are registered with the central scheduler and run automatically when the schedule fires.
 
-### DLT-176: Memory file index for efficient discovery
-**Status**: ✓ Implementation
-**Depends on**: None
-**Priority**: 3 (Medium)
-**Complexity**: Medium
-**Description**: Add a `MEMORY.md` index file in each memory folder (`memories/facts/` and `memories/preferences/`) that serves as a structured, machine-readable directory of all files. Each entry maps a filename to a one-line description of its contents, sufficient for agents to decide whether a file is worth reading without opening it first. The index is kept in sync by all write paths — post-processing extractors that create or modify memory files update the relevant index — and verified periodically by existing maintenance tasks. On the read path, the memory context provider's search agent reads the index first to determine which files to load, replacing the current Glob-based discovery with a single Read operation. Episodic memories are excluded since they are date-organized and searched differently (keyword grep across date-stamped files).
-

@@ -24,12 +24,14 @@ A per-message context provider that searches stored memories for information rel
 | R6 | Check existing context entries' metadata to skip memories already present — never remove, only append |
 | R7 | Validate agent-returned file paths to ensure they are within the memories/ directory |
 | R8 | Classify messages before searching: skip greetings/acknowledgments, shallow-search continuation messages (facts/preferences only), full-search new topics and past-context references |
+| R9 | For facts and preferences directories, the search agent reads the `MEMORY.md` index first to determine which files are relevant, reading only selected files — replacing Glob-based discovery; episodic search uses Glob unchanged |
+| R10 | If `MEMORY.md` is missing, empty, malformed, or contains only the header with no file entries in a facts/preferences directory, the search agent falls back to Glob-based discovery without error |
 
 ## Behaviors
 
-### Memory Search (R0, R1, R8)
+### Memory Search (R0, R1, R8, R9, R10)
 
-The provider searches stored memories by exploring the memory directories using file search tools, finding content relevant to the user's message. Runs on every message via the per-message pipeline.
+The provider searches stored memories by exploring the memory directories using file search tools, finding content relevant to the user's message. Runs on every message via the per-message pipeline. For facts and preferences, the search agent reads the `MEMORY.md` index first to determine which files are relevant, reading only selected files — falling back to Glob-based discovery if the index is unavailable.
 
 **Classification** (R8): Before searching, the search agent classifies the message into three tiers:
 - **Skip**: Purely social/transactional messages (greetings, acknowledgments, yes/no) — return `NO_RELEVANT_MEMORIES` immediately without searching
@@ -37,6 +39,8 @@ The provider searches stored memories by exploring the memory directories using 
 - **Full**: New topics, past-context references, messages with questions or requests — full search across all directories
 
 When classification is ambiguous, the agent defaults to Full search (fail-open).
+
+**Index-Based Discovery** (R9, R10): For facts and preferences directories, the search agent reads `MEMORY.md` first — a human-readable index mapping each filename to a one-line description. The agent evaluates descriptions against the user message, reads only relevant files, and returns results. If `MEMORY.md` is missing, empty, malformed, or contains only the header with no file entries, the agent falls back to Glob → Grep → Read discovery without error. Episodic search always uses Glob-based discovery (unchanged).
 
 **Acceptance Criteria**:
 - Given a user message related to previously stored memories, when the memory provider runs, then it searches memory directories for relevant files
@@ -46,6 +50,10 @@ When classification is ambiguous, the agent defaults to Full search (fail-open).
 - Given a greeting or acknowledgment message ("hi", "ok", "thanks"), when the memory provider runs, then the search agent returns `NO_RELEVANT_MEMORIES` immediately
 - Given a continuation message within an active topic, when the memory provider runs, then the search agent limits its search to facts/preferences (skipping episodic)
 - Given a message containing both a greeting and a question ("hi, remind me about my meeting"), when the memory provider runs, then the search agent performs a full search
+- Given a facts or preferences directory with `MEMORY.md` containing file entries, when the search agent searches that directory, then it reads `MEMORY.md` first, evaluates descriptions against the user message, and reads only files whose descriptions suggest relevance
+- Given `MEMORY.md` lists no relevant files, when the search agent evaluates descriptions, then it returns `NO_RELEVANT_MEMORIES` without reading individual files
+- Given `MEMORY.md` is missing, empty, malformed, or contains only a header with no file entries in a facts/preferences directory, when the search agent searches, then it falls back to Glob-based discovery without error
+- Given an episodic directory search, when the search agent searches, then it uses Glob-based discovery (unchanged)
 
 ### Per-File Context Entries (R2)
 

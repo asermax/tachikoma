@@ -48,6 +48,11 @@ The memory workspace also includes `memories/transcripts/`, a non-extractive sub
 | R27 | `build_context_summary` includes the authority hierarchy (Skills > Memory facts > Context files) in its closing instructions, informing extraction processors about information routing priorities |
 | R28 | Facts and preferences extraction prompts include a "File Consolidation at Write Time" section instructing agents to list the target directory before creating any new file, identify the broadest existing file that covers the topic, prefer updating that file over creating an incident- or date-specific sibling, and — when creation is unavoidable — use a broad topic name (project, system, tool, domain, or topic-area) so future related extracts can merge in |
 | R29 | Facts and preferences maintenance prompts include a "Cluster Consolidation" subsection instructing agents to group files by shared prefix or core topic and, when 3 or more files share a prefix/topic, merge them into a single broad-topic file using the same naming convention as extraction; episodic and context maintenance are excluded — episodic naming is date-based by design and context maintenance operates on a fixed three-file set |
+| R30 | A `MEMORY.md` index file in `memories/facts/` and `memories/preferences/` maps each filename to a one-line description in human-readable markdown, enabling efficient discovery without opening every file |
+| R31 | All write paths (extraction processors, maintenance agents) that create, modify, or delete memory files also update the relevant `MEMORY.md` index |
+| R32 | Light index maintenance (Mon–Sat) verifies index consistency — adds placeholder entries for files missing from index, removes entries for deleted files — without regenerating existing descriptions |
+| R33 | Heavy index rebuild (Sunday) regenerates the entire index from scratch using haiku description-worker sub-agents that read file contents in batches and return one-line descriptions; the orchestrator also analyzes descriptions for structural improvements (merges, renames) |
+| R34 | Bootstrap creates `MEMORY.md` on first run — header-only for empty directories, or triggers heavy rebuild for directories with existing content; idempotent on subsequent runs |
 
 ## Behaviors
 
@@ -107,6 +112,24 @@ Named files about how the user likes things — code style, communication, workf
 **Acceptance Criteria**:
 - Given no `memories/` directory exists, when the memory bootstrap hook runs, then `memories/`, `memories/episodic/`, `memories/facts/`, `memories/preferences/`, and `memories/transcripts/` are created
 - Given the directory structure already exists, when the hook runs, then nothing changes (idempotent)
+- Given no `MEMORY.md` exists in `memories/facts/` or `memories/preferences/`, when the memory bootstrap hook runs, then it creates the index — header-only for empty directories or triggers heavy rebuild for populated ones (R34)
+
+### Memory Index (R30, R31, R32, R33, R34)
+
+A `MEMORY.md` index file in `memories/facts/` and `memories/preferences/` maps each filename to a one-line description in human-readable markdown. The index enables efficient discovery without opening every file. Episodic memories are excluded — they are date-organized and searched differently.
+
+**Acceptance Criteria**:
+- Given the memory system is initialized, when `MEMORY.md` exists in `memories/facts/` or `memories/preferences/`, then each entry is a markdown link with a one-line description: `[Name](./filename.md): Description` (R30)
+- Given a facts or preferences extraction processor creates a new memory file, when the agent finishes writing, then `MEMORY.md` includes a new entry for that file (R31)
+- Given a facts or preferences extraction processor modifies an existing memory file, when the topic, focus, or scope meaningfully changes, then the agent updates the description in `MEMORY.md` (R31)
+- Given a facts or preferences extraction processor deletes a memory file, when the file is removed, then the corresponding entry is removed from `MEMORY.md` (R31)
+- Given a maintenance agent consolidates or merges files, when files are added/removed/renamed, then `MEMORY.md` reflects the changes (R31)
+- Given a light maintenance run (Mon–Sat), when it processes a directory, then it adds placeholder entries for files missing from the index and removes entries for deleted files, without regenerating existing descriptions (R32)
+- Given a heavy rebuild run (Sunday), when it processes a directory, it reads every file via haiku description-worker sub-agents, generates fresh descriptions, analyzes descriptions for structural improvements (merges, renames), and writes `MEMORY.md` from scratch (R33)
+- Given the system boots and a facts/preferences directory has files but no `MEMORY.md`, when the bootstrap hook runs, it triggers a heavy rebuild to create the index (R34)
+- Given the system boots and `MEMORY.md` already exists, when the bootstrap hook runs, it skips (idempotent) (R34)
+- Given the system boots and the facts/preferences directory is empty, when the bootstrap hook runs, it creates `MEMORY.md` with header only (R34)
+- Given the episodic memory directory, when the system runs, then no `MEMORY.md` is created or maintained in `memories/episodic/`
 
 ### Transcript Archival (R7, R8)
 
@@ -154,7 +177,7 @@ Before creating facts or preferences memory files, the forked agent reads the fo
 
 ### Scheduled Maintenance (R13, R17)
 
-Four maintenance jobs run on a shared nightly cron schedule, registered as low-priority scheduler jobs. They share the scheduler's low-priority semaphore, running one at a time by default (configurable via `[scheduler] max_concurrent_low`). Dispatch order follows registration order under CPython's FIFO semaphore: context, preferences, episodic, facts (lightest to heaviest). Each creates a fresh SDK session with scoped writer permissions — read access anywhere in the workspace, edit/write scoped to the target directory, bash restricted to utility commands (plus `rm` for memory jobs). The agent reads the target files, performs maintenance autonomously, and commits changes to git.
+Four maintenance jobs run on a shared nightly cron schedule, registered as low-priority scheduler jobs. They share the scheduler's low-priority semaphore, running one at a time by default (configurable via `[scheduler] max_concurrent_low`). Dispatch order follows registration order under CPython's FIFO semaphore: context, preferences, episodic, facts (lightest to heaviest). Each creates a fresh SDK session with scoped writer permissions — read access anywhere in the workspace, edit/write scoped to the target directory, bash restricted to utility commands (plus `rm` for memory jobs). The agent reads the target files, performs maintenance autonomously, and commits changes to git. Facts and preferences ticks also perform index maintenance — light consistency checks on weekdays (Mon–Sat) and full index rebuild with description-worker sub-agents on Sunday.
 
 **Acceptance Criteria**:
 - Given maintenance is enabled in configuration, when the system starts, then four maintenance jobs are scheduled for periodic execution (episodic, facts, preferences, context)
@@ -162,6 +185,8 @@ Four maintenance jobs run on a shared nightly cron schedule, registered as low-p
 - Given a maintenance agent completes its work, then all file changes are committed to git — staging only the affected directory
 - Given the memory store is empty or the context directory is absent, when a maintenance task runs, then it completes as a no-op with no git commit
 - Given maintenance is disabled in configuration, when the system starts, then no maintenance jobs are registered
+- Given a facts or preferences maintenance tick fires on a weekday (Mon–Sat), when it runs, then it also performs light index consistency verification (R32)
+- Given a facts or preferences maintenance tick fires on Sunday, when it runs, then it also performs a full index rebuild with description-worker sub-agents and the Agent tool (R33)
 
 ### Episodic Maintenance (R14)
 

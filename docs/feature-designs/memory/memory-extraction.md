@@ -111,13 +111,15 @@ Three **maintenance tick functions** run as scheduled jobs (DES-010), each using
 
 | Layer/Component | Responsibility | Key Decisions |
 |-----------------|----------------|---------------|
-| `src/tachikoma/memory/__init__.py` | Re-exports: `EpisodicProcessor`, `FactsProcessor`, `PreferencesProcessor`, `TranscriptArchiveProcessor`, `memory_hook`, `episodic_maintenance_tick`, `facts_maintenance_tick`, `preferences_maintenance_tick` | Clean public API for the memory package |
-| `src/tachikoma/memory/hooks.py` | `memory_hook`: creates `memories/` directory structure — `episodic/`, `facts/`, `preferences/`, and `transcripts/` subdirectories | Subsystem-owned hook pattern; registered after context hook; `transcripts/` lives alongside the extraction subdirectories because it is owned by the same package, even though it is populated by a deterministic processor |
+| `src/tachikoma/memory/__init__.py` | Re-exports: `EpisodicProcessor`, `FactsProcessor`, `PreferencesProcessor`, `TranscriptArchiveProcessor`, `MemoryContextProvider`, `memory_hook`, `episodic_maintenance_tick`, `facts_maintenance_tick`, `preferences_maintenance_tick`, `run_index_rebuild` | Clean public API for the memory package |
+| `src/tachikoma/memory/hooks.py` | `memory_hook`: creates `memories/` directory structure — `episodic/`, `facts/`, `preferences/`, and `transcripts/` subdirectories. Also ensures `MEMORY.md` index files exist in `memories/facts/` and `memories/preferences/` — creating header-only for empty directories or triggering `run_index_rebuild` for populated directories. Episodic directory is excluded from index creation. | Subsystem-owned hook pattern (DES-003); registered after context hook; `transcripts/` lives alongside the extraction subdirectories because it is owned by the same package; index creation is idempotent — skips if MEMORY.md already exists |
 | `src/tachikoma/memory/episodic.py` | `EpisodicProcessor(PromptDrivenProcessor)` + `EPISODIC_PROMPT` constant | Extends DES-004 base class; prompt co-located with processor |
-| `src/tachikoma/memory/facts.py` | `FactsProcessor(PromptDrivenProcessor)` + `FACTS_PROMPT` constant | Extends DES-004 base class; prompt co-located with processor; prompt explicitly excludes one-time events (bug fixes, security incidents, deployments) with routing to episodic memory; includes concrete negative filename examples; adds pre-write durability check ("useful in a month?"); prompt uses shared `CONTEXT_DEDUP_SECTION` (context file + skill dedup) and `STORE_PURPOSE_SECTION` (authority hierarchy) |
-| `src/tachikoma/memory/preferences.py` | `PreferencesProcessor(PromptDrivenProcessor)` + `PREFERENCES_PROMPT` constant | Extends DES-004 base class; prompt co-located with processor; prompt uses shared `CONTEXT_DEDUP_SECTION` (context file + skill dedup) and `STORE_PURPOSE_SECTION` (authority hierarchy) alongside inline AGENTS.md check |
+| `src/tachikoma/memory/facts.py` | `FactsProcessor(PromptDrivenProcessor)` + `FACTS_PROMPT` constant | Extends DES-004 base class; prompt co-located with processor; prompt explicitly excludes one-time events (bug fixes, security incidents, deployments) with routing to episodic memory; includes concrete negative filename examples; adds pre-write durability check ("useful in a month?"); prompt uses shared `CONTEXT_DEDUP_SECTION` (context file + skill dedup), `STORE_PURPOSE_SECTION` (authority hierarchy), and `INDEX_UPDATE_SECTION` (memory index updates on file create/modify/delete) |
+| `src/tachikoma/memory/preferences.py` | `PreferencesProcessor(PromptDrivenProcessor)` + `PREFERENCES_PROMPT` constant | Extends DES-004 base class; prompt co-located with processor; prompt uses shared `CONTEXT_DEDUP_SECTION` (context file + skill dedup), `STORE_PURPOSE_SECTION` (authority hierarchy), and `INDEX_UPDATE_SECTION` (memory index updates) alongside inline AGENTS.md check |
 | `src/tachikoma/memory/transcripts.py` | `TranscriptArchiveProcessor(PostProcessor)` — copies `session.transcript_path` to `memories/transcripts/<sdk-session-id>.jsonl` via `shutil.copy2` | Plain `PostProcessor` (no sub-agent — deterministic I/O); self-healing `mkdir(parents=True, exist_ok=True)` inside `process()`; all errors (`FileNotFoundError`, `OSError`) logged and swallowed so the pipeline never crashes on archival failure |
-| `src/tachikoma/memory/maintenance.py` | Three memory tick functions (`episodic_maintenance_tick`, `facts_maintenance_tick`, `preferences_maintenance_tick`), shared `_run_maintenance_tick` helper, `git_commit_memory_changes` for post-agent commits, per-type maintenance prompts. Plus `context_maintenance_tick` (standalone, targets `context/`), `git_commit_context_changes`, `CONTEXT_MAINTENANCE_PROMPT`, `_build_cross_store_manifest` helper, `CONTRADICTION_DETECTION_SECTION` shared prompt constant | Uses `query_and_consume` (shared in `post_processing.py`) with DES-004 tool scoping; follows DES-010 tick function pattern; `MAINTENANCE_BASH_HOOK` composes `UTILITY_BASH_PREFIXES` + `rm` via `make_bash_gate_hook`; `git_commit_memory_changes` runs scoped git agent per tick via `has_uncommitted_changes` gate; context tick is standalone (not via shared helper) because the path structure (`context/` vs `memories/<type>/`) differs; ticks append `STORE_PURPOSE_SECTION`, cross-store manifest, and `CONTRADICTION_DETECTION_SECTION` to their prompts |
+| `src/tachikoma/memory/index.py` | Heavy rebuild prompt constants (`DESCRIPTION_WORKER_PROMPT`, `HEAVY_INDEX_REBUILD_PROMPT`) and `run_index_rebuild(agent_defaults, memory_type)` helper | Shared between bootstrap hook and Sunday maintenance; uses `query_and_consume` with Agent tool for description workers (DES-004 sub-agent spawning); description workers are haiku sub-agents with Read tool only — no write permissions |
+| `src/tachikoma/memory/prompts.py` | Shared prompt sections: `STORE_PURPOSE_SECTION`, `CLASSIFICATION_EXAMPLES_SECTION`, `CONTEXT_DEDUP_SECTION`, `INDEX_UPDATE_SECTION`, `INDEX_LIGHT_MAINTENANCE_SECTION`. Plus `permissions_section()` helper, `EXTRACTION_TOOLS`, `EPISODIC_TOOLS`, and `extraction_allow_rules()` | `INDEX_UPDATE_SECTION` appended to facts/preferences extraction prompts — instructs agents to update `MEMORY.md` on create/modify/delete; `INDEX_LIGHT_MAINTENANCE_SECTION` appended on weekday maintenance — consistency verification without description regeneration |
+| `src/tachikoma/memory/maintenance.py` | Three memory tick functions (`episodic_maintenance_tick`, `facts_maintenance_tick`, `preferences_maintenance_tick`), shared `_run_maintenance_tick` helper, `_indexed_maintenance_tick` helper with day-of-week dispatch for facts/preferences, `git_commit_memory_changes` for post-agent commits, per-type maintenance prompts. Plus `context_maintenance_tick` (standalone, targets `context/`), `git_commit_context_changes`, `CONTEXT_MAINTENANCE_PROMPT`, `_build_cross_store_manifest` helper, `CONTRADICTION_DETECTION_SECTION` shared prompt constant | Uses `query_and_consume` (shared in `post_processing.py`) with DES-004 tool scoping; follows DES-010 tick function pattern; `MAINTENANCE_BASH_HOOK` composes `UTILITY_BASH_PREFIXES` + `rm` via `make_bash_gate_hook`; `git_commit_memory_changes` runs scoped git agent per tick via `has_uncommitted_changes` gate; context tick is standalone (not via shared helper) because the path structure (`context/` vs `memories/<type>/`) differs; ticks append `STORE_PURPOSE_SECTION`, cross-store manifest, and `CONTRADICTION_DETECTION_SECTION` to their prompts; `_indexed_maintenance_tick` dispatches light index maintenance (Mon–Sat) or heavy rebuild (Sunday) based on `datetime.now().weekday()` |
 
 ### Cross-Layer Contracts
 
@@ -182,19 +184,32 @@ EpisodicProcessor(PromptDrivenProcessor)    [DES-004]
 └── EPISODIC_PROMPT: str
 
 FactsProcessor(PromptDrivenProcessor)       [DES-004]
-└── FACTS_PROMPT: str
+└── FACTS_PROMPT: str                        [+ INDEX_UPDATE_SECTION appended]
 
 PreferencesProcessor(PromptDrivenProcessor) [DES-004]
-└── PREFERENCES_PROMPT: str
+└── PREFERENCES_PROMPT: str                  [+ INDEX_UPDATE_SECTION appended]
+```
+
+```
+MemoryIndex                                   [new module: index.py]
+├── DESCRIPTION_WORKER_PROMPT: str            [system prompt for haiku sub-agents]
+├── HEAVY_INDEX_REBUILD_PROMPT: str           [orchestrator prompt for full rebuild]
+└── run_index_rebuild(agent_defaults, memory_type) → None
+
+Shared Prompt Sections                        [prompts.py]
+├── ... existing sections ...
+├── INDEX_UPDATE_SECTION: str                 [shared: appended to facts/preferences extraction]
+└── INDEX_LIGHT_MAINTENANCE_SECTION: str      [shared: appended on weekday maintenance]
 ```
 
 ```
 MemoryMaintenance                              [DES-010 + DES-004]
 ├── episodic_maintenance_tick(settings) → None   [tiered consolidation]
-├── facts_maintenance_tick() → None              [staleness/redundancy/overlap]
-├── preferences_maintenance_tick() → None        [redundancy/overlap]
+├── facts_maintenance_tick() → None              [staleness/redundancy/overlap + index maintenance]
+├── preferences_maintenance_tick() → None        [redundancy/overlap + index maintenance]
 ├── context_maintenance_tick() → None            [staleness/redundancy/overlap/size limits]
-├── _run_maintenance_tick(type, prompt) → None   [shared composition helper]
+├── _run_maintenance_tick(type, prompt, ...) → None   [shared composition helper; accepts include_agent, extra_sections]
+├── _indexed_maintenance_tick(agent_defaults, memory_type, prompt, ...) → None  [day-of-week dispatch: Sunday → heavy rebuild + Agent tool, Mon–Sat → light maintenance]
 ├── _build_cross_store_manifest(cwd, target) → str | None  [cross-store file manifest from filesystem]
 ├── CONTRADICTION_DETECTION_SECTION: str         [shared prompt for cross-store contradiction resolution]
 ├── git_commit_memory_changes(type) → None       [scoped git add/commit]
@@ -262,12 +277,13 @@ Each processor inherits `_prompt`, `_cwd`, and the default `process()` implement
 3. Tick function builds prompt with configured thresholds (episodic)
    or fixed strategy (facts/preferences)
 4. _run_maintenance_tick assembles the final prompt:
-   a. Appends skill catalog section (if registry has skills)
-   b. Appends STORE_PURPOSE_SECTION (authority hierarchy)
-   c. Appends cross-store manifest from _build_cross_store_manifest (if other stores have files)
-   d. Appends CONTRADICTION_DETECTION_SECTION
+   a. Appends extra_sections if provided (index maintenance sections)
+   b. Appends skill catalog section (if registry has skills)
+   c. Appends STORE_PURPOSE_SECTION (authority hierarchy)
+   d. Appends cross-store manifest from _build_cross_store_manifest (if other stores have files)
+   e. Appends CONTRADICTION_DETECTION_SECTION
 5. _run_maintenance_tick calls query_and_consume with:
-   - MAINTENANCE_TOOLS (Read, Glob, Grep, Bash, Edit, Write)
+   - MAINTENANCE_TOOLS (Read, Glob, Grep, Bash, Edit, Write) + optional Agent tool
    - Scoped allow rules (Edit/Write path-scoped, Read/Glob/Grep/Bash unrestricted)
    - MAINTENANCE_BASH_HOOK (utility commands + rm)
    - processor_model for cost efficiency
@@ -276,6 +292,61 @@ Each processor inherits `_prompt`, `_cwd`, and the default `process()` implement
    via has_uncommitted_changes():
    - If changes exist: runs scoped git agent to stage and commit
    - If no changes: skips (idempotent no-op)
+```
+
+### Indexed maintenance tick flow (facts and preferences)
+
+```
+1. facts_maintenance_tick or preferences_maintenance_tick fires
+2. _indexed_maintenance_tick checks datetime.now().weekday():
+   a. Sunday (weekday == 6) → heavy path:
+      - extra_sections = HEAVY_INDEX_REBUILD_PROMPT
+      - include_agent = True (adds Agent tool for description workers)
+   b. Mon–Sat (weekday != 6) → light path:
+      - extra_sections = INDEX_LIGHT_MAINTENANCE_SECTION
+      - include_agent = False (standard MAINTENANCE_TOOLS)
+3. _run_maintenance_tick assembles prompt with extra_sections, skill catalog,
+   cross-store sections, and the appropriate tool set
+4. Agent performs normal maintenance + index-specific work
+5. git_commit_memory_changes commits any changes
+```
+
+### Heavy index rebuild flow
+
+```
+1. Triggered by bootstrap (missing MEMORY.md) or Sunday maintenance
+2. run_index_rebuild() calls query_and_consume with HEAVY_INDEX_REBUILD_PROMPT
+3. Orchestrator agent (processor_model) lists .md files via Glob
+4. If empty: write header-only MEMORY.md, stop
+5. If has files: group into batches of 5–8 (final batch may be smaller)
+6. For each batch: spawn description worker via Agent tool
+   - general-purpose agent, haiku model, Read tool only (no write permissions)
+   - Returns structured XML: <file path="./name.md">description</file>
+7. Orchestrator parses XML to collect descriptions
+8. Orchestrator analyzes for structural improvements:
+   - Merge files with similar descriptions
+   - Rename files violating naming patterns
+9. Orchestrator performs merges/renames
+10. Orchestrator writes MEMORY.md from scratch with final entries
+    Format: [Human-readable Name](./filename.md): One-line description
+    Header: # Memory Index
+    Entries sorted alphabetically by filename
+```
+
+### Light index maintenance flow (Mon–Sat)
+
+```
+1. facts/preferences maintenance tick fires on a weekday
+2. _indexed_maintenance_tick appends INDEX_LIGHT_MAINTENANCE_SECTION to prompt
+3. Agent performs normal maintenance + index consistency check:
+   a. Glob all .md files in directory (excluding MEMORY.md)
+   b. Read MEMORY.md entries
+   c. Add placeholder entries for files missing from index
+      Format: [Topic](./filename.md): Description pending update
+   d. Remove entries for deleted files
+   e. No description regeneration
+4. _run_maintenance_tick calls query_and_consume (no Agent tool on weekdays)
+5. git_commit_memory_changes commits any changes
 ```
 
 ### Context maintenance tick flow
@@ -430,6 +501,38 @@ Each processor inherits `_prompt`, `_cwd`, and the default `process()` implement
 - Con: Maintenance agents read additional files from other stores (small overhead; agents only read when they detect potential contradictions)
 - Con: Contradiction resolution effectiveness depends on LLM interpretation
 
+### Two-phase heavy rebuild with description workers
+
+**Choice**: The heavy rebuild uses a two-phase agent architecture. Lightweight description workers (custom haiku sub-agents, Read tool only — no write permissions) read batches of files and return one-line descriptions. The orchestrator agent receives all descriptions and makes structural decisions — merging files with similar descriptions, renaming files violating naming patterns, and writing the final `MEMORY.md` — without ever reading file contents directly.
+**Why**: A single agent reading all files would consume significant context on file contents, leaving less room for structural analysis. By delegating content reading to sub-agents, the orchestrator's context stays focused on descriptions and decisions. Batching files per sub-agent (5–8 per batch) balances parallelism with API overhead — typical workspaces have 10-30 files, so 2-5 sub-agent calls is efficient. Haiku model is chosen for description workers because generating a one-line summary is simple summarization work that doesn't benefit from higher-tier reasoning. The heavy rebuild logic is shared between bootstrap (first run) and Sunday maintenance via `run_index_rebuild()` in `index.py`.
+
+**Alternatives Considered:**
+- **Single agent reads all files**: Simpler (one agent call), but contaminates the orchestrator's context with file contents, reducing the quality of merge/rename decisions.
+- **One sub-agent per file**: Maximum parallelism but high API overhead and orchestration complexity. For 20 files, this means 20 sub-agent calls. Batching is more efficient with negligible latency impact.
+
+**Consequences:**
+- Pro: Orchestrator context stays clean — only descriptions, not full file contents
+- Pro: Orchestrator can make informed structural decisions (merges, renames) based on descriptions
+- Pro: Batching balances efficiency with context isolation
+- Pro: Shared rebuild logic between bootstrap and Sunday maintenance (single source of truth)
+- Con: More complex than a single-pass agent (multiple agent calls, result collection)
+- Con: Description quality depends on sub-agent accuracy (mitigated by periodic heavy rebuilds)
+
+### Day-of-week dispatch in tick functions
+
+**Choice**: Maintenance tick functions check `datetime.now().weekday()` to conditionally append light (Mon–Sat) or heavy (Sunday) index maintenance sections to their prompt, via the `_indexed_maintenance_tick` helper. The helper passes `include_agent=True` and `HEAVY_INDEX_REBUILD_PROMPT` on Sunday, or `include_agent=False` and `INDEX_LIGHT_MAINTENANCE_SECTION` on weekdays.
+**Why**: The current scheduler uses a single `CronTrigger` (`0 3 * * *`) shared by all maintenance jobs (DES-010). Adding day-of-week logic inside the tick function avoids any scheduler or configuration changes. The check is a one-liner that naturally extends the existing prompt composition pattern.
+
+**Alternatives Considered:**
+- **Two separate cron schedules**: Configure weekday (`0 3 * * 1-6`) and Sunday (`0 3 * * 0`) schedules. Rejected because it requires splitting each maintenance job into two scheduler entries, doubling the job count in `__main__.py`.
+- **Separate index-only tick**: Register a new scheduler job specifically for index maintenance. Rejected because it adds another job to the scheduler and would need its own git commit logic.
+
+**Consequences:**
+- Pro: Zero changes to scheduler, config, or `__main__.py`
+- Pro: Light/heavy logic is local to the tick function — easy to understand and test
+- Pro: Consistent with existing prompt composition pattern (append sections conditionally)
+- Con: Tied to system timezone (same as existing maintenance — acceptable)
+
 ## System Behavior
 
 ### Scenario: Normal episodic maintenance run
@@ -545,6 +648,48 @@ Each processor inherits `_prompt`, `_cwd`, and the default `process()` implement
 **Given**: A prior run already produced `memories/transcripts/<sid>.jsonl` (complete or partial)
 **When**: The processor runs again for the same session
 **Then**: `shutil.copy2` overwrites the destination. The final file matches the current source.
+
+### Scenario: Heavy index rebuild (Sunday)
+
+**Given**: Sunday maintenance run, facts directory has 15 files with some overlapping topics
+**When**: The heavy rebuild runs
+**Then**: `_indexed_maintenance_tick` detects Sunday, appends `HEAVY_INDEX_REBUILD_PROMPT` and enables the Agent tool. Orchestrator groups files into batches, spawns haiku description workers that return XML descriptions. Orchestrator detects overlapping descriptions, merges similar files, renames files violating naming patterns, and writes `MEMORY.md` from scratch with accurate entries.
+
+### Scenario: Light index maintenance (weekday)
+
+**Given**: Tuesday maintenance run, facts directory has 5 files but MEMORY.md only has 4 entries
+**When**: The maintenance tick fires
+**Then**: `_indexed_maintenance_tick` detects weekday, appends `INDEX_LIGHT_MAINTENANCE_SECTION`. Agent performs normal maintenance. Additionally detects the missing entry, adds a placeholder: `[Topic](./topic.md): Description pending update`. No descriptions are regenerated.
+
+### Scenario: Bootstrap creates index for empty directory
+
+**Given**: Fresh workspace, `memories/facts/` directory is empty
+**When**: `memory_hook` runs during startup
+**Then**: Hook creates `MEMORY.md` with header only (`# Memory Index\n`). No rebuild triggered.
+
+### Scenario: Bootstrap creates index for populated directory
+
+**Given**: Workspace with existing fact files but no `MEMORY.md`
+**When**: `memory_hook` runs during startup
+**Then**: Hook detects missing index and existing files. Triggers `run_index_rebuild()` to create the index before the first message is processed.
+
+### Scenario: Bootstrap with existing index (idempotent)
+
+**Given**: Workspace where `MEMORY.md` already exists in facts/ and preferences/
+**When**: `memory_hook` runs during startup
+**Then**: Hook checks that `MEMORY.md` exists → skips rebuild (idempotent no-op).
+
+### Scenario: Extraction updates index on file creation
+
+**Given**: A conversation about a new project, the facts extraction processor runs
+**When**: The forked agent creates `memories/facts/new-project.md`
+**Then**: Agent adds an entry to `MEMORY.md`: `[New Project](./new-project.md): Facts about the user's new-project setup`. Index is immediately in sync.
+
+### Scenario: Extraction updates index on file deletion
+
+**Given**: A facts file `old-project.md` is entirely obsolete
+**When**: The forked agent deletes the file during extraction
+**Then**: Agent removes the corresponding entry from `MEMORY.md`. Index stays in sync.
 
 ## Notes
 
