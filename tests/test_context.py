@@ -175,6 +175,63 @@ class TestRenderSystemPreamble:
         assert "halt" in result.lower()
         assert "(item:" in result  # breadcrumb format
 
+    def test_preamble_contains_episodic_naming_conventions(self) -> None:
+        """AC (R4): Preamble describes daily, weekly, monthly naming conventions."""
+        result = render_system_preamble(timezone="UTC")
+
+        assert "YYYY-MM-DD.md" in result
+        assert "YYYY-WNN.md" in result
+        assert "YYYY-MM.md" in result
+
+    def test_preamble_contains_retention_tier_descriptions(self) -> None:
+        """AC (R4): Preamble describes retention tiers without hard numbers."""
+        result = render_system_preamble(timezone="UTC")
+
+        assert "Daily" in result or "daily" in result
+        assert "recent detail" in result.lower()
+        assert "Weekly" in result or "weekly" in result
+        assert "consolidated summar" in result.lower()
+        assert "Monthly" in result or "monthly" in result
+        assert "long-term" in result.lower()
+
+    def test_preamble_contains_content_expectations(self) -> None:
+        """AC (R4): Preamble explains summaries, not transcripts."""
+        result = render_system_preamble(timezone="UTC")
+
+        assert "summaries, not transcripts" in result.lower() or (
+            "summar" in result.lower() and "transcript" in result.lower()
+        )
+
+    def test_preamble_contains_episodic_vs_facts_guidance(self) -> None:
+        """AC (R4): Preamble explains when to use episodic vs facts/preferences."""
+        result = render_system_preamble(timezone="UTC")
+
+        assert "episodic" in result.lower()
+        assert "facts" in result.lower()
+        assert "preferences" in result.lower()
+        # Should have guidance about when episodic is useful
+        assert "consult" in result.lower() or "recall" in result.lower()
+
+    def test_preamble_no_hard_retention_numbers(self) -> None:
+        """AC (R4): Preamble does not contain hard retention duration numbers."""
+        result = render_system_preamble(timezone="UTC")
+
+        # Should NOT contain numbers like "7 days", "30 days", etc.
+        # near the episodic/memories section
+        memories_section = result[result.find("## Memories"):]
+        # Check for patterns like "7 day", "30 day", "90 day", "1 week" etc.
+        assert "7 day" not in memories_section.lower()
+        assert "30 day" not in memories_section.lower()
+        assert "90 day" not in memories_section.lower()
+        assert "1 week" not in memories_section.lower()
+
+    def test_preamble_references_injected_indexes(self) -> None:
+        """AC (R1): Preamble mentions injected index for facts/preferences."""
+        result = render_system_preamble(timezone="UTC")
+
+        # Should reference injected indexes
+        assert "injected index" in result.lower() or "index below" in result.lower()
+
 
 class TestLoadContextIntegration:
     """Integration tests for load_foundational_context + build_system_prompt together.
@@ -457,6 +514,75 @@ class TestContextHook:
 
         with pytest.raises(PermissionError):
             await context_hook(ctx)
+
+    async def test_memory_indexes_appended_to_foundational_context(
+        self, ctx: BootstrapContext, settings_manager: SettingsManager
+    ) -> None:
+        """AC: memory_indexes from extras are appended to foundational_context."""
+        ws = settings_manager.settings.workspace
+        context_path = ws.path / CONTEXT_DIR_NAME
+        context_path.mkdir(parents=True)
+        (context_path / "SOUL.md").write_text("Soul content")
+        (context_path / "USER.md").write_text("User content")
+        (context_path / "AGENTS.md").write_text("Agents content")
+
+        # Pre-populate extras with memory indexes (as memory_hook would)
+        ctx.extras["memory_indexes"] = [
+            ("memory_index", "## Facts Index\n\nFacts description\n\n- [F](./f.md): desc"),
+            ("memory_index", "## Preferences Index\n\nPrefs description\n\n- [P](./p.md): desc"),
+        ]
+
+        await context_hook(ctx)
+
+        entries = ctx.extras["foundational_context"]
+        # Should have soul + user + agents + 2 memory index entries
+        assert len(entries) == 5
+        assert entries[0][0] == "soul"
+        assert entries[1][0] == "user"
+        assert entries[2][0] == "agents"
+        assert entries[3][0] == "memory_index"
+        assert entries[4][0] == "memory_index"
+
+    async def test_memory_indexes_after_context_files(
+        self, ctx: BootstrapContext, settings_manager: SettingsManager
+    ) -> None:
+        """AC: Memory indexes appear after SOUL/USER/AGENTS entries."""
+        ws = settings_manager.settings.workspace
+        context_path = ws.path / CONTEXT_DIR_NAME
+        context_path.mkdir(parents=True)
+        (context_path / "SOUL.md").write_text("Soul")
+        (context_path / "USER.md").write_text("User")
+        (context_path / "AGENTS.md").write_text("Agents")
+
+        ctx.extras["memory_indexes"] = [
+            ("memory_index", "## Facts Index\n\nFacts"),
+        ]
+
+        await context_hook(ctx)
+
+        entries = ctx.extras["foundational_context"]
+        assert len(entries) == 4
+        owners = [e[0] for e in entries]
+        assert owners == ["soul", "user", "agents", "memory_index"]
+
+    async def test_no_memory_indexes_in_extras(
+        self, ctx: BootstrapContext, settings_manager: SettingsManager
+    ) -> None:
+        """AC: No memory_indexes in extras → foundational_context has only context files."""
+        ws = settings_manager.settings.workspace
+        context_path = ws.path / CONTEXT_DIR_NAME
+        context_path.mkdir(parents=True)
+        (context_path / "SOUL.md").write_text("Soul content")
+        (context_path / "USER.md").write_text("User content")
+        (context_path / "AGENTS.md").write_text("Agents content")
+
+        # Don't set memory_indexes in extras
+        await context_hook(ctx)
+
+        entries = ctx.extras["foundational_context"]
+        assert len(entries) == 3
+        owners = [e[0] for e in entries]
+        assert owners == ["soul", "user", "agents"]
 
 
 class TestDefaultContent:

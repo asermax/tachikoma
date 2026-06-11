@@ -226,3 +226,65 @@ class TestMemoryHookIndexCreation:
         types_called = [call[0][1] for call in mock_rebuild.call_args_list]
         assert "facts" in types_called
         assert "preferences" in types_called
+
+
+class TestMemoryHookStaticIndexInjection:
+    """Tests for memory_hook stashing formatted indexes in ctx.extras."""
+
+    async def test_stashes_memory_indexes_with_populated_files(
+        self, ctx: BootstrapContext, settings_manager: SettingsManager
+    ) -> None:
+        """AC: Populated MEMORY.md files → entries in ctx.extras["memory_indexes"]."""
+        workspace_path = settings_manager.settings.workspace.path
+        facts_dir = workspace_path / "memories" / "facts"
+        prefs_dir = workspace_path / "memories" / "preferences"
+        facts_dir.mkdir(parents=True)
+        prefs_dir.mkdir(parents=True)
+
+        # Pre-create MEMORY.md files (simulating existing index)
+        (facts_dir / "MEMORY.md").write_text(
+            "# Memory Index\n\n[Fact](./fact.md): A fact\n"
+        )
+        (prefs_dir / "MEMORY.md").write_text(
+            "# Memory Index\n\n[Pref](./pref.md): A preference\n"
+        )
+        # Create the referenced files so the directory is non-empty
+        (facts_dir / "fact.md").write_text("# A fact\n")
+        (prefs_dir / "pref.md").write_text("# A pref\n")
+
+        await memory_hook(ctx)
+
+        assert "memory_indexes" in ctx.extras
+        indexes = ctx.extras["memory_indexes"]
+        assert len(indexes) == 2
+        tags = [tag for tag, _ in indexes]
+        assert all(t == "memory_index" for t in tags)
+
+    async def test_no_memory_files_empty_list_in_extras(
+        self, ctx: BootstrapContext, settings_manager: SettingsManager
+    ) -> None:
+        """AC: No MEMORY.md files (header-only indexes) → empty list in extras."""
+        await memory_hook(ctx)
+
+        assert "memory_indexes" in ctx.extras
+        # Newly created MEMORY.md files are header-only → format_memory_index returns None
+        assert ctx.extras["memory_indexes"] == []
+
+    async def test_empty_memory_md_files_empty_extras(
+        self, ctx: BootstrapContext, settings_manager: SettingsManager
+    ) -> None:
+        """AC: Empty MEMORY.md files → empty list in extras."""
+        workspace_path = settings_manager.settings.workspace.path
+        facts_dir = workspace_path / "memories" / "facts"
+        prefs_dir = workspace_path / "memories" / "preferences"
+        facts_dir.mkdir(parents=True)
+        prefs_dir.mkdir(parents=True)
+
+        # Pre-create header-only MEMORY.md files
+        (facts_dir / "MEMORY.md").write_text("# Memory Index\n")
+        (prefs_dir / "MEMORY.md").write_text("# Memory Index\n")
+
+        await memory_hook(ctx)
+
+        assert "memory_indexes" in ctx.extras
+        assert ctx.extras["memory_indexes"] == []

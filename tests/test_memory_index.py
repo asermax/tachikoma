@@ -14,6 +14,8 @@ from tachikoma.memory.facts import FACTS_PROMPT
 from tachikoma.memory.index import (
     DESCRIPTION_WORKER_PROMPT,
     HEAVY_INDEX_REBUILD_PROMPT,
+    format_memory_index,
+    load_memory_indexes,
     run_index_rebuild,
 )
 from tachikoma.memory.preferences import PREFERENCES_PROMPT
@@ -329,3 +331,199 @@ class TestIndexModuleExport:
     def test_in_all(self) -> None:
         """AC: run_index_rebuild is listed in __all__."""
         assert "run_index_rebuild" in tachikoma.memory.__all__
+
+
+# ---------------------------------------------------------------------------
+# format_memory_index
+# ---------------------------------------------------------------------------
+
+
+class TestFormatMemoryIndex:
+    """Tests for the format_memory_index helper."""
+
+    def test_valid_entries_produce_formatted_section(self) -> None:
+        """AC: Valid entries produce a section with header, description, and bullets."""
+        raw = (
+            "# Memory Index\n\n"
+            "[Restaurants](./restaurants.md): Favorite restaurants and food preferences\n"
+            "[Coding Style](./coding-style.md): Preferred coding conventions\n"
+        )
+        result = format_memory_index("facts", raw)
+
+        assert result is not None
+        assert "## Facts Index" in result
+        assert (
+            "- [Restaurants](./restaurants.md): Favorite restaurants and food preferences"
+            in result
+        )
+        assert "- [Coding Style](./coding-style.md): Preferred coding conventions" in result
+        assert "Stable reference information" in result
+
+    def test_empty_content_returns_none(self) -> None:
+        """AC: Empty content returns None."""
+        result = format_memory_index("facts", "")
+        assert result is None
+
+    def test_header_only_returns_none(self) -> None:
+        """AC: Header-only content (no entries) returns None."""
+        result = format_memory_index("facts", "# Memory Index\n")
+        assert result is None
+
+    def test_facts_type_description(self) -> None:
+        """AC: facts type includes the correct description."""
+        raw = "[Test](./test.md): A test entry\n"
+        result = format_memory_index("facts", raw)
+        assert result is not None
+        assert "Stable reference information" in result
+
+    def test_preferences_type_description(self) -> None:
+        """AC: preferences type includes the correct description."""
+        raw = "[Test](./test.md): A test entry\n"
+        result = format_memory_index("preferences", raw)
+        assert result is not None
+        assert "Subjective choices" in result
+
+    def test_mixed_valid_malformed_includes_only_valid(self) -> None:
+        """AC: Mixed entries include only well-formed ones; malformed excluded."""
+        raw = (
+            "# Memory Index\n\n"
+            "[Valid](./valid.md): A valid entry\n"
+            "[Missing Colon](./no-colon.md) No colon separator\n"
+            "Just a random line\n"
+            "[Also Valid](./also-valid.md): Another good one\n"
+        )
+        result = format_memory_index("facts", raw)
+
+        assert result is not None
+        assert "- [Valid](./valid.md): A valid entry" in result
+        assert "- [Also Valid](./also-valid.md): Another good one" in result
+        # Malformed entries should NOT appear in the output
+        assert "Missing Colon" not in result
+        assert "Just a random line" not in result
+
+    def test_all_malformed_returns_none(self) -> None:
+        """AC: All malformed entries returns None."""
+        raw = (
+            "# Memory Index\n\n"
+            "No entries here\n"
+            "Just text\n"
+            "[Bad format](missing-colon)\n"
+        )
+        result = format_memory_index("facts", raw)
+        assert result is None
+
+    def test_unknown_type_uses_fallback_description(self) -> None:
+        """AC: Unknown memory type uses a fallback description."""
+        raw = "[Test](./test.md): A test entry\n"
+        result = format_memory_index("unknown_type", raw)
+        assert result is not None
+        assert "## Unknown_Type Index" in result
+        assert "Browse the entries below" in result
+
+    def test_entry_format_preserved_in_output(self) -> None:
+        """AC: Well-formed entries are preserved as-is in the output bullets."""
+        raw = (
+            "[API Design](./api-design.md): API architecture decisions\n"
+            "[Work Info](./work-info.md): Job details and schedule\n"
+        )
+        result = format_memory_index("facts", raw)
+        assert result is not None
+        assert "- [API Design](./api-design.md): API architecture decisions" in result
+        assert "- [Work Info](./work-info.md): Job details and schedule" in result
+
+
+# ---------------------------------------------------------------------------
+# load_memory_indexes
+# ---------------------------------------------------------------------------
+
+
+class TestLoadMemoryIndexes:
+    """Tests for the load_memory_indexes helper."""
+
+    def test_both_files_present_returns_two_tuples(self, tmp_path: Path) -> None:
+        """AC: Both facts and preferences MEMORY.md present → two tuples."""
+        facts_dir = tmp_path / "memories" / "facts"
+        prefs_dir = tmp_path / "memories" / "preferences"
+        facts_dir.mkdir(parents=True)
+        prefs_dir.mkdir(parents=True)
+
+        (facts_dir / "MEMORY.md").write_text(
+            "# Memory Index\n\n[Fact](./fact.md): A fact\n"
+        )
+        (prefs_dir / "MEMORY.md").write_text(
+            "# Memory Index\n\n[Pref](./pref.md): A preference\n"
+        )
+
+        result = load_memory_indexes(tmp_path)
+
+        assert len(result) == 2
+        assert all(tag == "memory_index" for tag, _ in result)
+
+    def test_one_file_missing_returns_one_tuple(self, tmp_path: Path) -> None:
+        """AC: One file missing → one tuple, no error."""
+        facts_dir = tmp_path / "memories" / "facts"
+        facts_dir.mkdir(parents=True)
+        (facts_dir / "MEMORY.md").write_text(
+            "# Memory Index\n\n[Fact](./fact.md): A fact\n"
+        )
+        # preferences dir missing entirely
+
+        result = load_memory_indexes(tmp_path)
+
+        assert len(result) == 1
+        assert result[0][0] == "memory_index"
+        assert "## Facts Index" in result[0][1]
+
+    def test_both_files_missing_returns_empty(self, tmp_path: Path) -> None:
+        """AC: Both files missing → empty list."""
+        # No memories directory at all
+        result = load_memory_indexes(tmp_path)
+        assert result == []
+
+    def test_one_file_empty_skipped(self, tmp_path: Path) -> None:
+        """AC: One file empty (header-only) → skipped, other included."""
+        facts_dir = tmp_path / "memories" / "facts"
+        prefs_dir = tmp_path / "memories" / "preferences"
+        facts_dir.mkdir(parents=True)
+        prefs_dir.mkdir(parents=True)
+
+        (facts_dir / "MEMORY.md").write_text("# Memory Index\n")  # header-only
+        (prefs_dir / "MEMORY.md").write_text(
+            "# Memory Index\n\n[Pref](./pref.md): A preference\n"
+        )
+
+        result = load_memory_indexes(tmp_path)
+
+        assert len(result) == 1
+        assert "## Preferences Index" in result[0][1]
+
+    def test_owner_tag_is_memory_index(self, tmp_path: Path) -> None:
+        """AC: All returned tuples use 'memory_index' as the owner tag."""
+        facts_dir = tmp_path / "memories" / "facts"
+        prefs_dir = tmp_path / "memories" / "preferences"
+        facts_dir.mkdir(parents=True)
+        prefs_dir.mkdir(parents=True)
+
+        (facts_dir / "MEMORY.md").write_text(
+            "# Memory Index\n\n[Fact](./fact.md): A fact\n"
+        )
+        (prefs_dir / "MEMORY.md").write_text(
+            "# Memory Index\n\n[Pref](./pref.md): A pref\n"
+        )
+
+        result = load_memory_indexes(tmp_path)
+
+        for tag, _ in result:
+            assert tag == "memory_index"
+
+    def test_malformed_file_skipped(self, tmp_path: Path) -> None:
+        """AC: File with only malformed entries → skipped (returns None from format)."""
+        facts_dir = tmp_path / "memories" / "facts"
+        facts_dir.mkdir(parents=True)
+        (facts_dir / "MEMORY.md").write_text(
+            "# Memory Index\n\nNo valid entries here\n"
+        )
+
+        result = load_memory_indexes(tmp_path)
+
+        assert result == []
