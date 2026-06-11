@@ -676,12 +676,10 @@ class BackgroundTaskExecutor:
             )
 
             # Inject memory indexes directly (no provider class needed)
-            memory_indexes = load_memory_indexes(self._cwd)
-            memory_results = [
+            per_message_results.extend(
                 ContextResult(tag=tag, content=content)
-                for tag, content in memory_indexes
-            ]
-            per_message_results.extend(memory_results)
+                for tag, content in load_memory_indexes(self._cwd)
+            )
 
             all_results = (results or []) + per_message_results
 
