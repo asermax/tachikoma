@@ -553,10 +553,3 @@ python ${CLAUDE_PLUGIN_ROOT}/scripts/deltas.py priority list --level 1        # 
 **Complexity**: Easy
 **Description**: Allow plugins to declare scheduled ticks in their manifest that run on a cron schedule alongside built-in maintenance jobs. Plugin-declared ticks specify a tick function and an optional schedule override in the manifest, and are governed by the same maintenance enabled/schedule configuration as built-in ticks. During plugin loading, declared ticks are registered with the central scheduler and run automatically when the schedule fires.
 
-### DLT-177: Replace agentic memory search with static index injection
-**Status**: ✓ Implementation
-**Depends on**: None
-**Priority**: 2 (High)
-**Complexity**: Medium
-**Description**: The memory context provider runs an Opus sub-agent on every incoming message to classify relevance and search facts/preferences — an expensive approach that costs an Opus round-trip even for social messages and may miss or misload relevant memories. This delta replaces that agentic search for facts and preferences with static injection: the memory file indexes (MEMORY.md files in the facts and preferences directories) are read and embedded directly into the system prompt as navigable reference sections, with instructions for the agent to fetch relevant files on demand via Read. The episodic search path remains agentic since episodic files are numerous and require snippet extraction. Additionally, the system preamble's memory section is expanded with proper documentation about episodic memories — file naming conventions (daily `YYYY-MM-DD.md`, weekly `YYYY-WNN.md`, monthly `YYYY-MM.md`), retention tier structure, content expectations (summaries, not transcripts), and guidance on when consulting episodic context is useful versus when facts/preferences suffice.
-
