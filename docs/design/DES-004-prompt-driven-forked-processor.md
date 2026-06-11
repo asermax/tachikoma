@@ -44,7 +44,7 @@ Allow rules use Claude Code's permission rule syntax with absolute paths (via `a
 | Tier | Tools | Allow Rules | Example |
 |------|-------|-------------|---------|
 | **Tool-less** | `tools=[]` | None needed | BoundaryDetector, SummaryProcessor |
-| **Read-only** | `Read, Glob, Grep` | Path-scoped Read + unrestricted Glob/Grep | MemoryContextProvider |
+| **Read-only** | `Read, Glob, Grep` | Path-scoped Read + unrestricted Glob/Grep | SkillsContextProvider |
 | **Scoped writer** | `Read, Glob, Grep, Bash, Edit, Write` | Path-scoped Read/Edit/Write + unrestricted Glob/Grep/Bash + PreToolUse hook (`UTILITY_BASH_HOOK`) gating Bash to read-only inspection prefixes (`ls `, `find `, `file `, `echo `, `date `, `cat `, `grep `, `head `, `sort `, `tail `, `wc `, `stat `, `cd`, `pwd`) | Memory processors, CoreContextProcessor |
 | **Git agent** | `Read, Glob, Grep, Bash, Edit, Write` | Unrestricted Read/Glob/Grep/Edit/Write + `Bash(git *)` + PreToolUse hook gating Bash to `git ` plus the same utility inspection prefixes as scoped writer | GitProcessor, ProjectsProcessor |
 
@@ -96,7 +96,7 @@ Sub-agents fall into three roles, each driven by a dedicated config setting on `
 
 | Role | Sub-agents |
 |------|------------|
-| Searcher | `MemoryContextProvider`, `SkillsContextProvider`, `BoundaryDetector` |
+| Searcher | `SkillsContextProvider`, `BoundaryDetector` |
 | Processor | `EpisodicProcessor`, `FactsProcessor`, `PreferencesProcessor`, `CoreContextProcessor`, `SummaryProcessor` (per-message), `GitProcessor` (via `query_and_consume`), `ProjectsProcessor` (submodule commits), `_agent_rebase` in `git/sync.py` |
 | Classifier | task evaluator in `tasks/executor.py` |
 

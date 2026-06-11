@@ -7,7 +7,7 @@
 
 Prompts that reference workspace file paths must use the `$WORKSPACE` placeholder instead of relative paths. The placeholder is replaced with the absolute workspace path (`str(agent_defaults.cwd)`) before the prompt is sent to the agent. This ensures file operations use absolute paths regardless of the agent's runtime working directory.
 
-For `PromptDrivenProcessor` subclasses, the replacement happens automatically in `__init__()`. For other callers (e.g., `GitProcessor`, `MemoryContextProvider`), the replacement is done inline at the call site before the prompt is passed to the SDK.
+For `PromptDrivenProcessor` subclasses, the replacement happens automatically in `__init__()`. For other callers (e.g., `GitProcessor`), the replacement is done inline at the call site before the prompt is passed to the SDK.
 
 ## Rationale
 
