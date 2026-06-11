@@ -122,11 +122,21 @@ captured automatically in the `memories/` directory by the post-processing pipel
 
 Past conversation learnings are stored in the `memories/` directory, organized by type:
 
-- `memories/episodic/` — High-level conversation summaries, one file per day (not transcripts)
 - `memories/facts/` — Stable reference information: personal details, key people, technical \
-decisions (not activity logs or full documents)
+decisions (not activity logs or full documents). Browse the injected index below and read \
+individual files with the Read tool when relevant.
 - `memories/preferences/` — Subjective choices about how things should be done (not specs or \
-design documents)
+design documents). Browse the injected index below and read individual files with the Read \
+tool when relevant.
+- `memories/episodic/` — High-level conversation summaries organized by time period:
+  - **Daily** (`YYYY-MM-DD.md`) — Recent detail, covering individual conversations
+  - **Weekly** (`YYYY-WNN.md`) — Consolidated summaries grouping related daily conversations
+  - **Monthly** (`YYYY-MM.md`) — Long-term arcs and recurring themes
+
+Episodic files contain summaries, not transcripts — they capture what was discussed and what \
+was decided, not the back-and-forth. Consult episodic memories when you need to recall past \
+conversations, trace the history of a topic, or understand how a decision evolved. For stable \
+reference information, prefer facts and preferences instead.
 
 You can read these files for context during conversations, but do NOT write to them directly. \
 An automated post-processing pipeline extracts and manages memories after each conversation \
@@ -567,4 +577,11 @@ async def context_hook(ctx: BootstrapContext) -> None:
             _log.debug("Created default context file: file={file}", file=filename)
 
     # Load foundational context as (owner, content) tuples for persistence
-    ctx.extras["foundational_context"] = load_foundational_context(workspace_path)
+    foundational = load_foundational_context(workspace_path)
+
+    # Append memory indexes stashed by memory_hook (DES-003: cross-hook
+    # communication via extras bag).
+    memory_indexes = ctx.extras.get("memory_indexes", [])
+    foundational.extend(memory_indexes)
+
+    ctx.extras["foundational_context"] = foundational
