@@ -11,13 +11,9 @@ from loguru import logger
 
 from tachikoma.agent_defaults import agent_defaults_from_settings
 from tachikoma.bootstrap import BootstrapContext
-from tachikoma.memory.index import load_memory_indexes, run_index_rebuild
+from tachikoma.memory.index import _INDEXABLE_TYPES, load_memory_indexes, run_index_rebuild
 
 _log = logger.bind(component="memory")
-
-# Indexable memory types — directories that should have a MEMORY.md index.
-# Episodic memories are excluded (date-organized, searched differently).
-_INDEXABLE_TYPES = ("facts", "preferences")
 
 
 async def memory_hook(ctx: BootstrapContext) -> None:

@@ -62,13 +62,13 @@ def format_memory_index(memory_type: str, raw_content: str) -> str | None:
         Formatted section string, or ``None`` when the file has no usable
         entries.
     """
-    # Find all well-formed entries
-    entries = _INDEX_ENTRY_RE.findall(raw_content)
-    if not entries:
-        return None
+    # Single pass: collect well-formed matches and detect malformed entries.
+    matched_lines: list[str] = []
+    for match in _INDEX_ENTRY_RE.finditer(raw_content):
+        matched_lines.append(match.group(0))
 
-    # Reconstruct well-formed entry lines from parsed groups
-    lines = [f"[{name}](./{path}): {desc}" for name, path, desc in entries]
+    if not matched_lines:
+        return None
 
     # Detect lines that look like entry attempts but don't parse correctly.
     for line in raw_content.splitlines():
@@ -93,7 +93,7 @@ def format_memory_index(memory_type: str, raw_content: str) -> str | None:
     return (
         f"## {memory_type.title()} Index\n\n"
         f"{description}\n\n"
-        + "\n".join(f"- {line}" for line in lines)
+        + "\n".join(f"- {line}" for line in matched_lines)
     )
 
 
