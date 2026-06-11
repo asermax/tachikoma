@@ -130,6 +130,7 @@ A `MEMORY.md` index file in `memories/facts/` and `memories/preferences/` maps e
 - Given the system boots and `MEMORY.md` already exists, when the bootstrap hook runs, it skips (idempotent) (R34)
 - Given the system boots and the facts/preferences directory is empty, when the bootstrap hook runs, it creates `MEMORY.md` with header only (R34)
 - Given the episodic memory directory, when the system runs, then no `MEMORY.md` is created or maintained in `memories/episodic/`
+- Given the system boots with valid MEMORY.md files in facts and/or preferences directories, when the bootstrap completes, then the indexes are loaded and injected into foundational context for use by the agent (see memory-context-retrieval)
 
 ### Transcript Archival (R7, R8)
 

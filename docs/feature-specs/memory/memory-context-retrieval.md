@@ -4,104 +4,61 @@
 
 ## Overview
 
-A per-message context provider that searches stored memories for information relevant to the current user message. Runs on every message using the per-message pre-processing pipeline. Receives the session's summary and last assistant exchange for conversation context, enabling informed relevance decisions. On the first message (no summary yet), it operates without conversation context. Returns one context entry per relevant memory file with metadata identifying the file path for deduplication. Embedding-based semantic search is a potential future upgrade to the retrieval mechanism.
+Static injection of facts and preferences memory indexes into foundational context at startup. The `memory_hook` reads `MEMORY.md` index files from the facts and preferences directories during bootstrap, formats them into navigable sections, and stashes them in the bootstrap extras bag. The `context_hook` appends them to the foundational context list, where they become part of the system prompt as `<memory_index>` sections. The agent browses these indexes and reads individual files on demand via the Read tool when entries suggest relevance. Episodic memory search is not included — deferred to a future MCP tool.
 
 ## User Stories
 
-- As a user, I want my assistant to automatically recall relevant past conversations, known facts, and preferences so that responses are contextually aware without me having to repeat myself
-- As a user, I want relevant memories to surface throughout the conversation as the topic evolves, not just at the start
+- As a user, I want my stored facts and preferences automatically available to the assistant on every message so that responses are contextually aware without me having to repeat myself
+- As the system, I need memory context loading to be fast and reliable so that every session starts with full knowledge of stored facts and preferences
 
 ## Requirements
 
 | ID | Requirement |
 |----|-------------|
-| R0 | Search stored memories for information relevant to the current user message, on every message |
-| R1 | Use an agent-based approach with file search tools to explore stored memory directories |
-| R2 | Return one context entry per relevant memory file, each with the "memories" tag and metadata identifying the file path |
-| R3 | If no relevant memories are found (including when directories are empty), return no context without error |
-| R4 | Errors during memory search are caught and logged — never propagated to block the message |
-| R5 | Receive the session's summary and last exchange as conversation context for informed relevance decisions |
-| R6 | Check existing context entries' metadata to skip memories already present — never remove, only append |
-| R7 | Validate agent-returned file paths to ensure they are within the memories/ directory |
-| R8 | Classify messages before searching: skip greetings/acknowledgments, shallow-search continuation messages (facts/preferences only), full-search new topics and past-context references |
-| R9 | For facts and preferences directories, the search agent reads the `MEMORY.md` index first to determine which files are relevant, reading only selected files — replacing Glob-based discovery; episodic search uses Glob unchanged |
-| R10 | If `MEMORY.md` is missing, empty, malformed, or contains only the header with no file entries in a facts/preferences directory, the search agent falls back to Glob-based discovery without error |
+| R0 | Facts and preferences MEMORY.md indexes are loaded at startup and injected as foundational context, available on every message without per-message processing |
+| R1 | Agent fetches individual fact/preference files on demand via Read when the index suggests relevance |
+| R2 | Episodic memory search is deferred to a future tool (DLT-105 scope) — no episodic injection |
+| R3 | System preamble expanded with general episodic memory documentation (naming conventions, retention tiers, content expectations, when to consult) |
+| R4 | Error handling preserved — missing/empty/malformed MEMORY.md files don't break startup or context loading |
+| R5 | Background tasks also receive memory indexes in their preprocessing context |
 
 ## Behaviors
 
-### Memory Search (R0, R1, R8, R9, R10)
+### Static Index Injection (R0, R4)
 
-The provider searches stored memories by exploring the memory directories using file search tools, finding content relevant to the user's message. Runs on every message via the per-message pipeline. For facts and preferences, the search agent reads the `MEMORY.md` index first to determine which files are relevant, reading only selected files — falling back to Glob-based discovery if the index is unavailable.
-
-**Classification** (R8): Before searching, the search agent classifies the message into three tiers:
-- **Skip**: Purely social/transactional messages (greetings, acknowledgments, yes/no) — return `NO_RELEVANT_MEMORIES` immediately without searching
-- **Shallow**: Continuation messages within an active topic (when conversation context is present) — search only facts/preferences, skip episodic
-- **Full**: New topics, past-context references, messages with questions or requests — full search across all directories
-
-When classification is ambiguous, the agent defaults to Full search (fail-open).
-
-**Index-Based Discovery** (R9, R10): For facts and preferences directories, the search agent reads `MEMORY.md` first — a human-readable index mapping each filename to a one-line description. The agent evaluates descriptions against the user message, reads only relevant files, and returns results. If `MEMORY.md` is missing, empty, malformed, or contains only the header with no file entries, the agent falls back to Glob → Grep → Read discovery without error. Episodic search always uses Glob-based discovery (unchanged).
+The `memory_hook` reads both `memories/facts/MEMORY.md` and `memories/preferences/MEMORY.md` during bootstrap, formats each into a navigable section with a type description and usage instructions, and stashes the results in `ctx.extras["memory_indexes"]`. The `context_hook` reads from there and appends to the foundational context list. Missing or empty files are skipped silently. Malformed entries within a valid file are skipped silently (logged at debug level); well-formed entries are still included.
 
 **Acceptance Criteria**:
-- Given a user message related to previously stored memories, when the memory provider runs, then it searches memory directories for relevant files
-- Given the memory provider runs, when it searches, then it explores `memories/episodic/`, `memories/facts/`, and `memories/preferences/` directories
-- Given the memory provider runs on every message, when a follow-up message introduces a new topic, then it searches for memories relevant to the new topic
-- Given the memory provider runs on every message, when a follow-up message continues the same topic, then the agent can decide no new memories are needed
-- Given a greeting or acknowledgment message ("hi", "ok", "thanks"), when the memory provider runs, then the search agent returns `NO_RELEVANT_MEMORIES` immediately
-- Given a continuation message within an active topic, when the memory provider runs, then the search agent limits its search to facts/preferences (skipping episodic)
-- Given a message containing both a greeting and a question ("hi, remind me about my meeting"), when the memory provider runs, then the search agent performs a full search
-- Given a facts or preferences directory with `MEMORY.md` containing file entries, when the search agent searches that directory, then it reads `MEMORY.md` first, evaluates descriptions against the user message, and reads only files whose descriptions suggest relevance
-- Given `MEMORY.md` lists no relevant files, when the search agent evaluates descriptions, then it returns `NO_RELEVANT_MEMORIES` without reading individual files
-- Given `MEMORY.md` is missing, empty, malformed, or contains only a header with no file entries in a facts/preferences directory, when the search agent searches, then it falls back to Glob-based discovery without error
-- Given an episodic directory search, when the search agent searches, then it uses Glob-based discovery (unchanged)
+- Given a workspace with facts and preferences directories containing MEMORY.md files, when the system starts up, then both index files are read and injected as sections in the foundational context
+- Given the injected index sections, when the agent receives a message, then it sees navigable lists of memory files with one-line descriptions and file paths
+- Given a workspace where the facts or preferences directory has no MEMORY.md file, when the system starts up, then the injection is skipped for that directory without error or warning
+- Given a workspace where MEMORY.md exists but is empty or contains only a header with no file entries, when the system starts up, then the injection is skipped for that directory without error
+- Given a workspace with no memories directory at all, when the system starts up, then no memory index sections are injected and startup proceeds normally
+- Given a MEMORY.md file containing entries that don't match the expected format, when the system reads it at startup, then well-formed entries are included and malformed entries are skipped silently
 
-### Per-File Context Entries (R2)
+### On-Demand File Reading (R1)
 
-Results are returned as one context entry per relevant memory file, each with the "memories" tag and metadata identifying the file path. For facts and preferences files, the provider reads the full file from disk. For episodic files (which can be very large), the search agent extracts only the relevant snippet, and the entry includes a source path reference so the main agent can read more if needed.
+The agent sees the indexes as browseable lists with one-line descriptions and file paths. Each injected section includes usage instructions describing how to navigate the index. When the agent determines a file may be relevant to the current conversation, it reads the full content via the Read tool.
 
 **Acceptance Criteria**:
-- Given the memory provider finds N relevant memories, when it returns results, then it produces N individual context entries, each with tag "memories" and metadata `{"memory_path": "<path>"}`
-- Given a facts or preferences memory file, then the context entry contains the full file content
-- Given an episodic memory file, then the context entry contains the agent-extracted relevant snippet with a `[Source: path]` header referencing the original file
+- Given the agent determines a fact or preference file is relevant based on the index, when it needs the full content, then it reads the file via the Read tool
+- Given each injected index section, then it includes a description of the memory type and instructions for browsing entries and reading relevant files
 
-### No Relevant Memories (R3)
+### System Preamble (R3)
 
-When no relevant memories exist, the provider returns nothing and the message proceeds unmodified.
-
-**Acceptance Criteria**:
-- Given a user message with no related memories, when the memory provider runs, then it returns no context (None)
-- Given the memories directory is empty, when the memory provider runs, then it returns no context without error
-
-### Error Handling (R4)
-
-Provider errors are isolated — they never block the conversation.
+The existing `## Memories` section in the system preamble is expanded with general documentation about episodic memory. The expansion covers naming conventions (daily `YYYY-MM-DD.md`, weekly `YYYY-WNN.md`, monthly `YYYY-MM.md`), retention tier descriptions (daily = recent detail, weekly = consolidated summaries, monthly = long-term arcs), content expectations (summaries not transcripts), and guidance on when consulting episodic context is useful versus when facts/preferences suffice. No hard retention duration numbers are included.
 
 **Acceptance Criteria**:
-- Given the memory search agent fails (e.g., SDK connection error, timeout), when the provider catches the error, then it logs the failure and returns None
-- Given the memory search agent returns an `is_error=True` result for any reason, when the provider processes the response, then it logs a warning and returns None without populating any entries
+- Given the system preamble's Memories subsection, when it is rendered, then it includes episodic memory naming conventions (daily, weekly, monthly)
+- Given the system preamble's Memories subsection, when it is rendered, then it describes retention tiers at a general level
+- Given the system preamble's Memories subsection, when it is rendered, then it explains content expectations (summaries, not transcripts)
+- Given the system preamble's Memories subsection, when it is rendered, then it provides guidance on when consulting episodic context is useful versus when facts/preferences suffice
+- Given the system preamble's Memories subsection, then it does not include specific retention duration numbers
 
-### Conversation Context (R5)
+### Background Task Injection (R5)
 
-When the session has a summary and last exchange, the provider includes them in the search prompt so the agent can make informed decisions about whether new memories are needed.
-
-**Acceptance Criteria**:
-- Given a session with a summary and last exchange, when the memory provider runs, then the search prompt includes a "## Conversation Context" section with both
-- Given the first message of a new session (no summary yet), when the memory provider runs, then no conversation context section appears in the prompt
-- Given a session with a summary but no last exchange, when the memory provider runs, then the prompt includes the summary but omits the "Last assistant response" subsection
-
-### Deduplication (R6)
-
-Already-loaded memories are skipped to prevent duplicate injection.
+Background tasks receive memory indexes through their preprocessing step, so the task prompt includes the same navigable index sections available to the main agent.
 
 **Acceptance Criteria**:
-- Given a memory file is already in existing context entries (matched by metadata), when the provider processes results, then it skips that memory
-- Given new memory entries are produced, when they are persisted, then they are appended alongside existing entries — no existing entries are removed
-- Given there are no existing memory entries, when the provider returns results, then all returned memories are added
-
-### Path Validation (R7)
-
-Agent-returned file paths are validated to prevent reading files outside the memory directory.
-
-**Acceptance Criteria**:
-- Given the agent returns a file path outside the memories/ directory, when the provider validates it, then it rejects the path and logs a warning
-- Given the agent returns a path with directory traversal (e.g., `../`), when the provider resolves it, then it rejects the path
+- Given a background task being prepared for execution, when preprocessing runs, then the task prompt includes formatted memory index sections
+- Given a background task with missing MEMORY.md files, when preprocessing runs, then the task proceeds with partial or no memory context without error

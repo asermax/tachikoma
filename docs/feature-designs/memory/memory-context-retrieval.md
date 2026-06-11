@@ -7,52 +7,30 @@
 
 ## Purpose
 
-This document explains the design rationale for the memory context provider: how it searches stored memories using an agent-based approach on every message, how it uses explicit conversation context (session summary + last exchange) for informed relevance decisions, and how it integrates with the per-message pre-processing pipeline. For facts and preferences directories, the search agent reads `MEMORY.md` first — a human-readable index that maps each filename to a one-line description — evaluating descriptions against the user message and reading only relevant files. If `MEMORY.md` is missing or empty, the agent falls back to Glob-based discovery. Episodic search uses Glob unchanged.
-
-For the pre-processing pipeline infrastructure, see the [pre-processing pipeline design](../agent/pre-processing-pipeline.md).
+This document explains the design rationale for static memory index injection: how facts and preferences `MEMORY.md` indexes are read at startup, formatted into navigable sections, and injected into foundational context so the agent always has a browseable index of stored memories without per-message processing.
 
 ## Problem Context
 
-Conversations are enriched when the agent knows about past interactions, user facts, and preferences. The memory context provider searches stored memories and returns relevant content so the main agent can reference them naturally. This is the retrieval counterpart to memory extraction — extraction stores memories after conversations, retrieval injects them before.
+The previous approach ran an Opus sub-agent on every incoming message to classify relevance and search memories — an expensive approach that cost an Opus round-trip per message. Facts and preferences directories already contain `MEMORY.md` index files maintained by the memory subsystem, providing a stable, human-readable navigable entry point that can be injected directly as static context.
 
 **Constraints:**
-- Memory retrieval uses the existing file-based memory storage (episodic, facts, preferences)
-- The provider must be domain-agnostic from the pipeline's perspective — it implements the `MessageContextProvider` ABC
-- Provider failures must never block the conversation
-- The workspace directory (`cwd`) is the root from which the agent navigates to discover the memory directory structure
-- Conversation context (session summary + last exchange) is provided by the pipeline — the first message always operates without it
+- Facts and preferences directories already contain `MEMORY.md` index files maintained by the memory subsystem (bootstrap hook + maintenance ticks)
+- The `MEMORY.md` format (`[Name](./path.md): description`) is stable and human-readable
+- Background tasks also consume memory context and need the same indexes
+- The system preamble already has a `## Memories` section that can be expanded with episodic documentation
+- Episodic memory search is deferred to a future MCP tool (DLT-105) — not in scope
 
 **Interactions:**
-- Per-message pre-processing pipeline (`per-message-pre-processing`): memory provider registers as a `MessageContextProvider`
-- Coordinator (`core-architecture`): triggers the per-message pipeline on every message, passes SDK session ID through
-- Memory extraction (`memory-extraction`): provides the stored memories that this provider searches
+- Memory bootstrap hook (`memory/hooks.py`): creates directory structure, ensures MEMORY.md exists, reads and stashes formatted indexes
+- Context bootstrap hook (`context/loading.py`): loads foundational context, reads stashed memory indexes, appends to context list
+- Coordinator: saves foundational context for new sessions
+- Task executor (`tasks/executor.py`): calls `load_memory_indexes()` directly in preprocessing
 
 ## Design Overview
 
-A `MemoryContextProvider` implements the `MessageContextProvider` ABC and uses a `query()` call with an Opus agent to search stored memories. The provider receives the session's summary and last exchange from the pipeline for conversation context, rendered via the shared `render_conversation_context()` helper. On the first message (no summary yet), it operates without conversation context. The provider runs as a standalone DES-007 agent with file search tools. For facts and preferences directories, the search prompt instructs the agent to read `MEMORY.md` first — a human-readable markdown index mapping each filename to a one-line description — evaluating descriptions against the user message and reading only relevant files. If `MEMORY.md` is missing, empty, or malformed, the agent falls back to Glob-based discovery. Episodic search is unchanged (Glob → Grep → Read).
+Memory indexes are read at startup by `memory_hook` and stashed in `ctx.extras["memory_indexes"]` as formatted sections. `context_hook` reads from there and appends them to the foundational context list alongside SOUL/USER/AGENTS.md. The coordinator saves these entries for each new session, making them available as navigable `<memory_index>` sections in the system prompt. The agent sees browseable lists with one-line descriptions and reads individual files on demand via the Read tool.
 
-The search prompt includes a classification section (following DES-007) that instructs the agent to classify messages into three tiers before searching: Skip (greetings/acknowledgments → return sentinel immediately), Shallow (continuation messages → facts/preferences only), and Full (new topics/past references → all directories). When classification is ambiguous, the agent defaults to Full search.
-
-The agent returns relevant memory file paths in XML `<memory>` elements. For facts/preferences, it returns self-closing tags and the provider reads the full file. For episodic files (which can be very large), the agent extracts the relevant snippet inline and the provider uses it directly with a `[Source: path]` reference. The provider filters out paths already present in `existing_entries` (via `memory_path` metadata), and returns one `ContextResult` per new memory.
-
-```
-┌──────────────────────────────────────────────────────────────────┐
-│                    MemoryContextProvider                          │
-│                    (MessageContextProvider)                       │
-│                                                                  │
-│  provide(message, existing_entries, session_summary,            │
-│           session_last_exchange):                                 │
-│    1. Extract loaded memory paths from existing_entries metadata │
-│    2. Build search prompt with user message + conversation ctx  │
-│    3. query(standalone DES-007, with tools)                      │
-│    4. Parse XML <memory> elements from agent response            │
-│    5. Validate paths are within memories/                        │
-│    6. Filter out already-loaded paths                            │
-│    7. For snippets: use snippet + [Source: path] header          │
-│       For self-closing: read full file from disk                 │
-│    → list[ContextResult]  or  None                              │
-└──────────────────────────────────────────────────────────────────┘
-```
+The `MemoryContextProvider` class and all supporting infrastructure have been removed. Background tasks receive memory indexes through a direct `load_memory_indexes()` call in the task executor's preprocessing, without a provider class.
 
 ## Components
 
@@ -60,249 +38,171 @@ The agent returns relevant memory file paths in XML `<memory>` elements. For fac
 
 | Layer/Component | Responsibility | Key Decisions |
 |-----------------|----------------|---------------|
-| `src/tachikoma/memory/context_provider.py` | `MemoryContextProvider(MessageContextProvider)` — receives conversation context (session summary + last exchange) from the pipeline, runs as a standalone DES-007 agent with file search tools, parses XML `<memory>` elements from agent response, handles snippets (episodic) vs full-file reads (facts/preferences), creates per-file `ContextResult` entries with metadata. `ParsedMemoryEntry` dataclass and `parse_memory_entries()` function for XML parsing. Constants: `MEMORIES_OWNER`, `MEMORY_PATH_META_KEY`, `_NO_RELEVANT_MEMORIES`. Helper: `extract_memory_paths()`. `MEMORY_SEARCH_PROMPT` constant co-located with provider — includes a `## Classification` section (following DES-007) with Skip/Shallow/Full tiers for fail-fast message classification, and a `## Search Strategy` section with index-first discovery for facts/preferences (read `MEMORY.md`, evaluate descriptions, read selected files; fallback to Glob if index missing/empty) and Glob-based discovery for episodic. Uses `$WORKSPACE` placeholders for directory paths, replaced with absolute workspace path at call time. | Agent returns XML elements with optional snippet content; self-closing = full file load, open/close = snippet extraction; uses `memory_path` metadata key per ADR-011; single adaptive prompt with `{conversation_context_section}` placeholder rendered via shared `render_conversation_context()` helper; classification section with fail-open default (ambiguous → Full); index-based discovery for facts/preferences with Glob fallback; `$WORKSPACE` replacement applied before `str.format()` |
+| `src/tachikoma/memory/index.py` | `format_memory_index(memory_type, raw_content)` and `load_memory_indexes(workspace_path)` helpers | Shared between `memory_hook` (bootstrap) and `tasks/executor.py` (runtime); parses MEMORY.md entries, skips malformed ones, returns formatted sections |
+| `src/tachikoma/memory/hooks.py` | `memory_hook` reads MEMORY.md files during bootstrap, formats sections, stashes in `ctx.extras["memory_indexes"]` | Uses shared `load_memory_indexes()` helper; runs before `context_hook` in bootstrap order (DES-003: cross-hook communication via extras bag) |
+| `src/tachikoma/context/loading.py` | `context_hook` reads `ctx.extras.get("memory_indexes", [])` and appends to foundational context | Minimal change — reads from extras bag that memory_hook populated |
+| `src/tachikoma/context/loading.py` | `SYSTEM_PREAMLE_TEMPLATE` — expanded `## Memories` section with episodic naming conventions, retention tiers, and usage guidance | Static text expansion, no code logic changes |
+| `src/tachikoma/tasks/executor.py` | Direct `load_memory_indexes()` call in `_run_preprocessing()` | No provider class; inline ContextResult creation; synchronous within error-isolated try/except block |
+| `src/tachikoma/__main__.py` | Per-message pipeline registers only SkillsContextProvider | MemoryContextProvider removed |
 
 ### Cross-Layer Contracts
 
-```mermaid
-sequenceDiagram
-    participant Coordinator
-    participant Pipeline as MessagePreProcessingPipeline
-    participant Memory as MemoryContextProvider
-    participant SDK as query()
-    participant FS as Memory Files
-
-    Coordinator->>Pipeline: run(message, existing_entries, session_summary, session_last_exchange)
-    Pipeline->>Memory: provide(message, existing_entries, session_summary, session_last_exchange)
-    Memory->>Memory: extract loaded paths from existing_entries
-    Memory->>Memory: build search prompt with conversation context
-    Memory->>SDK: query(prompt, standalone DES-007 with tools)
-    SDK->>FS: agent searches memories/
-    SDK-->>Memory: ResultMessage (file paths)
-    Memory->>Memory: validate paths, filter duplicates
-    Memory->>FS: read each new file
-    Memory-->>Pipeline: list[ContextResult] or None
-    Pipeline-->>Coordinator: list[ContextResult]
-```
-
 **Integration Points:**
-- Coordinator ↔ Pipeline: `msg_pre_pipeline.run(message, existing_entries=entries, session_summary=active.summary, session_last_exchange=active.last_exchange)`
-- Pipeline ↔ Providers: `provide(message, existing_entries=entries, session_summary=summary, session_last_exchange=last_exchange)` — passed through to all providers
-- Memory provider ↔ SDK: standalone `query()` with tools (DES-007), conversation context via `render_conversation_context()` in prompt
-- Memory provider ↔ Filesystem: `Path.read_text()` to read memory files after agent identifies relevant paths
+- `memory_hook` → `ctx.extras["memory_indexes"]` → `context_hook` → foundational context list → coordinator saves as `SessionContextEntry`
+- `load_memory_indexes()` in `tasks/executor.py` → `ContextResult` entries → enriched prompt via `assemble_context()`
+- `SYSTEM_PREAMLE_TEMPLATE` → `render_system_preamble()` → `build_system_prompt()` → agent sees episodic documentation
 
-**Error contract:**
-- If `query()` fails (SDK error, expired session) → catch, log per DES-002, return None
-- If agent returns error (`ResultMessage.is_error`) → log warning, return None
-- If file read fails (FileNotFoundError) → skip that file, log warning, continue with remaining files
+**Error handling:**
+- `memory_hook`: missing/empty MEMORY.md → skip silently; malformed entries → skip silently (logged at debug level), include well-formed ones
+- `context_hook`: no `memory_indexes` in extras → skip (memory_hook ran first but found nothing)
+- `tasks/executor.py`: `load_memory_indexes()` failure → caught in `_run_preprocessing()`'s existing try/except, falls back to original prompt
 
 ### Shared Logic
 
-- **`MEMORY_PATH_META_KEY = "memory_path"`** — constant for metadata key, used for both writing metadata on new entries and reading metadata from existing entries (deduplication)
-- **`MEMORIES_OWNER = "memories"`** — constant for the entry owner tag
-- **`extract_memory_paths(entries)`** — helper function extracting loaded memory paths from `existing_entries` metadata. Filters by `entry.owner == MEMORIES_OWNER` and reads `metadata["memory_path"]`. Mirrors `extract_skill_names()` in the skills provider.
-
-## Modeling
-
-```
-MemoryContextProvider(MessageContextProvider)
-├── _agent_defaults: AgentDefaults     (cwd, cli_path, env, model)
-└── provide(message, existing_entries, session_summary, session_last_exchange) → list[ContextResult] | None
-
-MEMORY_SEARCH_PROMPT: str              (module-level constant, embeds {message}; $WORKSPACE replaced at call time)
-MEMORIES_OWNER: str = "memories"
-MEMORY_PATH_META_KEY: str = "memory_path"
-
-extract_memory_paths(entries: list[SessionContextEntry]) → set[str]
-└── Filters by owner == MEMORIES_OWNER, reads metadata[MEMORY_PATH_META_KEY]
-```
+- **`format_memory_index(memory_type, raw_content)`** — formats a MEMORY.md file's raw content into an injectable section with header, description, and entries. Returns `None` if no well-formed entries found.
+- **`load_memory_indexes(workspace_path)`** — reads and formats both facts and preferences MEMORY.md files, returns `list[tuple[str, str]]` of `(owner_tag, formatted_content)` pairs. Used by both `memory_hook` and the task executor.
 
 ## Data Flow
 
-### Memory provider flow (per message)
+### Static index injection flow (at startup)
 
 ```
-1. provider.provide(message, existing_entries, session_summary, session_last_exchange) is called
-2. Extract loaded memory paths: extract_memory_paths(existing_entries)
-3. Render conversation context: render_conversation_context(session_summary, session_last_exchange)
-4. Build search prompt by embedding user message and conversation context into MEMORY_SEARCH_PROMPT
-5. ClaudeAgentOptions(model=agent_defaults.searcher_model, effort="low",
-   allowed_tools=["Read", "Glob", "Grep"],
-   permission_mode="bypassPermissions", cwd=agent_defaults.cwd)
-6. Call query(prompt=prompt, options=options)
-7. Agent searches memories per the prompt's Search Strategy section:
-   - For facts/preferences: Read MEMORY.md → evaluate descriptions → read selected files
-     Fallback: Glob → Grep → Read if MEMORY.md missing/empty/malformed
-   - For episodic: Glob → Grep → Read (unchanged)
-8. Fully consume the query() generator per DES-007 (which requires DES-005):
-   - On ResultMessage:
-     a. If is_error → log warning
-     b. If result == "NO_RELEVANT_MEMORIES" → no paths
-     c. If result has content → parse XML <memory> elements via parse_memory_entries()
-9. Validate paths: resolve each against workspace root, reject any outside memories/
-10. Filter out paths already in loaded_paths set
-11. For each new entry:
-   a. If snippet provided → use snippet with [Source: path] header
-   b. If self-closing (no snippet) → read full file via Path.read_text()
-   c. Create ContextResult(tag="memories", content=content,
-      metadata={"memory_path": path})
-12. Return list of ContextResults, or None if empty
-13. If any exception → catch, log per DES-002, return None
+1. Bootstrap runs hooks in order:
+   a. memory_hook runs (creates dirs, ensures MEMORY.md exists)
+      - Reads memories/facts/MEMORY.md → format_memory_index("facts", content)
+      - Reads memories/preferences/MEMORY.md → format_memory_index("preferences", content)
+      - Stashes formatted results in ctx.extras["memory_indexes"]
+   b. context_hook runs (loads foundational context)
+      - Loads SOUL.md, USER.md, AGENTS.md as before
+      - Reads ctx.extras.get("memory_indexes", [])
+      - Appends memory index entries to foundational context list
+      - Stores combined list in ctx.extras["foundational_context"]
+
+2. Coordinator receives foundational_context from bootstrap extras
+
+3. On new session:
+   - Coordinator saves all foundational context entries (including memory indexes)
+     as SessionContextEntry instances with metadata=None
+
+4. On each message:
+   - build_system_prompt() wraps entries in XML tags
+   - Agent sees <memory_index>...</memory_index> sections in system prompt
+   - Agent reads individual files via Read tool when index entries suggest relevance
+```
+
+### Background task preprocessing flow (at runtime)
+
+```
+1. TaskExecutor._run_preprocessing(prompt, pinned_skills)
+2. Load memory indexes: load_memory_indexes(workspace_path)
+   → reads and formats both MEMORY.md files
+   → returns list of (tag, content) tuples
+   (synchronous within _run_preprocessing()'s error-isolated try/except block)
+3. Create ContextResult entries from memory indexes
+4. Include in preprocessing results alongside other providers
+5. assemble_context(all_results, prompt) → enriched prompt with memory indexes
+```
+
+### Episodic memory flow (preamble-based, no search)
+
+```
+1. System preamble includes expanded ## Memories section
+2. Agent sees episodic naming conventions, retention tiers, content expectations
+3. Agent reads episodic files manually via Read when needed
+   (future: DLT-105 adds MCP tools for episodic search)
 ```
 
 ## Key Decisions
 
-### Fail-fast classification in search prompt
+### Memory hook stashes indexes in extras bag
 
-**Choice**: The search prompt includes a "Classification" section that instructs the agent to classify messages into three tiers (Skip, Shallow, Full) before searching. Skip returns the sentinel immediately for greetings/acknowledgments. Shallow limits search to facts/preferences for continuation messages. Full searches all directories for new topics and past-context references. Classification is placed after conversation context but before Search Strategy. Fail-open default: ambiguous classifications escalate to Full search.
-**Why**: Every message triggers a full Glob → Grep → Read search cycle regardless of whether the message benefits from memory context. Simple greetings and acknowledgments incur the same latency as substantive queries. Classification lets the agent short-circuit for low-context messages and limit search scope for continuations, reducing preprocessing latency without losing relevant context.
-
-**Consequences**:
-- Pro: Reduced latency on greetings, acknowledgments, and short follow-ups
-- Pro: Fail-open default prevents missing relevant context
-- Pro: Follows DES-007 classification pattern (early decision point before expensive work)
-- Con: Classification quality depends on agent judgment (mitigated by fail-open default)
-
-### Explicit conversation context via shared helper
-
-**Choice**: The provider receives the session's summary and last exchange from the pipeline (threaded through from the coordinator) and renders them into the search prompt using the shared `render_conversation_context()` helper (defined in `per_message_pre_processing.py`). This is the same explicit context pattern used by the skills provider and boundary detector.
-**Why**: Without conversation context, the search agent can only evaluate relevance based on the single message. With explicit context, it can determine whether the latest message introduces new topics or continues existing ones, enabling the agent-driven search decision. Explicit context is lightweight (bounded by summary length), avoids the overhead of creating throwaway session branches on every message, and provides uniform context across all per-message providers.
+**Choice**: `memory_hook` reads and formats MEMORY.md files, stashing results in `ctx.extras["memory_indexes"]`. `context_hook` reads from there and appends to foundational context.
+**Why**: Preserves subsystem ownership — memory-related logic stays in the memory module, context-related assembly stays in the context module. The extras bag is the bootstrap's built-in mechanism for cross-hook communication (DES-003).
+**Alternatives Considered**:
+- Extend `context_hook` directly to read MEMORY.md: mixes memory-subsystem logic into the context module, violating subsystem ownership (DES-003)
+- Dedicated provider in session-gated pipeline: adds a provider class when static injection makes per-message providers unnecessary for memory
 
 **Consequences**:
-- Pro: Informed relevance assessment on follow-up messages
-- Pro: Agent can decide "already covered" and skip unnecessary search
-- Pro: Lighter-weight than forking (summary is 5-8 sentences vs full transcript)
-- Pro: Uniform context pattern across all per-message providers (skills, memory, boundary detection)
-- Con: Less detailed than full transcript (acceptable — summary captures the key points)
+- Pro: Clean subsystem boundaries per DES-003
+- Pro: `memory_hook` already ensures MEMORY.md exists, so reading it there is natural
+- Pro: `context_hook` only needs one extra line to append
+- Con: Subtle ordering dependency — `memory_hook` must run before `context_hook` (already guaranteed by registration order)
 
-### XML output format with snippet extraction for episodic memories
+### Shared helper function for memory index formatting
 
-**Choice**: The memory search agent returns XML `<memory>` elements. Self-closing tags (`<memory path="..." />`) signal full-file load (facts/preferences). Open/close tags with body content (`<memory path="...">snippet</memory>`) carry agent-extracted snippets (episodic). The provider uses `parse_memory_entries()` to parse both forms.
-**Why**: Episodic memory files can grow very large (20-34KB each), and loading their full content into the system prompt CLI argument caused `[Errno 7] Argument list too long` (ARG_MAX overflow). The agent already reads files to assess relevance, so extracting the relevant snippet is natural. Facts and preferences files remain small and topically focused, so full-file loading is appropriate for them.
-
-**Consequences**:
-- Pro: Episodic memory contribution to system prompt reduced from ~92KB to ~5-15KB (6-18x reduction)
-- Pro: Eliminates ARG_MAX overflow from memory context
-- Pro: Agent provides only the relevant information, improving main agent context quality
-- Pro: `[Source: path]` header allows the main agent to read more if the snippet is insufficient
-- Con: Agent must produce well-formed XML (mitigated by graceful parsing with fallback)
-- Con: Snippet quality depends on the agent's extraction judgment
-
-### Single adaptive prompt with conditional context
-
-**Choice**: One prompt template handles both with-context (summary available) and without-context (first message) modes via the `{conversation_context_section}` placeholder.
-**Why**: When a summary exists, the agent sees conversation context. When no summary is available (first message), the placeholder renders as an empty string and the section is omitted entirely. A single prompt with conditional rendering handles both cases.
+**Choice**: Extract `format_memory_index()` and `load_memory_indexes()` into `memory/index.py` for use by both `memory_hook` and the task executor.
+**Why**: Both consumers need to read and format the same MEMORY.md files with the same rendering logic. Sharing a function prevents format drift.
 
 **Consequences**:
-- Pro: Single prompt to maintain
-- Pro: Graceful degradation — same behavior whether context is present or not
+- Pro: Single source of truth for index formatting
+- Pro: Natural home in `memory/index.py` alongside `run_index_rebuild()`
+- Pro: Pure function, easy to test independently
 
-### memory_path metadata key
+### Direct function call in task executor (no provider)
 
-**Choice**: Use `{"memory_path": "<relative-path>"}` as the metadata on each memory `ContextResult`, following ADR-011.
-**Why**: Mirrors `{"skill_name": "name"}` from the skills provider. Enables deduplication by matching metadata in `existing_entries`.
-
-**Consequences**:
-- Pro: Consistent with ADR-011 and skills provider pattern
-- Pro: Stable identifier for exact deduplication
-
-### Path validation for agent-returned file paths
-
-**Choice**: Resolve each returned path against the workspace root and reject any path not within `memories/`.
-**Why**: The agent could return arbitrary paths. Without validation, the provider would read and inject arbitrary file content into the main agent's context.
+**Choice**: The task executor calls `load_memory_indexes()` directly in `_run_preprocessing()` and creates `ContextResult` entries inline.
+**Why**: Removes the context provider pattern for memory. The task executor already has its own preprocessing flow — a function call is simpler and more transparent than introducing a new provider class.
 
 **Consequences**:
-- Pro: Prevents content injection from outside the memory directory
-- Pro: Consistent with skills provider's validation pattern
+- Pro: No provider classes for memory
+- Pro: Direct, readable code
+- Con: Task executor has slightly more inline logic (acceptable — ~5 lines)
 
-### Preserved model and tool configuration
+### Episodic memory deferred to DLT-105
 
-**Choice**: Use `model=agent_defaults.searcher_model` (default `"opus"`, see DES-004), `effort="low"`, `allowed_tools=["Read", "Glob", "Grep"]`, `permission_mode="bypassPermissions"`. No explicit `max_turns` ceiling.
-**Why**: An earlier `max_turns=12` cap was observed producing `error_max_turns` failures on non-Claude model backends (GLM-family models running via Anthropic-compatible proxies occasionally loop through tool calls without emitting a final answer). Removing the cap eliminates it as a failure variable while diagnosing upstream behavior; the SDK's internal safety bounds still protect against unbounded runaway. `effort="low"` keeps per-turn cost minimal.
+**Choice**: No episodic memory injection or search in this design. The preamble documents episodic file structure so the agent can read files manually.
+**Why**: Episodic files are numerous and date-organized — they don't have a MEMORY.md index. Static injection would require loading all file names, which is unbounded.
 
 **Consequences**:
-- Pro: No spurious `error_max_turns` failures on non-Claude backends
-- Pro: Existing error-isolation (`try/except` + `is_error` branch) still returns None cleanly on any SDK failure
-- Con: Theoretically unbounded turns in pathological cases — mitigated by the SDK's own internal limits and by `effort="low"`
+- Pro: Keeps scope focused on high-value change (eliminating Opus round-trip for facts/preferences)
+- Con: Agent loses automatic episodic search until DLT-105 lands
 
 ## System Behavior
 
-### Scenario: First message of session (no conversation context)
+### Scenario: Normal startup with memory indexes
 
-**Given**: A new session with no summary yet
-**When**: The memory provider runs on the first message
-**Then**: Provider calls `query()` as a standalone agent. No conversation context section in the prompt. Agent classifies the message and searches memories based on the message alone. Provider reads relevant files, creates per-file entries.
+**Given**: A workspace with `memories/facts/MEMORY.md` and `memories/preferences/MEMORY.md` containing valid entries
+**When**: The system starts up
+**Then**: `memory_hook` reads both files, formats them, and stashes in extras. `context_hook` appends them to foundational context. The agent sees both sections in its system prompt.
 
-### Scenario: Greeting or acknowledgment (Skip tier)
+### Scenario: Missing MEMORY.md for one directory
 
-**Given**: A message that is purely social/transactional ("hi", "ok", "thanks")
-**When**: The memory provider runs
-**Then**: Agent classifies the message as Skip tier. Returns `NO_RELEVANT_MEMORIES` immediately without searching any files. Provider returns None.
+**Given**: A workspace where only `memories/facts/MEMORY.md` exists
+**When**: The system starts up
+**Then**: Only the facts index is injected. Preferences is skipped silently. No error or warning.
 
-### Scenario: Continuation message within active topic (Shallow tier)
+### Scenario: Empty MEMORY.md file
 
-**Given**: A session with conversation context, the message extends the current discussion
-**When**: A follow-up message continues the same topic (e.g., "what about that?")
-**Then**: Agent classifies as Shallow tier. Greps only facts/preferences for terms from the message, skips episodic search. Returns results or sentinel as appropriate.
+**Given**: A workspace where a MEMORY.md contains only the header
+**When**: The system starts up
+**Then**: `format_memory_index()` returns `None`. That directory's index is skipped. No error.
 
-### Scenario: Follow-up message introduces new topic (Full tier)
+### Scenario: Malformed entries in MEMORY.md
 
-**Given**: A session with a summary and last exchange, memory entries already loaded for the initial topic
-**When**: A subsequent message introduces a new topic
-**Then**: Agent classifies as Full tier. Provider includes conversation context in the prompt. Agent searches all memory directories, returns relevant file paths. Provider filters out already-loaded paths, reads new files, returns new entries.
+**Given**: A MEMORY.md file with some well-formed and some malformed entries
+**When**: `memory_hook` reads and formats the file
+**Then**: Well-formed entries are included. Malformed entries are skipped silently (logged at debug level).
 
-### Scenario: Follow-up message continues same topic
+### Scenario: No memories directory at all
 
-**Given**: A session with conversation context, relevant memories already loaded
-**When**: A follow-up message continues the same topic
-**Then**: Agent classifies as Shallow or determines no new memories needed. Returns `NO_RELEVANT_MEMORIES`. Provider returns None.
+**Given**: A workspace where the `memories/` directory does not exist
+**When**: The system starts up
+**Then**: `memory_hook` creates the directory structure (existing behavior). No indexes are injected. Startup proceeds normally.
 
-### Scenario: Memory already loaded (deduplication)
+### Scenario: Background task gets memory context
 
-**Given**: Memory file already in `existing_entries` (metadata `{"memory_path": "..."}`)
-**When**: Agent returns that path as relevant
-**Then**: Provider filters it out during deduplication.
+**Given**: A background task is being prepared for execution
+**When**: `_run_preprocessing()` runs
+**Then**: The executor calls `load_memory_indexes()` directly, creates `ContextResult` entries, and includes them in the assembled context.
 
-### Scenario: Query failure
+### Scenario: Agent reads a fact file on demand
 
-**Given**: The SDK query fails for any reason
-**When**: The provider calls `query()`
-**Then**: `query()` raises an exception. Provider catches it, logs, returns None. Conversation proceeds unaffected.
-
-### Scenario: Agent returns an error result
-
-**Given**: The memory search agent returns `ResultMessage(is_error=True)` for any reason (upstream rate limit, SDK-internal safety cutoff, transient error)
-**When**: The provider processes the ResultMessage
-**Then**: Provider logs a warning and returns None without populating entries.
-
-### Scenario: Memory file deleted between search and read
-
-**Given**: Agent identifies a relevant file
-**When**: Provider attempts to read it but it has been deleted
-**Then**: Provider logs warning, skips that file, continues with remaining files.
-
-### Scenario: Index-based search for facts/preferences
-
-**Given**: A session with facts and preferences directories containing `MEMORY.md` files
-**When**: The memory context provider searches for facts or preferences
-**Then**: Agent reads `MEMORY.md`, evaluates descriptions against the user message, selects relevant files, reads only those. Returns results or `NO_RELEVANT_MEMORIES`.
-
-### Scenario: Index fallback when MEMORY.md is missing
-
-**Given**: A facts directory with `.md` files but no `MEMORY.md`
-**When**: The memory context provider searches for facts
-**Then**: Agent attempts to read `MEMORY.md`, finds it missing, falls back to Glob → Grep → Read. Search proceeds normally. Index is created on next maintenance run or bootstrap.
-
-### Scenario: Index read fails (corrupted or malformed)
-
-**Given**: `MEMORY.md` exists but is corrupted or malformed
-**When**: The search agent reads `MEMORY.md`
-**Then**: Agent falls back to Glob-based discovery for that directory. The corrupted index is overwritten on the next Sunday heavy rebuild.
+**Given**: The agent sees the facts index with an entry like `[Restaurants](memories/facts/restaurants.md): Favorite restaurants`
+**When**: The user asks "what restaurants do I like?"
+**Then**: The agent uses the Read tool to read the file and responds with the content.
 
 ## Notes
 
-- The provider runs as a standalone DES-007 agent — no session forking. Conversation context is provided explicitly via the `render_conversation_context()` helper shared across all per-message providers (defined in `per_message_pre_processing.py`).
-- On first message, the provider operates without conversation context — the summary is `None` and the conversation context section is omitted from the prompt.
-- The `extract_memory_paths()` helper mirrors `extract_skill_names()` in the skills provider — both read metadata from `existing_entries` for deduplication.
-- Embedding-based semantic search could replace or augment the agent-based search. The `MessageContextProvider` ABC means the memory provider can be swapped without touching the pipeline.
-- The coordinator uses `FilePromptTransport` (`src/tachikoma/sdk_transport.py`) — a `SubprocessCLITransport` subclass that writes the system prompt to a tempfile and passes `--append-system-prompt-file` instead of `--append-system-prompt`. This eliminates the ARG_MAX constraint entirely as a defensive measure complementing snippet extraction. The transport imports the SDK's internal `SubprocessCLITransport` (pinned to SDK v0.1.48); verify compatibility on SDK upgrades.
+- Memory indexes are static for the lifetime of a session (loaded at startup). Changes to MEMORY.md during a session (from post-processing extraction or maintenance ticks) won't be reflected until the next startup. This is acceptable because MEMORY.md changes infrequently and the agent can still read newly created files directly via Read.
+- The `load_memory_indexes()` function is a pure utility — it reads files and returns formatted strings, with no dependency on the SDK, pipeline abstractions, or database.
+- The formatted index sections include usage instructions ("read it with the Read tool") so the agent knows how to navigate the indexes without relying on the preamble.
