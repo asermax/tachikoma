@@ -3,14 +3,15 @@
 Creates the memories/ directory structure on first run (idempotent).
 Also ensures MEMORY.md index files exist in facts/ and preferences/
 directories, creating them via heavy rebuild if the directory already
-has content.
+has content. After initialization, loads and stashes formatted memory
+indexes in ctx.extras for static injection into foundational context.
 """
 
 from loguru import logger
 
 from tachikoma.agent_defaults import agent_defaults_from_settings
 from tachikoma.bootstrap import BootstrapContext
-from tachikoma.memory.index import run_index_rebuild
+from tachikoma.memory.index import load_memory_indexes, run_index_rebuild
 
 _log = logger.bind(component="memory")
 
@@ -85,3 +86,9 @@ async def memory_hook(ctx: BootstrapContext) -> None:
             )
             agent_defaults = agent_defaults_from_settings(ctx.settings_manager.settings)
             await run_index_rebuild(agent_defaults, memory_type)
+
+    # Load and stash memory indexes for static injection into foundational
+    # context.  context_hook reads from ctx.extras["memory_indexes"] and
+    # appends to the foundational context list.  See DES-003 for the
+    # cross-hook communication pattern via the extras bag.
+    ctx.extras["memory_indexes"] = load_memory_indexes(workspace_path)
