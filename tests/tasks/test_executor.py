@@ -1318,3 +1318,152 @@ class TestStuckRunningSweep:
         await stuck_running_sweep(repo, settings, bus)
 
         bus.dispatch.assert_not_called()
+
+
+class TestMemoryIndexInjection:
+    """Tests for inline memory index loading in _run_preprocessing()."""
+
+    @pytest.mark.asyncio
+    async def test_memory_indexes_injected_into_prompt(self, repo: TaskRepository) -> None:
+        """AC: load_memory_indexes() results are included in the enriched prompt."""
+        settings = TaskSettings()
+        bus = EventBus()
+        bus.dispatch = AsyncMock()
+        cwd = Path("/tmp/test-workspace")
+
+        executor = BackgroundTaskExecutor(
+            repository=repo,
+            settings=settings,
+            bus=bus,
+            agent_defaults=AgentDefaults(cwd=cwd),
+            skill_registry=_mock_skill_registry(),
+            session_registry=_mock_session_registry(),
+        )
+
+        fake_index = [("memory_index", "## Facts Index\n\nTest facts content")]
+
+        with (
+            patch(
+                "tachikoma.tasks.executor.PreProcessingPipeline"
+            ) as mock_pipeline_cls,
+            patch(
+                "tachikoma.tasks.executor.MessagePreProcessingPipeline"
+            ) as mock_msg_pipeline_cls,
+            patch(
+                "tachikoma.tasks.executor.load_memory_indexes",
+                return_value=fake_index,
+            ) as mock_load,
+        ):
+            mock_pipeline = AsyncMock()
+            mock_pipeline.run = AsyncMock(return_value=[])
+            mock_pipeline_cls.return_value = mock_pipeline
+
+            mock_msg_pipeline = AsyncMock()
+            mock_msg_pipeline.run = AsyncMock(return_value=[])
+            mock_msg_pipeline_cls.return_value = mock_msg_pipeline
+
+            result = await executor._run_preprocessing("Test prompt")
+
+        # Verify load_memory_indexes was called with the executor's cwd
+        mock_load.assert_called_once_with(cwd)
+
+        # Verify the enriched prompt contains the memory index content
+        assert "## Facts Index" in result.prompt
+        assert "Test facts content" in result.prompt
+
+        # Verify the prompt is wrapped in XML tags
+        assert "<memory_index>" in result.prompt
+        assert "</memory_index>" in result.prompt
+
+    @pytest.mark.asyncio
+    async def test_no_memory_indexes_returns_original_prompt(
+        self, repo: TaskRepository
+    ) -> None:
+        """AC: When load_memory_indexes returns empty, prompt has no memory sections."""
+        settings = TaskSettings()
+        bus = EventBus()
+        bus.dispatch = AsyncMock()
+
+        executor = BackgroundTaskExecutor(
+            repository=repo,
+            settings=settings,
+            bus=bus,
+            agent_defaults=AgentDefaults(cwd=Path("/tmp")),
+            skill_registry=_mock_skill_registry(),
+            session_registry=_mock_session_registry(),
+        )
+
+        with (
+            patch(
+                "tachikoma.tasks.executor.PreProcessingPipeline"
+            ) as mock_pipeline_cls,
+            patch(
+                "tachikoma.tasks.executor.MessagePreProcessingPipeline"
+            ) as mock_msg_pipeline_cls,
+            patch(
+                "tachikoma.tasks.executor.load_memory_indexes",
+                return_value=[],
+            ),
+        ):
+            mock_pipeline = AsyncMock()
+            mock_pipeline.run = AsyncMock(return_value=[])
+            mock_pipeline_cls.return_value = mock_pipeline
+
+            mock_msg_pipeline = AsyncMock()
+            mock_msg_pipeline.run = AsyncMock(return_value=[])
+            mock_msg_pipeline_cls.return_value = mock_msg_pipeline
+
+            result = await executor._run_preprocessing("Test prompt")
+
+        # No results from any provider → original prompt returned
+        assert result.prompt == "Test prompt"
+
+    @pytest.mark.asyncio
+    async def test_multiple_memory_types_injected(
+        self, repo: TaskRepository
+    ) -> None:
+        """AC: Both facts and preferences indexes are injected."""
+        settings = TaskSettings()
+        bus = EventBus()
+        bus.dispatch = AsyncMock()
+        cwd = Path("/tmp/test-workspace")
+
+        executor = BackgroundTaskExecutor(
+            repository=repo,
+            settings=settings,
+            bus=bus,
+            agent_defaults=AgentDefaults(cwd=cwd),
+            skill_registry=_mock_skill_registry(),
+            session_registry=_mock_session_registry(),
+        )
+
+        fake_indexes = [
+            ("memory_index", "## Facts Index\n\nFacts content"),
+            ("memory_index", "## Preferences Index\n\nPreferences content"),
+        ]
+
+        with (
+            patch(
+                "tachikoma.tasks.executor.PreProcessingPipeline"
+            ) as mock_pipeline_cls,
+            patch(
+                "tachikoma.tasks.executor.MessagePreProcessingPipeline"
+            ) as mock_msg_pipeline_cls,
+            patch(
+                "tachikoma.tasks.executor.load_memory_indexes",
+                return_value=fake_indexes,
+            ),
+        ):
+            mock_pipeline = AsyncMock()
+            mock_pipeline.run = AsyncMock(return_value=[])
+            mock_pipeline_cls.return_value = mock_pipeline
+
+            mock_msg_pipeline = AsyncMock()
+            mock_msg_pipeline.run = AsyncMock(return_value=[])
+            mock_msg_pipeline_cls.return_value = mock_msg_pipeline
+
+            result = await executor._run_preprocessing("Test prompt")
+
+        assert "## Facts Index" in result.prompt
+        assert "## Preferences Index" in result.prompt
+        assert result.prompt.count("<memory_index>") == 2

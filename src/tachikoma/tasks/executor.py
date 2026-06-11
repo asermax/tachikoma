@@ -30,6 +30,7 @@ from tachikoma.buffer.priority import Priority
 from tachikoma.config import TaskSettings
 from tachikoma.git.processor import GitProcessor
 from tachikoma.memory.episodic import EpisodicProcessor
+from tachikoma.memory.index import load_memory_indexes
 from tachikoma.message import TextMessage
 from tachikoma.notifications import (
     NotificationCycleState,
@@ -39,6 +40,7 @@ from tachikoma.notifications import (
 from tachikoma.per_message_pre_processing import MessagePreProcessingPipeline
 from tachikoma.post_processing import PRE_FINALIZE_PHASE, PostProcessingPipeline
 from tachikoma.pre_processing import (
+    ContextResult,
     McpServerConfig,
     PreProcessingPipeline,
     assemble_context,
@@ -645,8 +647,9 @@ class BackgroundTaskExecutor:
     ) -> _PreprocessingResult:
         """Run pre-processing pipeline for context injection.
 
-        Registers context providers (memory, projects, skills) and
-        extracts MCP servers from results alongside the enriched prompt text.
+        Runs context providers (projects, skills) and injects memory
+        indexes directly. Extracts MCP servers from results alongside
+        the enriched prompt text.
 
         Args:
             prompt: The original task prompt
@@ -671,6 +674,14 @@ class BackgroundTaskExecutor:
             per_message_results = await msg_pipeline.run(
                 TextMessage(text=prompt, pinned_skills=pinned_skills)
             )
+
+            # Inject memory indexes directly (no provider class needed)
+            memory_indexes = load_memory_indexes(self._cwd)
+            memory_results = [
+                ContextResult(tag=tag, content=content)
+                for tag, content in memory_indexes
+            ]
+            per_message_results.extend(memory_results)
 
             all_results = (results or []) + per_message_results
 
