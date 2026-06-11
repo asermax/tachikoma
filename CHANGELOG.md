@@ -2,6 +2,101 @@
 
 <!-- version list -->
 
+## v1.103.0 (2026-06-11)
+
+### Documentation
+
+- Add DLT-177 delta specification
+  ([`3062b77`](https://github.com/asermax/tachikoma/commit/3062b77612e9a56039581a3500c7e9ba1dfe5fb7))
+
+- Complete DLT-177 design for static memory index injection
+  ([`50022e3`](https://github.com/asermax/tachikoma/commit/50022e316a440d4872c7ed2b217afb1473ea618d))
+
+- Create DLT-177 implementation plan for static memory index injection
+  ([`d1f16fc`](https://github.com/asermax/tachikoma/commit/d1f16fc804d4b254fc9b5b9a16f5023e7fa33f50))
+
+- Define DLT-177 replace agentic memory search with static index injection
+  ([`fa68270`](https://github.com/asermax/tachikoma/commit/fa6827036b17d0db095e203963023c26f99ac5f6))
+
+- Mark DLT-177 as complete
+  ([`3ea1801`](https://github.com/asermax/tachikoma/commit/3ea18012d4186dac7b79b80644b3a40ba53cca3f))
+
+- Mark DLT-177 batch 2 as complete
+  ([`6b830b5`](https://github.com/asermax/tachikoma/commit/6b830b5262397461002f89d4fe3f753abf886a08))
+
+- Mark DLT-177 batch 3 as complete
+  ([`46796ae`](https://github.com/asermax/tachikoma/commit/46796aeb61d3c7d3e4b1004cf4cbffebe3446af6))
+
+- Refine DLT-177 delta specification based on review
+  ([`a4a7407`](https://github.com/asermax/tachikoma/commit/a4a7407f5a92adb1758823f8e63839c5c2f3519a))
+
+- Remove completed DLT-177 delta working documents
+  ([`c87067d`](https://github.com/asermax/tachikoma/commit/c87067db100e9b0fcb9914bbfa26a41d8e89d3b2))
+
+- Remove MemoryContextProvider references from cross-cutting docs
+  ([`2d65461`](https://github.com/asermax/tachikoma/commit/2d65461ae19fe346cdcaf8f2088a8b3db297ca98))
+
+- Update DLT-177 design status to approved
+  ([`ca85364`](https://github.com/asermax/tachikoma/commit/ca85364ba4e39db3b8939e088176d64f346484da))
+
+- Update DLT-177 status to implementation
+  ([`34cbc51`](https://github.com/asermax/tachikoma/commit/34cbc51e283547c192f23df71c502a825cdcfdb0))
+
+- Update DLT-177 status to in-progress design
+  ([`b9626bc`](https://github.com/asermax/tachikoma/commit/b9626bc96d29339fae59bedefcf573b15facc41b))
+
+- Update DLT-177 status to in-progress plan
+  ([`5ab3642`](https://github.com/asermax/tachikoma/commit/5ab3642c7ea56748dc9c65cc11f6a3c9cbb738b3))
+
+- Update DLT-177 status to in-progress spec
+  ([`083e801`](https://github.com/asermax/tachikoma/commit/083e801461a7262362b558c347931036ecfa9d29))
+
+- Update DLT-177 status to plan complete
+  ([`c99b619`](https://github.com/asermax/tachikoma/commit/c99b619a5e1823adb8b3318ec4e391aa2871c6c3))
+
+- Update DLT-177 status to spec-complete
+  ([`b50ee17`](https://github.com/asermax/tachikoma/commit/b50ee176ada646a124266daea4cc6fcc1dcdabdc))
+
+- **memory**: Add DLT-177 design document
+  ([`4576b4e`](https://github.com/asermax/tachikoma/commit/4576b4e76fc5a534ef709f2b8fef5c33f4eef06d))
+
+- **memory**: Reconcile feature documentation for static index injection
+  ([`73442ae`](https://github.com/asermax/tachikoma/commit/73442ae2bc3813f050f62f1bb58db0ed6ed930b3))
+
+### Features
+
+- **context**: Expand memory preamble and append injected indexes
+  ([`acd70c6`](https://github.com/asermax/tachikoma/commit/acd70c69e4d461e210d2e1e483999daee6f2d3ec))
+
+- **memory**: Add static index injection helpers
+  ([`2e90b40`](https://github.com/asermax/tachikoma/commit/2e90b40c813252ee4f11a65ea2afc2f4bd15e787))
+
+- **memory**: Inject formatted indexes via bootstrap extras
+  ([`373ec03`](https://github.com/asermax/tachikoma/commit/373ec03cccacb08c05abf943e5fddbf2a9cb2ce7))
+
+- **tasks**: Inject memory indexes into background task preprocessing
+  ([`20ecbe2`](https://github.com/asermax/tachikoma/commit/20ecbe22014f7d79542dd33564d2842dd34b0c82))
+
+### Refactoring
+
+- **memory**: Deduplicate indexable types and simplify index formatting
+  ([`a84c519`](https://github.com/asermax/tachikoma/commit/a84c519e5833a4ddaf27dbd7d776b421d659b8d9))
+
+- **memory**: Remove agentic search context provider
+  ([`d5a8efb`](https://github.com/asermax/tachikoma/commit/d5a8efba816feb105b5cbcba1d51c3c07382f6f7))
+
+- **tasks**: Inline memory index injection in background executor
+  ([`506b8b9`](https://github.com/asermax/tachikoma/commit/506b8b9a7f5b166c8ab8316d843a9daeffce98d7))
+
+### Testing
+
+- Add tests for static memory index injection
+  ([`6106fa6`](https://github.com/asermax/tachikoma/commit/6106fa644889b7fae7a921e9b605f4b4ae7f96dd))
+
+- **memory**: Remove agentic search context provider tests
+  ([`ef07a35`](https://github.com/asermax/tachikoma/commit/ef07a3515db543ef3b0fd01748b2e5c06655dafd))
+
+
 ## v1.102.0 (2026-06-10)
 
 ### Documentation
