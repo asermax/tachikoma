@@ -230,20 +230,6 @@ def build_context_summary(entries: list[SessionContextEntry]) -> str | None:
         names = [f"{o.upper()}.md" for o in foundational]
         lines.append(f"**Foundational Context:** {', '.join(names)}")
 
-    # Memories: extract file paths from metadata
-    memory_entries = by_owner.get("memories", [])
-    if memory_entries:
-        paths = sorted(
-            {
-                e.metadata.get("memory_path")
-                for e in memory_entries
-                if e.metadata and e.metadata.get("memory_path")
-            }
-        )
-        if paths:
-            has_content = True
-            lines.append(f"**Loaded Memories:** {', '.join(paths)}")
-
     # Skills: extract enriched metadata (description, path) when available
     skill_entries = by_owner.get("skills", [])
     if skill_entries:

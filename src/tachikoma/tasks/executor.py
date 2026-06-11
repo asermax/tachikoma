@@ -29,7 +29,6 @@ from tachikoma.agent_defaults import AgentDefaults
 from tachikoma.buffer.priority import Priority
 from tachikoma.config import TaskSettings
 from tachikoma.git.processor import GitProcessor
-from tachikoma.memory.context_provider import MemoryContextProvider
 from tachikoma.memory.episodic import EpisodicProcessor
 from tachikoma.message import TextMessage
 from tachikoma.notifications import (
@@ -663,7 +662,6 @@ class BackgroundTaskExecutor:
             results = await pipeline.run(prompt)
 
             msg_pipeline = MessagePreProcessingPipeline()
-            msg_pipeline.register(MemoryContextProvider(self._agent_defaults))
 
             if self._skill_registry is not None:
                 msg_pipeline.register(

@@ -44,7 +44,6 @@ from tachikoma.media import media_hook
 from tachikoma.memory import (
     EpisodicProcessor,
     FactsProcessor,
-    MemoryContextProvider,
     PreferencesProcessor,
     TranscriptArchiveProcessor,
     context_maintenance_tick,
@@ -417,10 +416,9 @@ async def run(
     pre_pipeline = PreProcessingPipeline()
     pre_pipeline.register(ProjectsContextProvider(workspace_path=settings.workspace.path))
 
-    # Create and configure the per-message pre-processing pipeline (skills, memory)
+    # Create and configure the per-message pre-processing pipeline (skills)
     msg_pre_pipeline = MessagePreProcessingPipeline()
     msg_pre_pipeline.register(SkillsContextProvider(agent_defaults, skill_registry))
-    msg_pre_pipeline.register(MemoryContextProvider(agent_defaults))
 
     # Wire provider listeners for plugin context provider lifecycle
     from tachikoma.plugins.provider_listeners import register_plugin_provider_listeners  # noqa: I001, PLC0415
