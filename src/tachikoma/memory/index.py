@@ -1,16 +1,138 @@
-"""Memory index rebuild logic for heavy index maintenance.
+"""Memory index rebuild logic and static index injection helpers.
 
 Provides prompt constants and helper functions for rebuilding MEMORY.md
 index files in facts and preferences directories. Used by both the
 bootstrap hook (first-run index creation) and Sunday maintenance
 (full rebuild with description workers).
+
+Also provides ``format_memory_index()`` and ``load_memory_indexes()`` for
+static injection of memory indexes into foundational context at startup
+and into background task prompts at runtime.
 """
 
 from __future__ import annotations
 
+import re
+from pathlib import Path
+
+from loguru import logger
+
 from tachikoma.agent_defaults import AgentDefaults
 from tachikoma.memory.prompts import extraction_allow_rules
 from tachikoma.post_processing import UTILITY_BASH_HOOK, query_and_consume
+
+_log = logger.bind(component="memory")
+
+# Regex for MEMORY.md entries: [Human-readable Name](./path.md): One-line description
+_INDEX_ENTRY_RE = re.compile(
+    r"^\[([^\]]+)\]\(\./([^)]+\.md)\):\s*(.+)$", re.MULTILINE
+)
+
+# Memory types that have MEMORY.md indexes for static injection.
+_INDEXABLE_TYPES = ("facts", "preferences")
+
+# Type descriptions for injected index sections.
+_TYPE_DESCRIPTIONS: dict[str, str] = {
+    "facts": (
+        "Stable reference information: personal details, key people, "
+        "technical decisions.\nBrowse the entries below. When a file seems "
+        "relevant to the current conversation,\nread it with the Read tool "
+        "to get the full content."
+    ),
+    "preferences": (
+        "Subjective choices about how things should be done.\nBrowse the "
+        "entries below. When a file seems relevant to the current "
+        "conversation,\nread it with the Read tool to get the full content."
+    ),
+}
+
+
+def format_memory_index(memory_type: str, raw_content: str) -> str | None:
+    """Format a MEMORY.md file's raw content into an injectable section.
+
+    Parses entries matching ``[Name](./path.md): description``.  Malformed
+    entries are skipped with a debug log.  Returns ``None`` if no well-formed
+    entries are found.
+
+    Args:
+        memory_type: Memory type label (``"facts"`` or ``"preferences"``).
+        raw_content: Raw text content of a MEMORY.md file.
+
+    Returns:
+        Formatted section string, or ``None`` when the file has no usable
+        entries.
+    """
+    # Find all well-formed entries
+    entries = _INDEX_ENTRY_RE.findall(raw_content)
+    if not entries:
+        return None
+
+    # Reconstruct well-formed entry lines from parsed groups
+    lines = [f"[{name}](./{path}): {desc}" for name, path, desc in entries]
+
+    # Detect lines that look like entry attempts but don't parse correctly.
+    for line in raw_content.splitlines():
+        stripped = line.strip()
+        if (
+            stripped.startswith("[")
+            and "](" in stripped
+            and not _INDEX_ENTRY_RE.search(stripped)
+        ):
+            _log.debug(
+                "Skipping malformed MEMORY.md entry: type={type} line={line!r}",
+                type=memory_type,
+                line=stripped,
+            )
+
+    description = _TYPE_DESCRIPTIONS.get(
+        memory_type,
+        "Browse the entries below. When a file seems relevant, read it "
+        "with the Read tool.",
+    )
+
+    return (
+        f"## {memory_type.title()} Index\n\n"
+        f"{description}\n\n"
+        + "\n".join(f"- {line}" for line in lines)
+    )
+
+
+def load_memory_indexes(workspace_path: Path) -> list[tuple[str, str]]:
+    """Read and format both facts and preferences MEMORY.md files.
+
+    Returns a list of ``(owner_tag, formatted_content)`` tuples suitable for
+    injection into foundational context.  Skips missing, empty, or malformed
+    files silently.
+
+    Args:
+        workspace_path: Path to the workspace root directory.
+
+    Returns:
+        List of ``("memory_index", formatted_section)`` tuples.
+    """
+    results: list[tuple[str, str]] = []
+    memories_root = workspace_path / "memories"
+
+    for memory_type in _INDEXABLE_TYPES:
+        index_path = memories_root / memory_type / "MEMORY.md"
+
+        try:
+            raw_content = index_path.read_text()
+        except FileNotFoundError:
+            continue
+        except OSError as err:
+            _log.debug(
+                "Memory index unreadable: type={type} err={err}",
+                type=memory_type,
+                err=str(err),
+            )
+            continue
+
+        formatted = format_memory_index(memory_type, raw_content)
+        if formatted is not None:
+            results.append(("memory_index", formatted))
+
+    return results
 
 DESCRIPTION_WORKER_PROMPT = """\
 You are a memory description worker. You receive a batch of file paths and \
