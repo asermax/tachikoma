@@ -120,8 +120,8 @@ class TestContextResult:
 
     async def test_existing_providers_still_work_without_agents(self) -> None:
         """AC: Providers returning ContextResult without agents continue working."""
-        # This simulates how existing providers (like MemoryContextProvider)
-        # create ContextResult without the agents field
+        # This simulates how providers create ContextResult without the
+        # agents field
         provider = _make_mock_provider()
         provider.provide.return_value = ContextResult(tag="memories", content="test")
 

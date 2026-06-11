@@ -98,30 +98,6 @@ class TestBuildContextSummary:
         assert result is not None
         assert "**Foundational Context:** SOUL.md, USER.md, AGENTS.md" in result
 
-    def test_includes_memory_paths_from_metadata(self) -> None:
-        entries = [
-            _make_entry(
-                "memories",
-                "content",
-                metadata={"memory_path": "memories/facts/python.md"},
-            ),
-            _make_entry(
-                "memories",
-                "content",
-                metadata={"memory_path": "memories/facts/infra.md"},
-            ),
-        ]
-        result = build_context_summary(entries)
-        assert result is not None
-        assert "memories/facts/infra.md" in result
-        assert "memories/facts/python.md" in result
-        assert "**Loaded Memories:**" in result
-
-    def test_skips_memory_entries_without_metadata(self) -> None:
-        entries = [_make_entry("memories", "content")]
-        result = build_context_summary(entries)
-        assert result is None
-
     def test_includes_skill_names_from_metadata(self) -> None:
         entries = [
             _make_entry("skills", "content", metadata={"skill_name": "reading-list"}),
@@ -191,11 +167,6 @@ class TestBuildContextSummary:
             _make_entry("soul", "personality"),
             _make_entry("user", "user info"),
             _make_entry(
-                "memories",
-                "content",
-                metadata={"memory_path": "memories/facts/python.md"},
-            ),
-            _make_entry(
                 "skills",
                 "content",
                 metadata={"skill_name": "reading-list"},
@@ -206,22 +177,12 @@ class TestBuildContextSummary:
         result = build_context_summary(entries)
         assert result is not None
         assert "**Foundational Context:** SOUL.md, USER.md" in result
-        assert "**Loaded Memories:** memories/facts/python.md" in result
         assert "**Active Skills:**" in result
         assert "- **reading-list**" in result
         assert "**Projects:** tachikoma" in result
         assert "**Previous Conversation:**" in result
         assert "Skip re-extracting information" in result
         assert "still search for existing files" in result
-
-    def test_deduplicates_memory_paths(self) -> None:
-        entries = [
-            _make_entry("memories", "content", metadata={"memory_path": "memories/facts/x.md"}),
-            _make_entry("memories", "content", metadata={"memory_path": "memories/facts/x.md"}),
-        ]
-        result = build_context_summary(entries)
-        assert result is not None
-        assert result.count("memories/facts/x.md") == 1
 
     def test_deduplicates_skill_names(self) -> None:
         entries = [
@@ -257,7 +218,7 @@ class TestPostProcessingPipeline:
         session = _make_session()
 
         entries = [
-            _make_entry("memories", "c", metadata={"memory_path": "memories/facts/x.md"}),
+            _make_entry("skills", "c", metadata={"skill_name": "my-skill"}),
         ]
         registry = _make_mock_registry()
         registry.load_context_entries = AsyncMock(return_value=entries)
@@ -271,7 +232,7 @@ class TestPostProcessingPipeline:
         extra = call_kwargs.kwargs.get("extra") or call_kwargs[1].get("extra")
         assert extra is not None
         assert "context_summary" in extra
-        assert "memories/facts/x.md" in extra["context_summary"]
+        assert "my-skill" in extra["context_summary"]
 
     async def test_passes_extra_none_when_no_entries(self) -> None:
         """AC: Pipeline passes extra=None when entries are empty."""
