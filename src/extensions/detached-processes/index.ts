@@ -37,7 +37,13 @@ export default defineExtension<DetachedProcessesConfig>({
     const reconcile: ReconcileDeps = {
       repository,
       processesDir,
-      notify: (notification: ProcessNotification) => app.events.emit("notify", notification),
+      notify: (notification: ProcessNotification) =>
+        app.events.emit("notify", {
+          title: `Process ${notification.processId}`,
+          text: notification.message,
+          severity: notification.severity === "error" ? "warning" : "info",
+          source: notification.source,
+        }),
       log: app.log,
     };
 

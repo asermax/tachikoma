@@ -50,7 +50,8 @@ export default defineExtension<TasksConfig>({
       repository,
       side: app.agent.side,
       deliver: (delivery) => app.channels.deliver(delivery),
-      notify: (notification) => app.events.emit("notify", notification),
+      // User-facing output goes through deliver(); this signal is for other extensions.
+      notify: (notification) => app.events.emit("tasks:instance-finished", notification),
       maxIterations: app.extensionConfig.backgroundMaxIterations,
       timezone,
       now,
@@ -69,7 +70,7 @@ export default defineExtension<TasksConfig>({
         log: app.log,
         onExpired: (instance, reason) => {
           app.channels.deliver({ text: `❌ Background task failed: ${reason}`, gate: "idle" });
-          app.events.emit("notify", {
+          app.events.emit("tasks:instance-finished", {
             source: "Background task",
             instanceId: instance.id,
             status: "failed",

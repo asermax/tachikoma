@@ -51,7 +51,7 @@ The thin core: enough infrastructure that a user can hold an end-to-end REPL con
 **Description**: The project installs, lints, formats, typechecks, tests, and runs directly from TypeScript sources (Node type stripping, pnpm, Biome, vitest, just) with the pi SDK pinned and importable.
 
 ### DLT-002: Configuration system
-**Status**: ✗ Pending
+**Status**: ✓ Done
 **Depends on**: None
 **Priority**: 1 (Critical)
 **Complexity**: Medium
@@ -59,7 +59,7 @@ The thin core: enough infrastructure that a user can hold an end-to-end REPL con
 **Description**: TOML configuration at `~/.config/tachikoma/config.toml` is parsed with smol-toml, validated and defaulted via TypeBox schemas, and auto-generated as a commented default file on first run.
 
 ### DLT-003: Structured logging
-**Status**: ✗ Pending
+**Status**: ✓ Done
 **Depends on**: DLT-002
 **Priority**: 1 (Critical)
 **Complexity**: Easy
@@ -67,7 +67,7 @@ The thin core: enough infrastructure that a user can hold an end-to-end REPL con
 **Description**: All components log through pino with per-component child loggers, pretty output in development and structured JSON in service mode.
 
 ### DLT-004: Database layer
-**Status**: ✗ Pending
+**Status**: ✓ Done
 **Depends on**: DLT-002
 **Priority**: 1 (Critical)
 **Complexity**: Medium
@@ -75,7 +75,7 @@ The thin core: enough infrastructure that a user can hold an end-to-end REPL con
 **Description**: A shared drizzle database over `node:sqlite` lives at `{workspace}/.tachikoma/tachikoma.db`, with drizzle-kit migrations applied automatically at startup.
 
 ### DLT-005: Typed event bus
-**Status**: ✗ Pending
+**Status**: ✓ Done
 **Depends on**: None
 **Priority**: 1 (Critical)
 **Complexity**: Easy
@@ -83,14 +83,14 @@ The thin core: enough infrastructure that a user can hold an end-to-end REPL con
 **Description**: Extensions publish and subscribe to typed events through a core event bus without knowing about each other.
 
 ### DLT-006: Extension host
-**Status**: ✗ Pending
+**Status**: ✓ Done
 **Depends on**: DLT-002, DLT-003
 **Priority**: 1 (Critical)
 **Complexity**: Hard
 **Description**: Extensions defined via `defineExtension({ name, config?, setup(app) })` are loaded in order and receive an `AppContext` with app-level hooks (scheduler, db, session lifecycle, channels, context providers, post-processing) plus `app.agent.use()` for contributing pi extension factories.
 
 ### DLT-007: Workspace initialization
-**Status**: ✗ Pending
+**Status**: ✓ Done
 **Depends on**: DLT-002
 **Priority**: 1 (Critical)
 **Complexity**: Easy
@@ -99,6 +99,7 @@ The thin core: enough infrastructure that a user can hold an end-to-end REPL con
 
 ### DLT-008: Coordinator with long-lived pi session
 **Status**: ✗ Pending
+**Note**: Core loop (inbox, long-lived session, event mapping) is implemented; mid-generation steering/follow-up routing is not — messages arriving during an exchange wait for the next one.
 **Depends on**: DLT-006, DLT-007
 **Priority**: 1 (Critical)
 **Complexity**: Hard
@@ -106,7 +107,7 @@ The thin core: enough infrastructure that a user can hold an end-to-end REPL con
 **Description**: The coordinator enqueues user messages, prompts a single long-lived `AgentSession` per conversation, maps `session.subscribe()` events to domain `AgentEvent`s for channels, and routes mid-generation input as steering/follow-up.
 
 ### DLT-009: Channel registry + REPL channel
-**Status**: ✗ Pending
+**Status**: ✓ Done
 **Depends on**: DLT-008
 **Priority**: 1 (Critical)
 **Complexity**: Medium
@@ -114,7 +115,7 @@ The thin core: enough infrastructure that a user can hold an end-to-end REPL con
 **Description**: Channels register against the core and a terminal REPL channel renders streamed agent responses — the walking skeleton: message in, response out, end to end.
 
 ### DLT-010: Scheduler
-**Status**: ✗ Pending
+**Status**: ✓ Done
 **Depends on**: DLT-006
 **Priority**: 2 (High)
 **Complexity**: Easy
@@ -127,7 +128,7 @@ The thin core: enough infrastructure that a user can hold an end-to-end REPL con
 Conversation lifecycle and the learning loop: sessions open, close, resume, and leave memories behind.
 
 ### DLT-011: Session registry
-**Status**: ✗ Pending
+**Status**: ✓ Done
 **Depends on**: DLT-004, DLT-008
 **Priority**: 2 (High)
 **Complexity**: Medium
@@ -135,7 +136,7 @@ Conversation lifecycle and the learning loop: sessions open, close, resume, and 
 **Description**: Sessions are tracked in the database with their pi transcript path, summary, and lifecycle state, supporting close and reopen.
 
 ### DLT-012: Pipeline execution
-**Status**: ✗ Pending
+**Status**: ✓ Done
 **Depends on**: DLT-006
 **Priority**: 2 (High)
 **Complexity**: Medium
@@ -143,7 +144,7 @@ Conversation lifecycle and the learning loop: sessions open, close, resume, and 
 **Description**: Registered context providers run in parallel before a conversation and post-processors run in phases on session close, with per-item error isolation so individual failures never block the conversation.
 
 ### DLT-013: Rolling summaries
-**Status**: ✗ Pending
+**Status**: ✓ Done
 **Depends on**: DLT-011
 **Priority**: 2 (High)
 **Complexity**: Easy
@@ -151,7 +152,7 @@ Conversation lifecycle and the learning loop: sessions open, close, resume, and 
 **Description**: After each agent response, a side-channel `complete()` call updates the session's rolling summary used by boundary detection.
 
 ### DLT-014: Boundary detection
-**Status**: ✗ Pending
+**Status**: ✓ Done
 **Depends on**: DLT-013
 **Priority**: 2 (High)
 **Complexity**: Medium
@@ -159,7 +160,7 @@ Conversation lifecycle and the learning loop: sessions open, close, resume, and 
 **Description**: Each incoming message is classified via a side-channel LLM call as continuing the current topic, starting a new one, or matching a recent closed session to resume.
 
 ### DLT-015: Session replacement on boundary
-**Status**: ✗ Pending
+**Status**: ✓ Done
 **Depends on**: DLT-014
 **Priority**: 2 (High)
 **Complexity**: Hard
@@ -167,7 +168,7 @@ Conversation lifecycle and the learning loop: sessions open, close, resume, and 
 **Description**: On a detected boundary the coordinator closes the current session (triggering post-processing) and swaps in a new or resumed `AgentSession` via `AgentSessionRuntime`, rebinding extensions and event subscriptions.
 
 ### DLT-016: Cold-start session resumption
-**Status**: ✗ Pending
+**Status**: ✓ Done
 **Depends on**: DLT-015
 **Priority**: 3 (Medium)
 **Complexity**: Medium
@@ -175,7 +176,7 @@ Conversation lifecycle and the learning loop: sessions open, close, resume, and 
 **Description**: The first message after a process restart is matched against recent closed sessions and resumes the matching conversation instead of starting cold.
 
 ### DLT-017: Session idle timeout
-**Status**: ✗ Pending
+**Status**: ✓ Done
 **Depends on**: DLT-011, DLT-010
 **Priority**: 2 (High)
 **Complexity**: Easy
@@ -184,6 +185,7 @@ Conversation lifecycle and the learning loop: sessions open, close, resume, and 
 
 ### DLT-018: Context extension
 **Status**: ✗ Pending
+**Note**: SOUL.md/USER.md compose the system prompt but are read once at bootstrap, not re-read on session start — DLT-021 updates only apply after restart.
 **Depends on**: DLT-006, DLT-007
 **Priority**: 2 (High)
 **Complexity**: Easy
@@ -191,7 +193,7 @@ Conversation lifecycle and the learning loop: sessions open, close, resume, and 
 **Description**: SOUL.md, USER.md, and AGENTS.md from the workspace are composed into the pi session's system prompt, re-read on session start.
 
 ### DLT-019: Memory extraction
-**Status**: ✗ Pending
+**Status**: ✓ Done
 **Depends on**: DLT-012, DLT-015
 **Priority**: 2 (High)
 **Complexity**: Medium
@@ -199,7 +201,7 @@ Conversation lifecycle and the learning loop: sessions open, close, resume, and 
 **Description**: On session close, parallel processors read the pi JSONL transcript and extract episodic summaries, facts, and preferences into type-organized markdown files in the workspace.
 
 ### DLT-020: Memory context retrieval
-**Status**: ✗ Pending
+**Status**: ✓ Done
 **Depends on**: DLT-012
 **Priority**: 2 (High)
 **Complexity**: Medium
@@ -207,7 +209,7 @@ Conversation lifecycle and the learning loop: sessions open, close, resume, and 
 **Description**: A context provider surfaces relevant stored memories at conversation start so the agent references past interactions without being asked.
 
 ### DLT-021: Core context updates
-**Status**: ✗ Pending
+**Status**: ✓ Done
 **Depends on**: DLT-018, DLT-019
 **Priority**: 3 (Medium)
 **Complexity**: Medium
@@ -221,7 +223,7 @@ Conversation lifecycle and the learning loop: sessions open, close, resume, and 
 Packaged expertise and autonomous work.
 
 ### DLT-022: Skills via progressive disclosure
-**Status**: ✗ Pending
+**Status**: ✓ Done
 **Depends on**: DLT-006, DLT-007
 **Priority**: 2 (High)
 **Complexity**: Medium
@@ -230,6 +232,7 @@ Packaged expertise and autonomous work.
 
 ### DLT-023: Skill hot-reload
 **Status**: ✗ Pending
+**Note**: Not implemented (deliberately dropped): pi rediscovers skills on each session build, so changes land on the next session rather than mid-session.
 **Depends on**: DLT-022
 **Priority**: 3 (Medium)
 **Complexity**: Easy
@@ -237,7 +240,7 @@ Packaged expertise and autonomous work.
 **Description**: Changes to the skills directory are detected and the pi resource set reloaded so new or edited skills are available without restarting.
 
 ### DLT-024: Skill-bundled agents
-**Status**: ✗ Pending
+**Status**: ✓ Done
 **Depends on**: DLT-022
 **Priority**: 3 (Medium)
 **Complexity**: Medium
@@ -246,6 +249,7 @@ Packaged expertise and autonomous work.
 
 ### DLT-025: Skill authoring guide
 **Status**: ✗ Pending
+**Note**: No built-in skills ship in the repo yet.
 **Depends on**: DLT-022
 **Priority**: 3 (Medium)
 **Complexity**: Easy
@@ -253,7 +257,7 @@ Packaged expertise and autonomous work.
 **Description**: A built-in skill teaches the agent to scaffold new skills with correct structure and metadata.
 
 ### DLT-026: Workflow engine
-**Status**: ✗ Pending
+**Status**: ✓ Done
 **Depends on**: DLT-004, DLT-006
 **Priority**: 2 (High)
 **Complexity**: Hard
@@ -261,7 +265,7 @@ Packaged expertise and autonomous work.
 **Description**: Directory-based workflow definitions execute as database-persisted step state machines (pending, started, completed, skipped) with `registerTool` lifecycle tools to start, advance, query, end, and list workflows.
 
 ### DLT-027: Stale workflow cleanup
-**Status**: ✗ Pending
+**Status**: ✓ Done
 **Depends on**: DLT-026, DLT-012
 **Priority**: 4 (Low)
 **Complexity**: Easy
@@ -270,6 +274,7 @@ Packaged expertise and autonomous work.
 
 ### DLT-028: Workflow authoring guide
 **Status**: ✗ Pending
+**Note**: No built-in workflow-authoring skill (no built-in skill mechanism, see DLT-025).
 **Depends on**: DLT-026, DLT-022
 **Priority**: 3 (Medium)
 **Complexity**: Easy
@@ -277,7 +282,7 @@ Packaged expertise and autonomous work.
 **Description**: A built-in skill teaches the agent to create workflow definitions with steps, references, and scripts.
 
 ### DLT-029: Task management
-**Status**: ✗ Pending
+**Status**: ✓ Done
 **Depends on**: DLT-004, DLT-010
 **Priority**: 2 (High)
 **Complexity**: Medium
@@ -286,6 +291,7 @@ Packaged expertise and autonomous work.
 
 ### DLT-030: Session task execution
 **Status**: ✗ Pending
+**Note**: Due session tasks are delivered as idle-gated channel text to the user; the prompt is never injected into the active session for the agent to act on.
 **Depends on**: DLT-029, DLT-008
 **Priority**: 2 (High)
 **Complexity**: Medium
@@ -293,7 +299,7 @@ Packaged expertise and autonomous work.
 **Description**: Due session tasks wait for a configurable idle window, then inject their prompt into the active session (`sendUserMessage` with turn trigger) so results arrive as proactive messages without interrupting conversation.
 
 ### DLT-031: Background task execution
-**Status**: ✗ Pending
+**Status**: ✓ Done
 **Depends on**: DLT-029
 **Priority**: 2 (High)
 **Complexity**: Hard
@@ -308,6 +314,7 @@ The primary interface and workspace versioning.
 
 ### DLT-032: Telegram channel
 **Status**: ✗ Pending
+**Note**: Chunked sends with Markdown fallback work, but there are no tool-activity markers, no progressive streaming edits, and no steering/stop handling.
 **Depends on**: DLT-009
 **Priority**: 2 (High)
 **Complexity**: Hard
@@ -315,7 +322,7 @@ The primary interface and workspace versioning.
 **Description**: A grammY-based Telegram channel renders streamed responses with message splitting, tool-activity markers, and steering/stop handling for text conversations.
 
 ### DLT-033: Telegram media support
-**Status**: ✗ Pending
+**Status**: ✓ Done
 **Depends on**: DLT-032
 **Priority**: 3 (Medium)
 **Complexity**: Medium
@@ -323,7 +330,7 @@ The primary interface and workspace versioning.
 **Description**: Incoming photos, audio, voice, documents, stickers, video, video notes, and animations are downloaded with size validation and temp-file lifecycle management and passed to the agent.
 
 ### DLT-034: Telegram push notifications
-**Status**: ✗ Pending
+**Status**: ✓ Done
 **Depends on**: DLT-032
 **Priority**: 3 (Medium)
 **Complexity**: Easy
@@ -331,7 +338,7 @@ The primary interface and workspace versioning.
 **Description**: Configurable push alerts notify the user when the agent has responded or a background task completed.
 
 ### DLT-035: Projects extension
-**Status**: ✗ Pending
+**Status**: ✓ Done
 **Depends on**: DLT-012
 **Priority**: 3 (Medium)
 **Complexity**: Medium
@@ -339,7 +346,7 @@ The primary interface and workspace versioning.
 **Description**: External repositories register as tracked projects, synchronize on startup, and surface their state plus register/deregister tools via a context provider.
 
 ### DLT-036: Project commit/push post-processor
-**Status**: ✗ Pending
+**Status**: ✓ Done
 **Depends on**: DLT-035
 **Priority**: 3 (Medium)
 **Complexity**: Medium
@@ -347,7 +354,7 @@ The primary interface and workspace versioning.
 **Description**: On session close, changes in each registered project are committed with descriptive messages and pushed to their remotes.
 
 ### DLT-037: Workspace git versioning
-**Status**: ✗ Pending
+**Status**: ✓ Done
 **Depends on**: DLT-012
 **Priority**: 2 (High)
 **Complexity**: Easy
@@ -355,7 +362,7 @@ The primary interface and workspace versioning.
 **Description**: The workspace is committed automatically after each session, creating a history of all memory and context changes for rollback and auditing.
 
 ### DLT-038: Workspace git sync
-**Status**: ✗ Pending
+**Status**: ✓ Done
 **Depends on**: DLT-037
 **Priority**: 3 (Medium)
 **Complexity**: Medium
@@ -370,6 +377,7 @@ Supervision, delivery coordination, third-party extensibility, and release readi
 
 ### DLT-039: Notifications extension
 **Status**: ✗ Pending
+**Note**: Notify event, severity routing, the conversational notify tool, and schema-correct process-watcher payloads exist; background runs still lack the tool (bare sessions).
 **Depends on**: DLT-005
 **Priority**: 3 (Medium)
 **Complexity**: Medium
@@ -378,6 +386,7 @@ Supervision, delivery coordination, third-party extensibility, and release readi
 
 ### DLT-040: Buffered delivery
 **Status**: ✗ Pending
+**Note**: Idle/max-hold gating, digest batching, and shutdown flushing exist; no priority ordering yet.
 **Depends on**: DLT-039, DLT-030
 **Priority**: 3 (Medium)
 **Complexity**: Hard
@@ -385,7 +394,7 @@ Supervision, delivery coordination, third-party extensibility, and release readi
 **Description**: A priority buffer with idle-window and max-hold timeouts coordinates notification and session-task delivery so proactive messages land at natural conversation pauses without being lost or interleaved.
 
 ### DLT-041: Detached process supervision
-**Status**: ✗ Pending
+**Status**: ✓ Done
 **Depends on**: DLT-006
 **Priority**: 3 (Medium)
 **Complexity**: Hard
@@ -393,7 +402,7 @@ Supervision, delivery coordination, third-party extensibility, and release readi
 **Description**: Tools dispatch, monitor, and control OS-level commands that outlive the session, with watchers tracking exit status and streaming output back to the agent.
 
 ### DLT-042: External extension loading
-**Status**: ✗ Pending
+**Status**: ✓ Done
 **Depends on**: DLT-006
 **Priority**: 3 (Medium)
 **Complexity**: Hard
@@ -402,6 +411,7 @@ Supervision, delivery coordination, third-party extensibility, and release readi
 
 ### DLT-043: Granular processing status
 **Status**: ✗ Pending
+**Note**: Coordinator status events are emitted on the app bus but no channel subscribes — they surface only as debug logs (adapter compaction/retry statuses do render in the REPL).
 **Depends on**: DLT-012, DLT-009
 **Priority**: 4 (Low)
 **Complexity**: Easy
@@ -410,6 +420,7 @@ Supervision, delivery coordination, third-party extensibility, and release readi
 
 ### DLT-044: Release pipeline
 **Status**: ✗ Pending
+**Note**: No release tooling in the repo (no semantic-release/changelog configuration).
 **Depends on**: None
 **Priority**: 4 (Low)
 **Complexity**: Easy

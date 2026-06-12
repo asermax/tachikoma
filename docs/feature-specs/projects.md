@@ -1,0 +1,88 @@
+# Projects
+
+<!-- This spec describes the current system capability. Updated through delta reconciliation. -->
+
+## Overview
+
+External code repositories managed as git submodules under `projects/` in the workspace. The agent registers, lists, and deregisters projects mid-conversation through pi tools; registered projects are synchronized on startup, their git state is injected before every prompt, and dirty projects are committed and pushed automatically when a session closes — just before the workspace commit, so submodule pointer updates land in the same pass (see [git-workspace.md](git-workspace.md)).
+
+Git authentication (SSH keys, tokens) is the user's responsibility: the system assumes credentials are configured externally and surfaces failures as tool errors or warning logs.
+
+## User Stories
+
+- As a user, I want to register external repositories during a conversation so that the assistant can read and modify them inside its workspace
+- As a user, I want registered projects synced on every startup so that the assistant works against up-to-date code
+- As a user, I want project changes committed and pushed automatically at session close so that my work is preserved without manual git operations
+- As a user, I want to deregister projects I no longer need, with a guard against losing uncommitted work
+
+## Requirements
+
+| ID | Requirement |
+|----|-------------|
+| R0 | Manage external repositories as git submodules under `projects/` in the workspace; git state (`.gitmodules` plus `git submodule status`) is the registry — no database table |
+| R1 | `register_project` tool adds a submodule at `projects/<name>` and checks it out to its remote default branch (remote HEAD reference, falling back to `git remote show origin`, then `main`) — never detached HEAD |
+| R2 | Registration validates inputs (non-empty name and url, no duplicate directory) and cleans up partial state best-effort when the add fails |
+| R3 | `deregister_project` tool removes a submodule completely (deinit, `git rm`, drop the `.git/modules` clone); with uncommitted changes it refuses unless `force=true` |
+| R4 | `list_projects` tool reports each project's branch (or detached short commit) and uncommitted-change count |
+| R5 | Project tools are registered in every agent session via a pi extension factory (`app.agent.use`) |
+| R6 | On startup, the `sync-projects` bootstrap hook ensures `projects/` exists and syncs every registered submodule in parallel: init → default-branch checkout → `smartPull`, with one retry per submodule and per-submodule error isolation |
+| R7 | A context provider injects a `projects` block before every prompt: each project with its branch (or detached state) and dirty count; when none are registered, guidance pointing at `register_project` |
+| R8 | A `preFinalize` post-processor commits each dirty project with a generated descriptive message (deterministic dated fallback) and pushes via `smartPush`, in parallel with per-project error isolation |
+| R9 | The projects processor runs before the workspace commit (`finalize` phase) so submodule pointer updates land in the same workspace commit pass |
+| R10 | The extension can be disabled entirely via `[extensions.projects] enabled = false` |
+
+## Behaviors
+
+### Project Registration (R1, R2)
+
+During a conversation, the agent registers a project by adding it as a git submodule checked out to its default branch.
+
+**Acceptance Criteria**:
+- Given a conversation is active, when the agent calls `register_project` with a name and git URL, then the repository is added as a submodule at `projects/<name>`, recorded in `.gitmodules`, and checked out to its remote default branch (not detached HEAD)
+- Given an empty `name` or `url`, when the tool runs, then it fails with `'name' is required` / `'url' is required` before touching git state
+- Given `projects/<name>` already exists, when the tool runs, then it fails with an "already exists" error
+- Given the submodule add or checkout fails (invalid URL, unreachable or unauthenticated remote), when the tool runs, then any partial state is removed best-effort and the error surfaces the underlying git message
+- Given a successful registration, when the workspace status is checked, then `.gitmodules` and the new submodule appear as uncommitted changes for the next workspace commit pass; the tool response says so explicitly
+
+### Project Deregistration (R3)
+
+Removal is complete — including the `.git/modules` clone — with a safety check for uncommitted work.
+
+**Acceptance Criteria**:
+- Given a registered project with a clean tree, when `deregister_project` is called, then the submodule is deinitialized, removed via `git rm`, and `.git/modules/projects/<name>` is deleted
+- Given a project with uncommitted changes, when called without `force`, then the tool fails listing the porcelain status and instructing `force=true`
+- Given a project with uncommitted changes, when called with `force=true`, then the project is removed and the changes are lost
+- Given an unregistered name, when called, then the tool fails with a "not found" error
+
+### Listing and Context Injection (R4, R5, R7)
+
+The same per-project state line backs the `list_projects` tool and the per-prompt context block, so the agent always knows which projects exist and whether they are dirty.
+
+**Acceptance Criteria**:
+- Given no projects are registered, when `list_projects` runs or the context provider fires, then both return "No projects registered. Use register_project to add one." — the block is always present so the agent knows the tools exist
+- Given a registered project on `main` with one dirty file, when listed, then the line reads `- app: main — 1 uncommitted change`
+- Given a project in detached HEAD, when listed, then the location is the short commit hash, e.g. `abc1234 (detached)`
+- Given gathering state for one project fails, when the context provider runs, then that project is excluded from the block with a warning log; given listing submodules fails entirely, the provider degrades to the empty-state guidance
+
+### Startup Sync (R6)
+
+The `sync-projects` bootstrap hook brings every registered submodule up to date before the first conversation.
+
+**Acceptance Criteria**:
+- Given no submodules are registered, when the hook runs, then it creates `projects/` (idempotent) and completes as a no-op
+- Given the workspace was freshly cloned on a new machine, when the hook runs, then each submodule is initialized, populated, and checked out to its default branch
+- Given an initialized submodule behind its remote, when the hook runs, then `smartPull` fast-forwards it to the remote head
+- Given a submodule has uncommitted changes, when the hook runs, then its sync is skipped (`DIRTY_SKIPPED`) with a warning
+- Given a submodule sync fails, when the first attempt errors, then the full sequence retries once; a second failure is logged and the remaining submodules continue (startup is never aborted)
+
+### Session-Close Commit and Push (R8, R9)
+
+The `projects-commit` post-processor preserves work in every dirty project before the workspace commit runs.
+
+**Acceptance Criteria**:
+- Given a project with uncommitted changes, when the session closes, then all changes are staged and committed with a one-line message generated from the staged diffstat (processor-tier side completion), then pushed to `origin` via `smartPush`
+- Given message generation fails, when committing, then the deterministic fallback `Update <name> files (YYYY-MM-DD)` is used and the push still proceeds
+- Given a project with a clean tree, when the processor runs, then it is left untouched and no side completion is made
+- Given a push fails or the remote has conflicting divergence, when the processor runs, then a warning is logged and the commits remain local (retried by the next startup sync)
+- Given multiple dirty projects, when the processor runs, then they are processed in parallel and one project's failure does not affect the others
+- Given the processor completes, when the `finalize`-phase workspace commit runs, then the updated submodule pointers are committed alongside other workspace changes ([git-workspace.md](git-workspace.md))

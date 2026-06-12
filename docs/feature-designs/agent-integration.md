@@ -1,0 +1,121 @@
+# Design: Agent Integration
+
+<!-- This design describes the current implementation approach. Updated through delta reconciliation. -->
+
+**Feature Spec**: [../feature-specs/agent-integration.md](../feature-specs/agent-integration.md)
+**Status**: Current
+
+## Purpose
+
+Explain how Tachikoma embeds pi — session construction, credentials, model tiers, event adaptation, and side-channel LLM work — and why each seam sits where it does.
+
+## Problem Context
+
+pi is an embeddable coding agent; Tachikoma hosts it as a personal assistant. That means: an isolated agent dir so Tachikoma never collides with the user's own pi install, several model roles with different cost profiles, headless LLM work that must not touch the conversational session, and a hard rule that pi types never leak past this layer (channels and extensions see only domain types).
+
+**Constraints:**
+- pi is pre-1.0 and fast-moving; the verified surface lives in `docs/reference/pi-sdk-notes.md` and must be re-checked on upgrade
+- pi has no built-in structured-output API for one-shot calls — classification has to be built on `completeSimple`
+- Tests cannot hit live models; the adapter and side-runner consumers are faked via `Pick<>` types ([DES-002](../design/DES-002-extension-authoring.md))
+
+**Interactions:**
+- The [conversation loop](conversation-loop.md) calls `AgentManager.open()` for main/resumed sessions and `streamPrompt` per exchange
+- Extensions get this layer as `app.agent` (`src/extensions/host.ts` builds a per-extension `SideRunner`)
+- [Boundary detection](../feature-specs/boundary-detection.md) is the heaviest `side.classify`/`side.complete` consumer
+- [Core shell](../feature-specs/core-shell.md) defines the workspace `piDir` layout the manager builds on
+
+## Design Overview
+
+`AgentManager` is the single construction path for every pi session. It owns the process-wide `AuthStorage`/`ModelRegistry`/`ModelTiers`, and `open(options)` varies along three axes: persistence (`SessionManager.create` / `.open(sessionFile)` / `.inMemory`), binding (all registered factories and prompt builders, or `bare`), and model (`tier`). A fresh `DefaultResourceLoader` is built per open, which is what makes session replacement in the coordinator a plain re-open.
+
+`streamPrompt` is the only bridge from pi's push events to the domain: it subscribes, runs `prompt()`, queues mapped events, and yields them as an async iterable whose termination doubles as the exchange-end signal. `SideRunner` sits beside the session machinery for non-conversational LLM work, going straight to pi-ai's `completeSimple` for text and JSON, and to a bare in-memory session when tool use is needed.
+
+## Components
+
+### Implementation Structure
+
+| Component | Responsibility | Key Decisions |
+|-----------|----------------|---------------|
+| `src/agent/manager.ts` | Auth/model-registry ownership; `open()` builds sessions (loader, session manager mode, settings, model) | Auth fallback to machine-level pi login; fresh loader per open; `bare` axis for headless work |
+| `src/agent/models.ts` | `MODEL_TIERS` const map, `parseModelRef`, `ModelTiers.ref/resolve` | `provider/model-id` strings resolved against pi's registry; fail fast at resolve time |
+| `src/agent/adapter.ts` | `streamPrompt`: pi `session.subscribe()` events → `AgentEvent` async iterable | Pull-based queue with promise wake; terminal `result`/`error` event; unsubscribe in `finally` |
+| `src/agent/side-run.ts` | `SideRunner.complete/classify/run` | `completeSimple` for one-shots; prompt-engineered JSON + validation + single retry for classify; disposable bare session for `run` |
+| `src/extensions/host.ts` | Exposes the layer as `app.agent` | One `SideRunner` per extension, bound to that extension's logger |
+
+## Key Decisions
+
+### Fall back to the machine-level pi login
+
+**Choice**: Use `{workspace}/.tachikoma/pi/auth.json` only when it exists with real content (size > 2 bytes, i.e. more than `{}`); otherwise share `~/.pi/agent/auth.json` and env vars via `AuthStorage.create()`.
+**Why**: Developers running Tachikoma on a machine where they already use pi should not authenticate twice, while a dedicated deployment (VPS) can hold its own credentials inside the workspace data dir. The size guard prevents a present-but-empty file from shadowing a working login.
+**Alternatives Considered**:
+- Always workspace-local: isolation, but forces a second OAuth/key setup on dev machines
+- Always machine-level: no way to give a deployment scoped credentials
+- An explicit config switch: another knob for what file presence already expresses
+
+**Consequences**:
+- Pro: zero-config on dev machines, self-contained on servers
+- Con: which store is active is implicit — diagnosable only by checking the local file
+
+### Model tiers resolved through pi's `ModelRegistry`
+
+**Choice**: Carry the Python four-tier split (`agent`/`searcher`/`processor`/`classifier`) as config strings `provider/model-id`, resolved via `registry.find()` with a workspace `models.json` overlay; resolution failures throw.
+**Why**: Tiers let every consumer ask for a role, not a model, so cost tuning is one config edit. Going through the registry (instead of pi-ai's static `getModel`) keeps custom providers and `models.json` entries usable, and validates that auth knows the provider.
+**Alternatives Considered**:
+- Hardcoded models per call site: the exact sprawl the Python config eliminated
+- Single model everywhere: makes extraction/classification pay conversational-model prices
+
+**Consequences**:
+- Pro: `app.agent.models` gives extensions tier lookup without config coupling
+- Con: a typoed model id surfaces only when first resolved, not at config load
+
+### Pull-based adapter with terminal events instead of thrown errors
+
+**Choice**: `streamPrompt` buffers mapped events in a queue drained by an async generator; prompt failure becomes a final `{ kind: "error" }` event rather than a rejection, and success appends `{ kind: "result" }`.
+**Why**: Channels consume a single `for await` loop; making termination an in-band event means a channel renders provider failures with the same code path as text, and the coordinator can treat "iterator done" as "exchange done" without racing pi's promise.
+**Alternatives Considered**:
+- Handing channels the raw `session.subscribe()`: leaks pi types and has no notion of per-exchange scope
+- Throwing from the iterator: every channel would need try/catch rendering duplicating the error path
+
+**Consequences**:
+- Pro: one ordering guarantee — events, then exactly one terminal event
+- Pro: trivially testable with a fake session (`tests/adapter.test.ts`)
+- Con: unmapped pi events (queue updates, turn boundaries) are silently dropped until a mapping is added
+
+### Prompt-engineered JSON classification with one retry
+
+**Choice**: `classify()` appends the JSON Schema to the system prompt, extracts JSON from the reply (fenced block, then outermost braces), validates with the same TypeBox machinery as config parsing (`parseWithSchema`), and retries once with a format reminder.
+**Why**: Classification calls (boundary detection, task evaluation) are high-frequency and latency-sensitive; `completeSimple` is one HTTP call with no session scaffolding. The schema doubles as the validator, so malformed output is caught, and a single retry empirically covers the common failure mode.
+**Alternatives Considered**:
+- pi's `terminate: true` tool pattern in an in-memory session: guaranteed structure, but spins up a full agent session per classification
+- No validation: silent drift when models add prose
+
+**Consequences**:
+- Pro: typed results (`Static<S>`) with two model calls worst-case
+- Con: still probabilistic — a second malformed reply propagates as an error to the caller
+
+## System Behavior
+
+### Scenario: Provider failure mid-exchange
+
+**Given**: A streaming exchange in progress
+**When**: pi's `prompt()` rejects (provider error)
+**Then**: Already-queued events are drained, a single `error` event with the message is yielded, the subscription is removed, and the iterator completes — the coordinator's exchange ends normally and the loop continues.
+
+### Scenario: Boundary classification with a sloppy model reply
+
+**Given**: `classify()` called with the boundary decision schema
+**When**: The model wraps its JSON in prose
+**Then**: Brace extraction recovers the object and validation passes; if extraction or validation fails, one retry runs with "output ONLY the JSON object" appended, and a second failure throws to the caller (boundary middleware error-isolates it).
+
+### Scenario: Headless extraction run
+
+**Given**: A post-processor calls `app.agent.side.run({ prompt, tools: ["read"], tier: "processor" })`
+**When**: The run executes
+**Then**: A bare in-memory session opens (no Tachikoma factories, no persisted transcript), tools are limited to `read`, the final assistant text is returned, and the session is disposed in `finally` even when the prompt fails.
+
+## Notes
+
+- `SettingsManager.create(workspace.root, workspace.piDir)` keeps pi settings inside the data dir alongside auth and `models.json` — nothing under `~/.pi` is written unless the machine-level auth store is the active one.
+- Default tiers (config): `agent`/`searcher` → `anthropic/claude-opus-4-5`, `processor`/`classifier` → `anthropic/claude-haiku-4-5`.
+- `run()` returns only final text; structured output from tool-using runs would need pi's `terminate: true` pattern, deliberately not built yet.

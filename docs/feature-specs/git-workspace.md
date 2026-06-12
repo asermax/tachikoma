@@ -1,0 +1,80 @@
+# Workspace Git Versioning
+
+<!-- This spec describes the current system capability. Updated through delta reconciliation. -->
+
+## Overview
+
+Automatic git version tracking for the workspace. A bootstrap hook initializes the workspace as a git repo with a fixed committer identity and syncs it with its `origin` remote when one is configured. When a session closes, a finalize-phase post-processor stages everything, commits with a descriptive message generated from the staged diffstat, and pushes using divergence detection with rebase-based recovery instead of a bare push. Three agent tools expose status, history, and on-demand commits during conversations.
+
+The sync primitives (`smartPull`/`smartPush`) are shared with the [projects](projects.md) extension, which applies the same semantics to each registered project repo.
+
+## User Stories
+
+- As a user, I want every workspace change (memories, context files, configuration) committed automatically after each session so that I can review history and roll back
+- As a user, I want committed changes pushed to a remote so that my workspace is backed up and usable from other machines
+- As the system, I want pushes to detect divergence and rebase instead of failing or force-pushing so that multiple machines can share one workspace remote safely
+
+## Requirements
+
+| ID | Requirement |
+|----|-------------|
+| R0 | The workspace is a git repository; all changes are committed automatically when a session closes |
+| R1 | The `init-workspace-repo` bootstrap hook initializes the repo on first run (idempotent): `git init`, fixed repo-local identity (`Tachikoma <tachikoma@local>`), commit signing disabled, an empty initial commit, and a committed `.gitignore` |
+| R2 | Managed `.gitignore` entries (`.tachikoma/`) are appended on every startup when missing, without committing — the next commit pass picks them up |
+| R3 | When an `origin` remote is configured, bootstrap syncs the workspace via `smartPull`; a dirty tree skips the sync with a warning; failures log and continue with local state |
+| R4 | The `git-commit` post-processor (`finalize` phase) stages everything (`git add -A`) and commits with a one-line message generated from the staged diffstat via a processor-tier side completion; a clean tree is a no-op |
+| R5 | Generated messages are sanitized (first non-empty line, surrounding quotes stripped, truncated at 100 characters); generation failure falls back to the deterministic `Update workspace files (YYYY-MM-DD)` |
+| R6 | After committing, the processor pushes to `origin` via `smartPush` when the remote exists; push failures are logged and committed changes remain local |
+| R7 | If uncommitted changes remain after the commit-and-push pass, the processor retries the commit once, then warns if changes still remain |
+| R8 | `smartPush`: abort any stale in-progress rebase, fetch, classify divergence via merge-base ancestor checks; push directly when ahead; when diverged, attempt `rebase --autostash` then push; a conflicting rebase is aborted and surfaces as `REBASE_FAILED` with local commits preserved |
+| R9 | `smartPull`: return `DIRTY_SKIPPED` without fetching when the tree is dirty; fast-forward when behind; naive rebase when diverged; a conflicting rebase is aborted and surfaces as `SYNC_FAILED` with local state restored |
+| R10 | Sync helpers resolve `"HEAD"` to the actual local branch name and follow gitlink `.git` files, so divergence detection works in repos without an `origin/HEAD` ref and inside submodules |
+| R11 | Agent tools `query_git_status`, `list_recent_commits`, and `commit_workspace` are registered in every agent session via a pi extension factory |
+| R12 | The extension can be disabled entirely via `[extensions.git] enabled = false` |
+
+## Behaviors
+
+### Repo Initialization and Startup Sync (R1, R2, R3)
+
+The bootstrap hook makes the workspace a usable repo before any extension writes to it, and pulls remote changes when an `origin` exists.
+
+**Acceptance Criteria**:
+- Given no `.git` directory, when the hook runs, then the repo is initialized with `user.name = Tachikoma`, signing disabled, an empty initial commit, and a second commit adding `.gitignore` with `.tachikoma/`
+- Given the repo already exists, when the hook runs again, then HEAD and history are untouched (idempotent)
+- Given an existing `.gitignore` missing the managed entry, when the hook runs, then `.tachikoma/` is appended without clobbering existing content and left uncommitted
+- Given an `origin` remote with new commits, when the hook runs, then the workspace fast-forwards (or rebases) to the remote head
+- Given no `origin` remote, when the hook runs, then the sync step is skipped silently; given a dirty tree, the sync is skipped with a warning; given a sync failure, startup continues on local state
+
+### Session-Close Commit and Push (R0, R4, R5, R6, R7)
+
+After post-processing has written its outputs (memory extraction and friends — see [memory.md](memory.md) and [conversation-loop.md](conversation-loop.md)), the `git-commit` processor records everything.
+
+**Acceptance Criteria**:
+- Given uncommitted changes exist, when the processor runs, then all changes are staged and committed in one commit whose message comes from a processor-tier completion over the staged diffstat
+- Given the workspace is clean, when the processor runs, then no commit is made and no side completion is requested
+- Given message generation fails, when committing, then the fallback `Update workspace files (YYYY-MM-DD)` is used
+- Given an `origin` remote is configured, when the commit completes, then `smartPush` runs and a successful push (or rebase-then-push) is logged; a failed push logs a warning and the commits remain local
+- Given files changed while the commit pass ran, when the processor verifies the tree, then it commits once more and warns if changes still remain afterwards
+
+### Divergence Handling (R8, R9, R10)
+
+`smartPush` and `smartPull` (`src/extensions/git/sync.ts`) replace bare `git push`/`git pull` with explicit state machines returning result enums instead of throwing.
+
+**Acceptance Criteria**:
+- Given local and remote match, when pushing, then the result is `NOTHING_TO_PUSH`; when pulling, `UP_TO_DATE`
+- Given local is ahead, when pushing, then a direct push runs and returns `PUSHED`
+- Given local and remote diverged without conflicts, when pushing, then local commits are rebased onto the remote and pushed (`REBASE_SUCCEEDED`); when pulling, the rebase succeeds with the same linear result
+- Given the divergence conflicts, when pushing or pulling, then the rebase is aborted, the working tree ends clean, local commits are intact, and the result is `REBASE_FAILED` / `SYNC_FAILED`
+- Given the local branch is behind, when pulling, then it fast-forwards (`FAST_FORWARDED`)
+- Given the working tree is dirty, when pulling, then the result is `DIRTY_SKIPPED` and nothing is fetched
+- Given a stale rebase was left by a crash, when either helper runs, then the rebase is aborted before any new operation
+
+### Agent Git Tools (R11)
+
+Read-only inspection plus an explicit commit, for when the user wants changes saved before session end.
+
+**Acceptance Criteria**:
+- Given a clean tree, when `query_git_status` runs, then it reports the current branch and "Working tree is clean."; given pending changes, the truncated porcelain listing is returned
+- Given a history, when `list_recent_commits` runs with a limit, then that many commits are listed newest-first as `hash date subject`; an empty repo yields "No commits found."
+- Given pending changes, when `commit_workspace` runs with an explicit `message`, then it commits with that message and skips generation; without one, a message is generated from the staged diffstat
+- Given a clean tree, when `commit_workspace` runs, then it reports there is nothing to commit

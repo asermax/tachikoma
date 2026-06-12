@@ -1,0 +1,71 @@
+# Skills
+
+<!-- This spec describes the current system capability. Updated through delta reconciliation. -->
+
+## Overview
+
+Workspace skills give the agent packaged expertise: Agent Skills-format directories under `{workspace}/skills/` are contributed to pi as a native skill source, so pi's progressive disclosure surfaces each skill's description in the system prompt and the agent reads the full `SKILL.md` only when relevant. The extension itself stays thin — it wires the source and adds the one capability pi does not cover: agent definitions bundled inside skills become delegable subagents through a `delegate_to_agent` tool.
+
+## User Stories
+
+- As a user, I want to drop skill packages into my workspace skills directory so that the agent gains specialized knowledge without code changes or registry configuration
+- As the assistant, I want skill descriptions available via progressive disclosure so that I load full skill content only when it is relevant to the task
+- As a skill author, I want to bundle agent definitions inside a skill so that focused work can be delegated to an isolated subagent with its own prompt and tools
+
+## Requirements
+
+| ID | Requirement |
+|----|-------------|
+| R0 | A bootstrap hook creates `{workspace}/skills/` if missing (idempotent) |
+| R1 | The skills directory is contributed as a pi skill source via the `resources_discover` event in every agent session; discovery, progressive disclosure, and `/skill:` commands are pi-native |
+| R2 | Skills follow the Agent Skills standard (`SKILL.md` with YAML frontmatter) — no Tachikoma-specific skill format exists |
+| R3 | Markdown files under `<skill>/agents/` are discovered as agent definitions, namespaced as `<skill>/<agent>` to prevent cross-skill collisions |
+| R4 | Agent frontmatter: `description` is required (missing means the file is skipped with a warning); `name` defaults to the file stem; `tools` accepts a YAML list or a comma-separated string; the markdown body is the agent's system prompt |
+| R5 | A `delegate_to_agent` tool is registered when at least one agent exists at session creation; it runs the named agent headlessly with its own system prompt and tool set and returns the agent's final answer as the tool result (tail-truncated, with a truncation marker) |
+| R6 | Agents that declare no tools run with the default read-only set: `read`, `grep`, `find`, `ls` |
+| R7 | Invalid agent files are logged and skipped; a missing skills root or agents directory yields empty discovery, never an error |
+| R8 | Agent discovery re-runs at every session creation and on every `delegate_to_agent` execution, so new and edited agents apply without a restart |
+| R9 | The extension can be disabled via `[extensions.skills] enabled = false` (default enabled) |
+
+## Behaviors
+
+### Skill Source Contribution (R0, R1, R2)
+
+The session factory answers pi's `resources_discover` event with the workspace skills path; everything downstream (frontmatter parsing, description injection into the system prompt, on-demand `SKILL.md` reads) is pi's native pipeline.
+
+**Acceptance Criteria**:
+- Given the workspace has no `skills/` directory, when bootstrap runs, then the directory is created; a second run makes no changes
+- Given a valid Agent Skills package in `skills/`, when an agent session is created, then pi surfaces the skill through progressive disclosure (description in the system prompt, content loaded on demand)
+- Given a skill is added while the app is running, when the next agent session is created, then the new skill is discovered — there is no mid-session reload
+
+### Agent Discovery (R3, R4, R7, R8)
+
+`discoverSkillAgents` (`src/extensions/skills/agents.ts`) scans every `<skill>/agents/*.md` file under the skills root and parses frontmatter metadata.
+
+**Acceptance Criteria**:
+- Given `skills/research/agents/scout.md` with a `description` and a YAML `tools` list, when discovery runs, then an agent named `research/scout` is returned with those tools and the body as its system prompt
+- Given frontmatter declaring `name: pathfinder`, when discovery runs, then the agent is named `research/pathfinder` (explicit name wins over the file stem)
+- Given `tools: read, ls` as a comma-separated string, when discovery runs, then the tools parse to `["read", "ls"]`
+- Given an agent file without a `description`, when discovery runs, then the file is skipped with a warning and other agents still load
+- Given a skill without an `agents/` directory, or a missing skills root, when discovery runs, then an empty list is returned
+
+### Delegation (R5, R6)
+
+The `delegate_to_agent` tool (`src/extensions/skills/delegate.ts`) lists discovered agents in its description and runs the chosen agent in an isolated headless session via `app.agent.side.run`.
+
+**Acceptance Criteria**:
+- Given discovered agents, when the tool description is built, then each agent appears as `<skill>/<name>: <description>`
+- Given a delegation call with a known agent, when the tool executes, then the headless run uses the agent's system prompt, its declared tools, and the task as the prompt; the agent's final text is the tool result
+- Given an agent with no declared tools, when delegated to, then the run uses the default read-only tool set
+- Given an unknown agent name, when the tool executes, then it throws an error listing the available agents (no run is attempted)
+- Given no agents exist at session creation, then the tool is not registered for that session
+
+## Notes
+
+Python features deliberately dropped in this implementation:
+
+- **LLM skill classifier** — replaced by pi's progressive disclosure: skill descriptions sit in the system prompt and the agent reads `SKILL.md` on demand, so no per-message classification pass (and its latency/cost) is needed
+- **Skills hot-reload/watcher** — dropped; discovery runs per agent session, so new skills appear on the next session (topic boundary or restart) and agent definitions are re-read on every delegation. No filesystem watcher, no mid-session resource reload
+- **Skill `dependencies`** — dropped; not part of the Agent Skills standard. Skills that build on other material reference it directly in their content for the agent to read
+
+See [../reference/pi-sdk-notes.md](../reference/pi-sdk-notes.md) (Skills section) for the pi-native behavior this extension relies on.

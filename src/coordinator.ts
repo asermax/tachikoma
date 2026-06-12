@@ -132,6 +132,8 @@ export class Coordinator {
     } finally {
       signal.removeEventListener("abort", onAbort);
       this.clearIdleTimer();
+      // Held notices must not die with the process — push them out before closing.
+      this.flushDeliveries(true);
       await this.closeActiveSession();
     }
   }
