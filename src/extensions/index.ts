@@ -3,6 +3,8 @@ import boundary from "./boundary/index.ts";
 import context from "./context/index.ts";
 import detachedProcesses from "./detached-processes/index.ts";
 import memory from "./memory/index.ts";
+import notifications from "./notifications/index.ts";
+import plugins from "./plugins/index.ts";
 import repl from "./repl/index.ts";
 import skills from "./skills/index.ts";
 import tasks from "./tasks/index.ts";
@@ -18,6 +20,8 @@ export const firstPartyExtensions = [
   workflows,
   tasks,
   detachedProcesses,
+  notifications,
   repl,
   telegram,
+  plugins,
 ] as TachikomaExtension<never>[];
