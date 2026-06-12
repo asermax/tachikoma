@@ -155,6 +155,15 @@ export class Coordinator {
     await this.runPostProcessing(record);
   }
 
+  /** Close sessions left open by a previous run so their post-processing still happens. */
+  async recoverDanglingSessions(): Promise<void> {
+    for (const record of this.registry.findDangling()) {
+      const closed = this.registry.close(record.id);
+      this.log.info({ sessionId: closed.id }, "recovered dangling session from previous run");
+      await this.runPostProcessing(closed);
+    }
+  }
+
   async resumeSession(record: SessionRecord): Promise<void> {
     await this.closeActiveSession();
 

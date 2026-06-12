@@ -60,6 +60,7 @@ export const runApp = async (options: RunOptions = {}): Promise<void> => {
 
   await host.load(firstPartyExtensions);
   await host.bootstrap();
+  await coordinator.recoverDanglingSessions();
 
   const channelName = options.channel ?? config.channels.default;
   const channel = regs.channels.get(channelName);
