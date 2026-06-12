@@ -1,6 +1,7 @@
 import type { TachikomaExtension } from "./api.ts";
 import boundary from "./boundary/index.ts";
 import context from "./context/index.ts";
+import detachedProcesses from "./detached-processes/index.ts";
 import memory from "./memory/index.ts";
 import repl from "./repl/index.ts";
 import skills from "./skills/index.ts";
@@ -16,6 +17,7 @@ export const firstPartyExtensions = [
   skills,
   workflows,
   tasks,
+  detachedProcesses,
   repl,
   telegram,
 ] as TachikomaExtension<never>[];
