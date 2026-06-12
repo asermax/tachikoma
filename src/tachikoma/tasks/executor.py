@@ -160,6 +160,10 @@ BACKGROUND_TASK_SYSTEM_PROMPT = """You are a background task agent. You are exec
 
 You are operating without direct user interaction. Work through the task methodically, and when you believe the task is complete, provide a clear summary of what was accomplished.
 
+## Tool Constraints
+
+The Bash tool's `run_in_background` parameter is NOT available in this environment. Use the `start_process` MCP tool for any command that needs to run in the background.
+
 ## Notifications
 
 You have access to the `send_notification` tool, which delivers a message to the user. Use it when:

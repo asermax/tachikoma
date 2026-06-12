@@ -766,33 +766,6 @@ MAINTENANCE_BASH_PREFIXES = [*UTILITY_BASH_PREFIXES, "rm "]
 MAINTENANCE_BASH_HOOK = make_bash_gate_hook(MAINTENANCE_BASH_PREFIXES)
 
 
-async def _deny_run_in_background(
-    input: HookInput,
-    tool_use_id: str | None,
-    context: HookContext,
-) -> HookJSONOutput:
-    if (input.get("tool_input") or {}).get("run_in_background"):
-        _log.warning("Bash run_in_background denied by hook")
-        return {
-            "hookSpecificOutput": {
-                "hookEventName": "PreToolUse",
-                "permissionDecision": "deny",
-                "permissionDecisionReason": (
-                    "The run_in_background parameter is not available. "
-                    "Use the start_process tool for background execution."
-                ),
-            },
-        }
-    return {}
-
-
-RUN_IN_BACKGROUND_DENY_HOOK = HookMatcher(matcher="Bash", hooks=[_deny_run_in_background])
-"""Deny the Bash tool's ``run_in_background`` parameter.
-
-Agents should use the ``start_process`` detached-process MCP tool instead
-for any command that needs to run in the background.
-"""
-
 
 def build_permissions_settings(allow: list[str]) -> str:
     """Build a settings JSON string with allow-only permission rules.
