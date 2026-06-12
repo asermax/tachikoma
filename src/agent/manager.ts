@@ -1,3 +1,4 @@
+import { existsSync, statSync } from "node:fs";
 import { join } from "node:path";
 import {
   type AgentSession,
@@ -44,7 +45,12 @@ export class AgentManager {
     this.config = config;
     this.sources = sources;
     this.log = log;
-    this.authStorage = AuthStorage.create(join(workspace.piDir, "auth.json"));
+
+    // Credentials are machine-level: prefer a workspace-local auth.json when it has
+    // actual content, otherwise share the user's existing pi login (~/.pi/agent/auth.json).
+    const localAuth = join(workspace.piDir, "auth.json");
+    const hasLocalAuth = existsSync(localAuth) && statSync(localAuth).size > 2;
+    this.authStorage = hasLocalAuth ? AuthStorage.create(localAuth) : AuthStorage.create();
     this.modelRegistry = ModelRegistry.create(
       this.authStorage,
       join(workspace.piDir, "models.json"),
