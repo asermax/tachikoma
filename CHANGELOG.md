@@ -2,6 +2,14 @@
 
 <!-- version list -->
 
+## v1.103.1 (2026-06-12)
+
+### Bug Fixes
+
+- **tasks**: Wire detached-process tools into background task runner
+  ([`5f67522`](https://github.com/asermax/tachikoma/commit/5f67522593922d02b5e11f91a0f487887396a80c))
+
+
 ## v1.103.0 (2026-06-11)
 
 ### Documentation
