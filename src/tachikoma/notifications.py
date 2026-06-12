@@ -5,7 +5,6 @@ and an MCP tool server factory for agent-driven notifications during
 background task execution.
 """
 
-import hashlib
 import time
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -28,46 +27,26 @@ _log = logger.bind(component="notifications")
 # where the agent re-executes send_notification tool calls after API errors.
 _DEDUP_TTL_SECONDS = 60
 
-# Module-level dedup state: (source_id, content_hash) → first-seen timestamp.
-# Timestamp is set once on first dispatch and never refreshed — the TTL window
-# is fixed from the first occurrence.
+# Module-level dedup state: (source_id, content) → first-seen timestamp.
 _dedup_state: dict[tuple[str, str], float] = {}
 
 
-def _content_hash(content: str) -> str:
-    """Compute a SHA-256 hash of the notification content."""
-    return hashlib.sha256(content.encode()).hexdigest()
-
-
 def _is_duplicate(source_id: str | None, content: str) -> bool:
-    """Check whether this notification was already dispatched within the TTL window.
-
-    Lazily prunes expired entries on each call. Returns True if an identical
-    (source_id, content) pair was dispatched within the last _DEDUP_TTL_SECONDS.
-
-    Args:
-        source_id: The originating entity ID. If None, dedup is skipped entirely.
-        content: The notification message body.
-
-    Returns:
-        True if this is a duplicate within the TTL window.
-    """
+    """Return True if this (source_id, content) was seen within the TTL window."""
     if source_id is None:
         return False
 
     now = time.time()
-    content_hash = _content_hash(content)
-    key = (source_id, content_hash)
+    key = (source_id, content)
 
-    # Lazily prune expired entries
+    if key in _dedup_state and now - _dedup_state[key] <= _DEDUP_TTL_SECONDS:
+        return True
+
+    # Prune expired entries opportunistically (only when registering a new key)
     expired_keys = [k for k, ts in _dedup_state.items() if now - ts > _DEDUP_TTL_SECONDS]
     for k in expired_keys:
         del _dedup_state[k]
 
-    if key in _dedup_state:
-        return True
-
-    # Store first-seen timestamp (never refreshed on subsequent matches)
     _dedup_state[key] = now
     return False
 
@@ -170,9 +149,8 @@ async def dispatch_notification(
     """
     if _is_duplicate(source_id, content):
         _log.info(
-            "Deduplicated notification: source_id={source_id}, content_hash={hash}",
+            "Deduplicated notification: source_id={source_id}",
             source_id=source_id,
-            hash=_content_hash(content),
         )
         return
 
