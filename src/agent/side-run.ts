@@ -19,6 +19,18 @@ export interface CompleteOptions {
   tier?: ModelTier;
 }
 
+export interface HeadlessRunOptions {
+  prompt: string;
+  system?: string;
+  /** pi built-in tool names the run may use (e.g. ["read", "grep"]). Default: none. */
+  tools?: string[];
+  tier?: ModelTier;
+}
+
+export interface HeadlessRunResult {
+  text: string;
+}
+
 const textOf = (message: { content: { type: string }[] }): string =>
   message.content
     .filter((block): block is { type: "text"; text: string } => block.type === "text")
@@ -65,6 +77,40 @@ export class SideRunner {
     }
 
     return textOf(result);
+  }
+
+  /**
+   * Headless agent run in an ephemeral pi session: tool use allowed, nothing persisted,
+   * no Tachikoma extensions bound. Returns the final assistant text.
+   */
+  async run({
+    prompt,
+    system,
+    tools = [],
+    tier = "processor",
+  }: HeadlessRunOptions): Promise<HeadlessRunResult> {
+    const session = await this.manager.open({
+      inMemory: true,
+      bare: true,
+      tier,
+      tools,
+      ...(system != null ? { systemPrompt: system } : {}),
+    });
+
+    try {
+      await session.prompt(prompt);
+
+      for (let index = session.messages.length - 1; index >= 0; index -= 1) {
+        const message = session.messages[index];
+        if (message == null || message.role !== "assistant") continue;
+
+        return { text: textOf(message as { content: { type: string }[] }) };
+      }
+
+      return { text: "" };
+    } finally {
+      session.dispose();
+    }
   }
 
   /** Structured classification: instructs JSON output matching the schema, parses, retries once. */

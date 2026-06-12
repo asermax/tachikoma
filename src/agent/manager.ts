@@ -14,7 +14,7 @@ import {
 import type { Config } from "../config/schema.ts";
 import type { Logger } from "../log.ts";
 import type { Workspace } from "../workspace.ts";
-import { ModelTiers } from "./models.ts";
+import { type ModelTier, ModelTiers } from "./models.ts";
 
 export interface AgentSessionSources {
   piFactories: ExtensionFactory[];
@@ -26,8 +26,11 @@ export interface OpenSessionOptions {
   sessionFile?: string | null;
   /** Ephemeral side session: nothing persisted to disk. */
   inMemory?: boolean;
+  /** Skip registered extension factories and system prompt builders (headless side work). */
+  bare?: boolean;
   tools?: string[];
   systemPrompt?: string;
+  tier?: ModelTier;
 }
 
 export class AgentManager {
@@ -66,13 +69,18 @@ export class AgentManager {
   async open(options: OpenSessionOptions = {}): Promise<AgentSession> {
     const workspace = this.workspace;
 
+    const bare = options.bare === true;
+    const systemPromptOverride =
+      options.systemPrompt ??
+      (!bare && this.sources.systemPromptBuilders.length > 0
+        ? this.composeSystemPrompt()
+        : undefined);
+
     const loader = new DefaultResourceLoader({
       cwd: workspace.root,
       agentDir: workspace.piDir,
-      extensionFactories: [...this.sources.piFactories],
-      ...(this.sources.systemPromptBuilders.length > 0
-        ? { systemPromptOverride: () => this.composeSystemPrompt() }
-        : {}),
+      extensionFactories: bare ? [] : [...this.sources.piFactories],
+      ...(systemPromptOverride != null ? { systemPromptOverride: () => systemPromptOverride } : {}),
     });
     await loader.reload();
 
@@ -86,7 +94,7 @@ export class AgentManager {
     const { session, modelFallbackMessage } = await createAgentSession({
       cwd: workspace.root,
       agentDir: workspace.piDir,
-      model: this.tiers.resolve("agent"),
+      model: this.tiers.resolve(options.tier ?? "agent"),
       thinkingLevel: this.config.agent.thinkingLevel,
       ...(options.tools != null ? { tools: options.tools } : {}),
       resourceLoader: loader,
