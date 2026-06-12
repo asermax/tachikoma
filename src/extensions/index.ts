@@ -4,6 +4,7 @@ import context from "./context/index.ts";
 import memory from "./memory/index.ts";
 import repl from "./repl/index.ts";
 import skills from "./skills/index.ts";
+import tasks from "./tasks/index.ts";
 import workflows from "./workflows/index.ts";
 
 /** First-party extensions, in load order. */
@@ -13,5 +14,6 @@ export const firstPartyExtensions = [
   boundary,
   skills,
   workflows,
+  tasks,
   repl,
 ] as TachikomaExtension<never>[];
