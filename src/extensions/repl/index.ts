@@ -31,6 +31,8 @@ class ReplChannel implements Channel {
     });
 
     this.readline.on("close", () => {
+      // Pending exchanges must not touch the closed interface while shutdown runs.
+      this.readline = null;
       process.kill(process.pid, "SIGINT");
     });
 
