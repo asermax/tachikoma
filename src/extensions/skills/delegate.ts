@@ -1,0 +1,87 @@
+import { type ToolDefinition, truncateTail } from "@earendil-works/pi-coding-agent";
+import { Type } from "typebox";
+
+import type { SideRunner } from "../../agent/side-run.ts";
+import type { Logger } from "../../log.ts";
+import type { SkillAgent } from "./agents.ts";
+
+export type AgentRunner = Pick<SideRunner, "run">;
+
+export interface DelegateToolOptions {
+  /** Called once for the tool description and again on every execution (skills can change). */
+  discover: () => SkillAgent[];
+  runner: AgentRunner;
+  log: Logger;
+}
+
+const DEFAULT_AGENT_TOOLS = ["read", "grep", "find", "ls"];
+
+const DelegateParams = Type.Object({
+  agent: Type.String({
+    description: "Agent to delegate to, exactly as listed in the tool description",
+  }),
+  task: Type.String({
+    description:
+      "Complete, self-contained task description — the agent has no access to this conversation",
+  }),
+});
+
+const renderAgentList = (agents: SkillAgent[]): string =>
+  agents.length > 0
+    ? agents.map((agent) => `- ${agent.name}: ${agent.description}`).join("\n")
+    : "(none discovered)";
+
+/**
+ * `delegate_to_agent`: run a skill-bundled agent definition headlessly with its own
+ * system prompt and tool set, returning the agent's final answer.
+ */
+export const createDelegateTool = ({
+  discover,
+  runner,
+  log,
+}: DelegateToolOptions): ToolDefinition<typeof DelegateParams> => ({
+  name: "delegate_to_agent",
+  label: "Delegate to agent",
+
+  description: [
+    "Delegate a focused task to a specialized agent bundled with a skill.",
+    "The agent runs in an isolated context with its own system prompt and tools,",
+    "and returns its final answer as the tool result.",
+    "",
+    "Available agents:",
+    renderAgentList(discover()),
+  ].join("\n"),
+
+  promptSnippet: "delegate_to_agent: hand a focused task to a specialized skill-bundled agent",
+  promptGuidelines: [
+    "Use delegate_to_agent when a skill ships an agent suited to the task; pass a complete, self-contained task description.",
+  ],
+
+  parameters: DelegateParams,
+
+  async execute(_toolCallId, params) {
+    const agents = discover();
+    const agent = agents.find((candidate) => candidate.name === params.agent);
+
+    if (agent == null) {
+      throw new Error(
+        `Unknown agent "${params.agent}". Available agents:\n${renderAgentList(agents)}`,
+      );
+    }
+
+    log.debug({ agent: agent.name }, "delegating task to skill agent");
+
+    const result = await runner.run({
+      system: agent.systemPrompt,
+      tools: agent.tools ?? DEFAULT_AGENT_TOOLS,
+      prompt: params.task,
+    });
+
+    const { content, truncated } = truncateTail(result.text);
+
+    return {
+      content: [{ type: "text", text: truncated ? `${content}\n\n[output truncated]` : content }],
+      details: undefined,
+    };
+  },
+});
