@@ -5,6 +5,8 @@ and an MCP tool server factory for agent-driven notifications during
 background task execution.
 """
 
+import hashlib
+import time
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Literal
@@ -17,6 +19,62 @@ from pydantic import BaseModel
 from tachikoma.buffer.priority import Priority
 
 _log = logger.bind(component="notifications")
+
+# ---------------------------------------------------------------------------
+# Deduplication guard
+# ---------------------------------------------------------------------------
+
+# TTL window for deduplicating identical notifications. Covers CLI retry loops
+# where the agent re-executes send_notification tool calls after API errors.
+_DEDUP_TTL_SECONDS = 60
+
+# Module-level dedup state: (source_id, content_hash) → first-seen timestamp.
+# Timestamp is set once on first dispatch and never refreshed — the TTL window
+# is fixed from the first occurrence.
+_dedup_state: dict[tuple[str, str], float] = {}
+
+
+def _content_hash(content: str) -> str:
+    """Compute a SHA-256 hash of the notification content."""
+    return hashlib.sha256(content.encode()).hexdigest()
+
+
+def _is_duplicate(source_id: str | None, content: str) -> bool:
+    """Check whether this notification was already dispatched within the TTL window.
+
+    Lazily prunes expired entries on each call. Returns True if an identical
+    (source_id, content) pair was dispatched within the last _DEDUP_TTL_SECONDS.
+
+    Args:
+        source_id: The originating entity ID. If None, dedup is skipped entirely.
+        content: The notification message body.
+
+    Returns:
+        True if this is a duplicate within the TTL window.
+    """
+    if source_id is None:
+        return False
+
+    now = time.time()
+    content_hash = _content_hash(content)
+    key = (source_id, content_hash)
+
+    # Lazily prune expired entries
+    expired_keys = [k for k, ts in _dedup_state.items() if now - ts > _DEDUP_TTL_SECONDS]
+    for k in expired_keys:
+        del _dedup_state[k]
+
+    if key in _dedup_state:
+        return True
+
+    # Store first-seen timestamp (never refreshed on subsequent matches)
+    _dedup_state[key] = now
+    return False
+
+
+def _clear_dedup_state() -> None:
+    """Reset dedup state. For testing only."""
+    _dedup_state.clear()
 
 
 # ---------------------------------------------------------------------------
@@ -104,10 +162,20 @@ async def dispatch_notification(
         content: The notification message body.
         severity: Severity level — "info" for informational, "error" for failures.
         source_id: Optional ID of the originating entity (e.g. task instance ID).
+            When set, identical (source_id, content) pairs within the dedup TTL
+            window are silently dropped to guard against CLI retry loops.
         priority: Delivery priority — defaults to Normal.
         response_instance_id: When set, the notification is respondable — includes
             respond_to_task usage instructions for the main agent.
     """
+    if _is_duplicate(source_id, content):
+        _log.info(
+            "Deduplicated notification: source_id={source_id}, content_hash={hash}",
+            source_id=source_id,
+            hash=_content_hash(content),
+        )
+        return
+
     prompt = build_notification_prompt(source, content, response_instance_id)
     event = Notification(
         prompt=prompt,

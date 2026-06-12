@@ -1,5 +1,6 @@
 """Tests for the notifications module."""
 
+import time
 from datetime import UTC, datetime
 from unittest.mock import AsyncMock
 
@@ -11,6 +12,8 @@ from tachikoma.buffer.priority import Priority
 from tachikoma.notifications import (
     Notification,
     SendNotificationArgs,
+    _clear_dedup_state,
+    _dedup_state,
     build_notification_prompt,
     create_notification_server,
     dispatch_notification,
@@ -392,3 +395,145 @@ class TestRespondableNotification:
         event = dispatched_events[0]
         assert event.response_instance_id is None
         assert "respond_to_task" not in event.prompt
+
+
+class TestNotificationDedup:
+    """Tests for notification deduplication (CLI retry loop guard)."""
+
+    def setup_method(self) -> None:
+        """Reset dedup state before each test."""
+        _clear_dedup_state()
+
+    @pytest.mark.asyncio
+    async def test_duplicate_within_ttl_is_dropped(self) -> None:
+        """AC1: Same source_id + same content within TTL → only one dispatched."""
+        bus = EventBus()
+        dispatched_events: list = []
+
+        async def capture_dispatch(event):
+            dispatched_events.append(event)
+
+        bus.dispatch = AsyncMock(side_effect=capture_dispatch)
+
+        await dispatch_notification(
+            bus, source="Test", content="Hello", severity="info", source_id="inst-1"
+        )
+        await dispatch_notification(
+            bus, source="Test", content="Hello", severity="info", source_id="inst-1"
+        )
+
+        assert len(dispatched_events) == 1
+
+    @pytest.mark.asyncio
+    async def test_different_content_is_not_deduplicated(self) -> None:
+        """AC2: Same source_id but different content → both dispatched."""
+        bus = EventBus()
+        dispatched_events: list = []
+
+        async def capture_dispatch(event):
+            dispatched_events.append(event)
+
+        bus.dispatch = AsyncMock(side_effect=capture_dispatch)
+
+        await dispatch_notification(
+            bus, source="Test", content="Hello", severity="info", source_id="inst-1"
+        )
+        await dispatch_notification(
+            bus, source="Test", content="Goodbye", severity="info", source_id="inst-1"
+        )
+
+        assert len(dispatched_events) == 2
+
+    @pytest.mark.asyncio
+    async def test_none_source_id_skips_dedup(self) -> None:
+        """AC3: source_id=None → no dedup, both dispatched."""
+        bus = EventBus()
+        dispatched_events: list = []
+
+        async def capture_dispatch(event):
+            dispatched_events.append(event)
+
+        bus.dispatch = AsyncMock(side_effect=capture_dispatch)
+
+        await dispatch_notification(
+            bus, source="Test", content="Hello", severity="info", source_id=None
+        )
+        await dispatch_notification(
+            bus, source="Test", content="Hello", severity="info", source_id=None
+        )
+
+        assert len(dispatched_events) == 2
+
+    @pytest.mark.asyncio
+    async def test_ttl_expiry_allows_redispatch(self) -> None:
+        """AC4: First dispatch >60s ago → TTL expired, both dispatched."""
+        bus = EventBus()
+        dispatched_events: list = []
+
+        async def capture_dispatch(event):
+            dispatched_events.append(event)
+
+        bus.dispatch = AsyncMock(side_effect=capture_dispatch)
+
+        await dispatch_notification(
+            bus, source="Test", content="Hello", severity="info", source_id="inst-1"
+        )
+        assert len(dispatched_events) == 1
+
+        # Simulate TTL expiry by backdating the dedup entry
+        key = list(_dedup_state.keys())[0]
+        _dedup_state[key] = time.time() - 61  # 61 seconds ago
+
+        await dispatch_notification(
+            bus, source="Test", content="Hello", severity="info", source_id="inst-1"
+        )
+
+        assert len(dispatched_events) == 2
+
+    @pytest.mark.asyncio
+    async def test_different_metadata_same_content_is_deduplicated(self) -> None:
+        """AC5: Different priority/severity but same content/source_id → deduplicated."""
+        bus = EventBus()
+        dispatched_events: list = []
+
+        async def capture_dispatch(event):
+            dispatched_events.append(event)
+
+        bus.dispatch = AsyncMock(side_effect=capture_dispatch)
+
+        await dispatch_notification(
+            bus,
+            source="Test",
+            content="Hello",
+            severity="info",
+            source_id="inst-1",
+            priority=Priority.NORMAL,
+        )
+        await dispatch_notification(
+            bus,
+            source="Test",
+            content="Hello",
+            severity="error",
+            source_id="inst-1",
+            priority=Priority.URGENT,
+        )
+
+        assert len(dispatched_events) == 1
+
+    @pytest.mark.asyncio
+    async def test_three_rapid_duplicates_only_one_dispatched(self) -> None:
+        """AC6: 3 identical notifications → only first dispatched (TTL fixed, not refreshed)."""
+        bus = EventBus()
+        dispatched_events: list = []
+
+        async def capture_dispatch(event):
+            dispatched_events.append(event)
+
+        bus.dispatch = AsyncMock(side_effect=capture_dispatch)
+
+        for _ in range(3):
+            await dispatch_notification(
+                bus, source="Test", content="Hello", severity="info", source_id="inst-1"
+            )
+
+        assert len(dispatched_events) == 1

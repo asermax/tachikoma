@@ -5,6 +5,7 @@ import subprocess
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
+from tachikoma.notifications import _clear_dedup_state
 from tachikoma.updates.rollback import (
     RestartNotification,
     clear_restart_notification,
@@ -291,6 +292,10 @@ class TestHandleRestartNotificationConsolidation:
     Covers R6 (failed plugin notification) and R7 (startup notification
     consolidation) acceptance criteria.
     """
+
+    def setup_method(self) -> None:
+        """Clear notification dedup state between tests."""
+        _clear_dedup_state()
 
     async def test_restart_with_plugin_failures_sends_consolidated(
         self, tmp_path: Path, monkeypatch
