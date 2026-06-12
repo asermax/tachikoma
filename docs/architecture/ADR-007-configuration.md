@@ -1,0 +1,37 @@
+# ADR-007: Configuration
+
+**Status**: Accepted
+**Date**: 2026-06-11
+
+## Context
+
+The Python implementation established TOML at `~/.config/tachikoma/config.toml` with Pydantic validation and an auto-generated, commented default file on first run. The format and location are good user-facing contracts worth keeping. The schema itself is being redesigned for the rewrite (config is an implementation artifact, not workspace data, so compatibility is not required) — notably, extensions declare their own config sections.
+
+## Decision
+
+Keep **TOML at `~/.config/tachikoma/config.toml`**, parsed with **smol-toml** and validated with **TypeBox** schemas (ADR-003).
+
+- Each extension contributes its config schema via `defineExtension({ config })`; the core composes them into the full application schema
+- Values are validated and defaulted through the TypeBox schema at startup; invalid config fails fast with precise diagnostics
+- A commented default file is generated on first run, documenting every setting
+- Secrets (API keys, bot tokens) stay in environment variables, not the config file
+
+## Consequences
+
+### Positive
+
+- Users keep the familiar format and location; only the keys change between implementations
+- One schema language for config and everything else (ADR-003) — config types are inferred, not duplicated
+- smol-toml is small, spec-compliant (TOML 1.0), fast, and dependency-free
+- Extension-owned config sections keep the thin core ignorant of feature settings
+
+### Negative
+
+- **Breaking schema change** from the Python config — intentional, but users migrating must reconcile their settings against the newly generated defaults
+- smol-toml does not preserve comments through parse/serialize round-trips; programmatic write-back (a future config CLI) will need a comment-preserving strategy rather than naive re-serialization
+
+## Alternatives Considered
+
+- **JSON/YAML config**: loses the established TOML contract; YAML adds parser complexity for no gain
+- **@iarna/toml**: unmaintained and TOML 0.5-era
+- **Env-only configuration**: fine for secrets, hostile for the ~dozens of tunable settings Tachikoma exposes

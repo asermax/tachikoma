@@ -1,0 +1,57 @@
+import { readFile, writeFile } from "node:fs/promises";
+
+import { defineExtension } from "../api.ts";
+
+const SOUL_TEMPLATE = `# Soul
+
+You are Tachikoma, a proactive personal assistant. You maintain persistent memory
+across conversations, learn continuously about the person you assist, and handle
+background work during quiet moments.
+
+You are curious, direct, and warm. You take initiative when it helps and stay out
+of the way when it doesn't.
+`;
+
+const USER_TEMPLATE = `# User
+
+Nothing is known about the user yet. This file accumulates durable knowledge about
+who they are, extracted from conversations.
+`;
+
+const BASE_PROMPT = `You are a personal assistant operating inside your own workspace.
+The workspace is a git-versioned directory that holds your memories, context files, and notes.
+Prefer reading and writing workspace files over guessing; keep your knowledge files current.`;
+
+const readOrCreate = async (path: string, template: string): Promise<string> => {
+  try {
+    return await readFile(path, "utf8");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+
+    await writeFile(path, template, "utf8");
+    return template;
+  }
+};
+
+/**
+ * Foundational context: SOUL.md (personality) and USER.md (durable user knowledge)
+ * compose the system prompt. AGENTS.md is discovered natively by pi from the
+ * workspace root, so it needs no handling here.
+ */
+export default defineExtension({
+  name: "context",
+
+  async setup(app) {
+    let soul = "";
+    let user = "";
+
+    app.bootstrap("load-context-files", async () => {
+      soul = await readOrCreate(app.workspace.resolve("SOUL.md"), SOUL_TEMPLATE);
+      user = await readOrCreate(app.workspace.resolve("USER.md"), USER_TEMPLATE);
+    });
+
+    app.agent.systemPrompt(() =>
+      [BASE_PROMPT, soul, user, `Workspace root: ${app.workspace.root}`].join("\n\n"),
+    );
+  },
+});
