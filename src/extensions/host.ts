@@ -33,8 +33,14 @@ export class ExtensionHost {
     this.services = services;
   }
 
+  private readonly queue: TachikomaExtension<never>[] = [];
+
   async load(extensions: TachikomaExtension<never>[]): Promise<void> {
-    for (const extension of extensions) {
+    this.queue.push(...extensions);
+
+    // Extensions may enqueue further extensions (plugins) while loading.
+    for (let index = 0; index < this.queue.length; index += 1) {
+      const extension = this.queue[index] as TachikomaExtension<never>;
       const app = this.buildContext(extension);
 
       await extension.setup(app as AppContext<never>);
@@ -102,6 +108,8 @@ export class ExtensionHost {
         services.regs.bootstrapHooks.push({ name: `${extension.name}:${name}`, hook }),
 
       status: (text) => services.coordinator.status(text),
+
+      registerExtension: (nested) => this.queue.push(nested),
     };
   }
 }
