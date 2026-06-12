@@ -2,6 +2,19 @@
 
 <!-- version list -->
 
+## v1.103.2 (2026-06-12)
+
+### Bug Fixes
+
+- **notifications**: Add deduplication guard for CLI retry loops
+  ([`e5a0a06`](https://github.com/asermax/tachikoma/commit/e5a0a06762d559776ca5f94376e81c89dca87ec5))
+
+### Refactoring
+
+- **notifications**: Use raw content as dedup key instead of SHA-256 hash
+  ([`ec24ac9`](https://github.com/asermax/tachikoma/commit/ec24ac9bab7e443149180e894bb78a4758272de4))
+
+
 ## v1.103.1 (2026-06-12)
 
 ### Bug Fixes
