@@ -549,6 +549,7 @@ async def run(
                     "git-tools": git_tools,
                     "task-tools": background_task_tools,
                     "workflow-tools": workflow_tools,
+                    "detached-process-tools": detached_process_tools,
                 },
                 hooks=[destructive_git_deny_hook, RUN_IN_BACKGROUND_DENY_HOOK],
             )
