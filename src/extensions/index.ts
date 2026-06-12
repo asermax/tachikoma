@@ -2,9 +2,11 @@ import type { TachikomaExtension } from "./api.ts";
 import boundary from "./boundary/index.ts";
 import context from "./context/index.ts";
 import detachedProcesses from "./detached-processes/index.ts";
+import git from "./git/index.ts";
 import memory from "./memory/index.ts";
 import notifications from "./notifications/index.ts";
 import plugins from "./plugins/index.ts";
+import projects from "./projects/index.ts";
 import repl from "./repl/index.ts";
 import skills from "./skills/index.ts";
 import tasks from "./tasks/index.ts";
@@ -15,6 +17,8 @@ import workflows from "./workflows/index.ts";
 export const firstPartyExtensions = [
   context,
   memory,
+  projects,
+  git,
   boundary,
   skills,
   workflows,
