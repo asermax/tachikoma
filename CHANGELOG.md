@@ -2,6 +2,14 @@
 
 <!-- version list -->
 
+## v1.103.3 (2026-06-12)
+
+### Bug Fixes
+
+- **hooks**: Replace run_in_background deny hook with system prompt instruction
+  ([`73064a8`](https://github.com/asermax/tachikoma/commit/73064a8b5bca451d5ef0e9f1494dd1b601388ede))
+
+
 ## v1.103.2 (2026-06-12)
 
 ### Bug Fixes
