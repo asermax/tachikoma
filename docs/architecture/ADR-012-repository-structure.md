@@ -12,7 +12,7 @@ The architecture makes every feature an extension behind a single `defineExtensi
 **Single repository, single package**: the thin core under `src/core/` (or equivalent) and all first-party extensions in-tree under `src/extensions/*`, versioned and released together.
 
 - First-party extensions use exactly the same `defineExtension` format and `AppContext` surface that third-party extensions will — no privileged internal APIs
-- Third-party extensibility is **deferred to the plugins extension** (M5), which loads out-of-tree extensions through the same contract; until then the extension API is explicitly unstable
+- Third-party extensibility is **the extension API itself**: the `external` extension (M5) loads out-of-tree `defineExtension` modules and installs them from git; until it stabilizes the API is explicitly unstable
 - No pnpm workspace packages for now; the uniform extension format keeps later extraction into packages cheap if ever warranted
 
 ## Consequences
@@ -26,7 +26,7 @@ The architecture makes every feature an extension behind a single `defineExtensi
 ### Negative
 
 - The core/extension boundary is enforced by discipline (and lint rules), not package boundaries — core must never import extension internals, and extensions must reach the core only through `AppContext`
-- Third-party authors wait until the plugins extension lands and the API is declared stable
+- Third-party authors wait until the external extension loader lands and the API is declared stable
 - The repo grows wide; mitigated by the strict one-extension-one-directory convention
 
 ## Alternatives Considered

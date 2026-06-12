@@ -8,13 +8,13 @@ import { promisify } from "node:util";
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import { InstallManager, isGitSource } from "../../src/extensions/plugins/installs.ts";
+import { InstallManager, isGitSource } from "../../src/extensions/external/installs.ts";
 import {
-  handleInstallPlugin,
+  handleInstallExternalExtension,
   handleListInstalledPlugins,
-  handleUninstallPlugin,
-  handleUpdatePlugin,
-} from "../../src/extensions/plugins/tools.ts";
+  handleUninstallExtension,
+  handleUpdateExternalExtension,
+} from "../../src/extensions/external/tools.ts";
 import type { Logger } from "../../src/log.ts";
 
 const execFileAsync = promisify(execFile);
@@ -27,7 +27,7 @@ const fakeLog = {
 } as unknown as Logger;
 
 const VALID_MODULE = `export default {
-  name: "demo-plugin",
+  name: "demo-extension",
   setup() {},
 };
 `;
@@ -63,7 +63,7 @@ const gitCommitAll = async (repo: string, message: string): Promise<void> => {
 };
 
 const createPluginRepo = async (): Promise<string> => {
-  const repo = await mkdtemp(join(tmpdir(), "tachi-plugin-repo-"));
+  const repo = await mkdtemp(join(tmpdir(), "tachi-ext-repo-"));
 
   await writeFile(join(repo, "index.ts"), VALID_MODULE);
   await execFileAsync("git", ["init"], { cwd: repo });
@@ -72,14 +72,14 @@ const createPluginRepo = async (): Promise<string> => {
   return repo;
 };
 
-let pluginsDir: string;
+let extensionsDir: string;
 let manager: InstallManager;
 
 beforeEach(async () => {
-  pluginsDir = await mkdtemp(join(tmpdir(), "tachi-plugins-dir-"));
+  extensionsDir = await mkdtemp(join(tmpdir(), "tachi-external-dir-"));
   manager = new InstallManager({
     state: createFakeState(),
-    pluginsDir,
+    extensionsDir,
     log: fakeLog,
     now: () => new Date("2026-06-12T10:00:00Z"),
   });
@@ -91,140 +91,148 @@ describe("isGitSource", () => {
     expect(isGitSource("git@github.com:owner/repo.git")).toBe(true);
     expect(isGitSource("file:///tmp/repo")).toBe(true);
     expect(isGitSource("/tmp/repo.git")).toBe(true);
-    expect(isGitSource("/tmp/local-plugin")).toBe(false);
+    expect(isGitSource("/tmp/local-extension")).toBe(false);
   });
 });
 
-describe("install_plugin", () => {
-  it("clones a git source into the plugins dir and records the install", async () => {
+describe("install_extension", () => {
+  it("clones a git source into the external extensions dir and records the install", async () => {
     const repo = await createPluginRepo();
 
-    const message = await handleInstallPlugin(manager, {
+    const message = await handleInstallExternalExtension(manager, {
       source: pathToFileURL(repo).href,
       alias: "demo",
     });
 
-    expect(message).toContain("Plugin 'demo' installed successfully.");
+    expect(message).toContain("ExternalExtension 'demo' installed successfully.");
     expect(message).toContain("restart");
-    expect(existsSync(join(pluginsDir, "demo", "index.ts"))).toBe(true);
+    expect(existsSync(join(extensionsDir, "demo", "index.ts"))).toBe(true);
     expect(manager.list()).toEqual({
       demo: {
         source: pathToFileURL(repo).href,
         installedAt: "2026-06-12T10:00:00.000Z",
-        path: join(pluginsDir, "demo"),
+        path: join(extensionsDir, "demo"),
       },
     });
   });
 
   it("records a local path install in place without cloning", async () => {
-    const local = await mkdtemp(join(tmpdir(), "tachi-plugin-local-"));
+    const local = await mkdtemp(join(tmpdir(), "tachi-ext-local-"));
     await writeFile(join(local, "index.ts"), VALID_MODULE);
 
-    await handleInstallPlugin(manager, { source: local, alias: "local-demo" });
+    await handleInstallExternalExtension(manager, { source: local, alias: "local-demo" });
 
-    expect(existsSync(join(pluginsDir, "local-demo"))).toBe(false);
+    expect(existsSync(join(extensionsDir, "local-demo"))).toBe(false);
     expect(manager.list()["local-demo"]).toMatchObject({ source: local, path: local });
   });
 
   it("rejects invalid aliases and alias collisions", async () => {
-    const local = await mkdtemp(join(tmpdir(), "tachi-plugin-local-"));
+    const local = await mkdtemp(join(tmpdir(), "tachi-ext-local-"));
     await writeFile(join(local, "index.ts"), VALID_MODULE);
 
     await expect(
-      handleInstallPlugin(manager, { source: local, alias: "Bad Alias" }),
+      handleInstallExternalExtension(manager, { source: local, alias: "Bad Alias" }),
     ).rejects.toThrow(/Invalid alias/);
 
-    await handleInstallPlugin(manager, { source: local, alias: "demo" });
-    await expect(handleInstallPlugin(manager, { source: local, alias: "demo" })).rejects.toThrow(
-      /already installed/,
-    );
+    await handleInstallExternalExtension(manager, { source: local, alias: "demo" });
+    await expect(
+      handleInstallExternalExtension(manager, { source: local, alias: "demo" }),
+    ).rejects.toThrow(/already installed/);
   });
 
   it("cleans up the clone when the repo holds no valid extension module", async () => {
-    const repo = await mkdtemp(join(tmpdir(), "tachi-plugin-repo-"));
-    await writeFile(join(repo, "readme.md"), "not a plugin");
+    const repo = await mkdtemp(join(tmpdir(), "tachi-ext-repo-"));
+    await writeFile(join(repo, "readme.md"), "not a external extension");
     await execFileAsync("git", ["init"], { cwd: repo });
     await gitCommitAll(repo, "init");
 
     await expect(
-      handleInstallPlugin(manager, { source: pathToFileURL(repo).href, alias: "junk" }),
+      handleInstallExternalExtension(manager, { source: pathToFileURL(repo).href, alias: "junk" }),
     ).rejects.toThrow(/does not contain a valid Tachikoma extension/);
 
-    expect(existsSync(join(pluginsDir, "junk"))).toBe(false);
+    expect(existsSync(join(extensionsDir, "junk"))).toBe(false);
     expect(manager.list()).toEqual({});
   });
 });
 
-describe("update_plugin", () => {
+describe("update_extension", () => {
   it("pulls new commits for a git install", async () => {
     const repo = await createPluginRepo();
-    await handleInstallPlugin(manager, { source: pathToFileURL(repo).href, alias: "demo" });
+    await handleInstallExternalExtension(manager, {
+      source: pathToFileURL(repo).href,
+      alias: "demo",
+    });
 
-    const updated = VALID_MODULE.replace("demo-plugin", "demo-plugin-v2");
+    const updated = VALID_MODULE.replace("demo-extension", "demo-extension-v2");
     await writeFile(join(repo, "index.ts"), updated);
     await gitCommitAll(repo, "update");
 
-    const message = await handleUpdatePlugin(manager, { alias: "demo" });
+    const message = await handleUpdateExternalExtension(manager, { alias: "demo" });
 
-    expect(message).toContain("Plugin 'demo' updated.");
+    expect(message).toContain("ExternalExtension 'demo' updated.");
     expect(message).toContain("restart");
-    expect(await readFile(join(pluginsDir, "demo", "index.ts"), "utf8")).toBe(updated);
+    expect(await readFile(join(extensionsDir, "demo", "index.ts"), "utf8")).toBe(updated);
   });
 
   it("skips local installs as always current", async () => {
-    const local = await mkdtemp(join(tmpdir(), "tachi-plugin-local-"));
+    const local = await mkdtemp(join(tmpdir(), "tachi-ext-local-"));
     await writeFile(join(local, "index.ts"), VALID_MODULE);
-    await handleInstallPlugin(manager, { source: local, alias: "local-demo" });
+    await handleInstallExternalExtension(manager, { source: local, alias: "local-demo" });
 
-    const message = await handleUpdatePlugin(manager, { alias: "local-demo" });
+    const message = await handleUpdateExternalExtension(manager, { alias: "local-demo" });
 
     expect(message).toContain("always current");
   });
 
   it("rejects unknown aliases", async () => {
-    await expect(handleUpdatePlugin(manager, { alias: "ghost" })).rejects.toThrow(/not installed/);
+    await expect(handleUpdateExternalExtension(manager, { alias: "ghost" })).rejects.toThrow(
+      /not installed/,
+    );
   });
 });
 
-describe("uninstall_plugin", () => {
+describe("uninstall_extension", () => {
   it("removes the record and the cloned directory for git installs", async () => {
     const repo = await createPluginRepo();
-    await handleInstallPlugin(manager, { source: pathToFileURL(repo).href, alias: "demo" });
+    await handleInstallExternalExtension(manager, {
+      source: pathToFileURL(repo).href,
+      alias: "demo",
+    });
 
-    const message = await handleUninstallPlugin(manager, { alias: "demo" });
+    const message = await handleUninstallExtension(manager, { alias: "demo" });
 
-    expect(message).toContain("Plugin 'demo' uninstalled.");
-    expect(existsSync(join(pluginsDir, "demo"))).toBe(false);
+    expect(message).toContain("ExternalExtension 'demo' uninstalled.");
+    expect(existsSync(join(extensionsDir, "demo"))).toBe(false);
     expect(manager.list()).toEqual({});
   });
 
   it("keeps local source directories untouched", async () => {
-    const local = await mkdtemp(join(tmpdir(), "tachi-plugin-local-"));
+    const local = await mkdtemp(join(tmpdir(), "tachi-ext-local-"));
     await writeFile(join(local, "index.ts"), VALID_MODULE);
-    await handleInstallPlugin(manager, { source: local, alias: "local-demo" });
+    await handleInstallExternalExtension(manager, { source: local, alias: "local-demo" });
 
-    await handleUninstallPlugin(manager, { alias: "local-demo" });
+    await handleUninstallExtension(manager, { alias: "local-demo" });
 
     expect(existsSync(join(local, "index.ts"))).toBe(true);
     expect(manager.list()).toEqual({});
   });
 
   it("rejects unknown aliases", async () => {
-    await expect(handleUninstallPlugin(manager, { alias: "ghost" })).rejects.toThrow(
+    await expect(handleUninstallExtension(manager, { alias: "ghost" })).rejects.toThrow(
       /not installed/,
     );
   });
 });
 
-describe("list_installed_plugins", () => {
+describe("list_installed_extensions", () => {
   it("reports an empty install set", () => {
-    expect(handleListInstalledPlugins(manager)).toBe("No plugins installed.");
+    expect(handleListInstalledPlugins(manager)).toBe("No external extensions installed.");
   });
 
   it("lists installs with source kind and path", async () => {
-    const local = await mkdtemp(join(tmpdir(), "tachi-plugin-local-"));
+    const local = await mkdtemp(join(tmpdir(), "tachi-ext-local-"));
     await writeFile(join(local, "index.ts"), VALID_MODULE);
-    await handleInstallPlugin(manager, { source: local, alias: "local-demo" });
+    await handleInstallExternalExtension(manager, { source: local, alias: "local-demo" });
 
     const message = handleListInstalledPlugins(manager);
 

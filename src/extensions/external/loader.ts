@@ -54,7 +54,7 @@ export const validateExtensionShape = (value: unknown): ExtensionValidation => {
 /**
  * Load a Tachikoma extension from a source path: resolve the module file,
  * import it natively, and validate its default export. Invalid sources are
- * logged and skipped (null) so one bad plugin never aborts startup.
+ * logged and skipped (null) so one bad external extension never aborts startup.
  */
 export const loadExtensionModule = async (
   source: string,
@@ -63,7 +63,10 @@ export const loadExtensionModule = async (
   const modulePath = resolveExtensionModule(source);
 
   if (modulePath == null) {
-    log.warn({ source }, "plugin source has no loadable extension module (.ts/.js) — skipping");
+    log.warn(
+      { source },
+      "external extension source has no loadable extension module (.ts/.js) — skipping",
+    );
     return null;
   }
 
@@ -72,14 +75,20 @@ export const loadExtensionModule = async (
   try {
     module = await import(pathToFileURL(modulePath).href);
   } catch (error) {
-    log.warn({ source: modulePath, err: error }, "plugin module failed to import — skipping");
+    log.warn(
+      { source: modulePath, err: error },
+      "external extension module failed to import — skipping",
+    );
     return null;
   }
 
   const validation = validateExtensionShape(module.default);
 
   if (!validation.ok) {
-    log.warn({ source: modulePath, reason: validation.reason }, "invalid plugin — skipping");
+    log.warn(
+      { source: modulePath, reason: validation.reason },
+      "invalid external extension — skipping",
+    );
     return null;
   }
 

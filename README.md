@@ -2,7 +2,7 @@
 
 Tachikoma is a proactive personal assistant built on the [pi agent SDK](https://github.com/earendil-works/pi). It maintains persistent memory across conversations, extracts learnings automatically, handles background tasks during idle time, and is reachable through Telegram or a local REPL.
 
-This is the TypeScript implementation. The core is deliberately thin — config, database, scheduler, channels, session orchestration, and an extension host — and **every feature is an extension**: memory, conversation boundary detection, skills, workflows, scheduled tasks, project tracking, git-versioned workspace, Telegram, detached process supervision, notifications, and third-party plugin loading.
+This is the TypeScript implementation. The core is deliberately thin — config, database, scheduler, channels, session orchestration, and an extension host — and **every feature is an extension**: memory, conversation boundary detection, skills, workflows, scheduled tasks, project tracking, git-versioned workspace, Telegram, detached process supervision, notifications, and external extension loading (out-of-tree extensions on the same contract, installable from git).
 
 ## Requirements
 

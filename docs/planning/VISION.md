@@ -112,7 +112,7 @@ defineExtension({ name, config?, setup(app) })
 
 `setup` receives an `AppContext` exposing app-level hooks — scheduler, database, session lifecycle, channels, context provider registration, post-processing registration — and can contribute pi extension factories via `app.agent.use((pi) => ...)` for in-session behavior: tools (`pi.registerTool`), event hooks, and system prompt fragments.
 
-First-party extensions, all in-repo: **context** (SOUL.md/USER.md/AGENTS.md), **memory**, **boundary** (topic-shift detection, rolling summaries, session resumption), **skills**, **workflows**, **tasks**, **projects**, **git** (workspace versioning), **telegram**, **repl**, **detached-processes**, **notifications**, and **plugins** (third-party extension loading — the only out-of-tree extensibility path).
+First-party extensions, all in-repo: **context** (SOUL.md/USER.md/AGENTS.md), **memory**, **boundary** (topic-shift detection, rolling summaries, session resumption), **skills**, **workflows**, **tasks**, **projects**, **git** (workspace versioning), **telegram**, **repl**, **detached-processes**, **notifications**, and **external** (loading and installing out-of-tree extensions built on the same extension contract).
 
 ### Sessions on pi
 
@@ -153,10 +153,10 @@ Feature parity with the Python implementation, rebuilt for the new stack and del
 - Projects extension: registration tools, startup sync, context injection, commit/push on close
 - Git extension: workspace versioning after each session and fetch-rebase-push sync
 
-**M5 — Detached processes, notifications, plugins, polish:**
+**M5 — Detached processes, notifications, external extensions, polish:**
 - Detached process supervision tools
 - Event-bus-driven notifications with buffered, idle-aware delivery
-- Plugins extension for loading third-party Tachikoma extensions
+- External extension loading and git-based installation (the Python plugin system is superseded by the unified extension API itself)
 - Granular processing status updates and the release pipeline
 
 ### Out of Scope for the Port
@@ -217,7 +217,7 @@ Once parity lands, the Python backlog re-opens on the new foundation — see Fut
 6. Scheduled tasks run in both session (idle-gated) and background (autonomous, iterative) modes with timezone-aware schedules and restart catch-up (M3)
 7. Telegram reaches feature parity: streamed responses, full media support, push notifications (M4)
 8. Registered projects sync on startup and auto-commit/push on session close; the workspace itself is git-versioned after every session (M4)
-9. Detached processes can be dispatched and supervised; notifications buffer and deliver at conversation pauses; third-party extensions load via the plugins extension (M5)
+9. Detached processes can be dispatched and supervised; notifications buffer and deliver at conversation pauses; third-party extensions load via the external extension loader (M5)
 10. Every feature outside the core shell is implemented as an extension using the single `defineExtension` format (all milestones)
 
 ## Future Considerations
@@ -240,7 +240,7 @@ Ideas for after the port (not committing to these):
 
 **Context Providers (beyond memory):**
 - Calendar, tasks, email, and notes providers
-- Dynamic/user-created providers via the plugins extension
+- Dynamic/user-created providers via externally installed extensions
 
 **Channels and Interfaces:**
 - Web interface with chat and dashboard

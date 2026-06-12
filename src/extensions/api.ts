@@ -130,7 +130,7 @@ export interface AppContext<C = unknown> {
   bootstrap(name: string, hook: () => void | Promise<void>): void;
   /** Surface a progress line through the active channel while processing. */
   status(text: string): void;
-  /** Enqueue another extension for loading (third-party plugin support). */
+  /** Enqueue another extension for loading (external extension support). */
   registerExtension(extension: TachikomaExtension<never>): void;
 }
 

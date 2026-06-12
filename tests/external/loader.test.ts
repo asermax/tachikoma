@@ -8,27 +8,27 @@ import {
   loadExtensionModule,
   resolveExtensionModule,
   validateExtensionShape,
-} from "../../src/extensions/plugins/loader.ts";
+} from "../../src/extensions/external/loader.ts";
 import type { Logger } from "../../src/log.ts";
 
 const createFakeLog = () =>
   ({ error: vi.fn(), warn: vi.fn(), info: vi.fn(), debug: vi.fn() }) as unknown as Logger;
 
 const VALID_MODULE = `export default {
-  name: "demo-plugin",
+  name: "demo-extension",
   setup() {},
 };
 `;
 
 const INVALID_MODULE = `export default {
-  name: "broken-plugin",
+  name: "broken-extension",
 };
 `;
 
 let dir: string;
 
 beforeEach(async () => {
-  dir = await mkdtemp(join(tmpdir(), "tachi-plugins-loader-"));
+  dir = await mkdtemp(join(tmpdir(), "tachi-external-loader-"));
 });
 
 describe("validateExtensionShape", () => {
@@ -60,10 +60,12 @@ describe("validateExtensionShape", () => {
 
 describe("resolveExtensionModule", () => {
   it("resolves a directory to its index module", async () => {
-    await mkdir(join(dir, "plugin"));
-    await writeFile(join(dir, "plugin", "index.ts"), VALID_MODULE);
+    await mkdir(join(dir, "my-extension"));
+    await writeFile(join(dir, "my-extension", "index.ts"), VALID_MODULE);
 
-    expect(resolveExtensionModule(join(dir, "plugin"))).toBe(join(dir, "plugin", "index.ts"));
+    expect(resolveExtensionModule(join(dir, "my-extension"))).toBe(
+      join(dir, "my-extension", "index.ts"),
+    );
   });
 
   it("returns null for missing paths and non-module files", async () => {
@@ -82,17 +84,17 @@ describe("loadExtensionModule", () => {
 
     const extension = await loadExtensionModule(file, createFakeLog());
 
-    expect(extension?.name).toBe("demo-plugin");
+    expect(extension?.name).toBe("demo-extension");
     expect(typeof extension?.setup).toBe("function");
   });
 
-  it("loads a directory plugin through its index module", async () => {
-    await mkdir(join(dir, "plugin"));
-    await writeFile(join(dir, "plugin", "index.ts"), VALID_MODULE);
+  it("loads a directory external extension through its index module", async () => {
+    await mkdir(join(dir, "my-extension"));
+    await writeFile(join(dir, "my-extension", "index.ts"), VALID_MODULE);
 
-    const extension = await loadExtensionModule(join(dir, "plugin"), createFakeLog());
+    const extension = await loadExtensionModule(join(dir, "my-extension"), createFakeLog());
 
-    expect(extension?.name).toBe("demo-plugin");
+    expect(extension?.name).toBe("demo-extension");
   });
 
   it("logs and skips a module whose default export is invalid", async () => {

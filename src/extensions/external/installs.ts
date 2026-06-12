@@ -34,26 +34,26 @@ export type InstallsState = Pick<KeyValueState, "get" | "set">;
 
 export interface InstallManagerDeps {
   state: InstallsState;
-  /** Where git sources are cloned: `{dataDir}/plugins/<alias>`. */
-  pluginsDir: string;
+  /** Where git sources are cloned: `{dataDir}/extensions/<alias>`. */
+  extensionsDir: string;
   log: Logger;
   now?: () => Date;
 }
 
 /**
- * Agent-driven plugin installs. Git sources are cloned under the data dir and
+ * Agent-driven external extension installs. Git sources are cloned under the data dir and
  * updated with `git pull`; local paths are recorded as-is (always current).
  * Records live in the extension's KV state; loading happens on the next startup.
  */
 export class InstallManager {
   private readonly state: InstallsState;
-  private readonly pluginsDir: string;
+  private readonly extensionsDir: string;
   private readonly log: Logger;
   private readonly now: () => Date;
 
-  constructor({ state, pluginsDir, log, now }: InstallManagerDeps) {
+  constructor({ state, extensionsDir, log, now }: InstallManagerDeps) {
     this.state = state;
-    this.pluginsDir = pluginsDir;
+    this.extensionsDir = extensionsDir;
     this.log = log;
     this.now = now ?? (() => new Date());
   }
@@ -71,7 +71,7 @@ export class InstallManager {
 
     if (records[alias] != null) {
       throw new Error(
-        `Plugin '${alias}' is already installed. Uninstall it or pick another alias.`,
+        `ExternalExtension '${alias}' is already installed. Uninstall it or pick another alias.`,
       );
     }
 
@@ -90,15 +90,15 @@ export class InstallManager {
     const record: InstallRecord = { source, installedAt: this.now().toISOString(), path };
 
     this.state.set(INSTALLS_KEY, { ...records, [alias]: record });
-    this.log.info({ alias, source, path }, "plugin installed");
+    this.log.info({ alias, source, path }, "external extension installed");
 
     return record;
   }
 
   private async cloneGitSource(source: string, alias: string): Promise<string> {
-    const target = join(this.pluginsDir, alias);
+    const target = join(this.extensionsDir, alias);
 
-    await mkdir(this.pluginsDir, { recursive: true });
+    await mkdir(this.extensionsDir, { recursive: true });
     await rm(target, { recursive: true, force: true });
 
     try {
@@ -113,19 +113,20 @@ export class InstallManager {
   async update(alias: string): Promise<UpdateResult> {
     const record = this.list()[alias];
 
-    if (record == null) throw new Error(`Plugin '${alias}' is not installed.`);
+    if (record == null) throw new Error(`ExternalExtension '${alias}' is not installed.`);
 
     if (!isGitSource(record.source)) {
       return {
         status: "skipped",
-        detail: "Local plugins load directly from their source path and are always current.",
+        detail:
+          "Local external extensions load directly from their source path and are always current.",
       };
     }
 
     try {
       const { stdout } = await execFileAsync("git", ["pull", "--ff-only"], { cwd: record.path });
 
-      this.log.info({ alias }, "plugin updated");
+      this.log.info({ alias }, "external extension updated");
       return { status: "updated", detail: stdout.trim() };
     } catch (error) {
       throw new Error(`git pull failed for '${alias}': ${error}`);
@@ -136,7 +137,7 @@ export class InstallManager {
     const records = this.list();
     const record = records[alias];
 
-    if (record == null) throw new Error(`Plugin '${alias}' is not installed.`);
+    if (record == null) throw new Error(`ExternalExtension '${alias}' is not installed.`);
 
     // Only remove directories we cloned ourselves; local sources stay untouched.
     if (isGitSource(record.source)) {
@@ -147,7 +148,7 @@ export class InstallManager {
       INSTALLS_KEY,
       Object.fromEntries(Object.entries(records).filter(([key]) => key !== alias)),
     );
-    this.log.info({ alias }, "plugin uninstalled");
+    this.log.info({ alias }, "external extension uninstalled");
 
     return record;
   }

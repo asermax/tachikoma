@@ -364,7 +364,7 @@ The primary interface and workspace versioning.
 
 ---
 
-## Milestone 5 — Detached Processes, Notifications, Plugins, Polish
+## Milestone 5 — Detached Processes, Notifications, External Extensions, Polish
 
 Supervision, delivery coordination, third-party extensibility, and release readiness.
 
@@ -392,12 +392,12 @@ Supervision, delivery coordination, third-party extensibility, and release readi
 **Ports**: detached-processes/process-supervision
 **Description**: Tools dispatch, monitor, and control OS-level commands that outlive the session, with watchers tracking exit status and streaming output back to the agent.
 
-### DLT-042: Plugins extension
+### DLT-042: External extension loading
 **Status**: ✗ Pending
 **Depends on**: DLT-006
 **Priority**: 3 (Medium)
 **Complexity**: Hard
-**Ports**: plugins/plugin-loading
+**Ports**: plugins/plugin-loading (superseded: the manifest-based plugin system collapses into loading out-of-tree defineExtension modules, plus git install tooling)
 **Description**: Third-party Tachikoma extensions declared in configuration are loaded through the same `defineExtension` contract as first-party ones — the single out-of-tree extensibility path.
 
 ### DLT-043: Granular processing status

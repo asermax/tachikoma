@@ -2,10 +2,10 @@ import type { TachikomaExtension } from "./api.ts";
 import boundary from "./boundary/index.ts";
 import context from "./context/index.ts";
 import detachedProcesses from "./detached-processes/index.ts";
+import external from "./external/index.ts";
 import git from "./git/index.ts";
 import memory from "./memory/index.ts";
 import notifications from "./notifications/index.ts";
-import plugins from "./plugins/index.ts";
 import projects from "./projects/index.ts";
 import repl from "./repl/index.ts";
 import skills from "./skills/index.ts";
@@ -27,5 +27,5 @@ export const firstPartyExtensions = [
   notifications,
   repl,
   telegram,
-  plugins,
+  external,
 ] as TachikomaExtension<never>[];

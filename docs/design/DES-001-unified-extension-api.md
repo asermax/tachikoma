@@ -78,7 +78,7 @@ Session factories receive pi's native `ExtensionAPI` — no wrapping, no renamin
 
 ### Loading
 
-First-party extensions live in-tree under `src/extensions/<name>/` and are listed in `src/extensions/index.ts` in load order. Third-party loading (npm/git) is itself an extension (`plugins`) layered on the same `defineExtension` contract. Extension setup runs in list order; bootstrap hooks run afterwards in registration order, so an extension may rely on earlier extensions' services but not on later ones.
+First-party extensions live in-tree under `src/extensions/<name>/` and are listed in `src/extensions/index.ts` in load order. Out-of-tree loading is itself an extension (`external`): it imports third-party `defineExtension` modules from configured sources or git-installed aliases — there is no separate plugin system; the extension API is the extensibility surface. Extension setup runs in list order; bootstrap hooks run afterwards in registration order, so an extension may rely on earlier extensions' services but not on later ones.
 
 ### Database contributions
 
