@@ -11,6 +11,9 @@ export const createDatabase = (file: string) => {
   const sqlite = new Database(file);
   sqlite.pragma("journal_mode = WAL");
   sqlite.pragma("foreign_keys = ON");
+  // Background tasks, the maintenance tick, and the coordinator can all touch
+  // the DB concurrently; wait out a transient writer lock instead of throwing.
+  sqlite.pragma("busy_timeout = 5000");
 
   return drizzle(sqlite, { schema });
 };
