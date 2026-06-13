@@ -6,7 +6,7 @@
 
 The `context` extension (`src/extensions/context/`) composes the agent's identity from workspace-root files: SOUL.md (personality) and USER.md (durable user knowledge) are joined with a base prompt into the pi session's system prompt. AGENTS.md is discovered natively by pi from the workspace root and needs no handling in the extension.
 
-A companion `core-context` post-processor (`src/extensions/context/processor.ts`, currently registered by the [memory](./memory.md) extension) analyzes each closed conversation and conservatively updates the three files, staging ambiguous signals in a pending-signals file so recurring patterns can be promoted later.
+A companion `core-context` post-processor (`src/extensions/context/processor.ts`, currently registered by the [memory](./memory.md) extension) analyzes each closed conversation and conservatively updates the three files, staging ambiguous signals in a pending-signals file so recurring patterns can be promoted later. Separately, a periodic foundational-context maintenance tick owned by the [memory](./memory.md) extension (`memory-context-maintenance`) does a cleanup-only whole-file pass over the three files, pruning staleness and bloat without adding new content.
 
 ## User Stories
 
@@ -28,6 +28,7 @@ A companion `core-context` post-processor (`src/extensions/context/processor.ts`
 | R8 | The update policy is prompt-encoded and conservative: clear evidence updates files directly, ambiguous signals are staged, semantically recurring staged signals are promoted and removed, corrections are extracted as positive instructions, stale content is pruned, and size limits are enforced (USER.md ~120 lines, AGENTS.md ~400 lines) |
 | R9 | The headless run gets file tools (`read`, `grep`, `find`, `ls`, `edit`, `write`) on the `processor` tier; it may read anywhere in the workspace but is instructed to modify only the three context files and the pending signals file, verifying workspace claims before writing them |
 | R10 | The processor registration lives in the memory extension's setup — `[extensions.memory] enabled = false` also disables core context updates |
+| R11 | A periodic foundational-context maintenance tick (cleanup-only) reviews the three files for staleness, redundancy, overlap, and size on a staggered cron; it adds no new content, is especially conservative for SOUL.md, and is owned by the memory extension's maintenance wiring — see [memory](./memory.md) R20a for the full contract |
 
 ## Behaviors
 

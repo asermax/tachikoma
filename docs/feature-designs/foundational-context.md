@@ -21,6 +21,7 @@ pi ships a coding-agent system prompt; Tachikoma needs a personal-assistant iden
 **Interactions:**
 - The system prompt override is composed per session open by `AgentManager` (see [agent-integration](./agent-integration.md))
 - The `core-context` processor runs in the post-processing pipeline owned by the coordinator (see [conversation-loop](./conversation-loop.md)) and is currently registered by the memory extension (see [memory](./memory.md))
+- The periodic cleanup of these same three files (`runContextMaintenanceTick`, `memory-context-maintenance` cron) lives in the memory extension's maintenance module, not here — it complements the per-session updater by consolidating and pruning across the whole file rather than reacting to one conversation (see [memory](./memory.md))
 - Workspace internals (`dataDir`) come from the core shell (see [core-shell](./core-shell.md))
 - Context file changes are committed by the finalize-phase git processor (see [git-workspace](./git-workspace.md))
 

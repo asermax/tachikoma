@@ -40,7 +40,12 @@ describe("memory extension setup", () => {
   it("registers the transcript prune cron when maintenance is enabled", async () => {
     const cron = await setup(config());
 
-    expect(cron).toHaveBeenCalledTimes(4);
+    expect(cron).toHaveBeenCalledTimes(5);
+    expect(cron).toHaveBeenCalledWith(
+      "memory-context-maintenance",
+      "0 4 * * *",
+      expect.any(Function),
+    );
     expect(cron).toHaveBeenCalledWith(
       "memory-transcripts-maintenance",
       "50 3 * * *",

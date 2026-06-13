@@ -26,7 +26,7 @@ pi sessions are in-process JSONL trees, there is no MCP, and tool scoping is by 
 
 ## Design Overview
 
-`src/extensions/memory/index.ts` only wires: a bootstrap hook for the layout, a context provider for index injection, one extraction processor per store, the core-context and transcript-archive processors, and three maintenance crons. All logic lives in sibling modules taking narrow dependencies (`Pick<SideRunner, "run">`), so tests fake the runner and assert on the options it receives.
+`src/extensions/memory/index.ts` only wires: a bootstrap hook for the layout, a context provider for index injection, one extraction processor per store, the core-context and transcript-archive processors, three store maintenance crons, a foundational-context maintenance cron, and a transcript-prune cron. All logic lives in sibling modules taking narrow dependencies (`Pick<SideRunner, "run">`), so tests fake the runner and assert on the options it receives.
 
 ```
 message ──> memory-index provider ──> <context owner="memories"> layout + indexes
@@ -34,6 +34,7 @@ session close ──> main:        memory-episodic | memory-facts | memory-prefe
                   preFinalize: core-context
                   finalize:    transcript-archive | git-commit
 nightly cron ──> runMaintenanceTick(store) ──> headless run ──> sweepEmptyMarkdown
+nightly cron ──> runContextMaintenanceTick ──> headless run (SOUL/USER/AGENTS, cleanup-only, no sweep)
 nightly cron ──> pruneTranscripts ──> delete transcripts older than retentionDays (no agent)
 ```
 
@@ -52,7 +53,7 @@ Each extraction renders the transcript to role-prefixed text, composes the store
 | `src/extensions/memory/prompts.ts` | Shared prompt sections: store purpose, classification examples, context dedup, workspace validation, index update, light index maintenance, scope | The scope section defines the empty-file deletion protocol |
 | `src/extensions/memory/transcript.ts` | `parseTranscript`, `renderConversation`, `loadConversation` | Text-only turns; tail-priority truncation with marker |
 | `src/extensions/memory/archive.ts` | `createTranscriptArchiveProcessor` (`finalize`) writes archives; `pruneTranscripts` (nightly cron) deletes old ones | Names archive after the JSONL header session id; age-based prune by file mtime; both never throw |
-| `src/extensions/memory/maintenance.ts` | `runMaintenanceTick`, per-store maintenance prompts, `buildCrossStoreManifest`, `maintenanceSystemPrompt` | Injectable `now` clock for the Sunday rebuild dispatch |
+| `src/extensions/memory/maintenance.ts` | `runMaintenanceTick`, per-store maintenance prompts, `buildCrossStoreManifest`, `maintenanceSystemPrompt`; `runContextMaintenanceTick`, `contextMaintenanceSystemPrompt`, `buildStoreManifestForContext` for foundational-context cleanup | Injectable `now` clock for the Sunday rebuild dispatch; context tick is cleanup-only and runs no sweep (edits in place) |
 | `src/extensions/memory/dates.ts` | `localIsoDate` | Local timezone — memory filenames follow the user's day, not UTC |
 
 ## Key Decisions
@@ -110,14 +111,26 @@ Each extraction renders the transcript to role-prefixed text, composes the store
 
 ### Staggered cron schedules instead of a shared schedule with a semaphore
 
-**Choice**: Each store's maintenance is an independently scheduled cron (`0 3`, `20 3`, `40 3` by default), and the weekday/Sunday index strategy is decided by an injectable clock at tick time.
-**Why**: The core scheduler has named, overlap-protected jobs but no priority semaphore; staggering by 20 minutes achieves the "don't pile up three headless agent runs" goal with zero new machinery.
+**Choice**: Each store's maintenance is an independently scheduled cron (`0 3`, `20 3`, `40 3` by default), the foundational-context cleanup is its own cron (`0 4` by default), and the weekday/Sunday index strategy is decided by an injectable clock at tick time.
+**Why**: The core scheduler has named, overlap-protected jobs but no priority semaphore; staggering the headless agent runs by 20 minutes (and the context tick to the top of the next hour, well clear of the 03:50 transcript prune) achieves the "don't pile up headless agent runs" goal with zero new machinery.
 **Alternatives Considered**:
 - One cron fanning out sequentially: a single failure or hang stalls the remaining stores; per-job overlap protection is lost
 
 **Consequences**:
 - Pro: each tick is independently triggerable, loggable, and disableable by reconfiguring its schedule
 - Con: the stagger is convention — a long episodic run can still overlap the facts run
+
+### Cleanup-only periodic pass over the foundational context files
+
+**Choice**: `runContextMaintenanceTick` mirrors the store maintenance shape (headless `processor`-tier run over a conservative prompt) but targets the workspace-root `SOUL.md`/`USER.md`/`AGENTS.md` and is strictly cleanup-only: it reviews for staleness, redundancy, overlap, and size (the same ~120/~400-line limits the per-session `core-context` processor enforces) and applies edits in place. It adds no new content — extracting new signals from conversations remains the `core-context` processor's job. The prompt carries the shared store-purpose section plus a names-only memory-store manifest (`buildStoreManifestForContext`) so the agent trims context sections that duplicate the more authoritative facts store down to pointers. It runs no `sweepEmptyMarkdown` because these are stable, always-present files edited in place — never emptied.
+**Why**: The context files drift between the per-session updates (resolved projects linger, sections duplicate, AGENTS.md bloats), and the per-session processor only sees one conversation at a time. A periodic whole-file pass is the natural place to consolidate and prune, exactly as the store ticks do for memory. Reusing the side-run mechanism, the conservative-edit conventions, and the names-only manifest pattern keeps it consistent with the rest of maintenance and warrants no new ADR/DES (reuses ADR-006 scheduler, ADR-007 config).
+**Alternatives Considered**:
+- Folding context cleanup into the per-session `core-context` processor: would run on every session close (cost) and still only ever see one conversation, missing cross-section consolidation
+- A `MemoryStore`-style fourth store: the context files live at the workspace root with no index, no per-store directory, and a stricter (especially-conservative-for-SOUL, never-empty) edit policy — modeling them as a store would distort all three abstractions
+
+**Consequences**:
+- Pro: context files get the same periodic consolidation the memory stores get, keeping them a current snapshot rather than an append-only log
+- Con: cleanup quality is enforced by prompt instruction, not code — over-aggressive pruning would surface as context drift, mitigated by the conservative/cleanup-only framing and the especially-conservative SOUL.md guard
 
 ### Deterministic age-based transcript pruning instead of an agent tick
 

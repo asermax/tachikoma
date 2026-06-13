@@ -308,6 +308,72 @@ const STORE_LABELS: Record<MemoryStore, string> = {
 
 const CONTEXT_FILE_NAMES = ["SOUL.md", "USER.md", "AGENTS.md"];
 
+const CONTEXT_MAINTENANCE_PROMPT = `You are a memory maintenance agent performing foundational context file cleanup.
+
+## Files
+
+You are responsible for three foundational context files at the workspace root:
+- \`$WORKSPACE/SOUL.md\` — Personality traits, tone, and behavioral guidelines
+- \`$WORKSPACE/USER.md\` — What the assistant knows about the user
+- \`$WORKSPACE/AGENTS.md\` — Operational instructions and workflow preferences
+
+## Pre-check
+
+If none of the three files exist, stop immediately — nothing to maintain.
+
+## Evaluation Criteria
+
+Read all three context files and evaluate each for these issues:
+
+### Staleness
+
+An entry is stale when it describes a state that is no longer accurate:
+- References to completed projects or resolved issues — confirm against actual workspace state (read project directories, check file existence) before removing
+- Outdated role information, past events, or time-specific entries that are no longer relevant
+- Technical details that reference outdated tools, versions, or configurations
+- Entries about resolved bugs or completed work — the fix is done, the instruction is no longer needed
+
+For stale entries:
+- Remove the entry entirely if it has no ongoing relevance
+- If the entry can be updated to reflect current state, edit it
+- Do NOT prune based on vague hints, assumptions, or age alone — only remove when you have clear evidence (e.g., the project directory no longer exists, the referenced file has been deleted, the tool version has changed)
+
+### Redundancy
+
+Same information stated multiple times within or across files:
+- Keep the most complete and well-organized version
+- Remove the duplicate entries
+
+### Overlap
+
+Related topics split across sections within the same file:
+- When two sections cover the same topic with semantically equivalent content, merge them into one section combining the best of both
+- Only consolidate when sections are truly equivalent — related-but-distinct topics must remain separate
+
+## Size Limits
+
+Enforce these size limits by pruning actively:
+- **USER.md** must stay under ~120 lines. When it exceeds the limit: summarize verbose sections, remove stale sections, or omit details that belong in facts/preferences memory.
+- **AGENTS.md** must stay under ~400 lines. When it exceeds the limit: remove entries about resolved bugs or completed work, and consolidate duplicated entries across sections.
+
+## Constraints
+
+- **Cleanup-only**: Do NOT add new content — only clean and consolidate what is already there. Adding new content from conversations is the job of the per-session context update, not this maintenance pass.
+- **Read-first**: Always read a file before modifying it.
+- **Preserve structure**: Keep existing formatting and organization.
+- **Conservative**: Only remove content with clear evidence of staleness.
+- **SOUL.md**: Be especially conservative — personality traits and tone guidelines should only be removed when the user has explicitly contradicted them or when they duplicate each other.
+
+## Idempotency
+
+Treat absence of obvious problems as insufficient grounds for skipping — actively re-apply the Evaluation Criteria and Size Limits above. Stale instructions added for resolved incidents and entries that belong in facts/preferences memory accumulate quietly between runs and won't always surface in a quick scan.
+
+If no changes are needed, exit with no changes.
+
+## Scope
+
+You can read files anywhere in the workspace (needed to validate claims against actual project state). Only modify \`$WORKSPACE/SOUL.md\`, \`$WORKSPACE/USER.md\`, and \`$WORKSPACE/AGENTS.md\`. Do not create, delete, or modify any other files.`;
+
 /** Names-only listing of the other stores so the maintenance agent can reconcile across them. */
 export const buildCrossStoreManifest = async (
   workspaceRoot: string,
@@ -393,6 +459,75 @@ export const maintenanceSystemPrompt = async (
   parts.push(CONTRADICTION_DETECTION_SECTION, scopeSection(store));
 
   return parts.join("\n\n").replaceAll("$WORKSPACE", workspaceRoot);
+};
+
+/** Names-only listing of the memory stores so the context tick can reconcile against more authoritative facts/preferences. */
+export const buildStoreManifestForContext = async (
+  workspaceRoot: string,
+): Promise<string | null> => {
+  const sections: string[] = [];
+
+  for (const store of MEMORY_STORES) {
+    let files: string[];
+    try {
+      files = (await readdir(storeDir(workspaceRoot, store)))
+        .filter((name) => name.endsWith(".md"))
+        .sort();
+    } catch {
+      continue;
+    }
+
+    if (files.length === 0) continue;
+
+    sections.push(
+      [
+        `### ${STORE_LABELS[store]}`,
+        "",
+        ...files.map((name) => `- \`memories/${store}/${name}\``),
+      ].join("\n"),
+    );
+  }
+
+  if (sections.length === 0) return null;
+
+  return [
+    "## Memory Store Visibility",
+    "",
+    "Files in the memory stores (names and paths only, not content):",
+    "",
+    sections.join("\n\n"),
+    "",
+    'When a context-file section duplicates detail already captured in a more authoritative memory facts file, trim it to a brief pointer (e.g., "See memories/facts/X.md for details") rather than inlining the content.',
+  ].join("\n");
+};
+
+export const contextMaintenanceSystemPrompt = async (workspaceRoot: string): Promise<string> => {
+  const parts = [CONTEXT_MAINTENANCE_PROMPT, STORE_PURPOSE_SECTION];
+
+  const manifest = await buildStoreManifestForContext(workspaceRoot);
+  if (manifest != null) parts.push(manifest);
+
+  return parts.join("\n\n").replaceAll("$WORKSPACE", workspaceRoot);
+};
+
+/**
+ * Periodic cleanup pass over the foundational context files (SOUL/USER/AGENTS).
+ * Cleanup-only and conservative: reviews for staleness, redundancy, overlap, and
+ * bloat, applying edits in place. New content is the per-session update's job, not this.
+ */
+export const runContextMaintenanceTick = async (
+  deps: Pick<MaintenanceDeps, "side" | "workspaceRoot" | "log">,
+): Promise<void> => {
+  deps.log.info("context maintenance tick started");
+
+  await deps.side.run({
+    tools: MEMORY_FILE_TOOLS,
+    system: await contextMaintenanceSystemPrompt(deps.workspaceRoot),
+    prompt: "Perform the context file cleanup pass now, following your instructions.",
+    tier: "processor",
+  });
+
+  deps.log.info("context maintenance tick completed");
 };
 
 /** Daily maintenance pass over one memory store: consolidate, prune, keep indexes in sync. */

@@ -7,7 +7,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Runner } from "../../src/extensions/memory/extraction.ts";
 import {
   buildCrossStoreManifest,
+  buildStoreManifestForContext,
   type MaintenanceDeps,
+  runContextMaintenanceTick,
   runMaintenanceTick,
 } from "../../src/extensions/memory/maintenance.ts";
 import type { Logger } from "../../src/log.ts";
@@ -108,5 +110,62 @@ describe("buildCrossStoreManifest", () => {
 
   it("returns null when nothing else exists", async () => {
     expect(await buildCrossStoreManifest(workspace, "facts")).toBeNull();
+  });
+});
+
+describe("runContextMaintenanceTick", () => {
+  it("reviews the three foundational context files conservatively", async () => {
+    const { side, run } = fakeRunner();
+
+    await runContextMaintenanceTick({ side, workspaceRoot: workspace, log: fakeLog });
+
+    const options = run.mock.calls[0]?.[0];
+    expect(options.tier).toBe("processor");
+    expect(options.system).toContain(join(workspace, "SOUL.md"));
+    expect(options.system).toContain(join(workspace, "USER.md"));
+    expect(options.system).toContain(join(workspace, "AGENTS.md"));
+
+    // Cleanup-only and conservative — no new content, no destructive scope beyond the three files.
+    expect(options.system).toContain("Cleanup-only");
+    expect(options.system).toContain("Do NOT add new content");
+    expect(options.system).toContain("especially conservative");
+    expect(options.system).not.toContain("Memory Index");
+  });
+
+  it("includes a names-only memory store manifest so context can defer to facts", async () => {
+    await mkdir(join(workspace, "memories", "facts"), { recursive: true });
+    await writeFile(join(workspace, "memories", "facts", "tech-stack.md"), "stack", "utf8");
+
+    const { side, run } = fakeRunner();
+    await runContextMaintenanceTick({ side, workspaceRoot: workspace, log: fakeLog });
+
+    const system = run.mock.calls[0]?.[0].system;
+    expect(system).toContain("## Memory Store Visibility");
+    expect(system).toContain("- `memories/facts/tech-stack.md`");
+  });
+
+  it("does not write or delete files itself — edits are left to the side agent", async () => {
+    await writeFile(join(workspace, "USER.md"), "# User\n", "utf8");
+
+    const { side } = fakeRunner();
+    await runContextMaintenanceTick({ side, workspaceRoot: workspace, log: fakeLog });
+
+    expect((await readdir(workspace)).includes("USER.md")).toBe(true);
+  });
+});
+
+describe("buildStoreManifestForContext", () => {
+  it("lists the memory stores by name only", async () => {
+    await mkdir(join(workspace, "memories", "preferences"), { recursive: true });
+    await writeFile(join(workspace, "memories", "preferences", "style.md"), "x", "utf8");
+
+    const manifest = await buildStoreManifestForContext(workspace);
+
+    expect(manifest).toContain("### Preferences Files");
+    expect(manifest).toContain("- `memories/preferences/style.md`");
+  });
+
+  it("returns null when no stores have files", async () => {
+    expect(await buildStoreManifestForContext(workspace)).toBeNull();
   });
 });

@@ -6,7 +6,7 @@ import { createTranscriptArchiveProcessor, pruneTranscripts } from "./archive.ts
 import { createExtractionProcessor } from "./extraction.ts";
 import { createMemoryIndexProvider } from "./indexes.ts";
 import { ensureMemoryLayout, MEMORY_STORES } from "./layout.ts";
-import { runMaintenanceTick } from "./maintenance.ts";
+import { runContextMaintenanceTick, runMaintenanceTick } from "./maintenance.ts";
 
 export const MemoryConfigSchema = Type.Object({
   enabled: Type.Boolean({ default: true }),
@@ -19,6 +19,8 @@ export const MemoryConfigSchema = Type.Object({
       episodicSchedule: Type.String({ default: "0 3 * * *" }),
       factsSchedule: Type.String({ default: "20 3 * * *" }),
       preferencesSchedule: Type.String({ default: "40 3 * * *" }),
+      // Foundational context (SOUL/USER/AGENTS) cleanup; staggered after the store ticks.
+      contextSchedule: Type.String({ default: "0 4 * * *" }),
       recentDays: Type.Number({ default: 15 }),
       weeklyThresholdMonths: Type.Number({ default: 3 }),
       monthlyThresholdMonths: Type.Number({ default: 12 }),
@@ -91,6 +93,10 @@ export default defineExtension<MemoryConfig>({
       );
       app.scheduler.cron("memory-preferences-maintenance", maintenance.preferencesSchedule, () =>
         runMaintenanceTick("preferences", deps),
+      );
+
+      app.scheduler.cron("memory-context-maintenance", maintenance.contextSchedule, () =>
+        runContextMaintenanceTick(deps),
       );
 
       app.scheduler.cron("memory-transcripts-maintenance", maintenance.transcriptsSchedule, () =>
