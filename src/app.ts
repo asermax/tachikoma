@@ -7,6 +7,7 @@ import { ExtensionHost } from "./extensions/host.ts";
 import { firstPartyExtensions } from "./extensions/index.ts";
 import { createRegistrations } from "./extensions/registrations.ts";
 import { componentLogger, createRootLogger } from "./log.ts";
+import { adaptConfig, adaptWorkspace } from "./migration/index.ts";
 import { Scheduler } from "./scheduler.ts";
 import { SessionRegistry } from "./sessions/registry.ts";
 import { Workspace } from "./workspace.ts";
@@ -24,6 +25,15 @@ export const runApp = async (options: RunOptions = {}): Promise<void> => {
 
   const workspace = new Workspace(config.workspace.path);
   await workspace.ensure();
+
+  const migrationLog = componentLogger(log, "migration");
+  const adapted = await adaptConfig(configPath, migrationLog);
+
+  // config is shared by reference with everything constructed below; assign in
+  // place so the translated values flow through without re-wiring runApp.
+  if (adapted != null) Object.assign(config, adapted);
+
+  await adaptWorkspace(workspace, migrationLog);
 
   const db = createDatabase(workspace.databaseFile);
   runMigrations(db);
