@@ -1,10 +1,13 @@
 import { mkdtemp, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { parse as parseToml } from "smol-toml";
 import { describe, expect, it } from "vitest";
 
+import { DEFAULT_CONFIG_TEMPLATE } from "../src/config/default-template.ts";
 import { loadConfig } from "../src/config/load.ts";
-import { ConfigError } from "../src/config/parse.ts";
+import { ConfigError, parseWithSchema } from "../src/config/parse.ts";
+import { ConfigSchema } from "../src/config/schema.ts";
 
 describe("config loading", () => {
   it("generates a commented default file on first run", async () => {
@@ -31,6 +34,34 @@ describe("config loading", () => {
     expect(config.agent.main).toBe("anthropic/claude-fable-5");
     expect(config.agent.processor).toBeUndefined();
     expect(config.channels.default).toBe("repl");
+  });
+
+  it("rejects malformed TOML with a ConfigError carrying the line and column", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "tachi-config-"));
+    const path = join(dir, "config.toml");
+    const { writeFile } = await import("node:fs/promises");
+    await writeFile(path, "[sessions]\nresumeWindowSeconds = \n", "utf8");
+
+    await expect(loadConfig(path)).rejects.toThrow(ConfigError);
+    await expect(loadConfig(path)).rejects.toThrow(/line \d+, column \d+/);
+  });
+
+  it("parses and validates the default template cleanly", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "tachi-config-"));
+    const path = join(dir, "config.toml");
+
+    await expect(loadConfig(path)).resolves.toMatchObject({ created: true });
+  });
+
+  it("keeps the default template in sync with the schema defaults", async () => {
+    const fromTemplate = parseWithSchema(
+      ConfigSchema,
+      parseToml(DEFAULT_CONFIG_TEMPLATE),
+      "template",
+    );
+    const pureDefaults = parseWithSchema(ConfigSchema, {}, "defaults");
+
+    expect(fromTemplate).toEqual(pureDefaults);
   });
 
   it("rejects invalid values with a readable error", async () => {

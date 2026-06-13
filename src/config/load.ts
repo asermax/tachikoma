@@ -1,11 +1,11 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
-import { parse as parseToml } from "smol-toml";
+import { parse as parseToml, TomlError } from "smol-toml";
 
 import { expandHome } from "../workspace.ts";
 import { DEFAULT_CONFIG_TEMPLATE } from "./default-template.ts";
-import { parseWithSchema } from "./parse.ts";
+import { ConfigError, parseWithSchema } from "./parse.ts";
 import { type Config, ConfigSchema } from "./schema.ts";
 import { resolveTimezone } from "./timezone.ts";
 
@@ -36,7 +36,20 @@ export const loadConfig = async (path?: string): Promise<LoadedConfig> => {
   }
 
   const label = `config at ${configPath}`;
-  const config = parseWithSchema(ConfigSchema, parseToml(raw), label);
+
+  let parsed: unknown;
+
+  try {
+    parsed = parseToml(raw);
+  } catch (error) {
+    if (!(error instanceof TomlError)) throw error;
+
+    throw new ConfigError(
+      `Invalid ${label}:\n  line ${error.line}, column ${error.column}: ${error.message}\n${error.codeblock}`,
+    );
+  }
+
+  const config = parseWithSchema(ConfigSchema, parsed, label);
 
   config.scheduler.timezone = resolveTimezone(config.scheduler.timezone, label);
 
