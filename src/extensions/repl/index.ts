@@ -89,7 +89,7 @@ class ReplChannel implements Channel {
 
           case "tool-start":
             flushText();
-            process.stdout.write(`${DIM}⚙ ${event.toolName}${RESET}\n`);
+            process.stdout.write(`${DIM}🔧 ${event.toolName}${RESET}\n`);
             break;
 
           case "status":
