@@ -112,7 +112,7 @@ defineExtension({ name, config?, setup(app) })
 
 `setup` receives an `AppContext` exposing app-level hooks — scheduler, database, session lifecycle, channels, context provider registration, post-processing registration — and can contribute pi extension factories via `app.agent.use((pi) => ...)` for in-session behavior: tools (`pi.registerTool`), event hooks, and system prompt fragments.
 
-First-party extensions, all in-repo: **context** (SOUL.md/USER.md/AGENTS.md), **memory**, **boundary** (topic-shift detection, rolling summaries, session resumption), **skills**, **workflows**, **tasks**, **projects**, **git** (workspace versioning), **telegram**, **repl**, **detached-processes**, **notifications**, and **external** (loading and installing out-of-tree extensions built on the same extension contract).
+First-party extensions, all in-repo: **context** (SOUL.md/USER.md/AGENTS.md), **memory**, **boundary** (topic-shift detection, rolling summaries, session resumption), **skills**, **workflows**, **tasks**, **projects**, **git** (workspace versioning), **telegram**, **repl**, **detached-processes**, **notifications**, **self-update** (in-app upgrade with rollback), and **external** (loading and installing out-of-tree extensions built on the same extension contract).
 
 ### Sessions on pi
 
@@ -141,21 +141,22 @@ A thin core shell plus first-party extensions covering the full assistant featur
 - Boundary detection with topic-shift analysis, session replacement, and resumption (including cold-start)
 - Pre/post-processing pipelines with parallel execution and error isolation
 - Memory extraction (episodic, facts, preferences), memory context retrieval, and git-versioned transcript archiving with age-based retention
-- Core context files injected into the system prompt, with post-session updates
+- Core context files injected into the system prompt, with post-session updates and periodic maintenance of the foundational files (SOUL.md / USER.md / AGENTS.md)
 
 **Skills, workflows, tasks:**
 - Skills via pi's native Agent Skills support with the workspace as a skill source, hot-reload, bundled agents, and the authoring guide
-- Workflow engine with directory-based definitions, persisted step state machine, and lifecycle tools
-- Task system: cron and one-shot definitions, management tools, session (idle-gated) and background (autonomous) execution
+- Workflow engine with directory-based definitions, persisted step state machine, lifecycle tools, and composition (sub-workflows, loops, and conditional steps)
+- Task system: cron and one-shot definitions, management tools, session (idle-gated) and background (autonomous) execution, plus an interactive await/respond flow (`ask_user` / `respond_to_task`) for background runs that pause for user input
 
 **Channels, projects, git:**
-- Full Telegram channel: streamed rendering, complete media support, push notifications
+- Full Telegram channel: streamed rendering, complete media support, push notifications, inbound reactions, and reply routing
 - Projects extension: registration tools, startup sync, context injection, commit/push on close
-- Git extension: workspace versioning after each session and fetch-rebase-push sync
+- Git extension: workspace versioning after each session and fetch-rebase-push sync, with agent-driven rebase conflict resolution
 
 **Detached processes, notifications, external extensions, polish:**
 - Detached process supervision tools
-- Event-bus-driven notifications with buffered, idle-aware delivery
+- Event-bus-driven notifications with buffered, idle-aware delivery and severity-based priority ordering
+- In-app self-update: scheduled version check and notify, an `upgrade_self` tool that installs and re-execs, and automatic rollback of a failed upgrade on the next boot
 - External extension loading and git-based installation (out-of-tree extensibility is the unified extension API itself — no separate plugin system)
 - Granular processing status updates and the release pipeline
 

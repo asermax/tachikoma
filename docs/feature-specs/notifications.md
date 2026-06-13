@@ -6,7 +6,7 @@
 
 The notifications extension routes user-facing notifications from any producer to the active channel. Producers emit a payload on the `notify` app event; the extension routes it by severity — urgent notices are delivered immediately, everything else accumulates over a short flush window and goes out idle-gated, batched into a single digest when several pile up. A short-lived dedup guard drops a repeated `(source + text)` notice so re-emit/retry loops do not flood the user. Delivery gating itself (idle hold, max-hold force flush) is owned by the conversation loop (see [conversation-loop.md](conversation-loop.md)).
 
-A `notify_user` tool lets the agent itself emit notifications through the same path.
+A `notify_user` tool lets the agent itself emit notifications through the same path. Notifications are one-way; when a flow needs to await a user response, that is handled by the tasks await/respond mechanism (`ask_user` / `respond_to_task`, see [tasks.md](tasks.md)), not by this extension.
 
 ## User Stories
 
