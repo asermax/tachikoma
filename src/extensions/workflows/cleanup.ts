@@ -4,12 +4,12 @@ import { deleteScratchpad } from "./tools.ts";
 
 export const DEFAULT_STALE_HOURS = 24;
 
-export type StaleRepository = Pick<WorkflowStateRepository, "listStale" | "softDelete">;
+export type StaleRepository = Pick<WorkflowStateRepository, "listStale" | "abortCascade">;
 
 /**
  * Post-processor that expires workflow instances abandoned across sessions:
- * soft-deletes records untouched for longer than the threshold and removes
- * their scratchpad files.
+ * cascade soft-deletes each stale subtree untouched for longer than the
+ * threshold and removes their scratchpad files.
  */
 export const createStaleWorkflowCleanup = (
   repository: StaleRepository,
@@ -34,7 +34,7 @@ export const createStaleWorkflowCleanup = (
 
     for (const state of stale) {
       try {
-        if (repository.softDelete(state.id)) {
+        if (repository.abortCascade(state.id).length > 0) {
           deleteScratchpad(state.scratchpadPath);
           cleaned += 1;
         }

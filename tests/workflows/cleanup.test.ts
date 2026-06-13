@@ -23,7 +23,11 @@ beforeEach(async () => {
   scratchpadDir = await mkdtemp(join(tmpdir(), "tachi-workflows-cleanup-"));
 });
 
-const createWorkflow = async (id: string, workflowName: string) => {
+const createWorkflow = async (
+  id: string,
+  workflowName: string,
+  parentWorkflowId: string | null = null,
+) => {
   const scratchpadPath = join(scratchpadDir, `workflow-${id}.md`);
   await writeFile(scratchpadPath, "# Workflow\n");
 
@@ -34,6 +38,7 @@ const createWorkflow = async (id: string, workflowName: string) => {
     stepStates: { "01-plan": "pending" },
     definitionSnapshot: [{ id: "01-plan", title: "Plan", required: true, path: "/tmp/none" }],
     scratchpadPath,
+    parentWorkflowId,
   });
 };
 
@@ -65,6 +70,21 @@ describe("stale workflow cleanup", () => {
     expect(existsSync(fresh.scratchpadPath)).toBe(true);
   });
 
+  it("cascade soft-deletes the entire subtree of a stale workflow", async () => {
+    const root = await createWorkflow("root-1", "draft");
+    const child = await createWorkflow("child-1", "compose", root.id);
+    backdate(root.id, 25);
+    backdate(child.id, 25);
+
+    await createStaleWorkflowCleanup(repository, 24).process(processorContext());
+
+    const rootRow = db.select().from(workflowStates).where(eq(workflowStates.id, root.id)).get();
+    const childRow = db.select().from(workflowStates).where(eq(workflowStates.id, child.id)).get();
+
+    expect(rootRow?.deletedAt).not.toBeNull();
+    expect(childRow?.deletedAt).not.toBeNull();
+  });
+
   it("does nothing when no workflows are stale", async () => {
     const fresh = await createWorkflow("fresh-2", "draft");
 
@@ -78,7 +98,7 @@ describe("stale workflow cleanup", () => {
       listStale: () => {
         throw new Error("db gone");
       },
-      softDelete: () => true,
+      abortCascade: () => [],
     };
 
     await expect(
