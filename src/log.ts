@@ -20,6 +20,27 @@ export interface LogOptions {
   file?: FileSink;
 }
 
+// Credentials must never reach a destination. Pino redacts these fast-redact
+// paths before serialization; a leading `*.` matches the key at any depth, so
+// these cover secrets nested in logged config and error objects (Telegram bot
+// tokens, API keys, generic secrets/passwords, and HTTP auth headers).
+const REDACT_PATHS = [
+  "*.token",
+  "*.apiKey",
+  "*.api_key",
+  "*.apiToken",
+  "*.secret",
+  "*.password",
+  "*.authorization",
+  "*.headers.authorization",
+  "*.headers.Authorization",
+];
+
+const baseOptions = (level: string) => ({
+  level,
+  redact: { paths: REDACT_PATHS, censor: "[redacted]" },
+});
+
 // pino-roll prunes by file count; convert "days" → number of files for the period.
 // Frequencies match pino-roll's supported set; the ?? 1 only guards a direct call
 // with an unmapped value (config validation rejects those before they reach here).
@@ -38,7 +59,7 @@ export const createRootLogger = async ({ level, pretty, file }: LogOptions): Pro
   // multistream — transports run in a worker thread and can't be combined.
   const stderr = pretty ? pinoPretty({ destination: 2, colorize: true }) : pino.destination(2);
 
-  if (file == null) return pino({ level: normalized }, stderr);
+  if (file == null) return pino(baseOptions(normalized), stderr);
 
   // pino-roll is an in-process SonicBoom stream (not a worker-thread transport),
   // so it composes with multistream exactly like the stderr stream above.
@@ -55,7 +76,7 @@ export const createRootLogger = async ({ level, pretty, file }: LogOptions): Pro
   });
 
   return pino(
-    { level: normalized },
+    baseOptions(normalized),
     pino.multistream([{ stream: stderr }, { stream: fileStream }]),
   );
 };
