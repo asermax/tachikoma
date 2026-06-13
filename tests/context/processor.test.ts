@@ -126,6 +126,31 @@ describe("core context processor", () => {
     expect(await readFile(signalsFile, "utf8")).not.toContain("ancient signal");
   });
 
+  it("logs which context files the side run created, updated, or deleted", async () => {
+    await writeFile(join(workspace, "USER.md"), "existing user info\n", "utf8");
+
+    const run = vi.fn().mockImplementation(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      await writeFile(join(workspace, "AGENTS.md"), "new operational guidance\n", "utf8");
+      await writeFile(join(workspace, "USER.md"), "updated user info\n", "utf8");
+      return { text: "done" };
+    });
+    const side: Runner = { run };
+
+    const info = vi.fn();
+    const log = { debug: vi.fn(), info, warn: vi.fn() } as unknown as Logger;
+
+    await createCoreContextProcessor({ side, workspaceRoot: workspace, dataDir }).process({
+      session,
+      transcriptPath,
+      log,
+    });
+
+    expect(info).toHaveBeenCalledWith({ file: "AGENTS.md" }, "context file created");
+    expect(info).toHaveBeenCalledWith({ file: "USER.md" }, "context file updated");
+    expect(info).not.toHaveBeenCalledWith({ file: "SOUL.md" }, expect.anything());
+  });
+
   it("skips when there is no transcript", async () => {
     const { side, run } = fakeRunner();
 

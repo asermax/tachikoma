@@ -4,12 +4,13 @@ export const STORE_PURPOSE_SECTION = `## Store Purpose Definitions
 
 Each information store serves a distinct purpose. Use these definitions to route information correctly:
 
+- **Skills** (\`skills/\`): Installed skills under the workspace \`skills/\` directory. Each skill's SKILL.md owns the authoritative operational knowledge for its domain — the most authoritative store. When a skill covers a topic, defer to it rather than restating its content elsewhere.
 - **Memory facts** (\`memories/facts/\`): Stable reference information — project state, technical decisions, configuration, people, system architecture. Most authoritative store for reference information.
 - **Memory preferences** (\`memories/preferences/\`): Subjective choices with rationale — how the user wants things done, with context about why.
 - **Memory episodic** (\`memories/episodic/\`): Date-stamped summaries of what happened — events, outcomes, and decisions tied to a specific day.
 - **Context files** (workspace root): Concise summaries and pointers — personality (SOUL.md), user identity (USER.md), behavioral guidance (AGENTS.md). Context should reference facts rather than inlining their content.
 
-Authority order: Memory facts > Context files. When information appears in multiple stores, the more authoritative source is correct. Context files should contain summaries and pointers, not detailed operational content.`;
+Authority order: Skills > Memory facts > Context files. When information appears in multiple stores, the more authoritative source is correct. Do not write memory or context content that an installed skill already owns for its domain. Context files should contain summaries and pointers, not detailed operational content.`;
 
 export const CLASSIFICATION_EXAMPLES_SECTION = `## Classification Examples
 
@@ -55,6 +56,13 @@ Before creating any new memory file, check whether the information is already co
    - If the SAME information is already in one of these files, do NOT create a memory file for it — the context file is the source of truth
    - If a context file partially covers the topic but the conversation adds genuinely new details not found there, you MAY create a file — but only for the new information, not a restatement of what's already in the context file
    - If no context file covers the topic, proceed normally
+
+## Skill Deduplication
+
+Installed skills under the workspace \`skills/\` directory are authoritative for their domain — each skill's SKILL.md owns the operational knowledge for the topic it covers.
+
+- If a covered skill already owns the information you're about to write, do NOT write a memory or context entry for it — the skill is the source of truth.
+- Only record genuinely new details a covered skill does not already capture, and never restate instructions a skill already provides.
 
 This check prevents duplicating information across the memory system and the context files, which would create confusion about which is authoritative.`;
 

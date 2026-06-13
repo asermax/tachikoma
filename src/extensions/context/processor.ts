@@ -1,4 +1,4 @@
-import { readFile, unlink, writeFile } from "node:fs/promises";
+import { readFile, stat, unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import type { SideRunner } from "../../agent/side-run.ts";
@@ -125,6 +125,7 @@ Today's date is {date}.
    - Tool usage patterns, CLI preferences
    - Workflow conventions, formatting rules
    - System-specific instructions (task scheduling, note creation patterns)
+   - Installed skills (under the workspace \`skills/\` directory) are authoritative for their domain — skip writing operational instructions that a covered skill's SKILL.md already owns, and reference the skill instead of restating its guidance
 
    **Correction Detection** — Watch for moments where the agent was corrected and extract the lesson as a behavioral instruction:
    - **Explicit user corrections**: The user directly says "no", "don't", "wrong", "actually", or otherwise rejects the agent's approach and provides the right one
@@ -226,6 +227,42 @@ You can read files anywhere in the workspace (needed for validation). Only modif
 
 These files shape the assistant's identity and behavior across all sessions. Updates should be deliberate and evidence-based. When in doubt, stage the signal for future recurrence detection rather than making premature changes.`;
 
+const CONTEXT_FILENAMES = ["SOUL.md", "USER.md", "AGENTS.md"] as const;
+
+/** mtime in milliseconds, or null when the file is not present. */
+const snapshotMtimes = async (workspaceRoot: string): Promise<Record<string, number | null>> => {
+  const entries = await Promise.all(
+    CONTEXT_FILENAMES.map(async (name) => {
+      try {
+        return [name, (await stat(join(workspaceRoot, name))).mtimeMs] as const;
+      } catch {
+        return [name, null] as const;
+      }
+    }),
+  );
+
+  return Object.fromEntries(entries);
+};
+
+const logContextChanges = (
+  before: Record<string, number | null>,
+  after: Record<string, number | null>,
+  log: Logger,
+): void => {
+  for (const name of CONTEXT_FILENAMES) {
+    const wasPresent = before[name] != null;
+    const isPresent = after[name] != null;
+
+    if (!wasPresent && isPresent) {
+      log.info({ file: name }, "context file created");
+    } else if (wasPresent && !isPresent) {
+      log.info({ file: name }, "context file deleted");
+    } else if (wasPresent && isPresent && before[name] !== after[name]) {
+      log.info({ file: name }, "context file updated");
+    }
+  }
+};
+
 export interface CoreContextDeps {
   side: Pick<SideRunner, "run">;
   workspaceRoot: string;
@@ -276,6 +313,10 @@ export const createCoreContextProcessor = ({
 
     const prompt = `The following conversation with the user just ended:\n\n<conversation>\n${conversation}\n</conversation>\n\nFollow your instructions and update the context files accordingly.`;
 
+    const before = await snapshotMtimes(workspaceRoot);
+
     await side.run({ tools: FILE_TOOLS, system, prompt, tier: "processor" });
+
+    logContextChanges(before, await snapshotMtimes(workspaceRoot), log);
   },
 });

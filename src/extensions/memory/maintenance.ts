@@ -301,7 +301,7 @@ When reviewing files in this store, check for contradictions against other store
 1. Read the files listed in the cross-store visibility section above
 2. Compare their content against the files you're maintaining in this store
 3. If you find contradictory information:
-   - Determine which store is more authoritative per the authority hierarchy (Facts > Context)
+   - Determine which store is more authoritative per the authority hierarchy (Skills > Facts > Context)
    - If this store is LESS authoritative: update or remove the contradicting entry in this store to match the more authoritative source
    - If this store is MORE authoritative: leave this store's entry unchanged (the other store's maintenance tick will handle it)
 4. When information in this store duplicates detail from a more authoritative store: trim this store's entry to a brief pointer (e.g., "See memories/facts/X.md for details")`;
