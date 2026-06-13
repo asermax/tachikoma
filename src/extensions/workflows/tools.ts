@@ -258,13 +258,10 @@ const renderLoopStepBlocks = (state: WorkflowStateRecord): string => {
         ? "Items (0): (none) — completed with zero iterations"
         : `Items (${count}): ${entry.items.map((i) => `\`${i}\``).join(", ")}`;
 
-    let iterationLine: string;
-
-    if (entry.index >= count) {
-      iterationLine = `Current iteration: ${count} / ${count} (complete)`;
-    } else {
-      iterationLine = `Current iteration: ${entry.index + 1} / ${count}\n- Current item: \`${entry.items[entry.index]}\``;
-    }
+    const iterationLine =
+      entry.index >= count
+        ? `Current iteration: ${count} / ${count} (complete)`
+        : `Current iteration: ${entry.index + 1} / ${count}\n- Current item: \`${entry.items[entry.index]}\``;
 
     return `### Loop step: ${title} (\`${stepId}\`)\n\n- ${itemsLine}\n- ${iterationLine}`;
   });
