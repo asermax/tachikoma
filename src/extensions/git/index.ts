@@ -4,6 +4,7 @@ import { defineExtension } from "../api.ts";
 import { createGitGuardrailFactory } from "./guardrail.ts";
 import { initializeWorkspaceRepo } from "./hooks.ts";
 import { createGitProcessor } from "./processor.ts";
+import { createGitResolver } from "./resolve.ts";
 import { createGitToolsFactory } from "./tools.ts";
 
 interface GitConfig {
@@ -30,12 +31,17 @@ export default defineExtension<GitConfig>({
     }
 
     const workspaceRoot = app.workspace.root;
+    const resolver = createGitResolver(app.agent.side);
 
-    app.bootstrap("init-workspace-repo", () => initializeWorkspaceRepo(workspaceRoot, app.log));
+    app.bootstrap("init-workspace-repo", () =>
+      initializeWorkspaceRepo(workspaceRoot, app.log, resolver),
+    );
 
     app.agent.use(createGitToolsFactory({ workspaceRoot, side: app.agent.side, log: app.log }));
     app.agent.use(createGitGuardrailFactory(app.log));
 
-    app.sessions.registerProcessor(createGitProcessor({ workspaceRoot, side: app.agent.side }));
+    app.sessions.registerProcessor(
+      createGitProcessor({ workspaceRoot, side: app.agent.side, resolver }),
+    );
   },
 });

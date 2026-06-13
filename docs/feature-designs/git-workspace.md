@@ -33,7 +33,11 @@ session close ─► git-commit (finalize)
                    ├─ commitAll: add -A → diffstat → side.complete → commit
                    └─ smartPush: abort stale rebase → fetch → detectDivergence
                         ├─ AHEAD     → push
-                        ├─ DIVERGED  → rebase --autostash → push | abort → REBASE_FAILED
+                        ├─ DIVERGED  → rebase --autostash
+                        │               ├─ clean    → push → REBASE_SUCCEEDED
+                        │               ├─ conflict → resolver agent ×N → push → AGENT_RESOLVED
+                        │               │               └─ unresolved → abort → REBASE_FAILED
+                        │               └─ no-start → REBASE_FAILED
                         └─ UP_TO_DATE/BEHIND → NOTHING_TO_PUSH
 ```
 
@@ -46,7 +50,8 @@ session close ─► git-commit (finalize)
 | `src/extensions/git/index.ts` | `defineExtension` wiring; honors `enabled` flag | Hook + tools factory + processor; no logic |
 | `src/extensions/git/git.ts` | Subprocess primitives: `runGit` (throws), `runGitCapture` (never throws), `hasUncommittedChanges`, `hasRemote` | `execFile`-based, no shell strings (DES-002); capture variant returns `{code, stdout, stderr}` so callers branch on exit codes |
 | `src/extensions/git/commit.ts` | `commitAll`: stage everything, generate message from diffstat, commit | `Completer = Pick<SideRunner, "complete">` for fakeable tests; sanitization + 100-char cap; explicit `message` skips generation |
-| `src/extensions/git/sync.ts` | `detectDivergence`, `smartPush`, `smartPull`, result const maps | merge-base ancestor checks; stale-rebase abort on entry; gitlink and `HEAD`-name resolution; never throws |
+| `src/extensions/git/sync.ts` | `detectDivergence`, `smartPush`, `smartPull`, result const maps | merge-base ancestor checks; stale-rebase abort on entry; gitlink and `HEAD`-name resolution; optional `RebaseResolver` for conflicts with a bounded attempt loop; never throws |
+| `src/extensions/git/resolve.ts` | `createGitResolver`: a `RebaseResolver` backed by a headless side agent, with cwd-scoped `read_conflict`/`write_resolved`/`git` custom tools | One side-agent pass per call; tools bound to the target repo so the agent can't touch the wrong tree; `git` tool rejects push/fetch/reset/remote/filter-repo; swallows agent errors so a sync is never aborted by a throw |
 | `src/extensions/git/hooks.ts` | `initializeWorkspaceRepo`: init + identity + gitignore + startup `smartPull` | Fixed identity, `commit.gpgsign false`; gitignore entries appended uncommitted on every startup |
 | `src/extensions/git/processor.ts` | `git-commit` post-processor (`finalize`) | Commit → push when `origin` exists → verify clean → one retry commit |
 | `src/extensions/git/tools.ts` | `query_git_status`, `list_recent_commits`, `commit_workspace`, `scrub` | Handlers exported standalone; outputs truncated with pi's `truncateTail`; scrub handler delegates to `scrubPaths` and surfaces its outcome message |
@@ -78,13 +83,18 @@ session close ─► git-commit (finalize)
 - Pro: The `PUSH_RESULT`/`SYNC_RESULT` constants give callers a closed, exhaustive outcome set
 - Con: Failure detail lives in logs, not in the return value
 
-### Abort-on-conflict recovery, no automated resolution
+### Agent-assisted conflict resolution, with abort as the fallback
 
-**Choice**: Divergence is handled by `rebase --autostash`; a conflicting rebase is immediately aborted, restoring a clean tree, and surfaces as `REBASE_FAILED`/`SYNC_FAILED`. Both helpers also abort any stale rebase left by a crash before starting.
-**Why**: Local commits plus a clean tree is always a recoverable state — the next sync retries. Automated conflict resolution (e.g. spawning an agent for it) adds an LLM dependency to the most delicate git path; it is deliberately out of scope here until proven necessary.
+**Choice**: Divergence is handled by `rebase --autostash`. A clean rebase pushes/continues as before. When the rebase conflicts and a `RebaseResolver` is supplied, `sync.ts` leaves the rebase *in progress* and hands it to the resolver — a headless side agent (`createGitResolver`, `resolve.ts`) that reads the conflicted files, writes merged content, stages, and runs `git rebase --continue` through cwd-scoped custom tools. The resolver is invoked in a bounded loop (`MAX_RESOLVER_ATTEMPTS = 3`), and **success is decided by `sync.ts` from the on-disk rebase state after each pass, never from the agent's own report**. A resolved conflict surfaces as `AGENT_RESOLVED` (added to `PUSH_RESULT`/`SYNC_RESULT` and to `PUSH_SUCCESS`); an unresolved one — or any path with no resolver wired — falls back to the original behavior: `git rebase --abort`, restoring a clean tree with local commits intact, surfacing as `REBASE_FAILED`/`SYNC_FAILED`. Both helpers also abort any stale rebase left by a crash before starting.
+**Why**: Genuinely conflicting machines would otherwise stay diverged until a human intervened, which for an unattended workspace means silent drift. An LLM is the only thing that can merge conflicting edits without a human, and the rebase path is exactly where that judgment is needed. The risk of letting an LLM loose on the most delicate git path is contained by three guards: the resolution loop is bounded (no infinite spin against a misbehaving agent — the recurring OOM failure mode this project has hit before), the agent's tools are scoped to one repo and forbid push/fetch/reset/remote, and authority over "did it work" stays with deterministic filesystem state rather than the agent's claim. The resolver is an *optional* parameter, so callers that don't wire one (and the shared [projects](projects.md) primitives) keep the pure abort-on-conflict behavior unchanged.
+**Alternatives Considered**:
+- Abort always, no automated resolution: simplest and fully deterministic, but leaves real conflicts unresolved forever on an unattended remote
+- Driving the rebase loop inside the agent (agent owns "continue until done"): rejected — trusting the agent's self-report for completion and giving it an unbounded loop is exactly the failure mode to avoid; the bound and the success check belong in `sync.ts`
 **Consequences**:
-- Pro: No half-finished rebases can survive a crash; behavior is fully covered by `tests/git/sync.test.ts`
-- Con: Genuinely conflicting machines stay diverged until a human (or the agent, via conversation) intervenes
+- Pro: Conflicting machines self-heal when an agent can merge the edits; the bounded loop and clean-state fallback mean no half-finished rebase survives, covered by `tests/git/sync.test.ts` and `tests/git/resolve.test.ts`
+- Pro: `AGENT_RESOLVED` lets callers/telemetry distinguish agent-resolved syncs from clean rebases
+- Con: Adds an LLM dependency and cost to the conflict path; resolution quality is bounded by the agent, and a bad merge is committed (though it lands as ordinary local commits the next sync can still rework)
+- Con: The side session runs at the workspace root, so the resolver relies on cwd-scoped custom tools rather than pi's built-in file/bash tools to act on a non-workspace repo correctly
 
 ### `HEAD` and gitlink resolution hardening
 
@@ -123,11 +133,17 @@ session close ─► git-commit (finalize)
 **When**: B's `git-commit` processor pushes
 **Then**: `smartPush` fetches, classifies `DIVERGED`, rebases B's commits onto the remote, and pushes — history stays linear with no merge commits.
 
-### Scenario: The divergence conflicts
+### Scenario: The divergence conflicts and the agent resolves it
 
 **Given**: Both machines edited the same file region
-**When**: The rebase hits a conflict
-**Then**: The rebase is aborted, B's working tree is clean, its commits remain local, the result `REBASE_FAILED` is logged as a warning, and the session close completes normally; the next startup sync or push retries.
+**When**: The rebase hits a conflict and a resolver is wired
+**Then**: The rebase is left in progress and handed to the side agent, which merges the conflicted files, stages them, and continues the rebase; `sync.ts` confirms the rebase finished from disk state, B's commits are pushed, and the result is `AGENT_RESOLVED`.
+
+### Scenario: The divergence conflicts and the agent cannot resolve it
+
+**Given**: The same conflict, but the agent cannot produce a clean merge within the bounded attempts (or no resolver is wired)
+**When**: The resolution loop exhausts its attempts
+**Then**: The rebase is aborted, B's working tree is clean, its commits remain local, the result `REBASE_FAILED`/`SYNC_FAILED` is logged as a warning, and the session close completes normally; the next startup sync or push retries.
 
 ### Scenario: Startup with a dirty workspace
 
@@ -137,6 +153,6 @@ session close ─► git-commit (finalize)
 
 ## Notes
 
-- Tests (`tests/git/`) run against real git repos in temp directories; `setupRemotePair` builds a bare origin with two clones to produce ahead/behind/diverged topologies — no LLM or network beyond the filesystem. `scrub.test.ts` runs the real `git filter-repo` (the rewrite cases are skipped when the tool is absent); `guardrail.test.ts` is pure-function deny-pattern and compound-split coverage plus a faked `pi.on` to assert the `block`/`reason` shape
+- Tests (`tests/git/`) run against real git repos in temp directories; `setupRemotePair` builds a bare origin with two clones to produce ahead/behind/diverged topologies — no LLM or network beyond the filesystem. Conflict-resolution tests inject a fake `RebaseResolver` (one that drives the rebase to completion, and ones that leave it stuck) so the `AGENT_RESOLVED`/abort branches and the bounded loop are covered without an LLM; `resolve.test.ts` mocks `side.run` to assert the resolver wires cwd-scoped tools and that the `git` tool refuses push/fetch/reset/remote. `scrub.test.ts` runs the real `git filter-repo` (the rewrite cases are skipped when the tool is absent); `guardrail.test.ts` is pure-function deny-pattern and compound-split coverage plus a faked `pi.on` to assert the `block`/`reason` shape
 - `commit_workspace` exists for "save this now" requests; the description steers the agent away from it since session close commits anyway
 - The fixed identity and `commit.gpgsign false` are repo-local, so the user's global git configuration is never consulted or modified

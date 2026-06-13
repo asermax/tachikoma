@@ -1,11 +1,13 @@
 import type { PostProcessor } from "../api.ts";
 import { type Completer, commitAll } from "./commit.ts";
 import { hasRemote, hasUncommittedChanges } from "./git.ts";
+import type { RebaseResolver } from "./resolve.ts";
 import { PUSH_RESULT, PUSH_SUCCESS, smartPush } from "./sync.ts";
 
 export interface GitProcessorDeps {
   workspaceRoot: string;
   side: Completer;
+  resolver?: RebaseResolver;
 }
 
 export const workspaceFallbackMessage = (now = new Date()): string =>
@@ -16,7 +18,11 @@ export const workspaceFallbackMessage = (now = new Date()): string =>
  * each session with a message generated from the staged diffstat, then pushes
  * to origin when a remote is configured.
  */
-export const createGitProcessor = ({ workspaceRoot, side }: GitProcessorDeps): PostProcessor => ({
+export const createGitProcessor = ({
+  workspaceRoot,
+  side,
+  resolver,
+}: GitProcessorDeps): PostProcessor => ({
   name: "git-commit",
   phase: "finalize",
 
@@ -36,7 +42,7 @@ export const createGitProcessor = ({ workspaceRoot, side }: GitProcessorDeps): P
     if (message != null) log.info({ message }, "committed workspace changes");
 
     if (await hasRemote(workspaceRoot, "origin")) {
-      const result = await smartPush(workspaceRoot, "origin", "HEAD", log);
+      const result = await smartPush(workspaceRoot, "origin", "HEAD", log, resolver);
 
       if (PUSH_SUCCESS.has(result)) {
         log.info({ result }, "pushed workspace changes");

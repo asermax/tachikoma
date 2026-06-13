@@ -3,6 +3,7 @@ import { join } from "node:path";
 
 import type { Logger } from "../../log.ts";
 import { hasRemote, runGit } from "./git.ts";
+import type { RebaseResolver } from "./resolve.ts";
 import { SYNC_RESULT, smartPull } from "./sync.ts";
 
 export const COMMITTER_NAME = "Tachikoma";
@@ -62,14 +63,18 @@ const initializeRepo = async (workspaceRoot: string, log: Logger): Promise<void>
   log.info("workspace git repo initialized");
 };
 
-const syncWorkspace = async (workspaceRoot: string, log: Logger): Promise<void> => {
+const syncWorkspace = async (
+  workspaceRoot: string,
+  log: Logger,
+  resolver: RebaseResolver | undefined,
+): Promise<void> => {
   try {
     if (!(await hasRemote(workspaceRoot, "origin"))) {
       log.debug("no origin remote configured — skipping workspace sync");
       return;
     }
 
-    const result = await smartPull(workspaceRoot, "origin", "HEAD", log);
+    const result = await smartPull(workspaceRoot, "origin", "HEAD", log, resolver);
 
     if (result === SYNC_RESULT.dirtySkipped) {
       log.warn("workspace has uncommitted changes — skipping sync");
@@ -93,6 +98,7 @@ const syncWorkspace = async (workspaceRoot: string, log: Logger): Promise<void> 
 export const initializeWorkspaceRepo = async (
   workspaceRoot: string,
   log: Logger,
+  resolver?: RebaseResolver,
 ): Promise<void> => {
   const gitDirMissing = await access(join(workspaceRoot, ".git")).then(
     () => false,
@@ -104,5 +110,5 @@ export const initializeWorkspaceRepo = async (
   }
 
   await ensureGitignoreEntries(workspaceRoot);
-  await syncWorkspace(workspaceRoot, log);
+  await syncWorkspace(workspaceRoot, log, resolver);
 };
