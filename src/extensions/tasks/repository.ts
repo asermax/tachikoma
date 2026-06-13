@@ -4,7 +4,6 @@ import { and, desc, eq, inArray, isNotNull, lt } from "drizzle-orm";
 
 import type { AppDatabase } from "../../db/index.ts";
 import {
-  type StoredSchedule,
   type TaskDefinitionRecord,
   type TaskInstanceRecord,
   type TaskStatus,
@@ -13,20 +12,21 @@ import {
   taskInstances,
 } from "./schema.ts";
 
-export interface NewTaskDefinition {
-  name: string;
-  schedule: StoredSchedule;
-  taskType: TaskType;
-  prompt: string;
-  enabled?: boolean;
-}
+type TaskDefinitionInsert = typeof taskDefinitions.$inferInsert;
+type TaskInstanceInsert = typeof taskInstances.$inferInsert;
 
-export interface NewTaskInstance {
+// `id`, `since`, `createdAt` are stamped by createDefinition; `lastFiredAt` is
+// only set by later updates, so the creation surface omits all four.
+export type NewTaskDefinition = Omit<
+  TaskDefinitionInsert,
+  "id" | "since" | "createdAt" | "lastFiredAt"
+>;
+
+// `definitionId` is required here (null for ad-hoc instances) even though the
+// column is nullable, so it is picked explicitly rather than left optional.
+export type NewTaskInstance = Pick<TaskInstanceInsert, "taskType" | "prompt" | "scheduledFor"> & {
   definitionId: string | null;
-  taskType: TaskType;
-  prompt: string;
-  scheduledFor: Date;
-}
+};
 
 export type DefinitionPatch = Partial<Omit<TaskDefinitionRecord, "id" | "createdAt">>;
 export type InstancePatch = Partial<Omit<TaskInstanceRecord, "id" | "createdAt">>;
@@ -324,8 +324,12 @@ export class TaskRepository {
 
       if (anchor == null || anchor >= threshold) continue;
 
-      this.db.delete(taskInstances).where(eq(taskInstances.definitionId, definition.id)).run();
-      this.db.delete(taskDefinitions).where(eq(taskDefinitions.id, definition.id)).run();
+      // Both deletes ride one transaction so a crash between them cannot orphan
+      // instances under a removed definition.
+      this.db.transaction((tx) => {
+        tx.delete(taskInstances).where(eq(taskInstances.definitionId, definition.id)).run();
+        tx.delete(taskDefinitions).where(eq(taskDefinitions.id, definition.id)).run();
+      });
       deleted += 1;
     }
 
