@@ -1,11 +1,14 @@
+import { totalmem } from "node:os";
 import { beforeEach, describe, expect, it } from "vitest";
 
 import { isAlive, spawnProcess } from "../../src/extensions/detached-processes/spawn.ts";
 import {
+  handleDeleteProcess,
   handleDispatchProcess,
   handleQueryProcess,
   handleReadProcessOutput,
   handleRenameProcess,
+  handleTerminateProcess,
 } from "../../src/extensions/detached-processes/tools.ts";
 import { createTestContext, type TestContext, waitFor } from "./setup.ts";
 
@@ -36,6 +39,18 @@ describe("handleDispatchProcess", () => {
     await expect(
       handleDispatchProcess(ctx.toolDeps, { name: "x", command: "true", memory_limit_mb: 0 }),
     ).rejects.toThrow(/Invalid memory_limit_mb/);
+  });
+
+  it("rejects a memory limit larger than total system RAM", async () => {
+    const overSystem = Math.floor(totalmem() / (1024 * 1024)) + 1024;
+
+    await expect(
+      handleDispatchProcess(ctx.toolDeps, {
+        name: "x",
+        command: "true",
+        memory_limit_mb: overSystem,
+      }),
+    ).rejects.toThrow(/Exceeds total system RAM/);
   });
 });
 
@@ -200,5 +215,38 @@ describe("handleRenameProcess", () => {
     await expect(
       handleRenameProcess(ctx.toolDeps, { process_id: "nope", name: "whatever" }),
     ).rejects.toThrow(/not found/);
+  });
+});
+
+describe("handleDeleteProcess", () => {
+  it("drops an exited process record", async () => {
+    const record = await spawnProcess(ctx.spawnDeps, { name: "ephemeral", command: "true" });
+
+    await waitFor(() => !isAlive(record.pid));
+    await handleTerminateProcess(ctx.toolDeps, { process_id: record.id, grace_seconds: 0 });
+
+    const message = await handleDeleteProcess(ctx.toolDeps, { process_id: record.id });
+
+    expect(message).toContain("deleted");
+    expect(ctx.repository.get(record.id)).toBeNull();
+  });
+
+  it("refuses to delete a still-running process", async () => {
+    const record = await spawnProcess(ctx.spawnDeps, { name: "alive", command: "sleep 5" });
+
+    await expect(handleDeleteProcess(ctx.toolDeps, { process_id: record.id })).rejects.toThrow(
+      /still running/,
+    );
+
+    expect(ctx.repository.get(record.id)).not.toBeNull();
+
+    await handleTerminateProcess(ctx.toolDeps, { process_id: record.id, grace_seconds: 0 });
+    await waitFor(() => !isAlive(record.pid));
+  });
+
+  it("throws for an unknown process id", async () => {
+    await expect(handleDeleteProcess(ctx.toolDeps, { process_id: "nope" })).rejects.toThrow(
+      /not found/,
+    );
   });
 });

@@ -10,7 +10,7 @@ import { exitCodePath, isAlive } from "./spawn.ts";
 export interface ProcessNotification {
   source: string;
   processId: string;
-  severity: "info" | "error";
+  severity: "info" | "warning" | "urgent";
   message: string;
 }
 
@@ -99,7 +99,9 @@ export const reconcileExit = async (
     notify({
       source: `Detached process: ${record.name}`,
       processId: record.id,
-      severity: exitCode === 0 ? "info" : "error",
+      // An OOM kill is operationally significant — surface it as urgent so it
+      // interrupts rather than queueing behind ordinary completions.
+      severity: oomKilled ? "urgent" : exitCode === 0 ? "info" : "warning",
       message,
     });
   } catch (error) {

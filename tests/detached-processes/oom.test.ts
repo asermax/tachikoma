@@ -43,7 +43,7 @@ describe("OOM attribution in reconcileExit", () => {
 
     expect(ctx.notifications).toHaveLength(1);
     expect(ctx.notifications[0]).toMatchObject({
-      severity: "error",
+      severity: "urgent",
       message: `Process 'hungry' (id: ${record.id}) was killed by the OOM killer (256MB limit).`,
     });
   });

@@ -1,4 +1,4 @@
-import { constants } from "node:os";
+import { constants, totalmem } from "node:os";
 
 import { StringEnum } from "@earendil-works/pi-ai";
 import { type ExtensionFactory, truncateTail } from "@earendil-works/pi-coding-agent";
@@ -22,6 +22,7 @@ export interface ProcessToolDeps {
   defaultMemoryLimitMb: number | null;
   log: Logger;
   now?: () => Date;
+  onExit?: (id: string) => void;
 }
 
 const reconcileDeps = (deps: ProcessToolDeps): ReconcileDeps => ({
@@ -79,6 +80,10 @@ export const RenameProcessParams = Type.Object({
   name: Type.String({ description: "New display name (must not be empty)" }),
 });
 
+export const DeleteProcessParams = Type.Object({
+  process_id: Type.String({ description: "ID of the exited process record to delete" }),
+});
+
 export const TerminateProcessParams = Type.Object({
   process_id: Type.String({ description: "ID of the process to terminate" }),
   signal: Type.Optional(
@@ -115,8 +120,18 @@ export const handleDispatchProcess = async (
   deps: ProcessToolDeps,
   args: Static<typeof DispatchProcessParams>,
 ): Promise<string> => {
-  if (args.memory_limit_mb != null && args.memory_limit_mb < 1) {
-    throw new Error(`Invalid memory_limit_mb: ${args.memory_limit_mb}. Minimum value is 1.`);
+  if (args.memory_limit_mb != null) {
+    if (args.memory_limit_mb < 1) {
+      throw new Error(`Invalid memory_limit_mb: ${args.memory_limit_mb}. Minimum value is 1.`);
+    }
+
+    const systemMb = Math.floor(totalmem() / (1024 * 1024));
+
+    if (args.memory_limit_mb > systemMb) {
+      throw new Error(
+        `Invalid memory_limit_mb: ${args.memory_limit_mb}. Exceeds total system RAM (${systemMb}MB).`,
+      );
+    }
   }
 
   const record = await spawnProcess(deps, {
@@ -264,6 +279,25 @@ export const handleRenameProcess = async (
   return `Process renamed to '${args.name}'.`;
 };
 
+export const handleDeleteProcess = async (
+  deps: ProcessToolDeps,
+  args: Static<typeof DeleteProcessParams>,
+): Promise<string> => {
+  const record = deps.repository.get(args.process_id);
+
+  if (record == null) throw notFound(args.process_id);
+
+  // Refuse to drop a record whose process is still alive — that would orphan a
+  // running process from tracking. Stop it first.
+  if (record.status === "running" && isAlive(record.pid)) {
+    throw new Error(`Process '${record.name}' is still running — terminate it before deleting.`);
+  }
+
+  deps.repository.delete(record.id);
+
+  return `Process record '${record.name}' (${record.id}) deleted.`;
+};
+
 export const handleTerminateProcess = async (
   deps: ProcessToolDeps,
   args: Static<typeof TerminateProcessParams>,
@@ -392,6 +426,21 @@ export const createProcessToolsFactory =
       parameters: RenameProcessParams,
       async execute(_toolCallId, params) {
         return textResult(await handleRenameProcess(deps, params));
+      },
+    });
+
+    pi.registerTool({
+      name: "delete_process",
+      label: "Delete Process",
+      description:
+        "Delete a detached process record that has already exited, removing it from the tracked list. Refuses to delete a process that is still running — terminate it first.",
+      promptSnippet: "Forget an exited detached process record",
+      promptGuidelines: [
+        "Use delete_process to clean up exited process records the user no longer cares about.",
+      ],
+      parameters: DeleteProcessParams,
+      async execute(_toolCallId, params) {
+        return textResult(await handleDeleteProcess(deps, params));
       },
     });
 

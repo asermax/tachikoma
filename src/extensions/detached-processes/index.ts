@@ -6,7 +6,12 @@ import { Type } from "typebox";
 import { defineExtension } from "../api.ts";
 import { SystemctlScopeInspector } from "./cgroup.ts";
 import { SystemdRunLimiter } from "./limits.ts";
-import { type ProcessNotification, type ReconcileDeps, reconcileOnStartup } from "./reconcile.ts";
+import {
+  type ProcessNotification,
+  type ReconcileDeps,
+  reconcileExit,
+  reconcileOnStartup,
+} from "./reconcile.ts";
 import { ProcessRepository } from "./repository.ts";
 import { createProcessToolsFactory } from "./tools.ts";
 import { createWatcherTick } from "./watcher.ts";
@@ -43,7 +48,7 @@ export default defineExtension<DetachedProcessesConfig>({
         app.events.emit("notify", {
           title: `Process ${notification.processId}`,
           text: notification.message,
-          severity: notification.severity === "error" ? "warning" : "info",
+          severity: notification.severity,
           source: notification.source,
         }),
       scopeInspector,
@@ -60,6 +65,8 @@ export default defineExtension<DetachedProcessesConfig>({
       createProcessToolsFactory({
         ...reconcile,
         limiter,
+        // Reconcile the moment a child exits rather than waiting for the next sweep.
+        onExit: (id: string) => void reconcileExit(reconcile, id),
         defaultMemoryLimitMb:
           app.extensionConfig.defaultMemoryLimitMb > 0
             ? app.extensionConfig.defaultMemoryLimitMb

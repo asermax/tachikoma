@@ -41,14 +41,14 @@ describe("spawnProcess", () => {
     });
   });
 
-  it("notifies with error severity on a non-zero exit", async () => {
+  it("notifies with warning severity on a non-zero exit", async () => {
     const record = await spawnProcess(ctx.spawnDeps, { name: "failing", command: "exit 3" });
 
     await waitFor(() => !isAlive(record.pid));
     await createWatcherTick(ctx.reconcile)();
 
     expect(ctx.repository.get(record.id)?.exitCode).toBe(3);
-    expect(ctx.notifications[0]).toMatchObject({ severity: "error" });
+    expect(ctx.notifications[0]).toMatchObject({ severity: "warning" });
   });
 
   it("respects the requested working directory and env overrides", async () => {

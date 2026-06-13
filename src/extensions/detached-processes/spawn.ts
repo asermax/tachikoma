@@ -18,6 +18,12 @@ export interface SpawnDeps {
   processesDir: string;
   log: Logger;
   now?: () => Date;
+  /**
+   * Called when the child exits while this host is alive, for immediate
+   * reconciliation instead of waiting for the next polling sweep. Best-effort:
+   * the polling watcher remains the backstop for exits the host misses.
+   */
+  onExit?: (id: string) => void;
 }
 
 export interface SpawnOptions {
@@ -118,6 +124,8 @@ export const spawnProcess = async (
     } catch (error) {
       log.warn({ pid, err: error }, "failed to write exit-code sidecar");
     }
+
+    deps.onExit?.(id);
   });
 
   child.unref();

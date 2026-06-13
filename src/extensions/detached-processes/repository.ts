@@ -81,6 +81,14 @@ export class ProcessRepository {
     this.db.update(detachedProcesses).set({ name }).where(eq(detachedProcesses.id, id)).run();
   }
 
+  /** Drop an exited record. Returns true when a row was actually removed. */
+  delete(id: string): boolean {
+    return (
+      this.db.delete(detachedProcesses).where(eq(detachedProcesses.id, id)).returning().all()
+        .length > 0
+    );
+  }
+
   /**
    * Conditionally transition a record from running to exited. Returns true if
    * this caller won the race; false when another reconciler already did.
