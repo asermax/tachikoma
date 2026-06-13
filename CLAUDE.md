@@ -1,7 +1,3 @@
-# CLAUDE.md
-
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
-
 ## Project Overview
 
 Tachikoma is a proactive personal assistant built on the pi coding-agent SDK (`@earendil-works/pi-coding-agent`). It maintains persistent memory across conversations, extracts learnings automatically, and runs background and scheduled tasks. Accessible via Telegram or a local REPL.
