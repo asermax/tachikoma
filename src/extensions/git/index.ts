@@ -1,6 +1,7 @@
 import { Type } from "typebox";
 
 import { defineExtension } from "../api.ts";
+import { createGitGuardrailFactory } from "./guardrail.ts";
 import { initializeWorkspaceRepo } from "./hooks.ts";
 import { createGitProcessor } from "./processor.ts";
 import { createGitToolsFactory } from "./tools.ts";
@@ -12,8 +13,8 @@ interface GitConfig {
 /**
  * Workspace versioning: initializes the workspace as a git repo on startup
  * (syncing with origin when configured), commits and pushes all workspace
- * changes at session close, and exposes git inspection/commit tools to the
- * agent.
+ * changes at session close, exposes git inspection/commit/scrub tools to the
+ * agent, and gates the agent's bash tool against destructive git commands.
  */
 export default defineExtension<GitConfig>({
   name: "git",
@@ -33,6 +34,7 @@ export default defineExtension<GitConfig>({
     app.bootstrap("init-workspace-repo", () => initializeWorkspaceRepo(workspaceRoot, app.log));
 
     app.agent.use(createGitToolsFactory({ workspaceRoot, side: app.agent.side, log: app.log }));
+    app.agent.use(createGitGuardrailFactory(app.log));
 
     app.sessions.registerProcessor(createGitProcessor({ workspaceRoot, side: app.agent.side }));
   },

@@ -103,12 +103,12 @@ describe("handleCommitWorkspace", () => {
 });
 
 describe("createGitToolsFactory", () => {
-  it("registers the three workspace git tools", () => {
+  it("registers the workspace git tools", () => {
     const names: string[] = [];
     const pi = { registerTool: (tool: { name: string }) => names.push(tool.name) };
 
     createGitToolsFactory(deps)(pi as unknown as Parameters<ExtensionFactory>[0]);
 
-    expect(names).toEqual(["query_git_status", "list_recent_commits", "commit_workspace"]);
+    expect(names).toEqual(["query_git_status", "list_recent_commits", "commit_workspace", "scrub"]);
   });
 });

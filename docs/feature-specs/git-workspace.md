@@ -4,7 +4,7 @@
 
 ## Overview
 
-Automatic git version tracking for the workspace. A bootstrap hook initializes the workspace as a git repo with a fixed committer identity and syncs it with its `origin` remote when one is configured. When a session closes, a finalize-phase post-processor stages everything, commits with a descriptive message generated from the staged diffstat, and pushes using divergence detection with rebase-based recovery instead of a bare push. Three agent tools expose status, history, and on-demand commits during conversations.
+Automatic git version tracking for the workspace. A bootstrap hook initializes the workspace as a git repo with a fixed committer identity and syncs it with its `origin` remote when one is configured. When a session closes, a finalize-phase post-processor stages everything, commits with a descriptive message generated from the staged diffstat, and pushes using divergence detection with rebase-based recovery instead of a bare push. Agent tools expose status, history, on-demand commits, and a destructive history scrub during conversations. A tool-call guardrail blocks the agent from running destructive git commands through its bash tool, steering it to the dedicated tools instead.
 
 The sync primitives (`smartPull`/`smartPush`) are shared with the [projects](projects.md) extension, which applies the same semantics to each registered project repo.
 
@@ -13,6 +13,8 @@ The sync primitives (`smartPull`/`smartPush`) are shared with the [projects](pro
 - As a user, I want every workspace change (memories, context files, configuration) committed automatically after each session so that I can review history and roll back
 - As a user, I want committed changes pushed to a remote so that my workspace is backed up and usable from other machines
 - As the system, I want pushes to detect divergence and rebase instead of failing or force-pushing so that multiple machines can share one workspace remote safely
+- As a user, I want to permanently purge a leaked secret or large blob from the entire workspace history so that it stops being recoverable from git
+- As the system, I want the agent prevented from running destructive git (force push, reset, clean, history rewrite) through its bash tool so that workspace history is only mutated through the sanctioned, recoverable paths
 
 ## Requirements
 
@@ -29,8 +31,10 @@ The sync primitives (`smartPull`/`smartPush`) are shared with the [projects](pro
 | R8 | `smartPush`: abort any stale in-progress rebase, fetch, classify divergence via merge-base ancestor checks; push directly when ahead; when diverged, attempt `rebase --autostash` then push; a conflicting rebase is aborted and surfaces as `REBASE_FAILED` with local commits preserved |
 | R9 | `smartPull`: return `DIRTY_SKIPPED` without fetching when the tree is dirty; fast-forward when behind; naive rebase when diverged; a conflicting rebase is aborted and surfaces as `SYNC_FAILED` with local state restored |
 | R10 | Sync helpers resolve `"HEAD"` to the actual local branch name and follow gitlink `.git` files, so divergence detection works in repos without an `origin/HEAD` ref and inside submodules |
-| R11 | Agent tools `query_git_status`, `list_recent_commits`, and `commit_workspace` are registered in every agent session via a pi extension factory |
+| R11 | Agent tools `query_git_status`, `list_recent_commits`, `commit_workspace`, and `scrub` are registered in every agent session via a pi extension factory |
 | R12 | The extension can be disabled entirely via `[extensions.git] enabled = false` |
+| R13 | The `scrub` tool removes given paths from the entire workspace history via `git filter-repo --invert-paths` and force-pushes to `origin`; it requires a clean tree, requires the paths to exist in history, and degrades gracefully when `git filter-repo` is not installed. Outcomes are surfaced as a result enum, never thrown |
+| R14 | A `tool_call` guardrail (registered via a second pi extension factory) blocks the agent's `bash` tool from running destructive git commands — `git push`, `git reset`, `git checkout/restore .`, `git clean`, mutating `git remote` subcommands, `git filter-repo`, and `git rebase` — and returns a message steering the agent to `commit_workspace`/`scrub`/automatic sync. Compound commands are split on shell operators (respecting quoting) and any matching sub-command blocks the whole command. Read-only git and `git clone` are not blocked |
 
 ## Behaviors
 
@@ -78,3 +82,24 @@ Read-only inspection plus an explicit commit, for when the user wants changes sa
 - Given a history, when `list_recent_commits` runs with a limit, then that many commits are listed newest-first as `hash date subject`; an empty repo yields "No commits found."
 - Given pending changes, when `commit_workspace` runs with an explicit `message`, then it commits with that message and skips generation; without one, a message is generated from the staged diffstat
 - Given a clean tree, when `commit_workspace` runs, then it reports there is nothing to commit
+
+### History Scrub (R13)
+
+`scrub` is the only sanctioned history rewrite — a deliberate, destructive purge of paths from the whole history, for leaked secrets or oversized blobs.
+
+**Acceptance Criteria**:
+- Given paths that exist in history and a clean tree, when `scrub` runs, then those paths are removed from every commit via `git filter-repo --invert-paths`; with an `origin` remote, the rewritten history is force-pushed and the (filter-repo-removed) remote is restored first
+- Given a dirty working tree, when `scrub` runs, then it refuses with a clear message and does not rewrite anything
+- Given a path absent from history, when `scrub` runs, then it reports the missing paths and does not rewrite anything
+- Given `git filter-repo` is not installed, when `scrub` runs, then it returns a clear "not installed" message instead of failing opaquely
+- Given the rewrite succeeds but the force-push fails, when `scrub` runs, then it reports the rewrite happened locally and the push must be retried; given no `origin` remote, the rewrite is reported as completed without a push
+
+### Destructive-Git Guardrail (R14)
+
+The guardrail keeps history mutation flowing only through the recoverable tools, so the agent cannot force-push, reset, or rewrite via raw bash.
+
+**Acceptance Criteria**:
+- Given the agent's `bash` tool is called with a destructive git command (`git push`, `git reset`, `git checkout/restore .`, `git clean`, mutating `git remote`, `git filter-repo`, `git rebase`), when the `tool_call` event fires, then the call is blocked with a reason naming the dedicated tools
+- Given a non-destructive command (`git status`, `git log`, `git add`, `git commit`, `git fetch`, `git clone`, `ls`, …), when the `tool_call` event fires, then the call passes through unchanged
+- Given a compound command where one sub-command is destructive, when it is evaluated, then the whole command is blocked; given a destructive keyword that appears only inside a quoted argument, then it is not blocked
+- Given a non-bash tool call, when the `tool_call` event fires, then the guardrail ignores it

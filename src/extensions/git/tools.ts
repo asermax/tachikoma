@@ -5,6 +5,7 @@ import type { Logger } from "../../log.ts";
 import { type Completer, commitAll } from "./commit.ts";
 import { runGitCapture } from "./git.ts";
 import { workspaceFallbackMessage } from "./processor.ts";
+import { scrubPaths } from "./scrub.ts";
 
 export interface GitToolDeps {
   workspaceRoot: string;
@@ -26,6 +27,14 @@ export const CommitWorkspaceParams = Type.Object({
       description: "Commit message to use; when omitted, a message is generated from the changes",
     }),
   ),
+});
+
+export const ScrubWorkspaceParams = Type.Object({
+  paths: Type.Array(Type.String(), {
+    description:
+      "File or directory paths to permanently remove from the entire git history of the workspace",
+    minItems: 1,
+  }),
 });
 
 export const handleQueryGitStatus = async ({ workspaceRoot }: GitToolDeps): Promise<string> => {
@@ -85,6 +94,11 @@ export const handleCommitWorkspace = async (
   return `Committed workspace changes: ${message}`;
 };
 
+export const handleScrubWorkspace = async (
+  { workspaceRoot, log }: GitToolDeps,
+  args: Static<typeof ScrubWorkspaceParams>,
+): Promise<string> => (await scrubPaths(workspaceRoot, args.paths, log)).message;
+
 const textResult = (text: string) => ({
   content: [{ type: "text" as const, text }],
   details: undefined,
@@ -136,6 +150,21 @@ export const createGitToolsFactory =
       parameters: CommitWorkspaceParams,
       async execute(_toolCallId, params) {
         return textResult(await handleCommitWorkspace(deps, params));
+      },
+    });
+
+    pi.registerTool({
+      name: "scrub",
+      label: "Scrub Git History",
+      description:
+        "Permanently remove the given paths from the ENTIRE git history of the workspace via `git filter-repo`, then force-push to origin. This is DESTRUCTIVE and IRREVERSIBLE: it rewrites every commit that touched those paths and rewrites remote history. Requires a clean working tree and that `git filter-repo` is installed. Use only when the user explicitly wants files purged from history (e.g. a leaked secret or a large blob).",
+      promptSnippet: "Purge paths from the workspace git history",
+      promptGuidelines: [
+        "Use scrub only when the user explicitly asks to permanently erase files from git history; confirm the exact paths first since the rewrite is irreversible.",
+      ],
+      parameters: ScrubWorkspaceParams,
+      async execute(_toolCallId, params) {
+        return textResult(await handleScrubWorkspace(deps, params));
       },
     });
   };
