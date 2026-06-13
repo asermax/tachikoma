@@ -8,6 +8,7 @@ export const PROCESS_STATUSES = {
 export type ProcessStatus = keyof typeof PROCESS_STATUSES;
 
 export const STOP_REASON_AGENT_STOPPED = "agent_stopped";
+export const STOP_REASON_OOM_KILLED = "oom_killed";
 
 export const detachedProcesses = sqliteTable(
   "detached_processes",

@@ -5,11 +5,12 @@ import { type ExtensionFactory, truncateTail } from "@earendil-works/pi-coding-a
 import { type Static, Type } from "typebox";
 
 import type { Logger } from "../../log.ts";
+import { type ScopeInspector, scopeUnitName } from "./cgroup.ts";
 import type { ProcessLimiter } from "./limits.ts";
 import { readOutputTail } from "./output.ts";
 import { type ProcessNotification, type ReconcileDeps, reconcileExit } from "./reconcile.ts";
 import type { ProcessRepository } from "./repository.ts";
-import type { DetachedProcessRecord } from "./schema.ts";
+import { type DetachedProcessRecord, STOP_REASON_OOM_KILLED } from "./schema.ts";
 import { isAlive, spawnProcess, terminate } from "./spawn.ts";
 
 export interface ProcessToolDeps {
@@ -17,6 +18,7 @@ export interface ProcessToolDeps {
   limiter: ProcessLimiter;
   processesDir: string;
   notify: (notification: ProcessNotification) => void;
+  scopeInspector: ScopeInspector;
   defaultMemoryLimitMb: number | null;
   log: Logger;
   now?: () => Date;
@@ -26,6 +28,7 @@ const reconcileDeps = (deps: ProcessToolDeps): ReconcileDeps => ({
   repository: deps.repository,
   processesDir: deps.processesDir,
   notify: deps.notify,
+  scopeInspector: deps.scopeInspector,
   log: deps.log,
   now: deps.now,
 });
@@ -84,8 +87,9 @@ const describeProcess = (record: DetachedProcessRecord): string[] => {
   ];
 
   if (record.exitedAt != null) {
+    const oomSuffix = record.stopReason === STOP_REASON_OOM_KILLED ? ", OOM-killed" : "";
     lines.push(
-      `  Exited: ${record.exitedAt.toISOString()} (code: ${record.exitCode ?? "unknown"})`,
+      `  Exited: ${record.exitedAt.toISOString()} (code: ${record.exitCode ?? "unknown"}${oomSuffix})`,
     );
   }
 
@@ -152,9 +156,19 @@ export const handleQueryProcess = async (
     if (record.exitedAt != null) {
       lines.push(`- Exited: ${record.exitedAt.toISOString()}`);
       lines.push(`- Exit code: ${record.exitCode ?? "unknown"}`);
+
+      if (record.stopReason === STOP_REASON_OOM_KILLED) lines.push("- Stopped: OOM-killed");
     }
 
-    if (record.memoryLimitMb != null) lines.push(`- Memory limit: ${record.memoryLimitMb}MB`);
+    if (record.memoryLimitMb != null) {
+      lines.push(`- Memory limit: ${record.memoryLimitMb}MB`);
+
+      if (record.status === "running") {
+        const usedMb = await deps.scopeInspector.readMemoryCurrentMb(scopeUnitName(record.id));
+
+        if (usedMb != null) lines.push(`- Memory usage: ${usedMb}MB`);
+      }
+    }
 
     return lines.join("\n");
   }

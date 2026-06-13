@@ -29,22 +29,25 @@ The agent needs to start shell commands that survive Tachikoma's own exit, resta
 
 `spawn.ts` launches `sh -c <command>` (optionally wrapped by the limiter) as a detached process-group leader with stdout/stderr appended to per-process files, persists the record, and — while the host lives — holds a Node `exit` listener that writes the exit code to an `exit-code` sidecar file. `reconcile.ts` owns the single running → exited transition: it reads the sidecar (one 100ms retry), performs a conditional UPDATE so concurrent reconcilers converge on one winner, and lets only the winner notify — unless the record carries `stop_reason="agent_stopped"`. Three paths feed the reconciler: the periodic watcher sweep (`watcher.ts`), lazy reconciliation inside the tool handlers (`tools.ts`), and crash recovery at bootstrap (`reconcileOnStartup`, notifications suppressed).
 
+Limited processes run inside a *named* transient scope (`tachikoma-<id>.scope`), which makes the scope addressable after spawn. `cgroup.ts` (`SystemctlScopeInspector`) queries that scope through `systemctl --user show`: `MemoryCurrent` for a live usage read surfaced by `query_process`, and `Result` to tell an OOM kill apart from a plain SIGKILL when a process exits with code 137. The scope's own cgroup directory is already gone by reconcile time, but systemd retains the unit's `Result` long enough to attribute the kill; OOM attribution is then stamped onto the record's existing `stop_reason` column as `oom_killed`.
+
 ## Components
 
 ### Implementation Structure
 
 | Component | Responsibility | Key Decisions |
 |-----------|----------------|---------------|
-| `src/extensions/detached-processes/index.ts` | `defineExtension` wiring: repository, limiter, bootstrap hook, tool factory, watcher job | Config: `defaultMemoryLimitMb` (1024, `0` disables), `watchIntervalSeconds` (15) |
-| `src/extensions/detached-processes/schema.ts` | `detached_processes` drizzle table, `ProcessStatus` const map, `STOP_REASON_AGENT_STOPPED` | Status index for the watcher's hot query; `memoryLimitMb` recorded only when actually enforced |
-| `src/extensions/detached-processes/repository.ts` | `ProcessRepository` CRUD: `create`, `get`, `listRunning`/`listExited`, `markStopInitiated`, `clearStopReason`, `reconcileToExited` | `reconcileToExited` is a conditional UPDATE (`WHERE status='running'`) returning whether the caller won |
-| `src/extensions/detached-processes/spawn.ts` | `spawnProcess` (validation, detach, sidecar listener, persistence, DB-failure cleanup), `terminate` (group signalling + escalation), `isAlive` | `detached: true` makes the child a group leader so `kill(-pid)` reaches the whole tree; parent closes its fd copies after spawn |
-| `src/extensions/detached-processes/limits.ts` | `ProcessLimiter` seam + `SystemdRunLimiter` | `systemd-run --user --scope` puts the command in a transient cgroup and exits with its status, so liveness and exit codes behave like an unwrapped spawn |
+| `src/extensions/detached-processes/index.ts` | `defineExtension` wiring: repository, limiter, scope inspector, bootstrap hook, tool factory, watcher job | Config: `defaultMemoryLimitMb` (1024, `0` disables), `watchIntervalSeconds` (15); the single `SystemctlScopeInspector` is shared by the reconciler and the tools |
+| `src/extensions/detached-processes/schema.ts` | `detached_processes` drizzle table, `ProcessStatus` const map, `STOP_REASON_AGENT_STOPPED`, `STOP_REASON_OOM_KILLED` | Status index for the watcher's hot query; `memoryLimitMb` recorded only when actually enforced; OOM attribution reuses the `stop_reason` column (no new column) |
+| `src/extensions/detached-processes/repository.ts` | `ProcessRepository` CRUD: `create`, `get`, `listRunning`/`listExited`, `markStopInitiated`, `clearStopReason`, `reconcileToExited` | `reconcileToExited` is a conditional UPDATE (`WHERE status='running'`) returning whether the caller won; an optional `stopReason` arg stamps OOM attribution atomically with the transition |
+| `src/extensions/detached-processes/spawn.ts` | `spawnProcess` (validation, detach, sidecar listener, persistence, DB-failure cleanup), `terminate` (group signalling + escalation), `isAlive` | `detached: true` makes the child a group leader so `kill(-pid)` reaches the whole tree; parent closes its fd copies after spawn; passes the record id to `limiter.wrap` so the scope can be named |
+| `src/extensions/detached-processes/limits.ts` | `ProcessLimiter` seam + `SystemdRunLimiter` | `systemd-run --user --scope --unit=tachikoma-<id>.scope` puts the command in a *named* transient cgroup and exits with its status, so liveness and exit codes behave like an unwrapped spawn while leaving the scope addressable |
+| `src/extensions/detached-processes/cgroup.ts` | `scopeUnitName`, `ScopeInspector` seam + `SystemctlScopeInspector` (`readMemoryCurrentMb`, `wasOomKilled`) | Reads via `systemctl --user show <unit> -p MemoryCurrent\|Result --value` — agnostic of cgroup nesting and readable post-exit; degrades to null/false off systemd; injectable `show` runner for tests |
 | `src/extensions/detached-processes/output.ts` | `readOutputTail` — last 256KB of a log file | Generous raw window; `truncateTail` trims to pi's limits in the tool layer |
 | `src/extensions/detached-processes/watcher.ts` | `createWatcherTick` — sweep running records, reconcile dead ones | Per-record try/catch so one bad record never stops the sweep |
-| `src/extensions/detached-processes/reconcile.ts` | `reconcileExit` (shared reconciler), `reconcileOnStartup` (crash recovery) | Single winner notifies; agent-stopped and startup paths suppress notification |
-| `src/extensions/detached-processes/tools.ts` | Param schemas, four tool handlers, `createProcessToolsFactory` | Handlers are plain functions over a `ProcessToolDeps` bag so tests drive them without pi |
-| `tests/detached-processes/` | Real-spawn integration tests (`sh` children) over an in-memory-style temp DB | `setup.ts` fakes only the limiter, logger, and notify sink |
+| `src/extensions/detached-processes/reconcile.ts` | `reconcileExit` (shared reconciler), `reconcileOnStartup` (crash recovery) | Single winner notifies; agent-stopped and startup paths suppress notification; a 137 on a limited process consults the scope `Result` for OOM attribution |
+| `src/extensions/detached-processes/tools.ts` | Param schemas, four tool handlers, `createProcessToolsFactory` | Handlers are plain functions over a `ProcessToolDeps` bag so tests drive them without pi; `query_process` reads live scope memory for a running limited process and shows OOM stop reasons |
+| `tests/detached-processes/` | Real-spawn integration tests (`sh` children) over an in-memory-style temp DB; `cgroup.test.ts` and `oom.test.ts` cover scope inspection, OOM attribution, and live-usage reporting | `setup.ts` fakes the limiter, logger, notify sink, and scope inspector (an overridable `ScopeInspector` arg to `createTestContext`) |
 
 ## Key Decisions
 
@@ -78,12 +81,24 @@ The agent needs to start shell commands that survive Tachikoma's own exit, resta
 
 ### `systemd-run` scopes behind the `ProcessLimiter` seam
 
-**Choice**: Memory limits are applied by wrapping the spawn as `systemd-run --user --scope --quiet -p MemoryMax=<n>M -- sh -c <command>`. The `ProcessLimiter` interface (probe once at bootstrap, `wrap()` per spawn, `limited` flag in the result) isolates the mechanism.
-**Why**: `systemd-run --scope` delegates all cgroup bookkeeping (creation, pid assignment, cleanup) to systemd and stays in the foreground exiting with the command's status, so detection, signalling, and exit codes are unchanged. The seam lets a direct cgroup v2 implementation slot in if needed.
+**Choice**: Memory limits are applied by wrapping the spawn as `systemd-run --user --scope --quiet --unit=tachikoma-<id>.scope -p MemoryMax=<n>M -- sh -c <command>`. The `ProcessLimiter` interface (probe once at bootstrap, `wrap(id, command, limit)` per spawn, `limited` flag in the result) isolates the mechanism. The scope is named after the record id so it can be inspected later.
+**Why**: `systemd-run --scope` delegates all cgroup bookkeeping (creation, pid assignment, cleanup) to systemd and stays in the foreground exiting with the command's status, so detection, signalling, and exit codes are unchanged. The seam lets a direct cgroup v2 implementation slot in if needed. Without `--unit` systemd auto-generates an opaque scope name; naming it `tachikoma-<id>.scope` makes the deterministic-from-id unit addressable for usage reads and OOM attribution.
 **Consequences**:
-- Pro: No cgroup filesystem code; graceful degradation is a probe failure plus a warning
+- Pro: No cgroup-creation code; graceful degradation is a probe failure plus a warning
 - Pro: The record's `memoryLimitMb` reflects reality — stored only when `wrap()` actually limited
-- Con: Linux + systemd user-session only; no OOM-kill attribution or live memory-usage reads
+- Pro: The named scope unlocks live usage reads and OOM attribution (next decision) without a persisted cgroup-path column
+- Con: Linux + systemd user-session only
+
+### Scope inspection via `systemctl --user show`, not direct cgroup-file reads
+
+**Choice**: `cgroup.ts` reads the named scope's `MemoryCurrent` (live usage) and `Result` (OOM vs. plain kill) through `systemctl --user show <unit> -p <prop> --value`, rather than locating and reading `/sys/fs/cgroup/.../memory.current` and `memory.events` directly. The reconciler checks `Result=oom-kill` only when a 137 lands on a limited process, and stamps `stop_reason="oom_killed"` onto the record via the same conditional UPDATE that wins the exit transition.
+**Why**: A `systemd-run --scope` unit's cgroup is removed by systemd the moment its process dies, so the post-mortem `memory.events` (`oom_kill` counter) the legacy hand-rolled cgroup relied on is no longer readable at reconcile time — but systemd retains the unit's `Result` for a window after exit, which captures the OOM verdict. `systemctl show` is also agnostic of where the user manager nests its cgroups (no `/proc/self/cgroup` parsing, no mount discovery). Live `memory.current` for a *running* process is readable either way; using `systemctl show` for both keeps one uniform interface behind the `ScopeInspector` seam.
+**Alternatives Considered**: Resolving the cgroup path from the scope's `ControlGroup` property and reading `memory.current`/`memory.events` files directly (works while alive, but `memory.events` is gone post-exit); a persisted `cgroup_path` column (rejected — the path is derivable and the file is gone anyway). A new `oom_killed` boolean column (rejected — `stop_reason` already carries exit provenance).
+**Consequences**:
+- Pro: OOM attribution survives the cgroup's disappearance; no schema migration (reuses `stop_reason`)
+- Pro: Injectable `show` runner makes both reads unit-testable without a real systemd session
+- Con: Attribution depends on reconciling within systemd's `Result` retention window; a very delayed reconcile of an OOM kill could miss it and fall back to the plain SIGKILL message
+- Con: Two extra short-lived `systemctl` invocations per limited-process exit / inspection
 
 ### Notification dispatch decoupled through the app event bus
 
@@ -112,6 +127,18 @@ The agent needs to start shell commands that survive Tachikoma's own exit, resta
 **Given**: A process exits after the host was killed; no sidecar was written.
 **When**: Tachikoma restarts and the `reconcile` bootstrap hook runs.
 **Then**: The dead record is reconciled with `exitCode=null`, no notification fires, and `query_process(archived=true)` shows it on demand.
+
+### Scenario: Limited process killed by the OOM killer
+
+**Given**: A process with a 256MB limit allocates past it; the kernel OOM-kills its scope and the exit listener records 137 in the sidecar.
+**When**: A reconciler runs (watcher, lazy, or crash recovery while the window holds).
+**Then**: Because the exit code is 137 and the record carried a limit, `reconcileExit` queries the scope's `Result`, sees `oom-kill`, wins the UPDATE while stamping `stop_reason="oom_killed"`, and emits a notification reading "was killed by the OOM killer (256MB limit)." A plain SIGKILL of the same process (e.g. an external `kill -9`) yields `Result≠oom-kill` and the original "killed by signal (SIGKILL)." message.
+
+### Scenario: Inspecting live memory of a running limited process
+
+**Given**: A running process dispatched with a 128MB limit.
+**When**: The agent calls `query_process` with its `process_id`.
+**Then**: The handler reads the scope's `MemoryCurrent` via `systemctl --user show`, converts it to MB, and renders both "Memory limit: 128MB" and "Memory usage: NMB". Off systemd (or once the scope is gone) the usage line is simply omitted.
 
 ### Scenario: Stubborn process ignoring SIGTERM
 

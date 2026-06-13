@@ -2,8 +2,9 @@ import { readFile } from "node:fs/promises";
 import { setTimeout as sleep } from "node:timers/promises";
 
 import type { Logger } from "../../log.ts";
+import { type ScopeInspector, scopeUnitName } from "./cgroup.ts";
 import type { ProcessRepository } from "./repository.ts";
-import { STOP_REASON_AGENT_STOPPED } from "./schema.ts";
+import { STOP_REASON_AGENT_STOPPED, STOP_REASON_OOM_KILLED } from "./schema.ts";
 import { exitCodePath, isAlive } from "./spawn.ts";
 
 export interface ProcessNotification {
@@ -17,6 +18,7 @@ export interface ReconcileDeps {
   repository: ProcessRepository;
   processesDir: string;
   notify: (notification: ProcessNotification) => void;
+  scopeInspector: ScopeInspector;
   log: Logger;
   now?: () => Date;
 }
@@ -50,7 +52,7 @@ export const reconcileExit = async (
   recordId: string,
   { dispatchNotification = true }: { dispatchNotification?: boolean } = {},
 ): Promise<void> => {
-  const { repository, processesDir, notify, log } = deps;
+  const { repository, processesDir, notify, scopeInspector, log } = deps;
   const now = deps.now ?? (() => new Date());
 
   try {
@@ -59,7 +61,21 @@ export const reconcileExit = async (
     if (record == null || record.status !== "running") return;
 
     const exitCode = await readExitCode(exitCodePath(processesDir, record.id));
-    const won = repository.reconcileToExited(record.id, now(), exitCode);
+
+    // A 137 (SIGKILL) on a limited process may be the OOM killer rather than a
+    // plain kill; the scope's `Result` tells them apart even though its cgroup
+    // is already gone by now. Only check when a limit was actually enforced.
+    const oomKilled =
+      exitCode === SIGKILL_EXIT_CODE && record.memoryLimitMb != null
+        ? await scopeInspector.wasOomKilled(scopeUnitName(record.id))
+        : false;
+
+    const won = repository.reconcileToExited(
+      record.id,
+      now(),
+      exitCode,
+      oomKilled ? STOP_REASON_OOM_KILLED : undefined,
+    );
 
     if (!won || !dispatchNotification) return;
 
@@ -68,10 +84,17 @@ export const reconcileExit = async (
       return;
     }
 
-    const message =
-      exitCode === SIGKILL_EXIT_CODE
-        ? `Process '${record.name}' (id: ${record.id}) was killed by signal (SIGKILL).`
-        : `Process '${record.name}' (id: ${record.id}) exited with code ${exitCode ?? "unknown"}.`;
+    const limitSuffix = record.memoryLimitMb != null ? ` (${record.memoryLimitMb}MB limit)` : "";
+
+    let message: string;
+
+    if (oomKilled) {
+      message = `Process '${record.name}' (id: ${record.id}) was killed by the OOM killer${limitSuffix}.`;
+    } else if (exitCode === SIGKILL_EXIT_CODE) {
+      message = `Process '${record.name}' (id: ${record.id}) was killed by signal (SIGKILL).`;
+    } else {
+      message = `Process '${record.name}' (id: ${record.id}) exited with code ${exitCode ?? "unknown"}.`;
+    }
 
     notify({
       source: `Detached process: ${record.name}`,

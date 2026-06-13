@@ -80,7 +80,7 @@ export const spawnProcess = async (
   const stdoutFd = openSync(stdoutPath, "a");
   const stderrFd = openSync(stderrPath, "a");
 
-  const wrapped = limiter.wrap(options.command, options.memoryLimitMb ?? null);
+  const wrapped = limiter.wrap(id, options.command, options.memoryLimitMb ?? null);
   const cwd = options.cwd ?? process.cwd();
 
   let child: ReturnType<typeof spawn>;

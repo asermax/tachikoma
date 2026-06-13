@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { Type } from "typebox";
 
 import { defineExtension } from "../api.ts";
+import { SystemctlScopeInspector } from "./cgroup.ts";
 import { SystemdRunLimiter } from "./limits.ts";
 import { type ProcessNotification, type ReconcileDeps, reconcileOnStartup } from "./reconcile.ts";
 import { ProcessRepository } from "./repository.ts";
@@ -32,6 +33,7 @@ export default defineExtension<DetachedProcessesConfig>({
   setup(app) {
     const repository = new ProcessRepository(app.db);
     const limiter = new SystemdRunLimiter(app.log);
+    const scopeInspector = new SystemctlScopeInspector(app.log);
     const processesDir = join(app.workspace.dataDir, "processes");
 
     const reconcile: ReconcileDeps = {
@@ -44,6 +46,7 @@ export default defineExtension<DetachedProcessesConfig>({
           severity: notification.severity === "error" ? "warning" : "info",
           source: notification.source,
         }),
+      scopeInspector,
       log: app.log,
     };
 

@@ -6,15 +6,26 @@ import type { Logger } from "../../src/log.ts";
 const fakeLog = () => ({ info: vi.fn(), warn: vi.fn() }) as unknown as Logger;
 
 describe("SystemdRunLimiter", () => {
-  it("wraps the command with systemd-run when available and a limit is set", async () => {
+  it("wraps the command in a named scope when available and a limit is set", async () => {
     const limiter = new SystemdRunLimiter(fakeLog());
     await limiter.detect(async () => "ok");
 
-    const wrapped = limiter.wrap("echo hi", 512);
+    const wrapped = limiter.wrap("abc-123", "echo hi", 512);
 
     expect(wrapped).toEqual({
       file: "systemd-run",
-      args: ["--user", "--scope", "--quiet", "-p", "MemoryMax=512M", "--", "sh", "-c", "echo hi"],
+      args: [
+        "--user",
+        "--scope",
+        "--quiet",
+        "--unit=tachikoma-abc-123.scope",
+        "-p",
+        "MemoryMax=512M",
+        "--",
+        "sh",
+        "-c",
+        "echo hi",
+      ],
       limited: true,
     });
   });
@@ -26,7 +37,7 @@ describe("SystemdRunLimiter", () => {
       throw new Error("not found");
     });
 
-    const wrapped = limiter.wrap("echo hi", 512);
+    const wrapped = limiter.wrap("abc-123", "echo hi", 512);
 
     expect(wrapped).toEqual({ file: "sh", args: ["-c", "echo hi"], limited: false });
     expect(log.warn).toHaveBeenCalled();
@@ -36,7 +47,7 @@ describe("SystemdRunLimiter", () => {
     const limiter = new SystemdRunLimiter(fakeLog());
     await limiter.detect(async () => "ok");
 
-    expect(limiter.wrap("echo hi", null)).toEqual({
+    expect(limiter.wrap("abc-123", "echo hi", null)).toEqual({
       file: "sh",
       args: ["-c", "echo hi"],
       limited: false,

@@ -7,6 +7,7 @@ import { setTimeout as sleep } from "node:timers/promises";
 import { sql } from "drizzle-orm";
 
 import { type AppDatabase, createDatabase, runMigrations } from "../../src/db/index.ts";
+import type { ScopeInspector } from "../../src/extensions/detached-processes/cgroup.ts";
 import type { ProcessLimiter } from "../../src/extensions/detached-processes/limits.ts";
 import type {
   ProcessNotification,
@@ -45,7 +46,13 @@ export const fakeLogger = (): Logger =>
   ({ debug: () => {}, info: () => {}, warn: () => {}, error: () => {} }) as unknown as Logger;
 
 export const noLimits: ProcessLimiter = {
-  wrap: (command) => ({ file: "sh", args: ["-c", command], limited: false }),
+  wrap: (_id, command) => ({ file: "sh", args: ["-c", command], limited: false }),
+};
+
+/** No systemd session in tests: no live usage, never an OOM kill. */
+export const noScopeInspector: ScopeInspector = {
+  readMemoryCurrentMb: async () => null,
+  wasOomKilled: async () => false,
 };
 
 export interface TestContext {
@@ -54,12 +61,15 @@ export interface TestContext {
   processesDir: string;
   log: Logger;
   notifications: ProcessNotification[];
+  scopeInspector: ScopeInspector;
   reconcile: ReconcileDeps;
   spawnDeps: SpawnDeps;
   toolDeps: ProcessToolDeps;
 }
 
-export const createTestContext = async (): Promise<TestContext> => {
+export const createTestContext = async (
+  scopeInspector: ScopeInspector = noScopeInspector,
+): Promise<TestContext> => {
   const dir = await mkdtemp(join(tmpdir(), "tachi-procs-"));
   const db = createDatabase(join(dir, "test.db"));
 
@@ -78,13 +88,28 @@ export const createTestContext = async (): Promise<TestContext> => {
     repository,
     processesDir,
     notify: (notification) => notifications.push(notification),
+    scopeInspector,
     log,
   };
 
   const spawnDeps: SpawnDeps = { repository, limiter: noLimits, processesDir, log };
-  const toolDeps: ProcessToolDeps = { ...reconcile, limiter: noLimits, defaultMemoryLimitMb: null };
+  const toolDeps: ProcessToolDeps = {
+    ...reconcile,
+    limiter: noLimits,
+    defaultMemoryLimitMb: null,
+  };
 
-  return { db, repository, processesDir, log, notifications, reconcile, spawnDeps, toolDeps };
+  return {
+    db,
+    repository,
+    processesDir,
+    log,
+    notifications,
+    scopeInspector,
+    reconcile,
+    spawnDeps,
+    toolDeps,
+  };
 };
 
 /** Insert a running record directly, bypassing spawn — for reconcile-style tests. */

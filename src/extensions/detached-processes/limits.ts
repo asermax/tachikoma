@@ -2,6 +2,7 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 
 import type { Logger } from "../../log.ts";
+import { scopeUnitName } from "./cgroup.ts";
 
 const execFileAsync = promisify(execFile);
 
@@ -17,7 +18,7 @@ export interface WrappedCommand {
  * behind this interface.
  */
 export interface ProcessLimiter {
-  wrap(command: string, memoryLimitMb: number | null): WrappedCommand;
+  wrap(id: string, command: string, memoryLimitMb: number | null): WrappedCommand;
 }
 
 const plainShell = (command: string): WrappedCommand => ({
@@ -52,7 +53,7 @@ export class SystemdRunLimiter implements ProcessLimiter {
     }
   }
 
-  wrap(command: string, memoryLimitMb: number | null): WrappedCommand {
+  wrap(id: string, command: string, memoryLimitMb: number | null): WrappedCommand {
     if (memoryLimitMb == null) return plainShell(command);
 
     if (!this.available) {
@@ -60,12 +61,15 @@ export class SystemdRunLimiter implements ProcessLimiter {
       return plainShell(command);
     }
 
+    // Naming the scope makes it addressable for live usage reads and OOM
+    // attribution via `systemctl --user show <unit>` (see cgroup.ts).
     return {
       file: "systemd-run",
       args: [
         "--user",
         "--scope",
         "--quiet",
+        `--unit=${scopeUnitName(id)}`,
         "-p",
         `MemoryMax=${memoryLimitMb}M`,
         "--",

@@ -4,7 +4,7 @@
 
 ## Overview
 
-Agent tools dispatch, inspect, read output from, and terminate OS-level shell commands that run detached from Tachikoma: each process runs in its own process group with stdout/stderr captured to per-process files, so it survives Tachikoma's exit, restart, or crash. Records persist in the shared SQLite database; a polling watcher detects exits and emits `"notify"` app events (see [notifications](./notifications.md)), and a startup bootstrap reconciles records orphaned while the host was down. Memory limits are applied through `systemd-run` scopes when available.
+Agent tools dispatch, inspect, read output from, and terminate OS-level shell commands that run detached from Tachikoma: each process runs in its own process group with stdout/stderr captured to per-process files, so it survives Tachikoma's exit, restart, or crash. Records persist in the shared SQLite database; a polling watcher detects exits and emits `"notify"` app events (see [notifications](./notifications.md)), and a startup bootstrap reconciles records orphaned while the host was down. Memory limits are applied through named `systemd-run` scopes when available; the named scope is also queried (via `systemctl --user show`) for live memory usage and to attribute exit-code-137 deaths to the OOM killer.
 
 ## User Stories
 
@@ -22,9 +22,10 @@ Agent tools dispatch, inspect, read output from, and terminate OS-level shell co
 | R3 | `dispatch_detached_process` accepts `name` (required, non-blank), `command` (required, non-blank shell string), optional `cwd`, `env` overrides, and `memory_limit_mb`; returns the record ID, PID, and both log paths |
 | R4 | Capture stdout and stderr to separate append-mode files under `{workspace}/.tachikoma/processes/{id}/`; files remain on disk after exit |
 | R5 | Default `cwd` is Tachikoma's own working directory; the spawned environment is the OS environment with `env` entries merged on top |
-| R6 | Memory limiting wraps the command in `systemd-run --user --scope -p MemoryMax=...` when an effective limit resolves (per-call `memory_limit_mb`, else configured `defaultMemoryLimitMb` — default 1024, `0` disables); when `systemd-run` is unavailable (probed once at bootstrap) the spawn degrades to a plain shell with a warning, and the record stores a limit only when one was actually enforced |
+| R6 | Memory limiting wraps the command in `systemd-run --user --scope --unit=tachikoma-<id>.scope -p MemoryMax=...` when an effective limit resolves (per-call `memory_limit_mb`, else configured `defaultMemoryLimitMb` — default 1024, `0` disables); naming the scope after the record id makes it addressable for live usage reads and OOM attribution. When `systemd-run` is unavailable (probed once at bootstrap) the spawn degrades to a plain shell with a warning, and the record stores a limit only when one was actually enforced |
 | R7 | `memory_limit_mb` below 1 is rejected with a validation error before anything is spawned |
 | R8 | `query_process` with `process_id` returns full record details; without it, lists running records (`archived=true` lists exited ones); dead-but-`running` records encountered on either path are lazily reconciled to `exited` before responding; unknown ids return a "not found" error |
+| R8a | For a `running` process that carries a memory limit, `query_process` with `process_id` reads the scope's live `memory.current` (via `systemctl --user show <scope> -p MemoryCurrent`) and reports it in MB alongside the limit; the usage line is omitted when no reading is available (no systemd session, scope gone) |
 | R9 | `read_process_output` returns the tail of the captured stdout (default) or stderr (`stream="stderr"`) log, trimmed with pi's `truncateTail` and prefixed with a truncation marker when shortened; missing or empty logs yield "No output yet." |
 | R10 | `terminate_process` signals the whole process group (default SIGTERM, signal name validated against the OS signal table), escalates to SIGKILL after `grace_seconds` (default 10); `grace_seconds=0` sends the signal and returns immediately, leaving the exit to the watcher; already-exited records return "already stopped" without signalling |
 | R11 | Agent-initiated stop tracking: `stop_reason` is set to `agent_stopped` before signalling and cleared if signal delivery fails with EPERM; exit notifications are suppressed for agent-stopped records |
@@ -32,6 +33,7 @@ Agent tools dispatch, inspect, read output from, and terminate OS-level shell co
 | R13 | A scheduler job sweeps `running` records every `watchIntervalSeconds` (default 15), reconciling dead ones, with per-record error isolation |
 | R14 | Reconciliation transitions running → exited via a conditional UPDATE so concurrent reconcilers converge on a single winner; only the winner dispatches a notification |
 | R15 | Exit notifications are emitted as `"notify"` app events carrying the process name, id, and exit code, with severity `info` for exit code 0 and `error` otherwise; exit code 137 is reported as killed by SIGKILL |
+| R15a | OOM attribution: when a process exits with 137 *and* carried a memory limit, reconciliation queries the scope's `Result` (via `systemctl --user show <scope> -p Result`); a `Result=oom-kill` records `stop_reason="oom_killed"` on the record (no schema change — reuses the `stop_reason` column) and the notification reports "was killed by the OOM killer (<N>MB limit)." rather than a plain SIGKILL. Unlimited processes are not probed. When systemd is unavailable the check degrades to "not OOM" and the plain SIGKILL message is used |
 | R16 | A bootstrap hook creates the processes directory, probes `systemd-run` once, and reconciles records whose pids died while the host was down — without dispatching notifications |
 | R17 | Liveness is checked via signal 0 (EPERM counts as alive); PID reuse is accepted — a record kept alive by a reused pid reconciles when that pid eventually exits |
 | R18 | If the database write fails after a successful spawn, the spawned process group is SIGKILLed and the error propagates; no record is persisted |
@@ -53,18 +55,20 @@ Spawning detaches the command into its own process group, wires its output to pe
 ### Memory Limiting (R6, R7)
 
 **Acceptance Criteria**:
-- Given `systemd-run` is available and an effective limit of N MB, then the command is spawned as `systemd-run --user --scope --quiet -p MemoryMax=NM -- sh -c <command>` and the record stores the limit
+- Given `systemd-run` is available and an effective limit of N MB, then the command is spawned as `systemd-run --user --scope --quiet --unit=tachikoma-<id>.scope -p MemoryMax=NM -- sh -c <command>` and the record stores the limit
 - Given `systemd-run` is unavailable, then a warning is logged, the command spawns as a plain `sh -c`, and the record stores no limit
 - Given no per-call limit and `defaultMemoryLimitMb = 0`, then no wrapping occurs
 - Given `memory_limit_mb` below 1, then the tool returns a validation error and no process is spawned
 
-### Listing and Inspection (R8, R17)
+### Listing and Inspection (R8, R8a, R17)
 
 **Acceptance Criteria**:
 - Given `query_process` with no arguments, then running records are listed with ID, name, PID, command, and start time; records whose pid is dead are reconciled and excluded from the running list
-- Given `query_process` with `archived=true`, then exited records are listed with exit time and exit code
+- Given `query_process` with `archived=true`, then exited records are listed with exit time and exit code; an OOM-killed record is annotated with "OOM-killed" on its exit line
 - Given no matching records, then a clear "No running/exited processes found." message is returned
 - Given `query_process` with a `process_id` whose process has exited but is still marked running, then the record is reconciled and the response shows `exited` with the exit code
+- Given `query_process` with a `process_id` for a *running* limited process, then the response includes both the memory limit and the live memory usage (in MB); when no live reading is available the usage line is omitted
+- Given `query_process` with a `process_id` for an exited OOM-killed process, then the details include a "Stopped: OOM-killed" line
 - Given an unknown `process_id`, then a "not found" error is returned
 
 ### Reading Output (R9)
@@ -85,12 +89,14 @@ Spawning detaches the command into its own process group, wires its output to pe
 - Given an unknown signal name, then the tool returns an error before signalling
 - Given signalling fails with EPERM, then `stop_reason` is cleared and a permission error is returned without altering the record's status
 
-### Exit Detection and Notification (R12, R13, R14, R15)
+### Exit Detection and Notification (R12, R13, R14, R15, R15a)
 
 **Acceptance Criteria**:
 - Given a process exits with code 0 while the host is alive, then the next watcher tick reconciles the record (`exited`, `exitCode=0`, `exitedAt` set) and emits a `"notify"` event with severity `info` and the message "Process '<name>' (id: <id>) exited with code 0."
 - Given a non-zero exit code, then the emitted event has severity `error`
-- Given exit code 137, then the message reports the process "was killed by signal (SIGKILL)."
+- Given exit code 137 on a process with no memory limit, then the message reports the process "was killed by signal (SIGKILL)."
+- Given exit code 137 on a limited process whose scope `Result` is `oom-kill`, then the record gains `stop_reason="oom_killed"` (recorded atomically with the exit transition) and the message reports the process "was killed by the OOM killer (<N>MB limit)."
+- Given exit code 137 on a limited process whose scope was not OOM-killed (or systemd is unavailable), then the plain SIGKILL message is used and no OOM stop reason is recorded
 - Given a record was already reconciled by another path (lazy reconciliation, terminate, or a racing watcher tick), then the conditional UPDATE makes the loser a no-op and no duplicate notification is emitted
 - Given checking one record throws, then the error is logged and the sweep continues with the remaining records
 

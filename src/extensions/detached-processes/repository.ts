@@ -80,12 +80,25 @@ export class ProcessRepository {
   /**
    * Conditionally transition a record from running to exited. Returns true if
    * this caller won the race; false when another reconciler already did.
+   *
+   * When `stopReason` is given it is recorded as part of the same transition,
+   * so OOM attribution rides along with the winning UPDATE rather than racing
+   * a separate write.
    */
-  reconcileToExited(id: string, exitedAt: Date, exitCode: number | null): boolean {
+  reconcileToExited(
+    id: string,
+    exitedAt: Date,
+    exitCode: number | null,
+    stopReason?: string,
+  ): boolean {
     return (
       this.db
         .update(detachedProcesses)
-        .set({ status: "exited", exitedAt, exitCode })
+        .set(
+          stopReason == null
+            ? { status: "exited", exitedAt, exitCode }
+            : { status: "exited", exitedAt, exitCode, stopReason },
+        )
         .where(and(eq(detachedProcesses.id, id), eq(detachedProcesses.status, "running")))
         .returning()
         .all().length > 0
