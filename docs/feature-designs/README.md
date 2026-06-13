@@ -42,3 +42,4 @@ Design rationale describing **how** each feature is built — components, key de
 | [detached-processes](detached-processes.md) | Dispatch, inspect, and terminate OS-level shell commands that outlive Tachikoma, with exit-watching and startup reconciliation |
 | [notifications](notifications.md) | Routes notifications from any producer to the active channel — urgent immediately, the rest batched and idle-gated |
 | [external-extensions](external-extensions.md) | Loads out-of-tree extensions via the same `defineExtension` contract, with agent tools to install/update/list/uninstall |
+| [migration](migration.md) | Startup adaptation of a workspace last used by a legacy install — non-destructive database/config/context/skill/task migration, self-detecting and idempotent |
