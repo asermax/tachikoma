@@ -1,34 +1,33 @@
 # ADR-013: Release Tooling
 
 **Status**: Accepted
-**Date**: 2026-06-12
+**Date**: 2026-06-13
 
 ## Context
 
-Releases should be driven by conventional commits: commit history determines version bumps, changelog generation, and tagged releases. The project is a single-user, single-package repo that is run from sources — there is no CI pipeline, no npm publishing, and no remote-driven release flow to integrate with.
+Releases should be derived from conventional commits — version bump, changelog, npm publish, git tag, and GitHub release in one step — and runnable directly from a maintainer machine, matching the workflow already used by sibling projects (pi-save).
 
 ## Decision
 
-Use **commit-and-tag-version** (the maintained fork of standard-version), run locally via `just release`.
+Use **semantic-release** run locally (`just release`), with the same plugin chain as pi-save: commit-analyzer → release-notes-generator → changelog → npm → git → github, configured in `.releaserc.json` against the `master` branch. `prepack` builds `dist` so any publish is always built.
 
-- Versioning and changelog rules live in `.versionrc.json`: conventionalcommits preset, `CHANGELOG.md` generation, with `feat`/`fix`/`perf`/`refactor` surfaced as changelog sections
-- A release is one local command: it derives the next semver from commit history, bumps `package.json`, rewrites `CHANGELOG.md`, commits, and tags
-- Pushing the release commit and tag stays a deliberate, separate step
+The initial 2.0.0 release was created manually (version set, build, publish, `v2.0.0` tag + GitHub release): the codebase replaced an earlier implementation whose 1.x tags share this repository, and semantic-release would otherwise have started an unreachable-tag history at v1.0.0, colliding with them. With `v2.0.0` reachable on `master`, semantic-release picks it up as the baseline for every subsequent release.
 
 ## Consequences
 
 ### Positive
 
-- Local-first: a release needs no CI, no remote tokens, and no network — matching how the project is actually operated
-- Built on the conventional-commit contract the repo already follows, so no new commit discipline is needed
-- Dry-run support (`just release --dry-run`) shows the computed bump and changelog before anything is written
+- One command produces version, changelog, npm package, tag, and GitHub release, all derived from commit messages
+- Same mental model and config as sibling projects
+- No CI dependency or repository secrets needed to release
 
 ### Negative
 
-- Releases are manual; nothing enforces that a release is cut after merging notable work
-- The tool is in maintenance-oriented stewardship (fork of the deprecated standard-version) — a future swap may be needed, though the conventional-commit history keeps us portable
+- Requires local npm auth and a GitHub token at release time
+- Releases depend on commit message discipline (conventional commits)
 
 ## Alternatives Considered
 
-- **semantic-release**: designed around CI: it refuses interactive local use, requires remote/token configuration, and centers on publishing — all machinery this repo doesn't have or need
-- **changesets**: oriented at monorepos and npm package publishing with explicit changeset files per change; heavier ceremony than conventional commits for a single private package
+- **commit-and-tag-version**: local bump+changelog+tag, but no publish/GitHub release; replaced before first release
+- **Tag-triggered GitHub Action publish**: needs repository secrets and splits the flow across local and CI; also double-publishes when combined with semantic-release's own tagging
+- **changesets**: oriented at multi-package repos and PR-based flows
