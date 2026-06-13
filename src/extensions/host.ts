@@ -10,15 +10,17 @@ import { componentLogger, type Logger } from "../log.ts";
 import type { Scheduler } from "../scheduler.ts";
 import type { SessionRegistry } from "../sessions/registry.ts";
 import type { Workspace } from "../workspace.ts";
-import type {
-  AppContext,
-  ContextBlock,
-  ContextProvider,
-  ContextProviderInput,
-  PostProcessingPhase,
-  PostProcessor,
-  PostProcessorContext,
-  TachikomaExtension,
+import {
+  type AppContext,
+  type ContextBlock,
+  type ContextProvider,
+  type ContextProviderInput,
+  type PostProcessingPhase,
+  type PostProcessor,
+  type PostProcessorContext,
+  SESSION_SCOPES,
+  type TachikomaExtension,
+  type UseFactoryOptions,
 } from "./api.ts";
 import type { Registrations } from "./registrations.ts";
 
@@ -70,6 +72,21 @@ const runPostProcessorsOnce = async (
       }
     });
   }
+};
+
+/**
+ * Resolve which session contexts a factory binds into from its `use` options. Pure so the
+ * mapping is unit-testable; membership-based so an out-of-union scope binds nothing.
+ */
+export const factoryBindingTargets = (
+  options?: Pick<UseFactoryOptions, "sessionScopes">,
+): { main: boolean; background: boolean } => {
+  const scopes = options?.sessionScopes ?? [SESSION_SCOPES.main];
+
+  return {
+    main: scopes.includes(SESSION_SCOPES.main),
+    background: scopes.includes(SESSION_SCOPES.background),
+  };
 };
 
 export interface HostServices {
@@ -215,8 +232,10 @@ export class ExtensionHost {
 
       agent: {
         use: (factory, options) => {
-          services.regs.piFactories.push(factory);
-          if (options?.background === true) services.regs.backgroundFactories.push(factory);
+          const targets = factoryBindingTargets(options);
+
+          if (targets.main) services.regs.piFactories.push(factory);
+          if (targets.background) services.regs.backgroundFactories.push(factory);
         },
         systemPrompt: (builder) => services.regs.systemPromptBuilders.push(builder),
         provideContext: (provider) => services.regs.contextProviders.push(provider),

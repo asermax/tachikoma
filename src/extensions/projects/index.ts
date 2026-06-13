@@ -35,7 +35,7 @@ export default defineExtension<ProjectsConfig>({
 
     app.agent.provideContext(createProjectsContextProvider(workspaceRoot, app.log));
     app.agent.use(createProjectsToolsFactory({ workspaceRoot, log: app.log }), {
-      background: true,
+      sessionScopes: ["main", "background"],
     });
 
     app.sessions.registerProcessor(

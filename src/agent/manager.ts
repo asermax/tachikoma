@@ -19,7 +19,7 @@ import { type ModelTier, ModelTiers } from "./models.ts";
 
 export interface AgentSessionSources {
   piFactories: ExtensionFactory[];
-  /** Factories bound into background task runs (opted in via `app.agent.use(f, { background: true })`). */
+  /** Factories bound into background task runs (scoped via `app.agent.use(f, { sessionScopes: [..., "background"] })`). */
   backgroundFactories: ExtensionFactory[];
   systemPromptBuilders: (() => string)[];
 }
@@ -46,7 +46,7 @@ export interface OpenSessionOptions {
   /**
    * Bind the registered background factories (their tools + resource sources) instead of no
    * factories. For autonomous background task runs that need a curated slice of the agent's
-   * capabilities (skills, git, projects, etc.) — see `app.agent.use(f, { background: true })`.
+   * capabilities (skills, git, projects, etc.) — see `app.agent.use(f, { sessionScopes: [..., "background"] })`.
    */
   bindBackgroundFactories?: boolean;
 }

@@ -126,14 +126,26 @@ export interface ChannelsApi {
   deliver(delivery: Delivery): void;
 }
 
+/** Session contexts a tool/resource factory can bind into. */
+export const SESSION_SCOPES = {
+  /** The main conversational session. */
+  main: "main",
+  /** Autonomous background task runs. */
+  background: "background",
+} as const;
+
+export type SessionScope = (typeof SESSION_SCOPES)[keyof typeof SESSION_SCOPES];
+
 export interface UseFactoryOptions {
   /**
-   * Also bind this factory into autonomous background task runs (default false).
-   * Use for tool/resource factories a background task legitimately needs (skills,
-   * git, projects, detached processes, notifications, task management); omit for
-   * interactive- or channel-only surfaces.
+   * Which session contexts this factory binds into (default `["main"]`). Each scope is
+   * independent: include `"main"` to bind the conversational session, `"background"` to
+   * bind autonomous task runs, both to bind both, or `"background"` alone for a factory only
+   * background runs should see. Binding is by membership, so an out-of-union scope binds
+   * nothing rather than throwing. Use `"background"` for tools a background task legitimately
+   * needs (skills, git, projects, detached processes, notifications, task management).
    */
-  background?: boolean;
+  sessionScopes?: SessionScope[];
 }
 
 export interface AgentApi {

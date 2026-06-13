@@ -43,7 +43,7 @@ export default defineExtension<NotificationsConfig>({
     app.agent.use(
       createNotifyToolFactory((event, payload) => app.events.emit(event, payload)),
       {
-        background: true,
+        sessionScopes: ["main", "background"],
       },
     );
   },

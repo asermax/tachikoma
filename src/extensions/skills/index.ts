@@ -55,7 +55,7 @@ export default defineExtension<SkillsConfig>({
 
         pi.registerTool(createDelegateTool({ discover, runner: app.agent.side, log: app.log }));
       },
-      { background: true },
+      { sessionScopes: ["main", "background"] },
     );
   },
 });

@@ -77,7 +77,9 @@ export default defineExtension<TasksConfig>({
       log: app.log,
     });
 
-    app.agent.use(createTaskToolsFactory({ repository, timezone, now }), { background: true });
+    app.agent.use(createTaskToolsFactory({ repository, timezone, now }), {
+      sessionScopes: ["main", "background"],
+    });
 
     // respond_to_task is conversational-only: a background run must never answer
     // another instance's waiting question, so it stays out of background toolsets.

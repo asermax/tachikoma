@@ -38,9 +38,9 @@ export default defineExtension<GitConfig>({
     );
 
     app.agent.use(createGitToolsFactory({ workspaceRoot, side: app.agent.side, log: app.log }), {
-      background: true,
+      sessionScopes: ["main", "background"],
     });
-    app.agent.use(createGitGuardrailFactory(app.log), { background: true });
+    app.agent.use(createGitGuardrailFactory(app.log), { sessionScopes: ["main", "background"] });
 
     app.sessions.registerProcessor(
       createGitProcessor({ workspaceRoot, side: app.agent.side, resolver }),

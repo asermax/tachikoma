@@ -6,7 +6,7 @@ import { join, resolve } from "node:path";
 import type { ExtensionAPI, ExtensionFactory } from "@earendil-works/pi-coding-agent";
 import { describe, expect, it, vi } from "vitest";
 
-import type { AppContext } from "../../src/extensions/api.ts";
+import type { AppContext, UseFactoryOptions } from "../../src/extensions/api.ts";
 import skills from "../../src/extensions/skills/index.ts";
 
 const repoSkillsDir = resolve(import.meta.dirname, "../../skills");
@@ -15,11 +15,11 @@ const setup = async (): Promise<{
   workspaceSkillsDir: string;
   on: ReturnType<typeof vi.fn>;
   registerTool: ReturnType<typeof vi.fn>;
-  useOptions: { background?: boolean } | undefined;
+  useOptions: UseFactoryOptions | undefined;
 }> => {
   const workspaceDir = await mkdtemp(join(tmpdir(), "tachi-skills-ext-"));
   let factory: ExtensionFactory | null = null;
-  let useOptions: { background?: boolean } | undefined;
+  let useOptions: UseFactoryOptions | undefined;
 
   const app = {
     extensionConfig: { enabled: true },
@@ -27,7 +27,7 @@ const setup = async (): Promise<{
     workspace: { resolve: (...segments: string[]) => join(workspaceDir, ...segments) },
     bootstrap: vi.fn(),
     agent: {
-      use: (registered: ExtensionFactory, options?: { background?: boolean }) => {
+      use: (registered: ExtensionFactory, options?: UseFactoryOptions) => {
         factory = registered;
         useOptions = options;
       },
@@ -78,6 +78,6 @@ describe("skills extension", () => {
   it("opts its factory into background task runs so background tasks get skills and delegation", async () => {
     const { useOptions } = await setup();
 
-    expect(useOptions?.background).toBe(true);
+    expect(useOptions?.sessionScopes).toContain("background");
   });
 });
