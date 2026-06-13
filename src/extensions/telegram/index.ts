@@ -47,7 +47,13 @@ export default defineExtension<TelegramConfig>({
 
     const bot = new Bot(botToken);
     const mediaDir = join(app.workspace.dataDir, "media");
-    const channel = new TelegramChannel(bot, { chatId, allowMedia, pushNotifications, mediaDir });
+    const channel = new TelegramChannel(bot, {
+      chatId,
+      allowMedia,
+      pushNotifications,
+      mediaDir,
+      stop: () => app.sessions.abortExchange(),
+    });
 
     app.bootstrap("media-dir", () => ensureMediaDir(mediaDir, app.log));
     app.channels.register(channel);

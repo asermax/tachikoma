@@ -14,14 +14,20 @@ import {
   resolveMedia,
 } from "./media.ts";
 import { Mutex } from "./mutex.ts";
-import { deliverText, sendChunked, startTyping } from "./sending.ts";
+import { deliverText, startTyping } from "./sending.ts";
+import { StreamRenderer } from "./streaming.ts";
 
 export interface TelegramChannelOptions {
   chatId: number;
   allowMedia: boolean;
   pushNotifications: boolean;
   mediaDir: string;
+  /** Abort the in-flight agent run — wired from sessions.abortExchange. */
+  stop: () => Promise<void>;
 }
+
+export const STOP_COMMAND = "/stop";
+export const STOP_ACKNOWLEDGEMENT = "⏹ Stopped.";
 
 export class TelegramChannel implements Channel {
   readonly name = "telegram";
@@ -32,6 +38,7 @@ export class TelegramChannel implements Channel {
   private runtime: ChannelRuntime | null = null;
   private lastInboundId: number | null = null;
   private lastOutboundId: number | null = null;
+  private activeRenderer: StreamRenderer | null = null;
 
   constructor(bot: Bot, options: TelegramChannelOptions) {
     this.bot = bot;
@@ -55,7 +62,7 @@ export class TelegramChannel implements Channel {
       if (ctx.chat.id !== this.options.chatId) return;
 
       if (ctx.message.text != null) {
-        this.handleText(ctx.message);
+        await this.handleText(ctx.message);
       } else {
         await this.handleMedia(ctx.message);
       }
@@ -109,13 +116,22 @@ export class TelegramChannel implements Channel {
 
     await this.mutex.run(async () => {
       const stopTyping = startTyping(this.bot.api, this.options.chatId, log);
-      let text = "";
+      const renderer = new StreamRenderer(this.bot.api, this.options.chatId, log);
+      this.activeRenderer = renderer;
 
       try {
         for await (const event of events) {
           switch (event.kind) {
             case "text":
-              text += event.text;
+              await renderer.appendText(event.text);
+              break;
+
+            case "tool-start":
+              await renderer.showTransient(`⚙ ${event.toolName}`);
+              break;
+
+            case "status":
+              await renderer.showTransient(event.text);
               break;
 
             case "error":
@@ -127,13 +143,11 @@ export class TelegramChannel implements Channel {
           }
         }
       } finally {
+        this.activeRenderer = null;
         stopTyping();
       }
 
-      if (text.trim().length > 0) {
-        const ids = await sendChunked(this.bot.api, this.options.chatId, text);
-        this.lastOutboundId = ids.at(-1) ?? this.lastOutboundId;
-      }
+      this.lastOutboundId = (await renderer.finalize()) ?? this.lastOutboundId;
     });
   }
 
@@ -153,16 +167,53 @@ export class TelegramChannel implements Channel {
     });
   }
 
+  status(text: string): void {
+    const renderer = this.activeRenderer;
+
+    if (renderer != null) {
+      void renderer
+        .showTransient(text)
+        .catch((error) => this.log().debug({ err: error }, "status rendering failed"));
+      return;
+    }
+
+    // No streaming message to surface the line in — show liveness via typing.
+    void this.bot.api
+      .sendChatAction(this.options.chatId, "typing")
+      .catch((error) => this.log().debug({ err: error }, "status typing action failed"));
+  }
+
   async stop(): Promise<void> {
     if (this.bot.isRunning()) await this.bot.stop();
   }
 
-  private handleText(message: Message): void {
+  private async handleText(message: Message): Promise<void> {
+    if (message.text?.trim() === STOP_COMMAND) {
+      this.lastInboundId = message.message_id;
+      await this.handleStop();
+      return;
+    }
+
     const inbound = mapTextMessage(message);
     if (inbound == null) return;
 
     this.lastInboundId = message.message_id;
     this.runtimeOrThrow().submit(inbound);
+  }
+
+  /** Abort the in-flight run instead of submitting — "/stop" never reaches the agent. */
+  private async handleStop(): Promise<void> {
+    const log = this.log();
+
+    try {
+      await this.options.stop();
+    } catch (error) {
+      log.warn({ err: error }, "exchange abort failed");
+    }
+
+    await this.bot.api
+      .sendMessage(this.options.chatId, STOP_ACKNOWLEDGEMENT)
+      .catch((error) => log.warn({ err: error }, "stop acknowledgement failed"));
   }
 
   private async handleMedia(message: Message): Promise<void> {

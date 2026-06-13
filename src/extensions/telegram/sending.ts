@@ -11,6 +11,10 @@ export interface SendMessageOptions {
   disable_notification?: boolean;
 }
 
+export interface EditMessageOptions {
+  parse_mode?: "Markdown";
+}
+
 /** Narrow grammY API surface the channel sends through — fakeable in tests. */
 export interface SendApi {
   sendMessage(
@@ -25,17 +29,32 @@ export interface SendApi {
     messageId: number,
   ): Promise<{ message_id: number }>;
   deleteMessage(chatId: number, messageId: number): Promise<unknown>;
+  editMessageText(
+    chatId: number,
+    messageId: number,
+    text: string,
+    other?: EditMessageOptions,
+  ): Promise<unknown>;
 }
 
-export const isMarkdownParseError = (error: unknown): boolean => {
-  if (typeof error !== "object" || error == null) return false;
+const errorDetail = (error: unknown): string => {
+  if (typeof error !== "object" || error == null) return "";
 
   const description = (error as { description?: unknown }).description;
-  const detail =
-    typeof description === "string" ? description : error instanceof Error ? error.message : "";
 
-  return /can't parse entities/i.test(detail);
+  return typeof description === "string"
+    ? description
+    : error instanceof Error
+      ? error.message
+      : "";
 };
+
+export const isMarkdownParseError = (error: unknown): boolean =>
+  /can't parse entities/i.test(errorDetail(error));
+
+/** Telegram rejects edits whose content matches the current message — benign. */
+export const isMessageNotModifiedError = (error: unknown): boolean =>
+  /message is not modified/i.test(errorDetail(error));
 
 /** Try Markdown first; on a Telegram entity-parse rejection resend as plain text. */
 export const sendWithMarkdownFallback = async (
@@ -54,6 +73,31 @@ export const sendWithMarkdownFallback = async (
 
     const sent = await api.sendMessage(chatId, text, base);
     return sent.message_id;
+  }
+};
+
+/**
+ * Edit a message trying Markdown first, falling back to plain text on a parse
+ * rejection. "Message is not modified" rejections are swallowed — the visible
+ * content already matches.
+ */
+export const editWithMarkdownFallback = async (
+  api: Pick<SendApi, "editMessageText">,
+  chatId: number,
+  messageId: number,
+  text: string,
+): Promise<void> => {
+  try {
+    await api.editMessageText(chatId, messageId, text, { parse_mode: "Markdown" });
+  } catch (error) {
+    if (isMessageNotModifiedError(error)) return;
+    if (!isMarkdownParseError(error)) throw error;
+
+    try {
+      await api.editMessageText(chatId, messageId, text);
+    } catch (fallbackError) {
+      if (!isMessageNotModifiedError(fallbackError)) throw fallbackError;
+    }
   }
 };
 
