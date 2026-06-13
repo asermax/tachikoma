@@ -24,12 +24,12 @@ export const parseSchedule = (
     );
   }
 
-  // getPattern() is undefined when croner parsed the input as a one-shot datetime.
-  if (probe.getPattern() != null) return { type: "cron", expression: raw };
+  // getOnce() is null when croner parsed the input as a recurring cron pattern.
+  const at = probe.getOnce();
 
-  const at = probe.nextRun(now);
+  if (at == null) return { type: "cron", expression: raw };
 
-  if (at == null) {
+  if (at <= now) {
     throw new ScheduleError(`One-shot schedule datetime must be in the future. Got: ${raw}`);
   }
 

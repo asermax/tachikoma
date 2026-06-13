@@ -19,13 +19,17 @@ export class Scheduler {
   }
 
   cron(name: string, pattern: string, fn: () => void | Promise<void>): ScheduledJob {
-    const run = this.guarded(name, fn);
+    const job = new Cron(
+      pattern,
+      { timezone: this.timezone, protect: true, catch: this.onError(name) },
+      fn,
+    );
 
-    const job = new Cron(pattern, { timezone: this.timezone, protect: true, catch: true }, run);
     const handle: ScheduledJob = {
       name,
       stop: () => job.stop(),
-      trigger: run,
+      // Manual triggers bypass overrun protection: an explicit trigger must never be silently skipped.
+      trigger: this.guarded(name, fn),
     };
 
     this.register(handle);
@@ -33,17 +37,26 @@ export class Scheduler {
   }
 
   every(name: string, seconds: number, fn: () => void | Promise<void>): ScheduledJob {
-    const guarded = this.guarded(name, fn);
-    const run = this.singleFlight(name, guarded);
-
-    const interval = setInterval(run, seconds * 1000);
-    interval.unref();
+    // A wildcard pattern with `interval` fires roughly every `seconds`; `protect`
+    // is croner's native single-flight, skipping a tick while the previous run is active.
+    const job = new Cron(
+      "* * * * * *",
+      {
+        timezone: this.timezone,
+        interval: seconds,
+        protect: () =>
+          this.log.debug({ job: name }, "scheduled job skipped — previous run still active"),
+        catch: this.onError(name),
+        unref: true,
+      },
+      fn,
+    );
 
     const handle: ScheduledJob = {
       name,
-      stop: () => clearInterval(interval),
-      // Manual triggers bypass single-flight: an explicit trigger must never be silently skipped.
-      trigger: guarded,
+      stop: () => job.stop(),
+      // Manual triggers bypass overrun protection: an explicit trigger must never be silently skipped.
+      trigger: this.guarded(name, fn),
     };
 
     this.register(handle);
@@ -60,31 +73,18 @@ export class Scheduler {
     this.jobs.set(job.name, job);
   }
 
+  private onError(name: string): (error: unknown) => void {
+    return (error) => this.log.error({ job: name, err: error }, "scheduled job failed");
+  }
+
+  // Manual-trigger wrapper: errors are logged here since this path bypasses
+  // croner's scheduled execution (and therefore its `catch` handler).
   private guarded(name: string, fn: () => void | Promise<void>): () => Promise<void> {
     return async () => {
       try {
         await fn();
       } catch (error) {
-        this.log.error({ job: name, err: error }, "scheduled job failed");
-      }
-    };
-  }
-
-  private singleFlight(name: string, fn: () => void | Promise<void>): () => Promise<void> {
-    let running = false;
-
-    return async () => {
-      if (running) {
-        this.log.debug({ job: name }, "scheduled job skipped — previous run still active");
-        return;
-      }
-
-      running = true;
-
-      try {
-        await fn();
-      } finally {
-        running = false;
+        this.onError(name)(error);
       }
     };
   }
