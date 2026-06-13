@@ -1,3 +1,4 @@
+#!/usr/bin/env node
 import { parseArgs } from "node:util";
 
 import { runApp } from "./app.ts";

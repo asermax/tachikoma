@@ -4,6 +4,16 @@ Tachikoma is a proactive personal assistant built on the [pi agent SDK](https://
 
 This is the TypeScript implementation. The core is deliberately thin — config, database, scheduler, channels, session orchestration, and an extension host — and **every feature is an extension**: memory, conversation boundary detection, skills, workflows, scheduled tasks, project tracking, git-versioned workspace, Telegram, detached process supervision, notifications, and external extension loading (out-of-tree extensions on the same contract, installable from git).
 
+## Install
+
+```bash
+npm i -g @asermax/tachikoma
+tachikoma           # start the agent (REPL channel)
+tachikoma -c telegram
+```
+
+Releases are published automatically: `just release` bumps the version and tags via commit-and-tag-version, then `git push --follow-tags` triggers the publish workflow. Maintainers must configure an `NPM_TOKEN` repository secret with publish access to the `@asermax` scope.
+
 ## Requirements
 
 - Node.js >= 22.19 (the project runs TypeScript sources directly via native type stripping)

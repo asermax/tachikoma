@@ -21,6 +21,9 @@ fmt:
 typecheck:
     pnpm tsc --noEmit
 
+build:
+    rm -rf dist && pnpm tsc -p tsconfig.build.json
+
 check: lint typecheck test
 
 release *args:

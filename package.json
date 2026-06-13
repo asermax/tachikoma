@@ -1,8 +1,28 @@
 {
-  "name": "tachikoma",
+  "name": "@asermax/tachikoma",
   "version": "0.1.0",
   "type": "module",
-  "private": true,
+  "bin": {
+    "tachikoma": "./dist/main.js"
+  },
+  "main": "./dist/main.js",
+  "exports": {
+    ".": "./dist/main.js"
+  },
+  "files": [
+    "dist",
+    "drizzle",
+    "skills",
+    "README.md"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/asermax/tachikoma.git"
+  },
+  "homepage": "https://github.com/asermax/tachikoma/tree/pi",
   "dependencies": {
     "@earendil-works/pi-agent-core": "0.79.1",
     "@earendil-works/pi-ai": "0.79.1",
