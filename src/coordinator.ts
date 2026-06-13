@@ -58,14 +58,35 @@ export class Coordinator {
   }
 
   submit(message: InboundMessage): void {
+    // Messages arriving mid-exchange steer the live run instead of waiting in line.
+    if (this.exchanging && this.active != null && message.metadata.origin !== "system") {
+      const session = this.active.session;
+
+      void session
+        .steer(renderPrompt(message))
+        .catch((error) => this.log.error({ err: error }, "steering failed — queueing instead"));
+      return;
+    }
+
     this.inbox.push(message);
     this.wake?.();
     this.wake = null;
   }
 
+  /** Abort the in-flight agent run, if any (user-initiated stop). */
+  async abortExchange(): Promise<void> {
+    await this.active?.session.abort();
+  }
+
   status(text: string): void {
     this.log.debug({ status: text }, "pipeline status");
     this.events.emit("status", { text });
+
+    try {
+      this.channel?.status?.(text);
+    } catch (error) {
+      this.log.debug({ err: error }, "channel status rendering failed");
+    }
   }
 
   deliver(delivery: Delivery): void {
@@ -357,12 +378,27 @@ export class Coordinator {
   private flushDeliveries(force: boolean): void {
     if (!force && this.exchanging) return;
 
-    const pending = this.heldDeliveries.splice(0);
+    // Stable sort: higher priority first, arrival order within a priority.
+    const pending = this.heldDeliveries
+      .splice(0)
+      .sort((a, b) => (b.priority ?? 0) - (a.priority ?? 0));
     for (const delivery of pending) void this.sendDelivery(delivery);
   }
 
   private async sendDelivery(delivery: Delivery): Promise<void> {
     try {
+      if (delivery.target === "agent") {
+        // Inject as a prompt the agent acts on; boundary middleware skips it.
+        this.submit({
+          text: delivery.text,
+          channel: this.channel?.name ?? "system",
+          receivedAt: new Date(),
+          media: [],
+          metadata: { ...(delivery.metadata ?? {}), origin: "system", boundary: "skip" },
+        });
+        return;
+      }
+
       await this.channel?.deliver(delivery);
     } catch (error) {
       this.log.error({ err: error }, "delivery failed");

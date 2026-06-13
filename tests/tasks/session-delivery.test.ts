@@ -46,6 +46,7 @@ describe("deliverSessionTasks", () => {
     expect(deliver).toHaveBeenCalledWith({
       text: "📋 Scheduled task: morning briefing\n\ngive me the briefing",
       gate: "idle",
+      target: "agent",
       maxHoldSeconds: 900,
       metadata: { kind: "session_task", instanceId: instance.id },
     });

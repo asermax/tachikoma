@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { readFile, writeFile } from "node:fs/promises";
 
 import { defineExtension } from "../api.ts";
@@ -50,8 +51,24 @@ export default defineExtension({
       user = await readOrCreate(app.workspace.resolve("USER.md"), USER_TEMPLATE);
     });
 
+    // Re-read on every session build so core-context updates from the previous
+    // session's post-processing apply without a restart; the bootstrap snapshot
+    // is only the fallback when a read fails mid-flight.
+    const fresh = (path: string, fallback: string): string => {
+      try {
+        return readFileSync(path, "utf8");
+      } catch {
+        return fallback;
+      }
+    };
+
     app.agent.systemPrompt(() =>
-      [BASE_PROMPT, soul, user, `Workspace root: ${app.workspace.root}`].join("\n\n"),
+      [
+        BASE_PROMPT,
+        fresh(app.workspace.resolve("SOUL.md"), soul),
+        fresh(app.workspace.resolve("USER.md"), user),
+        `Workspace root: ${app.workspace.root}`,
+      ].join("\n\n"),
     );
   },
 });

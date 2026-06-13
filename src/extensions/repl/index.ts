@@ -83,6 +83,10 @@ class ReplChannel implements Channel {
     this.readline?.prompt();
   }
 
+  status(text: string): void {
+    process.stdout.write(`${DIM}· ${text}${RESET}\n`);
+  }
+
   async stop(): Promise<void> {
     this.readline?.close();
     this.readline = null;

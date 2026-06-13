@@ -91,6 +91,8 @@ export interface SessionsApi {
   close(): Promise<void>;
   /** Close the active session only when no exchange is in flight; returns whether it closed. */
   closeIfIdle(): Promise<boolean>;
+  /** Abort the in-flight agent run, if any (user-initiated stop). */
+  abortExchange(): Promise<void>;
   onOpen(hook: (session: SessionRecord) => void | Promise<void>): void;
   onExchange(processor: ExchangeProcessor): void;
   registerProcessor(processor: PostProcessor): void;

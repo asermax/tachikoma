@@ -1,4 +1,5 @@
 import { StringEnum } from "@earendil-works/pi-ai";
+import { defineTool } from "@earendil-works/pi-coding-agent";
 import { type Static, Type } from "typebox";
 
 import type { SideRunner } from "../../agent/side-run.ts";
@@ -147,11 +148,32 @@ export const executeBackgroundInstance = async (
     const system = buildSystemPrompt(now(), timezone);
     let prompt = instance.prompt;
 
+    const notifyTool = defineTool({
+      name: "notify_user",
+      label: "Notify User",
+      description:
+        "Send the user a notification about something important discovered during this background task.",
+      parameters: Type.Object({
+        text: Type.String({ description: "Notification text" }),
+        severity: StringEnum(["info", "warning", "urgent"] as const, { default: "info" }),
+      }),
+      execute: async (_id, params) => {
+        deliver({
+          text: `${params.severity === "urgent" ? "🚨 " : ""}${source}: ${params.text}`,
+          gate: params.severity === "urgent" ? "immediate" : "idle",
+          priority: params.severity === "urgent" ? 10 : 0,
+        });
+
+        return { content: [{ type: "text", text: "Notification queued." }], details: {} };
+      },
+    });
+
     for (let iteration = 1; iteration <= maxIterations; iteration += 1) {
       const { text } = await side.run({
         system,
         prompt,
         tools: BACKGROUND_TOOLS,
+        customTools: [notifyTool],
         tier: "processor",
       });
 

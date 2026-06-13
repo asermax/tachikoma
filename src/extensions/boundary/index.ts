@@ -39,6 +39,9 @@ export default defineExtension<BoundaryConfig>({
     app.sessions.onExchange(createSummaryProcessor(app.agent.side, app.sessions, app.log));
 
     app.inbound.use(async (message, context, next) => {
+      // System-originated injections (session tasks, notices) never shift topics.
+      if (message.metadata.boundary === "skip") return next();
+
       const active = context.session;
       const candidates = app.sessions
         .listResumable()

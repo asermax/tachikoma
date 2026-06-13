@@ -42,6 +42,8 @@ export const deliverSessionTasks = ({
       deliver({
         text: renderSessionTaskText(instance, definition),
         gate: "idle",
+        // The agent acts on the task inside the session; the user sees its response.
+        target: "agent",
         maxHoldSeconds,
         metadata: { kind: "session_task", instanceId: instance.id },
       });

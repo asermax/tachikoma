@@ -9,6 +9,7 @@ import {
   ModelRegistry,
   SessionManager,
   SettingsManager,
+  type ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
 
 import type { Config } from "../config/schema.ts";
@@ -29,6 +30,7 @@ export interface OpenSessionOptions {
   /** Skip registered extension factories and system prompt builders (headless side work). */
   bare?: boolean;
   tools?: string[];
+  customTools?: ToolDefinition[];
   systemPrompt?: string;
   tier?: ModelTier;
 }
@@ -103,6 +105,7 @@ export class AgentManager {
       ...(configured != null ? { model: configured.model } : {}),
       ...(configured?.thinkingLevel != null ? { thinkingLevel: configured.thinkingLevel } : {}),
       ...(options.tools != null ? { tools: options.tools } : {}),
+      ...(options.customTools != null ? { customTools: options.customTools } : {}),
       resourceLoader: loader,
       sessionManager,
       settingsManager: this.settingsManager,

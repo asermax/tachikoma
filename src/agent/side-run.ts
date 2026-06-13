@@ -1,4 +1,5 @@
 import { completeSimple, type Message } from "@earendil-works/pi-ai";
+import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 import type { Static, TSchema } from "typebox";
 
 import { parseWithSchema } from "../config/parse.ts";
@@ -24,6 +25,8 @@ export interface HeadlessRunOptions {
   system?: string;
   /** pi built-in tool names the run may use (e.g. ["read", "grep"]). Default: none. */
   tools?: string[];
+  /** Extra in-process tools for this run (their names are enabled automatically). */
+  customTools?: ToolDefinition[];
   tier?: ModelTier;
 }
 
@@ -95,13 +98,15 @@ export class SideRunner {
     prompt,
     system,
     tools = [],
+    customTools,
     tier = "processor",
   }: HeadlessRunOptions): Promise<HeadlessRunResult> {
     const session = await this.manager.open({
       inMemory: true,
       bare: true,
       tier,
-      tools,
+      tools: [...tools, ...(customTools ?? []).map((tool) => tool.name)],
+      ...(customTools != null ? { customTools } : {}),
       ...(system != null ? { systemPrompt: system } : {}),
     });
 

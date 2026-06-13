@@ -22,6 +22,10 @@ export type DeliveryGate = keyof typeof DELIVERY_GATES;
 export interface Delivery {
   text: string;
   gate?: DeliveryGate;
+  /** "user" renders through the channel; "agent" injects a prompt into the session. */
+  target?: "user" | "agent";
+  /** Higher delivers first when several held items flush together. Default 0. */
+  priority?: number;
   maxHoldSeconds?: number;
   metadata?: Record<string, unknown>;
 }
@@ -36,6 +40,9 @@ export interface Channel {
 
   /** Render a background-originated item (task results, notifications). */
   deliver(delivery: Delivery): Promise<void>;
+
+  /** Render a transient pipeline status line ("Gathering context…"). Optional. */
+  status?(text: string): void;
 
   stop(): Promise<void>;
 }
