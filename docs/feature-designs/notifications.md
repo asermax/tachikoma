@@ -24,7 +24,7 @@ Multiple extensions need to surface out-of-band information to the user (backgro
 
 ## Design Overview
 
-`index.ts` wires a `NotificationRouter` to the `notify` app event and registers the `notify_user` tool factory. The router parses each payload best-effort (`payload.ts`), then runs it through an in-memory dedup guard: an identical `(source + text)` notice seen within `dedupTtlSeconds` is dropped before any routing. Surviving urgent notices are formatted and delivered with `gate: "immediate"`, everything else is pushed onto a pending list with an unref'd flush timer. When the flush window elapses, the accumulated notices go out as one delivery — a single formatted notification or a digest (`format.ts`) — with `gate: "idle"` and the configured `maxHoldSeconds`.
+`index.ts` wires a `NotificationRouter` to the `notify` app event and registers the `notify_user` tool factory. The router parses each payload best-effort (`payload.ts`), then runs it through an in-memory dedup guard: an identical `(source + text)` notice seen within `dedupTtlSeconds` is dropped before any routing. Surviving urgent notices are formatted and delivered with `gate: "immediate"`, everything else is pushed onto a pending list with an unref'd flush timer. When the flush window elapses, the accumulated notices go out as one delivery — a single formatted notification or a digest (`format.ts`) — with `gate: "idle"` and the configured `maxHoldSeconds`. Every delivery also carries a `priority` mapped from severity (`SEVERITY_PRIORITY`: urgent 3, warning 2, info 1; a digest takes the max over its items), so the coordinator's stable priority sort surfaces urgent notices ahead of lower-severity ones when several flush together.
 
 ## Components
 
@@ -34,7 +34,7 @@ Multiple extensions need to surface out-of-band information to the user (backgro
 |-----------|----------------|---------------|
 | `src/extensions/notifications/index.ts` | Wiring: router construction, event subscription, tool registration | Router takes `deliver` as a plain function so tests run without an app |
 | `src/extensions/notifications/payload.ts` | Event name constant, severity map, `parseNotifyPayload` | Duck-typed parsing: `text` required, severity/source defaulted — never throws |
-| `src/extensions/notifications/router.ts` | Dedup guard, severity routing, flush-window batching | Single pending list + one unref'd `setTimeout`; `flush()` is idempotent and safe to call empty; dedup state is an in-memory `Map<key, firstSeenMs>` pruned opportunistically |
+| `src/extensions/notifications/router.ts` | Dedup guard, severity routing, flush-window batching, severity → delivery priority | Single pending list + one unref'd `setTimeout`; `flush()` is idempotent and safe to call empty; dedup state is an in-memory `Map<key, firstSeenMs>` pruned opportunistically; `SEVERITY_PRIORITY` const map sets each delivery's `priority` (digest = max over items) |
 | `src/extensions/notifications/format.ts` | Single-notification and digest text rendering | Source/time header block prefixes every notice; timestamps rendered in UTC |
 | `src/extensions/notifications/tools.ts` | `notify_user` agent tool | Emits the same `notify` event instead of delivering directly |
 
@@ -52,12 +52,13 @@ Multiple extensions need to surface out-of-band information to the user (backgro
 
 ### Two-stage delivery: router batches, coordinator gates
 
-**Choice**: The router owns a short flush window (default 30 s) that collapses bursts into one message and chooses the digest format; the coordinator's delivery gate owns idle holding and max-hold force flush. The router merely forwards `gate` and `maxHoldSeconds`.
-**Why**: Digest formation needs notification semantics (severity, source, item count) that the generic `Delivery` type does not carry; gating needs conversation state (exchange in flight, active session) that extensions cannot see. Splitting at the `Delivery` boundary keeps both sides simple instead of combining both roles in one buffer.
-**Alternatives Considered**: Delivering each notice individually and letting the coordinator batch (it has no format knowledge); a full priority-buffer extension with ordering and preemption.
+**Choice**: The router owns a short flush window (default 30 s) that collapses bursts into one message, chooses the digest format, and stamps a severity-derived `priority`; the coordinator's delivery gate owns idle holding, max-hold force flush, and the stable priority sort across all held items. The router forwards `gate`, `maxHoldSeconds`, and `priority`.
+**Why**: Digest formation needs notification semantics (severity, source, item count) that the generic `Delivery` type does not carry; gating and cross-item ordering need conversation state (exchange in flight, active session) that extensions cannot see. Splitting at the `Delivery` boundary keeps both sides simple — the router maps severity to a numeric `priority`, the coordinator sorts on it — instead of combining both roles in one buffer.
+**Alternatives Considered**: Delivering each notice individually and letting the coordinator batch (it has no format knowledge); a full priority-buffer extension with its own ordering and preemption subsystem (rejected — ordering is a stable sort on `Delivery.priority`, not a subsystem).
 **Consequences**:
-- Pro: One digest per burst instead of a message per notice; gate logic stays in one place
-- Con: No cross-type priority ordering or preemption — notifications and session tasks are held independently and flushed in arrival order by the coordinator
+- Pro: One digest per burst instead of a message per notice; gate and ordering logic stay in one place
+- Pro: Severity participates in flush ordering — urgent notices lead warnings, which lead info, when held items flush together; cross-type deliveries (e.g. session tasks) order by the same `priority` field
+- Con: No preemption — a held lower-priority item already mid-delivery is not interrupted; ordering applies within a flush batch
 - Con: Worst-case latency for a non-urgent notice is flush window + idle hold (bounded by `maxHoldSeconds`)
 
 ### TTL dedup guard on `(source + text)`
@@ -90,6 +91,12 @@ Multiple extensions need to surface out-of-band information to the user (backgro
 **Given**: An `info` notice is pending in the flush window
 **When**: An `urgent` payload arrives
 **Then**: The urgent notice is delivered immediately (`gate: "immediate"`), even mid-exchange; the pending `info` notice flushes later on its own timer as an idle-gated delivery.
+
+### Scenario: mixed-severity notices flush together
+
+**Given**: An `info` and a `warning` notice are held by the coordinator, then an `urgent` notice is also held (e.g. its immediate path was gated mid-exchange alongside them)
+**When**: The coordinator flushes the held batch
+**Then**: The urgent delivery (priority 3) is sent first, the warning (2) next, the info (1) last; two items of the same priority keep their arrival order.
 
 ### Scenario: producer re-emits the same notice
 

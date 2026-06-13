@@ -26,6 +26,7 @@ A `notify_user` tool lets the agent itself emit notifications through the same p
 | R5 | A flush with a single item is formatted as one notification with a source/time header; multiple items become one digest enumerating each item with its severity and source |
 | R6 | The `notify_user` tool lets the agent emit a notification (text, optional title and severity, default `info`); the payload is emitted on the `notify` event with source `agent`, and empty text is rejected |
 | R7 | A TTL dedup guard suppresses a notification whose `(source + text)` key was already seen within `dedupTtlSeconds` (default 60); suppression applies before severity routing (urgent included), is logged at info, and expired keys are pruned opportunistically |
+| R8 | Every delivery carries a `priority` derived from severity (`urgent` highest, then `warning`, then `info`) so the conversation loop orders notices ahead of lower-severity ones — and ahead of unprioritized deliveries (default 0) — when several flush together; a digest takes the highest priority among its items |
 
 ## Behaviors
 
@@ -55,6 +56,15 @@ A producer (or the agent) re-emitting the same notice within the TTL window must
 - Given an identical notice arrives after the window has elapsed, then it is delivered normally
 - Given a notice with the same source but different text (or vice versa), then it is delivered normally
 - Given suppression applies to all severities — an `urgent` repeat within the window is also dropped
+
+### Priority Ordering (R8)
+
+Severity determines the delivery `priority` so the conversation loop's flush surfaces important notices first.
+
+**Acceptance Criteria**:
+- Given an `urgent` notice and an `info` notice held in the same flush, when the conversation loop flushes, then the urgent one is delivered ahead of the info one
+- Given a digest of mixed-severity items, when it is delivered, then its `priority` is the highest severity among its items
+- Given two notices of the same severity, when they flush together, then they keep their arrival order (the loop's sort is stable)
 
 ### Payload Tolerance (R0, R1)
 

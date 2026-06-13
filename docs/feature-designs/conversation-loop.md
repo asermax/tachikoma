@@ -108,14 +108,15 @@ Context reaches the agent through a host-owned pi extension factory (`hostFactor
 
 ### Coordinator-held delivery gating instead of a priority buffer
 
-**Choice**: `deliver()` applies the gate inline — `immediate` sends now; `idle` holds in a FIFO array flushed when the in-flight exchange ends, with optional per-item `maxHoldSeconds` force-flush timers.
-**Why**: A full priority buffer (priorities, digests, shutdown flush) is the most complex way to do delivery; the observable requirement is just "don't interleave with an active exchange, never hold forever". The coordinator already knows `exchanging`/`active`, so gating lives where the knowledge is.
+**Choice**: `deliver()` applies the gate inline — `immediate` sends now; `idle` holds in an array flushed when the in-flight exchange ends, with optional per-item `maxHoldSeconds` force-flush timers. A flush sorts held items by descending `Delivery.priority` (default 0) with a stable comparator, so higher-priority items lead and same-priority items keep arrival order.
+**Why**: A full priority buffer (a separate subsystem with digests and preemption) is the most complex way to do delivery; the observable requirement is just "don't interleave with an active exchange, order by importance within a flush, never hold forever". The coordinator already knows `exchanging`/`active`, so gating — and the cheap priority sort over the held array — lives where the knowledge is. Producers that care about ordering (e.g. the notifications router mapping severity → priority) set `priority` on the `Delivery`; everything else defaults to 0 and flushes in arrival order.
 **Alternatives Considered**:
-- A priority-buffer extension: deferred until notification volume justifies ordering and digests
+- A separate priority-buffer extension: rejected — ordering is a one-line stable sort over the held array, not worth a subsystem
 
 **Consequences**:
 - Pro: ~20 lines, no extra state machine; channels only implement `deliver()`
-- Con: no priority ordering; a max-hold expiry flushes everything, possibly mid-exchange
+- Pro: within a flush, urgent items lead lower-severity ones via the stable priority sort
+- Con: a max-hold expiry flushes everything, possibly mid-exchange
 - Con: items held while a session is open but quiet wait for the next exchange end (or max-hold) — session close does not flush
 
 ## System Behavior

@@ -2,7 +2,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { EventBus } from "../../src/events.ts";
 import { NOTIFY_EVENT, parseNotifyPayload } from "../../src/extensions/notifications/payload.ts";
-import { NotificationRouter } from "../../src/extensions/notifications/router.ts";
+import {
+  NotificationRouter,
+  SEVERITY_PRIORITY,
+} from "../../src/extensions/notifications/router.ts";
 import type { Logger } from "../../src/log.ts";
 
 const fakeLog = {
@@ -53,6 +56,7 @@ describe("NotificationRouter", () => {
     expect(deliver).toHaveBeenCalledExactlyOnceWith({
       text: "--- Notification ---\nSource: monitor\nTime: 2026-06-12 10:00 UTC\n\nserver down",
       gate: "immediate",
+      priority: 3,
     });
   });
 
@@ -75,6 +79,7 @@ describe("NotificationRouter", () => {
       text: "--- Notification ---\nSource: ci\nTime: 2026-06-12 10:00 UTC\n\nBuild finished\n\nall green",
       gate: "idle",
       maxHoldSeconds: MAX_HOLD_SECONDS,
+      priority: 1,
     });
   });
 
@@ -87,9 +92,11 @@ describe("NotificationRouter", () => {
 
     expect(deliver).toHaveBeenCalledTimes(1);
 
-    const { text, gate, maxHoldSeconds } = deliver.mock.calls[0]?.[0] ?? {};
+    const { text, gate, maxHoldSeconds, priority } = deliver.mock.calls[0]?.[0] ?? {};
     expect(gate).toBe("idle");
     expect(maxHoldSeconds).toBe(MAX_HOLD_SECONDS);
+    // The digest inherits the highest severity among its items (warning here).
+    expect(priority).toBe(SEVERITY_PRIORITY.warning);
     expect(text).toContain("--- Notifications digest ---");
     expect(text).toContain("— Item 1 (info, source: ci) —\nbuild finished");
     expect(text).toContain("— Item 2 (warning, source: monitor) —\ndisk almost full");

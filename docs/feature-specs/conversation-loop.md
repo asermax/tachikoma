@@ -33,7 +33,7 @@ The loop lives in `src/coordinator.ts`, with persistence in `src/sessions/regist
 | R11 | On startup, sessions left open by a previous run are closed and post-processed (dangling recovery) |
 | R12 | Resuming closes the current session, reopens the target record (`closedAt` cleared, `lastResumedAt` set), and opens a fresh pi session from the stored transcript file |
 | R13 | `closeIfIdle()` closes the active session only when no exchange is in flight (returning whether it closed), so time-based policies in extensions can never dispose a streaming session |
-| R14 | Background deliveries gated `immediate` send at once; `idle`-gated deliveries (the default) are held while an exchange is in flight or a session is active, then flushed when the in-flight exchange completes or `maxHoldSeconds` expires |
+| R14 | Background deliveries gated `immediate` send at once; `idle`-gated deliveries (the default) are held while an exchange is in flight or a session is active, then flushed when the in-flight exchange completes or `maxHoldSeconds` expires. A flush orders held items by descending `priority` (default 0) with a stable sort, so higher-priority items lead and same-priority items keep arrival order |
 | R15 | `status(text)` surfaces pipeline progress as `status` events on the app event bus; the coordinator emits per-provider and per-processor status lines |
 | R16 | A message submitted while an exchange is in flight (with an active session and non-system origin) is routed into the live run via the pi session's `steer()` instead of being queued; a `/queue ` prefix opts out — the prefix is stripped, the message is tagged `queued` and waits in the inbox for the next exchange. A `steer()` failure is logged and the message dropped. `abortExchange()` aborts the in-flight run on request |
 
@@ -129,7 +129,7 @@ Background-originated output (`app.channels.deliver`) is gated so it lands at co
 - Given a delivery with `gate: "immediate"`, when it is submitted, then `channel.deliver()` is called right away, even mid-exchange
 - Given an idle-gated delivery while no exchange is in flight and no session is active, when it is submitted, then it is delivered immediately
 - Given an idle-gated delivery while an exchange is in flight or a session is active, when it is submitted, then it is held
-- Given held deliveries, when the in-flight exchange completes, then they are flushed in order
+- Given held deliveries, when the in-flight exchange completes, then they are flushed ordered by descending `priority`; items of equal priority keep their arrival order (stable sort)
 - Given a held delivery with `maxHoldSeconds`, when the hold timer expires, then all held deliveries are force-flushed even mid-exchange
 - Given `channel.deliver()` throws, when a delivery is sent, then the error is logged; other deliveries are unaffected
 
