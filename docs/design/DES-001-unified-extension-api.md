@@ -66,10 +66,10 @@ Session factories receive pi's native `ExtensionAPI` — no wrapping, no renamin
 | `app.sessions` | session registry access + lifecycle hooks: `onOpen`, `onExchange`, `registerProcessor` (post-processing), `current()`, `close()`, `openNew()`, `resume(id)` |
 | `app.channels` | `register(channel)` for channel extensions; `deliver(item, { gate: "idle" \| "immediate", maxHoldSeconds })` for background-originated output |
 | `app.agent` | `use(factory)` (pi extension factories), `provideContext(provider)` (pre-prompt context blocks), `models` (tier lookup: agent/searcher/processor/classifier), `run(options)` (headless side sessions for extraction/background work) |
-| `app.bootstrap(name, hook)` | ordered, idempotent startup hooks (DES-003 carried over) |
+| `app.bootstrap(name, hook)` | ordered, idempotent startup hooks |
 | `app.status(text)` | progress line surfaced through the active channel during processing |
 
-### Pipelines preserved from the Python architecture
+### Pipelines
 
 - **Context providers** (`app.agent.provideContext`): before each prompt the coordinator runs all providers in parallel with error isolation, then injects the combined result as a single tagged context message via pi's `before_agent_start`. Providers returning `null` contribute nothing.
 - **Exchange processors** (`app.sessions.onExchange`): run after every completed prompt cycle (rolling summary, last-exchange tracking). Parallel, error-isolated.

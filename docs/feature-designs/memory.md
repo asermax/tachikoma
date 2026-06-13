@@ -7,11 +7,11 @@
 
 ## Purpose
 
-Explains how long-term memory is rebuilt on pi primitives: transcript re-reading plus headless side runs instead of the Python stack's SDK session forking, MCP tool servers, and scoped permissions.
+Explains how long-term memory is built on pi primitives: transcript re-reading plus headless side runs.
 
 ## Problem Context
 
-The Python implementation extracted memories by forking the live Claude SDK session and constraining the fork with permission rules and MCP tools. pi offers none of that: sessions are in-process JSONL trees, there is no MCP, and tool scoping is by tool list only (see `docs/reference/pi-sdk-notes.md`). Memory extraction therefore has to work from the persisted transcript and express all policy — store routing, deduplication, consolidation, validation — in prompts executed by ephemeral headless agents.
+pi sessions are in-process JSONL trees, there is no MCP, and tool scoping is by tool list only (see `docs/reference/pi-sdk-notes.md`) — there is no session-forking-with-scoped-permissions mechanism to lean on. Memory extraction therefore has to work from the persisted transcript and express all policy — store routing, deduplication, consolidation, validation — in prompts executed by ephemeral headless agents.
 
 **Constraints:**
 - Headless runs (`SideRunner.run`) get pi built-in file tools only; there is no delete tool and no per-directory write enforcement
@@ -56,7 +56,7 @@ Each extraction renders the transcript to role-prefixed text, composes the store
 
 ## Key Decisions
 
-### Transcript re-read plus headless run replaces session forking
+### Transcript re-read plus headless run instead of session forking
 
 **Choice**: Extraction processors read the persisted pi JSONL (`loadConversation`), render user/assistant text capped at `maxTranscriptChars` with tail priority, and run an ephemeral in-memory pi session (`app.agent.side.run`) with file tools.
 **Why**: This is pi's documented post-processing pattern (open the transcript read-only, run one-shot extraction). Forking the live session is unnecessary — the extraction agent needs the conversation content, not the conversational context — and an ephemeral session leaves nothing on disk and binds no Tachikoma extensions.
@@ -85,7 +85,7 @@ Each extraction renders the transcript to role-prefixed text, composes the store
 ### Static index injection instead of retrieval
 
 **Choice**: A context provider injects the memory layout description plus the parsed facts/preferences `MEMORY.md` indexes on every message; the agent greps/reads memory files on demand. No similarity search, no per-message retrieval call.
-**Why**: Indexes are small and always relevant; pushing file discovery to the agent's own tools avoids a retrieval subsystem and mirrors the proven Python static-index approach. Episodic files are date-organized and addressed by the layout description alone.
+**Why**: Indexes are small and always relevant; pushing file discovery to the agent's own tools avoids a retrieval subsystem entirely. Episodic files are date-organized and addressed by the layout description alone.
 **Alternatives Considered**:
 - Per-message LLM retrieval/selection: adds latency and a failure mode to every message for marginal gain at current store sizes
 - Inlining full memory contents: blows up the context window as the store grows
@@ -100,7 +100,7 @@ Each extraction renders the transcript to role-prefixed text, composes the store
 **Choice**: Store policy (routing, dedup, validation, consolidation, index upkeep, scope) is encoded as module-level prompt constants in `prompts.ts`, composed per store in `STORE_PROMPTS` and per maintenance tick in `maintenanceSystemPrompt`.
 **Why**: The same authority hierarchy, classification examples, and index rules apply across extraction and maintenance; shared constants keep the stores' behavior consistent and reviewable as text, with `$WORKSPACE`/`{date}` substitution as the only templating.
 **Alternatives Considered**:
-- Per-store monolithic prompts: drift between stores was the observed failure mode in the Python project
+- Per-store monolithic prompts: invite policy drift between stores
 
 **Consequences**:
 - Pro: changing a policy (e.g. the authority order) is a one-line diff applying everywhere
@@ -110,7 +110,7 @@ Each extraction renders the transcript to role-prefixed text, composes the store
 ### Staggered cron schedules instead of a shared schedule with a semaphore
 
 **Choice**: Each store's maintenance is an independently scheduled cron (`0 3`, `20 3`, `40 3` by default), and the weekday/Sunday index strategy is decided by an injectable clock at tick time.
-**Why**: The core scheduler has named, overlap-protected jobs but no priority semaphore (unlike the Python scheduler); staggering by 20 minutes achieves the same "don't pile up three headless agent runs" goal with zero new machinery.
+**Why**: The core scheduler has named, overlap-protected jobs but no priority semaphore; staggering by 20 minutes achieves the "don't pile up three headless agent runs" goal with zero new machinery.
 **Alternatives Considered**:
 - One cron fanning out sequentially: a single failure or hang stalls the remaining stores; per-job overlap protection is lost
 

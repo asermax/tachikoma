@@ -6,7 +6,7 @@ Accepted
 
 ## Context
 
-The Python repo established testing conventions (pytest, mirrored structure, AC traceability). This document adapts them to this repo's actual stack: vitest running TypeScript sources directly, structural fakes instead of patch-based mocking, and real SQLite/git/process integration in temp directories. Tests are part of the quality gates — `just check` runs Biome, `tsc --noEmit`, and `vitest run`.
+This document establishes the testing conventions for this repo's stack: vitest running TypeScript sources directly, a mirrored test structure with AC traceability, structural fakes instead of patch-based mocking, and real SQLite/git/process integration in temp directories. Tests are part of the quality gates — `just check` runs Biome, `tsc --noEmit`, and `vitest run`.
 
 ## Pattern
 

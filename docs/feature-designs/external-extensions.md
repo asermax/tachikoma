@@ -11,7 +11,7 @@ Explain how out-of-tree extensibility works on the pi stack: why third-party cod
 
 ## Problem Context
 
-The Python codebase grew a dedicated plugin system: `tachikoma-plugin.toml` manifests, namespaced skill registration, typed manifest config, per-contribution discovery (hooks, events, context providers, post-processors), version tracking, and runtime install with registry refresh. On this stack that machinery is unnecessary: DES-001 makes *every* feature an extension, so out-of-tree loading reduces to "import a `defineExtension` module and hand it to the host". The `external` extension is that bridge — and is itself just another extension.
+A dedicated plugin system would mean manifests, namespaced skill registration, typed manifest config, per-contribution discovery (hooks, events, context providers, post-processors), version tracking, and runtime install with registry refresh. On this stack that machinery is unnecessary: DES-001 makes *every* feature an extension, so out-of-tree loading reduces to "import a `defineExtension` module and hand it to the host". The `external` extension is that bridge — and is itself just another extension.
 
 **Constraints:**
 - DES-001: one extension contract for first- and third-party code; third-party extensions use `app.state` for persistence (no migration access)
@@ -47,17 +47,17 @@ At setup, `index.ts` builds the candidate set: configured `sources` (home-expand
 
 **Choice**: Third-party extensions are ordinary `defineExtension` modules — the same shape as `src/extensions/<name>/index.ts` in-tree. Validation checks only that shape (`name`, `setup`, optional `configSchema`); there is no manifest file, no contribution declarations, no namespacing layer.
 **Why**: DES-001 already gives extensions everything the plugin system provided through bespoke manifest sections — config (`configSchema` + `[extensions.<name>]`), startup hooks (`app.bootstrap`), context providers (`app.agent.provideContext`), post-processors (`app.sessions.registerProcessor`), events (`app.events`), tools (`app.agent.use`). A second declaration format would duplicate that surface and drift from it.
-**Alternatives Considered**: Porting the Python manifest system (rejected: parallel API to maintain); pi's own `packages`/`extensions` settings (rejected: those load *pi* session-scoped extensions only, not process-scoped Tachikoma features).
+**Alternatives Considered**: A manifest-based plugin system (rejected: parallel API to maintain); pi's own `packages`/`extensions` settings (rejected: those load *pi* session-scoped extensions only, not process-scoped Tachikoma features).
 **Consequences**:
 - Pro: One authoring story — DES-002 applies verbatim to third-party authors; reading any first-party extension teaches the format
 - Pro: Third-party config is validated exactly like first-party config
-- Con: Capabilities gated by manifest declarations in Python (e.g. skill-only plugins) now get the full AppContext — trust is all-or-nothing
-- Con: Python-style namespacing (`<alias>:<skill>`) is gone; name collisions between extensions are not mediated
+- Con: There is no capability gating (e.g. skill-only plugins) — every extension gets the full AppContext, so trust is all-or-nothing
+- Con: There is no namespacing (`<alias>:<skill>`-style); name collisions between extensions are not mediated
 
 ### Restart-to-apply lifecycle instead of runtime install
 
 **Choice**: `install_extension`/`update_extension`/`uninstall_extension` only mutate records and files on disk; the loaded extension set changes on the next startup. Tool responses state this explicitly.
-**Why**: Extension `setup(app)` registers process-scoped services — scheduler jobs, bootstrap hooks, processors, session factories — and the host has no unregister protocol. Runtime swap would need teardown bookkeeping for every AppContext service (the bulk of the Python plugin system's update/re-registration complexity). Eager validation at install time (`loadExtensionModule` before persisting) keeps the failure visible in the tool call rather than at the next boot.
+**Why**: Extension `setup(app)` registers process-scoped services — scheduler jobs, bootstrap hooks, processors, session factories — and the host has no unregister protocol. Runtime swap would need teardown bookkeeping for every AppContext service. Eager validation at install time (`loadExtensionModule` before persisting) keeps the failure visible in the tool call rather than at the next boot.
 **Consequences**:
 - Pro: No partial-registration states; startup is the single composition point
 - Pro: Install errors surface immediately to the agent, with clone cleanup on failure
@@ -66,7 +66,7 @@ At setup, `index.ts` builds the candidate set: configured `sources` (home-expand
 ### Install records in KV state, not in the user's config file
 
 **Choice**: Agent-driven installs persist as a `Record<alias, InstallRecord>` under the `installs` key of the extension's namespaced `app.state`; the `[extensions.external].sources` config list stays user-owned and read-only.
-**Why**: Writing config.toml from a tool (the Python approach) makes the agent edit a user-owned file, with comment/format preservation problems. KV state is the DES-001 home for exactly this kind of structured-but-small extension state, and keeps the two provenances (user-declared vs agent-installed) separable.
+**Why**: Writing config.toml from a tool makes the agent edit a user-owned file, with comment/format preservation problems. KV state is the DES-001 home for exactly this kind of structured-but-small extension state, and keeps the two provenances (user-declared vs agent-installed) separable.
 **Consequences**:
 - Pro: `config.toml` is never machine-mutated; uninstall cannot corrupt user config
 - Pro: `list_installed_extensions` distinguishes agent installs naturally
@@ -75,7 +75,7 @@ At setup, `index.ts` builds the candidate set: configured `sources` (home-expand
 ### Source kind inferred from URL shape, no ref pinning
 
 **Choice**: `isGitSource` classifies by pattern (`https?://`, `git@`, `ssh://`, `file://`, or `.git` suffix); git sources are shallow of ceremony — plain `git clone`, updated with `git pull --ff-only` on the default branch. Everything else is a local path loaded in place.
-**Why**: Covers the practical cases with one regex and two git commands. The Python system's refs, commit-SHA version tracking, daily `ls-remote` checks, and URL-archive sources bought precision this stage of the rewrite does not need.
+**Why**: Covers the practical cases with one regex and two git commands. Refs, commit-SHA version tracking, daily `ls-remote` checks, and URL-archive sources would buy precision this stage of the project does not need.
 **Consequences**:
 - Pro: Minimal surface; `--ff-only` prevents silent merge states in clones
 - Con: No branch/tag selection, no update notifications, no integrity pinning — updates are manual and trust the remote's default branch
@@ -102,6 +102,6 @@ At setup, `index.ts` builds the candidate set: configured `sources` (home-expand
 
 ## Notes
 
-- Deliberately not carried over from the Python plugin system: manifest config schemas, namespaced skills, Claude Code plugin compatibility, version/update-status tracking, daily update checks, URL-archive sources, and runtime registry refresh
+- Deliberately out of scope: manifest config schemas, namespaced skills, Claude Code plugin compatibility, version/update-status tracking, daily update checks, URL-archive sources, and runtime registry refresh
 - `external` is last in `src/extensions/index.ts`, so third-party setups run after every first-party setup and may rely on their services (DES-001 ordering rule)
 - Uninstalled extensions remain active until restart — there is no unload

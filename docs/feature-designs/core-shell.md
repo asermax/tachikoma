@@ -16,7 +16,7 @@ Per [DES-001](../design/DES-001-unified-extension-api.md), the core is only the 
 **Constraints:**
 - Single-process, single-user app; no need for connection pooling or worker isolation
 - pi's API is never wrapped (DES-001) — the shell composes around pi, it does not abstract it
-- The workspace must stay compatible with the Python-era layout, and pi state must not leak into the user's own `~/.pi` install
+- The workspace must stay compatible with legacy layouts, and pi state must not leak into the user's own `~/.pi` install
 - Extensions load before the channel starts, so anything they register must be in place before the first message
 
 **Interactions:**

@@ -78,8 +78,8 @@ Four pi tools registered per agent session (`registerWorkflowTools` in `src/exte
 
 ## Notes
 
-- The advanced features of the Python engine — workflow composition (`composes`), loop steps, natural-language `condition` predicates, `required_skills` injection, and breadcrumb routing — are not ported; this implementation covers the flat single-workflow state machine
+- Advanced engine features — workflow composition (`composes`), loop steps, natural-language `condition` predicates, `required_skills` injection, and breadcrumb routing — are out of scope; this implementation covers the flat single-workflow state machine
 - TodoWrite-style task tracking has no pi equivalent; the start guidance instead directs the agent to maintain the scratchpad file and use `query_workflow` for recovery
-- Listing active workflows and reading one workflow's state are a single `query_workflow` tool (the Python version exposed two separate MCP tools)
+- Listing active workflows and reading one workflow's state are a single `query_workflow` tool rather than two separate tools
 
 Workflow definitions ship inside skill packages — see [skills](skills.md).

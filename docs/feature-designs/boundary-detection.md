@@ -53,7 +53,7 @@ message arrives ──> boundary middleware ── classify ────┘ (rea
 **Choice**: Implement boundary detection as an `app.inbound.use` middleware inside the `boundary` extension.
 **Why**: DES-001 makes inbound middleware the designated place where "boundary detection decides to continue, close + open, or resume a session". The `InboundContext` contract (`session`, `closeSession`, `resumeSession`) is exactly the leverage needed; the coordinator stays free of topic semantics.
 **Alternatives Considered**:
-- Coordinator-owned detection (the Python architecture): couples topic policy into core; conflicts with the everything-is-an-extension bet
+- Coordinator-owned detection: couples topic policy into core; conflicts with the everything-is-an-extension bet
 - pi's `input` extension event: session-scoped, so it cannot orchestrate across sessions or survive session replacement
 
 **Consequences**:
@@ -64,9 +64,9 @@ message arrives ──> boundary middleware ── classify ────┘ (rea
 ### Synchronous summary updates per exchange
 
 **Choice**: Run the rolling-summary processor as a registered exchange processor that the coordinator awaits at the end of each `handle()` cycle.
-**Why**: The summary is guaranteed current before the next message is dequeued, eliminating the Python design's "await pending per-message post-processing" machinery entirely — the single-consumer inbox already serializes exchanges.
+**Why**: The summary is guaranteed current before the next message is dequeued, with no "await pending per-message post-processing" machinery — the single-consumer inbox already serializes exchanges.
 **Alternatives Considered**:
-- Fire-and-forget background task with an await-before-detection barrier (Python approach): more moving parts for the same guarantee
+- Fire-and-forget background task with an await-before-detection barrier: more moving parts for the same guarantee
 - Summarize lazily at detection time: puts the summarization latency on the message-handling critical path
 
 **Consequences**:
@@ -114,6 +114,6 @@ message arrives ──> boundary middleware ── classify ────┘ (rea
 
 ## Notes
 
-- The classification prompt biases toward `continue` ("default when in doubt, and always when the message is a short reaction, follow-up, or answer to the assistant") — the TS port encodes the Python R19 acknowledgment rule in the prompt rather than in code.
+- The classification prompt biases toward `continue` ("default when in doubt, and always when the message is a short reaction, follow-up, or answer to the assistant") — the acknowledgment rule is encoded in the prompt rather than in code.
 - `lastExchange` is written even when summarization fails so the detector always has at least a recency signal on the next message.
 - Cold-start resumption (matching the first message after a restart against recent sessions) falls out of the same middleware: candidates are offered even when `active == null`.

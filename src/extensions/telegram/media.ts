@@ -42,9 +42,9 @@ export class MediaTooLargeError extends Error {
 }
 
 /**
- * Resolve the first matching media payload on a message, in the same priority
- * order as the Python channel: animation before document (animations set both
- * fields), video_note before video (defensive), document last (most generic).
+ * Resolve the first matching media payload on a message, in priority order:
+ * animation before document (animations set both fields), video_note before
+ * video (defensive), document last (most generic).
  */
 export const resolveMedia = (message: MediaMessage): ResolvedMedia | null => {
   if (message.animation != null) {

@@ -11,7 +11,7 @@ This document explains how notifications are routed from producers to the user: 
 
 ## Problem Context
 
-Multiple extensions need to surface out-of-band information to the user (background task outcomes, future monitors), but pi has no notification concept — `ctx.ui.notify` only works in pi's own TUI/RPC modes ([pi-sdk-notes](../reference/pi-sdk-notes.md)), and user-facing UX flows through Tachikoma's channel layer. The Python implementation routed `Notification` events through a priority buffer; in the TS rewrite the coordinator's delivery gate owns hold/flush timing ([conversation-loop.md](../feature-specs/conversation-loop.md)), so this extension only decides *what* gets delivered and *with which gate*.
+Multiple extensions need to surface out-of-band information to the user (background task outcomes, future monitors), but pi has no notification concept — `ctx.ui.notify` only works in pi's own TUI/RPC modes ([pi-sdk-notes](../reference/pi-sdk-notes.md)), and user-facing UX flows through Tachikoma's channel layer. The coordinator's delivery gate owns hold/flush timing ([conversation-loop.md](../feature-specs/conversation-loop.md)), so this extension only decides *what* gets delivered and *with which gate*.
 
 **Constraints:**
 - Producers must not depend on the notifications extension — emitting an app event must be enough (DES-001 `app.events`)
@@ -35,7 +35,7 @@ Multiple extensions need to surface out-of-band information to the user (backgro
 | `src/extensions/notifications/index.ts` | Wiring: router construction, event subscription, tool registration | Router takes `deliver` as a plain function so tests run without an app |
 | `src/extensions/notifications/payload.ts` | Event name constant, severity map, `parseNotifyPayload` | Duck-typed parsing: `text` required, severity/source defaulted — never throws |
 | `src/extensions/notifications/router.ts` | Severity routing and flush-window batching | Single pending list + one unref'd `setTimeout`; `flush()` is idempotent and safe to call empty |
-| `src/extensions/notifications/format.ts` | Single-notification and digest text rendering | Source/time header block ported from the Python `notifications.py` / `buffer/digest.py` formats; timestamps rendered in UTC |
+| `src/extensions/notifications/format.ts` | Single-notification and digest text rendering | Source/time header block prefixes every notice; timestamps rendered in UTC |
 | `src/extensions/notifications/tools.ts` | `notify_user` agent tool | Emits the same `notify` event instead of delivering directly |
 
 ## Key Decisions
@@ -53,8 +53,8 @@ Multiple extensions need to surface out-of-band information to the user (backgro
 ### Two-stage delivery: router batches, coordinator gates
 
 **Choice**: The router owns a short flush window (default 30 s) that collapses bursts into one message and chooses the digest format; the coordinator's delivery gate owns idle holding and max-hold force flush. The router merely forwards `gate` and `maxHoldSeconds`.
-**Why**: Digest formation needs notification semantics (severity, source, item count) that the generic `Delivery` type does not carry; gating needs conversation state (exchange in flight, active session) that extensions cannot see. Splitting at the `Delivery` boundary keeps both sides simple — this replaces the Python priority buffer's combined role.
-**Alternatives Considered**: Delivering each notice individually and letting the coordinator batch (it has no format knowledge); a full priority-buffer extension replicating the Python design.
+**Why**: Digest formation needs notification semantics (severity, source, item count) that the generic `Delivery` type does not carry; gating needs conversation state (exchange in flight, active session) that extensions cannot see. Splitting at the `Delivery` boundary keeps both sides simple instead of combining both roles in one buffer.
+**Alternatives Considered**: Delivering each notice individually and letting the coordinator batch (it has no format knowledge); a full priority-buffer extension with ordering and preemption.
 **Consequences**:
 - Pro: One digest per burst instead of a message per notice; gate logic stays in one place
 - Con: No cross-type priority ordering or preemption — notifications and session tasks are held independently and flushed in arrival order by the coordinator

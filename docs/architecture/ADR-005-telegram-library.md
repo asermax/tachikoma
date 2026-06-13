@@ -5,7 +5,7 @@
 
 ## Context
 
-Telegram is Tachikoma's primary interface. The Python implementation used aiogram; the rewrite needs a TypeScript equivalent covering long polling, full media support (photos, audio, voice, documents, stickers, video, animations), message editing for streamed responses, and clean middleware for the channel extension.
+Telegram is Tachikoma's primary interface. The channel needs a TypeScript library covering long polling, full media support (photos, audio, voice, documents, stickers, video, animations), message editing for streamed responses, and clean middleware for the channel extension.
 
 ## Decision
 
@@ -28,7 +28,7 @@ The channel remains thin per the architecture: grammY handles transport and Bot 
 ### Negative
 
 - Bot API rate limits are not handled out of the box — the throttler plugin (or deliberate edit pacing for streamed responses) must be part of the channel design
-- Another framework's update model to learn relative to aiogram; porting the media descriptor table is a translation, not a copy
+- A framework-specific update model to learn; the media descriptor table is hand-built rather than provided by the library
 
 ## Alternatives Considered
 

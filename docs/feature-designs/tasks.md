@@ -11,7 +11,7 @@ This document explains how scheduled tasks are implemented on the unified extens
 
 ## Problem Context
 
-pi deliberately provides no scheduling, idle gating, or buffered delivery — those are host concerns ([pi-sdk-notes](../reference/pi-sdk-notes.md)). The Python implementation used several long-lived async loops (generator, session scheduler, background runner) coordinated through a shared priority buffer; the TS rewrite must express the same capability using only the AppContext services an extension is given (DES-001): `app.scheduler`, `app.channels.deliver`, `app.agent.side`, `app.db`, `app.events`.
+pi deliberately provides no scheduling, idle gating, or buffered delivery — those are host concerns ([pi-sdk-notes](../reference/pi-sdk-notes.md)). The tasks extension must express that capability using only the AppContext services an extension is given (DES-001): `app.scheduler`, `app.channels.deliver`, `app.agent.side`, `app.db`, `app.events`.
 
 **Constraints:**
 - Extensions cannot reach coordinator internals — idle gating is owned by the conversation loop and reachable only through `app.channels.deliver` with `gate: "idle"` (see [conversation-loop.md](../feature-specs/conversation-loop.md))
@@ -58,7 +58,7 @@ tasks-tick (60s)
 
 **Choice**: A single `app.scheduler.every("tasks-tick", 60, ...)` job runs generation, expiration, session delivery, and background dispatch sequentially, each as a pure function over injected dependencies.
 **Why**: The core scheduler already provides naming, overlap protection, and error guarding (core-shell R9); reimplementing per-concern async loops would duplicate that. Pure passes with injected `now` are trivially testable against a temp database.
-**Alternatives Considered**: Long-lived async loops per concern (the Python design); croner jobs per definition.
+**Alternatives Considered**: Long-lived async loops per concern, coordinated through a shared priority buffer; croner jobs per definition.
 **Consequences**:
 - Pro: One place to observe all task activity; passes share a transactionless, re-entrant style
 - Pro: Tests drive passes directly with a fake clock — no timers
@@ -68,7 +68,7 @@ tasks-tick (60s)
 ### Session tasks are delivered as channel messages, completed at handoff
 
 **Choice**: `deliverSessionTasks` renders the task prompt into a labelled text block and hands it to `app.channels.deliver` with `gate: "idle"` and `maxHoldSeconds`; the instance is marked `completed` as soon as the handoff succeeds. The text reaches the user directly — it is not injected into the agent session as a new turn.
-**Why**: Channel delivery is the only proactive-output surface DES-001 gives extensions; the conversation loop owns gating and hold timers, so the pass stays a pure detector/enqueuer (same division of labor as the Python priority buffer, with the buffer role absorbed by the coordinator).
+**Why**: Channel delivery is the only proactive-output surface DES-001 gives extensions; the conversation loop owns gating and hold timers, so the pass stays a pure detector/enqueuer with the buffer role absorbed by the coordinator.
 **Alternatives Considered**: Injecting the prompt as an agent turn via `pi.sendUserMessage` (runs the agent on the prompt, but session factories are rebound on replacement and the extension would need to gate idleness itself); a dedicated buffer extension.
 **Consequences**:
 - Pro: No duplicated idle logic; delivery ordering and hold behavior are uniform with notifications
@@ -130,6 +130,6 @@ tasks-tick (60s)
 
 ## Notes
 
-- The `waiting` status, `userResponse` column, and expiration sweep exist, but nothing currently transitions an instance into `waiting` — the Python `await_response`/respond flow has no TS counterpart yet; the sweep is dormant until a producer lands.
+- The `waiting` status, `userResponse` column, and expiration sweep exist, but nothing currently transitions an instance into `waiting` — an `await_response`/respond flow has not been built yet; the sweep is dormant until a producer lands.
 - Config lives under `[extensions.tasks]`: `timezone` (falls back to `scheduler.timezone`), `sessionTaskMaxHoldSeconds` (900), `backgroundMaxIterations` (10), `waitTimeoutSeconds` (7200). The tick interval is a module constant.
 - Background runs use the `processor` model tier and pi built-in tools only (`read, bash, edit, write, grep, find, ls`); Tachikoma extension tools (tasks, notifications) are not bound into side runs.

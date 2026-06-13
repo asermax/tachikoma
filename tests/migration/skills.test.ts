@@ -4,12 +4,12 @@ import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 
 import type { Logger } from "../../src/log.ts";
-import { adaptSkillsFrontmatter, stripPythonFrontmatter } from "../../src/migration/skills.ts";
+import { adaptSkillsFrontmatter, stripLegacyFrontmatter } from "../../src/migration/skills.ts";
 import { Workspace } from "../../src/workspace.ts";
 
 const fakeLog = { info: vi.fn(), warn: vi.fn() } as unknown as Logger;
 
-const PYTHON_SKILL = `---
+const LEGACY_SKILL = `---
 description: Research assistant
 version: "1.2.0"
 depends_on:
@@ -39,9 +39,9 @@ const makeSkill = async (workspace: Workspace, name: string, content: string): P
   return file;
 };
 
-describe("stripPythonFrontmatter", () => {
+describe("stripLegacyFrontmatter", () => {
   it("removes version and block-list depends_on, keeping everything else", () => {
-    const scan = stripPythonFrontmatter(PYTHON_SKILL);
+    const scan = stripLegacyFrontmatter(LEGACY_SKILL);
 
     expect(scan).not.toBeNull();
     expect(scan?.keys.sort()).toEqual(["depends_on", "version"]);
@@ -53,18 +53,18 @@ describe("stripPythonFrontmatter", () => {
   });
 
   it("removes inline-list depends_on", () => {
-    const scan = stripPythonFrontmatter("---\ndescription: x\ndepends_on: [a, b]\n---\nbody\n");
+    const scan = stripLegacyFrontmatter("---\ndescription: x\ndepends_on: [a, b]\n---\nbody\n");
 
     expect(scan?.keys).toEqual(["depends_on"]);
     expect(scan?.content).toBe("---\ndescription: x\n---\nbody\n");
   });
 
-  it("returns null for skills without Python-only keys", () => {
-    expect(stripPythonFrontmatter(CLEAN_SKILL)).toBeNull();
+  it("returns null for skills without legacy-only keys", () => {
+    expect(stripLegacyFrontmatter(CLEAN_SKILL)).toBeNull();
   });
 
   it("returns null for files without frontmatter", () => {
-    expect(stripPythonFrontmatter("# Just markdown\n")).toBeNull();
+    expect(stripLegacyFrontmatter("# Just markdown\n")).toBeNull();
   });
 });
 
@@ -76,7 +76,7 @@ describe("adaptSkillsFrontmatter", () => {
 
   it("strips keys from affected skills when confirmed", async () => {
     const workspace = await makeWorkspace();
-    const pythonFile = await makeSkill(workspace, "research", PYTHON_SKILL);
+    const legacyFile = await makeSkill(workspace, "research", LEGACY_SKILL);
     const cleanFile = await makeSkill(workspace, "notes", CLEAN_SKILL);
     const ask = vi.fn(async () => true);
 
@@ -84,21 +84,21 @@ describe("adaptSkillsFrontmatter", () => {
 
     expect(ask).toHaveBeenCalledOnce();
     expect(ask.mock.calls[0]?.[0]).toContain("1 skill(s)");
-    await expect(readFile(pythonFile, "utf8")).resolves.not.toContain("depends_on");
+    await expect(readFile(legacyFile, "utf8")).resolves.not.toContain("depends_on");
     await expect(readFile(cleanFile, "utf8")).resolves.toBe(CLEAN_SKILL);
   });
 
   it("keeps files untouched and warns when declined", async () => {
     const workspace = await makeWorkspace();
-    const pythonFile = await makeSkill(workspace, "research", PYTHON_SKILL);
+    const legacyFile = await makeSkill(workspace, "research", LEGACY_SKILL);
 
     await adaptSkillsFrontmatter(workspace, fakeLog, async () => false);
 
-    await expect(readFile(pythonFile, "utf8")).resolves.toBe(PYTHON_SKILL);
+    await expect(readFile(legacyFile, "utf8")).resolves.toBe(LEGACY_SKILL);
     expect(fakeLog.warn).toHaveBeenCalled();
   });
 
-  it("does not prompt when no skill carries Python-only keys", async () => {
+  it("does not prompt when no skill carries legacy-only keys", async () => {
     const workspace = await makeWorkspace();
     await makeSkill(workspace, "notes", CLEAN_SKILL);
     const ask = vi.fn(async () => true);

@@ -11,7 +11,7 @@ Explain how directory-based workflow definitions become database-persisted step 
 
 ## Problem Context
 
-Agents are unreliable at executing long ordered procedures from prose alone: steps get skipped, order drifts, and context compaction erases progress. The workflow engine moves the source of truth out of the conversation — definitions live on disk inside skills, instance state lives in SQLite — and makes the tools the only way to transition state. The Python engine this ports from had grown composition, loops, and conditions; the rewrite starts from the flat core.
+Agents are unreliable at executing long ordered procedures from prose alone: steps get skipped, order drifts, and context compaction erases progress. The workflow engine moves the source of truth out of the conversation — definitions live on disk inside skills, instance state lives in SQLite — and makes the tools the only way to transition state. The engine deliberately starts from the flat core — no composition, loops, or conditions.
 
 **Constraints:**
 - State must survive context compaction, session replacement, and process restarts
@@ -84,7 +84,7 @@ loader.ts  ──snapshot──▶  repository.ts / schema.ts
 
 ### One `query_workflow` tool for both state lookup and listing
 
-**Choice**: Merge the Python `get_workflow_state` and `list_active_workflows` MCP tools into one tool with an optional `workflow_id`.
+**Choice**: One tool with an optional `workflow_id` covers both state lookup and listing, instead of separate `get_workflow_state` and `list_active_workflows` tools.
 **Why**: They serve the same recovery moment ("what was I doing?"); a single tool with a natural narrowing parameter is one less name for the model to choose between.
 **Consequences**:
 - Pro: recovery guidance reduces to "call `query_workflow()` then `query_workflow(workflow_id=...)`"
@@ -120,4 +120,4 @@ loader.ts  ──snapshot──▶  repository.ts / schema.ts
 
 - Scratchpad deletion is best-effort (`deleteScratchpad` swallows fs errors): a leftover file must never block a state transition
 - `tests/workflows/helpers.ts` mirrors the table DDL until central migrations are regenerated; the real migration lives in `drizzle/0001_extensions.sql`
-- Composition, loops, condition steps, and `required_skills` from the Python engine are intentionally absent (see spec Notes); `validateTransition` is the seam where they would re-enter
+- Composition, loops, condition steps, and `required_skills` are intentionally absent (see spec Notes); `validateTransition` is the seam where they would re-enter

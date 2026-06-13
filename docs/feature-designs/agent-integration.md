@@ -59,10 +59,10 @@ pi is an embeddable coding agent; Tachikoma hosts it as a personal assistant. Th
 
 ### Model tiers resolved through pi's `ModelRegistry`
 
-**Choice**: Carry the Python four-tier split (`agent`/`searcher`/`processor`/`classifier`) as config strings `provider/model-id`, resolved via `registry.find()` with a workspace `models.json` overlay; resolution failures throw.
+**Choice**: A four-tier split (`agent`/`searcher`/`processor`/`classifier`) as config strings `provider/model-id`, resolved via `registry.find()` with a workspace `models.json` overlay; resolution failures throw.
 **Why**: Tiers let every consumer ask for a role, not a model, so cost tuning is one config edit. Going through the registry (instead of pi-ai's static `getModel`) keeps custom providers and `models.json` entries usable, and validates that auth knows the provider.
 **Alternatives Considered**:
-- Hardcoded models per call site: the exact sprawl the Python config eliminated
+- Hardcoded models per call site: the exact sprawl the role-based config exists to eliminate
 - Single model everywhere: makes extraction/classification pay conversational-model prices
 
 **Consequences**:

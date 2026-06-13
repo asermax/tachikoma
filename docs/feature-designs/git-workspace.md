@@ -56,7 +56,7 @@ session close ─► git-commit (finalize)
 ### Single diffstat completion instead of a commit agent
 
 **Choice**: One `git add -A`, one `side.complete` call over the staged diffstat producing a single subject line, one commit.
-**Why**: The Python implementation spawned a Haiku agent with bash access to group changes into multiple commits. A plain completion is cheaper, faster, fully fakeable in tests, and exposes no tool surface to constrain — and a per-session bulk commit is granular enough for a workspace whose history exists for review and rollback.
+**Why**: A plain completion is cheaper, faster, fully fakeable in tests, and exposes no tool surface to constrain — and a per-session bulk commit is granular enough for a workspace whose history exists for review and rollback.
 **Alternatives Considered**:
 - Headless agent run (`app.agent.side.run`) grouping commits: better commit granularity, but slower, costlier, and needs git-command guardrails
 - Static messages only: free, but history becomes unreadable
@@ -73,13 +73,13 @@ session close ─► git-commit (finalize)
 **Why**: Callers (the processor, the projects processor, startup sync) must always continue — an exception would abort a session close or startup over a network blip. Enumerated outcomes make every degraded path an explicit, logged branch.
 **Consequences**:
 - Pro: Callers cannot forget the failure path; tests assert exact outcomes
-- Pro: Matches the Python `PUSH_RESULT`/`SYNC_RESULT` contract, easing the rewrite
+- Pro: The `PUSH_RESULT`/`SYNC_RESULT` constants give callers a closed, exhaustive outcome set
 - Con: Failure detail lives in logs, not in the return value
 
 ### Abort-on-conflict recovery, no automated resolution
 
 **Choice**: Divergence is handled by `rebase --autostash`; a conflicting rebase is immediately aborted, restoring a clean tree, and surfaces as `REBASE_FAILED`/`SYNC_FAILED`. Both helpers also abort any stale rebase left by a crash before starting.
-**Why**: Local commits plus a clean tree is always a recoverable state — the next sync retries. Automated conflict resolution (the Python version spawned an agent for it) adds an LLM dependency to the most delicate git path; it is deliberately out of scope here until proven necessary.
+**Why**: Local commits plus a clean tree is always a recoverable state — the next sync retries. Automated conflict resolution (e.g. spawning an agent for it) adds an LLM dependency to the most delicate git path; it is deliberately out of scope here until proven necessary.
 **Consequences**:
 - Pro: No half-finished rebases can survive a crash; behavior is fully covered by `tests/git/sync.test.ts`
 - Con: Genuinely conflicting machines stay diverged until a human (or the agent, via conversation) intervenes

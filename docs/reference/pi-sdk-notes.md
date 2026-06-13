@@ -46,7 +46,7 @@ const { session, extensionsResult, modelFallbackMessage } = await createAgentSes
 
 Key facts:
 
-- **One long-lived `AgentSession` per conversation** — unlike the Claude Agent SDK (per-message client + resume), pi sessions live in-process. The coordinator holds a session open and replaces it on boundary.
+- **One long-lived `AgentSession` per conversation** — pi sessions live in-process, with no per-message client recreation or resume bookkeeping. The coordinator holds a session open and replaces it on boundary.
 - **`AgentSessionRuntime`** (`createAgentSessionRuntime` + factory using `createAgentSessionServices`/`createAgentSessionFromServices`) owns session *replacement*: `newSession()`, `switchSession(path)`, `fork(entryId, { position: "before"|"at" })`, `importFromJsonl()`. After replacement: `runtime.session` changes, event subscriptions must be re-attached, extensions are rebound (`session_shutdown` → reload → `session_start`).
 - `session.prompt(text, { images, streamingBehavior, source, preflightResult })` resolves when the full run finishes. `steer()` / `followUp()` queue during streaming.
 - `session.agent.state` is mutable: `messages`, `tools`, `systemPrompt`, `model`, `thinkingLevel`. `session.agent.waitForIdle()`.
@@ -92,17 +92,17 @@ JSONL trees at `~/.pi/agent/sessions/--<cwd-slug>--/<timestamp>_<uuid>.jsonl`; e
 
 `SessionManager` instance API: `getEntries/getTree/getPath/getLeafEntry/getEntry/getChildren/getLabel/appendLabelChange/appendMessage/branch(entryId)/branchWithSummary(id, summary)/createBranchedSession(leafId)/getSessionFile`. Static: `list(cwd)`, `listAll(cwd)`.
 
-**Post-processing pattern (replaces Claude SDK session-fork):** open the transcript read-only via `SessionManager.open(path)`, walk entries, and run one-shot extraction with `pi-ai` `complete()`/`completeSimple()` or an in-memory `createAgentSession` seeded via `session.agent.state.messages`. `terminate: true` tool results give structured output.
+**Post-processing pattern:** open the transcript read-only via `SessionManager.open(path)`, walk entries, and run one-shot extraction with `pi-ai` `complete()`/`completeSimple()` or an in-memory `createAgentSession` seeded via `session.agent.state.messages`. `terminate: true` tool results give structured output.
 
 ## Skills
 
-pi implements the **Agent Skills standard** (agentskills.io) — same `SKILL.md` + YAML frontmatter (`name`, `description`, optional `license`, `compatibility`, `metadata`, `allowed-tools`, `disable-model-invocation`) Tachikoma already uses. Discovery: `~/.pi/agent/skills/`, `~/.agents/skills/`, `.pi/skills/`, `.agents/skills/` (ancestors, post-trust), settings `skills` array, packages, `resources_discover` event (`skillPaths`). Progressive disclosure: descriptions in system prompt, agent `read`s SKILL.md on demand; `/skill:name` commands force-load. Missing description ⇒ skill not loaded; name collisions keep first found.
+pi implements the **Agent Skills standard** (agentskills.io) — `SKILL.md` + YAML frontmatter (`name`, `description`, optional `license`, `compatibility`, `metadata`, `allowed-tools`, `disable-model-invocation`), the same format Tachikoma's workspace skills use. Discovery: `~/.pi/agent/skills/`, `~/.agents/skills/`, `.pi/skills/`, `.agents/skills/` (ancestors, post-trust), settings `skills` array, packages, `resources_discover` event (`skillPaths`). Progressive disclosure: descriptions in system prompt, agent `read`s SKILL.md on demand; `/skill:name` commands force-load. Missing description ⇒ skill not loaded; name collisions keep first found.
 
-**Consequences for Tachikoma:** no LLM-based skill classifier needed (pi's progressive disclosure replaces it); the skills watcher/hot-reload is replaced by `ctx.reload()`; Tachikoma skill `dependencies` and bundled agent definitions are not part of the standard — agents can be ported via a subagent-style extension (see `examples/extensions/subagent/`, which discovers `agents/*.md` with frontmatter and spawns isolated `pi` processes).
+**Consequences for Tachikoma:** no LLM-based skill classifier needed (pi's progressive disclosure covers detection); skill refresh is `ctx.reload()` rather than a filesystem watcher; skill `dependencies` and bundled agent definitions are not part of the standard — bundled agents can be supported via a subagent-style extension (see `examples/extensions/subagent/`, which discovers `agents/*.md` with frontmatter and spawns isolated `pi` processes).
 
 ## What pi does NOT provide (stays ours)
 
-- **MCP**: none by design. In-process MCP servers → `pi.registerTool()` / `customTools`.
+- **MCP**: none by design — agent tools are `pi.registerTool()` / `customTools` registrations.
 - **Scheduling/cron, idle gating, buffered delivery** — host concern (croner + our buffer; inject via `pi.sendMessage`/`sendUserMessage` with `deliverAs` + `triggerTurn`).
 - **Channels** (Telegram/REPL) — host consumes `session.subscribe()`; extension `ctx.ui` calls only function in pi's own TUI/RPC modes, so host-facing UX flows through our channel layer instead.
 - **Cross-session orchestration** — boundary detection, session registry/recovery, topic resume: ours, on top of `SessionManager`/`AgentSessionRuntime`.

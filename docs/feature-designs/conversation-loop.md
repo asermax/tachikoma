@@ -11,7 +11,7 @@ Explain how the coordinator orchestrates the conversation lifecycle around a sin
 
 ## Problem Context
 
-The Python implementation created a fresh Claude SDK client per message and used `resume` for continuity. pi inverts that model: one in-process `AgentSession` per conversation, replaced wholesale on topic boundaries. The coordinator must own everything pi deliberately does not (see `docs/reference/pi-sdk-notes.md`): cross-session lifecycle, the registry, boundary-driven replacement, post-session pipelines, idle gating, and channel delivery — while exposing only the extension hooks defined in [DES-001](../design/DES-001-unified-extension-api.md).
+pi's model is one in-process `AgentSession` per conversation, replaced wholesale on topic boundaries — no per-message client recreation or resume bookkeeping. The coordinator must own everything pi deliberately does not (see `docs/reference/pi-sdk-notes.md`): cross-session lifecycle, the registry, boundary-driven replacement, post-session pipelines, idle gating, and channel delivery — while exposing only the extension hooks defined in [DES-001](../design/DES-001-unified-extension-api.md).
 
 **Constraints:**
 - pi's `session.prompt()` resolves only when a full run finishes; a session handles one prompt at a time
@@ -97,7 +97,7 @@ Context reaches the agent through a host-owned pi extension factory (`hostFactor
 **Choice**: `runPostProcessing` records `completed`/`failed` per processor in the record's `postProcessingState` JSON column and skips already-completed processors on re-entry.
 **Why**: Dangling recovery re-runs post-processing for sessions closed by a crash; without per-processor state, every recovery would re-extract memories, re-commit, etc. State on the row makes the pipeline idempotent at processor granularity.
 **Alternatives Considered**:
-- A single `processedAt` timestamp (Python approach): all-or-nothing, so one failing processor forces rerunning all of them
+- A single `processedAt` timestamp: all-or-nothing, so one failing processor forces rerunning all of them
 - A separate processing-log table: more structure than a per-session map needs
 
 **Consequences**:
@@ -107,9 +107,9 @@ Context reaches the agent through a host-owned pi extension factory (`hostFactor
 ### Coordinator-held delivery gating instead of a priority buffer
 
 **Choice**: `deliver()` applies the gate inline — `immediate` sends now; `idle` holds in a FIFO array flushed when the in-flight exchange ends, with optional per-item `maxHoldSeconds` force-flush timers.
-**Why**: The Python priority buffer (priorities, digests, shutdown flush) was the most complex part of delivery; the observable requirement is just "don't interleave with an active exchange, never hold forever". The coordinator already knows `exchanging`/`active`, so gating lives where the knowledge is.
+**Why**: A full priority buffer (priorities, digests, shutdown flush) is the most complex way to do delivery; the observable requirement is just "don't interleave with an active exchange, never hold forever". The coordinator already knows `exchanging`/`active`, so gating lives where the knowledge is.
 **Alternatives Considered**:
-- Porting the priority buffer as an extension: deferred until notification volume justifies ordering and digests
+- A priority-buffer extension: deferred until notification volume justifies ordering and digests
 
 **Consequences**:
 - Pro: ~20 lines, no extra state machine; channels only implement `deliver()`
@@ -145,5 +145,5 @@ Context reaches the agent through a host-owned pi extension factory (`hostFactor
 ## Notes
 
 - `status` events are emitted on the app event bus and debug-logged; no channel currently subscribes, so granular status is observable in logs but not yet rendered to the user.
-- `lastAssistantText` (exchange processor input) concatenates the text blocks of the latest assistant message in the pi session — it does not filter to text after the last tool call as the Python version did.
+- `lastAssistantText` (exchange processor input) concatenates the text blocks of the latest assistant message in the pi session — it does not filter to text after the last tool call.
 - The exchange's `try/finally` guarantees `exchanging` resets and held deliveries flush even when the channel's `respond()` throws.

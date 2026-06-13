@@ -5,7 +5,7 @@ import type { Logger } from "../log.ts";
 import type { Workspace } from "../workspace.ts";
 import { pathExists } from "./fs.ts";
 
-// The Python implementation kept these under {workspace}/context/; pi reads
+// Legacy workspaces kept these under {workspace}/context/; pi reads
 // SOUL.md/USER.md from the workspace root and discovers AGENTS.md natively.
 const CONTEXT_FILES = ["SOUL.md", "USER.md", "AGENTS.md"];
 
@@ -27,7 +27,7 @@ export const adaptContextFiles = async (workspace: Workspace, log: Logger): Prom
     }
 
     await rename(oldPath, newPath);
-    log.info({ file: name }, "moved Python-era context file to the workspace root");
+    log.info({ file: name }, "moved legacy context file to the workspace root");
   }
 
   // Tidy up the old directory when nothing is left; rmdir refuses non-empty dirs.

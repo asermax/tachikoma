@@ -55,7 +55,7 @@ Two halves with different lifetimes. The extension (`src/extensions/context/inde
 ### File-based pending signals edited by the agent
 
 **Choice**: Store ambiguous signals as a dated markdown list at `{dataDir}/pending-signals.md`; the agent stages/promotes/discards by editing the file directly with its file tools, while the host only parses it for the prompt snapshot and enforces the 30-day expiry.
-**Why**: Headless pi runs have file tools and no MCP surface, so dedicated add/remove tools (the Python design) have no transport; a strict line format (`- **YYYY-MM-DD**: text`) keeps the file machine-parseable anyway.
+**Why**: Headless pi runs have file tools and no custom-tool transport, so dedicated add/remove tools have nowhere to live; a strict line format (`- **YYYY-MM-DD**: text`) keeps the file machine-parseable anyway.
 **Alternatives Considered**:
 - Custom tools via `customTools` on the side session: more host code for the same effect, and the agent still needs file tools for the context files themselves
 - Database-backed signals: loses direct user inspectability and requires injection plumbing both ways

@@ -120,8 +120,8 @@ export const sendChunked = async (
 };
 
 /**
- * Copy+delete a silently-sent message so the copy fires a push notification
- * (mirrors the Python channel's notify pattern). Copy-first ordering keeps the
+ * Copy+delete a silently-sent message so the copy fires a push notification.
+ * Copy-first ordering keeps the
  * text safe: on copy failure the original is preserved and no delete runs; on
  * delete failure the duplicate is accepted after retries.
  */

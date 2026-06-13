@@ -9,7 +9,7 @@ export interface LogOptions {
 
 // Logs always go to stderr so channel output on stdout (REPL) stays clean.
 export const createRootLogger = ({ level, pretty }: LogOptions): Logger => {
-  // Python-era configs used uppercase levels ("INFO"); pino requires lowercase,
+  // Legacy configs used uppercase levels ("INFO"); pino requires lowercase,
   // and this runs before config migration gets a chance to translate.
   const normalized = level.toLowerCase();
 

@@ -4,7 +4,7 @@
 
 *Not just responding to commands — anticipating needs, managing context, and evolving through use.*
 
-This is the TypeScript rewrite of Tachikoma on the pi agent SDK. The product vision — what the assistant does and why — is unchanged from the Python implementation. The architecture sections describe the new stack: a thin core shell where every feature ships as an extension.
+Tachikoma is built in TypeScript on the pi agent SDK. The architecture sections describe the stack: a thin core shell where every feature ships as an extension.
 
 ## Problem
 
@@ -19,10 +19,10 @@ Current AI assistants are stateless and reactive. Every conversation starts from
 - **ChatGPT/Claude**: Powerful but stateless per-session; memory features are shallow (key-value facts, not real understanding)
 - **OpenClaw**: Tested — good infrastructure (Telegram, cron jobs) but the agent itself is too basic; waits for instructions, doesn't take initiative
 - **Custom agent frameworks (LangChain, CrewAI)**: Provide primitives but don't encode personal assistant patterns; still reactive by default
-- **Tachikoma v1 (Python, Claude Agent SDK)**: Proved the product — persistent memory, boundary detection, proactive tasks, skills — but the SDK's per-message subprocess model forced significant accidental complexity (session resume gymnastics, context persistence and reassembly, custom transports), and Python kept the agent runtime at arm's length
+- **Subprocess-based agent SDKs (e.g. Claude Agent SDK)**: Capable runtimes, but the per-message subprocess model forces significant accidental complexity (session resume gymnastics, context persistence and reassembly, custom transports) and keeps the agent runtime at arm's length from the host
 
 **What's needed:**
-An opinionated personal assistant built on an embeddable agent SDK that maintains conversation continuity across messages, enriches every interaction with accumulated context (memories, skills, project state), and autonomously processes tasks on schedules — all accessible through a simple chat interface. The rewrite keeps the proven behavior and the user's accumulated workspace, and rebuilds the machinery on pi: long-lived in-process sessions, a native extension system, and TypeScript end to end.
+An opinionated personal assistant built on an embeddable agent SDK that maintains conversation continuity across messages, enriches every interaction with accumulated context (memories, skills, project state), and autonomously processes tasks on schedules — all accessible through a simple chat interface. Tachikoma builds that machinery on pi: long-lived in-process sessions, a native extension system, and TypeScript end to end.
 
 ## Core Workflows
 
@@ -118,61 +118,61 @@ First-party extensions, all in-repo: **context** (SOUL.md/USER.md/AGENTS.md), **
 
 pi sessions are long-lived in-process objects: the coordinator holds one `AgentSession` per conversation and replaces it on topic boundary via `AgentSessionRuntime` — no per-message client recreation, no resume bookkeeping, no context persistence layer to reassemble injected context. Transcripts are tree-structured JSONL files under a dedicated `agentDir` (`{workspace}/.tachikoma/pi`), isolating Tachikoma's pi state from any user pi install.
 
-Post-session extraction opens the JSONL transcript read-only and runs one-shot side-channel `complete()` calls from pi-ai — replacing the Claude SDK's session-fork pattern. In-process MCP tool servers become plain `pi.registerTool()` registrations. LLM-based skill classification is replaced by pi's native progressive disclosure.
+Post-session extraction opens the JSONL transcript read-only and runs one-shot side-channel `complete()` calls from pi-ai. Agent tools are plain `pi.registerTool()` registrations, and skill discovery relies on pi's native progressive disclosure rather than an LLM classification pass.
 
 ### Workspace Compatibility
 
-The workspace data contract stays compatible with the existing `~/tachikoma` workspace: markdown memories organized by type, SOUL.md/USER.md/AGENTS.md core context files, Agent Skills-format skill packages, git versioning. Pointing an existing workspace at the rewrite must just work. Configuration and the database are redesigned — they are implementation artifacts, not user data.
+The workspace data contract is stable: markdown memories organized by type, SOUL.md/USER.md/AGENTS.md core context files, Agent Skills-format skill packages, git versioning. Pointing an existing `~/tachikoma` workspace at a fresh install must just work. Configuration and the database are implementation artifacts, not user data — legacy formats are detected and adapted at startup.
 
 ## Scope
 
-### v1 — Port Target
+### v1 — Delivered Scope
 
-Feature parity with the Python implementation, rebuilt for the new stack and delivered in milestones (see [DELTAS.md](DELTAS.md) for the full inventory):
+A thin core shell plus first-party extensions covering the full assistant feature set (see [DELTAS.md](DELTAS.md) for open work):
 
-**M1 — Core shell + walking skeleton:**
-- Toolchain (Node type stripping, pnpm, Biome, vitest, just) — done
+**Core shell + walking skeleton:**
+- Toolchain (Node type stripping, pnpm, Biome, vitest, just)
 - Configuration, logging, database, typed event bus, scheduler
 - Extension host with the `defineExtension`/`AppContext` contract
 - Coordinator with a long-lived pi session, channel registry, and REPL channel — a user can hold a conversation end to end
 
-**M2 — Sessions, boundary, memory, context:**
+**Sessions, boundary, memory, context:**
 - Database-backed session registry with lifecycle, rolling summaries, idle timeout
 - Boundary detection with topic-shift analysis, session replacement, and resumption (including cold-start)
 - Pre/post-processing pipelines with parallel execution and error isolation
 - Memory extraction (episodic, facts, preferences) and memory context retrieval
 - Core context files injected into the system prompt, with post-session updates
 
-**M3 — Skills, workflows, tasks:**
+**Skills, workflows, tasks:**
 - Skills via pi's native Agent Skills support with the workspace as a skill source, hot-reload, bundled agents, and the authoring guide
 - Workflow engine with directory-based definitions, persisted step state machine, and lifecycle tools
 - Task system: cron and one-shot definitions, management tools, session (idle-gated) and background (autonomous) execution
 
-**M4 — Channels, projects, git:**
+**Channels, projects, git:**
 - Full Telegram channel: streamed rendering, complete media support, push notifications
 - Projects extension: registration tools, startup sync, context injection, commit/push on close
 - Git extension: workspace versioning after each session and fetch-rebase-push sync
 
-**M5 — Detached processes, notifications, external extensions, polish:**
+**Detached processes, notifications, external extensions, polish:**
 - Detached process supervision tools
 - Event-bus-driven notifications with buffered, idle-aware delivery
-- External extension loading and git-based installation (the Python plugin system is superseded by the unified extension API itself)
+- External extension loading and git-based installation (out-of-tree extensibility is the unified extension API itself — no separate plugin system)
 - Granular processing status updates and the release pipeline
 
-### Out of Scope for the Port
+### Out of Scope
 
-Machinery the Claude Agent SDK made necessary and pi makes obsolete is not ported:
-- Custom SDK transport (ARG_MAX tempfile workaround) — pi is embedded in-process
+Machinery that subprocess-based agent SDKs force on a host and pi makes unnecessary is deliberately absent:
+- Custom SDK transports (ARG_MAX tempfile workarounds) — pi is embedded in-process
 - Per-message client recreation, context persistence entries, and context reassembly — sessions are long-lived
-- LLM-based skill classification — replaced by progressive disclosure
+- LLM-based skill classification — pi's progressive disclosure covers detection
 - Transcript archiving — pi transcripts already live inside the workspace `agentDir`
-- SDK subprocess stderr capture — there is no subprocess
+- Subprocess stderr capture — there is no subprocess
 
-Backlog items from the Python implementation that were never built (parallel sessions, autonomous long-running agents, proactive nudges, evaluation framework, observability) stay deferred until parity is reached.
+Larger capabilities (parallel sessions, autonomous long-running agents, proactive nudges, evaluation framework, observability) are tracked as backlog deltas — see Future Considerations.
 
-### Post-Port
+### Beyond v1
 
-Once parity lands, the Python backlog re-opens on the new foundation — see Future Considerations.
+The long-term backlog builds on this foundation — see Future Considerations and [DELTAS.md](DELTAS.md).
 
 ## Technical Context
 
@@ -197,7 +197,7 @@ Once parity lands, the Python backlog re-opens on the new foundation — see Fut
 - Terminal REPL for local development and direct interaction
 
 **Workspace:**
-- A git-managed directory containing all persistent user data (memories, core context files, skill definitions) — format-compatible with the Python implementation's workspace
+- A git-managed directory containing all persistent user data (memories, core context files, skill definitions)
 - Markdown files for memories, with retrieval during pre-processing
 - drizzle over `node:sqlite` for session, task, and workflow tracking; drizzle-kit for migrations
 - TOML configuration validated with TypeBox, auto-generated defaults on first run
@@ -209,22 +209,22 @@ Once parity lands, the Python backlog re-opens on the new foundation — see Fut
 
 ## Success Criteria
 
-1. Walking skeleton: a REPL conversation flows end to end through the thin core and a long-lived pi session (M1)
-2. Conversations close on topic shift or idle timeout, and memory extraction (episodic, facts, preferences) plus core context updates run automatically (M2)
-3. Past conversations resume on topic match, including across process restarts (M2)
-4. An existing Python-era workspace (memories, context files, skills) works unmodified against the rewrite (M2–M3)
-5. Skills are detected and applied via progressive disclosure without a classification pass, and new skills are available without restart (M3)
-6. Scheduled tasks run in both session (idle-gated) and background (autonomous, iterative) modes with timezone-aware schedules and restart catch-up (M3)
-7. Telegram reaches feature parity: streamed responses, full media support, push notifications (M4)
-8. Registered projects sync on startup and auto-commit/push on session close; the workspace itself is git-versioned after every session (M4)
-9. Detached processes can be dispatched and supervised; notifications buffer and deliver at conversation pauses; third-party extensions load via the external extension loader (M5)
-10. Every feature outside the core shell is implemented as an extension using the single `defineExtension` format (all milestones)
+1. Walking skeleton: a REPL conversation flows end to end through the thin core and a long-lived pi session
+2. Conversations close on topic shift or idle timeout, and memory extraction (episodic, facts, preferences) plus core context updates run automatically
+3. Past conversations resume on topic match, including across process restarts
+4. A pre-existing workspace (memories, context files, skills) works unmodified
+5. Skills are detected and applied via progressive disclosure without a classification pass, and new skills are available without restart
+6. Scheduled tasks run in both session (idle-gated) and background (autonomous, iterative) modes with timezone-aware schedules and restart catch-up
+7. Telegram is a full-fidelity channel: streamed responses, full media support, push notifications
+8. Registered projects sync on startup and auto-commit/push on session close; the workspace itself is git-versioned after every session
+9. Detached processes can be dispatched and supervised; notifications buffer and deliver at conversation pauses; third-party extensions load via the external extension loader
+10. Every feature outside the core shell is implemented as an extension using the single `defineExtension` format
 
 ## Future Considerations
 
-Ideas for after the port (not committing to these):
+Ideas beyond the delivered scope (not committing to these):
 
-**Held over from the Python backlog:**
+**Long-standing backlog:**
 - Parallel conversation sessions
 - Delegation to autonomous long-running agents
 - Proactive nudges from past conversations (sensor framework, fatigue management)

@@ -6,7 +6,7 @@
 
 Out-of-tree Tachikoma extensions load through the exact same `defineExtension` contract as first-party features (DES-001): a module whose default export has a `name`, a `setup(app)` function, and optionally a TypeBox `configSchema`. The `external` extension imports such modules at startup from paths declared in config and from agent-installed records, validates their shape, and registers them with the host. Agent tools install (git clone or local path), update, list, and uninstall third-party extensions; changes take effect on restart.
 
-This supersedes the Python manifest-based plugin system (`tachikoma-plugin.toml`, namespaced skill registration, plugin-specific pipelines): the unified extension API is the single out-of-tree extensibility surface. Third-party extensions receive the full AppContext and persist state through `app.state` — they have no access to drizzle migrations.
+There is no separate manifest-based plugin system (manifests, namespaced skill registration, plugin-specific pipelines): the unified extension API is the single out-of-tree extensibility surface. Third-party extensions receive the full AppContext and persist state through `app.state` — they have no access to drizzle migrations.
 
 ## User Stories
 

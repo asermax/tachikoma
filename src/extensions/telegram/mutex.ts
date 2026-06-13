@@ -1,7 +1,7 @@
 /**
- * Promise-chain mutex serializing channel deliveries (TS analogue of the Python
- * DES-009 delivery lock): callers queue FIFO behind the in-flight task, so two
- * send sequences never interleave their Telegram API calls.
+ * Promise-chain mutex serializing channel deliveries: callers queue FIFO
+ * behind the in-flight task, so two send sequences never interleave their
+ * Telegram API calls.
  */
 export class Mutex {
   private tail: Promise<void> = Promise.resolve();

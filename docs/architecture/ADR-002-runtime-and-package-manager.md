@@ -5,7 +5,7 @@
 
 ## Context
 
-The rewrite needs a Node.js baseline and a dependency manager. pi requires Node >= 22.19. A traditional TypeScript build step (tsc/esbuild watch, dist artifacts, source maps) adds friction for a long-running personal service that is edited and restarted frequently.
+The project needs a Node.js baseline and a dependency manager. pi requires Node >= 22.19. A traditional TypeScript build step (tsc/esbuild watch, dist artifacts, source maps) adds friction for a long-running personal service that is edited and restarted frequently.
 
 ## Decision
 

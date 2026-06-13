@@ -11,7 +11,7 @@ Explain how Tachikoma supervises detached OS shell commands on the pi stack: ide
 
 ## Problem Context
 
-The agent needs to start shell commands that survive Tachikoma's own exit, restart, or crash, and later query, read, or stop them. The Python implementation used psutil identity checks, a shell wrapper for exit codes, and direct cgroup v2 management; this implementation reaches the same capability with Node primitives and one external tool.
+The agent needs to start shell commands that survive Tachikoma's own exit, restart, or crash, and later query, read, or stop them. The implementation reaches that capability with Node primitives and one external tool.
 
 **Constraints:**
 - Everything ships as an extension (DES-001): persistence via the shared drizzle handle, periodic work via `app.scheduler`, startup via `app.bootstrap`, agent tools via `app.agent.use` factories
@@ -52,7 +52,7 @@ The agent needs to start shell commands that survive Tachikoma's own exit, resta
 
 **Choice**: Spawn the user's command directly under `sh -c`; a Node `child.on("exit")` listener in the host writes the exit code (128 + signal number for signal deaths) to `{id}/exit-code`, which `reconcileExit` reads later.
 **Why**: Node already reports child exit codes and signals precisely, including kills of the group leader, without rewriting the user's command line. The sidecar keeps the code available to whichever reconciler runs later (watcher, lazy, terminate).
-**Alternatives Considered**: The Python approach — wrap as `sh -c '<cmd>; echo $? > id.exit'` — which also captures codes when the host is down.
+**Alternatives Considered**: Wrapping the command as `sh -c '<cmd>; echo $? > id.exit'`, which also captures codes when the host is down.
 **Consequences**:
 - Pro: `ps` shows the user's real command; signal deaths get faithful 128+n codes (SIGTERM → 143, asserted in `tests/detached-processes/terminate.test.ts`)
 - Pro: No quoting games around the user's command string
@@ -61,7 +61,7 @@ The agent needs to start shell commands that survive Tachikoma's own exit, resta
 ### Polling-only watcher
 
 **Choice**: One scheduler job (`detached-watch`, every `watchIntervalSeconds`, default 15s) sweeps `listRunning()` and reconciles records whose pid fails the signal-0 check. There is no event-driven file watcher.
-**Why**: With the sidecar written in-process, there is no external file event worth watching; the only thing the watcher must catch is "the pid is gone". A single sweep is simpler than the Python hybrid (watchfiles + poll) and the lazy reconciliation in every tool handler covers the freshness-sensitive case (the agent asking about a record).
+**Why**: With the sidecar written in-process, there is no external file event worth watching; the only thing the watcher must catch is "the pid is gone". A single sweep is simpler than a hybrid file-watch + poll setup, and the lazy reconciliation in every tool handler covers the freshness-sensitive case (the agent asking about a record).
 **Alternatives Considered**: Subscribing to the in-process `exit` event for immediate reconciliation — rejected as the sole path because it dies with the host; keeping it in addition was not needed at the current notification latency expectations.
 **Consequences**:
 - Pro: One code path, trivially testable (`createWatcherTick(deps)()` is awaited directly in tests)
@@ -71,7 +71,7 @@ The agent needs to start shell commands that survive Tachikoma's own exit, resta
 
 **Choice**: `isAlive(pid)` is `process.kill(pid, 0)`, with EPERM counted as alive. No OS start-time identity anchor is stored.
 **Why**: Node has no portable create-time API without a new dependency, and the failure mode is benign here: a reused pid keeps a stale record "running" until the squatter exits, at which point the watcher reconciles it (with a `null` code). Destructive signalling targets the process *group* (`-pid`), and group ids of detached children are not recycled into unrelated foreground groups in practice.
-**Alternatives Considered**: A psutil-style create-time check via `/proc/<pid>/stat` (Linux-only, hand-rolled) or a dependency.
+**Alternatives Considered**: A create-time identity check via `/proc/<pid>/stat` (Linux-only, hand-rolled) or a dependency.
 **Consequences**:
 - Pro: Zero dependencies, three-line check
 - Con: A reused pid can delay exit detection indefinitely and, in the worst case, `terminate_process` could signal an unrelated process group — accepted, documented in `reconcile.ts`
@@ -79,16 +79,16 @@ The agent needs to start shell commands that survive Tachikoma's own exit, resta
 ### `systemd-run` scopes behind the `ProcessLimiter` seam
 
 **Choice**: Memory limits are applied by wrapping the spawn as `systemd-run --user --scope --quiet -p MemoryMax=<n>M -- sh -c <command>`. The `ProcessLimiter` interface (probe once at bootstrap, `wrap()` per spawn, `limited` flag in the result) isolates the mechanism.
-**Why**: `systemd-run --scope` delegates all cgroup bookkeeping (creation, pid assignment, cleanup) to systemd and stays in the foreground exiting with the command's status, so detection, signalling, and exit codes are unchanged. The Python subsystem managed cgroup v2 directories by hand; the seam lets a direct cgroup implementation slot back in if needed.
+**Why**: `systemd-run --scope` delegates all cgroup bookkeeping (creation, pid assignment, cleanup) to systemd and stays in the foreground exiting with the command's status, so detection, signalling, and exit codes are unchanged. The seam lets a direct cgroup v2 implementation slot in if needed.
 **Consequences**:
 - Pro: No cgroup filesystem code; graceful degradation is a probe failure plus a warning
 - Pro: The record's `memoryLimitMb` reflects reality — stored only when `wrap()` actually limited
-- Con: Linux + systemd user-session only; no OOM-kill attribution or live memory-usage reads (both existed in the Python design)
+- Con: Linux + systemd user-session only; no OOM-kill attribution or live memory-usage reads
 
 ### Notification dispatch decoupled through the app event bus
 
 **Choice**: `reconcileExit` calls an injected `notify` callback; `index.ts` binds it to `app.events.emit("notify", payload)` with severity `info`/`error`. Suppression is record-driven (`stop_reason`) plus explicit `dispatchNotification: false` for terminate and crash-recovery paths.
-**Why**: Mirrors the Python rule that the watcher-side reconciler is the sole notification producer, while keeping this extension ignorant of channels and idle gating (DES-001 separation).
+**Why**: The watcher-side reconciler is the sole notification producer, keeping this extension ignorant of channels and idle gating (DES-001 separation).
 **Consequences**:
 - Pro: Tests assert notifications on a plain array sink; no channel machinery involved
 - Con: Delivery semantics depend entirely on the `"notify"` consumer's payload contract (see Notes)
@@ -123,5 +123,5 @@ The agent needs to start shell commands that survive Tachikoma's own exit, resta
 
 - Payload contract caveat: the watcher emits `{ source, processId, severity: "info" | "error", message }`, while the notifications router (`parseNotifyPayload`) only delivers payloads carrying a `text` field with severity `info|warning|urgent` — exit notices therefore currently reach raw `"notify"` subscribers but are skipped by the user-facing router. Aligning the payload shape is pending
 - Tools are registered through `app.agent.use`, so they exist in interactive agent sessions; headless side runs (`bare: true` in `src/agent/manager.ts`) do not receive them
-- There is no rename tool and no system-prompt preamble section in this implementation (both existed in the Python subsystem); tool discoverability relies on `promptSnippet`/`promptGuidelines`
+- There is no rename tool and no system-prompt preamble section; tool discoverability relies on `promptSnippet`/`promptGuidelines`
 - `tests/detached-processes/setup.ts` still carries a DDL mirror of `schema.ts`; the central migrations (`drizzle/0001_extensions.sql`) already include the table, so the mirror is removable

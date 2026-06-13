@@ -7,7 +7,7 @@
 
 ## Purpose
 
-Explain why the REPL is a single-file readline channel rather than a port of the Python prompt_toolkit/rich REPL.
+Explain why the REPL is a single-file readline channel rather than a full-featured TUI.
 
 ## Problem Context
 
@@ -36,13 +36,13 @@ One class, `ReplChannel` in `src/extensions/repl/index.ts`, implementing `Channe
 
 ## Key Decisions
 
-### node:readline + raw ANSI instead of porting prompt_toolkit/rich
+### node:readline + raw ANSI instead of a rich TUI stack
 
 **Choice**: Use the Node standard library's readline with two ANSI constants for styling; no markdown rendering, no persistent history, no multiline composition.
-**Why**: The Python REPL accreted developer comforts over time; the rewrite's REPL only has to prove the channel contract end to end. Dependencies and rendering sophistication can be added when they earn their place.
+**Why**: The REPL only has to prove the channel contract end to end. Dependencies and rendering sophistication can be added when they earn their place.
 **Alternatives Considered**:
 - ink / blessed style TUI: heavy dependency for a developer loop
-- Porting rich-style markdown rendering: meaningful effort with no bearing on the architecture being validated
+- Terminal markdown rendering: meaningful effort with no bearing on the architecture being validated
 
 **Consequences**:
 - Pro: zero dependencies; the whole channel fits in one screen of code

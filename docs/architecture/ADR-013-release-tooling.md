@@ -5,7 +5,7 @@
 
 ## Context
 
-The Python implementation used python-semantic-release: conventional commits drove version bumps, changelog generation, and tagged releases. The rewrite needs an equivalent so DLT-044 carries over, but the project is a single-user, single-package repo that is run from sources — there is no CI pipeline, no npm publishing, and no remote-driven release flow to integrate with.
+Releases should be driven by conventional commits: commit history determines version bumps, changelog generation, and tagged releases. The project is a single-user, single-package repo that is run from sources — there is no CI pipeline, no npm publishing, and no remote-driven release flow to integrate with.
 
 ## Decision
 
@@ -20,7 +20,7 @@ Use **commit-and-tag-version** (the maintained fork of standard-version), run lo
 ### Positive
 
 - Local-first: a release needs no CI, no remote tokens, and no network — matching how the project is actually operated
-- Same conventional-commit contract as the Python repo, so commit discipline transfers unchanged
+- Built on the conventional-commit contract the repo already follows, so no new commit discipline is needed
 - Dry-run support (`just release --dry-run`) shows the computed bump and changelog before anything is written
 
 ### Negative
@@ -30,5 +30,5 @@ Use **commit-and-tag-version** (the maintained fork of standard-version), run lo
 
 ## Alternatives Considered
 
-- **semantic-release**: the closest analogue to python-semantic-release, but designed around CI: it refuses interactive local use, requires remote/token configuration, and centers on publishing — all machinery this repo doesn't have or need
+- **semantic-release**: designed around CI: it refuses interactive local use, requires remote/token configuration, and centers on publishing — all machinery this repo doesn't have or need
 - **changesets**: oriented at monorepos and npm package publishing with explicit changeset files per change; heavier ceremony than conventional commits for a single private package

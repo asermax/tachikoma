@@ -5,7 +5,7 @@
 
 ## Context
 
-Tachikoma runs as a long-lived background service; diagnosing boundary decisions, pipeline runs, and task executions after the fact requires structured logs with consistent component attribution. The Python implementation standardized on structured logging with per-subsystem loggers — the rewrite needs the same discipline.
+Tachikoma runs as a long-lived background service; diagnosing boundary decisions, pipeline runs, and task executions after the fact requires structured logs with consistent component attribution — structured logging with per-subsystem loggers, applied with discipline.
 
 ## Decision
 
@@ -23,7 +23,6 @@ Use **pino** for structured logging.
 - Fastest mainstream Node logger; negligible overhead even at debug level
 - Child loggers make component- and session-scoped filtering trivial (`jq 'select(.component == "boundary")'`)
 - JSON output integrates with journald/any log shipper without format adapters
-- Mirrors the Python implementation's logging design, keeping operational habits intact
 
 ### Negative
 

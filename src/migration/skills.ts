@@ -5,9 +5,9 @@ import type { Logger } from "../log.ts";
 import type { Workspace } from "../workspace.ts";
 import type { Ask } from "./ask.ts";
 
-// Frontmatter keys the Python skill registry consumed; pi's Agent Skills loader
-// only knows name/description/disable-model-invocation and ignores the rest.
-const PYTHON_ONLY_KEYS = ["depends_on", "version"];
+// Frontmatter keys only the legacy skill registry consumed; pi's Agent Skills
+// loader only knows name/description/disable-model-invocation and ignores the rest.
+const LEGACY_ONLY_KEYS = ["depends_on", "version"];
 
 export interface FrontmatterScan {
   keys: string[];
@@ -15,11 +15,11 @@ export interface FrontmatterScan {
 }
 
 /**
- * Detect Python-only frontmatter keys in a SKILL.md and produce a copy with
+ * Detect legacy-only frontmatter keys in a SKILL.md and produce a copy with
  * those keys (and their indented/list continuation lines) removed.
- * Returns null when the file has no frontmatter or no Python-only keys.
+ * Returns null when the file has no frontmatter or no legacy-only keys.
  */
-export const stripPythonFrontmatter = (source: string): FrontmatterScan | null => {
+export const stripLegacyFrontmatter = (source: string): FrontmatterScan | null => {
   const lines = source.split("\n");
 
   if (lines[0]?.trim() !== "---") return null;
@@ -36,7 +36,7 @@ export const stripPythonFrontmatter = (source: string): FrontmatterScan | null =
     const key = /^([\w-]+)\s*:/.exec(line)?.[1];
 
     if (key != null) {
-      skipping = PYTHON_ONLY_KEYS.includes(key);
+      skipping = LEGACY_ONLY_KEYS.includes(key);
 
       if (skipping) {
         found.add(key);
@@ -58,7 +58,7 @@ export const stripPythonFrontmatter = (source: string): FrontmatterScan | null =
 };
 
 /**
- * Scan workspace skills for Python-only frontmatter keys and offer to strip
+ * Scan workspace skills for legacy-only frontmatter keys and offer to strip
  * them. Declining (or a non-interactive startup) keeps the files as-is with a
  * warning — pi simply ignores the keys.
  */
@@ -83,7 +83,7 @@ export const adaptSkillsFrontmatter = async (
       continue;
     }
 
-    const scan = stripPythonFrontmatter(source);
+    const scan = stripLegacyFrontmatter(source);
 
     if (scan != null) affected.push({ path: skillFile, scan });
   }
@@ -97,13 +97,13 @@ export const adaptSkillsFrontmatter = async (
   ) {
     log.warn(
       { skills: affected.length, keys },
-      "keeping Python-only frontmatter keys — pi ignores them (skill dependency chains are not supported)",
+      "keeping legacy-only frontmatter keys — pi ignores them (skill dependency chains are not supported)",
     );
     return;
   }
 
   for (const { path, scan } of affected) {
     await writeFile(path, scan.content, "utf8");
-    log.info({ file: path, keys: scan.keys }, "stripped Python-only frontmatter keys");
+    log.info({ file: path, keys: scan.keys }, "stripped legacy-only frontmatter keys");
   }
 };

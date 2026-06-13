@@ -48,7 +48,7 @@ const translateOldConfig = async (
 
       if (typeof value !== "string" || value === "") continue;
 
-      // Python values were bare SDK aliases ("opus"); pi needs "provider/model-id".
+      // Legacy values were bare model aliases ("opus"); pi needs "provider/model-id".
       const candidate = value.includes("/") ? value : `anthropic/${value}`;
 
       if (await ask(`Set agent ${role} model to "${candidate}" (was "${value}")?`)) {
@@ -118,7 +118,7 @@ const translateOldConfig = async (
   if (dropped.length > 0) {
     log.info(
       { sections: dropped },
-      "config sections without a pi equivalent were not ported (except tasks.timezone → scheduler.timezone); originals preserved in the backup",
+      "config sections without a pi equivalent were not migrated (except tasks.timezone → scheduler.timezone); originals preserved in the backup",
     );
   }
 
@@ -126,8 +126,8 @@ const translateOldConfig = async (
 };
 
 /**
- * Detect a config.toml written by the Python implementation, back it up to
- * `<path>.python-backup`, write a translated new-layout file, and return the
+ * Detect a config.toml written by a legacy install, back it up to
+ * `<path>.legacy-backup`, write a translated new-layout file, and return the
  * reloaded Config. Returns null when the file is absent or already new-shape.
  */
 export const adaptConfig = async (
@@ -150,21 +150,21 @@ export const adaptConfig = async (
   } catch (error) {
     log.warn(
       { path, error },
-      "could not parse config for Python-era detection — leaving it untouched",
+      "could not parse config for legacy-shape detection — leaving it untouched",
     );
     return null;
   }
 
   if (!isOldShapeConfig(parsed)) return null;
 
-  log.warn({ path }, "Python-era config detected — translating to the new layout");
+  log.warn({ path }, "legacy config detected — translating to the new layout");
 
   const translated = await translateOldConfig(parsed, log, ask);
-  const backupPath = `${path}.python-backup`;
+  const backupPath = `${path}.legacy-backup`;
 
   await writeFile(backupPath, raw, "utf8");
 
-  const header = `# Tachikoma configuration\n# Translated from the Python-era config; the original is preserved at\n# ${backupPath}\n\n`;
+  const header = `# Tachikoma configuration\n# Translated from the legacy config; the original is preserved at\n# ${backupPath}\n\n`;
   await writeFile(path, `${header}${stringifyToml(translated)}\n`, "utf8");
 
   log.info({ path, backupPath }, "config translated — continuing with the new layout");

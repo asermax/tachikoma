@@ -70,7 +70,7 @@ describe("adaptConfig", () => {
       extraFileRoots: ["~/exports"],
     });
 
-    await expect(readFile(`${path}.python-backup`, "utf8")).resolves.toBe(OLD_CONFIG);
+    await expect(readFile(`${path}.legacy-backup`, "utf8")).resolves.toBe(OLD_CONFIG);
 
     const rewritten = await readFile(path, "utf8");
     expect(rewritten).toContain("[extensions.telegram]");
@@ -107,7 +107,7 @@ describe("adaptConfig", () => {
 
     expect(config).toBeNull();
     await expect(readFile(path, "utf8")).resolves.toBe(content);
-    expect(existsSync(`${path}.python-backup`)).toBe(false);
+    expect(existsSync(`${path}.legacy-backup`)).toBe(false);
   });
 
   it("returns null for a missing config file", async () => {

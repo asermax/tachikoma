@@ -54,10 +54,9 @@ const signalExitCode = (signal: NodeJS.Signals): number | null => {
 
 /**
  * Spawn a detached shell command with stdout/stderr captured to files and
- * persist the record. The exit-code sidecar file mirrors the Python wrapper's
- * `echo $? > id.exit`: it lets reconciliation recover the code while this host
- * process is alive; after a restart the child is reparented and the code is
- * unknowable (null).
+ * persist the record. The exit-code sidecar file lets reconciliation recover
+ * the code while this host process is alive; after a restart the child is
+ * reparented and the code is unknowable (null).
  */
 export const spawnProcess = async (
   deps: SpawnDeps,

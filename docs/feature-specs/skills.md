@@ -62,10 +62,10 @@ The `delegate_to_agent` tool (`src/extensions/skills/delegate.ts`) lists discove
 
 ## Notes
 
-Python features deliberately dropped in this implementation:
+Machinery deliberately left out of this implementation:
 
-- **LLM skill classifier** — replaced by pi's progressive disclosure: skill descriptions sit in the system prompt and the agent reads `SKILL.md` on demand, so no per-message classification pass (and its latency/cost) is needed
-- **Skills hot-reload/watcher** — dropped; discovery runs per agent session, so new skills appear on the next session (topic boundary or restart) and agent definitions are re-read on every delegation. No filesystem watcher, no mid-session resource reload
-- **Skill `dependencies`** — dropped; not part of the Agent Skills standard. Skills that build on other material reference it directly in their content for the agent to read
+- **LLM skill classifier** — pi's progressive disclosure covers it: skill descriptions sit in the system prompt and the agent reads `SKILL.md` on demand, so no per-message classification pass (and its latency/cost) is needed
+- **Skills hot-reload/watcher** — discovery runs per agent session, so new skills appear on the next session (topic boundary or restart) and agent definitions are re-read on every delegation. No filesystem watcher, no mid-session resource reload
+- **Skill `dependencies`** — not part of the Agent Skills standard. Skills that build on other material reference it directly in their content for the agent to read
 
 See [../reference/pi-sdk-notes.md](../reference/pi-sdk-notes.md) (Skills section) for the pi-native behavior this extension relies on.

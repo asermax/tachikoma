@@ -5,7 +5,7 @@
 
 ## Context
 
-The Python implementation established TOML at `~/.config/tachikoma/config.toml` with Pydantic validation and an auto-generated, commented default file on first run. The format and location are good user-facing contracts worth keeping. The schema itself is being redesigned for the rewrite (config is an implementation artifact, not workspace data, so compatibility is not required) — notably, extensions declare their own config sections.
+Tachikoma's user-facing configuration contract is TOML at `~/.config/tachikoma/config.toml`, schema-validated, with an auto-generated, commented default file on first run. Config is an implementation artifact, not workspace data, so the schema is free to evolve — notably, extensions declare their own config sections.
 
 ## Decision
 
@@ -21,14 +21,14 @@ Keep **TOML at `~/.config/tachikoma/config.toml`**, parsed with **smol-toml** an
 
 ### Positive
 
-- Users keep the familiar format and location; only the keys change between implementations
+- A familiar format and a conventional location, documented by the generated defaults
 - One schema language for config and everything else (ADR-003) — config types are inferred, not duplicated
 - smol-toml is small, spec-compliant (TOML 1.0), fast, and dependency-free
 - Extension-owned config sections keep the thin core ignorant of feature settings
 
 ### Negative
 
-- **Breaking schema change** from the Python config — intentional, but users migrating must reconcile their settings against the newly generated defaults
+- **Schema changes are not guaranteed backward-compatible** — intentional, but users migrating across breaking changes must reconcile their settings against the newly generated defaults
 - smol-toml does not preserve comments through parse/serialize round-trips; programmatic write-back (a future config CLI) will need a comment-preserving strategy rather than naive re-serialization
 
 ## Alternatives Considered

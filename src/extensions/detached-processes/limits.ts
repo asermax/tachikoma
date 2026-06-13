@@ -13,8 +13,8 @@ export interface WrappedCommand {
 }
 
 /**
- * Seam for resource limiting. The Python subsystem manages cgroup v2 directories
- * directly; a future cgroup implementation can slot in behind this interface.
+ * Seam for resource limiting; a direct cgroup v2 implementation can slot in
+ * behind this interface.
  */
 export interface ProcessLimiter {
   wrap(command: string, memoryLimitMb: number | null): WrappedCommand;

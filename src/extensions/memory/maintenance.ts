@@ -378,8 +378,8 @@ export const maintenanceSystemPrompt = async (
 ): Promise<string> => {
   const parts = [basePrompt(store, settings)];
 
-  // Mirrors the Python day-of-week dispatch: weekdays keep the index consistent
-  // cheaply, Sunday rebuilds it from scratch with fresh descriptions.
+  // Day-of-week dispatch: weekdays keep the index consistent cheaply,
+  // Sunday rebuilds it from scratch with fresh descriptions.
   if (store !== "episodic") {
     const isSunday = (now?.() ?? new Date()).getDay() === 0;
     parts.push(isSunday ? heavyIndexRebuildSection(store) : INDEX_LIGHT_MAINTENANCE_SECTION);

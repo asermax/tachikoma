@@ -22,13 +22,13 @@ Persistence is explicitly not the scheduler's job — task definitions and execu
 ### Positive
 
 - Zero dependencies, pure TypeScript, no native code — consistent with the rest of the stack
-- Timezone-aware cron expressions match the Python implementation's contract (user-local schedules)
+- Timezone-aware cron expressions support user-local schedules natively
 - Overrun protection and pause/resume cover the idle-gating and user-activity interactions the task system needs
 - Predictable testing: schedules are objects that can be queried for next runs, and vitest fake timers drive them deterministically
 
 ### Negative
 
-- In-process only: schedules die with the process — catch-up logic for missed runs is ours, backed by the database (this was equally true in the Python implementation)
+- In-process only: schedules die with the process — catch-up logic for missed runs is ours, backed by the database
 - Long-horizon one-shot timers rely on the process staying up; restart catch-up is the safety net
 
 ## Alternatives Considered

@@ -53,8 +53,8 @@ Rendering is whole-message: `respond()` drains the event stream while a typing i
 ### Whole-message rendering instead of progressive edits
 
 **Choice**: `respond()` accumulates `text` events and sends once after the stream completes, with a typing indicator covering the wait.
-**Why**: Progressive editing (the Python channel's approach) requires edit throttling, split-message reconciliation, and partial-markdown-safe formatting — a large surface for the first TS cut. Draining the stream then chunk-sending needs none of it, and the conversation loop already hands the channel a complete event stream per exchange.
-**Alternatives Considered**: Progressive `editMessageText` with throttle (Python parity); buffered edits per N seconds.
+**Why**: Progressive editing requires edit throttling, split-message reconciliation, and partial-markdown-safe formatting — a large surface for the first cut. Draining the stream then chunk-sending needs none of it, and the conversation loop already hands the channel a complete event stream per exchange.
+**Alternatives Considered**: Progressive `editMessageText` with throttle; buffered edits per N seconds.
 
 **Consequences**:
 - Pro: No edit rate-limit handling, no split-message bookkeeping, no partial-markdown parse failures
@@ -65,7 +65,7 @@ Rendering is whole-message: `respond()` drains the event stream while a typing i
 ### Markdown with plain-text fallback instead of an entity converter
 
 **Choice**: Send with legacy `parse_mode: "Markdown"`; if Telegram rejects with a "can't parse entities" error, resend the identical text with no parse mode (`isMarkdownParseError` matches on the error description).
-**Why**: The Python channel needed telegramify-markdown's entity pipeline because progressive edits re-parse partial markdown constantly. With whole-message sends, parse failures are rare, and the fallback guarantees delivery — formatting is best-effort, text is never lost.
+**Why**: An entity-conversion pipeline (telegramify-markdown style) only pays off when progressive edits re-parse partial markdown constantly. With whole-message sends, parse failures are rare, and the fallback guarantees delivery — formatting is best-effort, text is never lost.
 **Alternatives Considered**: MarkdownV2 with escaping (strict, breaks easily on LLM output); a TS entity-conversion library; plain text always.
 
 **Consequences**:
@@ -77,7 +77,7 @@ Rendering is whole-message: `respond()` drains the event stream while a typing i
 ### Promise-chain mutex serializing all sends
 
 **Choice**: A 19-line `Mutex` (`run()` chains onto a tail promise) wraps both `respond()` and `deliver()`.
-**Why**: Immediate-gated deliveries can arrive while an exchange is rendering. Without serialization, the chunked send of a response and the silent-send/copy/delete sequence of a delivery would interleave in the chat. The mutex is the TS analogue of the Python channel's delivery lock; `tests/telegram/mutex.test.ts` proves two concurrent `deliverText` calls never interleave their API calls.
+**Why**: Immediate-gated deliveries can arrive while an exchange is rendering. Without serialization, the chunked send of a response and the silent-send/copy/delete sequence of a delivery would interleave in the chat. `tests/telegram/mutex.test.ts` proves two concurrent `deliverText` calls never interleave their API calls.
 **Alternatives Considered**: async-mutex dependency; queueing deliveries inside the channel; relying on the coordinator's idle gating alone (insufficient — `gate: "immediate"` bypasses it).
 
 **Consequences**:
@@ -100,7 +100,7 @@ Rendering is whole-message: `respond()` drains the event stream while a typing i
 
 **Choice**: Downloads land in `{workspace}/.tachikoma/media` (via `app.workspace.dataDir`), named `<12-hex>-<original-name>`; the `media-dir` bootstrap hook prunes files older than 30 days.
 **Why**: The agent needs the file path to remain valid across process restarts and topic boundaries — the OS temp dir offers no such guarantee. Bootstrap-time pruning bounds disk growth without a background job.
-**Alternatives Considered**: OS temp dir (Python's approach); per-session directories; no retention.
+**Alternatives Considered**: OS temp dir; per-session directories; no retention.
 
 **Consequences**:
 - Pro: Paths referenced in past transcripts stay resolvable for ~30 days

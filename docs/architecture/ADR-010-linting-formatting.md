@@ -5,7 +5,7 @@
 
 ## Context
 
-The Python implementation used ruff — one fast tool for both linting and formatting, one config file, one quality-gate command. The rewrite wants the same shape in the TypeScript ecosystem, where the conventional answer (ESLint + Prettier + a stack of plugins and peer dependencies) is notoriously heavy and slow.
+The quality gate wants one fast tool for both linting and formatting, one config file, one command. The conventional TypeScript answer (ESLint + Prettier + a stack of plugins and peer dependencies) is notoriously heavy and slow.
 
 ## Decision
 
@@ -19,7 +19,7 @@ Use **Biome** for both linting and formatting.
 
 ### Positive
 
-- The ruff analogue: one Rust-fast binary replaces ESLint + Prettier + plugin chains; whole-repo checks are effectively instant
+- One Rust-fast binary replaces ESLint + Prettier + plugin chains; whole-repo checks are effectively instant
 - One config file, no plugin/peer-dependency matrix to maintain
 - Formatter and linter never disagree (a classic ESLint/Prettier failure mode)
 - Import organizing built in
@@ -27,7 +27,7 @@ Use **Biome** for both linting and formatting.
 ### Negative
 
 - Smaller rule ecosystem than ESLint — in particular, no equivalent for some type-aware rules from typescript-eslint; `tsc --noEmit` (strict mode) covers the type-level ground
-- Opinionated formatter with limited knobs; accepted, as with ruff format
+- Opinionated formatter with limited knobs; accepted
 - No third-party plugin system yet, so project-specific custom rules aren't an option
 
 ## Alternatives Considered

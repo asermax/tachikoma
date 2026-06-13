@@ -11,7 +11,7 @@ Explain why the skills extension is a thin wiring layer over pi's native skill p
 
 ## Problem Context
 
-The Python implementation owned the entire skill lifecycle: a multi-source registry, a per-message LLM classifier, a filesystem watcher with debounce, and transitive dependency resolution. pi already implements the Agent Skills standard (the same `SKILL.md` format Tachikoma used) with progressive disclosure built in, which makes most of that machinery redundant. What remains is deciding how skill-bundled agent definitions — not part of the standard — reach the agent.
+Owning the entire skill lifecycle would mean a multi-source registry, a per-message LLM classifier, a filesystem watcher with debounce, and transitive dependency resolution. pi already implements the Agent Skills standard (the `SKILL.md` format Tachikoma's workspace skills use) with progressive disclosure built in, which makes all of that machinery redundant. What remains is deciding how skill-bundled agent definitions — not part of the standard — reach the agent.
 
 **Constraints:**
 - pi's API is never wrapped ([DES-001](../design/DES-001-unified-extension-api.md)); skill discovery must flow through pi's own `resources_discover` mechanism
@@ -39,12 +39,12 @@ Three small modules. `index.ts` wires: a bootstrap hook ensures the skills direc
 
 ## Key Decisions
 
-### Delegate skill discovery to pi instead of porting the registry/classifier
+### Delegate skill discovery to pi instead of owning a registry/classifier
 
 **Choice**: Contribute the skills directory through `resources_discover` and let pi own discovery, relevance, and loading.
-**Why**: pi implements the Agent Skills standard natively with progressive disclosure — descriptions in the system prompt, content read on demand. The Python classifier existed because the Claude SDK had no such mechanism; porting it would duplicate pi at extra cost and latency per message.
+**Why**: pi implements the Agent Skills standard natively with progressive disclosure — descriptions in the system prompt, content read on demand. A separate classifier would duplicate pi at extra cost and latency per message.
 **Alternatives Considered**:
-- Port the Python `SkillRegistry` + LLM classifier: full control over injection, but a per-message LLM call and a parallel skill pipeline pi would ignore
+- A `SkillRegistry` + LLM classifier: full control over injection, but a per-message LLM call and a parallel skill pipeline pi would ignore
 - `skillsOverride` on the resource loader: replaces pi's whole skill set rather than adding a source; wrong altitude for one extra directory
 
 **Consequences**:
@@ -56,7 +56,7 @@ Three small modules. `index.ts` wires: a bootstrap hook ensures the skills direc
 ### Re-discover agents on every delegation instead of watching the filesystem
 
 **Choice**: `delegate_to_agent` calls `discover()` again inside `execute`, and the session factory re-runs discovery per session; no watcher exists.
-**Why**: The Python watcher + debounce + dirty-registry machinery existed to keep a long-lived in-memory registry fresh. With cheap synchronous scans of a small directory tree, reading fresh at the moments that matter (session creation, tool execution) gets the same freshness with no lifecycle to manage.
+**Why**: Watcher + debounce + dirty-registry machinery only earns its keep when a long-lived in-memory registry must stay fresh. With cheap synchronous scans of a small directory tree, reading fresh at the moments that matter (session creation, tool execution) gets the same freshness with no lifecycle to manage.
 **Alternatives Considered**:
 - Filesystem watcher marking a registry dirty: more moving parts, shutdown handling, OS watch limits — for a directory scanned in microseconds
 

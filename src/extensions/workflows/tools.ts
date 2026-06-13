@@ -85,7 +85,7 @@ const formatUtc = (date: Date): string =>
 
 /**
  * Validate a step transition against the current states and the frozen definition.
- * Returns null when valid, an error message otherwise. Ported from the Python engine.
+ * Returns null when valid, an error message otherwise.
  */
 export const validateTransition = (
   stepStates: StepStates,
